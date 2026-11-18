@@ -1,4 +1,5 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import { msg, T, Var } from "gt-react";
 import { ArrowRightIcon, DownloadIcon } from "lucide-react";
 
 import { ensureLocalApi } from "../localApi";
@@ -9,6 +10,7 @@ import {
   getDesktopUpdateReleaseUrl,
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
+import { m } from "../i18n/messages";
 import { toastManager } from "./ui/toast";
 import { stackedThreadToast } from "./ui/toastHelpers";
 
@@ -22,7 +24,7 @@ export async function openDesktopUpdateReleaseNotes(
   try {
     if (shell && (await shell.openExternal(releaseUrl))) return;
   } catch {}
-  toastManager.add({ type: "error", title: "Unable to open release notes" });
+  toastManager.add({ type: "error", title: m(msg("Unable to open release notes")) });
 }
 
 /**
@@ -43,8 +45,9 @@ export async function installDesktopUpdate(
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not confirm update",
-        description: error instanceof Error ? error.message : "Update confirmation failed.",
+        title: m(msg("Could not confirm update")),
+        description:
+          error instanceof Error ? error.message : m(msg("Update confirmation failed.")),
       }),
     );
     return;
@@ -63,7 +66,7 @@ export async function installDesktopUpdate(
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not install update",
+        title: m(msg("Could not install update")),
         description: actionError,
       }),
     );
@@ -71,8 +74,9 @@ export async function installDesktopUpdate(
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not install update",
-        description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        title: m(msg("Could not install update")),
+        description:
+          error instanceof Error ? error.message : m(msg("An unexpected error occurred.")),
       }),
     );
   }
@@ -93,7 +97,7 @@ function ReleaseNotesLink({
       }}
       type="button"
     >
-      Release notes
+      <T>Release notes</T>
       <ArrowRightIcon
         aria-hidden
         className="ml-1 inline size-3 -rotate-45 align-[-0.125em]"
@@ -118,18 +122,23 @@ export function showDesktopUpdateDownloadedToast(
   toastManager.add(
     stackedThreadToast({
       type: "success",
-      title: "Update downloaded",
+      title: m(msg("Update downloaded")),
       description: (
         <>
-          {version ? `T3 Code ${version} is ready.` : "The update is ready."} Restart to finish
-          updating.
+          {version ? (
+            <T>
+              T3 Code <Var>{version}</Var> is ready. Restart to finish updating.
+            </T>
+          ) : (
+            <T>The update is ready. Restart to finish updating.</T>
+          )}
           {releaseUrl ? <ReleaseNotesLink releaseUrl={releaseUrl} shell={shell} /> : null}
         </>
       ),
       ...(installBridge
         ? {
             actionProps: {
-              children: "Restart now",
+              children: m(msg("Restart now")),
               onClick: () => {
                 void installDesktopUpdate(installBridge, state);
               },

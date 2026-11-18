@@ -10,7 +10,7 @@ export function isAppModalPage(pathname: string) {
 }
 
 export function isSidebarUtilityPage(pathname: string) {
-  return pathname.startsWith("/projects/");
+  return pathname.startsWith("/projects/") || pathname === "/issues";
 }
 
 // Pages the root route always renders without the app shell, so they are never

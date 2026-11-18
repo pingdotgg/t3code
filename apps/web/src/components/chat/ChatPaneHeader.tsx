@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useRef, useState, type ReactNode, type Ref } from "react";
 
 import { isElectron } from "../../env";
@@ -26,11 +27,12 @@ export function ChatPaneHeader({
   reserveNativeControlsInset: boolean;
   children: ReactNode;
 }) {
+  const gt = useGT();
   const { leadingEdge, trailingEdge } = useLayoutPane();
   return (
     <header
       ref={ref}
-      {...workspaceAreaProps("tabs", 0.5, "Thread tabs")}
+      {...workspaceAreaProps("tabs", 0.5, gt("Thread tabs"))}
       data-chat-header
       data-pane-header
       className={chatPaneHeaderClassName({ leadingEdge, trailingEdge, reserveNativeControlsInset })}

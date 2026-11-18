@@ -1,5 +1,6 @@
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { VcsStatusResult } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { FileDiffIcon, GitBranchIcon, GitBranchPlusIcon } from "lucide-react";
 import { useId, useState } from "react";
 
@@ -67,6 +68,7 @@ export function GitCommitDialog({
   /** A message a failed commit left behind, offered again when the dialog reopens. */
   retainedMessage?: string;
 }) {
+  const gt = useGT();
   const branchFieldId = useId();
   const messageFieldId = useId();
   const [commitMessage, setCommitMessage] = useState("");
@@ -91,8 +93,8 @@ export function GitCommitDialog({
   const excludedCount = allFiles.length - selectedFiles.length;
   const refName = gitStatus?.refName ?? null;
   const branchItems = [
-    { value: "current", label: refName ?? "(detached HEAD)" },
-    { value: "new", label: "New branch" },
+    { value: "current", label: refName ?? gt("(detached HEAD)") },
+    { value: "new", label: gt("New branch") },
   ];
 
   const toggleFile = (path: string) => {
@@ -127,11 +129,13 @@ export function GitCommitDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>Commit changes</DialogTitle>
+          <DialogTitle>{gt("Commit changes")}</DialogTitle>
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor={branchFieldId}>Branch</Label>
+            <Label htmlFor={branchFieldId}>
+              <T>Branch</T>
+            </Label>
             <Select
               value={branchTarget}
               onValueChange={(value) => setBranchTarget(value === "new" ? "new" : "current")}
@@ -141,23 +145,34 @@ export function GitCommitDialog({
                 {branchTarget === "new" ? <GitBranchPlusIcon /> : <GitBranchIcon />}
                 <SelectValue />
                 {branchTarget === "current" && isDefaultRef ? (
-                  <Badge variant="warning">default</Badge>
+                  <Badge variant="warning">
+                    {gt("default", { $context: "git ref badge, the default branch" })}
+                  </Badge>
                 ) : null}
               </SelectTrigger>
               <SelectPopup>
                 <SelectItem value="current">
                   <span className="flex min-w-0 items-center gap-2">
                     <GitBranchIcon />
-                    <span className="min-w-0 truncate">{refName ?? "(detached HEAD)"}</span>
-                    {isDefaultRef ? <Badge variant="warning">default</Badge> : null}
+                    <span className="min-w-0 truncate">{refName ?? gt("(detached HEAD)")}</span>
+                    {isDefaultRef ? (
+                      <Badge variant="warning">
+                        {gt("default", { $context: "git ref badge, the default branch" })}
+                      </Badge>
+                    ) : null}
                   </span>
                 </SelectItem>
                 <SelectItem value="new">
                   <span className="flex min-w-0 items-center gap-2">
                     <GitBranchPlusIcon />
-                    <span className="shrink-0">New branch</span>
+                    <span className="shrink-0">{gt("New branch")}</span>
                     {refName ? (
-                      <span className="min-w-0 truncate text-dim-foreground">from {refName}</span>
+                      <span className="min-w-0 truncate text-dim-foreground">
+                        {gt("from {branch}", {
+                          branch: refName,
+                          $context: "the branch a new branch starts from",
+                        })}
+                      </span>
                     ) : null}
                   </span>
                 </SelectItem>
@@ -167,7 +182,9 @@ export function GitCommitDialog({
 
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between gap-2">
-              <Label render={<span />}>Files</Label>
+              <Label render={<span />}>
+                <T>Files</T>
+              </Label>
               {allFiles.length > 1 ? (
                 <span className="text-meta">
                   <InlineButton
@@ -178,14 +195,14 @@ export function GitCommitDialog({
                       )
                     }
                   >
-                    {allSelected ? "Exclude all" : "Include all"}
+                    {allSelected ? gt("Exclude all") : gt("Include all")}
                   </InlineButton>
                 </span>
               ) : null}
             </div>
             {allFiles.length === 0 ? (
               <p className="rounded-card surface-card-settings px-3 py-2 text-body text-muted-foreground">
-                No changed files.
+                <T>No changed files.</T>
               </p>
             ) : (
               <div className="max-h-52 overflow-y-auto">
@@ -202,13 +219,13 @@ export function GitCommitDialog({
                     >
                       <Checkbox
                         checked={!isExcluded}
-                        aria-label={`Include ${file.path}`}
+                        aria-label={gt("Include {path}", { path: file.path })}
                         onCheckedChange={() => toggleFile(file.path)}
                       />
                       <button
                         type="button"
                         className="flex min-w-0 flex-1 text-left enabled:cursor-pointer"
-                        aria-label={`Open ${file.path}`}
+                        aria-label={gt("Open {path}", { path: file.path })}
                         disabled={!canOpenFiles}
                         onClick={() => onOpenFile(file.path)}
                       >
@@ -248,12 +265,14 @@ export function GitCommitDialog({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor={messageFieldId}>Commit message (optional)</Label>
+            <Label htmlFor={messageFieldId}>
+              <T>Commit message (optional)</T>
+            </Label>
             <Textarea
               id={messageFieldId}
               value={commitMessage}
               onChange={(event) => setCommitMessage(event.target.value)}
-              placeholder="Leave empty to auto-generate"
+              placeholder={gt("Leave empty to auto-generate")}
               size="sm"
             />
           </div>
@@ -261,15 +280,25 @@ export function GitCommitDialog({
         <DialogFooter variant="bare" className="sm:items-center">
           <p className="flex flex-col gap-0.5 text-meta text-dim-foreground sm:mr-auto">
             <span>
-              {selectedFiles.length} of {allFiles.length} {allFiles.length === 1 ? "file" : "files"}
+              {gt(
+                "{total, plural, one {{selected} of {total} file} other {{selected} of {total} files}}",
+                { selected: selectedFiles.length, total: allFiles.length },
+              )}
             </span>
-            {excludedCount > 0 ? <span>{excludedCount} excluded</span> : null}
+            {excludedCount > 0 ? (
+              <span>
+                {gt("{count} excluded", {
+                  count: excludedCount,
+                  $context: "number of files left out of the commit",
+                })}
+              </span>
+            ) : null}
           </p>
           <Button variant="secondary" size="standard" onClick={() => onOpenChange(false)}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button size="standard" disabled={submitDisabled} onClick={submit}>
-            {branchTarget === "new" ? "Commit on new branch" : "Commit"}
+            {branchTarget === "new" ? <T>Commit on new branch</T> : <T context="verb">Commit</T>}
             <DialogSubmitKbd />
           </Button>
         </DialogFooter>

@@ -19,6 +19,7 @@ import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
+import { T, useGT } from "gt-react";
 import { memo, useImperativeHandle, useRef, useState, type ComponentProps, type Ref } from "react";
 import { flushSync } from "react-dom";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
@@ -99,6 +100,7 @@ interface ThreadDetailsPanelProps extends Pick<
 
 export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
+  const gt = useGT();
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
   const focusBranchOnOpen = useRef(false);
   const focusBranch = () => {
@@ -217,7 +219,7 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
             <div className="group/details-items thread-details-stack flex flex-col gap-1">
               {Object.values(show).some(Boolean) || visible.usage || visible.context ? (
                 <section
-                  aria-label="Workspace"
+                  aria-label={gt("Workspace")}
                   data-thread-details-card
                   className="surface-tray rounded-pane p-1"
                 >
@@ -352,7 +354,9 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                   }}
                 >
                   <SlidersHorizontalIcon aria-hidden />
-                  <MenuItemLabel>Choose what to show</MenuItemLabel>
+                  <MenuItemLabel>
+                    <T>Choose what to show</T>
+                  </MenuItemLabel>
                 </ThreadDetailsControl>
               </div>
             </div>

@@ -3,6 +3,7 @@ import type { ThreadContextRecord, ProjectId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
 import type { MouseEventHandler } from "react";
+import { useGT } from "gt-react";
 
 import { useProject, useThreadShell } from "~/state/entities";
 import { orchestrationEnvironment } from "~/state/orchestration";
@@ -20,6 +21,7 @@ export function ThreadContextChip(props: {
   onClick?: MouseEventHandler<HTMLAnchorElement>;
   inPromptEditor?: boolean;
 }) {
+  const gt = useGT();
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
   const lookup = useEnvironmentQuery(
@@ -54,7 +56,7 @@ export function ThreadContextChip(props: {
                 onClick={props.onClick}
               />
             }
-            aria-label={`Thread, ${title}`}
+            aria-label={gt("Thread, {title}", { title })}
             onPointerDown={(event) => {
               if (props.inPromptEditor) return;
               beginLayoutContentDrag(event, {
@@ -72,8 +74,10 @@ export function ThreadContextChip(props: {
       />
       <TooltipPopup side="top">
         {props.unreadable
-          ? "On another machine, so this machine's agent can't read it. Remove it or switch back to send."
-          : "Open thread"}
+          ? gt(
+              "On another machine, so this machine's agent can't read it. Remove it or switch back to send.",
+            )
+          : gt("Open thread")}
       </TooltipPopup>
     </Tooltip>
   );

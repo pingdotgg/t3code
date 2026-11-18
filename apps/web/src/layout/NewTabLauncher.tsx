@@ -1,6 +1,7 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { T, useGT } from "gt-react";
 import { SquareDashedIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef } from "react";
 
@@ -171,6 +172,7 @@ function NewTabLauncherBody({
   contextProjectId,
   openers,
 }: NewTabLauncherBodyProps) {
+  const gt = useGT();
   const { paneId } = useLayoutPane();
   const handleNewThread = useNewThreadHandler();
   const { startScratchThread } = useScratchProject();
@@ -265,7 +267,7 @@ function NewTabLauncherBody({
   return (
     <div
       ref={attachLauncher}
-      {...workspaceAreaProps("launcher", 1, "New tab")}
+      {...workspaceAreaProps("launcher", 1, gt("New tab"))}
       data-new-tab-launcher=""
       data-surface-reaches-under-header=""
       className={cn(
@@ -273,8 +275,14 @@ function NewTabLauncherBody({
         PANE_BODY_UNDER_HEADER_CLASS,
       )}
     >
-      <div role="list" aria-label="New tab" className="flex w-full max-w-110 flex-col gap-0.5 py-6">
-        <DraftProjectGroupLabel>Start a thread in</DraftProjectGroupLabel>
+      <div
+        role="list"
+        aria-label={gt("New tab")}
+        className="flex w-full max-w-110 flex-col gap-0.5 py-6"
+      >
+        <DraftProjectGroupLabel>
+          <T>Start a thread in</T>
+        </DraftProjectGroupLabel>
         <ProjectPickerRows
           model={model}
           groupLabels={false}
@@ -299,7 +307,7 @@ function NewTabLauncherBody({
         <div aria-hidden className="mx-2.5 my-1 h-px bg-border" />
         <DraftProjectRow
           icon={<PullRequestGlyph.pullRequest className="size-4 shrink-0 text-muted-foreground" />}
-          label="All pull requests"
+          label={gt("All pull requests")}
           detail=""
           onSelect={() => openPage("pull-requests")}
         />
@@ -353,16 +361,19 @@ function LauncherThreadLabel({
   threadRef: ScopedThreadRef;
   projectId: ProjectId | null;
 }) {
+  const gt = useGT();
   const thread = useThreadShell(threadRef);
   return (
     <div
       role="listitem"
       className="flex min-w-0 items-baseline gap-1 px-2.5 pt-2 pb-1 text-caption text-dim-foreground"
     >
-      <span className="shrink-0">Open for</span>
+      <span className="shrink-0">
+        {gt("Open for", { $context: "followed by the thread that new tools open for" })}
+      </span>
       <span className="flex min-w-0">
         <ThreadContextChip
-          record={{ ...threadRef, title: thread?.title ?? "New thread" }}
+          record={{ ...threadRef, title: thread?.title ?? gt("New thread") }}
           projectId={projectId}
           onClick={(event) => {
             if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -412,6 +423,7 @@ export function LayoutLauncherPane({
 }
 
 function WorkspaceWayBackHint() {
+  const gt = useGT();
   const { paneId } = useLayoutPane();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const scrollingWorkspaces = useScrollingWorkspacesEnabled();
@@ -427,14 +439,19 @@ function WorkspaceWayBackHint() {
   if (!back && !overview) return null;
   return (
     <p className="pointer-events-none absolute inset-x-0 bottom-4 text-center text-meta text-dim-foreground">
-      {back ? `${back} goes back ${way}.` : null}
+      {back
+        ? way === "up"
+          ? gt("{shortcut} goes back up.", { shortcut: back })
+          : gt("{shortcut} goes back down.", { shortcut: back })
+        : null}
       {back && overview ? " " : null}
-      {overview ? `${overview} shows every workspace.` : null}
+      {overview ? gt("{shortcut} shows every workspace.", { shortcut: overview }) : null}
     </p>
   );
 }
 
 function LauncherTabNotch({ tabId }: { tabId: string | null }) {
+  const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const siblingTabs = useLayoutPaneSiblingTabs();
   const closable = useLayoutStore(
@@ -460,10 +477,12 @@ function LauncherTabNotch({ tabId }: { tabId: string | null }) {
             }}
           >
             {closable ? <span className={LAYOUT_TAB_ICON_CLASS}>{icon}</span> : icon}
-            <span className="truncate">New tab</span>
+            <span className="truncate">
+              <T>New tab</T>
+            </span>
           </div>
           {closable && tabId !== null ? (
-            <LayoutTabCloseButton tabId={tabId} title="New tab" />
+            <LayoutTabCloseButton tabId={tabId} title={gt("New tab")} />
           ) : null}
         </span>
         {siblingTabs.after.map((tab) => (

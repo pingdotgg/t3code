@@ -14,6 +14,7 @@ import type {
   PullRequestUpdateMethod,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -24,6 +25,7 @@ import {
 import { useState, type MouseEvent, type ReactNode, type RefCallback } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
+import type { MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 
 import { Button, ContentButton } from "../ui/button";
@@ -57,16 +59,32 @@ function reviewerKey(login: string): string {
 }
 
 /** "3s", "4m 12s", "1h 5m": how long a finished run took, where the host said. */
-function checkDuration(check: PullRequestCheck): string | null {
+function checkDuration(check: PullRequestCheck, resolve: MessageResolver): string | null {
   if (check.startedAt === undefined || check.completedAt === undefined) return null;
   const seconds = Math.round(
     (new Date(check.completedAt).getTime() - new Date(check.startedAt).getTime()) / 1000,
   );
   if (!Number.isFinite(seconds) || seconds < 0) return null;
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) {
+    return resolve(msg("{seconds}s", { seconds, $context: "elapsed time, seconds" }));
+  }
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  if (minutes < 60) {
+    return resolve(
+      msg("{minutes}m {seconds}s", {
+        minutes,
+        seconds: seconds % 60,
+        $context: "elapsed time, minutes and seconds",
+      }),
+    );
+  }
+  return resolve(
+    msg("{hours}h {minutes}m", {
+      hours: Math.floor(minutes / 60),
+      minutes: minutes % 60,
+      $context: "elapsed time, hours and minutes",
+    }),
+  );
 }
 
 function ReadinessRow({
@@ -82,6 +100,7 @@ function ReadinessRow({
   meta?: ReactNode;
   children: ReactNode;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(revealUrl !== undefined);
   const [seenRevealUrl, setSeenRevealUrl] = useState(revealUrl);
   if (revealUrl !== seenRevealUrl) {
@@ -93,7 +112,9 @@ function ReadinessRow({
       open={open}
       onOpenChange={setOpen}
       data-pull-request-summary-section
-      aria-label={revealUrl !== undefined ? "Checks" : undefined}
+      aria-label={
+        revealUrl !== undefined ? gt("Checks", { $context: "CI checks section" }) : undefined
+      }
     >
       <CollapsibleTrigger render={<ContentButton variant="panel-row" />}>
         <span className="flex min-w-0 flex-1 items-center gap-2 text-meta">
@@ -188,11 +209,13 @@ export function PullRequestReadinessCard({
   /** A line under the merge control, such as an auto-merge that is already armed. */
   note?: ReactNode;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const openLink = useOpenLink(threadRef);
   const openCheck = (url: string) => {
     void openLink(url).catch((error: unknown) => {
       console.error(error);
-      toastManager.add({ type: "error", title: "Unable to open check details" });
+      toastManager.add({ type: "error", title: gt("Unable to open check details") });
     });
   };
 
@@ -201,7 +224,7 @@ export function PullRequestReadinessCard({
     (check) =>
       check.status === "success" || check.status === "skipped" || check.status === "neutral",
   ).length;
-  const checksPresentation = checksState ? pullRequestChecksStatePresentation(checksState) : null;
+  const checksPresentation = checksState ? pullRequestChecksStatePresentation(checksState, messages) : null;
   const checksIcon =
     checksState === "pending" ? (
       <PullRequestCheckStatusIcon status="pending" />
@@ -246,10 +269,10 @@ export function PullRequestReadinessCard({
   const standing = reviewOutcomes.filter((entry) => !entry.stale);
   const changesRequested = standing.filter((entry) => entry.outcome === "changes-requested");
   const approved = standing.filter((entry) => entry.outcome === "approved");
-  const names = (entries: typeof standing) => {
-    const first = entries[0]?.actor?.login ?? "ghost";
-    return entries.length > 1 ? `${first} and ${entries.length - 1} more` : first;
-  };
+  const names = (entries: typeof standing) => ({
+    first: entries[0]?.actor?.login ?? "ghost",
+    more: entries.length - 1,
+  });
   const reviewOutcome =
     changesRequested.length > 0
       ? ("changes-requested" as const)
@@ -257,37 +280,58 @@ export function PullRequestReadinessCard({
         ? ("approved" as const)
         : null;
   const reviewLabel = activityPending
-    ? "Reading reviews"
+    ? gt("Reading reviews")
     : changesRequested.length > 0
-      ? `Changes requested by ${names(changesRequested)}`
+      ? gt(
+          "{more, plural, =0 {Changes requested by {first}} other {Changes requested by {first} and {more} more}}",
+          names(changesRequested),
+        )
       : approved.length > 0
-        ? `Approved by ${names(approved)}`
+        ? gt(
+            "{more, plural, =0 {Approved by {first}} other {Approved by {first} and {more} more}}",
+            names(approved),
+          )
         : reviewerEntries.length > 0
-          ? "Waiting on reviews"
-          : "No reviews yet";
+          ? gt("Waiting on reviews")
+          : gt("No reviews yet");
   const reviewMeta =
     activityPending || reviewerEntries.length === 0
       ? null
-      : `${approved.length} of ${reviewerEntries.length} approved`;
+      : gt("{approved} of {total} approved", {
+          approved: approved.length,
+          total: reviewerEntries.length,
+        });
 
   // Conflicts: only an open pull request has a merge to be in the way of.
   const open = detail.state === "open";
   const conflicting = open && detail.mergeability === "conflicting";
+  const baseBranch = detail.baseBranch;
   const conflictsLabel = conflicting
-    ? `Conflicts with ${detail.baseBranch}`
+    ? gt("Conflicts with {baseBranch}", { baseBranch })
     : detail.mergeability === "unknown"
-      ? `Checking for conflicts with ${detail.baseBranch}`
+      ? gt("Checking for conflicts with {baseBranch}", { baseBranch })
       : freshness
         ? freshness.behindBy === null
-          ? `Behind ${detail.baseBranch}`
-          : `${freshness.behindBy.toLocaleString()} ${
-              freshness.behindBy === 1 ? "commit" : "commits"
-            } behind ${detail.baseBranch}`
-        : `No conflicts with ${detail.baseBranch}`;
+          ? gt("Behind {baseBranch}", { baseBranch })
+          : gt(
+              "{count, plural, one {{formatted} commit behind {baseBranch}} other {{formatted} commits behind {baseBranch}}}",
+              {
+                count: freshness.behindBy,
+                formatted: freshness.behindBy.toLocaleString(),
+                baseBranch,
+              },
+            )
+        : gt("No conflicts with {baseBranch}", { baseBranch });
   const commitCount = activityPending
     ? null
-    : `${detail.commits.length.toLocaleString()} ${detail.commits.length === 1 ? "commit" : "commits"}`;
-  const conflictsMeta = !conflicting && freshness ? "no conflicts" : commitCount;
+    : gt("{count, plural, one {{formatted} commit} other {{formatted} commits}}", {
+        count: detail.commits.length,
+        formatted: detail.commits.length.toLocaleString(),
+      });
+  const conflictsMeta =
+    !conflicting && freshness
+      ? gt("no conflicts", { $context: "readiness row meta, the branch merges cleanly" })
+      : commitCount;
 
   return (
     <div className="surface-panel min-w-0 overflow-hidden rounded-xl">
@@ -300,13 +344,17 @@ export function PullRequestReadinessCard({
               ? checksPresentation.label
               : // Skipped and neutral runs count as passed here, as they do in the meta count.
                 checksState === "passing"
-                ? "All checks passed"
+                ? gt("All checks passed")
                 : checksSummary
           }
           meta={
             checksStale || detail.checks.length === 0
               ? null
-              : `${passed.toLocaleString()} of ${detail.checks.length.toLocaleString()}`
+              : gt("{passed} of {total}", {
+                  passed: passed.toLocaleString(),
+                  total: detail.checks.length.toLocaleString(),
+                  $context: "checks that passed out of all checks",
+                })
           }
         >
           {canApproveWorkflows ? (
@@ -320,28 +368,28 @@ export function PullRequestReadinessCard({
             >
               <PlayIcon aria-hidden className="size-3.5" />
               {approvingWorkflows
-                ? "Approving..."
+                ? gt("Approving...")
                 : approveWorkflowsArmed
-                  ? "Confirm approve?"
-                  : "Approve workflows to run"}
+                  ? gt("Confirm approve?")
+                  : gt("Approve workflows to run")}
             </Button>
           ) : null}
           {checksStale ? (
             <div className="flex items-center gap-2 px-1.5 py-1.5 text-meta leading-5 text-muted-foreground">
-              <span>Check details are out of date.</span>
+              <span>{gt("Check details are out of date.")}</span>
               <Button size="xs" variant="ghost" onClick={onRefreshChecks}>
-                Refresh
+                {gt("Refresh")}
               </Button>
             </div>
           ) : detail.checks.length === 0 ? (
             <p className="px-1.5 py-1.5 text-meta leading-5 text-muted-foreground">
-              No checks reported.
+              {gt("No checks reported.")}
             </p>
           ) : (
             detail.checks.map((check, index) => {
               const finding = { kind: "check", check } as const;
               const failing = check.status === "failure" || check.status === "cancelled";
-              const duration = checkDuration(check);
+              const duration = checkDuration(check, messages);
               return (
                 <div
                   // oxlint-disable-next-line react/no-array-index-key -- Check names and URLs can repeat; these status rows have no local state.
@@ -364,7 +412,7 @@ export function PullRequestReadinessCard({
                         {/* A skipped run still reports times, but "Skipped" is the answer there. */}
                         {duration && check.status !== "pending" && check.status !== "skipped"
                           ? duration
-                          : pullRequestCheckStatusLabel(check)}
+                          : pullRequestCheckStatusLabel(check, messages)}
                       </span>
                     </span>
                   </button>
@@ -379,7 +427,7 @@ export function PullRequestReadinessCard({
                     >
                       <HammerIcon className="size-3" />
                       {pendingFinding === pullRequestFindingKey(finding)
-                        ? "Preparing..."
+                        ? gt("Preparing...")
                         : fixCheckLabel}
                     </Button>
                   ) : null}
@@ -405,15 +453,15 @@ export function PullRequestReadinessCard({
           <div className="flex min-w-0 flex-wrap items-center gap-1.5 py-1">
             {reviewerEntries.length === 0 ? (
               <span className="px-1.5 text-meta leading-5 text-muted-foreground">
-                Nobody has been asked yet.
+                <T>Nobody has been asked yet.</T>
               </span>
             ) : (
               reviewerEntries.map((entry) => {
                 const verdict = entry.outcome
                   ? entry.stale
-                    ? pullRequestReviewOutcomeStaleLabel(entry.outcome)
-                    : pullRequestReviewOutcomeLabel(entry.outcome)
-                  : "Pending";
+                    ? pullRequestReviewOutcomeStaleLabel(entry.outcome, messages)
+                    : pullRequestReviewOutcomeLabel(entry.outcome, messages)
+                  : gt("Pending", { $context: "reviewer has not reviewed yet" });
                 return (
                   <Tooltip key={entry.key}>
                     <TooltipTrigger
@@ -465,7 +513,7 @@ export function PullRequestReadinessCard({
           </div>
           {detail.commentsTruncated ? (
             <p className="px-1.5 pb-1.5 text-meta leading-5 text-muted-foreground">
-              Only the recent conversation was read, so older reviews may be missing here.
+              <T>Only the recent conversation was read, so older reviews may be missing here.</T>
             </p>
           ) : null}
         </ReadinessRow>
@@ -494,12 +542,12 @@ export function PullRequestReadinessCard({
           >
             {conflicting ? (
               <div className="flex flex-wrap items-center gap-2 px-1.5 py-1.5 text-meta leading-5 text-muted-foreground">
-                <span>These changes conflict with {detail.baseBranch}.</span>
+                <span>{gt("These changes conflict with {baseBranch}.", { baseBranch })}</span>
                 {resolveConflicts}
               </div>
             ) : freshness ? (
               <div className="px-1.5 py-1.5 text-meta leading-5 text-muted-foreground">
-                <p>Changes can be cleanly merged.</p>
+                <p>{gt("Changes can be cleanly merged.")}</p>
                 {freshness.methods.length > 0 ? (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     {freshness.methods.map((method) => (
@@ -511,7 +559,7 @@ export function PullRequestReadinessCard({
                         onClick={() => onUpdateBranch(method)}
                       >
                         <PullRequestGlyph.merged aria-hidden className="size-3" />
-                        {method === "rebase" ? "Update with rebase" : "Update branch"}
+                        {method === "rebase" ? gt("Update with rebase") : gt("Update branch")}
                       </Button>
                     ))}
                   </div>
@@ -520,8 +568,8 @@ export function PullRequestReadinessCard({
             ) : (
               <p className="px-1.5 py-1.5 text-meta leading-5 text-muted-foreground">
                 {detail.mergeability === "unknown"
-                  ? "The host is still working out whether this merges cleanly."
-                  : "Changes can be cleanly merged."}
+                  ? gt("The host is still working out whether this merges cleanly.")
+                  : gt("Changes can be cleanly merged.")}
               </p>
             )}
           </ReadinessRow>
@@ -539,7 +587,7 @@ export function PullRequestReadinessCard({
                       <Button
                         size="icon-sm"
                         variant={primaryMenuVariant}
-                        aria-label="More merge actions"
+                        aria-label={gt("More merge actions")}
                       />
                     }
                   >

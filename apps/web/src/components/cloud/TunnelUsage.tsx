@@ -1,8 +1,10 @@
 import { T3CHAT_PLAN_TUNNEL_LIMITS } from "@t3tools/contracts/relay";
 import { TriangleAlertIcon } from "lucide-react";
+import { msg, T, useGT } from "gt-react";
 import type { ReactNode } from "react";
 
 import type { ManagedTunnelUpgrade } from "../../cloud/managedRelayState";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { cn } from "../../lib/utils";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
@@ -12,15 +14,29 @@ const MAX_SEGMENTS = 10;
 
 export const T3CHAT_SUBSCRIPTION_URL = "https://t3.chat/settings/subscription";
 
-export function tunnelUpgradeCopy(upgrade: Exclude<ManagedTunnelUpgrade, null>): string {
+/** Components pass `useMessages()` so the copy follows a language switch. */
+export function tunnelUpgradeCopy(
+  upgrade: Exclude<ManagedTunnelUpgrade, null>,
+  resolve: MessageResolver = m,
+): string {
   const { pro, premier } = T3CHAT_PLAN_TUNNEL_LIMITS;
   switch (upgrade) {
     case "link":
-      return `Link T3 Chat Pro for up to ${pro} tunnels, or Premier for up to ${premier}.`;
+      return resolve(
+        msg("Link T3 Chat Pro for up to {pro} tunnels, or Premier for up to {premier}.", {
+          pro,
+          premier,
+        }),
+      );
     case "pro":
-      return `Upgrade to T3 Chat Pro for up to ${pro} tunnels, or Premier for up to ${premier}.`;
+      return resolve(
+        msg("Upgrade to T3 Chat Pro for up to {pro} tunnels, or Premier for up to {premier}.", {
+          pro,
+          premier,
+        }),
+      );
     case "premier":
-      return `Upgrade to T3 Chat Premier for up to ${premier} tunnels.`;
+      return resolve(msg("Upgrade to T3 Chat Premier for up to {premier} tunnels.", { premier }));
   }
 }
 
@@ -36,19 +52,20 @@ export function TunnelUsageMeter({
   readonly action?: ReactNode;
   readonly className?: string;
 }) {
+  const gt = useGT();
   const full = used >= limit;
   const fill = full ? "bg-warning" : "bg-foreground/72";
   return (
     <div className={cn("flex max-w-sm flex-col gap-1.5", className)}>
       <div className="flex items-baseline justify-between gap-3 text-meta">
         <span className={cn("tabular-nums", full ? "text-warning-foreground" : "text-foreground")}>
-          {used} of {limit} tunnels in use
+          {gt("{used} of {limit} tunnels in use", { used, limit })}
         </span>
         {action}
       </div>
       <div
         role="meter"
-        aria-label="T3 Connect tunnels in use"
+        aria-label={gt("T3 Connect tunnels in use")}
         aria-valuemin={0}
         aria-valuemax={limit}
         aria-valuenow={used}
@@ -84,33 +101,36 @@ export function TunnelLimitAlert({
   readonly onLinkT3Chat: (() => void) | null;
   readonly onManageTunnels: (() => void) | null;
 }) {
+  const gt = useGT();
   const action =
     upgrade === "link" && onLinkT3Chat ? (
       <Button size="sm" onClick={onLinkT3Chat}>
-        Link T3 Chat
+        <T>Link T3 Chat</T>
       </Button>
     ) : upgrade === "pro" || upgrade === "premier" ? (
       <Button
         size="sm"
         render={<a href={T3CHAT_SUBSCRIPTION_URL} target="_blank" rel="noopener noreferrer" />}
       >
-        Upgrade on T3 Chat
+        <T>Upgrade on T3 Chat</T>
       </Button>
     ) : onManageTunnels ? (
       <Button size="sm" variant="secondary" onClick={onManageTunnels}>
-        Manage tunnels
+        <T>Manage tunnels</T>
       </Button>
     ) : null;
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>You&apos;re out of tunnels (they cost us money).</AlertTitle>
+      <AlertTitle>
+        <T>You&apos;re out of tunnels (they cost us money).</T>
+      </AlertTitle>
       <AlertDescription>
         {upgrade === "link"
-          ? "Switch to Tailscale or get more tunnels by linking your T3 Chat sub (sorry!)"
+          ? gt("Switch to Tailscale or get more tunnels by linking your T3 Chat sub (sorry!)")
           : upgrade
-            ? "Switch to Tailscale or get more tunnels by upgrading your T3 Chat sub (sorry!)"
-            : "Switch to Tailscale or deregister an environment you no longer use (sorry!)"}
+            ? gt("Switch to Tailscale or get more tunnels by upgrading your T3 Chat sub (sorry!)")
+            : gt("Switch to Tailscale or deregister an environment you no longer use (sorry!)")}
       </AlertDescription>
       {action ? <AlertAction>{action}</AlertAction> : null}
     </Alert>

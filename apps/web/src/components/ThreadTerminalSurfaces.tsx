@@ -12,6 +12,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import {
   resolveTerminalActivityStatus,
   type TerminalActivityStatus,
@@ -122,6 +123,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   onAddTerminalContext,
   paneMode,
 }: PersistentThreadTerminalDrawerProps) {
+  const gt = useGT();
   const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
   const hasTerminalWriteAccess = () =>
     readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
@@ -361,7 +363,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
       mode={paneMode ? "pane" : "drawer"}
       threadRef={threadRef}
       threadId={threadId}
-      threadTitle={serverThread?.title ?? (draftThread ? "New thread" : null)}
+      threadTitle={serverThread?.title ?? (draftThread ? gt("New thread") : null)}
       cwd={cwd}
       worktreePath={effectiveWorktreePath}
       runtimeEnv={runtimeEnv}
@@ -437,6 +439,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   newShortcutLabel,
   closeShortcutLabel,
 }: PersistentThreadTerminalPanelProps) {
+  const gt = useGT();
   const serverThread = useQuietThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const projectRef = serverThread
@@ -512,7 +515,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
       visible={visible}
       threadRef={threadRef}
       threadId={threadRef.threadId}
-      threadTitle={serverThread?.title ?? (draftThread ? "New thread" : null)}
+      threadTitle={serverThread?.title ?? (draftThread ? gt("New thread") : null)}
       cwd={cwd}
       worktreePath={worktreePath}
       runtimeEnv={runtimeEnv}

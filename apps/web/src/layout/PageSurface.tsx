@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { useGT } from "gt-react";
 
 import { Button } from "../components/ui/button";
 import { Spinner } from "../components/ui/spinner";
@@ -19,6 +20,7 @@ const PullRequestsPage = lazy(() =>
 export function LayoutPageBody({ content }: { content: LayoutPageContent }) {
   const location = parseLayoutPageLocation(content);
   const navigate = useNavigate();
+  const gt = useGT();
   return (
     <LayoutPageLocationContext value={location}>
       <Suspense
@@ -36,7 +38,7 @@ export function LayoutPageBody({ content }: { content: LayoutPageContent }) {
               variant="ghost"
               onClick={() => void navigate({ href: layoutPageHref(content) })}
             >
-              {content.kind === "settings" ? "Open settings" : "Open usage"}
+              {content.kind === "settings" ? gt("Open settings") : gt("Open usage")}
             </Button>
           </div>
         )}

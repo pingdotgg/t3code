@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
+import { msg, useGT, useMessages } from "gt-react";
 import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { useAtomValue } from "@effect/atom-react";
@@ -62,6 +63,7 @@ import {
 import { contextMenuShortcutFields, shortcutLabelForCommand } from "../keybindings";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
+import { m, type MessageResolver } from "../i18n/messages";
 import { isElectron } from "../env";
 import { textDirection } from "../textDirection";
 import { buildThreadRouteParams } from "../threadRoutes";
@@ -699,32 +701,40 @@ export function buildLayoutTabMenuItems(
   const hasSiblings = location.pane.tabs.length > 1;
   const items: ContextMenuItem<LayoutTabMenuId>[] = [
     ...(isLayoutGhostTab(location.tab)
-      ? [{ id: "layout:keep", label: "Keep open", icon: "pin" } as const]
+      ? [{ id: "layout:keep", label: m(msg("Keep open")), icon: "pin" } as const]
       : []),
     {
       id: "layout:split-right",
-      label: "Split right",
+      label: m(msg("Split right")),
       icon: "panel-right",
       ...keys("layout.splitRight"),
     },
     {
       id: "layout:split-down",
-      label: "Split down",
+      label: m(msg("Split down")),
       icon: "panel-bottom",
       ...keys("layout.splitDown"),
     },
   ];
   if (hasSiblings || paneCount > 1) {
-    items.push({ id: "layout:new-column", label: "Move to a new column", icon: "columns-2" });
+    items.push({
+      id: "layout:new-column",
+      label: m(msg("Move to a new column")),
+      icon: "columns-2",
+    });
   }
   if (isScrollingWorkspacesEnabled() && countLayoutTabs(layout) > 1) {
-    items.push({ id: "layout:new-workspace", label: "Move to a new workspace", icon: "layers-2" });
+    items.push({
+      id: "layout:new-workspace",
+      label: m(msg("Move to a new workspace")),
+      icon: "layers-2",
+    });
   }
   if (paneCount > 1) {
     const filled = useLayoutStore.getState().maximizedTabId === tabId;
     items.push({
       id: "layout:fill",
-      label: filled ? "Show every pane" : "Fill the window",
+      label: filled ? m(msg("Show every pane")) : m(msg("Fill the window")),
       icon: "maximize",
       ...keys("layout.fill"),
     });
@@ -732,7 +742,7 @@ export function buildLayoutTabMenuItems(
   if (location.tab.content.kind === "chat" && location.tab.content.target.kind === "server") {
     items.push({
       id: "layout:copy-link",
-      label: "Copy link",
+      label: m(msg("Copy link")),
       icon: "link",
       separatorBefore: true,
     });
@@ -740,14 +750,14 @@ export function buildLayoutTabMenuItems(
   if (canCloseLayoutTab(layout, tabId)) {
     items.push({
       id: "layout:close-tab",
-      label: "Close",
+      label: m(msg("Close")),
       icon: "x",
       ...keys("tab.close"),
       separatorBefore: !items.some((item) => item.id === "layout:copy-link"),
     });
   }
   if (hasSiblings) {
-    items.push({ id: "layout:close-other-tabs", label: "Close others", icon: "copy-x" });
+    items.push({ id: "layout:close-other-tabs", label: m(msg("Close others")), icon: "copy-x" });
   }
   return items;
 }
@@ -803,7 +813,7 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
       const link = threadLinkFor(location.tab);
       if (!link) return;
       void writeTextToClipboard(link, "thread link").catch(() =>
-        toastManager.add({ type: "error", title: "Could not copy the link" }),
+        toastManager.add({ type: "error", title: m(msg("Could not copy the link")) }),
       );
       return;
     }
@@ -823,13 +833,16 @@ type SurfaceTabMenuId = "rename" | "copy-path" | "toggle-mute";
  * resolve while the preview manager's createTab is still in flight, and muting
  * then fails with a PreviewTabNotFoundError nothing surfaces to the user.
  */
-export function tabMuteMenuItem(input: {
-  overlay: DesktopPreviewOverlay | null;
-  canResolveRuntimeTabId: boolean;
-}): { label: string; disabled: boolean } {
+export function tabMuteMenuItem(
+  input: {
+    overlay: DesktopPreviewOverlay | null;
+    canResolveRuntimeTabId: boolean;
+  },
+  resolve: MessageResolver = m,
+): { label: string; disabled: boolean } {
   const muted = input.overlay?.audioMuted ?? false;
   return {
-    label: muted ? "Unmute tab" : "Mute tab",
+    label: muted ? resolve(msg("Unmute tab")) : resolve(msg("Mute tab")),
     disabled: input.overlay === null || !input.canResolveRuntimeTabId,
   };
 }
@@ -871,9 +884,9 @@ function surfaceTabMenu(tab: LayoutTab | undefined): {
       ? (previewState.sessions[surface.resourceId]?.tabId ?? null)
       : null;
   const overlay = previewTabId ? (previewState.desktopByTabId[previewTabId] ?? null) : null;
-  if (surface?.kind === "device") items.push({ id: "rename", label: "Rename" });
+  if (surface?.kind === "device") items.push({ id: "rename", label: m(msg("Rename")) });
   if (surface?.kind === "file" && surface.attachment === undefined) {
-    items.push({ id: "copy-path", label: "Copy path" });
+    items.push({ id: "copy-path", label: m(msg("Copy path")) });
   }
   if (surface?.kind === "preview") {
     items.push({
@@ -969,6 +982,7 @@ export const LAYOUT_TAB_ICON_CLASS = "contents [visibility:var(--tab-icon-visibi
  * `LAYOUT_TAB_ICON_CLASS`.
  */
 export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: string }) {
+  const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut = shortcutLabelForCommand(keybindings, "tab.close");
   return (
@@ -978,7 +992,7 @@ export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: s
           <ContentButton
             variant="tab-close"
             type="button"
-            aria-label={`Close ${title}`}
+            aria-label={gt("Close {title}", { title })}
             className="absolute start-2.25 top-1/2 -translate-y-1/2"
             data-tab-close=""
             onClick={() => closeLayoutTabByUser(tabId)}
@@ -987,12 +1001,15 @@ export function LayoutTabCloseButton({ tabId, title }: { tabId: string; title: s
       >
         <XIcon aria-hidden className="size-3" />
       </TooltipTrigger>
-      <TooltipPopup side="bottom">Close tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {shortcut ? gt("Close tab ({shortcut})", { shortcut }) : gt("Close tab")}
+      </TooltipPopup>
     </Tooltip>
   );
 }
 
 export function LayoutNewTabButton({ tabId }: { tabId: string | null }) {
+  const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut = shortcutLabelForCommand(keybindings, "tab.new");
   return (
@@ -1003,7 +1020,8 @@ export function LayoutNewTabButton({ tabId }: { tabId: string | null }) {
             variant="bare"
             size="icon-xs"
             data-pane-notch-add=""
-            aria-label="New tab"
+            data-layout-new-tab=""
+            aria-label={gt("New tab")}
             onPointerDown={(event) =>
               beginLayoutContentDrag(event, {
                 kind: "new-tab",
@@ -1019,7 +1037,9 @@ export function LayoutNewTabButton({ tabId }: { tabId: string | null }) {
       >
         <PlusIcon />
       </TooltipTrigger>
-      <TooltipPopup side="bottom">New tab{shortcut ? ` (${shortcut})` : ""}</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {shortcut ? gt("New tab ({shortcut})", { shortcut }) : gt("New tab")}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -1135,6 +1155,8 @@ export function useLayoutTabLabel(tab: LayoutTab): {
   title: string;
   tooltip: string;
 } {
+  const gt = useGT();
+  const messages = useMessages();
   const target = tab.content.kind === "chat" ? tab.content.target : null;
   const threadRef =
     target?.kind === "server"
@@ -1204,10 +1226,10 @@ export function useLayoutTabLabel(tab: LayoutTab): {
   if (isLayoutPageContent(tab.content)) {
     const title =
       tab.content.kind === "settings"
-        ? "Settings"
+        ? gt("Settings")
         : tab.content.kind === "usage"
-          ? "Usage"
-          : "Pull requests";
+          ? gt("Usage")
+          : gt("Pull requests");
     const Icon =
       tab.content.kind === "settings"
         ? SettingsIcon
@@ -1223,8 +1245,8 @@ export function useLayoutTabLabel(tab: LayoutTab): {
   if (tab.content.kind === "launcher") {
     return {
       icon: <SquareDashedIcon aria-hidden className="size-3.5 shrink-0" />,
-      title: "New tab",
-      tooltip: "New tab",
+      title: gt("New tab"),
+      tooltip: gt("New tab"),
     };
   }
   if (tab.content.kind === "surface") {
@@ -1232,7 +1254,7 @@ export function useLayoutTabLabel(tab: LayoutTab): {
     const threadTerminal = tab.content.surfaceId === THREAD_TERMINAL_SURFACE_ID;
     const threadTitle =
       thread?.title ??
-      (surfaceDraft ? "New thread" : null) ??
+      (surfaceDraft ? gt("New thread") : null) ??
       (threadless
         ? (project?.title ??
           (isThreadlessHomeRef(surfaceThreadRef) &&
@@ -1242,10 +1264,11 @@ export function useLayoutTabLabel(tab: LayoutTab): {
             : null))
         : null);
     const title = surface
-      ? (sideChat?.title ?? surfaceTabTitle(surface, preview, terminal?.state.summary?.label))
+      ? (sideChat?.title ??
+        surfaceTabTitle(surface, preview, terminal?.state.summary?.label, messages))
       : terminalRef
-        ? terminalTabTitle(activeTerminalId, terminal?.state.summary?.label)
-        : "Surface";
+        ? terminalTabTitle(activeTerminalId, terminal?.state.summary?.label, messages)
+        : gt("Surface", { $context: "a side panel tab with no known kind" });
     const root =
       thread?.worktreePath ?? surfaceDraft?.worktreePath ?? project?.workspaceRoot ?? home;
     const path =
@@ -1265,11 +1288,12 @@ export function useLayoutTabLabel(tab: LayoutTab): {
     const status =
       terminalRef || surface?.kind === "terminal"
         ? terminalRunning
-          ? "Process running"
+          ? gt("Process running")
           : terminal && resolveTerminalActivityStatus(terminal.state) === "failed"
-            ? "Last command failed"
-            : "Idle"
+            ? gt("Last command failed")
+            : gt("Idle", { $context: "terminal status" })
         : null;
+    const browserLabel = gt("Browser");
     return {
       icon: threadTerminal ? (
         <SquareTerminal aria-hidden className="size-3.5 shrink-0" />
@@ -1282,7 +1306,7 @@ export function useLayoutTabLabel(tab: LayoutTab): {
       tooltip: [
         title,
         terminal?.state.summary?.label,
-        surface?.kind === "preview" && title !== "Browser" ? "Browser" : null,
+        surface?.kind === "preview" && title !== browserLabel ? browserLabel : null,
         threadTitle,
         path,
         url,
@@ -1292,12 +1316,12 @@ export function useLayoutTabLabel(tab: LayoutTab): {
         .join("\n"),
     };
   }
-  const title = thread?.title ?? "New thread";
+  const title = thread?.title ?? gt("New thread");
   if (tab.ghostOf) {
     return {
       icon: <GitForkIcon aria-hidden className="size-3.5 shrink-0" />,
       title,
-      tooltip: ghostTabTooltip(title, ghostParent?.title),
+      tooltip: ghostTabTooltip(title, ghostParent?.title, messages),
     };
   }
   const icon =
@@ -1310,13 +1334,21 @@ export function useLayoutTabLabel(tab: LayoutTab): {
   return {
     icon,
     title,
-    tooltip: isLayoutGhostTab(tab) ? ghostTabTooltip(tooltip, undefined) : tooltip,
+    tooltip: isLayoutGhostTab(tab) ? ghostTabTooltip(tooltip, undefined, messages) : tooltip,
   };
 }
 
 /** A ghost tab names the thread it was opened from, if any, and how to keep it. */
-export function ghostTabTooltip(title: string, parentTitle: string | undefined): string {
-  return [title, parentTitle ? `Opened from ${parentTitle}` : null, "Double-click to keep open"]
+export function ghostTabTooltip(
+  title: string,
+  parentTitle: string | undefined,
+  resolve: MessageResolver = m,
+): string {
+  return [
+    title,
+    parentTitle ? resolve(msg("Opened from {title}", { title: parentTitle })) : null,
+    resolve(msg("Double-click to keep open")),
+  ]
     .filter(Boolean)
     .join("\n");
 }

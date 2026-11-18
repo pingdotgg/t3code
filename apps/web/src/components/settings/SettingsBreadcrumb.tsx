@@ -1,4 +1,4 @@
-import { msg, useMessages } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 import { ChevronRightIcon, SettingsIcon } from "lucide-react";
 
 import { SettingsScopePicker } from "./SettingsScopePicker";
@@ -19,12 +19,13 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
 
 /** The breadcrumb opens the shared scope picker on pages with scoped settings. */
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
+  const gt = useGT();
   const m = useMessages();
   const sectionLabel = settingsBreadcrumbLabel(pathname);
 
   return (
     <nav
-      aria-label="Settings breadcrumb"
+      aria-label={gt("Settings breadcrumb")}
       data-settings-breadcrumb
       className="flex min-w-0 items-center text-label"
     >

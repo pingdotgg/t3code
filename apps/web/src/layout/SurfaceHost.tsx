@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { Button } from "~/components/ui/button";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { memo, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -142,11 +143,12 @@ interface UnseenPeeks {
  * uQRYP). Clicking it brings the pane in; scrolling to it clears it.
  */
 function UnseenPeekDot({ side, tabId }: { side: "left" | "right"; tabId: string }) {
+  const gt = useGT();
   return (
     <Button
       variant="ghost"
       size="icon-fixed-xs"
-      aria-label={side === "left" ? "New pane to the left" : "New pane to the right"}
+      aria-label={side === "left" ? gt("New pane to the left") : gt("New pane to the right")}
       data-layout-unseen-peek={side}
       className={cn(
         "absolute top-1/2 z-30 -translate-y-1/2",

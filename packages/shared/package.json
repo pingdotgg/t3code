@@ -459,6 +459,10 @@
       "types": "./src/t3McpToolPresentation.ts",
       "import": "./src/t3McpToolPresentation.ts"
     },
+    "./t3McpToolPresentationCopy": {
+      "types": "./src/t3McpToolPresentationCopy.ts",
+      "import": "./src/t3McpToolPresentationCopy.ts"
+    },
     "./Array": {
       "types": "./src/Array.ts",
       "import": "./src/Array.ts"
@@ -594,6 +598,50 @@
     "./pinOrderKey": {
       "types": "./src/pinOrderKey.ts",
       "import": "./src/pinOrderKey.ts"
+    },
+    "./usageLimitsCopy": {
+      "types": "./src/usageLimitsCopy.ts",
+      "import": "./src/usageLimitsCopy.ts"
+    },
+    "./usageFormatCopy": {
+      "types": "./src/usageFormatCopy.ts",
+      "import": "./src/usageFormatCopy.ts"
+    },
+    "./speechCopy": {
+      "types": "./src/speechCopy.ts",
+      "import": "./src/speechCopy.ts"
+    },
+    "./threadLinksCopy": {
+      "types": "./src/threadLinksCopy.ts",
+      "import": "./src/threadLinksCopy.ts"
+    },
+    "./terminalLabelsCopy": {
+      "types": "./src/terminalLabelsCopy.ts",
+      "import": "./src/terminalLabelsCopy.ts"
+    },
+    "./projectScriptsCopy": {
+      "types": "./src/projectScriptsCopy.ts",
+      "import": "./src/projectScriptsCopy.ts"
+    },
+    "./orchestrationTimingCopy": {
+      "types": "./src/orchestrationTimingCopy.ts",
+      "import": "./src/orchestrationTimingCopy.ts"
+    },
+    "./codexArtifactTemplatesCopy": {
+      "types": "./src/codexArtifactTemplatesCopy.ts",
+      "import": "./src/codexArtifactTemplatesCopy.ts"
+    },
+    "./toolActivityCopy": {
+      "types": "./src/toolActivityCopy.ts",
+      "import": "./src/toolActivityCopy.ts"
+    },
+    "./promptLinksCopy": {
+      "types": "./src/promptLinksCopy.ts",
+      "import": "./src/promptLinksCopy.ts"
+    },
+    "./paletteSearchCopy": {
+      "types": "./src/paletteSearchCopy.ts",
+      "import": "./src/paletteSearchCopy.ts"
     }
   },
   "scripts": {
@@ -607,6 +655,7 @@
     "effect": "catalog:",
     "ffi-rs": "1.3.2",
     "get-east-asian-width": "^1.6.0",
+    "gt-i18n": "1.0.40",
     "mdast-util-directive": "catalog:",
     "mdast-util-to-hast": "^13.2.1",
     "micromark-extension-directive": "catalog:",

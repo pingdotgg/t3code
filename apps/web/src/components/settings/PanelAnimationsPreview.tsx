@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useState } from "react";
 
@@ -109,6 +110,7 @@ function StretchBar({
 }
 
 export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
+  const gt = useGT();
   const [panelsOpen, setPanelsOpen] = useState(true);
   const leftShift = panelsOpen ? OPEN_LEFT - CLOSED_LEFT : 0;
   const rightShift = panelsOpen ? OPEN_RIGHT - CLOSED_RIGHT : 0;
@@ -116,7 +118,7 @@ export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
   return (
     <button
       type="button"
-      aria-label="Replay panel animation preview"
+      aria-label={gt("Replay panel animation preview")}
       className="relative h-16 w-28 shrink-0 cursor-pointer overflow-hidden rounded-control outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
       onClick={() => setPanelsOpen((open) => !open)}
       style={{ "--preview-duration": `${durationMs}ms` } as CSSProperties}

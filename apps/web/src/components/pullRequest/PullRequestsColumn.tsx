@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { Plug2Icon } from "lucide-react";
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 
@@ -22,6 +23,7 @@ export function PullRequestsColumn({
   searchInput,
   sortMenu,
   filtersMenu,
+  savedViewsMenu,
   rightPanelOpen,
   maximizedAway,
   split,
@@ -36,6 +38,7 @@ export function PullRequestsColumn({
   searchInput: ReactNode;
   sortMenu: ReactNode;
   filtersMenu: ReactNode;
+  savedViewsMenu: ReactNode;
   rightPanelOpen: boolean;
   maximizedAway: boolean;
   /** Whether the list sits beside an open review as its own pane. */
@@ -43,7 +46,8 @@ export function PullRequestsColumn({
   listBody: ReactNode;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
-  const contentArea = workspaceAreaProps("pull-requests", 1, "Pull requests");
+  const gt = useGT();
+  const contentArea = workspaceAreaProps("pull-requests", 1, gt("Pull requests"));
   const focusedRef = useLayoutPaneFocusedRef();
   const searchRef = useRef<HTMLDivElement | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener focuses the visible search input on Cmd/Ctrl+F
@@ -77,7 +81,7 @@ export function PullRequestsColumn({
           window controls. */}
       <SettingsPaneHeader transparent trailingEdge={!rightPanelOpen}>
         <SettingsTabNotch
-          title="Pull requests"
+          title={gt("Pull requests")}
           icon={
             <PullRequestGlyph.pullRequest
               aria-hidden
@@ -85,7 +89,9 @@ export function PullRequestsColumn({
             />
           }
         >
-          <h1 className="truncate">Pull requests</h1>
+          <h1 className="truncate">
+            <T>Pull requests</T>
+          </h1>
         </SettingsTabNotch>
       </SettingsPaneHeader>
 
@@ -106,11 +112,12 @@ export function PullRequestsColumn({
               <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
                 {sortMenu}
                 {filtersMenu}
+                {savedViewsMenu}
                 <PullRequestCompactFilterMenu
-                  label="Filter by provider"
+                  label={gt("Filter by provider")}
                   iconOnly={host !== undefined}
                   triggerIcon={<Plug2Icon aria-hidden className="size-4" />}
-                  triggerLabel="All"
+                  triggerLabel={gt("All", { $context: "all providers" })}
                   value={host ?? ""}
                   options={hostMenuOptions}
                   onChange={(next) => onHost(next === "" ? undefined : next)}
@@ -118,7 +125,7 @@ export function PullRequestsColumn({
                 <Button
                   size="icon"
                   variant="ghost"
-                  aria-label="Refresh pull requests"
+                  aria-label={gt("Refresh pull requests")}
                   onClick={onRefresh}
                   disabled={refreshing}
                 >

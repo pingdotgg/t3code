@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
@@ -321,7 +323,11 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
         Effect.fail(
           new EnvironmentRpcUnavailableError({
             environmentId: supervisor.target.environmentId,
-            message: `${supervisor.target.label} did not confirm the message within 60 seconds.`,
+            ...translatableMessage(
+              msg("{host} did not confirm the message within 60 seconds.", {
+                host: supervisor.target.label,
+              }),
+            ),
           }),
         ),
     }),
@@ -1224,6 +1230,34 @@ export const linkThreadPullRequest = Effect.fn("EnvironmentCommands.linkThreadPu
     });
   },
 );
+export type LinkThreadIssueInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.issue.link" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export type UnlinkThreadIssueInput = Omit<
+  Extract<OrchestrationV2Command, { type: "thread.issue.unlink" }>,
+  "type" | "commandId"
+> &
+  CommandMetadata;
+export const linkThreadIssue = Effect.fn("EnvironmentCommands.linkThreadIssue")(function* (
+  input: LinkThreadIssueInput,
+) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.issue.link",
+    commandId: yield* allocateCommandId(input),
+  });
+});
+export const unlinkThreadIssue = Effect.fn("EnvironmentCommands.unlinkThreadIssue")(function* (
+  input: UnlinkThreadIssueInput,
+) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.issue.unlink",
+    commandId: yield* allocateCommandId(input),
+  });
+});
 export type WatchThreadPullRequestInput = Omit<
   Extract<OrchestrationV2Command, { type: "thread.pull-request.watch" }>,
   "type" | "commandId"

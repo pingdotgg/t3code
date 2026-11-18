@@ -7,6 +7,7 @@ import {
   Volume2Icon,
   VolumeXIcon,
 } from "lucide-react";
+import { msg, useGT, useMessages } from "gt-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -18,6 +19,7 @@ import {
   mediaMetadataParts,
 } from "~/components/media/mediaFileInfo";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import type { MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { InlineButton } from "../ui/button";
@@ -47,11 +49,11 @@ function wavSampleRate(bytes: ArrayBuffer): number | null {
   return riff ? view.getUint32(24, true) : null;
 }
 
-function channelLabel(channels: number | null): string | null {
+function channelLabel(channels: number | null, resolve: MessageResolver): string | null {
   if (channels === null) return null;
-  if (channels === 1) return "mono";
-  if (channels === 2) return "stereo";
-  return `${channels} channels`;
+  if (channels === 1) return resolve(msg("mono", { $context: "audio channel layout" }));
+  if (channels === 2) return resolve(msg("stereo", { $context: "audio channel layout" }));
+  return resolve(msg("{channels} channels", { $context: "audio channel count" }), { channels });
 }
 
 function sampleRateLabel(sampleRate: number | null): string | null {
@@ -154,6 +156,8 @@ export function AudioPreview(props: AudioPreviewProps) {
 }
 
 function StandardAudioPreview(props: AudioPreviewProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const onUnmount = useContext(AudioPreviewUnmountContext);
   const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
   const audioRef = useStableCallback((element: HTMLAudioElement | null) => {
@@ -178,7 +182,7 @@ function StandardAudioPreview(props: AudioPreviewProps) {
   const metadata = mediaMetadataParts([
     mediaFormatLabel(props.name),
     sampleRateLabel(summary?.sampleRate ?? null),
-    channelLabel(summary?.channels ?? null),
+    channelLabel(summary?.channels ?? null, messages),
     formatMediaSize(summary?.sizeBytes ?? null),
   ]);
 
@@ -241,7 +245,7 @@ function StandardAudioPreview(props: AudioPreviewProps) {
             type="button"
             variant="default"
             size="icon-sm"
-            aria-label={state.paused ? "Play" : "Pause"}
+            aria-label={state.paused ? gt("Play") : gt("Pause")}
             onClick={togglePlay}
           >
             {state.paused ? (
@@ -256,7 +260,7 @@ function StandardAudioPreview(props: AudioPreviewProps) {
           <MediaScrubber
             state={state}
             onSeek={seek}
-            label="Seek audio"
+            label={gt("Seek audio")}
             trackClassName="bg-foreground/10"
             playedClassName="bg-warning-foreground"
           />
@@ -267,7 +271,7 @@ function StandardAudioPreview(props: AudioPreviewProps) {
             type="button"
             variant="ghost-muted"
             size="icon-xs"
-            aria-label={state.muted ? "Unmute" : "Mute"}
+            aria-label={state.muted ? gt("Unmute") : gt("Mute")}
             aria-pressed={state.muted}
             onClick={toggleMuted}
           >
@@ -302,6 +306,7 @@ function audioTime(seconds: number) {
 }
 
 function AudioChip(props: AudioPreviewProps) {
+  const gt = useGT();
   const audio = useRef<HTMLAudioElement | null>(null);
   const onUnmount = useContext(AudioPreviewUnmountContext);
   const [loadedSource, setLoadedSource] = useState<string | null>(null);
@@ -321,15 +326,15 @@ function AudioChip(props: AudioPreviewProps) {
   });
   const loading = !props.failed && !ready;
   const open = props.onOpen ?? (props.failed ? props.onRetry : undefined);
-  const action = props.failed
+  const actionLabel = props.failed
     ? props.onOpen
-      ? "Open"
-      : "Retry"
+      ? gt("Audio unavailable. Open {name}", { name: props.name })
+      : gt("Audio unavailable. Retry {name}", { name: props.name })
     : loading
-      ? "Loading"
+      ? gt("Loading {name}", { name: props.name })
       : playing
-        ? "Pause"
-        : "Play";
+        ? gt("Pause {name}", { name: props.name })
+        : gt("Play {name}", { name: props.name });
   const Icon = props.failed
     ? TriangleAlertIcon
     : loading
@@ -344,7 +349,7 @@ function AudioChip(props: AudioPreviewProps) {
       {...(props.failed ? { state: "invalid" as const } : {})}
       {...(props.variant === "bubble" ? { shape: "bubble" as const } : {})}
       className="relative isolate overflow-hidden"
-      title={props.failed ? "Audio unavailable. Open the file or retry playback." : props.name}
+      title={props.failed ? gt("Audio unavailable. Open the file or retry playback.") : props.name}
     >
       <span
         aria-hidden
@@ -353,7 +358,7 @@ function AudioChip(props: AudioPreviewProps) {
       />
       <ContextChipAction
         className="ml-0 [&_svg]:size-[1em]"
-        aria-label={`${props.failed ? "Audio unavailable. " : ""}${action} ${props.name}`}
+        aria-label={actionLabel}
         disabled={loading}
         onClick={() => {
           if (props.failed) {
@@ -377,7 +382,11 @@ function AudioChip(props: AudioPreviewProps) {
           <InlineButton
             className="block max-w-full"
             onClick={open}
-            aria-label={`${props.failed && !props.onOpen ? "Retry" : "Preview"} ${props.name}`}
+            aria-label={
+              props.failed && !props.onOpen
+                ? gt("Retry {name}", { name: props.name })
+                : gt("Preview {name}", { name: props.name })
+            }
           >
             <span className="block truncate text-left">
               {middleTruncateAttachmentName(props.name)}
@@ -389,7 +398,7 @@ function AudioChip(props: AudioPreviewProps) {
       </ContextChipLabel>
       <span dir="ltr" className="shrink-0 text-micro text-current">
         {props.failed
-          ? "Unavailable"
+          ? gt("Unavailable")
           : loading
             ? "..."
             : duration > 0

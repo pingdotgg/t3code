@@ -11,6 +11,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { CornerUpLeftIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -40,6 +41,7 @@ export default function SideChatPane(props: {
   readonly onClose: () => void;
 }) {
   const { parentRef, threadId } = props;
+  const gt = useGT();
   const inPanelTabBar = useInPanelTabBar();
   const threadRef = scopeThreadRef(parentRef.environmentId, threadId);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the parent panel as host in the panel store
@@ -60,11 +62,11 @@ export default function SideChatPane(props: {
   const mergeRun = projection ? resolveLatestMergeBackRun(projection) : null;
   // A pending merge-back would fail the main thread's queued message, so the server refuses it.
   const bringBackBlockedReason = !canOperate
-    ? "This connection cannot change threads."
+    ? gt("This connection cannot change threads.")
     : threadRuntimeIsActive(parent?.runtime)
-      ? "Available when the main thread is idle."
+      ? gt("Available when the main thread is idle.")
       : mergeRun === null
-        ? "Available after a finished reply."
+        ? gt("Available after a finished reply.")
         : null;
 
   const bringBack = async () => {
@@ -78,14 +80,14 @@ export default function SideChatPane(props: {
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: "Brought back",
-        description: "The main thread gets this side chat with your next message there.",
+        title: gt("Brought back"),
+        description: gt("The main thread gets this side chat with your next message there."),
       });
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Could not bring back the side chat",
+        title: gt("Could not bring back the side chat"),
         ...(error instanceof Error ? { description: error.message } : {}),
       });
     }
@@ -99,8 +101,8 @@ export default function SideChatPane(props: {
       const confirmed = await settlePromise(() =>
         api.dialogs.confirm(
           [
-            `Delete side chat "${shell.title}"?`,
-            "This permanently clears its conversation history.",
+            gt('Delete side chat "{title}"?', { title: shell.title }),
+            gt("This permanently clears its conversation history."),
           ].join("\n"),
           { variant: "destructive" },
         ),
@@ -121,7 +123,7 @@ export default function SideChatPane(props: {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Could not delete the side chat",
+        title: gt("Could not delete the side chat"),
         ...(error instanceof Error ? { description: error.message } : {}),
       });
     }
@@ -135,7 +137,7 @@ export default function SideChatPane(props: {
             <Button
               variant="ghost"
               size="icon-sm"
-              aria-label="Bring back"
+              aria-label={gt("Bring back")}
               aria-disabled={bringBackBlockedReason !== null || bringingBack || undefined}
               onClick={() => void bringBack()}
             >
@@ -144,7 +146,7 @@ export default function SideChatPane(props: {
           }
         />
         <TooltipPopup side="bottom">
-          Bring back
+          <T>Bring back</T>
           {bringBackBlockedReason ? <span className="block">{bringBackBlockedReason}</span> : null}
         </TooltipPopup>
       </Tooltip>
@@ -153,14 +155,16 @@ export default function SideChatPane(props: {
           <Button
             variant="ghost"
             size="icon-sm"
-            aria-label="Delete side chat"
+            aria-label={gt("Delete side chat")}
             disabled={!canOperate || shell === null || deleting}
             onClick={() => void deleteSideChat()}
           >
             <Trash2Icon className="size-3.5" />
           </Button>
         </TooltipTrigger>
-        <TooltipPopup side="bottom">Delete side chat</TooltipPopup>
+        <TooltipPopup side="bottom">
+          <T>Delete side chat</T>
+        </TooltipPopup>
       </Tooltip>
       {inPanelTabBar ? null : (
         <Tooltip>
@@ -169,14 +173,16 @@ export default function SideChatPane(props: {
               <Button
                 variant="ghost"
                 size="icon-sm"
-                aria-label="Close side chat"
+                aria-label={gt("Close side chat")}
                 onClick={props.onClose}
               >
                 <XIcon className="size-3.5" />
               </Button>
             }
           />
-          <TooltipPopup side="bottom">Close side chat</TooltipPopup>
+          <TooltipPopup side="bottom">
+            <T>Close side chat</T>
+          </TooltipPopup>
         </Tooltip>
       )}
     </div>
@@ -188,13 +194,17 @@ export default function SideChatPane(props: {
         <PanelTabActions>{actions}</PanelTabActions>
       ) : (
         <div className="flex h-9 shrink-0 items-center gap-1 pr-1 pl-3">
-          <span className="min-w-0 flex-1 truncate text-meta">{shell?.title ?? "Side chat"}</span>
+          <span className="min-w-0 flex-1 truncate text-meta">
+            {shell?.title ?? gt("Side chat")}
+          </span>
           {actions}
         </div>
       )}
       {shell === null ? (
         snapshotLoaded ? (
-          <p className="p-3 text-xs text-muted-foreground">This side chat was deleted.</p>
+          <p className="p-3 text-xs text-muted-foreground">
+            <T>This side chat was deleted.</T>
+          </p>
         ) : null
       ) : (
         <BackgroundThreadContext value>

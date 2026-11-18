@@ -6865,6 +6865,78 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #38284 an MCP app's update-model-context note must reach Claude's next turn
+  it.effect("sends MCP app model context with the next Claude turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        freshQueueOnReopen: true,
+      });
+      const runTurn = Effect.fnUntraced(function* (ordinal: number, note: string) {
+        yield* harness.runtime.startTurn({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`mcp-app-context-${ordinal}`),
+            providerTurnOrdinal: ordinal,
+            text: "What did the app report?",
+            attachments: [],
+          }),
+          appContext: [{ key: "mcp_app_item-1", text: note }],
+        });
+        const content = harness.offeredMessages.at(-1)?.message.content;
+        return typeof content === "string"
+          ? content
+          : (content ?? []).map((block) => (block.type === "text" ? block.text : "")).join("\n");
+      });
+      const finishTurn = Effect.fnUntraced(function* (ordinal: number) {
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: `mcp-app-context-result-${ordinal}`, result: "Done." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+      });
+
+      assert.include(yield* runTurn(0, "Created Jira issue PROJ-42"), "PROJ-42");
+      // A turn that does not complete may not have put the note in Claude's history.
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: "turn:mcp-app-context-0",
+        }),
+      });
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+      assert.include(yield* runTurn(1, "Created Jira issue PROJ-42"), "PROJ-42");
+      yield* finishTurn(1);
+      // Already in Claude's history: resending it every turn would only grow the context.
+      assert.notInclude(yield* runTurn(2, "Created Jira issue PROJ-42"), "PROJ-42");
+      yield* finishTurn(2);
+      assert.include(yield* runTurn(3, "Created Jira issue PROJ-43"), "PROJ-43");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 1500, post_tokens: 400 },
+          uuid: "00000000-0000-4000-8000-000000038284",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* finishTurn(3);
+      // Compaction summarizes the note away, so the next turn carries it again.
+      assert.include(yield* runTurn(4, "Created Jira issue PROJ-43"), "PROJ-43");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("sends the model id Claude Code reported for the selected catalog model", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -8998,6 +9070,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         targetThreadId: ThreadId.make("thread-claude-fork-after-compact-rollback"),
       });
       assert.equal(forkCalls[0]?.options.upToMessageId, earlierCursor);
+      // A running later turn writes past the head, so the head cannot bound a fork.
+      const busyForkError = yield* harness.runtime
+        .forkThread({
+          sourceProviderThread: pastSilentTurn.providerThread,
+          sourceProviderTurns: [
+            ...turnsAcrossSilent.slice(0, 2),
+            { ...turnsAcrossSilent[2]!, status: "running", completedAt: null },
+          ],
+          providerTurnId: providerTurn.id,
+          targetThreadId: ThreadId.make("thread-claude-fork-while-source-runs"),
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(busyForkError, ProviderAdapter.ProviderAdapterForkThreadError);
+      assert.equal(forkCalls.length, 1);
       const interruptedBeforeCompact = yield* rollbackTo(
         [
           {
@@ -24745,6 +24831,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.events.some(
             (event) => event.type === "message.updated" && event.message.role === "assistant",
           ),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
+    it.effect("drops a goal the CLI clears after an unrecoverable error", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const condition = "all tests pass";
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: {
+              ...harness.providerThread,
+              goal: { objective: condition, status: "active", checks: 1 },
+            },
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("goal-error-clear-attempt"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offerAll(harness.sdkMessages, [
+          makeAssistantErrorFrame({
+            uuid: "goal-error-clear-api-error",
+            error: "invalid_request",
+            text: "Prompt is too long",
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "informational",
+            content: `Goal cleared after an unrecoverable error (context limit reached): "${condition}". Run /goal again to continue.`,
+            level: "warning",
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "goal-error-clear-notice",
+          }),
+          makeResultFrame({
+            uuid: "goal-error-clear-result",
+            result: "Prompt is too long",
+            isError: true,
+            terminalReason: "prompt_too_long",
+          }),
+        ]);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        assert.isNull(
+          harness.events.findLast((event) => event.type === "provider_thread.updated")
+            ?.providerThread.goal,
         );
       }).pipe(
         Effect.scoped,

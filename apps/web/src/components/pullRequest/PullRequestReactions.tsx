@@ -5,9 +5,11 @@ import type {
   PullRequestReactionContent,
   PullRequestRef,
 } from "@t3tools/contracts";
+import { msg, useGT, useLocale, useMessages } from "gt-react";
 import { SmilePlusIcon } from "lucide-react";
 import { useState } from "react";
 
+import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
@@ -28,6 +30,113 @@ import {
 const EMPTY_PENDING: ReadonlyMap<PullRequestReactionContent, PendingPullRequestReaction> =
   new Map();
 
+/** Reaction pills with a picker. `onReact` resolves to whether the host saved the change. */
+export function ReactionBar({
+  reactions,
+  canReact,
+  onReact,
+  className,
+}: {
+  readonly reactions: ReadonlyArray<PullRequestReaction>;
+  readonly canReact: boolean;
+  readonly onReact: (content: PullRequestReactionContent, reacted: boolean) => Promise<boolean>;
+  readonly className?: string | undefined;
+}) {
+  const gt = useGT();
+  const messages = useMessages();
+  const locale = useLocale();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pending, setPending] = useState<{
+    readonly signature: string;
+    readonly values: ReadonlyMap<PullRequestReactionContent, PendingPullRequestReaction>;
+  }>({ signature: "", values: EMPTY_PENDING });
+
+  const signature = pullRequestReactionsSignature(reactions);
+  const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
+  const shown = applyPendingPullRequestReactions(reactions, values);
+
+  const toggle = async (content: PullRequestReactionContent, reacted: boolean) => {
+    const entry: PendingPullRequestReaction = { reacted };
+    setPending({ signature, values: new Map([...values, [content, entry]]) });
+    if (await onReact(content, reacted)) return;
+    setPending((current) => {
+      if (current.values.get(content) !== entry) return current;
+      const next = new Map(current.values);
+      next.delete(content);
+      return { signature: current.signature, values: next };
+    });
+    toastManager.add({ type: "error", title: m(msg("The reaction could not be saved")) });
+  };
+
+  if (shown.length === 0 && !canReact) return null;
+
+  return (
+    <div className={cn("flex min-w-0 max-w-full flex-wrap items-center gap-1", className)}>
+      {shown.map((reaction) => (
+        <Tooltip key={reaction.content}>
+          <TooltipTrigger
+            render={
+              <Button
+                size="xs-pill"
+                variant={reaction.viewerHasReacted ? "secondary" : "pill"}
+                aria-pressed={reaction.viewerHasReacted}
+                aria-label={gt("{reaction}, {count}", {
+                  reaction: pullRequestReactionName(reaction.content, messages),
+                  count: reaction.count,
+                  $context: "reaction button: reaction name and how many people used it",
+                })}
+                disabled={!canReact}
+                onClick={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
+              />
+            }
+          >
+            <span aria-hidden>{pullRequestReactionEmoji(reaction.content)}</span>
+            <span className="tabular-nums">{reaction.count}</span>
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {pullRequestReactionTooltip(reaction, messages, locale)}
+          </TooltipPopup>
+        </Tooltip>
+      ))}
+
+      {canReact ? (
+        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+          <PopoverTrigger
+            render={
+              <Button size="icon-xs-pill" variant="pill" aria-label={gt("Add a reaction")} />
+            }
+          >
+            <SmilePlusIcon aria-hidden className="size-3.5" />
+          </PopoverTrigger>
+          <PopoverPopup align="start" side="top" padding="compact">
+            <div className="flex items-center gap-0.5">
+              {PULL_REQUEST_REACTION_ORDER.map((content) => {
+                const reacted =
+                  shown.find((reaction) => reaction.content === content)?.viewerHasReacted ?? false;
+                return (
+                  <Button
+                    key={content}
+                    size="icon-sm"
+                    variant={reacted ? "secondary" : "ghost"}
+                    aria-pressed={reacted}
+                    aria-label={pullRequestReactionName(content, messages)}
+                    onClick={() => {
+                      setPickerOpen(false);
+                      void toggle(content, !reacted);
+                    }}
+                  >
+                    <span aria-hidden>{pullRequestReactionEmoji(content)}</span>
+                  </Button>
+                );
+              })}
+            </div>
+          </PopoverPopup>
+        </Popover>
+      ) : null}
+    </div>
+  );
+}
+
 export function PullRequestReactionBar({
   reactions,
   canReact,
@@ -46,101 +155,28 @@ export function PullRequestReactionBar({
   readonly onRefresh: () => void;
   readonly className?: string | undefined;
 }) {
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [pending, setPending] = useState<{
-    readonly signature: string;
-    readonly values: ReadonlyMap<PullRequestReactionContent, PendingPullRequestReaction>;
-  }>({ signature: "", values: EMPTY_PENDING });
   const setReaction = useAtomCommand(pullRequestEnvironment.setReaction, {
     reportFailure: false,
   });
-
-  const signature = pullRequestReactionsSignature(reactions);
-  const values = pending.signature === signature ? pending.values : EMPTY_PENDING;
-  const shown = applyPendingPullRequestReactions(reactions, values);
-
-  const toggle = async (content: PullRequestReactionContent, reacted: boolean) => {
-    const entry: PendingPullRequestReaction = { reacted };
-    setPending({ signature, values: new Map([...values, [content, entry]]) });
-    const result = await setReaction({
-      environmentId,
-      input: {
-        ...reference,
-        ...(subjectId === undefined ? {} : { subjectId }),
-        content,
-        reacted,
-      },
-    });
-    if (result._tag === "Failure") {
-      setPending((current) => {
-        if (current.values.get(content) !== entry) return current;
-        const next = new Map(current.values);
-        next.delete(content);
-        return { signature: current.signature, values: next };
-      });
-      toastManager.add({ type: "error", title: "The reaction could not be saved" });
-      return;
-    }
-    onRefresh();
-  };
-
-  if (shown.length === 0 && !canReact) return null;
-
   return (
-    <div className={cn("flex min-w-0 max-w-full flex-wrap items-center gap-1", className)}>
-      {shown.map((reaction) => (
-        <Tooltip key={reaction.content}>
-          <TooltipTrigger
-            render={
-              <Button
-                size="xs-pill"
-                variant={reaction.viewerHasReacted ? "secondary" : "pill"}
-                aria-pressed={reaction.viewerHasReacted}
-                aria-label={`${pullRequestReactionName(reaction.content)}, ${reaction.count}`}
-                disabled={!canReact}
-                onClick={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
-              />
-            }
-          >
-            <span aria-hidden>{pullRequestReactionEmoji(reaction.content)}</span>
-            <span className="tabular-nums">{reaction.count}</span>
-          </TooltipTrigger>
-          <TooltipPopup side="top">{pullRequestReactionTooltip(reaction)}</TooltipPopup>
-        </Tooltip>
-      ))}
-
-      {canReact ? (
-        <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-          <PopoverTrigger
-            render={<Button size="icon-xs-pill" variant="pill" aria-label="Add a reaction" />}
-          >
-            <SmilePlusIcon aria-hidden className="size-3.5" />
-          </PopoverTrigger>
-          <PopoverPopup align="start" side="top" padding="compact">
-            <div className="flex items-center gap-0.5">
-              {PULL_REQUEST_REACTION_ORDER.map((content) => {
-                const reacted =
-                  shown.find((reaction) => reaction.content === content)?.viewerHasReacted ?? false;
-                return (
-                  <Button
-                    key={content}
-                    size="icon-sm"
-                    variant={reacted ? "secondary" : "ghost"}
-                    aria-pressed={reacted}
-                    aria-label={pullRequestReactionName(content)}
-                    onClick={() => {
-                      setPickerOpen(false);
-                      void toggle(content, !reacted);
-                    }}
-                  >
-                    <span aria-hidden>{pullRequestReactionEmoji(content)}</span>
-                  </Button>
-                );
-              })}
-            </div>
-          </PopoverPopup>
-        </Popover>
-      ) : null}
-    </div>
+    <ReactionBar
+      reactions={reactions}
+      canReact={canReact}
+      className={className}
+      onReact={async (content, reacted) => {
+        const result = await setReaction({
+          environmentId,
+          input: {
+            ...reference,
+            ...(subjectId === undefined ? {} : { subjectId }),
+            content,
+            reacted,
+          },
+        });
+        if (result._tag === "Failure") return false;
+        onRefresh();
+        return true;
+      }}
+    />
   );
 }

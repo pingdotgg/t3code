@@ -4,12 +4,14 @@ import {
   SquareTerminalIcon,
   FileDiffIcon,
 } from "lucide-react";
+import { useGT } from "gt-react";
 import { PaneTabButton } from "../components/PaneNotch";
 import { Kbd, KbdGroup } from "../components/ui/kbd";
 
 export type LayoutTourLesson = "tabs" | "split" | "overview" | "keys";
 
 function DiagramPane({ tabs = ["Chat"] }: { tabs?: readonly string[] }) {
+  const gt = useGT();
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-hidden rounded-control surface-card p-2">
       <div className="flex w-max origin-top-left scale-60">
@@ -23,7 +25,7 @@ function DiagramPane({ tabs = ["Chat"] }: { tabs?: readonly string[] }) {
           return (
             <PaneTabButton key={tab} tabIndex={-1}>
               <Icon className="size-3.5" />
-              {tab}
+              {tab === "Terminal" ? gt("Terminal") : tab === "Diff" ? gt("Diff") : gt("Chat")}
             </PaneTabButton>
           );
         })}

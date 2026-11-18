@@ -1,5 +1,6 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
+import { T, useGT } from "gt-react";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -133,6 +134,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onPrevious: (() => void) | undefined;
   onWriteAnswer: (() => void) | undefined;
 }) {
+  const gt = useGT();
   // Message-mode requests remain answerable after their provider turn ends.
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
@@ -274,17 +276,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const writeOptionKey =
     activeQuestion.options.length < 9 ? activeQuestion.options.length + 1 : null;
   const hint = customAnswerActive
-    ? "Your answer is ready to submit."
+    ? gt("Your answer is ready to submit.")
     : activeQuestion.multiSelect
-      ? "Select one or more options."
-      : "Select one option.";
+      ? gt("Select one or more options.")
+      : gt("Select one option.");
   const primaryLabel = primaryAction?.isResponding
-    ? "Submitting…"
+    ? gt("Submitting…")
     : primaryAction && !primaryAction.isLastQuestion
-      ? "Next"
+      ? gt("Next", { $context: "button that goes to the next question" })
       : prompt.questions.length > 1
-        ? "Submit answers"
-        : "Answer";
+        ? gt("Submit answers")
+        : gt("Answer", { $context: "verb, submits the answer to a question" });
 
   return (
     <Collapsible
@@ -301,14 +303,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             render={<button type="button" />}
             title={
               isCollapsed
-                ? "Show the question and its options"
-                : "Hide the question and its options"
+                ? gt("Show the question and its options")
+                : gt("Hide the question and its options")
             }
             data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
           />
         }
         icon={<MessageCircleQuestionMarkIcon className="text-ring" />}
-        title="Question"
+        title={gt("Question", { $context: "heading of a question the agent asks" })}
         sub={
           isCollapsed ? (
             <span
@@ -318,7 +320,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               {activeQuestion.question}
             </span>
           ) : (
-            `${providerLabel || "The agent"} needs an answer`
+            providerLabel
+              ? gt("{provider} needs an answer", { provider: providerLabel })
+              : gt("The agent needs an answer")
           )
         }
         trailing={
@@ -330,8 +334,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             {prompt.dismissible ? (
               <ComposerBanner.Dismiss
                 render={<span role="button" tabIndex={0} />}
-                aria-label="Dismiss question without answering"
-                title="Dismiss question without answering"
+                aria-label={gt("Dismiss question without answering")}
+                title={gt("Dismiss question without answering")}
                 disabled={isResponding}
                 data-pending-user-input-dismiss
                 onClick={(event) => {
@@ -402,7 +406,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               {canWriteAnswer ? (
                 <QuestionOptionRow
                   textAlign={questionTextAlign}
-                  label="Let me write an answer"
+                  label={gt("Let me write an answer")}
                   description={customAnswerActive ? progress.customAnswer.trim() : null}
                   multiSelect={activeQuestion.multiSelect === true}
                   selected={customAnswerActive}
@@ -424,7 +428,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               disabled={isResponding}
               onClick={() => onDismiss(prompt.requestId)}
             >
-              Skip
+              <T>Skip</T>
             </Button>
           ) : null}
           {!actionsInComposer && onPrevious && questionIndex > 0 ? (
@@ -434,7 +438,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               disabled={primaryAction?.isResponding ?? isResponding}
               onClick={onPrevious}
             >
-              Previous
+              {gt("Previous", { $context: "button that goes to the previous question" })}
             </Button>
           ) : null}
           {!actionsInComposer && onSubmit ? (

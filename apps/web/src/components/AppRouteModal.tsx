@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { XIcon } from "lucide-react";
 import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 
@@ -96,16 +97,19 @@ export function AppRouteModal({
 }
 
 export function AppRouteModalClose() {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <DialogClose aria-label="Close" render={<Button size="icon-sm" variant="ghost" />} />
+          <DialogClose aria-label={gt("Close")} render={<Button size="icon-sm" variant="ghost" />} />
         }
       >
         <XIcon />
       </TooltipTrigger>
-      <TooltipPopup side="bottom">Close (Esc)</TooltipPopup>
+      <TooltipPopup side="bottom">
+        <T>Close (Esc)</T>
+      </TooltipPopup>
     </Tooltip>
   );
 }

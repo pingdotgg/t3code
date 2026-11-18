@@ -8,6 +8,7 @@ import {
   SquarePen,
   TerminalSquare,
 } from "lucide-react";
+import { msg, useGT, useMessages } from "gt-react";
 import {
   type ComponentType,
   type ReactNode,
@@ -78,59 +79,59 @@ export const SURFACE_LAUNCHER_ENTRIES: ReadonlyArray<{
 }> = [
   {
     kind: "browser",
-    label: "Browser",
+    label: msg("Browser"),
     icon: Globe2,
     shortcut: "B",
-    hint: "Only available in the desktop app.",
+    hint: msg("Only available in the desktop app."),
   },
   {
     kind: "terminal",
-    label: "Terminal",
+    label: msg("Terminal"),
     icon: TerminalSquare,
     shortcut: "T",
-    hint: "Available when a project is open.",
+    hint: msg("Available when a project is open."),
   },
   {
     kind: "files",
-    label: "Files",
+    label: msg("Files"),
     icon: Files,
     shortcut: "F",
-    hint: "Available when a project is open.",
+    hint: msg("Available when a project is open."),
   },
   {
     kind: "diff",
-    label: "Diff",
+    label: msg("Diff"),
     icon: FileDiff,
     shortcut: "D",
-    hint: "Available for Git repositories.",
+    hint: msg("Available for Git repositories."),
   },
   {
     kind: "pull-request",
-    label: "Pull request",
+    label: msg("Pull request"),
     icon: PullRequestGlyph.pullRequest,
     shortcut: "P",
-    hint: "No pull request on this branch yet.",
+    hint: msg("No pull request on this branch yet."),
   },
   {
     kind: "pull-requests",
-    label: "Linked pull requests",
+    label: msg("Linked pull requests"),
     icon: PullRequestGlyph.link,
     shortcut: "L",
-    hint: "No linked pull requests available.",
+    hint: msg("No linked pull requests available."),
   },
   {
     kind: "side-chat",
-    label: "Side chat",
+    label: msg("Side chat"),
     icon: MessagesSquare,
     shortcut: "S",
-    hint: "Available after the first message.",
+    hint: msg("Available after the first message."),
   },
   {
     kind: "device",
-    label: "Device",
+    label: msg("Device"),
     icon: Smartphone,
     shortcut: "M",
-    hint: "Available from a thread.",
+    hint: msg("Available from a thread."),
   },
 ];
 
@@ -171,7 +172,7 @@ export function surfaceMenuActions(input: {
     ? [
         {
           kind: "new-thread",
-          label: "New thread",
+          label: msg("New thread"),
           icon: SquarePen,
           shortcut: "N",
           available: true,
@@ -213,6 +214,7 @@ export function SurfaceMenuItems(props: {
   readonly onAddBrowserInProfile: (profileId: string) => void;
   readonly onClose: () => void;
 }) {
+  const messages = useMessages();
   return props.actions.map((action) => {
     const Icon = action.icon;
     if (action.kind === "browser" && action.available && props.browserProfiles.length > 1) {
@@ -233,7 +235,7 @@ export function SurfaceMenuItems(props: {
             }}
           >
             <Icon />
-            {action.label}
+            {messages(action.label)}
             <MenuKbd shortcut={action.shortcut} />
           </MenuSubTrigger>
           <MenuSubPopup className="max-w-56">
@@ -255,7 +257,7 @@ export function SurfaceMenuItems(props: {
         aria-keyshortcuts={action.shortcut}
       >
         <Icon />
-        {action.label}
+        {messages(action.label)}
         <MenuKbd shortcut={action.shortcut} />
       </MenuItem>
     );
@@ -414,11 +416,16 @@ function BrowserProfileChooser(props: {
   readonly browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   readonly onAddBrowserInProfile: (profileId: string) => void;
 }) {
+  const gt = useGT();
   return (
     <Menu>
       <MenuTrigger
         render={
-          <Button aria-label="Open browser in a profile" size="icon-micro" variant="ghost-muted" />
+          <Button
+            aria-label={gt("Open browser in a profile")}
+            size="icon-micro"
+            variant="ghost-muted"
+          />
         }
       >
         <ChevronDown />
@@ -444,9 +451,11 @@ export function SurfaceLauncherRows(props: {
   readonly browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   readonly onAddBrowserInProfile: (profileId: string) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <>
-      <DraftProjectGroupLabel>Open a surface</DraftProjectGroupLabel>
+      <DraftProjectGroupLabel>{gt("Open a surface")}</DraftProjectGroupLabel>
       {SURFACE_LAUNCHER_ENTRIES.map((entry) => {
         const action = props.actions.find((candidate) => candidate.kind === entry.kind);
         if (!action) return null;
@@ -464,8 +473,8 @@ export function SurfaceLauncherRows(props: {
           <DraftProjectRow
             key={entry.kind}
             icon={<Icon className="size-4 shrink-0 text-muted-foreground" />}
-            label={entry.label}
-            detail={action.available ? "" : (action.disabledReason ?? entry.hint)}
+            label={messages(entry.label)}
+            detail={action.available ? "" : (action.disabledReason ?? messages(entry.hint))}
             shortcut={entry.shortcut}
             disabled={!action.available}
             action={profileChooser}
@@ -512,6 +521,7 @@ function overflows(element: Element | null): boolean {
 }
 
 function PullRequestCell(props: { readonly row: LauncherPullRequestRow }) {
+  const gt = useGT();
   const one = props.row.kind === "one";
   const detail = props.row.kind === "one" ? `#${props.row.number}` : String(props.row.count);
   const labelRef = useRef<HTMLSpanElement>(null);
@@ -534,9 +544,13 @@ function PullRequestCell(props: { readonly row: LauncherPullRequestRow }) {
       label={
         <span ref={labelRef} className="group/pr-label">
           <span className="group-data-short/pr-label:hidden">
-            {one ? "Pull request" : "Pull requests"}
+            {one ? gt("Pull request") : gt("Pull requests")}
           </span>
-          <span className="hidden group-data-short/pr-label:inline">{one ? "PR" : "PRs"}</span>
+          <span className="hidden group-data-short/pr-label:inline">
+            {one
+              ? gt("PR", { $context: "short for pull request" })
+              : gt("PRs", { $context: "short for pull requests" })}
+          </span>
         </span>
       }
       detail={detail}
@@ -552,6 +566,7 @@ export function SurfaceLauncherGrid(props: {
   readonly browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   readonly onAddBrowserInProfile: (profileId: string) => void;
 }) {
+  const messages = useMessages();
   return (
     <div className="@container">
       <div
@@ -572,7 +587,7 @@ export function SurfaceLauncherGrid(props: {
             <SurfaceLauncherCell
               key={entry.kind}
               icon={<Icon className="size-4 shrink-0 text-muted-foreground" />}
-              label={entry.label}
+              label={messages(entry.label)}
               shortcut={entry.shortcut}
               action={
                 entry.kind === "browser" && props.browserProfiles.length > 1 ? (

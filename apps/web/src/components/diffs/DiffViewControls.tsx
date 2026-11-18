@@ -8,6 +8,7 @@ import {
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
 } from "lucide-react";
+import { T, useGT } from "gt-react";
 
 import { updateClientSettings } from "~/hooks/useSettings";
 import { Button } from "../ui/button";
@@ -82,6 +83,7 @@ export function DiffViewControls({
   hideTestFiles?: boolean;
   onHideTestFilesChange?: (hidden: boolean) => void;
 }) {
+  const gt = useGT();
   const setDiffLayout = (value: unknown) => {
     if (value === "stacked" || value === "split") {
       updateClientSettings({ diffLayout: value });
@@ -100,7 +102,7 @@ export function DiffViewControls({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
-                  aria-label={refresh.refreshing ? "Refreshing diff" : "Refresh diff"}
+                  aria-label={refresh.refreshing ? gt("Refreshing diff") : gt("Refresh diff")}
                   onClick={refresh.onRefresh}
                 />
               }
@@ -108,7 +110,7 @@ export function DiffViewControls({
               <RefreshIcon size="sm" refreshing={refresh.refreshing} />
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {refresh.refreshing ? "Refreshing diff…" : "Refresh diff"}
+              {refresh.refreshing ? gt("Refreshing diff…") : gt("Refresh diff")}
             </TooltipPopup>
           </Tooltip>
         )}
@@ -120,7 +122,7 @@ export function DiffViewControls({
                   type="button"
                   size="icon-sm"
                   variant="ghost"
-                  aria-label={allFilesCollapsed ? "Expand all files" : "Collapse all files"}
+                  aria-label={allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
                   onClick={onToggleAllFiles}
                 />
               }
@@ -132,7 +134,7 @@ export function DiffViewControls({
               )}
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {allFilesCollapsed ? "Expand all files" : "Collapse all files"}
+              {allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
             </TooltipPopup>
           </Tooltip>
         )}
@@ -142,7 +144,7 @@ export function DiffViewControls({
           <TooltipTrigger
             render={
               <Toggle
-                aria-label={diffLayout === "split" ? "Stacked diff view" : "Split diff view"}
+                aria-label={diffLayout === "split" ? gt("Stacked diff view") : gt("Split diff view")}
                 variant="ghost"
                 size="sm"
                 pressed={diffLayout === "split"}
@@ -153,7 +155,7 @@ export function DiffViewControls({
             <Columns2Icon className="size-3.5" />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            {diffLayout === "split" ? "Stacked view" : "Split view"}
+            {diffLayout === "split" ? gt("Stacked view") : gt("Split view")}
           </TooltipPopup>
         </Tooltip>
       </div>
@@ -162,7 +164,7 @@ export function DiffViewControls({
           <TooltipTrigger
             render={
               <Toggle
-                aria-label={wordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"}
+                aria-label={wordWrap ? gt("Disable diff line wrapping") : gt("Enable diff line wrapping")}
                 variant="ghost"
                 size="sm"
                 pressed={wordWrap}
@@ -173,7 +175,7 @@ export function DiffViewControls({
             <TextWrapIcon className="size-3.5" />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
+            {wordWrap ? gt("Disable line wrapping") : gt("Enable line wrapping")}
           </TooltipPopup>
         </Tooltip>
         <Tooltip>
@@ -181,7 +183,7 @@ export function DiffViewControls({
             render={
               <Toggle
                 aria-label={
-                  ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"
+                  ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")
                 }
                 variant="ghost"
                 size="sm"
@@ -193,7 +195,7 @@ export function DiffViewControls({
             <PilcrowIcon className="size-3.5" />
           </TooltipTrigger>
           <TooltipPopup side="top">
-            {ignoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
+            {ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")}
           </TooltipPopup>
         </Tooltip>
         {testFileCount > 0 && onHideTestFilesChange && (
@@ -201,7 +203,7 @@ export function DiffViewControls({
             <TooltipTrigger
               render={
                 <Toggle
-                  aria-label="Hide test files"
+                  aria-label={gt("Hide test files")}
                   variant="ghost"
                   size="sm"
                   pressed={hideTestFiles}
@@ -213,8 +215,11 @@ export function DiffViewControls({
             </TooltipTrigger>
             <TooltipPopup side="top">
               {hideTestFiles
-                ? `Show ${testFileCount} hidden test ${testFileCount === 1 ? "file" : "files"}`
-                : "Hide test files"}
+                ? gt(
+                    "{count, plural, one {Show {count} hidden test file} other {Show {count} hidden test files}}",
+                    { count: testFileCount },
+                  )
+                : gt("Hide test files")}
             </TooltipPopup>
           </Tooltip>
         )}
@@ -224,7 +229,7 @@ export function DiffViewControls({
             <TooltipTrigger
               render={
                 <Toggle
-                  aria-label={fileTreeOpen ? "Hide file tree" : "Show file tree"}
+                  aria-label={fileTreeOpen ? gt("Hide file tree") : gt("Show file tree")}
                   variant="ghost"
                   size="sm"
                   pressed={fileTreeOpen}
@@ -235,7 +240,7 @@ export function DiffViewControls({
               <FolderTreeIcon className="size-3.5" />
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {fileTreeOpen ? "Hide file tree" : "Show file tree"}
+              {fileTreeOpen ? gt("Hide file tree") : gt("Show file tree")}
             </TooltipPopup>
           </Tooltip>
         )}
@@ -244,44 +249,44 @@ export function DiffViewControls({
         <DropdownMenu>
           <DropdownMenuTrigger
             render={<Button size="icon-sm" variant="ghost" />}
-            aria-label="More diff actions"
+            aria-label={gt("More diff actions")}
           >
             <EllipsisIcon className="size-3.5" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {refresh && (
               <DropdownMenuItem disabled={refresh.refreshing} onClick={refresh.onRefresh}>
-                Refresh diff
+                {gt("Refresh diff")}
               </DropdownMenuItem>
             )}
             {hasFiles && (
               <DropdownMenuItem onClick={onToggleAllFiles}>
-                {allFilesCollapsed ? "Expand all files" : "Collapse all files"}
+                {allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
               </DropdownMenuItem>
             )}
             <DropdownMenuRadioGroup value={diffLayout} onValueChange={setDiffLayout}>
-              <DropdownMenuRadioItem value="stacked">Stacked view</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="split">Split view</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="stacked">{gt("Stacked view")}</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="split">{gt("Split view")}</DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
             <DropdownMenuCheckboxItem
               checked={wordWrap}
               onCheckedChange={(checked) => onWordWrapChange(Boolean(checked))}
             >
-              Wrap lines
+              <T>Wrap lines</T>
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={ignoreWhitespace}
               onCheckedChange={(checked) => onIgnoreWhitespaceChange(Boolean(checked))}
             >
-              Hide whitespace changes
+              <T>Hide whitespace changes</T>
             </DropdownMenuCheckboxItem>
             {testFileCount > 0 && onHideTestFilesChange && (
               <DropdownMenuCheckboxItem
                 checked={hideTestFiles}
                 onCheckedChange={(checked) => onHideTestFilesChange(Boolean(checked))}
               >
-                Hide test files
+                {gt("Hide test files")}
               </DropdownMenuCheckboxItem>
             )}
             {hasFiles && (
@@ -289,7 +294,7 @@ export function DiffViewControls({
                 checked={fileTreeOpen}
                 onCheckedChange={(checked) => onFileTreeOpenChange(Boolean(checked))}
               >
-                File tree
+                <T>File tree</T>
               </DropdownMenuCheckboxItem>
             )}
           </DropdownMenuContent>

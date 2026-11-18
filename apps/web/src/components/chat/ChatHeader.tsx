@@ -10,6 +10,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT, Var } from "gt-react";
 import { GitForkIcon, SquarePenIcon, SquareTerminal } from "lucide-react";
 import {
   memo,
@@ -121,6 +122,7 @@ export const ChatHeader = memo(function ChatHeader({
   hiddenTerminal,
   onNewSideChat,
 }: ChatHeaderProps) {
+  const gt = useGT();
   const { tabId: layoutTabId } = useLayoutPane();
   // Drag the tab out of its notch to split (pen T5Hy0Q).
   const handleTabPointerDown = (event: React.PointerEvent) => {
@@ -138,7 +140,7 @@ export const ChatHeader = memo(function ChatHeader({
   const runLayoutMenuAction = (id: string) => {
     if (layoutTabId !== null && isLayoutTabMenuId(id)) runLayoutTabMenuAction(id, layoutTabId);
   };
-  const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
+  const activeProjectName = activeProject?.isScratch ? gt("No project") : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
   const canOperateThread = useEnvironmentScope(
@@ -202,7 +204,7 @@ export const ChatHeader = memo(function ChatHeader({
       originalTitle: renamingTitle ?? activeThreadTitle,
     });
     if (resolution.action === "reject-empty") {
-      toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
+      toastManager.add({ type: "warning", title: gt("Thread title cannot be empty") });
       return;
     }
     if (resolution.action === "noop") return;
@@ -214,8 +216,8 @@ export const ChatHeader = memo(function ChatHeader({
         const error = squashAtomCommandFailure(result);
         toastManager.add({
           type: "error",
-          title: "Failed to rename thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: gt("Failed to rename thread"),
+          description: error instanceof Error ? error.message : gt("An error occurred."),
         });
       }
     });
@@ -263,7 +265,7 @@ export const ChatHeader = memo(function ChatHeader({
               ? [
                   {
                     id: "project-settings",
-                    label: "Project settings",
+                    label: gt("Project settings"),
                     icon: "settings",
                     separatorBefore: layoutItems.length > 0,
                   },
@@ -354,7 +356,7 @@ export const ChatHeader = memo(function ChatHeader({
               <input
                 autoFocus
                 dir="auto"
-                aria-label="Thread title"
+                aria-label={gt("Thread title")}
                 className="min-w-24 max-w-full bg-transparent outline-none [field-sizing:content]"
                 defaultValue={renamingTitle}
                 onBlur={(event) => {
@@ -384,7 +386,7 @@ export const ChatHeader = memo(function ChatHeader({
                       <PaneTabButton
                         data-layout-pane-tab={layoutTabId ?? undefined}
                         type="button"
-                        aria-label={`Thread actions for ${activeThreadTitle}`}
+                        aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
                         aria-haspopup="menu"
                         onClick={openMenuFromTitle}
                         onAuxClick={handleTabAuxClick}
@@ -456,15 +458,20 @@ export const ChatHeader = memo(function ChatHeader({
                       hiddenTerminal.running && "text-success-foreground",
                     )}
                   />
-                  <span className="min-w-0 truncate">Terminal</span>
+                  <span className="min-w-0 truncate">
+                    <T>Terminal</T>
+                  </span>
                 </TooltipTrigger>
                 <TooltipPopup side="bottom">
-                  Show the terminal
-                  {hiddenTerminal.shortcutLabel ? ` (${hiddenTerminal.shortcutLabel})` : ""}
+                  {hiddenTerminal.shortcutLabel
+                    ? gt("Show the terminal ({shortcut})", {
+                        shortcut: hiddenTerminal.shortcutLabel,
+                      })
+                    : gt("Show the terminal")}
                   <br />
                   {activeThreadTitle}
                   <br />
-                  {hiddenTerminal.running ? "Process running" : "Idle"}
+                  {hiddenTerminal.running ? gt("Process running") : gt("Idle")}
                 </TooltipPopup>
               </Tooltip>
             </span>
@@ -474,10 +481,15 @@ export const ChatHeader = memo(function ChatHeader({
         {renamingTitle === null && activeThreadLinkOrigin ? (
           <Tooltip>
             <TooltipTrigger render={<Badge variant="info" size="sm" />}>
-              From {activeThreadLinkOrigin}
+              <T>
+                From <Var>{activeThreadLinkOrigin}</Var>
+              </T>
             </TooltipTrigger>
             <TooltipPopup side="top">
-              Started by an agent on {activeThreadLinkOrigin} through a linked environment.
+              <T>
+                Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
+                environment.
+              </T>
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -500,6 +512,7 @@ function ParentThreadTab({
   readonly link: { threadId: ThreadId; title: string };
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
+  const gt = useGT();
   const parent = useQuietThreadShell(scopeThreadRef(environmentId, link.threadId));
   const project = useProject(
     parent ? scopeProjectRef(parent.environmentId, parent.projectId) : null,
@@ -512,7 +525,7 @@ function ParentThreadTab({
             <ContentButton
               variant="tab"
               type="button"
-              aria-label={`Open parent thread: ${link.title}`}
+              aria-label={gt("Open parent thread: {title}", { title: link.title })}
               onClick={() => onOpenThread(link.threadId)}
               onPointerDown={(event) =>
                 beginLayoutContentDrag(event, {
@@ -529,7 +542,7 @@ function ParentThreadTab({
           </span>
         </TooltipTrigger>
         <TooltipPopup side="bottom" className="whitespace-pre-line">
-          {`${link.title}\nParent thread`}
+          {`${link.title}\n${gt("Parent thread")}`}
         </TooltipPopup>
       </Tooltip>
     </span>

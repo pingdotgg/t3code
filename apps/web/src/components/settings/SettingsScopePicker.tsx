@@ -1,5 +1,6 @@
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { fileBasename } from "@t3tools/shared/path";
+import { T, useGT } from "gt-react";
 import { CheckIcon, FolderIcon, LayersIcon, RotateCcwIcon, SearchIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
@@ -84,6 +85,7 @@ function ScopePopover({
   singleEnvironment: boolean;
   onChange: (next: SettingsScopeSearch) => void;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -98,22 +100,24 @@ function ScopePopover({
     (environment) => environment.environmentId === environmentValue,
   );
   const projectLabel =
-    selectedProject?.displayName ?? (value.project ? "Unavailable project" : null);
+    selectedProject?.displayName ?? (value.project ? gt("Unavailable project") : null);
   const environmentLabel = selectedEnvironment
     ? settingsScopeEnvironmentLabel(selectedEnvironment, environments)
     : environmentValue !== ALL_ENVIRONMENTS_VALUE
-      ? "Unavailable environment"
+      ? gt("Unavailable environment")
       : null;
   const triggerLabel =
     projectLabel && environmentLabel
-      ? `${projectLabel} on ${environmentLabel}`
-      : (projectLabel ?? environmentLabel ?? "All");
+      ? gt("{project} on {environment}", { project: projectLabel, environment: environmentLabel })
+      : (projectLabel ??
+        environmentLabel ??
+        gt("All", { $context: "settings scope, every project and environment" }));
   const checkouts = selectedProject ? settingsScopeCheckoutChoices(selectedProject, value) : [];
   const selectedCheckout = checkouts.find((member) => member.physicalProjectKey === value.checkout);
   const checkoutLabel = selectedCheckout
     ? settingsScopeCheckoutLabel(selectedCheckout, checkouts)
     : value.checkout
-      ? "Unavailable checkout"
+      ? gt("Unavailable checkout")
       : null;
 
   const clearOverrides = useClearProjectOverridesOn();
@@ -182,15 +186,21 @@ function ScopePopover({
     onChange(next);
   };
   const resetOverrides = async () => {
-    const environmentNames =
-      environmentValue === ALL_ENVIRONMENTS_VALUE
-        ? "every connected environment"
-        : (environmentLabel ?? "this environment");
+    const question =
+      environmentValue === ALL_ENVIRONMENTS_VALUE || environmentLabel === null
+        ? gt(
+            "{count, plural, one {Reset settings overrides for {count} project on every connected environment?} other {Reset settings overrides for {count} projects on every connected environment?}}",
+            { count: overriddenProjectCount },
+          )
+        : gt(
+            "{count, plural, one {Reset settings overrides for {count} project on {environment}?} other {Reset settings overrides for {count} projects on {environment}?}}",
+            { count: overriddenProjectCount, environment: environmentLabel },
+          );
     const confirmed =
       (await readLocalApi()?.dialogs.confirm(
         [
-          `Reset settings overrides for ${overriddenProjectCount} ${overriddenProjectCount === 1 ? "project" : "projects"} on ${environmentNames}?`,
-          "They will follow the environment settings again. Project actions are kept.",
+          question,
+          gt("They will follow the environment settings again. Project actions are kept."),
         ].join("\n"),
         { variant: "destructive" },
       )) ?? false;
@@ -207,14 +217,22 @@ function ScopePopover({
       }}
     >
       <PopoverTrigger
-        aria-label={`Settings scope: ${triggerLabel}${checkoutLabel ? ` in ${checkoutLabel}` : ""}`}
+        aria-label={
+          checkoutLabel
+            ? gt("Settings scope: {scope} in {checkout}", {
+                scope: triggerLabel,
+                checkout: checkoutLabel,
+              })
+            : gt("Settings scope: {scope}", { scope: triggerLabel })
+        }
         render={<ContentButton variant="breadcrumb" className="-ms-2.5" />}
       >
         {trigger}
         {projectLabel || environmentLabel ? (
           <span className="min-w-0 truncate text-meta text-muted-foreground">
-            {triggerLabel}
-            {checkoutLabel ? ` in ${checkoutLabel}` : ""}
+            {checkoutLabel
+              ? gt("{scope} in {checkout}", { scope: triggerLabel, checkout: checkoutLabel })
+              : triggerLabel}
           </span>
         ) : null}
       </PopoverTrigger>
@@ -235,16 +253,16 @@ function ScopePopover({
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.currentTarget.value)}
-                placeholder="Find a project or environment"
-                aria-label="Find a project or environment"
+                placeholder={gt("Find a project or environment")}
+                aria-label={gt("Find a project or environment")}
               />
             </InputGroup>
           </div>
           <div className="flex min-h-0">
-            <ScopeColumn label="Project">
+            <ScopeColumn label={gt("Project")}>
               <ScopeRow
                 icon={<LayersIcon aria-hidden className="size-3.5" />}
-                label="All projects"
+                label={gt("All projects")}
                 selected={projectValue === ALL_PROJECTS_VALUE}
                 onSelect={() => choose(selectProjectAxis(value, ALL_PROJECTS_VALUE))}
               />
@@ -254,21 +272,27 @@ function ScopePopover({
                   icon={<ProjectFavicon project={group} className="size-3.5" />}
                   label={group.displayName}
                   secondary={
-                    group.archived ? [secondary, "Archived"].filter(Boolean).join(", ") : secondary
+                    group.archived
+                      ? [secondary, gt("Archived", { $context: "project state" })]
+                          .filter(Boolean)
+                          .join(", ")
+                      : secondary
                   }
                   meta={overrides.countByProjectKey.get(group.projectKey)}
-                  metaLabel="overridden settings"
+                  metaLabel={gt("overridden settings", {
+                    $context: "screen reader text after a count of settings",
+                  })}
                   selected={projectValue === group.projectKey}
                   onSelect={() => choose(selectProjectAxis(value, group.projectKey))}
                 />
               ))}
             </ScopeColumn>
             <div aria-hidden className="w-px shrink-0 bg-border" />
-            <ScopeColumn label="Environment">
+            <ScopeColumn label={gt("Environment")}>
               {singleEnvironment ? null : (
                 <ScopeRow
                   icon={<LayersIcon aria-hidden className="size-3.5" />}
-                  label="All environments"
+                  label={gt("All environments")}
                   selected={environmentValue === ALL_ENVIRONMENTS_VALUE}
                   onSelect={() => choose(selectEnvironmentAxis(value, ALL_ENVIRONMENTS_VALUE))}
                 />
@@ -285,7 +309,7 @@ function ScopePopover({
                   }
                   label={label}
                   secondary={secondary}
-                  meta={environment.connection.phase === "connected" ? undefined : "Offline"}
+                  meta={environment.connection.phase === "connected" ? undefined : gt("Offline")}
                   selected={environmentValue === environment.environmentId}
                   onSelect={() => choose(selectEnvironmentAxis(value, environment.environmentId))}
                 />
@@ -294,10 +318,10 @@ function ScopePopover({
             {checkouts.length > 0 ? (
               <>
                 <div aria-hidden className="w-px shrink-0 bg-border" />
-                <ScopeColumn label="Checkout">
+                <ScopeColumn label={gt("Checkout", { $context: "settings scope column" })}>
                   <ScopeRow
                     icon={<LayersIcon aria-hidden className="size-3.5" />}
-                    label="All checkouts"
+                    label={gt("All checkouts")}
                     selected={(value.checkout ?? ALL_CHECKOUTS_VALUE) === ALL_CHECKOUTS_VALUE}
                     onSelect={() => choose(selectCheckoutAxis(value, null))}
                   />
@@ -320,8 +344,11 @@ function ScopePopover({
           <div className="flex items-center gap-2 border-t border-border px-3.5 py-2">
             <p className="min-w-0 flex-1 truncate text-meta text-dim-foreground">
               {overriddenProjectCount === 0
-                ? "No project overrides settings"
-                : `${overriddenProjectCount} ${overriddenProjectCount === 1 ? "project overrides" : "projects override"} some settings`}
+                ? gt("No project overrides settings")
+                : gt(
+                    "{count, plural, one {{count} project overrides some settings} other {{count} projects override some settings}}",
+                    { count: overriddenProjectCount },
+                  )}
             </p>
             <Button
               size="xs"
@@ -330,7 +357,7 @@ function ScopePopover({
               onClick={() => void resetOverrides()}
             >
               <RotateCcwIcon />
-              Reset overrides
+              <T>Reset overrides</T>
             </Button>
           </div>
         </div>

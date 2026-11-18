@@ -14,12 +14,12 @@ import {
 } from "./composerEventScope";
 import { ComposerFooterModeControls, ComposerPermissionsSection } from "./ComposerFooterControls";
 import {
+  resolveRuntimeModeOption,
   resolveRuntimeModeOptions,
-  runtimeModeConfig,
   runtimeModeOptions,
 } from "./runtimeModeConfig";
 
-const options = runtimeModeOptions.map((mode) => ({ mode, ...runtimeModeConfig[mode] }));
+const options = runtimeModeOptions.map((mode) => resolveRuntimeModeOption(mode));
 
 // Mirrors the overflow menu, which holds the Permissions section.
 function OverflowMenu() {

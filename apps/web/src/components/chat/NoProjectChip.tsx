@@ -1,9 +1,8 @@
+import { useGT } from "gt-react";
 import { MessageSquareDashedIcon } from "lucide-react";
 
 import { ComposerContextLabel } from "../ComposerContextLabel";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-
-const NO_PROJECT_LABEL = "No project";
 
 /**
  * The tray row's lead for a thread without a project, where a git thread has
@@ -11,6 +10,8 @@ const NO_PROJECT_LABEL = "No project";
  * thread keeps the bare icon, like a locked workspace.
  */
 export function NoProjectChip({ started = false }: { readonly started?: boolean }) {
+  const gt = useGT();
+  const noProjectLabel = gt("No project");
   if (started) {
     return (
       <Tooltip>
@@ -19,13 +20,13 @@ export function NoProjectChip({ started = false }: { readonly started?: boolean 
             <span
               className="inline-flex h-7 shrink-0 items-center ps-2 pe-0.5 text-muted-foreground sm:h-5.5"
               data-composer-context-control
-              aria-label={NO_PROJECT_LABEL}
+              aria-label={noProjectLabel}
             />
           }
         >
           <MessageSquareDashedIcon aria-hidden className="size-3 shrink-0" />
         </TooltipTrigger>
-        <TooltipPopup>{NO_PROJECT_LABEL}</TooltipPopup>
+        <TooltipPopup>{noProjectLabel}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -36,7 +37,7 @@ export function NoProjectChip({ started = false }: { readonly started?: boolean 
       data-composer-context-control
     >
       <MessageSquareDashedIcon aria-hidden className="size-3 shrink-0" />
-      <ComposerContextLabel>{NO_PROJECT_LABEL}</ComposerContextLabel>
+      <ComposerContextLabel>{noProjectLabel}</ComposerContextLabel>
     </span>
   );
 }

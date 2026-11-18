@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { T, useGT, Var } from "gt-react";
 import {
   ArrowLeftRightIcon,
   Columns2Icon,
@@ -55,20 +56,23 @@ function useLayoutLessons() {
 
 /** First-use tips disappear as the user exercises the corresponding layout actions. */
 export function LayoutLearningTips() {
+  const gt = useGT();
   const learned = useLayoutLessons();
   const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const keys = isMacPlatform(navigator.platform) ? "⌥⌘" : "Ctrl+Alt";
   const tips = [
-    { key: "split", Icon: GripHorizontalIcon, text: "Drag a tab to the right edge" },
-    { key: "keys", Icon: KeyboardIcon, text: `Hold ${keys} to see the layout keys` },
+    { key: "split", Icon: GripHorizontalIcon, text: gt("Drag a tab to the right edge") },
+    { key: "keys", Icon: KeyboardIcon, text: gt("Hold {keys} to see the layout keys", { keys }) },
   ].filter((tip) => !learned.includes(tip.key));
   if (!scrollingWorkspaces || tips.length === 0) return null;
   return (
     <div
       className="mt-5 flex flex-col gap-2 border-t border-border pt-4 text-muted-foreground"
-      aria-label="Try the layout"
+      aria-label={gt("Try the layout")}
     >
-      <span className="text-meta">Try the layout</span>
+      <span className="text-meta">
+        <T>Try the layout</T>
+      </span>
       {tips.map(({ key, Icon, text }) => (
         <div key={key} className="flex items-center gap-2 text-body">
           <Icon className="size-3.5 shrink-0" />
@@ -81,6 +85,7 @@ export function LayoutLearningTips() {
 
 /** A dismissible introduction, followed by a five-step tour anchored to the real workspace. */
 export function LayoutOnboarding() {
+  const gt = useGT();
   const [completed, setCompleted] = useLocalStorage(TOUR_KEY, false, Schema.Boolean);
   const [step, setStep] = useState<number | null>(null);
   const nextRef = useRef<HTMLButtonElement | null>(null);
@@ -88,32 +93,42 @@ export function LayoutOnboarding() {
   const keys = isMacPlatform(navigator.platform) ? "⌥⌘" : "Ctrl+Alt";
   const steps = [
     {
-      title: "New tab",
-      text: "Opens a new chat, terminal, browser or files in this pane.",
-      selector: '[data-layout-pane-focused="true"] [aria-label^="New tab"]',
+      title: gt("New tab"),
+      text: gt("Opens a new chat, terminal, browser or files in this pane."),
+      selector: '[data-layout-pane-focused="true"] [data-layout-new-tab]',
       Icon: PlusIcon,
     },
     {
-      title: "Drag a tab to make a pane",
-      text: "Drop a tab at an edge to put it beside another pane. Drop it on a tab bar to group them again.",
+      title: gt("Drag a tab to make a pane"),
+      text: gt(
+        "Drop a tab at an edge to put it beside another pane. Drop it on a tab bar to group them again.",
+      ),
       selector: '[data-layout-pane-focused="true"] [data-layout-pane-tab]',
       Icon: GripHorizontalIcon,
     },
     {
-      title: "More panes live off to the side",
-      text: `Swipe sideways with two fingers on a tab bar, or hold ${keys} and scroll anywhere. Click a peeking pane to bring it in.`,
+      title: gt("More panes live off to the side"),
+      text: gt(
+        "Swipe sideways with two fingers on a tab bar, or hold {keys} and scroll anywhere. Click a peeking pane to bring it in.",
+        { keys },
+      ),
       selector: '[data-layout-pane-focused="true"] [data-layout-tab-strip]',
       Icon: ArrowLeftRightIcon,
     },
     {
-      title: "See the whole workspace",
-      text: "Pinch to zoom out, or move to the bottom-left corner. Pick a pane to return to it.",
+      title: gt("See the whole workspace"),
+      text: gt(
+        "Pinch to zoom out, or move to the bottom-left corner. Pick a pane to return to it.",
+      ),
       selector: "[data-layout-hot-corner]",
       Icon: Columns2Icon,
     },
     {
-      title: "Layout keys",
-      text: `Hold ${keys} to see every layout shortcut. Release the keys to return to your work.`,
+      title: gt("Layout keys"),
+      text: gt(
+        "Hold {keys} to see every layout shortcut. Release the keys to return to your work.",
+        { keys },
+      ),
       selector: '[data-layout-pane-focused="true"] [data-layout-tab-strip]',
       Icon: KeyboardIcon,
     },
@@ -144,29 +159,41 @@ export function LayoutOnboarding() {
           <div className="flex min-h-0 flex-col gap-6 overflow-y-auto p-8">
             <div className="flex flex-col gap-2">
               <DialogTitle render={<h1 />} size="page">
-                Tabs, side by side
+                <T>Tabs, side by side</T>
               </DialogTitle>
               <DialogDescription>
-                Chats, terminals, diffs and the browser are all tabs now. Put them side by side,
-                scroll to the rest, and zoom out to see it all.
+                <T>
+                  Chats, terminals, diffs and the browser are all tabs now. Put them side by side,
+                  scroll to the rest, and zoom out to see it all.
+                </T>
               </DialogDescription>
             </div>
             <div className="grid grid-cols-1 gap-4 min-[480px]:grid-cols-2 md:grid-cols-4">
               {(
                 [
-                  ["tabs", "Everything is a tab", "Chat, terminal, diff, browser."],
-                  ["split", "Drag to split", "Drop a tab on an edge to put it beside."],
+                  ["tabs", gt("Everything is a tab"), gt("Chat, terminal, diff, browser.")],
+                  [
+                    "split",
+                    gt("Drag to split"),
+                    gt("Drop a tab on an edge to put it beside."),
+                  ],
                   [
                     "overview",
-                    "Scroll and zoom out",
-                    "Swipe sideways for more panes. Pinch to see everything.",
+                    gt("Scroll and zoom out"),
+                    gt("Swipe sideways for more panes. Pinch to see everything."),
                   ],
                   [
                     "keys",
-                    "Same keys as before",
+                    gt("Same keys as before"),
                     isMacPlatform(navigator.platform)
-                      ? "⌘J for a terminal, ⌘D for the diff."
-                      : "Ctrl+J for a terminal, Ctrl+D for the diff.",
+                      ? gt("{terminalKey} for a terminal, {diffKey} for the diff.", {
+                          terminalKey: "⌘J",
+                          diffKey: "⌘D",
+                        })
+                      : gt("{terminalKey} for a terminal, {diffKey} for the diff.", {
+                          terminalKey: "Ctrl+J",
+                          diffKey: "Ctrl+D",
+                        }),
                   ],
                 ] satisfies ReadonlyArray<readonly [LayoutTourLesson, string, string]>
               ).map(([lesson, title, description]) => (
@@ -185,10 +212,10 @@ export function LayoutOnboarding() {
                   setStep(0);
                 }}
               >
-                Show me
+                <T>Show me</T>
               </Button>
               <Button size="standard" variant="secondary" onClick={finish}>
-                Got it
+                <T>Got it</T>
               </Button>
             </div>
           </div>
@@ -218,7 +245,7 @@ export function LayoutOnboarding() {
         collisionAvoidance={{ side: "shift", align: "shift" }}
         initialFocus={nextRef}
       >
-        <div className="flex flex-col gap-2" role="region" aria-label="Layout tour">
+        <div className="flex flex-col gap-2" role="region" aria-label={gt("Layout tour")}>
           {step === 0 ? (
             <current.Icon className="size-6 text-muted-foreground" aria-hidden />
           ) : (
@@ -231,11 +258,19 @@ export function LayoutOnboarding() {
           <p className="text-body text-muted-foreground">{current.text}</p>
           <div className="mt-2 flex items-center gap-2">
             <span className="mr-auto flex items-center gap-2 text-meta text-dim-foreground">
-              <span>{step + 1} of 5</span>
-              {tried ? <Badge variant="success">Tried</Badge> : null}
+              <span>
+                <T>
+                  <Var>{step + 1}</Var> of <Var>{steps.length}</Var>
+                </T>
+              </span>
+              {tried ? (
+                <Badge variant="success">
+                  <T>Tried</T>
+                </Badge>
+              ) : null}
             </span>
             <Button size="standard" variant="ghost-muted" onClick={finish}>
-              Skip
+              <T>Skip</T>
             </Button>
             <Button
               ref={nextRef}
@@ -245,7 +280,7 @@ export function LayoutOnboarding() {
                 else setStep(step + 1);
               }}
             >
-              {step === 4 ? "Got it" : "Next"}
+              {step === 4 ? <T>Got it</T> : <T>Next</T>}
             </Button>
           </div>
         </div>

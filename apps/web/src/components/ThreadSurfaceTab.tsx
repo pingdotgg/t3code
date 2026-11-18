@@ -5,6 +5,7 @@ import { DEFAULT_RUNTIME_MODE } from "../types";
 /** Resolve surface context independently of ChatView so tabs remain usable after the chat closes,
  * and report when their thread is gone. */
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { msg, T, useGT } from "gt-react";
 import {
   AuthOrchestrationOperateScope,
   AuthPreviewOperateScope,
@@ -118,6 +119,7 @@ import {
 import { Button } from "./ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./ui/empty";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { m } from "../i18n/messages";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 
 const SideChatPane = lazy(() => import("./chat/SideChatPane"));
@@ -197,6 +199,7 @@ function useThreadSurfaceContext(threadRef: ScopedThreadRef) {
  * gives it a tab (surfaceSync.ts).
  */
 export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
+  const gt = useGT();
   const ref = threadRef;
   const context = useThreadSurfaceContext(ref);
   const canOperatePreview = useEnvironmentScope(threadRef.environmentId, AuthPreviewOperateScope);
@@ -229,7 +232,7 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
       modelSelection: context.serverThread?.modelSelection,
     }),
     onError: (description) =>
-      toastManager.add({ type: "error", title: "Could not open side chat", description }),
+      toastManager.add({ type: "error", title: gt("Could not open side chat"), description }),
   });
   const serverConfigLoaded = context.serverConfig !== null;
   const shell = context.serverThread;
@@ -262,14 +265,14 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
   // Why the browser cannot open here: each case its own reason.
   const browserUnavailableReason =
     sessionStatus === "Initial"
-      ? "Connecting to the environment."
+      ? gt("Connecting to the environment.")
       : sessionStatus === "Failure"
-        ? "Can't reach the environment."
+        ? gt("Can't reach the environment.")
         : !canOperatePreview
-          ? "Ask the environment owner for preview access."
+          ? gt("Ask the environment owner for preview access.")
           : isPreviewSupportedInRuntime() || serverBrowser
             ? null
-            : "Only available in the desktop app.";
+            : gt("Only available in the desktop app.");
   const available: Record<LauncherSurfaceKind, boolean> = {
     browser: browserUnavailableReason === null,
     terminal: context.gitCwd !== null && canOperateTerminal,
@@ -319,7 +322,7 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Unable to open browser",
+                title: gt("Unable to open browser"),
                 description: error.message,
               }),
             );
@@ -502,7 +505,8 @@ function ThreadTerminalTab({ threadRef }: { threadRef: ScopedThreadRef }) {
 function useThreadTitle(threadRef: ScopedThreadRef): string | null {
   const shell = useQuietThreadShell(threadRef);
   const draft = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
-  return shell?.title ?? (draft ? "New thread" : null);
+  const gt = useGT();
+  return shell?.title ?? (draft ? gt("New thread") : null);
 }
 
 function ThreadSurfacePane({
@@ -619,21 +623,24 @@ function ThreadSurfacePane({
 }
 
 function ThreadGoneState({ threadless, onClose }: { threadless: boolean; onClose: () => void }) {
+  const gt = useGT();
   return (
     <Empty className="flex-1">
       <EmptyHeader>
         <EmptyMedia variant="icon">
           <Unlink2Icon />
         </EmptyMedia>
-        <EmptyTitle>{threadless ? "Its project is gone" : "Its thread is gone"}</EmptyTitle>
+        <EmptyTitle>
+          {threadless ? gt("Its project is gone") : gt("Its thread is gone")}
+        </EmptyTitle>
         <EmptyDescription>
           {threadless
-            ? "The project this was opened in no longer exists."
-            : "The thread this was opened from no longer exists."}
+            ? gt("The project this was opened in no longer exists.")
+            : gt("The thread this was opened from no longer exists.")}
         </EmptyDescription>
         <div className="mt-4 flex justify-center">
           <Button size="sm" variant="secondary" onClick={onClose}>
-            Close tab
+            <T>Close tab</T>
           </Button>
         </div>
       </EmptyHeader>
@@ -665,6 +672,7 @@ function ThreadSurfaceContent({
     isDesktop: boolean;
   };
 }) {
+  const gt = useGT();
   const bridge = useThreadChatBridge(threadRef);
   const { paneId } = useLayoutPane();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -841,8 +849,8 @@ function ThreadSurfaceContent({
         return (
           <FileSurfaceState
             icon={<FolderX />}
-            title="No project folder"
-            description="This thread has no workspace folder, so there are no files to show."
+            title={gt("No project folder")}
+            description={gt("This thread has no workspace folder, so there are no files to show.")}
           />
         );
       }
@@ -904,8 +912,10 @@ async function addTerminalContextFromChat(
   }
   toastManager.add({
     type: "error",
-    title: "Could not add terminal output to chat",
-    description: "The chat is not ready. Your terminal selection is still available to add again.",
+    title: m(msg("Could not add terminal output to chat")),
+    description: m(
+      msg("The chat is not ready. Your terminal selection is still available to add again."),
+    ),
   });
   return false;
 }
@@ -935,8 +945,8 @@ async function sendAnnotationFromChat(
   toastManager.add(
     stackedThreadToast({
       type: "info",
-      title: "Annotation attached to draft",
-      description: "The chat could not send it yet. Send it from the chat.",
+      title: m(msg("Annotation attached to draft")),
+      description: m(msg("The chat could not send it yet. Send it from the chat.")),
     }),
   );
 }
@@ -1076,7 +1086,10 @@ export async function closeThreadSurface(
     !options.bulk &&
     readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
   ) {
-    const [first = "Terminal", ...rest] = readTerminalTabTitles(threadRef, surface.terminalIds);
+    const [first = m(msg("Terminal")), ...rest] = readTerminalTabTitles(
+      threadRef,
+      surface.terminalIds,
+    );
     if (!(await confirmTerminalClose([first, ...rest]))) return;
   }
   finish();

@@ -1,4 +1,5 @@
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
+import { useGT } from "gt-react";
 import { contextWindowSegments } from "./compaction.logic";
 import { cn } from "~/lib/utils";
 
@@ -10,6 +11,7 @@ export function ContextWindowSegments({
   usage: ContextWindowSnapshot;
   minSegmentWidth?: number;
 }) {
+  const gt = useGT();
   const percentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
   const segments = contextWindowSegments(usage);
   const largest = segments.reduce((max, segment) => Math.max(max, segment.tokens), 0);
@@ -25,7 +27,7 @@ export function ContextWindowSegments({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(percentage)}
-      aria-label="Context window usage"
+      aria-label={gt("Context window usage")}
     >
       <span
         className="flex h-full gap-px overflow-hidden"

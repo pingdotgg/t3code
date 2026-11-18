@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useGT } from "gt-react";
 import type { ReactNode } from "react";
 
 import { isElectron } from "../../env";
@@ -22,12 +23,13 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 export function SettingsTabNotch({
   icon,
   children,
-  title = "Settings",
+  title,
 }: {
   icon: ReactNode;
   children: ReactNode;
   title?: string;
 }) {
+  const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { tabId } = useLayoutPane();
   const siblingTabs = useLayoutPaneSiblingTabs();
@@ -52,7 +54,7 @@ export function SettingsTabNotch({
             <span className={LAYOUT_TAB_ICON_CLASS}>{icon}</span>
             {children}
           </div>
-          {tabId !== null ? <LayoutTabCloseButton tabId={tabId} title={title} /> : null}
+          {tabId !== null ? <LayoutTabCloseButton tabId={tabId} title={title ?? gt("Settings")} /> : null}
         </span>
         {siblingTabs.after.map((tab) => (
           <LayoutPaneTab key={tab.id} tab={tab} />

@@ -22,6 +22,7 @@ import type {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { T, useGT, useMessages } from "gt-react";
 import {
   ArrowUpRightIcon,
   CheckIcon,
@@ -49,7 +50,8 @@ export function SecretRequestCard(props: {
   readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
 }) {
   const { item } = props;
-  const display = secretRequestDisplay(item, props.visibility);
+  const messages = useMessages();
+  const display = secretRequestDisplay(item, props.visibility, messages);
   if (display.kind === "answered" || display.kind === "pending-elsewhere") {
     const Icon =
       display.kind === "pending-elsewhere"
@@ -115,8 +117,9 @@ function HostLink(props: { readonly href: string; readonly host: string }) {
 
 function useSecretRequestSources(environmentId: EnvironmentId) {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const messages = useMessages();
   return isSecretsFeatureEnabled
-    ? secretRequestSources(config, config?.settings.secretProviders ?? {})
+    ? secretRequestSources(config, config?.settings.secretProviders ?? {}, messages)
     : NO_SOURCES;
 }
 
@@ -125,6 +128,8 @@ function PendingSecretRequestForm(props: {
   readonly item: SecretRequestItem;
 }) {
   const { item } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const inputId = useId();
   const errorId = useId();
   const privacyId = useId();
@@ -160,7 +165,11 @@ function PendingSecretRequestForm(props: {
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
-      pipe(squashAtomCommandFailure(result), secretRequestFailureMessage, setError);
+      pipe(
+        squashAtomCommandFailure(result),
+        (failure) => secretRequestFailureMessage(failure, messages),
+        setError,
+      );
     }
   };
 
@@ -213,14 +222,14 @@ function PendingSecretRequestForm(props: {
           >
             <ShieldCheckIcon className="size-3 shrink-0" aria-hidden />
             <span className="@max-[30rem]/secret-card:sr-only">
-              {item.delivery === "file" ? "Private file, 24 hours" : "Hidden from agent"}
+              {item.delivery === "file" ? gt("Private file, 24 hours") : gt("Hidden from agent")}
             </span>
           </TooltipTrigger>
-          <TooltipPopup>{secretRequestPrivacyNote(item)}</TooltipPopup>
+          <TooltipPopup>{secretRequestPrivacyNote(item, messages)}</TooltipPopup>
         </Tooltip>
       </div>
       <span id={privacyId} className="sr-only">
-        {secretRequestPrivacyNote(item)}
+        {secretRequestPrivacyNote(item, messages)}
       </span>
       {/* Flat paints wells and secondary buttons with the composer fill, so this box takes the tray fill. */}
       <div className="flex min-w-0 flex-col gap-2.5 rounded-lg surface-composer px-2.5 pt-2 pb-2.5 in-data-[surface-style=flat]:[--composer-fill:var(--tray-fill)]">
@@ -269,7 +278,7 @@ function PendingSecretRequestForm(props: {
                   data-1p-ignore
                   data-lpignore="true"
                   data-bwignore
-                  placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+                  placeholder={item.placeholder ?? messages(SECRET_REQUEST_DEFAULT_PLACEHOLDER)}
                   value={secret}
                   disabled={submitting}
                   aria-invalid={error !== null || undefined}
@@ -304,7 +313,7 @@ function PendingSecretRequestForm(props: {
               variant="secondary"
               disabled={submitting || draft.trim().length === 0}
             >
-              Save securely
+              <T>Save securely</T>
               <Kbd size="sm" aria-hidden>
                 ↵
               </Kbd>
@@ -315,7 +324,7 @@ function PendingSecretRequestForm(props: {
               disabled={submitting}
               onClick={() => void send({ type: "decline" })}
             >
-              Decline
+              <T>Decline</T>
             </Button>
           </div>
         </div>
