@@ -144,6 +144,8 @@ export function startThreadNotifications(
       return;
     const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
     const active = activeThread();
+    const watching = document.visibilityState === "visible" && document.hasFocus();
+    if (watching && active.environmentId === environmentId && active.threadId === thread.id) return;
     const title =
       kind === "completion"
         ? m(msg("Thread completed"))
@@ -161,12 +163,7 @@ export function startThreadNotifications(
         hasNotificationSound(getClientSettings().notificationMode),
       );
     }
-    if (
-      inAppNotificationsEnabled &&
-      document.visibilityState === "visible" &&
-      document.hasFocus() &&
-      (active.environmentId !== environmentId || active.threadId !== thread.id)
-    ) {
+    if (inAppNotificationsEnabled && watching) {
       const toastKey = threadKey({ environmentId, threadId: thread.id });
       const toastId: ToastId = toastManager.add({
         onRemove: (): void => forgetToast(toastKey, toastId),
@@ -204,7 +201,7 @@ export function startThreadNotifications(
     }
     if (
       !hasDesktopNotifications(mode) ||
-      (document.visibilityState === "visible" && document.hasFocus()) ||
+      watching ||
       typeof Notification === "undefined" ||
       Notification.permission !== "granted"
     )

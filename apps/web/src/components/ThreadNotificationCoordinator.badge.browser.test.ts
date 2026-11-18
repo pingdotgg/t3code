@@ -307,6 +307,29 @@ it.each([
   expect(state.unlock).toHaveBeenCalledTimes(beforeGesture + 1);
 });
 
+it("stays quiet for the thread in view, but sounds for it once the window loses focus", async () => {
+  await using app = setup();
+  state.mode = "notifications-and-sound";
+  state.inApp = true;
+  focused = true;
+  app.start();
+  app.openThread("one", "thread");
+  const completed = (turnId: string, completedAt: string) =>
+    shell({ latestTurn: { turnId, state: "completed", completedAt } });
+  state.shells.set("one", completed("turn", "2026-09-13T07:00:01.000Z"));
+  expect(state.sound).not.toHaveBeenCalled();
+  expect(state.toast).not.toHaveBeenCalled();
+  expect(TestNotification.sent).toEqual([]);
+  state.shells.set(
+    "one",
+    shell({ latestTurn: { turnId: "next", state: "running", completedAt: null } }),
+  );
+  focused = false;
+  state.shells.set("one", completed("next", "2026-09-13T07:00:05.000Z"));
+  expect(state.sound).toHaveBeenCalledOnce();
+  expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
+});
+
 it.each([false, true])(
   "presents one completion when a monitor ends with a final wake (disconnected: %s)",
   async (disconnect) => {
