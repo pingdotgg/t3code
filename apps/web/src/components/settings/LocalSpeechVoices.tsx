@@ -2,6 +2,7 @@ import { useGT, T } from "gt-react";
 import { useSpeechOutputDestination } from "../../speech/useSpeechOutputDestination";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import type { useSpeechVoiceCatalog } from "../../speech/useSpeechVoiceCatalog";
@@ -16,6 +17,14 @@ export function LocalSpeechVoices({
 }) {
   const gt = useGT();
   const { destination, selectVoice, canManage } = useSpeechOutputDestination();
+  const clearRemovedVoice = useStableCallback((environmentId: EnvironmentId, voiceId: string) => {
+    if (
+      destination?.engine === "piper" &&
+      destination.environmentId === environmentId &&
+      destination.voice === voiceId
+    )
+      selectVoice(null);
+  });
   const [choice, setChoice] = useState<{
     environmentId: EnvironmentId;
     language: string;
@@ -166,7 +175,7 @@ export function LocalSpeechVoices({
                       disabled={disabled}
                       onClick={() =>
                         void catalog.run(selected.id, "remove").then((updated) => {
-                          if (updated && selected.id === activeId) selectVoice(null);
+                          if (updated) clearRemovedVoice(environment.environmentId, selected.id);
                         })
                       }
                     >

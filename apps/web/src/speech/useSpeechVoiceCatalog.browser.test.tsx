@@ -17,6 +17,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import {
   __setClientSettingsForTests,
   getClientSettings,
+  updateClientSettings,
   mergeEnvironmentSettings,
   useEnvironmentSettings,
   useUpdateEnvironmentSettings,
@@ -199,13 +200,41 @@ it("starts off, checks the selected environment, and offers managed Piper instal
   });
   expect(selectEnvironmentSpeechVoice).not.toHaveBeenCalled();
   vi.mocked(useEnvironmentScope).mockReturnValue(true);
+  const removal = Promise.withResolvers<SpeechSynthesisVoices>();
+  vi.mocked(removeEnvironmentSpeechVoice).mockImplementation(() =>
+    Effect.promise(() => removal.promise),
+  );
+  await screen.rerender(<SpeechOutputSettings key="remove-selected" />);
+  await screen.getByRole("button", { name: "Remove voice", exact: true }).click();
+  const otherVoice = { ...voices[0]!, id: "pt_BR-other-medium", name: "Other" };
+  await updateClientSettings({
+    speechOutputDestination: {
+      environmentId: prepared.environmentId,
+      engine: "piper",
+      voice: otherVoice.id,
+    },
+  });
+  await screen.rerender(<SpeechOutputSettings key="remove-selected" />);
+  voices = [{ ...voices[0]!, state: "downloadable", active: false }, otherVoice];
+  removal.resolve({ voices, runtime });
+  await expect.element(screen.getByRole("button", { name: "Selected", exact: true })).toBeVisible();
+  expect(getClientSettings().speechOutputDestination?.voice).toBe(otherVoice.id);
+
+  voices = [{ ...voices[0]!, state: "installed" }, otherVoice];
+  await updateClientSettings({
+    speechOutputDestination: {
+      environmentId: prepared.environmentId,
+      engine: "piper",
+      voice: voices[0]!.id,
+    },
+  });
   vi.mocked(removeEnvironmentSpeechVoice).mockImplementation(() =>
     Effect.sync(() => {
-      voices = [{ ...voices[0]!, state: "downloadable", active: false }];
+      voices = [{ ...voices[0]!, state: "downloadable", active: false }, otherVoice];
       return { voices, runtime };
     }),
   );
-  await screen.rerender(<SpeechOutputSettings key="remove-selected" />);
+  await screen.rerender(<SpeechOutputSettings key="remove-current-selection" />);
   await screen.getByRole("button", { name: "Remove voice", exact: true }).click();
   await vi.waitFor(() => expect(getClientSettings().speechOutputDestination?.voice).toBeNull());
   await screen.getByRole("combobox", { name: "Read aloud with" }).click();

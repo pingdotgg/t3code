@@ -1,6 +1,6 @@
 import { useGT, T } from "gt-react-native";
 import { useSpeechOutputDestination } from "../voice-output/useSpeechOutputDestination";
-import { useState } from "react";
+import { useInsertionEffect, useRef, useState } from "react";
 import { Linking, ScrollView, View } from "react-native";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -14,7 +14,14 @@ import { useSpeechVoiceCatalog } from "../voice-output/useSpeechVoiceCatalog";
 
 export function LocalSpeechVoices({ environment }: { environment: EnvironmentPresentation }) {
   const gt = useGT();
-  const { destination } = useSpeechOutputDestination();
+  const controls = useSpeechOutputDestination();
+  const { destination } = controls;
+  const latestControls = useRef(controls);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- removal completion must use the latest committed selection and writer
+  useInsertionEffect(() => {
+    latestControls.current = controls;
+  });
+
   const catalog = useSpeechVoiceCatalog(environment.environmentId);
   const voiceId =
     destination?.voice ?? environment.serverConfig?.settings.speechOutput.piperVoiceId;
@@ -30,7 +37,20 @@ export function LocalSpeechVoices({ environment }: { environment: EnvironmentPre
         onPress={() => setOpen(true)}
       />
       {open ? (
-        <VoicePicker environment={environment} catalog={catalog} onClose={() => setOpen(false)} />
+        <VoicePicker
+          environment={environment}
+          catalog={catalog}
+          onClose={() => setOpen(false)}
+          onVoiceRemoved={(voiceId) => {
+            const latest = latestControls.current;
+            if (
+              latest.destination?.engine === "piper" &&
+              latest.destination.environmentId === environment.environmentId &&
+              latest.destination.voice === voiceId
+            )
+              latest.selectVoice(null);
+          }}
+        />
       ) : null}
     </>
   );
@@ -39,10 +59,12 @@ export function LocalSpeechVoices({ environment }: { environment: EnvironmentPre
 function VoicePicker({
   environment,
   catalog,
+  onVoiceRemoved,
   onClose,
 }: {
   environment: EnvironmentPresentation;
   catalog: ReturnType<typeof useSpeechVoiceCatalog>;
+  onVoiceRemoved: (voiceId: string) => void;
   onClose: () => void;
 }) {
   const gt = useGT();
@@ -180,7 +202,7 @@ function VoicePicker({
                     disabled={disabled}
                     onPress={() =>
                       void catalog.run(selected.id, "remove").then((updated) => {
-                        if (updated && selected.id === activeId) selectVoice(null);
+                        if (updated) onVoiceRemoved(selected.id);
                       })
                     }
                   />
