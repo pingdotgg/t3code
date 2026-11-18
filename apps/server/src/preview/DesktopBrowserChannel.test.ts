@@ -122,41 +122,64 @@ it.effect(
       yield* Effect.gen(function* () {
         const channel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
         const key = { threadId: "thread-1", tabId: "tab-1" };
-        const frames = yield* Queue.unbounded<string, Cause.Done>();
-        const commands = yield* Queue.unbounded<string>();
-        const socket = Socket.make({
-          reader: Effect.succeed({
-            pull: Queue.take(frames).pipe(
-              Effect.map((frame) => [frame] as const),
-              Effect.mapError(
-                () =>
-                  new Socket.SocketError({ reason: new Socket.SocketCloseError({ code: 1006 }) }),
+        const connect = Effect.gen(function* () {
+          const frames = yield* Queue.unbounded<string, Cause.Done>();
+          const commands = yield* Queue.unbounded<string>();
+          const socket = Socket.make({
+            reader: Effect.succeed({
+              pull: Queue.take(frames).pipe(
+                Effect.map((frame) => [frame] as const),
+                Effect.mapError(
+                  () =>
+                    new Socket.SocketError({ reason: new Socket.SocketCloseError({ code: 1006 }) }),
+                ),
               ),
-            ),
-            upgrade: () => Effect.void,
-          }),
-          writer: Effect.succeed({
-            write: (chunk) =>
-              typeof chunk === "string" ? Queue.offer(commands, chunk) : Effect.void,
-            writeAll: () => Effect.void,
-          }),
+              upgrade: () => Effect.void,
+            }),
+            writer: Effect.succeed({
+              write: (chunk) =>
+                typeof chunk === "string" ? Queue.offer(commands, chunk) : Effect.void,
+              writeAll: () => Effect.void,
+            }),
+          });
+          const served = yield* channel.serve(socket).pipe(Effect.forkChild);
+          const send = (event: object) => Queue.offer(frames, JSON.stringify(event));
+          return { frames, commands, served, send };
         });
         expect(channel.available).toBe(true);
-        const served = yield* channel.serve(socket).pipe(Effect.forkChild);
 
-        yield* Queue.offer(frames, JSON.stringify({ type: "attached", ...key }));
+        const first = yield* connect;
+        yield* first.send({ type: "attached", ...key });
         expect(yield* channel.awaitAttached(key, "5 seconds")).toBe(true);
+        // The desktop redials before the first socket's close is seen, while an endpoint is open.
+        const second = yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* channel.endpoint(key);
+            const detached = yield* channel.detached.pipe(Stream.runHead, Effect.forkChild);
+            const replacement = yield* connect;
+            yield* Fiber.join(detached);
+            expect(yield* channel.isAttached(key)).toBe(false);
+            yield* replacement.send({ type: "attached", ...key });
+            expect(yield* channel.awaitAttached(key, "5 seconds")).toBe(true);
+            return replacement;
+          }),
+        );
+        // Neither the old endpoint's release nor the first socket's late close reaches the new tab.
+        yield* Queue.end(first.frames);
+        yield* Fiber.join(first.served);
+        expect(yield* channel.isAttached(key)).toBe(true);
         yield* channel.pointer(key, { phase: "move", x: 1, y: 2 });
-        expect(JSON.parse(yield* Queue.take(commands))).toEqual({
+        expect(JSON.parse(yield* Queue.take(second.commands))).toEqual({
           type: "pointer",
           ...key,
           phase: "move",
           x: 1,
           y: 2,
         });
+        expect(yield* Queue.size(first.commands)).toBe(0);
 
-        yield* Queue.end(frames);
-        yield* Fiber.join(served);
+        yield* Queue.end(second.frames);
+        yield* Fiber.join(second.served);
         expect(yield* channel.isAttached(key)).toBe(false);
       }).pipe(
         Effect.provide(

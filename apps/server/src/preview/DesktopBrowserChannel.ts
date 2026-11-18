@@ -167,11 +167,23 @@ const make = Effect.gen(function* () {
     }
   };
 
+  // A connection's tabs go with it; the desktop announces them again on the one that replaces it.
+  const retireConnection = Effect.suspend(() => {
+    socketWrite = null;
+    return Effect.forEach(
+      [...attachedTabs.values()],
+      (key) => receive({ type: "detached", ...key }),
+      { discard: true },
+    );
+  });
+
   const serve = Effect.fn("DesktopBrowserChannel.serve")(
     function* (socket: Socket.Socket) {
       if (!overSocket) return;
       const writer = yield* socket.writer;
       const send = (line: string) => writer.write(line);
+      // A redial can arrive before the old socket's close is seen here.
+      yield* retireConnection;
       socketWrite = send;
       const reader = yield* socket.reader;
       const decoder = new TextDecoder();
@@ -181,7 +193,7 @@ const make = Effect.gen(function* () {
             frames,
             (frame) =>
               decodeEventLine(typeof frame === "string" ? frame : decoder.decode(frame)).pipe(
-                Effect.flatMap(receive),
+                Effect.flatMap((event) => (socketWrite === send ? receive(event) : Effect.void)),
                 Effect.ignore,
               ),
             { discard: true },
@@ -189,17 +201,8 @@ const make = Effect.gen(function* () {
         ),
         Effect.forever,
         Effect.ignore,
-        // A dropped socket takes its tabs with it; the desktop announces them again when it redials.
         Effect.ensuring(
-          Effect.suspend(() => {
-            if (socketWrite !== send) return Effect.void;
-            socketWrite = null;
-            return Effect.forEach(
-              [...attachedTabs.values()],
-              (key) => receive({ type: "detached", ...key }),
-              { discard: true },
-            );
-          }),
+          Effect.suspend(() => (socketWrite === send ? retireConnection : Effect.void)),
         ),
       );
     },
@@ -233,11 +236,13 @@ const make = Effect.gen(function* () {
       inbound.delete(id);
       return yield* Effect.die("The desktop tab detached before the server connected.");
     }
+    const connection = socketWrite;
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         if (inbound.get(id) === queue) inbound.delete(id);
         yield* Queue.shutdown(queue);
-        yield* command({ type: "release", ...key });
+        // A desktop that redialed already dropped this relay; a release now would drop its new one.
+        if (socketWrite === connection) yield* command({ type: "release", ...key });
       }),
     );
     // The relay serves one Playwright connection; a second would see the first's sessions.
