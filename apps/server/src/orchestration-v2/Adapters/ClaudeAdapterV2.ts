@@ -2142,10 +2142,22 @@ function parseClaudeInteger(text: string): number {
   return Number.parseInt(value, 10);
 }
 
-// A background command that starts by sleeping is a timer the agent set to check back, which
-// Claude wakes it for when it ends. A dev server never starts that way.
+const CLAUDE_SLEEP_DURATION = String.raw`(?:\d[\w.]*|\$\(\([\w\s+*/%-]+\)\)|\$\{\w+(?::?[-=]\d[\w.]*)?\}|\$\w+)`;
+const CLAUDE_SLEEP_TIMER_START = new RegExp(
+  String.raw`^\s*sleep\s+(?:${CLAUDE_SLEEP_DURATION}|"${CLAUDE_SLEEP_DURATION}"|'\d[\w.]*')\s*(?:$|;|&&|\n)`,
+);
+const CLAUDE_SLEEP_TIMER_REPORT = /^(?:(?:date|echo|printf|true|:)(?:\s[^|&`()]*)?)?$/;
+
+// A background command that only sleeps for a finite time, then at most prints the time or a
+// note, is a timer the agent set to check back, which Claude wakes it for when it ends. Any other
+// step (`sleep 5 && npm run dev`) may never end, so that command is not a timer.
 function isClaudeSleepTimer(command: string | undefined): boolean {
-  return command !== undefined && /^\s*sleep\s+["']?(?:\d|\$\(\()/.test(command);
+  const start = command === undefined ? null : CLAUDE_SLEEP_TIMER_START.exec(command);
+  if (command === undefined || start === null) return false;
+  return command
+    .slice(start[0].length)
+    .split(/;|&&|\n/)
+    .every((step) => CLAUDE_SLEEP_TIMER_REPORT.test(step.trim()));
 }
 
 // Claude Code defers MCP tools behind ToolSearch, so the agent only finds

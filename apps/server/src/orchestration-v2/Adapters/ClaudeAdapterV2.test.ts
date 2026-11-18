@@ -12249,8 +12249,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ["quoted_timer", 'sleep "60" && date', true],
           ["single_quoted_timer", "sleep '60'; date", true],
           ["quoted_computed_timer", 'sleep "$((29 * 60))"; date', true],
-          ["unit_timer", "sleep 5m; date", true],
+          ["expanded_timer", 'sleep "${DELAY:-60}"; date', true],
+          ["unit_timer", 'sleep 5m && echo "Time to check the build"', true],
           ["endless_sleep", "sleep infinity", false],
+          ["delayed_server", "sleep 5 && npm run dev", false],
         ] as const;
         yield* Queue.offer(
           harness.sdkMessages,
