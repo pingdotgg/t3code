@@ -1,12 +1,14 @@
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
+import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import {
+  AuthAccessWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   type AuthSessionState,
-  managedCapabilityDenial,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import {
@@ -18,6 +20,7 @@ import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { useUpdatePrimarySettings } from "~/hooks/useSettings";
 import { isHostedStaticApp } from "~/hostedPairing";
 import {
   useEnvironments,
@@ -52,6 +55,8 @@ const EMPTY_SESSION_STATE_ATOM = Atom.make(AsyncResult.initial<AuthSessionState>
 function ConfiguredConnectOnboardingDialog() {
   // Pending Clerk sessions must not look signed out or activation would look like a new sign-in.
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
+  const gt = useGT();
+  const m = useMessages();
   const [optOutState, setOptOutState] = useLocalStorage(
     CONNECT_ONBOARDING_OPT_OUT_STORAGE_KEY,
     EMPTY_CONNECT_ONBOARDING_OPT_OUT_STATE,
@@ -74,10 +79,14 @@ function ConfiguredConnectOnboardingDialog() {
   const connectAllowed =
     managedCapabilityDenial(usePrimaryManagedPolicy(), "connect") === undefined;
   const canManageRelay = canReadRelay && canWriteRelay && connectAllowed;
+  const canRequireDeviceApproval = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
+  const deviceApprovalRequired =
+    usePrimaryEnvironment()?.serverConfig?.settings.requireConnectDeviceApproval === true;
+  const updatePrimarySettings = useUpdatePrimarySettings();
   const sessionScopesKnown =
     primaryEnvironmentId === null ? environmentsReady : primarySessionState._tag !== "Initial";
 
-  const controller = useCloudLinkController();
+  const controller = useCloudLinkController(primaryEnvironmentId);
   const accountPage = useT3ConnectAccountPage();
   const showPublishStep = canManageRelay && controller.linkState.target !== null;
   const steps: ReadonlyArray<OnboardingStep> = showPublishStep
@@ -89,6 +98,7 @@ function ConfiguredConnectOnboardingDialog() {
   const [step, setStep] = useState<OnboardingStep>("devices");
   const [exposeEnvironment, setExposeEnvironment] = useState(true);
   const [publishAgentActivity, setPublishAgentActivity] = useState(true);
+  const [requireDeviceApproval, setRequireDeviceApproval] = useState(false);
   const [dontShowAgain, setDontShowAgain] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const [prefilledFromLinkState, setPrefilledFromLinkState] = useState(false);
@@ -131,6 +141,7 @@ function ConfiguredConnectOnboardingDialog() {
       setPrefilledFromLinkState(false);
       setExposeEnvironment(true);
       setPublishAgentActivity(true);
+      setRequireDeviceApproval(false);
       setDontShowAgain(false);
       setStep(canManageRelay && controller.linkState.target !== null ? "publish" : "devices");
       setOpenForAccount(requestedAccount);
@@ -165,6 +176,19 @@ function ConfiguredConnectOnboardingDialog() {
 
   const applyPublishSelection = async () => {
     if (isApplying) return;
+    // Onboarding only turns approval on; turning it off stays in Settings. Publishing waits
+    // for the save, so a failed save cannot leave the machine reachable without approval.
+    if (requireDeviceApproval && !deviceApprovalRequired) {
+      setIsApplying(true);
+      const saved = await new Promise<boolean>((resolve) =>
+        updatePrimarySettings(
+          { requireConnectDeviceApproval: true },
+          { onSaved: () => resolve(true), onFailed: () => resolve(false) },
+        ),
+      );
+      setIsApplying(false);
+      if (!saved) return;
+    }
     if (
       primaryEnvironmentId === null ||
       !readEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope) ||
@@ -188,10 +212,10 @@ function ConfiguredConnectOnboardingDialog() {
     if (!ok) return;
     toastManager.add({
       type: "success",
-      title: "T3 Connect enabled",
+      title: gt("T3 Connect enabled"),
       description: exposeEnvironment
-        ? "This environment is available to your other devices through T3 Connect."
-        : "This environment publishes agent activity to your mobile clients.",
+        ? gt("This environment is available to your other devices through T3 Connect.")
+        : gt("This environment publishes agent activity to your mobile clients."),
     });
     setStep("devices");
   };
@@ -214,17 +238,17 @@ function ConfiguredConnectOnboardingDialog() {
     >
       <WizardPopup>
         <WizardHeader
-          title="Set up T3 Connect"
+          title={gt("Set up T3 Connect")}
           description={
-            <>
+            <T>
               Mesh your devices together. Publish this environment and connect the rest, all in one
               place.
-            </>
+            </T>
           }
         >
           {steps.length > 1 ? (
             <WizardSteps
-              steps={steps.map((id) => STEP_LABELS[id])}
+              steps={steps.map((id) => m(STEP_LABELS[id]))}
               currentStep={steps.indexOf(step)}
               isStepDisabled={() => isApplying}
               onStepChange={(index) => {
@@ -246,6 +270,11 @@ function ConfiguredConnectOnboardingDialog() {
             <PublishStep
               exposeEnvironment={exposeEnvironment}
               publishAgentActivity={publishAgentActivity}
+              requireDeviceApproval={
+                canRequireDeviceApproval ? requireDeviceApproval || deviceApprovalRequired : null
+              }
+              requireDeviceApprovalLocked={deviceApprovalRequired}
+              onRequireDeviceApprovalChange={setRequireDeviceApproval}
               disabled={isApplying || !canManageRelay || linkStateData === null}
               operationError={controller.operationError ?? controller.linkState.error}
               tunnelLimit={controller.tunnelLimit}
@@ -278,25 +307,25 @@ function ConfiguredConnectOnboardingDialog() {
                 checked={dontShowAgain}
                 onCheckedChange={(checked) => setDontShowAgain(checked === true)}
               />
-              Don&apos;t show this again
+              <T>Don&apos;t show this again</T>
             </label>
           }
         >
           {step === "publish" ? (
             <>
               <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
-                Not now
+                <T>Not now</T>
               </Button>
               <Button
                 disabled={isApplying || !canManageRelay || linkStateData === null}
                 onClick={() => void applyPublishSelection()}
               >
-                {isApplying ? "Enabling…" : "Continue"}
+                {isApplying ? gt("Enabling…") : gt("Continue")}
               </Button>
             </>
           ) : (
             <Button disabled={isApplying} onClick={complete}>
-              Done
+              <T>Done</T>
             </Button>
           )}
         </WizardFooter>
@@ -308,13 +337,16 @@ function ConfiguredConnectOnboardingDialog() {
 }
 
 const STEP_LABELS: Record<OnboardingStep, string> = {
-  publish: "Publish",
-  devices: "Connect devices",
+  publish: msg("Publish"),
+  devices: msg("Connect devices"),
 };
 
 function PublishStep({
   exposeEnvironment,
   publishAgentActivity,
+  requireDeviceApproval,
+  requireDeviceApprovalLocked,
+  onRequireDeviceApprovalChange,
   disabled,
   operationError,
   tunnelLimit,
@@ -324,6 +356,10 @@ function PublishStep({
 }: {
   readonly exposeEnvironment: boolean;
   readonly publishAgentActivity: boolean;
+  /** Null when this session cannot change who may connect. */
+  readonly requireDeviceApproval: boolean | null;
+  readonly requireDeviceApprovalLocked: boolean;
+  readonly onRequireDeviceApprovalChange: (enabled: boolean) => void;
   readonly disabled: boolean;
   readonly operationError: string | null;
   readonly tunnelLimit: number | null;
@@ -331,23 +367,39 @@ function PublishStep({
   readonly onExposeEnvironmentChange: (enabled: boolean) => void;
   readonly onPublishAgentActivityChange: (enabled: boolean) => void;
 }) {
+  const gt = useGT();
   return (
     <div className="space-y-3">
       <div className="rounded-lg border">
         <OnboardingToggleRow
-          title="Publish this environment"
-          description="Make this environment available to your other devices through T3 Connect."
+          title={gt("Publish this environment")}
+          description={gt(
+            "Make this environment available to your other devices through T3 Connect.",
+          )}
           checked={exposeEnvironment}
           disabled={disabled}
           onCheckedChange={onExposeEnvironmentChange}
         />
         <OnboardingToggleRow
-          title="Publish agent activity"
-          description="Send activity from this environment to your mobile clients for push notifications and Live Activities."
+          title={gt("Publish agent activity")}
+          description={gt(
+            "Send activity from this environment to your mobile clients for push notifications and Live Activities.",
+          )}
           checked={publishAgentActivity}
           disabled={disabled}
           onCheckedChange={onPublishAgentActivityChange}
         />
+        {requireDeviceApproval !== null ? (
+          <OnboardingToggleRow
+            title={gt("Require approval for new devices")}
+            description={gt(
+              "Devices that sign in to your T3 Connect account wait until someone already connected here approves them.",
+            )}
+            checked={requireDeviceApproval}
+            disabled={disabled || requireDeviceApprovalLocked}
+            onCheckedChange={onRequireDeviceApprovalChange}
+          />
+        ) : null}
       </div>
       {operationError ? <p className="text-xs text-destructive">{operationError}</p> : null}
       {tunnelLimit !== null ? (
@@ -416,8 +468,10 @@ function DevicesStep() {
         showSavedEnvironments
         empty={
           <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-            No other environments are published to your account yet. Publish one from another device
-            and it will show up here.
+            <T>
+              No other environments are published to your account yet. Publish one from another
+              device and it will show up here.
+            </T>
           </p>
         }
       />

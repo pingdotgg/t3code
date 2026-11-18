@@ -4,6 +4,16 @@ import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
+private val REVIEW_DIFF_EVENTS = arrayOf(
+  "onDebug",
+  "onVisibleFileChange",
+  "onToggleFile",
+  "onToggleViewedFile",
+  "onPressLine",
+  "onToggleComment",
+  "onPressNotice",
+)
+
 class T3ReviewDiffModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("T3ReviewDiffSurface")
@@ -54,14 +64,7 @@ class T3ReviewDiffModule : Module() {
         view.setInitialFileId(fileId)
       }
 
-      Events(
-        "onDebug",
-        "onVisibleFileChange",
-        "onToggleFile",
-        "onToggleViewedFile",
-        "onPressLine",
-        "onToggleComment",
-      )
+      Events(REVIEW_DIFF_EVENTS)
 
       AsyncFunction("scrollToFile") { view: T3ReviewDiffView, fileId: String, animated: Boolean ->
         view.scrollToFile(fileId, animated)
@@ -69,7 +72,8 @@ class T3ReviewDiffModule : Module() {
       AsyncFunction("scrollToTop") { view: T3ReviewDiffView, animated: Boolean ->
         view.scrollToTop(animated)
       }
-      AsyncFunction("setRowsJson") { view: T3ReviewDiffView, rowsJson: String ->
+      AsyncFunction("setRowsJson") { view: T3ReviewDiffView, rowsJson: String, resetKey: String ->
+        view.setContentResetKey(resetKey)
         view.setRowsJson(rowsJson)
       }
       AsyncFunction("setTokensJson") { view: T3ReviewDiffView, tokensJson: String ->

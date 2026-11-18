@@ -1,14 +1,18 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import * as DateTime from "effect/DateTime";
+import { msg } from "gt-react";
 
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
 import { readHostedPairingRequest } from "../../hostedPairing";
+import { m, type MessageResolver } from "../../i18n/messages";
 import {
   type ServerClientSessionRecord,
   type ServerPairingLinkRecord,
 } from "~/environments/primary";
 import {
   type AdvertisedEndpoint,
+  type AuthClientMetadata,
   type AuthClientSession,
   type AuthGrantScope,
   type AuthPairingLink,
@@ -19,6 +23,9 @@ import {
   type DesktopSshEnvironmentTarget,
   type DesktopUpdateState,
   type DesktopWslState,
+  type EnvironmentId,
+  type ServerAuthPolicy,
+  type ServerDirectEndpoint,
 } from "@t3tools/contracts";
 import {
   getDesktopUpdateDownloadedVersion,
@@ -61,10 +68,11 @@ export function isQrShareableEndpoint(endpoint: AdvertisedEndpoint): boolean {
  * means unchecked. */
 export function missingTailscaleEndpointDescription(
   state: Pick<DesktopServerExposureState, "mode" | "tailscaleServeEnabled"> | null,
+  resolve: MessageResolver = m,
 ): string {
   return state && state.mode !== "network-accessible" && !state.tailscaleServeEnabled
-    ? "Turn on Network access to detect Tailscale."
-    : "Start Tailscale to set up HTTPS access through MagicDNS.";
+    ? resolve(msg("Turn on Network access to detect Tailscale."))
+    : resolve(msg("Start Tailscale to set up HTTPS access through MagicDNS."));
 }
 
 export function resolveTailscaleServeBaseUrl(
@@ -95,12 +103,15 @@ export function isWslSettingsRowVisible(input: {
  * Once client/server versions match, this passive Version label follows the sidebar update action,
  * including retryable failures. Rechecks retain downloaded-update labels; `state` is null outside desktop.
  */
-export function resolveLocalVersionStatusLabel(state: DesktopUpdateState | null): string {
-  if (!state) return "Up to date";
+export function resolveLocalVersionStatusLabel(
+  state: DesktopUpdateState | null,
+  resolve: MessageResolver = m,
+): string {
+  if (!state) return resolve(msg("Up to date"));
   if (state.status === "downloading") {
     return state.availableVersion
-      ? `Downloading update ${state.availableVersion}`
-      : "Downloading update";
+      ? resolve(msg("Downloading update {version}", { version: state.availableVersion }))
+      : resolve(msg("Downloading update"));
   }
   const action = resolveDesktopUpdateButtonAction(state);
   if (
@@ -109,14 +120,16 @@ export function resolveLocalVersionStatusLabel(state: DesktopUpdateState | null)
     (state.status === "checking" && state.downloadedVersion !== null)
   ) {
     const version = getDesktopUpdateDownloadedVersion(state);
-    return version ? `Update ${version} downloaded` : "Update downloaded";
+    return version
+      ? resolve(msg("Update {version} downloaded", { version }))
+      : resolve(msg("Update downloaded"));
   }
   if (action === "download") {
     return state.availableVersion
-      ? `Update ${state.availableVersion} available`
-      : "Update available";
+      ? resolve(msg("Update {version} available", { version: state.availableVersion }))
+      : resolve(msg("Update available"));
   }
-  return "Up to date";
+  return resolve(msg("Up to date"));
 }
 
 export type QrEndpointOption = {
@@ -171,14 +184,17 @@ export function formatAccessTimestamp(value: string): string {
   return accessTimestampFormatter.format(parsed);
 }
 
-export function parseManualDesktopSshTarget(input: {
-  readonly host: string;
-  readonly username: string;
-  readonly port: string;
-}): DesktopSshEnvironmentTarget {
+export function parseManualDesktopSshTarget(
+  input: {
+    readonly host: string;
+    readonly username: string;
+    readonly port: string;
+  },
+  resolve: MessageResolver = m,
+): DesktopSshEnvironmentTarget {
   const rawHost = input.host.trim();
   if (rawHost.length === 0) {
-    throw new Error("SSH host or alias is required.");
+    throw new Error(resolve(msg("SSH host or alias is required.")));
   }
 
   let hostname = rawHost;
@@ -210,15 +226,15 @@ export function parseManualDesktopSshTarget(input: {
 
   const rawPort = input.port.trim();
   if (rawPort.length > 0) {
-    port = Number.parseInt(rawPort, 10);
+    port = /^\d+$/u.test(rawPort) ? Number.parseInt(rawPort, 10) : Number.NaN;
   }
 
   if (hostname.length === 0) {
-    throw new Error("SSH host or alias is required.");
+    throw new Error(resolve(msg("SSH host or alias is required.")));
   }
 
   if (port !== null && (!Number.isInteger(port) || port <= 0 || port > 65_535)) {
-    throw new Error("SSH port must be between 1 and 65535.");
+    throw new Error(resolve(msg("SSH port must be between 1 and 65535.")));
   }
 
   return {
@@ -260,10 +276,13 @@ export function parsePairingUrlFields(
   }
 }
 
-export function parseRemotePairingFields(input: {
-  readonly host: string;
-  readonly pairingCode: string;
-}): {
+export function parseRemotePairingFields(
+  input: {
+    readonly host: string;
+    readonly pairingCode: string;
+  },
+  resolve: MessageResolver = m,
+): {
   readonly host: string;
   readonly pairingCode: string;
 } {
@@ -273,17 +292,21 @@ export function parseRemotePairingFields(input: {
   const host = input.host.trim();
   const pairingCode = input.pairingCode.trim();
   if (!host) {
-    throw new Error("Enter a backend host.");
+    throw new Error(resolve(msg("Enter a backend host.")));
   }
   if (!pairingCode) {
-    throw new Error("Enter a pairing code.");
+    throw new Error(resolve(msg("Enter a pairing code.")));
   }
   return { host, pairingCode };
 }
 
-export function formatDesktopSshConnectionError(error: unknown): string {
-  const fallback = "Failed to connect SSH host.";
-  const rawMessage = error instanceof Error ? error.message : fallback;
+export function formatDesktopSshConnectionError(
+  error: unknown,
+  resolve: MessageResolver = m,
+): string {
+  const fallback = resolve(msg("Failed to connect SSH host."));
+  const rawMessage =
+    error instanceof Error ? (thrownErrorMessage(error, m) ?? error.message) : fallback;
   const withoutIpcPrefix = rawMessage.replace(
     /^Error invoking remote method 'desktop:ensure-ssh-environment':\s*/u,
     "",
@@ -301,11 +324,20 @@ export function sortDesktopPairingLinks(links: ReadonlyArray<ServerPairingLinkRe
 export function summarizeAuthorizedClients(
   sessions: ReadonlyArray<ServerClientSessionRecord>,
   links: ReadonlyArray<ServerPairingLinkRecord>,
+  resolve: MessageResolver = m,
 ): string {
   const parts = [
-    `${sessions.length} ${sessions.length === 1 ? "client" : "clients"}`,
+    resolve(
+      msg("{count, plural, one {{count} client} other {{count} clients}}", {
+        count: sessions.length,
+      }),
+    ),
     links.length > 0
-      ? `${links.length} ${links.length === 1 ? "pairing link" : "pairing links"}`
+      ? resolve(
+          msg("{count, plural, one {{count} pairing link} other {{count} pairing links}}", {
+            count: links.length,
+          }),
+        )
       : null,
   ];
   return parts.filter((part): part is string => part !== null).join(" · ");
@@ -368,6 +400,15 @@ export function selectPairingEndpoint(
   );
 }
 
+/** A loopback server advertises a direct endpoint only once its Tailscale Serve URL answers. */
+export function isServerNetworkAccessible(input: {
+  readonly authPolicy: ServerAuthPolicy | null;
+  readonly directEndpoints: ReadonlyArray<ServerDirectEndpoint> | undefined;
+}): boolean {
+  if (input.authPolicy === "remote-reachable") return true;
+  return input.authPolicy === "loopback-browser" && (input.directEndpoints?.length ?? 0) > 0;
+}
+
 export function isTailscaleHttpsEndpoint(endpoint: AdvertisedEndpoint): boolean {
   return endpoint.id.startsWith("tailscale-magicdns:");
 }
@@ -421,18 +462,68 @@ export function isHostedAppPairingUrl(value: string): boolean {
   }
 }
 
-export function endpointShareHint(endpoint: AdvertisedEndpoint, url: string): string {
+export function endpointShareHint(
+  endpoint: AdvertisedEndpoint,
+  url: string,
+  resolve: MessageResolver = m,
+): string {
   if (isHostedAppPairingUrl(url)) {
-    return "Opens the hosted app, no install needed";
+    return resolve(msg("Opens the hosted app, no install needed"));
   }
   switch (endpoint.reachability) {
     case "lan":
-      return "Devices on the same network";
+      return resolve(msg("Devices on the same network"));
     case "private-network":
-      return "Devices on your private network";
+      return resolve(msg("Devices on your private network"));
     case "public":
-      return "Reachable from anywhere";
+      return resolve(msg("Reachable from anywhere"));
     case "loopback":
-      return "Clients on this machine";
+      return resolve(msg("Clients on this machine"));
   }
+}
+
+/** An explicit choice while it is listed, else the primary, else a connected environment. */
+export function resolveAccessEnvironmentId(input: {
+  readonly primaryEnvironmentId: EnvironmentId | null;
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly connected: boolean;
+  }>;
+  readonly selected: EnvironmentId | null;
+}): EnvironmentId | null {
+  const isListed = (environmentId: EnvironmentId | null) =>
+    input.environments.some((environment) => environment.environmentId === environmentId);
+  if (isListed(input.selected)) return input.selected;
+  if (isListed(input.primaryEnvironmentId)) return input.primaryEnvironmentId;
+  return (
+    (input.environments.find((environment) => environment.connected) ?? input.environments[0])
+      ?.environmentId ?? null
+  );
+}
+
+/** A short name for a T3 Connect device: its label, or what it runs on. */
+export function connectDeviceName(
+  {
+    client,
+  }: {
+    readonly client?: AuthClientMetadata | undefined;
+  },
+  resolve: MessageResolver = m,
+): string {
+  return client?.label ?? client?.os ?? client?.browser ?? resolve(msg("this device"));
+}
+
+/** How a T3 Connect device describes itself. It can say anything, so the code is what to trust. */
+export function describeConnectDeviceClient(
+  {
+    client,
+  }: {
+    readonly client?: AuthClientMetadata | undefined;
+  },
+  resolve: MessageResolver = m,
+): string {
+  const bits = [client?.label, client?.os, client?.browser, client?.ipAddress].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+  return bits.length > 0 ? [...new Set(bits)].join(" · ") : resolve(msg("Unknown device"));
 }

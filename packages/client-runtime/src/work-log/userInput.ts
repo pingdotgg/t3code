@@ -1,4 +1,5 @@
 import { type UserInputAttachmentAnswerPayload } from "@t3tools/contracts";
+import { composerContextProviderTextForDisplay } from "@t3tools/shared/composerContextReferences";
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -7,7 +8,8 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 export function getQuestionAnswerText(value: unknown): string {
-  if (typeof value === "string") return value;
+  // Answers holding context chips are stored in provider form.
+  if (typeof value === "string") return composerContextProviderTextForDisplay(value);
   if (Array.isArray(value)) return value.map(getQuestionAnswerText).filter(Boolean).join(", ");
   const nested = record(value);
   return nested ? getQuestionAnswerText(nested.answers) : "";

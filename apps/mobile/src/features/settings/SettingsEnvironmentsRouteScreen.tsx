@@ -1,15 +1,14 @@
+import { useGT } from "gt-react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
 import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useRef, useState } from "react";
-import { Platform, RefreshControl } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SettingsScreen } from "./components/SettingsScreen";
-import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
-import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { LocalEnvironmentList } from "../connection/LocalEnvironmentList";
 import { PullRequestRoutingSettings } from "../connection/PullRequestRoutingSettings";
@@ -28,6 +27,7 @@ import {
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 export function SettingsEnvironmentsRouteScreen() {
+  const gt = useGT();
   const {
     connectedEnvironments,
     onReconnectEnvironment,
@@ -93,35 +93,19 @@ export function SettingsEnvironmentsRouteScreen() {
 
   return (
     <SettingsScreen
-      title="Environments"
-      trailing={
-        Platform.OS === "android" && relaySession ? (
-          <AndroidAnchoredMenu
-            title="Environment options"
-            actions={[
-              {
-                id: "refresh",
-                title: "Refresh cloud environments",
-                attributes: { disabled: isRefreshingCloud },
-              },
-            ]}
-            onPressAction={({ nativeEvent }) => {
-              if (nativeEvent.event === "refresh") void refreshCloudEnvironments();
-            }}
-          >
-            {(open) => (
-              <AndroidHeaderIconButton
-                accessibilityLabel="Environment options"
-                icon="ellipsis"
-                onPress={open}
-              />
-            )}
-          </AndroidAnchoredMenu>
-        ) : undefined
+      title={gt("Environments")}
+      refresh={
+        relaySession
+          ? {
+              accessibilityLabel: gt("Refresh cloud environments"),
+              disabled: isRefreshingCloud,
+              onPress: () => void refreshCloudEnvironments(),
+            }
+          : undefined
       }
       actions={[
         {
-          accessibilityLabel: "Add environment",
+          accessibilityLabel: gt("Add environment"),
           icon: "plus",
           tintColor: headerIconColor,
           onPress: () => navigation.navigate("SettingsEnvironmentNew"),
