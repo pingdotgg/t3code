@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 /**
  * A queued-message edit ends on save, cancel, or when its run leaves the queue.
  * The store owns one watcher per edit, so "run left the queue" is handled exactly
@@ -66,10 +68,15 @@ export function resolveQueuedEditExit(input: {
  * can. An open question takes the composer over for its answer, so an edit
  * begun then would happen out of sight and could be sent before it is seen.
  */
-export function queuedRunEditBlockedReason(input: {
-  readonly openQuestionCount: number;
-}): string | null {
-  return input.openQuestionCount > 0 ? "Answer the question to edit queued messages" : null;
+export function queuedRunEditBlockedReason(
+  input: {
+    readonly openQuestionCount: number;
+  },
+  resolve: MFunctionType = mFallback,
+): string | null {
+  return input.openQuestionCount > 0
+    ? resolve(msg("Answer the question to edit queued messages"))
+    : null;
 }
 
 interface ExitWatch<E> {

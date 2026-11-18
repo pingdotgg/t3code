@@ -238,7 +238,6 @@ describe("LinearIssueTracker", () => {
           ...target,
           state: "open",
           involvement: "all",
-          viewer: "julius",
           sort: "updated",
           limit: 50,
         }),
