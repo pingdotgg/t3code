@@ -635,11 +635,14 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                   m(msg("Allow", { $context: "button, grants a site permission" })),
                   m(msg("Block", { $context: "button, denies a site permission" })),
                 ],
-                message: permission === "geolocation"
-                  ? m(msg("{origin} wants to know your location"), { origin: truncateForPrompt(origin) })
-                  : m(msg("{origin} wants to see text and images copied to the clipboard"), {
-                      origin: truncateForPrompt(origin),
-                    }),
+                message:
+                  permission === "geolocation"
+                    ? m(msg("{origin} wants to know your location"), {
+                        origin: truncateForPrompt(origin),
+                      })
+                    : m(msg("{origin} wants to see text and images copied to the clipboard"), {
+                        origin: truncateForPrompt(origin),
+                      }),
               },
               (answer) => {
                 if (answer !== undefined) decisions.set(origin, answer);
