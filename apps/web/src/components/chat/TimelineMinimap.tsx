@@ -1,5 +1,6 @@
 import { resolveTimelineMinimapPreview, type TimelineMinimapItem } from "./timelineMinimapItems";
 import { useRef, useState, type MouseEvent } from "react";
+import { createPortal } from "react-dom";
 import { T, useGT } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -12,6 +13,7 @@ import {
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
+import { observeResize } from "~/lib/observeResize";
 
 // A release outside the window can skip `mouseup`, so the next button-free
 // `mousemove` also counts.
@@ -31,30 +33,36 @@ function onMouseButtonsReleased(onRelease: () => void): () => void {
 }
 
 export function TimelineMinimap({
+  scrollNode,
   hasPersistentGutter,
   hitStripWidth,
   currentIndex,
   atEnd,
   items,
   stripMap,
-  onWheel,
   onSelect,
 }: {
+  scrollNode: HTMLElement;
   hasPersistentGutter: boolean;
   hitStripWidth: number;
   currentIndex: number | null;
   atEnd: boolean;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
-  onWheel: (event: WheelEvent) => void;
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const gt = useGT();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const wheelTargetRef = (node: HTMLDivElement | null) => {
-    if (!node) return;
-    node.addEventListener("wheel", onWheel, { passive: false });
-    return () => node.removeEventListener("wheel", onWheel);
+  const [frame, setFrame] = useState<{ left: number; height: number } | null>(null);
+  const measureFrame = (anchor: HTMLDivElement | null) => {
+    if (!anchor) return;
+    return observeResize([scrollNode, anchor], () => {
+      const left = scrollNode.getBoundingClientRect().left - anchor.getBoundingClientRect().left;
+      const height = scrollNode.clientHeight;
+      setFrame((current) =>
+        current?.left === left && current.height === height ? current : { left, height },
+      );
+    });
   };
 
   const pressedOnStripRef = useRef(false);
@@ -104,17 +112,17 @@ export function TimelineMinimap({
     return null;
   }
 
-  return (
+  const minimap = (
     <div
       className={cn(
-        "group/minimap pointer-events-none absolute inset-y-0 left-0 z-40 w-18",
+        "group/minimap pointer-events-none absolute bottom-0 w-18",
         hasPersistentGutter
           ? "opacity-100"
           : "hidden opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 [@media(pointer:fine)]:block",
       )}
       data-testid="timeline-minimap"
       data-persistent-gutter={hasPersistentGutter ? "true" : "false"}
-      ref={wheelTargetRef}
+      style={frame ?? undefined}
     >
       <div className="relative h-full w-full select-none">
         <div
@@ -226,31 +234,6 @@ export function TimelineMinimap({
                 />
               );
             })}
-            {activeItem ? (
-              // Display-only: it overlaps the message column, and the strip keeps tracking beneath it.
-              <span
-                className="pointer-events-none absolute left-8 w-80 -translate-y-1/2"
-                style={{ top: `${activeTopPercent}%` }}
-              >
-                <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
-                  <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
-                    {activeItem.userText ?? <T>User message</T>}
-                  </span>
-                  {activeItem.assistantText ? (
-                    <span
-                      className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
-                      style={{
-                        display: "-webkit-box",
-                        WebkitBoxOrient: "vertical",
-                        WebkitLineClamp: 3,
-                      }}
-                    >
-                      {activeItem.assistantText}
-                    </span>
-                  ) : null}
-                </span>
-              </span>
-            ) : null}
           </button>
           <TimelineMinimapNavigationButton
             direction="next"
@@ -263,6 +246,48 @@ export function TimelineMinimap({
         </div>
       </div>
     </div>
+  );
+  return (
+    <>
+      {createPortal(
+        <div ref={measureFrame} className="pointer-events-none sticky bottom-0 z-40 h-0">
+          {minimap}
+        </div>,
+        scrollNode,
+      )}
+      {activeItem ? (
+        // Display-only: it overlaps the message column, and the strip keeps tracking beneath it.
+        <div className="pointer-events-none absolute inset-y-0 left-3 z-40">
+          <div
+            className="absolute top-1/2 -translate-y-1/2"
+            style={{ height: resolveTimelineMinimapHeightStyle(items.length) }}
+          >
+            <span
+              className="pointer-events-none absolute left-8 w-80 -translate-y-1/2"
+              style={{ top: `${activeTopPercent}%` }}
+            >
+              <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
+                <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
+                  {activeItem.userText ?? <T>User message</T>}
+                </span>
+                {activeItem.assistantText ? (
+                  <span
+                    className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
+                    style={{
+                      display: "-webkit-box",
+                      WebkitBoxOrient: "vertical",
+                      WebkitLineClamp: 3,
+                    }}
+                  >
+                    {activeItem.assistantText}
+                  </span>
+                ) : null}
+              </span>
+            </span>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
