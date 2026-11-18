@@ -1,6 +1,7 @@
 import { getDocument, GlobalWorkerOptions, PDFDataRangeTransport, PDFWorker } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import fallbackUrl from "pdfjs-dist/wasm/openjpeg_nowasm_fallback.js?url";
+import { PreviewError } from "./previewFailure";
 import { readBoundedBody } from "./readBoundedDocument";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
@@ -74,7 +75,7 @@ export async function openPdfRanges(
 ) {
   const first = await readRange(src(), 0, RANGE_CHUNK_BYTES, signal).catch(() => null);
   if (!first?.revision) return null;
-  if (first.size > limit) throw new Error("This file is too large to preview.");
+  if (first.size > limit) throw new PreviewError({ code: "document-too-large" });
   const transport = new PDFDataRangeTransport(first.size, first.bytes);
   transport.requestDataRange = (begin: number, end: number) => {
     void readRange(src(), begin, end, signal)
