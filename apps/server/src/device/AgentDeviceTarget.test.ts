@@ -162,6 +162,10 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           launch(bound, [
             "test",
             "sample.ad",
+            "--env",
+            "APP_ID=a",
+            "-e",
+            "B=b",
             "--reporter",
             "./reporter.mjs",
             "--reporter=junit:out/j.xml",
@@ -172,6 +176,10 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       ).toEqual([
         "test",
         path.resolve("sample.ad"),
+        "--env",
+        "APP_ID=a",
+        "-e",
+        "B=b",
         "--reporter",
         NodeURL.pathToFileURL(path.resolve("reporter.mjs")).href,
         `--reporter=junit:${path.resolve("out/j.xml")}`,
