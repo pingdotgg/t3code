@@ -7,6 +7,8 @@ declare module "vite-plus/test/browser" {
   interface BrowserCommands {
     /** Defined in vite.config.ts. Moves Playwright's mouse off the page. */
     resetPointer: () => Promise<void>;
+    /** Defined in vite.config.ts. Puts a PNG on the system clipboard. */
+    writeClipboardImage: (pngBase64: string) => Promise<void>;
   }
 }
 

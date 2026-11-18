@@ -56,7 +56,7 @@ import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { type FolderDropTarget, folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
-import { splitTransferredFiles } from "./workspaceFileDrop";
+import { splitTransferredFiles, type TransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -132,7 +132,7 @@ import {
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   isPreviewableComposerVideo,
-  shouldHandleComposerAttachmentPaste,
+  claimsAttachmentPaste,
 } from "./composerAttachmentFiles";
 import {
   releaseAttachmentUpload,
@@ -289,6 +289,7 @@ import {
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { usePromptSuggestion } from "./usePromptSuggestion";
+import { useSendAfterPreparingImages } from "./useSendAfterPreparingImages";
 import { useFreshSessionArmed } from "./freshSessionArms";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -308,6 +309,12 @@ export interface ChatComposerHandle {
     options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
   ) => boolean;
   pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
+  /** Attaches a paste's images, files and folders; false leaves the paste to text handling. */
+  pasteAttachmentsAtEnd: (
+    clipboardData: DataTransfer,
+    transferred: TransferredFiles,
+    options?: { bypassAutoAttachment?: boolean },
+  ) => boolean;
   citeAssistantText: (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -2167,6 +2174,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return composerSendState.hasSendableContent;
   };
 
+  const sendAfterPreparingImages = useSendAfterPreparingImages(attachmentTargetKey);
   const submitComposerRef = useRef<
     (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
   >(() => {});
@@ -2189,11 +2197,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // draft instead.
     if (activeThreadId && countPreparingComposerImages(attachmentTargetKey) > 0) {
       event?.preventDefault();
-      toastManager.add({
-        type: "info",
-        title: "Still compressing a pasted image.",
-        description: "Send again once its thumbnail appears.",
-      });
+      sendAfterPreparingImages(() => submitComposerRef.current(dispatchMode, submissionIntent));
       return false;
     }
     if (pendingDraftWork.has(attachmentTargetKey)) {
@@ -2807,30 +2811,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
 
+  const hasPastedContext = (clipboardData: DataTransfer) =>
+    !isLiteralPendingAnswer && (readPastedComposerContext(clipboardData)?.records.length ?? 0) > 0;
+  // Takes the files already read: a dictation tool may replace the clipboard after the first read.
+  const pasteComposerAttachments = (
+    clipboardData: DataTransfer,
+    transferred: TransferredFiles,
+    bypassAutoAttachment: boolean,
+  ): boolean => {
+    const attachFiles = Boolean(activeThreadId) && !hasPastedContext(clipboardData);
+    if (!claimsAttachmentPaste(clipboardData, transferred, attachFiles)) return false;
+    const { files, folders } = transferred;
+    if (folders.length > 0) addComposerFoldersStable(folders);
+    if (files.length > 0) {
+      void addComposerAttachments(files, { skipImageInlineChip: bypassAutoAttachment });
+    }
+    return true;
+  };
+  const pasteComposerAttachmentsStable = useStableCallback(pasteComposerAttachments);
+
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
-    const { files, folders } = splitTransferredFiles(event.clipboardData);
-    const plainText = event.clipboardData.getData("text/plain");
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
-    const pastedContext =
-      !isLiteralPendingAnswer &&
-      (readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0;
-    if (
-      folders.length > 0 ||
-      (!pastedContext &&
-        activeThreadId &&
-        files.length > 0 &&
-        shouldHandleComposerAttachmentPaste({ files, plainText }))
-    ) {
+    const transferred = splitTransferredFiles(event.clipboardData);
+    if (pasteComposerAttachments(event.clipboardData, transferred, bypassAutoAttachment)) {
       event.preventDefault();
       event.stopPropagation();
-      if (folders.length > 0) addComposerFoldersStable(folders);
-      if (files.length > 0) {
-        void addComposerAttachments(files, { skipImageInlineChip: bypassAutoAttachment });
-      }
       return;
     }
+    const plainText = event.clipboardData.getData("text/plain");
 
-    if (pastedContext) return;
+    if (hasPastedContext(event.clipboardData)) return;
     if (!foldPastedText(plainText, bypassAutoAttachment)) {
       return;
     }
@@ -3107,6 +3117,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusComposer();
         return true;
       },
+      pasteAttachmentsAtEnd: (clipboardData, transferred, options) => {
+        const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
+        const bypassAutoAttachment = options?.bypassAutoAttachment === true || shortcutArmed;
+        if (!pasteComposerAttachmentsStable(clipboardData, transferred, bypassAutoAttachment))
+          return false;
+        // Enter right after the paste must reach the composer, not the page.
+        focusComposer();
+        return true;
+      },
       citeAssistantText: (citation, sourceAnchor) =>
         insertComposerTextStable(
           formatAssistantCitationForComposer(citation, citation.comment),
@@ -3312,6 +3331,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerDraftReplyTo,
       insertComposerTextStable,
       insertComposerTextAtEndStable,
+      pasteComposerAttachmentsStable,
       promptRef,
       composerImagesRef,
       composerFilesRef,

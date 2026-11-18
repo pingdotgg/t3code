@@ -1,5 +1,6 @@
 import { pasteTextToFocusComposer, shouldRedirectInputToComposer } from "./composerFocusRedirect";
 import { readPastedComposerContext } from "../composerInlineTokenPaste";
+import { splitTransferredFiles } from "./workspaceFileDrop";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { useEffect, useRef } from "react";
 import { isMacPlatform } from "../../lib/utils";
@@ -32,14 +33,34 @@ export function usePasteToFocusComposer(
       if (isCommandPaletteOpen() || isInSideChatPane(event.target)) return;
       if (getTerminalFocusOwner() !== null) return;
       if (composerRef.current?.isModelPickerOpen()) return;
-      const text = pasteTextToFocusComposer(event);
-      const clipboardData = event.clipboardData;
-      if (text === null || clipboardData === null) return;
       const bypassAutoAttachment = Date.now() <= pasteAsTextShortcutUntilRef.current;
+      // Images and files pasted outside the composer would be dropped; `types` reads no data.
+      if (
+        event.clipboardData?.types.includes("Files") === true &&
+        shouldRedirectInputToComposer(event) &&
+        composerRef.current?.pasteAttachmentsAtEnd(
+          event.clipboardData,
+          splitTransferredFiles(event.clipboardData),
+          { bypassAutoAttachment },
+        )
+      ) {
+        pasteAsTextShortcutUntilRef.current = 0;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const clipboardData = event.clipboardData;
+      if (clipboardData === null) return;
+      const hasContext = (readPastedComposerContext(clipboardData)?.records.length ?? 0) > 0;
+      // A copied chip carries its image as a file; the text import restores the chip instead.
+      const text =
+        hasContext && shouldRedirectInputToComposer(event)
+          ? clipboardData.getData("text/plain") || null
+          : pasteTextToFocusComposer(event);
+      if (text === null) return;
       pasteAsTextShortcutUntilRef.current = 0;
       if (
-        ((readPastedComposerContext(clipboardData)?.records.length ?? 0) === 0 &&
-          composerRef.current?.pasteTextAtEnd(text, { bypassAutoAttachment })) ||
+        (!hasContext && composerRef.current?.pasteTextAtEnd(text, { bypassAutoAttachment })) ||
         composerRef.current?.insertTextAtEnd(text, { clipboardData })
       ) {
         event.preventDefault();
