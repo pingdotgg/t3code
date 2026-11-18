@@ -581,6 +581,14 @@ function useSidebarThreads(input: {
     ...visibleSnoozedThreads,
     ...(settledShelfFixed ? renderedSettledThreads : []),
   ];
+  const searchableThreads = [
+    ...pinnedThreads,
+    ...activeThreads,
+    ...inputThreads,
+    ...workingThreads,
+    ...snoozedThreads,
+    ...settledThreads,
+  ];
   const sectionByThreadKey = new Map<string, SidebarSection>();
   for (const [list, section] of [
     [pinnedThreads, "pinned"],
@@ -597,14 +605,7 @@ function useSidebarThreads(input: {
     threads,
     workingShelfEnabled,
     settledShelfFixed,
-    searchableThreads: [
-      ...pinnedThreads,
-      ...activeThreads,
-      ...inputThreads,
-      ...workingThreads,
-      ...snoozedThreads,
-      ...settledThreads,
-    ],
+    searchableThreads,
     settledVisibleCount,
     settledCount,
     olderSettledShelf,
@@ -632,7 +633,9 @@ function useSidebarThreads(input: {
     visibleInputThreads,
     visibleWorkingThreads,
     orderedThreadKeys: orderedThreads.map(threadShellKey),
-    threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
+    threadByKey: new Map(
+      searchableThreads.map((thread) => [threadShellKey(thread), thread] as const),
+    ),
     settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
     snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
     sectionByThreadKey,

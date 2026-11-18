@@ -26,6 +26,7 @@ import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
+import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
@@ -222,6 +223,48 @@ describe("sidebar status shelf collapse", () => {
       await userEvent.keyboard("{ArrowRight}");
       await expect.element(row).toBeInTheDocument();
       await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+
+      const adjacentRef = {
+        environmentId: adjacentThread.environmentId,
+        threadId: adjacentThread.id,
+      };
+      vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: adjacentRef });
+      vi.mocked(useHandleNewThread).mockReturnValue({
+        activeDraftThread: null,
+        activeThread: null,
+        defaultProjectRef: {
+          environmentId: activeProject.environmentId,
+          projectId: activeProject.id,
+        },
+        defaultProjectFallbackReady: true,
+        handleNewThread: vi.fn().mockResolvedValue(null),
+        routeDraftId: null,
+        routeThreadRef: adjacentRef,
+      });
+      await screen.rerender(
+        <SidebarProvider>
+          <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        </SidebarProvider>,
+      );
+      using _selection = {
+        [Symbol.dispose]: () => useThreadSelectionStore.getState().clearSelection(),
+      };
+      const show = vi.fn().mockResolvedValue(null);
+      vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+      const adjacentRow = screen.getByText(adjacentThread.title, { exact: true });
+      const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+      await userEvent.keyboard(`{${mod}>}`);
+      await userEvent.click(row);
+      await userEvent.click(adjacentRow);
+      await userEvent.keyboard(`{/${mod}}`);
+      await userEvent.click(toggle);
+      await expect.element(row).not.toBeInTheDocument();
+      expect(useThreadSelectionStore.getState().selectedThreadKeys.size).toBe(2);
+      await userEvent.click(adjacentRow, { button: "right" });
+      await vi.waitFor(() => expect(show).toHaveBeenCalled());
+      expect(show.mock.lastCall?.[0]).toContainEqual(
+        expect.objectContaining({ id: "settle", label: "Settle (2)" }),
+      );
     },
   );
 });
