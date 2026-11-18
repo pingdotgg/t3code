@@ -939,6 +939,30 @@ describe("thread outbox recovery rollback", () => {
     }),
   );
 
+  it.effect("keeps the draft unchanged when a standalone goal command is rejected", () =>
+    Effect.gen(function* () {
+      const message: QueuedThreadMessage = {
+        ...queuedMessage({ messageId: "goal-rejected", text: "/goal clear" }),
+        restoreToDraft: false,
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+        runtimeMode: "full-access",
+      };
+      const threadKey = `${message.environmentId}:${message.threadId}`;
+      appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+        [threadKey]: { text: "Keep my draft", attachments: [], runtimeMode: "approval-required" },
+      });
+      const draft = composerDrafts.getComposerDraftSnapshot(threadKey);
+      yield* Effect.promise(() => harness.manager.enqueue(message));
+      expect(yield* restoreRejectedQueuedMessage(message, "rejected")).toBe("restored");
+      expect(composerDrafts.getComposerDraftSnapshot(threadKey)).toEqual(draft);
+      expect(remainingMessages()).toEqual([]);
+      expect(appAtomRegistry.get(threadComposerErrorsAtom)[threadKey]).toEqual({
+        message: "rejected",
+        messageId: message.messageId,
+      });
+    }),
+  );
+
   it.effect("does not record a creation outcome for a rejected follow-up message", () =>
     Effect.gen(function* () {
       const message = queuedMessage({ messageId: "message-followup-restore", text: "follow up" });

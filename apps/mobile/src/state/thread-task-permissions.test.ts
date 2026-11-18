@@ -489,6 +489,7 @@ describe("mobile task permissions", () => {
         environmentId: "secondary",
         threadId: "thread",
         text: "/goal clear",
+        restoreToDraft: false,
         attachments: [],
         modelSelection: state.thread.modelSelection,
       }),

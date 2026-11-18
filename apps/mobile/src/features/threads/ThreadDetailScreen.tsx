@@ -721,7 +721,10 @@ function ThreadDetailBody(
     try {
       await props.onSendCommand(command);
     } catch (error) {
-      Dialog.alert("Could not update goal", error instanceof Error ? error.message : "Try again.");
+      Dialog.alert(
+        gt("Could not update goal"),
+        error instanceof Error ? error.message : gt("Try again."),
+      );
     }
     setGoalCommandPending(false);
   };
@@ -895,8 +898,8 @@ function ThreadDetailBody(
         label: goal.title,
         accessibilityLabel: `${goal.title}: ${goal.objective}`,
         actions: [
-          ...(canResumeGoal ? [goalAction("Resume", "Resume goal", "/goal resume")] : []),
-          goalAction("Clear", "Clear goal", "/goal clear"),
+          ...(canResumeGoal ? [goalAction(gt("Resume"), gt("Resume goal"), "/goal resume")] : []),
+          goalAction(gt("Clear"), gt("Clear goal"), "/goal clear"),
         ],
       };
     }
