@@ -1,7 +1,9 @@
+import { useGT } from "gt-react-native";
 import { type RefObject, use, useRef, useState } from "react";
 import { Keyboard, type TextInputInstance, View } from "react-native";
 import { useHardwareBack } from "../../lib/backHandler";
 import { useToolbarLayout } from "./useToolbarLayout";
+import { BottomSheetContext } from "./BottomSheetContext";
 import { RoutedFormSheetContext } from "./RoutedFormSheetContext";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useSidebarToggle } from "../../features/layout/useSidebarToggle";
@@ -75,6 +77,7 @@ function SearchableAppBar(props: AppBarProps & { readonly search: AppBarSearch }
 }
 
 function AppBarView(props: AppBarProps & { readonly searchState?: SearchState }) {
+  const gt = useGT();
   const { search, searchState } = props;
   const inFormSheet = use(RoutedFormSheetContext);
   const { paddingTop, paddingBottom } = useToolbarLayout(props.sheet || inFormSheet);
@@ -82,12 +85,14 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
   const inWorkspace = useHasWorkspaceAppBar();
   const sidebarToggle = useSidebarToggle();
   const closeInspector = use(InspectorCloseContext);
+  // A bottom sheet owns the pull at its top, so refresh needs a button there.
+  const inBottomSheet = use(BottomSheetContext);
   const inline = search?.mode === "inline";
   const searching = searchState?.searching === true;
   const actions = props.refresh
     ? [
         ...(props.actions ?? []),
-        { ...props.refresh, icon: "arrow.clockwise" as const, overflowOnly: true },
+        { ...props.refresh, icon: "arrow.clockwise" as const, overflowOnly: !inBottomSheet },
       ]
     : props.actions;
   const openSearch = () => searchState?.open();
@@ -99,7 +104,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       <SearchField
         inputRef={searchState.inputRef}
         accessibilityLabel={searchLabel}
-        clearAccessibilityLabel={search.clearAccessibilityLabel ?? "Clear search"}
+        clearAccessibilityLabel={search.clearAccessibilityLabel ?? gt("Clear search")}
         placeholder={
           search.compactToolbar
             ? (search.compactPlaceholder ?? search.placeholder)
@@ -187,7 +192,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       leading={
         (props.onClose ? (
           <AndroidHeaderIconButton
-            accessibilityLabel={props.closeAccessibilityLabel ?? "Close"}
+            accessibilityLabel={props.closeAccessibilityLabel ?? gt("Close")}
             icon="xmark"
             onPress={props.onClose}
           />
@@ -204,7 +209,6 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       }
       embedded={props.sheet}
       hideBottomBorder={props.hideBottomBorder}
-      compact={props.compact}
       actions={
         search && !inline
           ? [
@@ -225,7 +229,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
             {confirmButton}
             {closeInspector ? (
               <AndroidHeaderIconButton
-                accessibilityLabel="Close inspector"
+                accessibilityLabel={gt("Close inspector")}
                 icon="xmark"
                 onPress={closeInspector}
               />
@@ -265,20 +269,20 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
               {inline ? (
                 props.onClose ? (
                   <ScreenHeaderButton
-                    accessibilityLabel={props.closeAccessibilityLabel ?? "Close"}
+                    accessibilityLabel={props.closeAccessibilityLabel ?? gt("Close")}
                     icon="xmark"
                     onPress={props.onClose}
                   />
                 ) : props.onBack ? (
                   <ScreenHeaderButton
-                    accessibilityLabel="Navigate up"
+                    accessibilityLabel={gt("Navigate up")}
                     icon="arrow.left"
                     onPress={props.onBack}
                   />
                 ) : null
               ) : (
                 <ScreenHeaderButton
-                  accessibilityLabel={search.closeAccessibilityLabel ?? "Close search"}
+                  accessibilityLabel={search.closeAccessibilityLabel ?? gt("Close search")}
                   icon="arrow.left"
                   onPress={closeSearch}
                 />
