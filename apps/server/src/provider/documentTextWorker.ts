@@ -559,15 +559,14 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             yield* table(part);
             continue;
           }
-          const speakerNotes = children(part).find((child) => child.name === "notes");
-          yield* paragraphs(
-            speakerNotes
-              ? { ...part, children: part.children.filter((child) => child !== speakerNotes) }
-              : part,
-          );
-          if (speakerNotes?.hasText) {
+          const notes = children(part).find((child) => child.name === "notes");
+          yield* paragraphs({
+            ...part,
+            children: part.children.filter((child) => child !== notes),
+          });
+          if (notes?.hasText) {
             yield "\nNotes:\n";
-            yield* paragraphs(speakerNotes);
+            yield* paragraphs(notes);
           }
         }
       }
