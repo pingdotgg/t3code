@@ -25,6 +25,7 @@ function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState
   return {
     isLoadingConnections: false,
     hasConnections: true,
+    isPausedByFocus: false,
     hasLoadedShellSnapshot: true,
     hasPendingShellSnapshot: false,
     hasSyncingConnectedEnvironment: false,
@@ -44,6 +45,17 @@ const reconnecting = connectingEnvironment("reconnecting", RETAINED_FAILURE);
 
 describe("home empty state", () => {
   it.each([
+    [
+      "explains a Focus pause instead of reporting an offline environment",
+      workspaceState({
+        isPausedByFocus: true,
+        hasReadyEnvironment: false,
+        hasLoadedShellSnapshot: false,
+        connectionState: "available",
+      }),
+      0,
+      { title: "Paused by Focus", loading: false, showsAddEnvironment: false },
+    ],
     [
       "waits while a saved environment retries after a retained failure",
       workspaceState({
