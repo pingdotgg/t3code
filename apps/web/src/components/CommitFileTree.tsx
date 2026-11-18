@@ -1,6 +1,7 @@
 import { T, useGT } from "gt-react";
 import { ChevronRightIcon, FolderIcon, FolderOpenIcon } from "lucide-react";
 import { useState } from "react";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Checkbox } from "~/components/ui/checkbox";
 import { cn } from "~/lib/utils";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -78,39 +79,54 @@ export function CommitFileTree(props: {
             }
           />
         )}
-        {isDirectory ? (
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
-            aria-expanded={isExpanded}
-            onClick={() => toggleDirectory(node.path)}
-          >
-            <ChevronRightIcon
-              aria-hidden="true"
-              className={cn("size-3.5 shrink-0 text-muted-foreground", isExpanded && "rotate-90")}
-            />
-            {isExpanded ? (
-              <FolderOpenIcon
-                aria-hidden="true"
-                className="size-3.5 shrink-0 text-muted-foreground"
-              />
-            ) : (
-              <FolderIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-            )}
-            {label}
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-center gap-1.5 text-left enabled:cursor-pointer"
-            disabled={!canOpenFile}
-            aria-label={gt("Open {path} in editor", { path: node.path })}
-            onClick={() => onOpenFile(node.path)}
-          >
-            <span aria-hidden="true" className="size-3.5 shrink-0" />
-            {label}
-          </button>
-        )}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              isDirectory ? (
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
+                  aria-expanded={isExpanded}
+                  onClick={() => toggleDirectory(node.path)}
+                >
+                  <ChevronRightIcon
+                    aria-hidden="true"
+                    className={cn(
+                      "size-3.5 shrink-0 text-muted-foreground",
+                      isExpanded && "rotate-90",
+                    )}
+                  />
+                  {isExpanded ? (
+                    <FolderOpenIcon
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                    />
+                  ) : (
+                    <FolderIcon
+                      aria-hidden="true"
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                    />
+                  )}
+                  {label}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left enabled:cursor-pointer"
+                  disabled={!canOpenFile}
+                  aria-label={gt("Open {path} in editor", { path: node.path })}
+                  onClick={() => onOpenFile(node.path)}
+                >
+                  <span aria-hidden="true" className="size-3.5 shrink-0" />
+                  {label}
+                </button>
+              )
+            }
+          />
+          <TooltipPopup side="top" variant="code">
+            {node.path}
+          </TooltipPopup>
+        </Tooltip>
       </div>
     );
   });

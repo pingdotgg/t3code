@@ -94,7 +94,7 @@ import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
-import { useLocalStorage } from "~/hooks/useLocalStorage";
+import { readLocalStorageValue, writeLocalStorageValue } from "~/hooks/useLocalStorage";
 import {
   useGitStackedAction,
   useSourceControlActionRunning,
@@ -1020,10 +1020,8 @@ export default function GitActionsControl({
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
   const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
   const [isEditingFiles, setIsEditingFiles] = useState(false);
-  const [commitFileView, setCommitFileView] = useLocalStorage(
-    COMMIT_FILE_VIEW_STORAGE_KEY,
-    "list",
-    CommitFileViewSchema,
+  const [commitFileView, setCommitFileView] = useState(() =>
+    readLocalStorageValue(COMMIT_FILE_VIEW_STORAGE_KEY, "list", CommitFileViewSchema),
   );
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [inlineSuccess, setInlineSuccess] = useState<InlineGitActionSuccess | null>(null);
@@ -1931,7 +1929,15 @@ export default function GitActionsControl({
                           value={[commitFileView]}
                           onValueChange={(next) => {
                             const view = next[0];
-                            if (view === "list" || view === "tree") setCommitFileView(view);
+                            if (view === "list" || view === "tree") {
+                              setCommitFileView(view);
+                              writeLocalStorageValue(
+                                COMMIT_FILE_VIEW_STORAGE_KEY,
+                                view,
+                                "list",
+                                CommitFileViewSchema,
+                              );
+                            }
                           }}
                           aria-label={gt("File view")}
                         >
