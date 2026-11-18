@@ -260,7 +260,10 @@ const NO_ISSUE_CANDIDATES: MergedIssueCandidates = {
   truncated: false,
 };
 
-/** Fans out like the merged listing: a scope that fails leaves the others' answers in place. */
+/**
+ * Fans out like the merged listing: a scope that fails leaves the others' answers in place.
+ * Retry skips scopes that already answered or still have a request in flight.
+ */
 export function createMergedIssueCandidatesAtoms<E>(
   candidates: (
     target: IssueCandidatesTarget,
@@ -296,6 +299,15 @@ export function createMergedIssueCandidatesAtoms<E>(
       };
     }).pipe(Atom.withLabel(`issues:candidates:${key}`)),
   );
-  return (targets: ReadonlyArray<IssueCandidatesTarget>) =>
-    targets.length === 0 ? empty : family(JSON.stringify(targets));
+  return {
+    atom: (targets: ReadonlyArray<IssueCandidatesTarget>) =>
+      targets.length === 0 ? empty : family(JSON.stringify(targets)),
+    retry: (registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueCandidatesTarget>) => {
+      for (const target of targets) {
+        const atom = candidates(target);
+        const result = registry.get(atom);
+        if (result._tag === "Failure" && !result.waiting) registry.refresh(atom);
+      }
+    },
+  };
 }

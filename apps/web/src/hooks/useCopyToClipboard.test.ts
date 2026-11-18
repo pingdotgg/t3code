@@ -16,7 +16,7 @@ describe("writeTextToClipboard", () => {
       },
     );
     await expect(
-      writeTextToClipboard("original", "message", {
+      writeTextToClipboard("original", undefined, {
         "text/plain": "replacement",
         "text/html": "<b>original</b>",
       }),
@@ -42,7 +42,7 @@ describe("writeTextToClipboard", () => {
     const rich = "<p><strong>Message</strong></p>";
 
     await expect(
-      writeTextToClipboard("Message", "message", {
+      writeTextToClipboard("Message", undefined, {
         [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment,
         "text/html": rich,
       }),
