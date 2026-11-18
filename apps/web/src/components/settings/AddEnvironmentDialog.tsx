@@ -91,14 +91,12 @@ function PendingConnectionStatus({ pending }: { readonly pending: PendingConnect
   return (
     <div className="flex h-9 w-full items-center gap-2 rounded-lg border border-input bg-muted/40 px-3 text-xs text-muted-foreground transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none sm:h-8 dark:border-transparent dark:bg-white/[0.035]">
       <Spinner size="sm" aria-hidden />
-      <span role="status" className="min-w-0 truncate">
+      <span aria-hidden className="min-w-0 truncate">
         {pending.label}
         {pending.target ? <span className="font-mono"> {pending.target}</span> : null}
       </span>
       {elapsedMs >= 1_000 ? (
-        <span aria-hidden className="shrink-0 tabular-nums">
-          · {formatDuration(elapsedMs)}
-        </span>
+        <span className="shrink-0 tabular-nums">· {formatDuration(elapsedMs)}</span>
       ) : null}
     </div>
   );
@@ -214,7 +212,7 @@ export function AddEnvironmentDialog({
   };
   const connectSavedBackendSshTarget = async (target: DesktopSshEnvironmentTarget) => {
     const session = savedBackendSessionRef.current;
-    startPendingConnection("Connecting to", formatPendingSshTarget(target));
+    startPendingConnection(gt("Connecting to"), formatPendingSshTarget(target));
     onErrorChange(null);
     const result = await connectSshEnvironment({
       target,
@@ -284,7 +282,7 @@ export function AddEnvironmentDialog({
       return;
     }
 
-    startPendingConnection("Connecting to", remotePairingInput.host);
+    startPendingConnection(gt("Connecting to"), remotePairingInput.host);
     const result = await connectPairing({
       ...remotePairingInput,
       ...(routeTarget ? { expectedEnvironmentId: routeTarget.environmentId } : {}),
@@ -340,7 +338,7 @@ export function AddEnvironmentDialog({
     if (isAddingSavedBackend || !desktopBridge) return;
 
     const session = savedBackendSessionRef.current;
-    startPendingConnection("Connecting to", formatPendingSshTarget(target));
+    startPendingConnection(gt("Connecting to"), formatPendingSshTarget(target));
     onErrorChange(null);
     setSavedBackendSshHost(target.alias);
     let resolved: DesktopSshEnvironmentTarget;
@@ -497,7 +495,7 @@ export function AddEnvironmentDialog({
       : null;
   const addRelayRoute = async () => {
     if (relayRouteOffer === null || routeTarget === null) return;
-    startPendingConnection("Adding T3 Connect route", null);
+    startPendingConnection(gt("Adding T3 Connect route"), null);
     const result = await registerEnvironment(
       new RelayConnectionRegistration({
         target: new RelayConnectionTarget({
@@ -706,6 +704,10 @@ export function AddEnvironmentDialog({
         </TooltipPopup>
       </Tooltip>
       <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
+        <span role="status" className="sr-only">
+          {pendingConnection?.label}
+          {pendingConnection?.target ? ` ${pendingConnection.target}` : null}
+        </span>
         <DialogHeader>
           <DialogTitle>
             {routeTarget
