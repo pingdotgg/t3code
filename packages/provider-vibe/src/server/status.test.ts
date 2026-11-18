@@ -53,17 +53,18 @@ describe("buildVibeCapabilities", () => {
 });
 
 describe("vibeTurnFailure", () => {
-  it("classifies Vibe's -31001 rate-limit code as usage_limit", () => {
-    const failure = vibeTurnFailure({
-      status: "failed",
-      error: { code: -31001, message: "rate limited" },
+  it.each([-31001, "rate_limit"])("classifies Vibe's %s rate-limit code as usage_limit", (code) => {
+    const failure = vibeTurnFailure({ code, message: "raw provider error" });
+    expect(failure).toMatchObject({
+      class: "usage_limit",
+      code: String(code),
+      message: "Vibe usage limit reached.",
     });
-    expect(failure?.class).toBe("usage_limit");
-    expect(failure?.code).toBe("-31001");
   });
 
   it("classifies other errors as provider_error", () => {
-    const failure = vibeTurnFailure({ status: "failed", error: { code: -32603, message: "boom" } });
+    const failure = vibeTurnFailure({ code: -32603, message: "boom" });
     expect(failure?.class).toBe("provider_error");
+    expect(failure?.message).toBe("Vibe turn failed.");
   });
 });

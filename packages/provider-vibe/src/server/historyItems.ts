@@ -82,12 +82,13 @@ export function vibeHistoryTurnItem(
   const toolName = str(detail?.["toolName"])?.replace(/^mcp_([^.]+)\.(.+)$/, "mcp__$1__$2") ?? null;
   const status = EFFECT_STATUS[str(state?.["status"]) ?? ""] ?? "running";
   const title = str(asRecord(detail?.["display"])?.["summary"]) ?? str(entry["title"]) ?? null;
-  const output = effectOutput(state);
+  const outputRecord = asRecord(state?.["output"]);
   const common = { ...base, status, title };
 
   switch (str(detail?.["kind"])) {
     case "shell": {
-      const exitCode = asRecord(state?.["output"])?.["exitCode"];
+      const output = effectOutput(state);
+      const exitCode = outputRecord?.["exitCode"];
       return {
         ...common,
         type: "command_execution",
@@ -104,6 +105,7 @@ export function vibeHistoryTurnItem(
       const changes = Array.isArray(input?.["changes"]) ? input["changes"].map(asRecord) : [];
       const oldStr =
         text(input?.["oldString"]) ??
+        (detail?.["kind"] === "file_write" ? text(outputRecord?.["previousContent"]) : undefined) ??
         (changes.length > 0
           ? changes.map((c) => text(c?.["oldString"]) ?? "").join("\n")
           : undefined);
@@ -123,17 +125,30 @@ export function vibeHistoryTurnItem(
     }
     case "file_search": {
       const pattern = str(input?.["pattern"]);
-      const root = str(input?.["path"]) ?? pattern;
+      const matches = outputRecord?.["parsedMatches"];
+      const results = Array.isArray(matches)
+        ? matches.flatMap((match: unknown) => {
+            const record = asRecord(match);
+            const fileName = str(record?.["path"]);
+            if (fileName === undefined) return [];
+            const line = record?.["line"];
+            return [
+              {
+                fileName,
+                ...(typeof line === "number" && Number.isInteger(line) && line > 0 ? { line } : {}),
+              },
+            ];
+          })
+        : [];
       return {
         ...common,
         type: "file_search",
         ...(pattern === undefined ? {} : { pattern }),
-        ...(!output?.trim() || root === undefined
-          ? {}
-          : { results: [{ fileName: root, preview: output.slice(0, SEARCH_PREVIEW_MAX_CHARS) }] }),
+        results,
       };
     }
     case "web_search": {
+      const output = effectOutput(state);
       const query = str(input?.["query"]);
       return {
         ...common,
@@ -145,6 +160,7 @@ export function vibeHistoryTurnItem(
       };
     }
   }
+  const output = effectOutput(state);
   return {
     ...common,
     type: "dynamic_tool",

@@ -71,6 +71,42 @@ describe("vibeHistoryTurnItem", () => {
       { type: "file_change", status: "waiting", fileName: "/repo/b.ts", newStr: "z" },
     ],
     [
+      "file overwrite",
+      effect(
+        { kind: "file_write", input: { filePath: "/repo/b.ts", content: "z" } },
+        { status: "completed", output: { previousContent: "" } },
+      ),
+      { type: "file_change", fileName: "/repo/b.ts", oldStr: "", newStr: "z" },
+    ],
+    [
+      "file search with matches",
+      effect(
+        { kind: "file_search", input: { pattern: "todo", path: "." } },
+        {
+          status: "completed",
+          output: {
+            parsedMatches: [
+              { path: "a.ts", line: 12 },
+              { path: "b.ts", line: null },
+            ],
+          },
+        },
+      ),
+      {
+        type: "file_search",
+        pattern: "todo",
+        results: [{ fileName: "a.ts", line: 12 }, { fileName: "b.ts" }],
+      },
+    ],
+    [
+      "file search without matches",
+      effect(
+        { kind: "file_search", input: { pattern: "todo", path: "." } },
+        { status: "completed", output: { matches: "", matchCount: 0, parsedMatches: [] } },
+      ),
+      { type: "file_search", results: [] },
+    ],
+    [
       "failed generic tool",
       effect(
         { kind: "tool", toolName: "mcp__db__query", input: { sql: "select 1" } },

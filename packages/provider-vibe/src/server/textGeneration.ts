@@ -19,16 +19,7 @@ interface HistoryEntryLike {
   readonly role?: unknown;
   readonly type?: unknown;
   readonly content?: unknown;
-  readonly error?: unknown;
 }
-
-const asRecord = (value: unknown): Record<string, unknown> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-
-const str = (value: unknown): string | undefined =>
-  typeof value === "string" && value.length > 0 ? value : undefined;
 
 function entryText(entry: HistoryEntryLike): string {
   if (entry.type !== "message" || !Array.isArray(entry.content)) return "";
@@ -86,10 +77,10 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
             });
             const terminalTurn = yield* waitForTurnTerminal(client, sessionId);
             if (terminalTurn === undefined || terminalTurn.status !== "completed") {
-              const error = asRecord(terminalTurn?.error);
               return yield* new TextGenerationError({
                 operation,
-                detail: `Vibe turn ended as ${terminalTurn?.status ?? "unknown"}: ${str(error?.["message"]) ?? "no assistant reply"}`,
+                detail: "Vibe did not complete the text generation turn.",
+                cause: terminalTurn?.error,
               });
             }
             const history = yield* client.sessionHistoryList({ sessionId, limit: 100 });

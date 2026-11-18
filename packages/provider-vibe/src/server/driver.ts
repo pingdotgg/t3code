@@ -35,14 +35,13 @@ import { VIBE_PROVIDER } from "./appServerSupport.ts";
 
 const decodeVibeSettings = Schema.decodeSync(VibeSettings);
 const DRIVER_KIND = VIBE_PROVIDER;
-const VIBE_NPM_PACKAGE = "mistral-vibe";
 // Vibe is a uv/pip tool; updates stay manual from T3 Code.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: () =>
     Effect.succeed(
       makeManualOnlyProviderMaintenanceCapabilities({
         provider: DRIVER_KIND,
-        packageName: VIBE_NPM_PACKAGE,
+        packageName: null,
       }),
     ),
 };

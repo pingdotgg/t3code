@@ -114,8 +114,8 @@ const VibeProviderCapabilitiesV2 = {
   },
   subagents: {
     supportsSubagents: true,
-    exposesSubagentThreadIds: true,
-    emitsSubagentLifecycle: true,
+    exposesSubagentThreadIds: false,
+    emitsSubagentLifecycle: false,
     canWaitForSubagents: false,
     canCloseSubagents: false,
     canForkSubagentThread: false,
@@ -193,26 +193,14 @@ function entryText(entry: unknown): string {
     .join("");
 }
 
-/** Maps a vibe turn error/stop reason to the native failure contract; `-31001` is Vibe's rate limit. */
-export function vibeTurnFailure(turn: {
-  readonly status?: unknown;
-  readonly error?: unknown;
-  readonly stopReason?: unknown;
-}): ReturnType<typeof makeProviderFailure> | undefined {
-  const error = asRecord(turn.error);
-  const code = error?.["code"];
-  const message = str(error?.["message"]) ?? str(turn.stopReason) ?? "Vibe turn failed.";
+/** `-31001` is Vibe's rate-limit code. */
+export function vibeTurnFailure(error: unknown): ReturnType<typeof makeProviderFailure> {
+  const code = asRecord(error)?.["code"];
+  const rateLimited = code === MISTRAL_VIBE_RATE_LIMITED || code === "rate_limit";
   return makeProviderFailure({
-    message,
-    ...(typeof code === "number" || typeof code === "string"
-      ? {
-          code: String(code),
-          class:
-            code === MISTRAL_VIBE_RATE_LIMITED
-              ? ("usage_limit" as const)
-              : ("provider_error" as const),
-        }
-      : { class: "provider_error" as const }),
+    message: rateLimited ? "Vibe usage limit reached." : "Vibe turn failed.",
+    class: rateLimited ? "usage_limit" : "provider_error",
+    code: typeof code === "number" || typeof code === "string" ? String(code) : null,
   });
 }
 
@@ -545,13 +533,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             },
           });
           const failure =
-            terminalStatus === "failed"
-              ? vibeTurnFailure({
-                  status,
-                  error: turn?.["error"],
-                  stopReason: turn?.["stopReason"],
-                })
-              : undefined;
+            terminalStatus === "failed" ? vibeTurnFailure(turn?.["error"]) : undefined;
           if (failure === undefined) {
             yield* emit({
               type: "turn.terminal",
@@ -779,6 +761,25 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       ),
     );
 
+    // Vibe pages newest-first and `nextCursor` points at older items, so reverse the pages.
+    const readAllPages = Effect.fn("VibeAdapterV2.readAllPages")(function* <A>(
+      readPage: (
+        cursor: string | null,
+      ) => Effect.Effect<VibePage<A>, VibeAppServerError.VibeAppServerError>,
+    ) {
+      const pages: Array<ReadonlyArray<A>> = [];
+      let cursor: string | null = null;
+      do {
+        const page: VibePage<A> = yield* Effect.mapError(readPage(cursor), protocolError);
+        pages.push(page.items);
+        cursor = page.nextCursor ?? null;
+      } while (cursor !== null);
+      return pages.reverse().flat();
+    });
+
+    const readNativeTurns = (sessionId: string) =>
+      readAllPages((cursor) => client.sessionTurnsList({ sessionId, limit: 500, cursor }));
+
     const ensureThread: ProviderAdapter.ProviderAdapterV2SessionRuntime["ensureThread"] = Effect.fn(
       "VibeAdapterV2.ensureThread",
     )(function* (ensureInput) {
@@ -827,6 +828,8 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             protocolError,
           );
       const nativeThreadId = started.state.session.id;
+      const retainedTurns = nativeId ? yield* readNativeTurns(nativeThreadId) : [];
+      state.turnOrdinals = new Map(retainedTurns.map((turn, index) => [turn.id, index + 1]));
       const createdAt = yield* DateTime.now;
       const thread: OrchestrationV2ProviderThread = {
         id: idAllocator.derive.providerThread({
@@ -1038,22 +1041,6 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         });
       });
 
-    // Vibe pages newest-first and `nextCursor` points at older items, so reverse the pages.
-    const readAllPages = Effect.fn("VibeAdapterV2.readAllPages")(function* <A>(
-      readPage: (
-        cursor: string | null,
-      ) => Effect.Effect<VibePage<A>, VibeAppServerError.VibeAppServerError>,
-    ) {
-      const pages: Array<ReadonlyArray<A>> = [];
-      let cursor: string | null = null;
-      do {
-        const page: VibePage<A> = yield* Effect.mapError(readPage(cursor), protocolError);
-        pages.push(page.items);
-        cursor = page.nextCursor ?? null;
-      } while (cursor !== null);
-      return pages.reverse().flat();
-    });
-
     const readAllHistoryEntries = Effect.fn("VibeAdapterV2.readAllHistoryEntries")(function* (
       nativeSessionId: string,
     ) {
@@ -1076,13 +1063,12 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           });
         }
         const historyEntries = yield* readAllHistoryEntries(nativeSessionId);
-        const turns = yield* readAllPages((cursor) =>
-          client.sessionTurnsList({ sessionId: nativeSessionId, limit: 500, cursor }),
-        );
+        const turns = yield* readNativeTurns(nativeSessionId);
         const now = yield* DateTime.now;
         const messages: OrchestrationV2ConversationMessage[] = [];
         for (const entry of historyEntries) {
-          const role = str(entry["role"]) === "user" ? "user" : "assistant";
+          const role = entry["role"];
+          if (entry["type"] !== "message" || (role !== "user" && role !== "assistant")) continue;
           const text =
             role === "user" ? stripT3PromptInstructions(entryText(entry)) : entryText(entry);
           if (!text) continue;
@@ -1177,7 +1163,17 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
               cause,
             }),
         );
-        return yield* readThreadSnapshot({ providerThread: rollbackInput.providerThread });
+        const snapshot = yield* readThreadSnapshot({
+          providerThread: rollbackInput.providerThread,
+        });
+        if (nativeSessionId === sessionIdOf()) {
+          state.turnOrdinals.clear();
+          for (const turn of snapshot.providerTurns) {
+            const nativeTurnId = turn.nativeTurnRef?.nativeId;
+            if (nativeTurnId) state.turnOrdinals.set(nativeTurnId, turn.ordinal);
+          }
+        }
+        return snapshot;
       });
 
     const forkThread: ProviderAdapter.ProviderAdapterV2SessionRuntime["forkThread"] = (forkInput) =>

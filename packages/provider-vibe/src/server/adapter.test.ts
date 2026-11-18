@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import { CheckpointId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { VibeSettings } from "../settings.ts";
 import { makeVibeAdapterV2 } from "./adapter.ts";
+import { withVibeAppServerClient } from "./appServerSupport.ts";
 
 const decodeSettings = Schema.decodeSync(VibeSettings);
 
@@ -33,8 +34,7 @@ type FakeReply =
   | { readonly result: unknown }
   | { readonly error: { readonly code: string; readonly message: string } };
 
-/** Opens an adapter session against an in-memory vibe-app-server speaking line-delimited JSON-RPC. */
-const openFakeVibe = Effect.fn("openFakeVibe")(function* (
+const fakeVibeProcess = Effect.fn("fakeVibeProcess")(function* (
   reply: (method: string, params: Record<string, unknown>) => FakeReply | undefined = () =>
     undefined,
 ) {
@@ -79,7 +79,7 @@ const openFakeVibe = Effect.fn("openFakeVibe")(function* (
               let result: unknown = {};
               if (method === "initialize")
                 result = { serverInfo: { name: "vibe-app-server", version: "3.1.0" } };
-              if (method === "session/start")
+              if (method === "session/start" || method === "session/resume")
                 result = { state: { session: { id: "native-session", cwd: process.cwd() } } };
               yield* send({ jsonrpc: "2.0", id: message["id"], result });
             }
@@ -93,6 +93,21 @@ const openFakeVibe = Effect.fn("openFakeVibe")(function* (
       }),
     ),
   );
+  const takeRequest = (method: string) =>
+    Effect.gen(function* () {
+      while (true) {
+        const request = yield* Queue.take(requests);
+        if (request.method === method) return request.params;
+      }
+    });
+  return { spawner, exited, send, responses, takeRequest };
+});
+
+/** Opens an adapter session against an in-memory vibe-app-server speaking line-delimited JSON-RPC. */
+const openFakeVibe = Effect.fn("openFakeVibe")(function* (
+  reply?: (method: string, params: Record<string, unknown>) => FakeReply | undefined,
+) {
+  const { spawner, exited, send, responses, takeRequest } = yield* fakeVibeProcess(reply);
   const instanceId = ProviderInstanceId.make("vibe");
   const threadId = ThreadId.make("vibe-thread");
   const modelSelection = { instanceId, model: "mistral-large" };
@@ -131,22 +146,60 @@ const openFakeVibe = Effect.fn("openFakeVibe")(function* (
           return event as Extract<ProviderAdapter.ProviderAdapterV2Event, { type: T }>;
       }
     });
-  const takeRequest = (method: string) =>
-    Effect.gen(function* () {
-      while (true) {
-        const request = yield* Queue.take(requests);
-        if (request.method === method) return request.params;
-      }
-    });
   const notify = (method: string, params: Record<string, unknown>) =>
     send({ jsonrpc: "2.0", method, params: { sessionId: "native-session", ...params } });
-  return { runtime, providerThread, send, notify, responses, takeEvent, takeRequest };
+  return {
+    runtime,
+    providerThread,
+    threadId,
+    modelSelection,
+    runtimePolicy,
+    send,
+    notify,
+    responses,
+    takeEvent,
+    takeRequest,
+  };
 });
 
 const millis = (value: DateTime.Utc | null) =>
   value === null ? null : DateTime.toEpochMillis(value);
 
 describe("Vibe adapter against an in-memory app-server", () => {
+  it.effect("declines a non-interactive callback while keeping the protocol reader open", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { spawner, send, responses, takeRequest } = yield* fakeVibeProcess();
+        yield* withVibeAppServerClient({ cwd: process.cwd() }, (client) =>
+          Effect.gen(function* () {
+            yield* send({
+              jsonrpc: "2.0",
+              id: 100,
+              method: "callback/call",
+              params: {
+                sessionId: "native-session",
+                callback: { callbackId: "approval", detail: { kind: "approval" } },
+              },
+            });
+            expect(yield* Queue.take(responses)).toEqual({
+              jsonrpc: "2.0",
+              id: 100,
+              result: { callbackId: "approval", accepted: true },
+            });
+            expect(yield* takeRequest("callback/result")).toEqual({
+              sessionId: "native-session",
+              result: {
+                callbackId: "approval",
+                output: { type: "approval", decision: { type: "deny" } },
+              },
+            });
+            expect(yield* client.setupStatus()).toEqual({});
+          }),
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      }),
+    ),
+  );
+
   it.effect("publishes a question card, returns the answer, and resolves the card", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -306,7 +359,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
     ),
   );
 
-  it.effect("reads every snapshot page in order with each message's author and time", () =>
+  it.effect("keeps snapshot and live turns in order across resume and rewind", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const message = (id: string, role: string, turnId: string, text: string, at: number) => ({
@@ -341,6 +394,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
             u2: {
               result: {
                 items: [
+                  message("s1", "system", "t1", "internal instructions", 900),
                   message("u1", "user", "t1", "first", 1000),
                   message("a1", "assistant", "t1", "one", 1100),
                 ],
@@ -353,11 +407,28 @@ describe("Vibe adapter against an in-memory app-server", () => {
             t2: { result: { items: [turn("t1", 1000)], nextCursor: null } },
           },
         };
-        const { runtime, providerThread } = yield* openFakeVibe((method, params) => {
+        let rewound = false;
+        const vibe = yield* openFakeVibe((method, params) => {
+          if (method === "session/rewind") {
+            rewound = true;
+            return { result: {} };
+          }
+          if (rewound && method === "session/turns/list") {
+            return { result: { items: [turn("t1", 1000)], nextCursor: null } };
+          }
           const cursor = (params["page"] as { cursor?: string } | undefined)?.cursor ?? "";
           return pages[method]?.[cursor];
         });
 
+        const {
+          runtime,
+          providerThread,
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          notify,
+          takeEvent,
+        } = vibe;
         const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
         expect(
           snapshot.messages.map((entry) => [entry.createdBy, entry.text, millis(entry.createdAt)]),
@@ -373,6 +444,36 @@ describe("Vibe adapter against an in-memory app-server", () => {
           ["t1", 1],
           ["t2", 2],
         ]);
+
+        yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          existingProviderThread: providerThread,
+        });
+        for (const id of ["t2", "t3", "t3"]) {
+          yield* notify("turn/started", { turn: { id } });
+          expect((yield* takeEvent("provider_turn.updated")).providerTurn.ordinal).toBe(
+            id === "t2" ? 2 : 3,
+          );
+        }
+
+        const providerTurn = snapshot.providerTurns[1]!;
+        const rewoundSnapshot = yield* runtime.rollbackThread({
+          providerThread,
+          providerThreadTurns: snapshot.providerTurns,
+          target: {
+            type: "provider_turn",
+            providerTurn,
+            appRunOrdinal: 2,
+            checkpointId: CheckpointId.make("rewind"),
+          },
+        });
+        expect(rewoundSnapshot.providerTurns.map((entry) => entry.nativeTurnRef?.nativeId)).toEqual(
+          ["t1"],
+        );
+        yield* notify("turn/started", { turn: { id: "t4" } });
+        expect((yield* takeEvent("provider_turn.updated")).providerTurn.ordinal).toBe(2);
       }).pipe(Effect.provide(layerTest)),
     ),
   );

@@ -5,13 +5,14 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import type { VibeSettings } from "../settings.ts";
+import { vibeQuestionResult } from "./callbacks.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import type * as Scope from "effect/Scope";
+import * as Scope from "effect/Scope";
 
 import * as VibeAppServer from "@t3tools/vibe-app-server/client";
 import * as VibeError from "@t3tools/vibe-app-server/errors";
@@ -232,6 +233,7 @@ export const withVibeAppServerClient = Effect.fn("VibeAppServerSupport.withVibeA
     E | VibeError.VibeAppServerError,
     R | ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
   > {
+    const scope = yield* Scope.Scope;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const spawn = buildVibeSpawnInput(input.settings, input.cwd, input.environment);
     const child = yield* spawner
@@ -281,18 +283,25 @@ export const withVibeAppServerClient = Effect.fn("VibeAppServerSupport.withVibeA
           }),
         );
       }
-      const callback = asRecord(asRecord(params)?.["callback"]);
+      const request = asRecord(params);
+      const callback = asRecord(request?.["callback"]);
       const callbackId = str(callback?.["callbackId"]) ?? str(callback?.["callback_id"]);
-      const sessionId = str(callback?.["sessionId"]);
-      if (!callbackId || !sessionId) return Effect.succeed({ accepted: false });
-      return Effect.as(
-        client.callbackResult({
+      const sessionId = str(callback?.["sessionId"]) ?? str(request?.["sessionId"]);
+      const kind = asRecord(callback?.["detail"])?.["kind"];
+      if (!callbackId || !sessionId || (kind !== "approval" && kind !== "user_input")) {
+        return Effect.succeed({ accepted: false });
+      }
+      const result =
+        kind === "approval"
+          ? { type: "approval", decision: { type: "deny" } }
+          : vibeQuestionResult([], {}, true);
+      return client
+        .callbackResult({
           sessionId,
           callbackId,
-          result: { error: "not answerable in this context" },
-        }),
-        { callbackId, accepted: true },
-      );
+          result,
+        })
+        .pipe(Effect.ignore, Effect.forkIn(scope), Effect.as({ callbackId, accepted: true }));
     });
     return yield* use(client, init.serverInfo).pipe(
       Effect.ensuring(child.kill({ forceKillAfter: "1 second" }).pipe(Effect.ignore)),
