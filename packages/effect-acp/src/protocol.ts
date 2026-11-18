@@ -951,7 +951,16 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
             Effect.andThen(
               Cause.hasInterruptsOnly(cause)
                 ? Effect.void
-                : handleTermination(() => Effect.succeed(error)),
+                : handleTermination(() =>
+                    !options.terminationError
+                      ? Effect.succeed(error)
+                      : // A child that closes stdin as it dies fails the write before its exit is seen.
+                        options.terminationError.pipe(
+                          Effect.timeoutOption("5 seconds"),
+                          Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+                          Effect.map(Option.getOrElse(() => error)),
+                        ),
+                  ),
             ),
           );
         },
