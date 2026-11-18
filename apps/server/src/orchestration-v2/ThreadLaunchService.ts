@@ -1112,6 +1112,7 @@ const make = Effect.gen(function* () {
     threadId: ThreadId,
     runId: RunId | null,
     cause: unknown,
+    retryPersistence = true,
   ) => {
     if (runId === null) {
       return Effect.logWarning("Thread workspace preparation failed", {
@@ -1148,7 +1149,12 @@ const make = Effect.gen(function* () {
             cause,
             persistCause,
           });
-          if (Cause.hasInterruptsOnly(persistCause) || !(yield* runIsPreparing)) return;
+          if (
+            !retryPersistence ||
+            Cause.hasInterruptsOnly(persistCause) ||
+            !(yield* runIsPreparing)
+          )
+            return;
           // A full disk rejects this write as well, and nothing else moves the run out of
           // "preparing", so it would hold the thread's queue until a restart. Retry until
           // storage recovers or the run settles another way.
@@ -1532,7 +1538,8 @@ const make = Effect.gen(function* () {
         input.threadId,
         input.runId,
         Cause.squash(scheduled.cause),
-      ).pipe(Effect.forkIn(preparationScope));
+        false,
+      );
     }
   });
 

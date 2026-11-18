@@ -1833,9 +1833,9 @@ it.effect.each(["fails", "is interrupted"] as const)(
     }),
 );
 
-it.effect("returns from prepareRun while failure persistence keeps retrying", () =>
+it.effect("returns from prepareRun without retrying a scheduling failure", () =>
   Effect.gen(function* () {
-    const retried = yield* Deferred.make<void>();
+    const rejected = yield* Deferred.make<void>();
     let rejectedWrites = 0;
     const harness = makeHarness({
       dispatch: (command, dispatch) =>
@@ -1843,9 +1843,9 @@ it.effect("returns from prepareRun while failure persistence keeps retrying", ()
           ? dispatch(command)
           : Effect.suspend(() => {
               rejectedWrites += 1;
-              return (
-                rejectedWrites >= 2 ? Deferred.succeed(retried, undefined) : Effect.void
-              ).pipe(Effect.andThen(Effect.die("SQLITE_FULL: database or disk is full")));
+              return Deferred.succeed(rejected, undefined).pipe(
+                Effect.andThen(Effect.die("SQLITE_FULL: database or disk is full")),
+              );
             }),
     });
     yield* Effect.gen(function* () {
@@ -1855,8 +1855,9 @@ it.effect("returns from prepareRun while failure persistence keeps retrying", ()
         threadId: ThreadId.make("thread:prepare:missing-thread"),
         runId: RunId.make("run:prepare:missing-thread"),
       });
-      yield* Deferred.await(retried);
-      assert.equal(rejectedWrites, 2);
+      yield* Deferred.await(rejected);
+      yield* TestClock.adjust("1 second");
+      assert.equal(rejectedWrites, 1);
     }).pipe(Effect.provide(harness.layer));
   }),
 );
