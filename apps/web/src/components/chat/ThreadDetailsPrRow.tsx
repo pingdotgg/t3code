@@ -168,7 +168,7 @@ export function ThreadDetailsPrRow({
     checks: detail?.checks ?? [],
   });
 
-  const { actionPending, perform } = usePullRequestActionRunner({
+  const { actionPending, pendingAction, perform } = usePullRequestActionRunner({
     environmentId,
     reference,
     terminology,
@@ -204,7 +204,10 @@ export function ThreadDetailsPrRow({
   const confirmingMerge = mergeConfirmation?.key === confirmationKey;
   const adminOverride = canAdminOverride && (mergeConfirmation?.adminOverride ?? false);
 
-  const rowAction = resolveThreadPanelPullRequestAction(detail);
+  const rowAction =
+    pendingAction === "ready" || pendingAction === "merge"
+      ? pendingAction
+      : resolveThreadPanelPullRequestAction(detail);
   if (mergeConfirmation && (!confirmingMerge || rowAction !== "merge")) {
     setMergeConfirmation(null);
   }

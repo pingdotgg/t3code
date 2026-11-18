@@ -15,6 +15,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 
 const state = vi.hoisted(() => ({
   adminMerge: false,
+  isDraft: false,
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
@@ -50,7 +51,7 @@ const queryData = () => ({
   number: 1,
   title: "Test PR",
   state: "open",
-  isDraft: false,
+  isDraft: state.isDraft,
   mergeability: "mergeable",
   headSha: "confirmed-head",
   headBranch: "feature",
@@ -64,8 +65,8 @@ const queryData = () => ({
     description: null,
     url: null,
   })),
-  capabilities: { actions: ["merge"], mergeMethods: state.mergeMethods },
-  viewerPermissions: { actions: ["merge"], adminMerge: state.adminMerge },
+  capabilities: { actions: ["merge", "ready"], mergeMethods: state.mergeMethods },
+  viewerPermissions: { actions: ["merge", "ready"], adminMerge: state.adminMerge },
   mergeCapabilities: {
     merge: state.mergeMethods.includes("merge"),
     squash: state.mergeMethods.includes("squash"),
@@ -290,7 +291,7 @@ it("resets admin permission consent after cancellation or lost access", async ()
 });
 
 async function setup() {
-  state.perform.mockReset();
+  state.perform.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   state.checkoutError = null;
   state.newThread.mockReset().mockResolvedValue({
     draftId: DraftId.make("new-draft"),
@@ -301,6 +302,7 @@ async function setup() {
   state.updateToast.mockReset();
 
   state.adminMerge = false;
+  state.isDraft = false;
   state.status = "success";
   state.extraStatus = null;
   state.mergeMethods = ["merge"];
@@ -483,4 +485,47 @@ it("requires fresh confirmation when the project default merge method changes", 
   await screen.rerender(row("After"));
   await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
   expect(state.perform).not.toHaveBeenCalled();
+});
+
+it("keeps Ready pending when refreshed detail becomes mergeable before the action settles", async () => {
+  await using screen = await setup();
+  const row = () => (
+    <ThreadDetailsPrRow
+      environmentId={EnvironmentId.make("environment")}
+      pr={null}
+      number={1}
+      status={null}
+      project={repositoryProject}
+      label="Test PR"
+      onOpen={vi.fn()}
+    />
+  );
+  let finish!: (result: { _tag: "Success"; value: undefined }) => void;
+  const result = new Promise<{ _tag: "Success"; value: undefined }>((resolve) => {
+    finish = resolve;
+  });
+  state.perform.mockReturnValueOnce(result);
+  state.isDraft = true;
+  await screen.rerender(row());
+  await clickButton(screen.container, "Ready");
+  expect(state.perform).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({
+        projectId: repositoryProject.id,
+        repository: "owner/repo",
+        number: 1,
+        action: "ready",
+      }),
+    }),
+  );
+  await expect.element(screen.getByRole("button", { name: "Marking..." })).toBeDisabled();
+
+  state.isDraft = false;
+  await screen.rerender(row());
+  await expect.element(screen.getByRole("button", { name: "Marking..." })).toBeDisabled();
+  await act(async () => {
+    finish({ _tag: "Success", value: undefined });
+    await result;
+  });
+  await expect.element(screen.getByRole("button", { name: "Merge", exact: true })).toBeEnabled();
 });

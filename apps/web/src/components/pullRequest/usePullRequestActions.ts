@@ -201,18 +201,22 @@ export function usePullRequestActionRunner({
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, {
     reportFailure: false,
   });
-  const pendingRef = useRef(new Set<string>());
-  const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const pendingRef = useRef(new Map<string, PullRequestAction>());
+  const [pendingActions, setPendingActions] = useState<ReadonlyMap<string, PullRequestAction>>(
+    () => new Map(),
+  );
   const actionKey =
     reference === null
       ? null
       : JSON.stringify([
           environmentId,
+          reference.projectId,
           reference.host ?? null,
           reference.repository,
           reference.number,
         ]);
-  const actionPending = actionKey !== null && pendingKeys.has(actionKey);
+  const pendingAction = actionKey === null ? null : (pendingActions.get(actionKey) ?? null);
+  const actionPending = pendingAction !== null;
 
   const perform = async (
     action: PullRequestAction,
@@ -221,8 +225,8 @@ export function usePullRequestActionRunner({
     expectedHeadSha?: string,
   ) => {
     if (actionKey === null || reference === null || pendingRef.current.has(actionKey)) return false;
-    pendingRef.current.add(actionKey);
-    setPendingKeys(new Set(pendingRef.current));
+    pendingRef.current.set(actionKey, action);
+    setPendingActions(new Map(pendingRef.current));
     const result = await runAction({
       environmentId,
       input: {
@@ -234,7 +238,7 @@ export function usePullRequestActionRunner({
       },
     });
     pendingRef.current.delete(actionKey);
-    setPendingKeys(new Set(pendingRef.current));
+    setPendingActions(new Map(pendingRef.current));
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
@@ -254,7 +258,7 @@ export function usePullRequestActionRunner({
     return true;
   };
 
-  return { actionPending, perform };
+  return { actionPending, pendingAction, perform };
 }
 
 export function usePullRequestCloseBatch(

@@ -323,9 +323,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   const stripAttachments = composerStripAttachments(
     draftAttachments,
-    (attachment) =>
-      uploadStates[composerAttachmentUploadKey(props.environmentId, attachment.id)]?.status ===
-      "failed",
+    (attachment) => uploadStates[composerAttachmentUploadKey(props.environmentId, attachment.id)],
   );
   const attachmentsUploading =
     props.connectionState === "connected" &&
