@@ -1,5 +1,7 @@
 import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
@@ -83,6 +85,7 @@ describe("liveActivityPreferences", () => {
   });
 
   it.effect("restores only the device preference when an environment update fails", () => {
+    const otherConnection = { ...connection, environmentId: "env-2" as EnvironmentId };
     updateEnvironment.mockImplementationOnce(() =>
       Effect.fail(new CloudEnvironmentLinkError({ message: "environment update failed" })),
     );
@@ -94,20 +97,26 @@ describe("liveActivityPreferences", () => {
           enabled: false,
           previousEnabled: true,
           clerkToken: "clerk-token",
-          connections: [connection],
+          connections: [connection, otherConnection],
           canConfigureEnvironment: () => false,
           canUpdateEnvironment: () => true,
         }),
       );
 
-      expect(exit._tag).toBe("Failure");
+      expect(Exit.findErrorOption(exit)).toEqual(
+        Option.some(
+          expect.objectContaining({ updatedEnvironments: [otherConnection.environmentLabel] }),
+        ),
+      );
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(1, {
         liveActivitiesEnabled: false,
       });
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(2, {
         liveActivitiesEnabled: true,
       });
-      expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(connection.environmentId, false);
+      expect(updateEnvironment).toHaveBeenCalledTimes(2);
+      expect(updateEnvironment).toHaveBeenCalledWith(connection.environmentId, false);
+      expect(updateEnvironment).toHaveBeenCalledWith(otherConnection.environmentId, false);
       expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
     }).pipe(Effect.provide(layerTest));
   });

@@ -3278,6 +3278,8 @@
   "0aecb0b05ccd394e": "Este dispositivo não pôde ser registrado no {product}, então as atualizações de atividade ainda não vão aparecer. Elas começarão quando o registro for concluído.",
   "79f07c54023a5bf7": "Desativar notificações",
   "ebf3eaee224a5372": "Abra os Ajustes do sistema para desativar as notificações do {product}.",
+  "990fb243dc6a5448": "Alguns ambientes foram atualizados",
+  "0a3f122ccb7757c8": "A configuração do dispositivo não foi salva. A nova configuração foi aplicada a: {environments}.",
   "d65f9a3ee3f07eb8": "Atividade dos agentes",
   "9ddc5a1e3ae7dc5d": "Notificações do dispositivo",
   "3f5506ebb3736478": "Live Updates dos agentes",

@@ -3284,6 +3284,8 @@
   "0aecb0b05ccd394e": "This device could not be registered with {product}, so activity updates won't appear yet. They'll start once registration succeeds.",
   "79f07c54023a5bf7": "Disable notifications",
   "ebf3eaee224a5372": "Open system Settings to disable notifications for {product}.",
+  "990fb243dc6a5448": "Some environments were updated",
+  "0a3f122ccb7757c8": "The device setting was not saved. The new setting was applied to: {environments}.",
   "d65f9a3ee3f07eb8": "Agent activity",
   "9ddc5a1e3ae7dc5d": "Device Notifications",
   "3f5506ebb3736478": "Agent Live Updates",

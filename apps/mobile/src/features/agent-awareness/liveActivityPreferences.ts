@@ -1,4 +1,6 @@
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
@@ -7,6 +9,14 @@ import {
   type CloudEnvironmentLinkError,
 } from "../cloud/linkEnvironment";
 import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
+
+export class LiveActivityEnvironmentUpdateError extends Schema.TaggedError<LiveActivityEnvironmentUpdateError>()(
+  "LiveActivityEnvironmentUpdateError",
+  {
+    updatedEnvironments: Schema.Array(Schema.String),
+    cause: Schema.Defect(),
+  },
+) {}
 
 export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEnabled")(
   function* (input: {
@@ -29,14 +39,14 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
       const result = input.canUpdateEnvironment(connection.environmentId)
         ? yield* input.updateEnvironment(connection.environmentId, enabled)
         : "unlinked";
-      if (result === "updated") return false;
+      if (result === "updated") return "updated" as const;
       if (
         !enabled ||
         !clerkToken ||
         !connection.bearerToken ||
         !input.canConfigureEnvironment(connection.environmentId)
       ) {
-        return result === "unsupported";
+        return result;
       }
 
       yield* linkEnvironmentToCloudWithPreference({
@@ -44,7 +54,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
         connection,
         liveActivitiesEnabled: enabled,
       });
-      return false;
+      return "updated" as const;
     });
 
     const updateRelayPreference = Effect.fn("updateRelayPreference")(function* (enabled: boolean) {
@@ -57,10 +67,29 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
 
       const results = yield* Effect.forEach(
         input.connections,
-        (connection) => updateEnvironmentPreference(connection, enabled, clerkToken),
+        (connection) =>
+          updateEnvironmentPreference(connection, enabled, clerkToken).pipe(
+            Effect.result,
+            Effect.map((result) => ({ connection, result })),
+          ),
         { concurrency: "unbounded" },
       );
-      return results.some(Boolean);
+      const failure = results.find(({ result }) => Result.isFailure(result));
+      if (failure && Result.isFailure(failure.result)) {
+        const updatedEnvironments = results.flatMap(({ connection, result }) =>
+          Result.isSuccess(result) && result.success === "updated"
+            ? [connection.environmentLabel]
+            : [],
+        );
+        if (updatedEnvironments.length === 0) return yield* failure.result.failure;
+        return yield* new LiveActivityEnvironmentUpdateError({
+          updatedEnvironments,
+          cause: failure.result.failure,
+        });
+      }
+      return results.some(
+        ({ result }) => Result.isSuccess(result) && result.success === "unsupported",
+      );
     });
 
     return yield* updateRelayPreference(input.enabled).pipe(

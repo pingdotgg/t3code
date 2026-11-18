@@ -37,7 +37,10 @@ import {
   openAndroidLiveUpdateSettings,
   supportsAndroidLiveUpdateSettings,
 } from "../agent-awareness/androidNotifications";
-import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
+import {
+  LiveActivityEnvironmentUpdateError,
+  setLiveActivityUpdatesEnabled,
+} from "../agent-awareness/liveActivityPreferences";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
   agentAwarenessNotificationsReady,
@@ -67,6 +70,7 @@ const updateLiveActivityPreference = createEnvironmentCommand(connectionAtomRunt
   execute: updateLinkedEnvironmentLiveActivityPreference,
 });
 
+const isLiveActivityEnvironmentUpdateError = Schema.is(LiveActivityEnvironmentUpdateError);
 const isCloudEnvironmentLinkError = Schema.is(CloudEnvironmentLinkError);
 
 const updateEnvironmentPreference = Effect.fn("updateEnvironmentPreference")(function* (
@@ -370,6 +374,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       setLiveActivityStatus("disabled");
       if (!isAtomCommandInterrupted(updateResult)) {
         const error = squashAtomCommandFailure(updateResult);
+        if (reportPartialEnvironmentUpdate(error)) return;
         Dialog.alert(
           Platform.OS === "android"
             ? gt("Ongoing activity unavailable")
@@ -462,9 +467,11 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     );
     if (updateResult._tag === "Failure") {
       setLiveActivityStatus(isSignedIn ? "enabled" : "signed-out");
-      reportAtomCommandResult(updateResult, {
-        label: "live activity disable",
-      });
+      if (!reportPartialEnvironmentUpdate(squashAtomCommandFailure(updateResult))) {
+        reportAtomCommandResult(updateResult, {
+          label: "live activity disable",
+        });
+      }
       return;
     }
     savePreferences({ liveActivitiesEnabled: false });
@@ -478,6 +485,18 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         ),
       );
     }
+  }
+
+  function reportPartialEnvironmentUpdate(error: unknown): boolean {
+    if (!isLiveActivityEnvironmentUpdateError(error)) return false;
+    refreshManagedRelayEnvironments();
+    Dialog.alert(
+      gt("Some environments were updated"),
+      gt("The device setting was not saved. The new setting was applied to: {environments}.", {
+        environments: error.updatedEnvironments.join(", "),
+      }),
+    );
+    return true;
   }
 
   // Both writers settle their own failures, so awaiting them never throws.

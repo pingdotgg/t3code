@@ -3284,6 +3284,8 @@
   "0aecb0b05ccd394e": "Enheten kunde inte registreras hos {product}, så aktivitetsuppdateringar visas inte än. De startar när registreringen lyckas.",
   "79f07c54023a5bf7": "Inaktivera aviseringar",
   "ebf3eaee224a5372": "Öppna systeminställningarna för att inaktivera aviseringar för {product}.",
+  "990fb243dc6a5448": "Vissa miljöer uppdaterades",
+  "0a3f122ccb7757c8": "Enhetsinställningen sparades inte. Den nya inställningen tillämpades på: {environments}.",
   "d65f9a3ee3f07eb8": "Agentaktivitet",
   "9ddc5a1e3ae7dc5d": "Enhetsaviseringar",
   "3f5506ebb3736478": "Liveuppdateringar från agenter",

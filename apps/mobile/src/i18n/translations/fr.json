@@ -3278,6 +3278,8 @@
   "0aecb0b05ccd394e": "Cet appareil n’a pas pu être inscrit auprès de {product}, les mises à jour d’activité n’apparaîtront donc pas encore. Elles commenceront dès que l’inscription aura réussi.",
   "79f07c54023a5bf7": "Désactiver les notifications",
   "ebf3eaee224a5372": "Ouvrez les Réglages du système pour désactiver les notifications de {product}.",
+  "990fb243dc6a5448": "Certains environnements ont été mis à jour",
+  "0a3f122ccb7757c8": "Le réglage de l’appareil n’a pas été enregistré. Le nouveau réglage a été appliqué à : {environments}.",
   "d65f9a3ee3f07eb8": "Activité des agents",
   "9ddc5a1e3ae7dc5d": "Notifications de l’appareil",
   "3f5506ebb3736478": "Live Updates des agents",
