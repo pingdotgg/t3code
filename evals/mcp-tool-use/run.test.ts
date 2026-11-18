@@ -257,6 +257,26 @@ it("accepts any tool listed as an alternative", () => {
   assert.deepEqual(failed(expect, run("list_thread_pull_requests")), [
     "calls link_pull_request|watch_pull_request",
   ]);
+  const issueCase = decodeDeviceCase(
+    NodeFS.readFileSync(new URL("./cases/issues.ndjson", import.meta.url), "utf8").split("\n")[0]!,
+  );
+  for (const [input, passes] of [
+    [{ url: "https://github.com/acme/app/issues/42" }, true],
+    [{ key: "42", projectId: "app" }, true],
+    [{ url: "https://github.com/acme/app/issues/42", threadId: "issue-work-thread" }, true],
+    [{ key: "42", projectId: "app", threadId: "issue-work-thread" }, true],
+    [{ url: "https://github.com/acme/app/issues/42", threadId: "another-thread" }, false],
+    [{ key: "43", projectId: "app" }, false],
+    [{ key: "42", projectId: "other-project" }, false],
+  ] as const) {
+    assert.equal(
+      failed(issueCase.expect, {
+        ...run("link_issue"),
+        calls: [{ step: 0, tool: "link_issue", input }],
+      }).length === 0,
+      passes,
+    );
+  }
   // A bound on alternatives counts their calls together.
   const both: SampleRun = {
     calls: ["preview_status", "preview_open"].map((tool) => ({ step: 0, tool, input: {} })),
