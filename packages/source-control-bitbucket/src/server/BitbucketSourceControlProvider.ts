@@ -220,7 +220,7 @@ export const makeDiscovery = Effect.gen(function* () {
     type: "api",
     kind: SourceControlProviderKind.make("bitbucket"),
     label: "Bitbucket",
-    installHint: "Add a Bitbucket token in Settings → Source Control.",
+    installHint: "Add a Bitbucket token in Settings → Source control & issues.",
     probeAuth: bitbucket.probeAuth,
   } satisfies SourceControlApiDiscoverySpec;
 });

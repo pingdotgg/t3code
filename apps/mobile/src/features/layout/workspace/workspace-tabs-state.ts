@@ -17,8 +17,10 @@ export type WorkspaceSearchTab = WorkspaceTab | "settings";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
 /**
- * Settings, Chats and pull requests pair a list with a detail column; Usage is one page. The
- * pre-iOS 26 split keeps its sidebar, which holds the tabs, for every tab.
+ * Settings, Chats, pull requests and issues pair a list with a detail column; Usage is one page. The
+ * pre-iOS 26 split previously hid the sidebar on Usage, taking its tabs with it.
+ *
+ * 旧版 iPad 的 Usage 侧栏曾随页面切换消失，导致标签栏丢失。
  */
 export function workspaceUsesColumns(
   tab: WorkspaceTab,
@@ -28,7 +30,7 @@ export function workspaceUsesColumns(
 ) {
   return settingsOpen
     ? nativeColumns || splitView
-    : (!nativeColumns && splitView) || tab === "threads" || tab === "pullRequests";
+    : (!nativeColumns && splitView) || tab !== "usage";
 }
 
 export interface WorkspaceTabState {
@@ -50,6 +52,7 @@ function emptyTab(): WorkspaceTabState {
 
 /** The list a workspace page belongs to. */
 export function workspaceTabOf(routeName: string | undefined): WorkspaceTab {
+  if (routeName === "Issue") return "issues";
   return routeName === "PullRequest" ? "pullRequests" : "threads";
 }
 
@@ -62,6 +65,7 @@ export function initialWorkspaceTabsState(
     tabs: {
       threads: emptyTab(),
       pullRequests: emptyTab(),
+      issues: emptyTab(),
       usage: emptyTab(),
       settings: emptyTab(),
     },
@@ -73,7 +77,7 @@ export type WorkspaceTabsAction =
   | { readonly type: "search"; readonly tab?: WorkspaceSearchTab }
   | { readonly type: "query"; readonly query: string; readonly tab?: WorkspaceSearchTab }
   | { readonly type: "expand"; readonly tab?: WorkspaceSearchTab }
-  | { readonly type: "cancel"; readonly tab?: WorkspaceSearchTab }
+  | { readonly type: "cancel"; readonly tab?: WorkspaceSearchTab; readonly scrollToTop?: boolean }
   | { readonly type: "scroll"; readonly tab: WorkspaceSearchTab; readonly offset: number };
 
 export function workspaceTabsReducer(
@@ -89,7 +93,7 @@ export function workspaceTabsReducer(
           selectionRevision: state.selectionRevision + 1,
         };
   const tab = action.tab ?? state.selectedTab;
-  if (tab !== "threads" && tab !== "pullRequests" && tab !== "settings") return state;
+  if (tab === "usage") return state;
   const current = state.tabs[tab];
   let next: WorkspaceTabState;
   switch (action.type) {
@@ -113,7 +117,8 @@ export function workspaceTabsReducer(
         ...current,
         query: "",
         searchMode: "resting",
-        scrollOffset: current.searchEntryOffset,
+        scrollOffset: action.scrollToTop ? 0 : current.searchEntryOffset,
+        searchEntryOffset: action.scrollToTop ? 0 : current.searchEntryOffset,
       };
       break;
     case "scroll":

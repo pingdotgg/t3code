@@ -1,19 +1,16 @@
 import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@t3tools/contracts";
 import { compareSemverVersions } from "@t3tools/shared/semver";
+import { mFallback, msg } from "gt-i18n";
+import { formatConjunctionList } from "./listFormat.ts";
+import type { MFunctionType } from "gt-i18n/types";
 
-const RUNTIME_NAMES: Partial<Record<string, string>> = {
-  claudeAgent: "Claude Code",
-  codex: "the Codex CLI",
-};
-
-function formatModelList(names: ReadonlyArray<string>): string {
-  if (names.length <= 2) return names.join(" and ");
-  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
-}
+const CLAUDE_CODE_NAME = "Claude Code";
 
 export function formatProviderUpdateRequiredNotice(
   provider: Pick<ServerProvider, "driver" | "updateRequiredModels">,
   searchQuery = "",
+  resolve: MFunctionType = mFallback,
+  locale = "en",
 ): string | null {
   const query = searchQuery.trim().toLocaleLowerCase();
   const models = (provider.updateRequiredModels ?? []).filter(
@@ -29,8 +26,24 @@ export function formatProviderUpdateRequiredNotice(
       compareSemverVersions(version, highest) > 0 ? version : highest,
     );
   const providerName =
-    RUNTIME_NAMES[provider.driver] ?? PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver;
+    provider.driver === "claudeAgent"
+      ? CLAUDE_CODE_NAME
+      : (PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver);
   const version = minVersion.startsWith("v") ? minVersion : `v${minVersion}`;
-  const names = formatModelList(models.map((model) => model.name));
-  return `Update ${providerName} to ${version} or newer to use ${names}.`;
+  const names = formatConjunctionList(
+    models.map((model) => model.name),
+    locale,
+    resolve,
+  );
+  return resolve(
+    msg(
+      "{runtime, select, codex {Update the Codex CLI to {version} or newer to use {names}.} other {Update {providerName} to {version} or newer to use {names}.}}",
+      {
+        runtime: provider.driver === "codex" ? "codex" : "other",
+        providerName,
+        version,
+        names,
+      },
+    ),
+  );
 }

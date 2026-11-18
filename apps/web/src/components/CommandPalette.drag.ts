@@ -22,7 +22,7 @@ export function startPaletteThreadDrag(
       distance: 6,
       onAttach: () => {},
       onFinish: endThreadContextDrag,
-      onDrop: (point) => dropThreadContext(point, [thread]),
+      onDrop: (point) => dropThreadContext(point, [{ ...thread, title }]),
     },
     onStart: () => {
       flushSync(() => dispatchCommandPalette({ _tag: "SetOpen", open: false }));
