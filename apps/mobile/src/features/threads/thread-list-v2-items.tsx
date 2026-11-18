@@ -1391,11 +1391,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       swipeActions.primary !== null &&
       TRIAGE_MENU_ACTION_IDS.has(swipeActions.primary));
   const swipePrimaryAction = hideSettleAction ? secondaryAction : primaryAction;
-  const swipeAccessibilityHint = !canSwipe || swipePrimaryAction === null
-    ? gt("Opens the thread")
-    : hideSettleAction ? gt("Opens the thread. Swipe left to snooze.") : secondaryAction === null
-      ? primaryAction.swipeHint
-      : primaryAction.swipeSnoozeHint;
+  const swipeAccessibilityHint =
+    !canSwipe || swipePrimaryAction === null
+      ? gt("Opens the thread")
+      : hideSettleAction
+        ? gt("Opens the thread. Swipe left to snooze.")
+        : secondaryAction === null
+          ? primaryAction.swipeHint
+          : primaryAction.swipeSnoozeHint;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const cardContent = (

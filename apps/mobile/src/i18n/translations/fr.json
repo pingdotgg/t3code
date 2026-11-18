@@ -5766,5 +5766,6 @@
   "5d9bc70d1cb3b596": "{count} machines n’ont presque plus d’espace disque",
   "7bb6d3c4fe5cea0f": "{count} machines sont surchargées",
   "b48a4b390016a4f0": "Utilise {usage} alors que la mémoire ralentit les agents. L’arrêter aide les autres.",
-  "0d23483df1d6fc87": "Utilise {usage} alors que cette machine est surchargée. L’arrêter aide les autres."
+  "0d23483df1d6fc87": "Utilise {usage} alors que cette machine est surchargée. L’arrêter aide les autres.",
+  "8d9a8818faaf5ed1": "Ouvre le fil. Balayez vers la gauche pour le mettre en attente."
 }

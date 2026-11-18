@@ -5772,5 +5772,6 @@
   "5d9bc70d1cb3b596": "{count} datorer har nästan slut på diskutrymme",
   "7bb6d3c4fe5cea0f": "{count} datorer är överbelastade",
   "b48a4b390016a4f0": "Använder {usage} medan minnet gör agenterna långsamma. Att stoppa den hjälper resten.",
-  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten."
+  "0d23483df1d6fc87": "Använder {usage} medan den här datorn är överbelastad. Att stoppa den hjälper resten.",
+  "8d9a8818faaf5ed1": "Öppnar tråden. Svep åt vänster för att snooza."
 }
