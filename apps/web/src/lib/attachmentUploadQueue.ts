@@ -602,6 +602,14 @@ export async function refreshExpiredAttachmentUploads(input: {
         (verification.status === "missing" || verification.status === "mismatched") &&
         image.file
       ) {
+        if (!canOperate(input.environmentId)) {
+          setUploadState(image.id, {
+            status: "failed",
+            environmentId: input.environmentId,
+            ...uploadFailureReason(msg("This connection cannot upload attachments.")),
+          });
+          return;
+        }
         clearUploadState(image.id);
         startAttachmentUpload({
           environmentId: input.environmentId,

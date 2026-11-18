@@ -241,6 +241,53 @@ describe("attachmentUploadQueue", () => {
     expect(uploaded?.[1]?.id).toBe("pending-second");
   });
 
+  it.each([
+    ["damaged", { _tag: "Success", value: { sizeBytes: 4 } }],
+    ["expired", { _tag: "Failure", error: { _tag: "AssetAttachmentNotFoundError" } }],
+  ])(
+    "keeps the %s upload failed when write access is revoked during verification",
+    async (_, result) => {
+      const image = makeImage("revoke-during-verification");
+      useAttachmentUploadStore.setState({
+        uploadsByImageId: {
+          [image.id]: {
+            status: "ready",
+            environmentId: firstEnvironment,
+            attachmentId: "pending-original",
+          },
+        },
+      });
+      mocks.executeAtomQuery.mockImplementationOnce(async () => {
+        mocks.readEnvironmentScope.mockImplementation(
+          (_environmentId, scope) => scope === "orchestration:read",
+        );
+        return result;
+      });
+
+      await refreshExpiredAttachmentUploads({ environmentId: firstEnvironment, images: [image] });
+
+      expect(readAttachmentUpload(image.id)).toMatchObject({
+        status: "failed",
+        reason: "This connection cannot upload attachments.",
+      });
+      expect(
+        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
+      ).toBeNull();
+      expect(mocks.runAtomCommand).not.toHaveBeenCalled();
+      expect(TestXmlHttpRequest.requests).toHaveLength(0);
+
+      mocks.readEnvironmentScope.mockReturnValue(true);
+      retryAttachmentUpload({ environmentId: firstEnvironment, image });
+      const settled = awaitAttachmentUploads([image.id]);
+      await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(1));
+      TestXmlHttpRequest.requests[0]!.complete();
+      await settled;
+      expect(
+        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
+      ).toMatchObject([{ id: "pending-environment-1-revoke-during-verification.png" }]);
+    },
+  );
+
   it("keeps a damaged inline document failed when its replacement upload fails", async () => {
     const file = makeFile("document-reupload-failure");
     useAttachmentUploadStore.setState({
