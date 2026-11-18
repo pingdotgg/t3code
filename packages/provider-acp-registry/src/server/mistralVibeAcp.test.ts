@@ -3,7 +3,7 @@ import type { RuntimeMode } from "@t3tools/contracts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { mistralVibePermissionDisposition } from "./mistralVibeAcp.ts";
+import { mistralVibePermissionDisposition, mistralVibeSessionMode } from "./mistralVibeAcp.ts";
 
 const shellRequest: EffectAcpSchema.RequestPermissionRequest = {
   sessionId: "session-1",
@@ -29,4 +29,9 @@ it("hands every call Smart Approve flags to the user under auto", () => {
     mistralVibePermissionDisposition(policy("auto", { type: "readOnly" }), shellRequest),
     "deny",
   );
+});
+
+it("never leaves a Supervised thread in a wider mode when Vibe hides Ask", () => {
+  assert.equal(mistralVibeSessionMode(policy("approval-required"), ["accept-edits"]), "ask");
+  assert.equal(mistralVibeSessionMode(policy("approval-required"), []), undefined);
 });

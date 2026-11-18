@@ -23,7 +23,8 @@ function mistralVibeRuntimeMode(
     : "approval-required";
 }
 
-// The first advertised mode wins; none grants more than its runtime mode.
+// The first advertised mode wins; none grants more than its runtime mode. With none advertised,
+// asking for Ask makes Vibe reject it and fail the session instead of running in a wider mode.
 const MISTRAL_VIBE_MODES: Record<RuntimeMode, ReadonlyArray<string>> = {
   "approval-required": ["ask"],
   "auto-accept-edits": ["accept-edits", "ask"],
@@ -35,8 +36,11 @@ export function mistralVibeSessionMode(
   policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   advertisedModeIds: ReadonlyArray<string>,
 ): string | undefined {
-  return MISTRAL_VIBE_MODES[mistralVibeRuntimeMode(policy)].find((id) =>
-    advertisedModeIds.includes(id),
+  if (advertisedModeIds.length === 0) return undefined;
+  return (
+    MISTRAL_VIBE_MODES[mistralVibeRuntimeMode(policy)].find((id) =>
+      advertisedModeIds.includes(id),
+    ) ?? "ask"
   );
 }
 
