@@ -133,6 +133,8 @@ import {
   type ProviderUserInputAnswers,
   type ProviderThreadId,
   type RequestRewriteRule,
+  type RequestRewriteRuleReport,
+  type RequestRewriteWarning,
   type RunId,
   type ThreadId,
   resolveIdleCompaction,
@@ -189,6 +191,7 @@ import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as ClaudeRequestForwarder from "../../provider/ClaudeRequestForwarder.ts";
+import { REQUEST_REWRITE_WARNING_TEXT } from "../../provider/claudeRequestRules.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -5696,6 +5699,20 @@ export interface ClaudeAdapterV2Options {
   readonly installationGate?: ProviderInstallationGate.ProviderInstallationGate["Service"];
 }
 
+interface ClaudeTurnRuleRewrites {
+  readonly rules: Map<
+    string,
+    {
+      readonly name: string;
+      removed: number;
+      added: number;
+      requests: number;
+      readonly warnings: Set<RequestRewriteWarning>;
+    }
+  >;
+  failures: number;
+}
+
 export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   adapterOptions: ClaudeAdapterV2Options,
 ) {
@@ -6148,8 +6165,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               threadId: input.threadId,
               upstream,
               rules,
-              onRewrite: () => Effect.void,
-              onFailure: () => Effect.void,
+              onRewrite: (rules) => recordRuleRewrite(rules),
+              onFailure: (failure) => reportRuleFailure(failure),
             })
             .pipe(Scope.provide(sessionScope));
           return forwarderRoute.baseUrl;
@@ -9496,41 +9513,123 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               detail: `T3 Code reads what Claude Code added from its session log. ${read === undefined ? "That log could not be found or read" : "That log records no added context"} (Claude Code ${liveQuery.claudeCodeVersion ?? "version unknown"}).`,
             });
           }
-          for (const notice of notices) {
-            const now = yield* DateTime.now;
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CLAUDE_PROVIDER,
-              turnItem: {
-                id: idAllocator.derive.turnItemFromProviderItem({
-                  driver: CLAUDE_PROVIDER,
-                  nativeItemId: notice.nativeItemId,
-                }),
-                threadId: context.input.threadId,
-                runId: context.input.runId,
-                nodeId: context.input.rootNodeId,
-                providerThreadId: context.input.providerThread.id,
-                providerTurnId: context.providerTurnId,
-                nativeItemRef: {
-                  driver: CLAUDE_PROVIDER,
-                  nativeId: notice.nativeItemId,
-                  strength: "strong",
-                },
-                parentItemId: null,
-                ordinal: yield* resolveItemOrdinal(context, notice.nativeItemId),
-                type: "notification",
-                status: "completed",
-                title: null,
-                startedAt: now,
-                completedAt: now,
-                updatedAt: now,
-                source: { kind: "system" },
-                outcome: "updated",
-                summary: notice.summary,
-                detail: capNotificationDetail(notice.detail),
-              },
+          const rewrites = turnRuleRewrites.get(context);
+          if (rewrites !== undefined && rewrites.rules.size > 0) {
+            const rules = [...rewrites.rules.values()];
+            notices.push({
+              nativeItemId: `request-rules:${context.providerTurnId}`,
+              summary: `Your rules changed what was sent this turn: ${rules.map((rule) => `${rule.name} (−${rule.removed.toLocaleString("en-US")} / +${rule.added.toLocaleString("en-US")} characters, ${requestCount(rule.requests)})`).join(", ")}`,
+              detail: rules
+                .map((rule) =>
+                  [
+                    `${rule.name}: ${requestCount(rule.requests)}, ${rule.removed.toLocaleString("en-US")} characters removed, ${rule.added.toLocaleString("en-US")} added.`,
+                    ...warningLines(rule.warnings),
+                  ].join("\n"),
+                )
+                .join("\n\n"),
             });
           }
+          for (const notice of notices) yield* emitNotice(context, notice);
+        });
+
+        const emitNotice = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          notice: {
+            readonly nativeItemId: string;
+            readonly summary: string;
+            readonly detail: string;
+          },
+        ) {
+          const now = yield* DateTime.now;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CLAUDE_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId: notice.nativeItemId,
+              }),
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: {
+                driver: CLAUDE_PROVIDER,
+                nativeId: notice.nativeItemId,
+                strength: "strong",
+              },
+              parentItemId: null,
+              ordinal: yield* resolveItemOrdinal(context, notice.nativeItemId),
+              type: "notification",
+              status: "completed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              source: { kind: "system" },
+              outcome: "updated",
+              summary: notice.summary,
+              detail: capNotificationDetail(notice.detail),
+            },
+          });
+        });
+
+        // What request rules changed in each turn, shown as one row when the turn settles.
+        const turnRuleRewrites = new WeakMap<ActiveClaudeTurnContext, ClaudeTurnRuleRewrites>();
+        const ruleRewritesOf = (context: ActiveClaudeTurnContext) => {
+          const existing = turnRuleRewrites.get(context);
+          if (existing !== undefined) return existing;
+          const created: ClaudeTurnRuleRewrites = { rules: new Map(), failures: 0 };
+          turnRuleRewrites.set(context, created);
+          return created;
+        };
+        const requestCount = (count: number) =>
+          `${count.toLocaleString("en-US")} ${count === 1 ? "request" : "requests"}`;
+        const warningLines = (warnings: Iterable<RequestRewriteWarning>) =>
+          [...new Set(warnings)].map(
+            (warning) => `Warning: ${REQUEST_REWRITE_WARNING_TEXT[warning]}`,
+          );
+        const ruleName = (name: string) => (name.trim().length > 0 ? name : "Unnamed rule");
+        // Counted when the request is sent, so the turn's row never misses a request still streaming.
+        const recordRuleRewrite = (reports: ReadonlyArray<RequestRewriteRuleReport>) =>
+          Effect.map(Ref.get(activeTurn), (context) => {
+            if (context === null) return;
+            const { rules } = ruleRewritesOf(context);
+            for (const report of reports) {
+              const rule = rules.get(report.ruleId) ?? {
+                name: ruleName(report.name),
+                removed: 0,
+                added: 0,
+                requests: 0,
+                warnings: new Set<RequestRewriteWarning>(),
+              };
+              rule.removed += report.removedChars;
+              rule.added += report.addedChars;
+              rule.requests += 1;
+              for (const warning of report.warnings) rule.warnings.add(warning);
+              rules.set(report.ruleId, rule);
+            }
+          });
+        const reportRuleFailure = Effect.fnUntraced(function* (
+          failure: ClaudeRequestForwarder.ClaudeRewriteFailure,
+        ) {
+          const context = yield* Ref.get(activeTurn);
+          if (context === null) return;
+          const rewrites = ruleRewritesOf(context);
+          rewrites.failures += 1;
+          yield* sdkMessageLock.withPermits(1)(
+            emitNotice(context, {
+              nativeItemId: `request-rules-failed:${context.providerTurnId}:${rewrites.failures}`,
+              summary: `A request changed by your rules failed (${failure.status}): ${failure.rules.map((rule) => ruleName(rule.name)).join(", ")}`,
+              detail: [
+                failure.errorType === undefined
+                  ? "The response carried no error details."
+                  : `${failure.errorType}: ${failure.errorMessage ?? ""}`,
+                ...warningLines(failure.rules.flatMap((rule) => rule.warnings)),
+              ].join("\n"),
+            }),
+          );
         });
 
         const finalizeActiveTurn = Effect.fnUntraced(function* (requested: {

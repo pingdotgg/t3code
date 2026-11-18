@@ -27,6 +27,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as ClaudeRequestForwarder from "../../provider/ClaudeRequestForwarder.ts";
+import { REQUEST_REWRITE_WARNING_TEXT } from "../../provider/claudeRequestRules.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
@@ -8796,6 +8797,97 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.include(terminal.failure.message, configDir);
       assert.include(terminal.failure.message, JSON.stringify(cwd));
       assert.notInclude(terminal.failure.message, "repeated API errors");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("shows what request rules changed in a turn, and each failed request at once", () =>
+    Effect.gen(function* () {
+      let route:
+        | Parameters<ClaudeRequestForwarder.ClaudeRequestForwarder["Service"]["openRoute"]>[0]
+        | undefined;
+      const harness = yield* makeWakeHarnessWithOptions({
+        requestForwarder: ClaudeRequestForwarder.ClaudeRequestForwarder.of({
+          openRoute: (input) =>
+            Effect.sync(() => {
+              route = input;
+              return { baseUrl: "http://127.0.0.1:1/s/token", setUpstream: () => Effect.void };
+            }),
+        }),
+        requestRewriteRules: Effect.succeed([
+          {
+            id: "drop",
+            name: "Drop reminders",
+            enabled: true,
+            action: "remove",
+            target: "reminders",
+            pattern: "x",
+          },
+        ]),
+      });
+      const ruleNotices = () =>
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "notification" &&
+          (event.turnItem.summary?.includes("your rules") === true ||
+            event.turnItem.summary?.includes("Your rules") === true)
+            ? [{ summary: event.turnItem.summary, detail: event.turnItem.detail }]
+            : [],
+        );
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-request-rules"),
+          text: "First.",
+          attachments: [],
+        }),
+      );
+      assert.isDefined(route);
+      const report = {
+        ruleId: "drop",
+        name: "Drop reminders",
+        blocks: 1,
+        removedChars: 1200,
+        addedChars: 0,
+        snippets: [],
+      };
+      yield* route?.onRewrite([{ ...report, warnings: [] }]) ?? Effect.void;
+      yield* route?.onRewrite([{ ...report, warnings: ["cache-breakpoint"] }]) ?? Effect.void;
+      yield* (
+        route?.onFailure({
+          status: 429,
+          rules: [{ ...report, warnings: ["first-system-block"] }],
+          errorType: "rate_limit_error",
+          errorMessage: "Error",
+        }) ?? Effect.void
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000711", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      // The failure row comes as the request fails, before the turn settles.
+      assert.deepStrictEqual(ruleNotices(), [
+        {
+          summary: "A request changed by your rules failed (429): Drop reminders",
+          detail: `rate_limit_error: Error\nWarning: ${REQUEST_REWRITE_WARNING_TEXT["first-system-block"]}`,
+        },
+        {
+          summary:
+            "Your rules changed what was sent this turn: Drop reminders (−2,400 / +0 characters, 2 requests)",
+          detail: `Drop reminders: 2 requests, 2,400 characters removed, 0 added.\nWarning: ${REQUEST_REWRITE_WARNING_TEXT["cache-breakpoint"]}`,
+        },
+      ]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

@@ -10,6 +10,16 @@ const MAX_SNIPPETS = 2;
 const SNIPPET_LEAD = 40;
 const SNIPPET_LENGTH = 240;
 
+/** English text for each warning, used in thread rows. */
+export const REQUEST_REWRITE_WARNING_TEXT: Record<RequestRewriteWarning, string> = {
+  "first-system-block":
+    "The first system block is no longer Claude Code's billing header or identity line. The provider rejects such requests with HTTP 429, and Claude Code retries for about 3 minutes before it gives up.",
+  "cache-breakpoint":
+    "A block that carried a prompt-cache breakpoint was removed or changed, so that breakpoint is gone or no longer matches the cache.",
+  "system-removed":
+    "No system prompt is left. The provider rejects such requests with HTTP 429, and Claude Code retries for about 3 minutes before it gives up.",
+};
+
 export interface ClaudeRequestRewrite {
   /** The body to send: the original string when nothing changed. */
   readonly body: string;
