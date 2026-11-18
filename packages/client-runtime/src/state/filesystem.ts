@@ -135,7 +135,14 @@ export function getFilesystemBrowseTabCompletion(
   visibleEntries: ReadonlyArray<FilesystemBrowseEntry>,
   filterQuery: string,
 ): { readonly name: string; readonly isComplete: boolean } | null {
-  const [first, ...rest] = visibleEntries;
+  const lowerQuery = filterQuery.toLowerCase();
+  const lowerNormalizedQuery = filterQuery.normalize("NFC").toLowerCase();
+  const prefixEntries = visibleEntries.filter(
+    (entry) =>
+      entry.name.toLowerCase().startsWith(lowerQuery) ||
+      entry.name.normalize("NFC").toLowerCase().startsWith(lowerNormalizedQuery),
+  );
+  const [first, ...rest] = prefixEntries;
   if (first === undefined) return null;
   if (rest.length === 0) return { name: first.name, isComplete: true };
   let prefix = Array.from(first.name);
@@ -151,8 +158,8 @@ export function getFilesystemBrowseTabCompletion(
   }
   const name = prefix.join("");
   const lowerName = name.toLowerCase();
-  return lowerName.length > filterQuery.toLowerCase().length &&
-    visibleEntries.every((entry) => entry.name.toLowerCase().startsWith(lowerName))
+  return lowerName.length > lowerQuery.length &&
+    prefixEntries.every((entry) => entry.name.toLowerCase().startsWith(lowerName))
     ? { name, isComplete: false }
     : null;
 }

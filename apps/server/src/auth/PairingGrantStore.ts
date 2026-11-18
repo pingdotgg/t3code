@@ -301,8 +301,7 @@ export class PairingGrantStore extends Context.Service<
         readonly requestedScopes?: ReadonlyArray<AuthEnvironmentScope>;
         /** All scopes must be granted; requestedScopes only requires an overlap for OAuth. */
         readonly requiredScopes?: ReadonlyArray<AuthEnvironmentScope>;
-        /** Also spends a code issued for an agent sign-in at this level; others refuse them. */
-        readonly mcpApproval?: AuthMcpClientAccess;
+        readonly allowedSubject?: string;
       },
     ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
   }
@@ -509,8 +508,8 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-    // Approval codes stay out of the pairing links and QR codes that clients show.
-    if (!mcpApproval) {
+    // Purpose-bound codes stay out of the pairing links and QR codes that clients show.
+    if (!subject.startsWith(AuthPairingLinks.MCP_APPROVAL_SUBJECT_PREFIX)) {
       yield* emitUpsert({
         id,
         scopes: input?.scopes ?? AuthStandardClientScopes,
@@ -652,11 +651,7 @@ const make = Effect.gen(function* () {
             ? { requestedScopes: input.requestedScopes }
             : {}),
           ...(input?.requiredScopes !== undefined ? { requiredScopes: input.requiredScopes } : {}),
-          ...(input?.mcpApproval
-            ? {
-                mcpApprovalSubject: `${AuthPairingLinks.MCP_APPROVAL_SUBJECT_PREFIX}${input.mcpApproval}`,
-              }
-            : {}),
+          ...(input?.allowedSubject ? { allowedSubject: input.allowedSubject } : {}),
           consumedAt: now,
           now,
         })

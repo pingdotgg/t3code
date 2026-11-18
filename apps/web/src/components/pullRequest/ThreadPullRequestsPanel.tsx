@@ -27,7 +27,10 @@ import {
 } from "~/components/chat/composerMentionDrag";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { findProjectForChangeRequest } from "@t3tools/client-runtime/change-request-links";
-import { useOpenPrLink } from "~/lib/openPullRequestLink";
+import { pullRequestLinkPanelTarget, useOpenPrLink } from "~/lib/openPullRequestLink";
+import { useClientSettings } from "~/hooks/useSettings";
+import { usePrimaryEnvironmentId } from "~/state/environments";
+import { usePullRequestIntentPrefetch } from "./usePullRequestIntentPrefetch";
 import { cn } from "~/lib/utils";
 import { useShortcutModifierState } from "~/shortcutModifierState";
 import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
@@ -93,6 +96,7 @@ function LinkRowImpl({
   speedMode,
   onUnlink,
   onSetWatching,
+  onIntent,
   canStartWatch,
 }: {
   line: PullRequestListLine;
@@ -101,6 +105,7 @@ function LinkRowImpl({
   speedMode: boolean;
   onUnlink: (link: ThreadPullRequestLink) => void;
   onSetWatching: ((link: ThreadPullRequestLink, watching: boolean) => void) | null;
+  onIntent: (link: ThreadPullRequestLink | null) => void;
   canStartWatch: boolean;
 }) {
   const openPrLink = useOpenPrLink(threadRef);
@@ -134,6 +139,14 @@ function LinkRowImpl({
   return (
     <div
       className={cn(PULL_REQUEST_ROW_CLASS, "relative hover:bg-accent/60")}
+      onPointerEnter={() => onIntent(link)}
+      onPointerLeave={(event) => {
+        if (!event.currentTarget.contains(document.activeElement)) onIntent(null);
+      }}
+      onFocus={() => onIntent(link)}
+      onBlur={(event) => {
+        if (!event.currentTarget.matches(":hover")) onIntent(null);
+      }}
       onContextMenu={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -400,6 +413,37 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: true });
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
   const capabilities = useServerConfigs().get(threadRef.environmentId)?.environment.capabilities;
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const opensInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
+  const prefetch = usePullRequestIntentPrefetch((target) =>
+    links.some(
+      (link) =>
+        link.number === target.number &&
+        link.repository.toLowerCase() === target.repository.toLowerCase(),
+    ),
+  );
+  const intendLink = (link: ThreadPullRequestLink | null) => {
+    const target =
+      link === null || !opensInApp
+        ? null
+        : pullRequestLinkPanelTarget({
+            url: link.url,
+            environmentId: threadRef.environmentId,
+            primaryEnvironmentId,
+            lendHostProject: true,
+          });
+    prefetch(
+      target?.host === undefined
+        ? null
+        : {
+            environmentId: target.project.environmentId,
+            projectId: target.project.id,
+            host: target.host,
+            repository: target.repository,
+            number: target.number,
+          },
+    );
+  };
   const supportsWatch = capabilities?.threadPullRequestWatch === true;
   const canStartWatch = thread !== null && canStartThreadPullRequestWatch(thread);
   const handleUnlink = (link: ThreadPullRequestLink) => {
@@ -427,7 +471,15 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   };
 
   // Legend rows update only for data/extraData changes; include all external inputs.
-  const rowInputs = { speedMode, environmentProjects, capabilities, supportsWatch, thread };
+  const rowInputs = {
+    speedMode,
+    environmentProjects,
+    capabilities,
+    supportsWatch,
+    thread,
+    opensInApp,
+    primaryEnvironmentId,
+  };
 
   if (linkCount === 0) {
     return (
@@ -469,6 +521,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
               speedMode={speedMode}
               onUnlink={handleUnlink}
               onSetWatching={supportsWatch ? handleSetWatching : null}
+              onIntent={intendLink}
               canStartWatch={canStartWatch}
             />
           )}
