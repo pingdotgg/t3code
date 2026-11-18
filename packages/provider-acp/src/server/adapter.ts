@@ -485,6 +485,7 @@ export interface AcpAdapterV2Flavor {
   readonly permissionDisposition?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
     request: EffectAcpSchema.RequestPermissionRequest,
+    currentModeId?: string,
   ) => AcpPermissionDisposition;
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
@@ -6900,10 +6901,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 flavor.answerablePermissionOptions === undefined
                   ? params
                   : { ...params, options: flavor.answerablePermissionOptions(params) };
+              const currentModeId = (yield* targetRuntime.getModeState)?.currentModeId;
               const dispositionFor = (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
-              ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
+              ) =>
+                flavor.permissionDisposition === undefined
+                  ? acpPermissionDisposition(policy, request)
+                  : flavor.permissionDisposition(policy, request, currentModeId);
               if (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") {
                 if (!(yield* awaitRequestTurn(handlerGeneration)))
                   return { outcome: { outcome: "cancelled" } } as const;

@@ -22,11 +22,15 @@ const policy = (runtimeMode: RuntimeMode, sandboxPolicy?: unknown) =>
     ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
   });
 
-it("hands every call Smart Approve flags to the user under auto", () => {
-  assert.equal(mistralVibePermissionDisposition(policy("auto"), shellRequest), "ask");
-  assert.equal(mistralVibePermissionDisposition(policy("full-access"), shellRequest), "allow");
+it("hands the user only the calls Smart Approve flags", () => {
   assert.equal(
-    mistralVibePermissionDisposition(policy("auto", { type: "readOnly" }), shellRequest),
+    mistralVibePermissionDisposition(policy("auto"), shellRequest, "smart-approve"),
+    "ask",
+  );
+  // Without the Smart Approve rollout Vibe runs Ask, and Auto approves as for any agent.
+  assert.equal(mistralVibePermissionDisposition(policy("auto"), shellRequest, "ask"), "allow");
+  assert.equal(
+    mistralVibePermissionDisposition(policy("auto", { type: "readOnly" }), shellRequest, "ask"),
     "deny",
   );
 });

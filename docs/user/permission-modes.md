@@ -30,7 +30,8 @@ Providers enforce permissions differently. Some read-only actions can proceed in
 **Auto** uses automatic review on Codex, Claude, Cursor, Grok, fx, and Mistral Vibe; providers without
 an equivalent, including OpenCode and Antigravity, fall back to asking. On Grok, commands its review
 blocks come to you for approval. On fx, prompts it still sends also come to you. On Mistral Vibe,
-calls its Smart Approve finds risky come to you.
+calls its Smart Approve finds risky come to you; where Vibe lacks Smart Approve, Auto approves its
+requests.
 
 Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
 runs in **Supervised**.

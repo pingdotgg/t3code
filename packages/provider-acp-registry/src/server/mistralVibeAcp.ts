@@ -48,8 +48,7 @@ export function mistralVibeSessionMode(
 export function mistralVibePermissionDisposition(
   policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
+  currentModeId?: string,
 ): AcpPermissionDisposition {
-  return mistralVibeRuntimeMode(policy) === "auto"
-    ? "ask"
-    : acpPermissionDisposition(policy, request);
+  return currentModeId === "smart-approve" ? "ask" : acpPermissionDisposition(policy, request);
 }
