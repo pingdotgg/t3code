@@ -99,3 +99,13 @@
 - Fix 2 (`AutoFailoverService`): a thread not on Auto that hits a usage limit now fails over through Auto at the level its model implies (Fable/Sol/Astra high; Sonnet/Haiku/Flash/OpenCode/Luna low; else medium). Delegated threads not on Auto are left alone: their parent chose the model.
 - Setup repo: `fallbackModelSelection` (Grok) is cleared by `apply-auto-settings.py`; the health check warns while it is set.
 - Numbers: AutoFailoverService 8/8; ProviderTurnStartService 65/69, the same 4 failures as before the change (Windows-only git/startup tests); server typecheck 0 errors.
+
+## 2026-11-18: Fork synced onto upstream `373ec12be6`
+
+- What: the 18 fork commits from `1f698f01d9..bd33ae897c` were rebased onto upstream main `373ec12be6` (300 upstream commits newer). `origin/main` is recorded as an ancestor with an `-s ours` merge, as in the previous sync, so the PR merges without a force-push.
+- Why: the fork was 300 commits behind upstream two days after the last sync.
+- Conflicts: 3 sites in 2 files, all from upstream translating the whole app (#37893): `ProviderModelPicker.tsx` (fork's Auto trigger label vs upstream's `gt()` labels) and `UsageLimitsPooled.tsx` (imports moved to `usageLimitsCopy.ts`). Kept upstream's translated strings and the fork's Auto and pooled-view behavior.
+- Adapted to upstream: reset advice (`suggestResetCredit`) moved from `usageLimits.ts` to `usageLimitsCopy.ts`, where upstream now keeps `formatDuration` and other client copy. The fork's pooled view, chart, reset advice and Subscriptions heading wrap their copy in `<T>`/`gt()` (upstream's `no-untranslated-copy` lint), and the web catalogs gained those 17 keys.
+- Numbers: `vp run check:changed` all pass (typecheck 42 packages, 492 tests in 25 files, lint, knip, format, react compiler); `vp run i18n:check` pass; `UsageLimitsPooled.browser.test.tsx` 2/2.
+- Real run (worktree `.t3`, seeded copy, never `~/.t3/userdata`): Auto High/Medium/Low pinned at the top of Favorites with their routes, Usage → Limits pooled view and reset advice render, one Claude Haiku turn answered. Production build (`apps/web vp run build`, `apps/server node scripts/cli.ts build`) boots on an empty data dir.
+- Next: Tomáš switches hub2 and hub to the new build.
