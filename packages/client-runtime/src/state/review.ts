@@ -80,6 +80,11 @@ export function createReviewEnvironmentAtoms<R, E>(
       staleTimeMs: 5_000,
     }),
     diffPreview,
+    fileContents: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:review:file-contents",
+      tag: WS_METHODS.reviewGetDiffFileContents,
+      staleTimeMs: 5_000,
+    }),
     diffFilePatch: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:review:diff-file-patch",
       staleTimeMs: 5 * 60_000,

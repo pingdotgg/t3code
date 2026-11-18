@@ -120,6 +120,7 @@ import {
   FileSurfaceLoading,
 } from "./fileSurfaceChrome";
 import SourceFilePreview from "./ReadOnlySourcePreview";
+import { FileChangeSurface } from "./FileChangeSurface";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey } from "./fileContentRevision";
@@ -1753,32 +1754,51 @@ export default function FilePreviewPanel({
                 text={file.data.contents}
                 delimiter={tableDelimiter}
               />
-            ) : file.data.truncated || isHostFile || !canWriteFiles ? (
-              <SourceFilePreview
-                name={relativePath}
-                text={file.data.contents}
-                cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
-                onPostRender={onFilePostRender}
-                wordWrap={wordWrap}
-              />
             ) : (
-              <DiffWorkerPoolProvider>
-                <EditableFileSurface
-                  key={`${relativePath}:${resolvedTheme}`}
-                  environmentId={environmentId}
-                  projectId={projectId}
-                  cwd={cwd}
-                  relativePath={relativePath}
-                  composerDraftTarget={composerDraftTarget}
-                  contents={file.data.contents}
-                  resolvedTheme={resolvedTheme}
-                  revealRequestId={revealRequestId}
-                  wordWrap={wordWrap}
-                  onPostRender={onFilePostRender}
-                  onPendingChange={onPendingChange}
-                  onEditorChange={handleEditorChangeStable}
-                />
-              </DiffWorkerPoolProvider>
+              <FileChangeSurface
+                environmentId={environmentId}
+                cwd={cwd}
+                path={relativePath}
+                contents={file.data.contents}
+                mutationId={workspaceMutationId}
+                enabled={!isHostFile && !file.data.truncated}
+              >
+                {(paintChanges) =>
+                  file.data!.truncated || isHostFile || !canWriteFiles ? (
+                    <SourceFilePreview
+                      name={relativePath}
+                      text={file.data!.contents}
+                      cacheKey={projectFileCacheKey(cwd, relativePath, file.data!.contents)}
+                      onPostRender={(node, instance, phase) => {
+                        paintChanges(node, instance, phase);
+                        onFilePostRender(node, instance, phase);
+                      }}
+                      wordWrap={wordWrap}
+                    />
+                  ) : (
+                    <DiffWorkerPoolProvider>
+                      <EditableFileSurface
+                        key={`${relativePath}:${resolvedTheme}`}
+                        environmentId={environmentId}
+                        projectId={projectId}
+                        cwd={cwd}
+                        relativePath={relativePath}
+                        composerDraftTarget={composerDraftTarget}
+                        contents={file.data!.contents}
+                        resolvedTheme={resolvedTheme}
+                        revealRequestId={revealRequestId}
+                        wordWrap={wordWrap}
+                        onPostRender={(node, instance, phase) => {
+                          paintChanges(node, instance, phase);
+                          onFilePostRender(node, instance, phase);
+                        }}
+                        onPendingChange={onPendingChange}
+                        onEditorChange={handleEditorChangeStable}
+                      />
+                    </DiffWorkerPoolProvider>
+                  )
+                }
+              </FileChangeSurface>
             )
           ) : null}
         </div>

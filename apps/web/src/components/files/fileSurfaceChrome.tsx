@@ -16,6 +16,40 @@ export const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 export const FILE_LINK_REVEAL_UNSAFE_CSS = `
   ${DIFF_SURFACE_THEME_UNSAFE_CSS}
 
+  [data-column-number]:is([data-file-addition], [data-file-deletion]) {
+    position: relative;
+  }
+
+  [data-column-number][data-file-addition]::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 3px;
+    background: var(--diff-addition-foreground);
+    pointer-events: none;
+  }
+
+  [data-column-number][data-file-deletion]::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: 0;
+    bottom: 0;
+    width: 8px;
+    height: 8px;
+    background: var(--diff-deletion-foreground);
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
+    transform: translateY(50%);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  [data-column-number][data-file-deletion="before"]::before {
+    top: 0;
+    bottom: auto;
+    transform: translateY(-50%);
+  }
+
   diffs-container {
     --diffs-bg: var(--code-background, var(--background)) !important;
     --diffs-light-bg: var(--code-background, var(--background)) !important;

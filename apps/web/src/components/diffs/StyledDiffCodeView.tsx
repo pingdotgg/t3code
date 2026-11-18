@@ -67,6 +67,14 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   ) !important;
 }
 
+[data-indicators="bars"] [data-column-number][data-line-type="change-addition"]::before {
+  background: var(--diff-addition-foreground);
+}
+
+[data-indicators="bars"] [data-column-number][data-line-type="change-deletion"]::before {
+  background: var(--diff-deletion-foreground);
+}
+
 [data-indicators="bars"]
   :is([data-column-number], [data-gutter-buffer="annotation"])[data-selected-line] {
   position: relative;
@@ -246,6 +254,7 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
             : "diff-render-surface [--code-background:var(--background)] outline-none"
         }
         options={{
+          diffIndicators: "bars",
           ...options,
           unsafeCSS: unsafeCSSExtra
             ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
