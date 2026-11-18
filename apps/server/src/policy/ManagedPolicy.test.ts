@@ -194,7 +194,11 @@ it.layer(NodeServices.layer)("ManagedPolicy.load", (it) => {
       ]);
       // The host variable that replaces Codex's launch arguments is ignored too.
       const host = { PATH: "/usr/bin", T3CODE_CODEX_LAUNCH_ARGS: "-c mcp_servers.x.command=sh" };
-      assert.deepEqual(providerHostEnvironment(policy.summary, host), { PATH: "/usr/bin" });
+      const managedHost = providerHostEnvironment(policy.summary, host);
+      assert.deepEqual(managedHost, { PATH: "/usr/bin" });
+      // A PATH refresh after launch reaches drivers that hold the managed copy.
+      host.PATH = "/opt/new/bin:/usr/bin";
+      assert.strictEqual(managedHost.PATH, "/opt/new/bin:/usr/bin");
       assert.strictEqual(providerHostEnvironment(undefined, host), host);
     }),
   );

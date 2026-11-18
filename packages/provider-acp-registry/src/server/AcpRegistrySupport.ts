@@ -55,6 +55,8 @@ const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest
 const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 const MAX_COMMAND_OUTPUT_BYTES = 1024 * 1024;
+// Install errors become the provider status message; npm and uv print the actionable error last.
+const MAX_COMMAND_ERROR_TAIL_CHARS = 1_000;
 // Archive listings can exceed the output of package-manager commands.
 const MAX_ARCHIVE_LISTING_BYTES = 64 * 1024 * 1024;
 const MAX_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
@@ -911,23 +913,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return yield* refreshRegistry();
   });
 
-  const loadCachedRegistry = Effect.fn("AcpRegistryCatalog.loadCachedRegistry")(function* () {
+  const loadRegistry = Effect.fn("AcpRegistryCatalog.loadRegistry")(function* () {
     const current = yield* Ref.get(registryRef);
     if (current !== undefined) return current;
 
     const cached = yield* readCachedRegistry;
-    if (Option.isNone(cached)) {
-      return yield* new AcpRegistryError({
-        reason: "registry_unavailable",
-        detail: "No valid cached ACP Registry index is available.",
-      });
-    }
+    if (Option.isNone(cached)) return yield* refreshRegistry();
     yield* Ref.set(registryRef, cached.value);
     return cached.value;
-  });
-
-  const loadRegistry = Effect.fn("AcpRegistryCatalog.loadRegistry")(function* () {
-    return yield* loadCachedRegistry().pipe(Effect.catch(() => refreshRegistry()));
   });
 
   const runCommand = Effect.fn("AcpRegistryCatalog.runCommand")(function* (
@@ -961,7 +954,13 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             stream: child.stdout,
             maxBytes: options.maxStdoutBytes ?? MAX_COMMAND_OUTPUT_BYTES,
           }),
-          collectUint8StreamText({ stream: child.stderr, maxBytes: MAX_COMMAND_OUTPUT_BYTES }),
+          child.stderr.pipe(
+            Stream.decodeText(),
+            Stream.runFold(
+              () => "",
+              (tail, text) => `${tail}${text}`.slice(-MAX_COMMAND_ERROR_TAIL_CHARS),
+            ),
+          ),
           child.exitCode,
         ],
         { concurrency: "unbounded" },
@@ -969,7 +968,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       if (Number(exitCode) !== 0) {
         return yield* new AcpRegistryError({
           reason: "install_failed",
-          detail: `ACP Registry install command '${command}' exited with code ${Number(exitCode)}: ${stderr.text.trim()}`,
+          detail: `ACP Registry install command '${command}' exited with code ${Number(exitCode)}: ${stderr.trim()}`,
         });
       }
       // Truncated listings would bypass archive traversal validation.
@@ -1782,7 +1781,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       if (agentId.length === 0) return { status: "unconfigured" } as const;
       const denial = agentDenial?.(agentId);
       if (denial !== undefined) return { status: "denied", message: denial } as const;
-      const registry = yield* loadCachedRegistry();
+      const registry = yield* loadRegistry();
       const agent = registry.agents.find((candidate) => candidate.id === agentId);
       if (agent === undefined) return { status: "not_found", agentId } as const;
       const documentationUrl = agent.website ?? agent.repository;

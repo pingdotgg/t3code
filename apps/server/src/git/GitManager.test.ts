@@ -465,9 +465,9 @@ function createFakeSourceControlProvider(scenario: FakeProviderScenario = {}): {
       : {
           headBranchProbe:
             scenario.headBranchProbe ??
-            (({ headSelectors, defaultBranchHeadSelector }) => ({
-              headSelectors: defaultBranchHeadSelector
-                ? [defaultBranchHeadSelector]
+            (({ headSelectors, ownerHeadSelector }) => ({
+              headSelectors: ownerHeadSelector
+                ? [ownerHeadSelector]
                 : headSelectors.filter((selector) => !selector.includes(":")),
               limit: 100,
             })),
@@ -2270,6 +2270,72 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("finds a fork branch's open PR past a full page of other forks' PRs", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature"]);
+      yield* runGit(repoDir, ["push", "-u", "fork", "feature"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:team/repository.git",
+        originDir,
+      );
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "fork",
+        "git@github.com:alice/repository.git",
+        forkDir,
+      );
+      const otherForks: FakeChangeRequest[] = Array.from({ length: 100 }, (_, index) => ({
+        number: 200 - index,
+        title: "Update docs",
+        url: `https://github.com/team/repository/pull/${200 - index}`,
+        baseRefName: "main",
+        headRefName: "feature",
+        state: "open",
+        isCrossRepository: true,
+        headRepositoryNameWithOwner: `fork-${index + 1}/repository`,
+        headRepositoryOwnerLogin: `fork-${index + 1}`,
+      }));
+      const { manager, providerCalls } = yield* makeManager({
+        providerScenario: {
+          prListSequenceByHeadSelector: { feature: [otherForks, otherForks] },
+          prListByHeadSelector: {
+            "alice:feature": [
+              {
+                number: 1,
+                title: "This fork",
+                url: "https://github.com/team/repository/pull/1",
+                baseRefName: "main",
+                headRefName: "feature",
+                state: "open",
+                isCrossRepository: true,
+                headRepositoryNameWithOwner: "alice/repository",
+                headRepositoryOwnerLogin: "alice",
+              },
+            ],
+          },
+        },
+      });
+
+      expect(yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature" })).toMatchObject({
+        number: 1,
+        state: "open",
+      });
+      expect(listed(providerCalls).map((call) => [call.headSelector, call.state])).toEqual([
+        ["feature", "all"],
+        ["alice:feature", "open"],
+      ]);
+    }),
+  );
+
   it.effect.each([
     { remoteUrl: "git@gitlab.com:Group/Subgroup/Fork.git", setUpstream: true },
     { remoteUrl: "git@gitlab.com:Group/Subgroup/Fork.git", setUpstream: false },
@@ -3645,6 +3711,56 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           "feature/push-dirty",
         ]).pipe(Effect.map((output) => output.stdout.trim())),
       ).toBe("Push dirty branch");
+    }),
+  );
+
+  it.effect("finishes a pushed commit when the final status read fails", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-after-push"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "change.txt"), "change\n");
+      const gate = {
+        matches: (args: ReadonlyArray<string>) => args[0] === "push",
+        reached: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      const events: GitActionProgressEvent[] = [];
+      const { manager } = yield* makeManager({ gitSpawnGate: gate });
+
+      const action = yield* Effect.forkChild(
+        runStackedAction(
+          manager,
+          { cwd: repoDir, action: "commit_push", commitMessage: "Status after push" },
+          {
+            progressReporter: {
+              publish: (event) =>
+                Effect.sync(() => {
+                  events.push(event);
+                }),
+            },
+          },
+        ),
+      );
+      yield* Deferred.await(gate.reached);
+      NodeFS.writeFileSync(NodePath.join(repoDir, ".git", "index.lock"), "");
+      yield* Deferred.succeed(gate.release, undefined);
+      const result = yield* Fiber.join(action);
+
+      expect(result.push.status).toBe("pushed");
+      expect(result.toast.cta).toEqual({ kind: "none" });
+      expect(events.at(-1)?.kind).toBe("action_finished");
+      expect(
+        (yield* runGit(remoteDir, [
+          "--git-dir=.",
+          "log",
+          "-1",
+          "--pretty=%s",
+          "feature/status-after-push",
+        ])).stdout.trim(),
+      ).toBe("Status after push");
     }),
   );
 
