@@ -12482,7 +12482,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return { action: "cancel" } satisfies ElicitationResult;
           }
           const grantKey = `${request.serverName}\u0000${request.message}`;
-          if (request.mode !== "url" && (yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey)) {
+          if (
+            request.mode !== "url" &&
+            (yield* Ref.get(mcpElicitationSessionGrants)).has(grantKey)
+          ) {
             return acceptance;
           }
           // The CLI waits on this answer, so a turn held for its prompt echo

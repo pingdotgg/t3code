@@ -6087,7 +6087,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
             }
 
-            if (payload.mode !== "url" && context.input.runtimePolicy.runtimeMode === "full-access") {
+            if (
+              payload.mode !== "url" &&
+              context.input.runtimePolicy.runtimeMode === "full-access"
+            ) {
               return acceptance;
             }
 

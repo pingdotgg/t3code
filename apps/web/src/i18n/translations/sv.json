@@ -751,7 +751,7 @@
   "9aba95a61cc1b6e3": "Feedback skickad till OpenAI.\n\nTråd-ID: `{feedbackId}`",
   "de62133b5898fab1": "Kunde inte skicka feedback till OpenAI.\n\n{errorMessage}",
   "0bed322f6071f4da": "Ett fel uppstod.",
-  "17c2c3f06943156e": "Complete the steps in your browser, then choose Continue.",
+  "17c2c3f06943156e": "Slutför stegen i webbläsaren och välj sedan Fortsätt.",
   "e94aa66471dae6aa": "Varför får jag den här frågan?",
   "228a325b5708e675": "Full åtkomst hoppar över godkännanden, men en fråga-regel i agentens egna inställningar matchar den här åtgärden, så den frågar ändå. Ta bort eller begränsa regeln för att slippa de här frågorna.",
   "3f9101f696c738a8": "Full åtkomst hoppar över godkännanden, men agenten stannar ändå för några egna säkerhetskontroller som ingen inställning kan hoppa över, till exempel en radering vars sökväg den inte kan verifiera. T3 Code kan inte stänga av dem, så kontrollera begäran och godkänn den om den är vad du väntar dig.",
@@ -3027,10 +3027,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "på datorn som öppnade den här sidan"
-      ]
+      "c": [" ", "på datorn som öppnade den här sidan"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3042,10 +3039,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· den som kör den får den här åtkomsten"
-      ]
+      "c": [" ", "· den som kör den får den här åtkomsten"]
     }
   ],
   "c54cc9c75db9dc58": "Godkänn bara en inloggning som du själv precis har startat.",
@@ -3596,8 +3590,8 @@
       "v": "v"
     }
   ],
-  "802a10810a7f044e": "Open {host}",
-  "b477f81121abcb00": "Could not open the link. Copy it into your browser to continue.",
+  "802a10810a7f044e": "Öppna {host}",
+  "b477f81121abcb00": "Det gick inte att öppna länken. Kopiera den till webbläsaren för att fortsätta.",
   "9cc6288e83305ca3": "Diagrammet kunde inte renderas.",
   "74d986aed0381cb0": "Diagramrenderaren kunde inte läsas in.",
   "d694484d6fea351e": "Expandera diagram",

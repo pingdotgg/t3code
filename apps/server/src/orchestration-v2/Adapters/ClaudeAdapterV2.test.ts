@@ -7423,10 +7423,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(yield* Fiber.join(yield* elicit(approvalOnly)), granted);
         assert.equal(runtimeRequests().length, 1);
 
+        const urlAnswer = yield* elicit({
+          ...approvalOnly,
+          mode: "url",
+          url: "https://example.com/authorize",
+        });
+        const urlRequest = yield* awaitCard(2);
+        assert.isUndefined(urlAnswer.pollUnsafe());
+        yield* harness.runtime.respondToRuntimeRequest({
+          requestId: urlRequest.id,
+          decision: "accept",
+        });
+        assert.deepEqual(yield* Fiber.join(urlAnswer), { action: "accept" });
+
         const otherMessage = yield* elicit({ ...approvalOnly, message: "Deploy api?" });
-        yield* awaitCard(2);
-        const otherServer = yield* elicit({ ...approvalOnly, serverName: "builds" });
         yield* awaitCard(3);
+        const otherServer = yield* elicit({ ...approvalOnly, serverName: "builds" });
+        yield* awaitCard(4);
         assert.isUndefined(otherMessage.pollUnsafe());
         assert.isUndefined(otherServer.pollUnsafe());
       }).pipe(Effect.scoped, Effect.provide(testLayer)),

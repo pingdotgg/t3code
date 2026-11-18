@@ -65,7 +65,9 @@ export interface ThreadPendingApproval {
   readonly supportsFeedback?: boolean;
 }
 
-export const MCP_URL_ELICITATION_HINT = msg("Complete the steps in your browser, then choose Continue.");
+export const MCP_URL_ELICITATION_HINT = msg(
+  "Complete the steps in your browser, then choose Continue.",
+);
 
 export const FULL_ACCESS_OVERRIDE_QUESTION = msg("Why am I being asked this?");
 
