@@ -1371,21 +1371,26 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const multiline = variant === "folder-multiline";
   const inFolder = variant === "folder" || multiline;
   const diff = latestRunDiff(thread);
-  // Only the trailing icons would remain, so the row moves them to the title line instead.
+  // Cards keep branch, PR and issue details off the meta line; folder rows still list them.
+  const isCard = variant === "card";
+  const metaBranch = isCard ? null : checkoutThread.branch;
+  const metaPrBadge = isCard ? null : prBadge;
+  const metaIssueBadge = isCard ? null : issueBadge;
   const metaLineEmpty =
-    !checkoutThread.branch &&
+    !metaBranch &&
     !showsScratchMachine &&
-    prBadge === null &&
-    issueBadge === null &&
+    metaPrBadge === null &&
+    metaIssueBadge === null &&
     diff === null &&
     runningTerminalIds.length === 0;
+  const providerOnTitleLine = isCard || metaLineEmpty;
   const metaLine = metaLineEmpty ? null : (
     <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-meta font-normal">
-      {checkoutThread.branch ? (
+      {metaBranch ? (
         <>
           <ThreadWorktreeIndicator thread={checkoutThread} />
           <span className="flex min-w-0 flex-1">
-            <MiddleTruncate value={checkoutThread.branch} showTitle={false} />
+            <MiddleTruncate value={metaBranch} showTitle={false} />
           </span>
         </>
       ) : showsScratchMachine ? (
@@ -1401,27 +1406,29 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         <span className="flex-1" />
       )}
       {terminalStatusIcon}
-      {prBadge}
-      {issueBadge}
+      {metaPrBadge}
+      {metaIssueBadge}
       {diff ? (
         <span className="shrink-0 font-mono">
           <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}
           <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
         </span>
       ) : null}
-      <span
-        aria-hidden
-        className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-      >
-        {remoteMachineIcon}
-        <SidebarProviderStack
-          thread={thread}
-          providerEntryByInstanceId={props.providerEntryByInstanceId}
-        />
-      </span>
+      {providerOnTitleLine ? null : (
+        <span
+          aria-hidden
+          className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+        >
+          {remoteMachineIcon}
+          <SidebarProviderStack
+            thread={thread}
+            providerEntryByInstanceId={props.providerEntryByInstanceId}
+          />
+        </span>
+      )}
     </div>
   );
-  const titleLineIcons = metaLineEmpty ? (
+  const titleLineIcons = providerOnTitleLine ? (
     <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
       {remoteMachineIcon}
       <SidebarProviderStack
