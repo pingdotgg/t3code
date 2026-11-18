@@ -8,10 +8,17 @@ interface Props extends Pick<
 > {
   handlers: ResizableWidthHandlers;
   className?: string;
+  edge?: "left" | "right";
   label?: string;
 }
 
-export function RightPanelResizeHandle({ handlers, className, label, ...separatorProps }: Props) {
+export function RightPanelResizeHandle({
+  handlers,
+  className,
+  edge = "left",
+  label,
+  ...separatorProps
+}: Props) {
   return (
     <div
       role="separator"
@@ -19,7 +26,10 @@ export function RightPanelResizeHandle({ handlers, className, label, ...separato
       aria-orientation="vertical"
       {...separatorProps}
       className={cn(
-        "group absolute inset-y-0 left-0 z-40 w-1 cursor-col-resize touch-none select-none any-pointer-coarse:-left-2 any-pointer-coarse:w-4",
+        "group absolute inset-y-0 z-40 w-1 cursor-col-resize touch-none select-none any-pointer-coarse:w-4",
+        edge === "left"
+          ? "left-0 any-pointer-coarse:-left-2"
+          : "right-0 any-pointer-coarse:-right-2",
         className,
       )}
       {...handlers}

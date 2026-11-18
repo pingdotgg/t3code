@@ -3,7 +3,10 @@ import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import type { PullRequestActivityVisibility } from "../../persistence/mobile-preferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
-import { DEFAULT_ACTIVITY_FILTER, type ActivityFilter } from "./pullRequestActivityFilter";
+import {
+  DEFAULT_ACTIVITY_FILTER,
+  type ActivityFilter,
+} from "@t3tools/client-runtime/review-activity";
 
 const SHOW_EVERYTHING: PullRequestActivityVisibility = { bots: true, resolved: true };
 

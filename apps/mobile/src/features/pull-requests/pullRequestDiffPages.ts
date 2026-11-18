@@ -1,5 +1,6 @@
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
+import { orderReviewFiles } from "@t3tools/client-runtime/review-workspace";
 import type { PullRequestDiffResult } from "@t3tools/contracts";
 import { msg } from "gt-react-native";
 
@@ -33,10 +34,11 @@ export function getCachedPullRequestDiffPages(
   terminology: ChangeRequestTerminology,
   resolve: MessageResolver = m,
   locale = "",
+  ignoreWhitespace = false,
 ): ReviewParsedDiff {
   const first = pages[0];
   if (!first) return { kind: "empty" };
-  const key = JSON.stringify([scope, terminology.singular, first.cursor, locale]);
+  const key = JSON.stringify([scope, terminology.singular, first.cursor, locale, ignoreWhitespace]);
   let snapshots = parsedSnapshots.get(first.result);
   if (!snapshots) {
     snapshots = new Map();
@@ -52,7 +54,14 @@ export function getCachedPullRequestDiffPages(
   )
     return previous.parsed;
   const cache = previous?.cache ?? new WeakMap<PullRequestDiffResult, ReviewParsedDiff>();
-  const parsed = combinePullRequestDiffPages(pages, cache, scope, terminology, resolve);
+  const parsed = combinePullRequestDiffPages(
+    pages,
+    cache,
+    scope,
+    terminology,
+    resolve,
+    ignoreWhitespace,
+  );
   snapshots.set(key, { pages, cache, parsed });
   return parsed;
 }
@@ -85,6 +94,7 @@ export function combinePullRequestDiffPages(
   scope: string,
   terminology: ChangeRequestTerminology,
   resolve: MessageResolver = m,
+  ignoreWhitespace = false,
 ): ReviewParsedDiff {
   const parsed = pages.map((page) => {
     const cached = cache.get(page.result);
@@ -93,6 +103,7 @@ export function combinePullRequestDiffPages(
       page.result.patch,
       `${scope}:${page.cursor ?? "first"}`,
       resolve,
+      ignoreWhitespace,
     );
     if (value.kind === "files" && page.result.omittedFileStats?.length) {
       const omittedFileStats = new Map(
@@ -118,7 +129,10 @@ export function combinePullRequestDiffPages(
     cache.set(page.result, value);
     return value;
   });
-  const files = parsed.flatMap((page) => (page.kind === "files" ? page.files : []));
+  const files = orderReviewFiles(
+    parsed.flatMap((page) => (page.kind === "files" ? page.files : [])),
+    (file) => file.path,
+  );
   if (files.length === 0) return parsed[0] ?? { kind: "empty" };
   return {
     kind: "files",
@@ -145,7 +159,11 @@ export type WithheldFileLoad =
 
 const withheldFileParses = new WeakMap<
   PullRequestDiffResult,
-  { readonly locale: string; readonly file: ReviewRenderableFile | null }
+  {
+    readonly locale: string;
+    readonly ignoreWhitespace: boolean;
+    readonly file: ReviewRenderableFile | null;
+  }
 >();
 
 function parseWithheldFile(
@@ -153,13 +171,14 @@ function parseWithheldFile(
   scope: string,
   resolve: MessageResolver,
   locale: string,
+  ignoreWhitespace: boolean,
 ) {
   const cached = withheldFileParses.get(result);
-  if (cached?.locale === locale) return cached.file;
-  const parsed = buildReviewParsedDiff(result.patch, scope, resolve);
+  if (cached?.locale === locale && cached.ignoreWhitespace === ignoreWhitespace) return cached.file;
+  const parsed = buildReviewParsedDiff(result.patch, scope, resolve, ignoreWhitespace);
   const file =
     parsed.kind === "files" ? (parsed.files.find((entry) => entry.rows.length > 0) ?? null) : null;
-  withheldFileParses.set(result, { locale, file });
+  withheldFileParses.set(result, { locale, ignoreWhitespace, file });
   return file;
 }
 
@@ -189,6 +208,7 @@ export function withWithheldFiles(
   scope: string,
   resolve: MessageResolver = m,
   locale = "",
+  ignoreWhitespace = false,
 ): ReviewParsedDiff {
   if (parsed.kind !== "files" || !parsed.files.some((file) => file.withheld)) return parsed;
   const files = parsed.files.map((file): ReviewRenderableFile => {
@@ -196,7 +216,13 @@ export function withWithheldFiles(
     const load = loads.get(file.path);
     const loaded =
       load?.status === "loaded"
-        ? parseWithheldFile(load.result, `${scope}:withheld:${file.path}`, resolve, locale)
+        ? parseWithheldFile(
+            load.result,
+            `${scope}:withheld:${file.path}`,
+            resolve,
+            locale,
+            ignoreWhitespace,
+          )
         : null;
     if (loaded !== null) return { ...loaded, id: file.id };
     return {

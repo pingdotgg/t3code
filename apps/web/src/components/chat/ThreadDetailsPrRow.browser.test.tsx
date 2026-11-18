@@ -9,10 +9,13 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { DraftId } from "~/composerDraftStore";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
+import { pullRequestEnvironment } from "~/state/pullRequests";
 
 const state = vi.hoisted(() => ({
+  adminMerge: false,
   isDraft: false,
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
@@ -55,6 +58,7 @@ const queryData = () => ({
   state: "open",
   isDraft: state.isDraft,
   mergeability: "mergeable",
+  headSha: "confirmed-head",
   headBranch: "feature",
   baseBranch: "main",
   changedFiles: 1,
@@ -67,7 +71,7 @@ const queryData = () => ({
     url: null,
   })),
   capabilities: { actions: ["merge", "ready"], mergeMethods: state.mergeMethods },
-  viewerPermissions: { actions: ["merge", "ready"] },
+  viewerPermissions: { actions: ["merge", "ready"], adminMerge: state.adminMerge },
   mergeCapabilities: {
     merge: state.mergeMethods.includes("merge"),
     squash: state.mergeMethods.includes("squash"),
@@ -170,6 +174,9 @@ const clickButton = async (scope: ParentNode, label: string) =>
   });
 
 it("merges with the last selected merge method", async () => {
+  using _permission = vi
+    .spyOn(pullRequestEnvironment.runAction, "permissionAtom")
+    .mockReturnValue(Atom.make(true));
   await using screen = await setup();
   const { container } = screen;
   state.mergeMethods = ["merge", "squash"];
@@ -213,7 +220,7 @@ it("requires a new merge click after passing checks become pending and pass agai
       pr={null}
       number={1}
       status={null}
-      project={repositoryProject}
+      project={null}
       label="Test PR"
       onOpen={vi.fn()}
     />
@@ -235,6 +242,7 @@ it("requires a new merge click after passing checks become pending and pass agai
   });
   expect(dialogs()).toHaveLength(0);
   await act(async () => {
+    state.adminMerge = false;
     state.status = "success";
     await screen.rerender(render());
   });
@@ -242,6 +250,58 @@ it("requires a new merge click after passing checks become pending and pass agai
   await clickMerge();
   expect(dialogs()).toHaveLength(1);
   expect(state.perform).not.toHaveBeenCalled();
+});
+
+it("resets admin permission consent after cancellation or lost access", async () => {
+  using _permission = vi
+    .spyOn(pullRequestEnvironment.runAction, "permissionAtom")
+    .mockReturnValue(Atom.make(true));
+  await using screen = await setup();
+  state.adminMerge = true;
+  const row = () => (
+    <ThreadDetailsPrRow
+      environmentId={EnvironmentId.make("environment")}
+      pr={null}
+      number={1}
+      status={null}
+      project={null}
+      label="Test PR"
+      onOpen={vi.fn()}
+    />
+  );
+  await screen.rerender(row());
+  const open = () =>
+    act(() => {
+      [...screen.container.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Merge")!
+        .click();
+    });
+  const toggle = () =>
+    act(() => {
+      document.querySelector<HTMLLabelElement>('label:has([role="checkbox"])')!.click();
+    });
+  const cancel = () =>
+    act(() => {
+      [...document.querySelectorAll('[role="alertdialog"] button')]
+        .find((button) => button.textContent?.trim() === "Cancel")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  const checkbox = () => page.getByRole("checkbox", { name: "Merge with admin permissions" });
+  await open();
+  await expect.element(checkbox()).not.toBeChecked();
+  await toggle();
+  await expect.element(checkbox()).toBeChecked();
+  await cancel();
+  await open();
+  await expect.element(checkbox()).not.toBeChecked();
+  await toggle();
+  state.adminMerge = false;
+  await screen.rerender(row());
+  await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+  state.adminMerge = true;
+  await screen.rerender(row());
+  await open();
+  await expect.element(checkbox()).not.toBeChecked();
 });
 
 async function setup() {
@@ -255,6 +315,7 @@ async function setup() {
   state.addToast.mockReset().mockReturnValue("checkout-toast");
   state.updateToast.mockReset();
 
+  state.adminMerge = false;
   state.isDraft = false;
   state.status = "success";
   state.extraStatus = null;
@@ -277,7 +338,7 @@ it("adds the failing checks to a given composer instead of opening a new thread"
         pr={null}
         number={1}
         status={null}
-        project={repositoryProject}
+        project={null}
         label="Test PR"
         onOpen={vi.fn()}
         composerTarget={threadRef}
@@ -414,6 +475,30 @@ it("names a linked issue row by its kind, number and title, not its URL", async 
   expect(name).toMatch(/issue/i);
   expect(name).toContain("#123");
   expect(name).toContain("Sidebar flickers on resize");
+});
+
+it("requires fresh confirmation when the project default merge method changes", async () => {
+  await using screen = await setup();
+  state.mergeMethods = ["merge", "squash"];
+  state.projectMergeMethods = { repository: "merge" };
+  const row = (label: string) => (
+    <ThreadDetailsPrRow
+      environmentId={EnvironmentId.make("environment")}
+      pr={null}
+      number={1}
+      status={null}
+      project={repositoryProject as never}
+      label={label}
+      onOpen={vi.fn()}
+    />
+  );
+  await screen.rerender(row("Before"));
+  await clickButton(screen.container, "Merge");
+  expect(document.querySelector('[role="alertdialog"]')!.textContent).toContain("using merge");
+  state.projectMergeMethods = { repository: "squash" };
+  await screen.rerender(row("After"));
+  await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+  expect(state.perform).not.toHaveBeenCalled();
 });
 
 it("keeps Ready pending when refreshed detail becomes mergeable before the action settles", async () => {

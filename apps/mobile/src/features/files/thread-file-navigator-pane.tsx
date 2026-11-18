@@ -4,7 +4,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useGT, useMessages } from "gt-react-native";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { SheetPane } from "../../components/ui/SheetPane";
 
 import { useEnvironmentQuery } from "../../state/query";
@@ -20,6 +20,7 @@ export function ThreadFileNavigatorPane(props: {
   readonly projectName: string;
   readonly selectedPath: string | null;
   readonly onSelectFile: (path: string) => void;
+  readonly toolbar?: ReactNode;
 }) {
   const gt = useGT();
   const workspaceKey = JSON.stringify([props.environmentId, props.cwd]);
@@ -84,6 +85,7 @@ export function ThreadFileNavigatorPane(props: {
         entriesQuery.selectPath(path);
         props.onSelectFile(path);
       }}
+      toolbar={props.toolbar}
     />
   );
 

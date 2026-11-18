@@ -10,6 +10,8 @@ export function PullRequestSheetContent(props: {
   readonly busy?: boolean;
   readonly children: ReactNode;
   readonly footer?: ReactNode;
+  /** Sizes the sheet to its content on iOS as well, for short forms. */
+  readonly compact?: boolean;
 }) {
   const navigation = useNavigation();
   return (

@@ -9,7 +9,7 @@ import { msg } from "gt-react-native";
 import { m, type MessageResolver } from "../../i18n/messages";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 
-export type PullRequestAgentTask = "ask" | "explain" | "feedback" | "conflicts" | "watch";
+export type PullRequestAgentTask = "ask" | "feedback" | "conflicts" | "watch";
 
 export function pullRequestAgentThread(
   threads: PullRequestLinkedThreadsResult["threads"],
@@ -62,9 +62,6 @@ export function pullRequestAgentPrompt(
   switch (task) {
     case "ask":
       return "";
-    case "explain":
-      // oxlint-disable-next-line t3code/no-untranslated-copy -- prompt sent to the agent
-      return `Explain this ${singular}. Read the diff and walk through its purpose, the changes, the risks, and what I should read closely before approving. Do not change any code.`;
     case "feedback":
       // oxlint-disable-next-line t3code/no-untranslated-copy -- prompt sent to the agent
       return `Address the actionable feedback and failing checks on this ${singular}. Fetch the latest review threads and check results, skip resolved feedback, and verify each finding before changing code. First confirm this thread is on the ${shortLabel}'s branch; if it isn't, prepare the ${shortLabel} in its own worktree. Keep the fixes focused and run the relevant checks.`;
@@ -88,14 +85,6 @@ export function pullRequestAgentActions(
       task: "ask",
       title: resolve(msg("Ask a question")),
       icon: "bubble.left.and.text.bubble.right",
-      disabled: false,
-    },
-    {
-      task: "explain",
-      title: resolve(
-        msg("Explain this {term, select, mr {MR} cr {change request} other {PR}}", { term }),
-      ),
-      icon: "book",
       disabled: false,
     },
     {

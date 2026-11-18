@@ -112,6 +112,7 @@ export function usePullRequestDiffEntry(navigation: {
 export function usePullRequestDiff(
   params: PullRequestDiffParams,
   terminology: ChangeRequestTerminology,
+  ignoreWhitespace = false,
 ) {
   const reference = pullRequestTarget(params);
   const target = {
@@ -176,8 +177,9 @@ export function usePullRequestDiff(
     );
   });
   const pagesParsed = useMemo(
-    () => getCachedPullRequestDiffPages(pages, key, terminology, messages, locale),
-    [key, pages, terminology, messages, locale],
+    () =>
+      getCachedPullRequestDiffPages(pages, key, terminology, messages, locale, ignoreWhitespace),
+    [key, pages, terminology, messages, locale, ignoreWhitespace],
   );
   // The server says whether a withheld file can be read alone; GitHub may refuse the whole diff.
   const withheldFilesReadable = pages[0]?.result.withheldFilesReadable === true;
@@ -188,6 +190,7 @@ export function usePullRequestDiff(
     key,
     messages,
     locale,
+    ignoreWhitespace,
   );
   const patch = useMemo(() => pages.map((page) => page.result.patch).join("\n"), [pages]);
   const nextCursor = pages.at(-1)?.result.nextCursor ?? null;
@@ -225,4 +228,13 @@ export function usePullRequestDiff(
     refreshing,
     onPullRefresh,
   };
+}
+
+export function usePullRequestActivity(params: PullRequestParams) {
+  const target = pullRequestTarget(params);
+  const detail = useEnvironmentQuery(
+    composerPullRequests.detail({ ...target, input: { ...target.input, allowStale: false } }),
+  );
+  const viewer = !detail.isPending && !detail.error ? detail.data?.viewer?.trim() : null;
+  return useEnvironmentQuery(viewer ? composerPullRequests.activity({ ...target, viewer }) : null);
 }

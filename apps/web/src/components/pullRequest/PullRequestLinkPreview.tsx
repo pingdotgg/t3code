@@ -69,11 +69,22 @@ export function PullRequestLinkPreview({
   const namesSubject =
     parsePullRequestAnchor(originalUrl)?.kind === "timeline" ||
     pullRequestLinkCommit(originalUrl) !== null;
-  const activityQuery = useEnvironmentQuery(
+  const viewerDetail = useEnvironmentQuery(
     open && namesSubject
+      ? pullRequestEnvironment.detail({
+          environmentId: target.environmentId,
+          input: { ...target.input, allowStale: false },
+        })
+      : null,
+  );
+  const viewer =
+    !viewerDetail.isPending && !viewerDetail.error ? viewerDetail.data?.viewer?.trim() : null;
+  const activityQuery = useEnvironmentQuery(
+    open && namesSubject && viewer
       ? pullRequestEnvironment.activity({
           environmentId: target.environmentId,
           input: target.input,
+          viewer,
         })
       : null,
   );

@@ -38,9 +38,10 @@ fragment ThreadComment on PullRequestReviewComment {
   lastEditedAt
   url
   isMinimized
-  # A review link names the review, not its comments; this lets it find the comments it posted.
   pullRequestReview {
     url
+    id
+    state
   }
   ...Reactions
 }
@@ -62,6 +63,8 @@ fragment ReviewThreadPage on PullRequestReviewThreadConnection {
     # Null once the thread's line has left the diff, which `isOutdated` reports.
     line
     diffSide
+    startLine
+    startDiffSide
     comments(first: 10) {
       totalCount
       pageInfo {
@@ -272,6 +275,105 @@ query ReviewDismissals($owner: String!, $name: String!, $number: Int!, $after: S
           }
         }
       }
+    }
+  }
+}
+
+# Personal review drafts, private to the authenticated reviewer.
+query PendingReview($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+      reviews(first: 100, states: PENDING) {
+        nodes {
+          id
+          fullDatabaseId
+          body
+          viewerDidAuthor
+        }
+      }
+    }
+  }
+}
+
+query PendingReviewCommentRoots($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on PullRequestReviewComment {
+      id
+      replyTo {
+        id
+      }
+    }
+  }
+}
+
+query PendingReviewPositions($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          line
+          diffSide
+          startLine
+          startDiffSide
+          comments(first: 1) {
+            nodes {
+              id
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+mutation SaveDraftComment($input: AddPullRequestReviewThreadInput!) {
+  addPullRequestReviewThread(input: $input) {
+    thread {
+      comments(first: 1) {
+        nodes {
+          id
+          url
+        }
+      }
+    }
+  }
+}
+
+mutation CreateDraftReview($input: AddPullRequestReviewInput!) {
+  addPullRequestReview(input: $input) {
+    pullRequestReview {
+      id
+      comments(first: 1) {
+        nodes {
+          id
+          url
+        }
+      }
+    }
+  }
+}
+
+mutation DiscardDraftReview($id: ID!) {
+  deletePullRequestReview(input: { pullRequestReviewId: $id }) {
+    clientMutationId
+  }
+}
+
+mutation DiscardDraftComment($id: ID!) {
+  deletePullRequestReviewComment(input: { id: $id }) {
+    clientMutationId
+  }
+}
+
+mutation SubmitDraftReview($input: SubmitPullRequestReviewInput!) {
+  submitPullRequestReview(input: $input) {
+    pullRequestReview {
+      id
     }
   }
 }

@@ -1,3 +1,4 @@
+import { usePullRequestActivity } from "./usePullRequestDiff";
 import { useNavigation } from "@react-navigation/native";
 import {
   applyPendingPullRequestReactions,
@@ -7,7 +8,7 @@ import {
   pullRequestReactionName,
   pullRequestReactionTooltip,
   pullRequestReactionsSignature,
-} from "@t3tools/client-runtime/pull-request-reactions";
+} from "@t3tools/client-runtime/review-reactions";
 import type {
   PullRequestComment,
   PullRequestReaction,
@@ -134,7 +135,7 @@ function usePullRequestReact(params: PullRequestParams, subjectId?: string) {
 export function PullRequestReactions(props: { readonly params: PullRequestParams }) {
   const target = pullRequestTarget(props.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
-  const activity = useEnvironmentQuery(composerPullRequests.activity(target));
+  const activity = usePullRequestActivity(props.params);
   const { canReact } = usePullRequestPermissions(props.params, detail.data);
   const reactions = activity.data?.reactions ?? [];
   const onReact = usePullRequestReact(props.params);

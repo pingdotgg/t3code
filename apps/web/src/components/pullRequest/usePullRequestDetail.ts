@@ -59,8 +59,10 @@ export function usePullRequestDetail(
   const detailQuery = useEnvironmentQuery(
     pullRequestEnvironment.detail({ environmentId, input: { ...reference, allowStale: false } }),
   );
+  const viewer =
+    !detailQuery.isPending && !detailQuery.error ? detailQuery.data?.viewer?.trim() : null;
   const activityQuery = useEnvironmentQuery(
-    pullRequestEnvironment.activity({ environmentId, input: reference }),
+    viewer ? pullRequestEnvironment.activity({ environmentId, input: reference, viewer }) : null,
   );
   const serverConfigs = useServerConfigs();
   const supportsChecks =

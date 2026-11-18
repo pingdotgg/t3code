@@ -4,11 +4,10 @@ import type {
   PullRequestMergeMethod,
   PullRequestUpdateMethod,
 } from "@t3tools/contracts";
-import { CheckIcon, ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
+import { ChevronDownIcon, FolderGit2Icon, GitBranchIcon, PlayIcon } from "lucide-react";
 import { Branch, T, useGT } from "gt-react";
 import type { ReactNode } from "react";
 
-import { AnimatedWidth } from "~/components/AnimatedWidth";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
@@ -27,14 +26,15 @@ import type { resolvePullRequestPrimaryControl } from "./pullRequestDetail.logic
 import { PullRequestGlyph } from "./pullRequestIcons";
 import type { resolvePullRequestState } from "./pullRequestPresentation";
 import type { PickableEnvironment } from "./pullRequestProjectAssignment.logic";
-import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
 import type { ChangeRequestTermKind } from "./changeRequestTerm";
+import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
 export type PerformPullRequestAction = (
   action: PullRequestAction,
   method?: PullRequestMergeMethod,
   updateMethod?: PullRequestUpdateMethod,
+  adminOverride?: boolean,
 ) => Promise<boolean>;
 
 export function ActOnEnvironmentPicker({
@@ -206,34 +206,26 @@ export function PullRequestResolveConflictsButton({
 
 /** The header's one prominent control, which depends on where the pull request stands. */
 export function PullRequestPrimaryAction({
-  pullRequestKey,
   primaryAction,
-  mergeBlockedReason,
   autoMergeArmed,
   armedAutoMergeLabel,
-  pendingAutoMergeLabel,
-  selectedMergeMethod,
-  selectedMergeMethodLabel,
   statePresentation,
   pendingAction,
   perform,
   resolveConflicts,
+  mergeControl,
 }: {
-  pullRequestKey: string;
   primaryAction: ReturnType<typeof resolvePullRequestPrimaryControl> | null;
-  mergeBlockedReason: string | null;
   autoMergeArmed: boolean;
   armedAutoMergeLabel: string;
-  pendingAutoMergeLabel: string;
-  selectedMergeMethod: PullRequestMergeMethod;
-  selectedMergeMethodLabel: string;
   statePresentation: ReturnType<typeof resolvePullRequestState> | null;
   pendingAction: PullRequestAction | null;
   perform: PerformPullRequestAction;
   resolveConflicts: ReactNode;
+  /** The merge button, with its confirmation and any admin override; armed for auto-merge or not. */
+  mergeControl: (autoMerge: boolean) => ReactNode;
 }) {
   const gt = useGT();
-  const inlineConfirm = useInlineActionConfirm(pullRequestKey);
   const actionPending = pendingAction !== null;
   return (
     <>
@@ -281,62 +273,7 @@ export function PullRequestPrimaryAction({
           </TooltipPopup>
         </Tooltip>
       ) : primaryAction === "enable-auto-merge" ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className="inline-flex shrink-0">
-                <Button
-                  size="xs"
-                  variant="default"
-                  disabled={actionPending}
-                  aria-disabled={mergeBlockedReason !== null || undefined}
-                  aria-description={mergeBlockedReason ?? undefined}
-                  {...(mergeBlockedReason === null
-                    ? inlineConfirm.props(
-                        "enable-auto-merge",
-                        () => void perform("enable-auto-merge", selectedMergeMethod),
-                      )
-                    : {})}
-                  aria-label={
-                    pendingAction === "enable-auto-merge"
-                      ? gt("Enabling...")
-                      : inlineConfirm.isArmed("enable-auto-merge")
-                        ? gt("Confirm auto-merge?")
-                        : pendingAutoMergeLabel
-                  }
-                >
-                  {inlineConfirm.isArmed("enable-auto-merge") ? (
-                    <CheckIcon aria-hidden className="size-3.5" />
-                  ) : (
-                    <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-                  )}
-                  <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
-                    <span className="grid">
-                      <span aria-hidden className="invisible col-start-1 row-start-1">
-                        {pendingAutoMergeLabel}
-                      </span>
-                      <span className="col-start-1 row-start-1">
-                        {pendingAction === "enable-auto-merge"
-                          ? gt("Enabling...")
-                          : inlineConfirm.isArmed("enable-auto-merge")
-                            ? gt("Confirm auto-merge?")
-                            : pendingAutoMergeLabel}
-                      </span>
-                    </span>
-                  </AnimatedWidth>
-                </Button>
-              </span>
-            }
-          />
-          <TooltipPopup side="top">
-            {mergeBlockedReason ??
-              (pendingAction === "enable-auto-merge"
-                ? gt("Enabling...")
-                : inlineConfirm.isArmed("enable-auto-merge")
-                  ? gt("Confirm auto-merge?")
-                  : pendingAutoMergeLabel)}
-          </TooltipPopup>
-        </Tooltip>
+        mergeControl(true)
       ) : primaryAction === "auto-merge-armed" ? (
         <Tooltip>
           <TooltipTrigger
@@ -354,59 +291,7 @@ export function PullRequestPrimaryAction({
           </TooltipPopup>
         </Tooltip>
       ) : primaryAction === "merge" ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span className="inline-flex shrink-0">
-                <Button
-                  size="xs"
-                  variant="default"
-                  disabled={actionPending}
-                  aria-disabled={mergeBlockedReason !== null || undefined}
-                  aria-description={mergeBlockedReason ?? undefined}
-                  {...(mergeBlockedReason === null
-                    ? inlineConfirm.props("merge", () => void perform("merge", selectedMergeMethod))
-                    : {})}
-                  aria-label={
-                    pendingAction === "merge"
-                      ? gt("Merging...")
-                      : inlineConfirm.isArmed("merge")
-                        ? gt("Confirm merge?")
-                        : selectedMergeMethodLabel
-                  }
-                >
-                  {inlineConfirm.isArmed("merge") ? (
-                    <CheckIcon aria-hidden className="size-3.5" />
-                  ) : (
-                    <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-                  )}
-                  <AnimatedWidth className="@max-[30rem]/pr-header:hidden">
-                    <span className="grid">
-                      <span aria-hidden className="invisible col-start-1 row-start-1">
-                        {selectedMergeMethodLabel}
-                      </span>
-                      <span className="col-start-1 row-start-1">
-                        {pendingAction === "merge"
-                          ? gt("Merging...")
-                          : inlineConfirm.isArmed("merge")
-                            ? gt("Confirm merge?")
-                            : selectedMergeMethodLabel}
-                      </span>
-                    </span>
-                  </AnimatedWidth>
-                </Button>
-              </span>
-            }
-          />
-          <TooltipPopup side="top">
-            {mergeBlockedReason ??
-              (pendingAction === "merge"
-                ? gt("Merging...")
-                : inlineConfirm.isArmed("merge")
-                  ? gt("Confirm merge?")
-                  : selectedMergeMethodLabel)}
-          </TooltipPopup>
-        </Tooltip>
+        mergeControl(false)
       ) : (primaryAction === "merged" || primaryAction === "closed") &&
         statePresentation !== null ? (
         <Badge size="control" variant="outline">

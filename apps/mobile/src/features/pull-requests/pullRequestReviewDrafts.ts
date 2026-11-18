@@ -8,14 +8,16 @@ export type PendingReviewComment = PullRequestReviewCommentDraft & {
   readonly headSha: string;
   readonly code: string;
 };
+export type ReviewDraftScope = PullRequestParams & { readonly viewer: string | null };
 export type ReviewDraft = {
   readonly summary: string;
   readonly comment: string;
   readonly comments: readonly PendingReviewComment[];
 };
 export const EMPTY_REVIEW_DRAFT: ReviewDraft = { summary: "", comment: "", comments: [] };
-export function pullRequestReviewKey(params: PullRequestParams) {
+export function pullRequestReviewKey(params: PullRequestParams, viewer?: string | null) {
   return JSON.stringify([
+    ...(viewer === undefined ? [] : [viewer?.trim().toLowerCase() ?? null]),
     params.environmentId,
     params.projectId,
     params.host ?? "",
@@ -55,16 +57,18 @@ export function clearSubmittedReview(current: ReviewDraft, submitted: ReviewDraf
             saved.path === comment.path &&
             saved.oldPath === comment.oldPath &&
             saved.code === comment.code &&
-            samePosition(saved.position, comment.position),
+            samePosition(saved.position, comment.position) &&
+            samePosition(saved.startPosition, comment.startPosition),
         ),
     ),
   };
 }
 
 function samePosition(
-  left: PendingReviewComment["position"],
-  right: PendingReviewComment["position"],
-) {
+  left: PendingReviewComment["position"] | undefined,
+  right: PendingReviewComment["position"] | undefined,
+): boolean {
+  if (left === undefined || right === undefined) return left === right;
   if (left.kind === "added" && right.kind === "added") return left.newLine === right.newLine;
   if (left.kind === "deleted" && right.kind === "deleted") return left.oldLine === right.oldLine;
   return (

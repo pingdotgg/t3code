@@ -9,11 +9,16 @@ import {
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { page } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 
-const { permissions, reads } = vi.hoisted(() => ({
+const { permissions, current, reads } = vi.hoisted(() => ({
   permissions: { checkout: true, operate: true },
   reads: { diff: [] as unknown[] },
+  current: {
+    detail: null as PullRequestDetailView | null,
+    runAction: null as unknown as ReturnType<typeof vi.fn>,
+  },
 }));
 
 vi.mock(import("~/state/session"), async (original) => ({
@@ -38,9 +43,9 @@ vi.mock(import("./usePullRequestDetail"), async (original) => ({
     detailQuery: { isPending: false, refresh: vi.fn() },
     activityQuery: { isPending: false, refresh: vi.fn(), error: null },
     activity: null,
-    sharedSummary: detail,
-    coreDetail: detail,
-    detail,
+    sharedSummary: current.detail,
+    coreDetail: current.detail,
+    detail: current.detail,
   })) as never,
 }));
 vi.mock(import("~/state/usePullRequestStack"), async (original) => ({
@@ -66,10 +71,14 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     },
   };
 });
-vi.mock(import("~/state/use-atom-command"), async (original) => ({
-  ...(await original()),
-  useAtomCommand: (() => vi.fn()) as never,
-}));
+vi.mock(import("~/state/use-atom-command"), async (original) => {
+  const { pullRequestEnvironment } = await import("~/state/pullRequests");
+  return {
+    ...(await original()),
+    useAtomCommand: ((command: unknown) =>
+      command === pullRequestEnvironment.runAction ? current.runAction : vi.fn()) as never,
+  };
+});
 
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 
@@ -145,10 +154,12 @@ const panel = (attach = false) => (
   />
 );
 
-function setup() {
+function setup(nextDetail: PullRequestDetailView = detail) {
   permissions.checkout = true;
   permissions.operate = true;
   reads.diff = [];
+  current.detail = nextDetail;
+  current.runAction = vi.fn(async () => ({ _tag: "Success", value: undefined }));
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
 }
 
@@ -177,6 +188,30 @@ it("can still add conflict resolution to an existing composer without checkout s
   const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
   expect(draft?.prompt).toContain("conflicts");
   expect(draft?.prompt).toContain(detail.url);
+});
+
+it("binds an admin bypass merge to the displayed head", async () => {
+  setup({
+    ...detail,
+    mergeability: "mergeable",
+    headSha: "displayed-head",
+    autoMergeEnabled: false,
+    mergeCapabilities: { merge: false, squash: true, rebase: false },
+    capabilities: { ...detail.capabilities, actions: ["merge"], mergeMethods: ["squash"] },
+    viewerPermissions: { ...detail.viewerPermissions, actions: ["merge"], adminMerge: true },
+  });
+  await using screen = await render(panel());
+  await screen.getByRole("button", { name: "Squash and merge" }).click();
+  await page.getByText("Merge with admin permissions").click();
+  await page.getByRole("button", { name: "Bypass rules and merge" }).click();
+  expect(current.runAction).toHaveBeenCalledWith({
+    environmentId,
+    input: expect.objectContaining({
+      action: "merge",
+      adminOverride: true,
+      expectedHeadSha: "displayed-head",
+    }),
+  });
 });
 
 it("reads the first diff page once the pointer rests on the Code tab", async () => {

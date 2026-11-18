@@ -1,5 +1,6 @@
 import { cutLineNoteStart } from "@t3tools/shared/diffCutLines";
 import type { NativeReviewDiffRow, NativeReviewDiffTheme } from "../diffs/nativeReviewDiffSurface";
+import { reviewRenameSegments } from "@t3tools/client-runtime/review-workspace";
 import type { NativeReviewDiffFile } from "../diffs/nativeReviewDiffTypes";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
@@ -434,6 +435,9 @@ function prepareFileRows(file: ReviewRenderableFile): PreparedNativeReviewFileRo
       fileId: file.id,
       filePath: file.path,
       previousPath: file.previousPath,
+      ...(file.previousPath && file.previousPath !== file.path
+        ? { renameSegments: reviewRenameSegments(file.previousPath, file.path) }
+        : {}),
       changeType: mapChangeType(file),
       additions: file.additions,
       deletions: file.deletions,

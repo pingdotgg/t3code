@@ -1,6 +1,8 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { pullRequestMergeRequirementsUnmet } from "@t3tools/client-runtime/review-workspace";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
@@ -9,7 +11,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { AsyncResult } from "effect/reactivity";
 import { useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
-import { View } from "react-native";
+import { Modal, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SplitButton } from "../../components/ui/SplitButton";
@@ -26,6 +28,7 @@ import {
   PR_ACTION_ICONS,
   pullRequestActionLabel,
   resolveMergeMethod,
+  pullRequestMergeConfirmationAction,
 } from "./pullRequestActions";
 import { pullRequestStackMerge, singlePullRequestMergeAllowed } from "./pullRequestStack";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
@@ -57,6 +60,7 @@ export function PullRequestMergeControls(props: {
   const [selectedMethod, setSelectedMethod] = useState<PullRequestMergeMethod | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
+  const [confirmation, setConfirmation] = useState<{ key: string; bypass: boolean } | null>(null);
   const methods = allowedMergeMethods(pr);
   const method = resolveMergeMethod(
     pr,
@@ -158,66 +162,105 @@ export function PullRequestMergeControls(props: {
     permissions.canWrite &&
     canPerformPullRequestAction(pr, autoAction);
 
-  const perform = async (action: "merge" | "enable-auto-merge" | "disable-auto-merge") => {
+  const canAdminMerge =
+    permissions.connected &&
+    permissions.canWrite &&
+    pr.viewerPermissions.adminMerge === true &&
+    pr.headSha != null &&
+    canPerformPullRequestAction(pr, "merge") &&
+    !stack.stack &&
+    canMergeSingle &&
+    method !== undefined;
+  const requirementsUnmet = pullRequestMergeRequirementsUnmet({
+    mergeRequirementsSatisfied: pr.mergeRequirementsSatisfied,
+    checks: pr.checks,
+    baseBehind: pr.baseComparison === "behind" && pr.mergeability === "mergeable",
+  });
+  const confirmationKey = `${target.environmentId}:${pr.projectId}:${pr.repository}:${pr.number}:${pr.headSha ?? ""}:${method ?? ""}`;
+  const bypass = confirmation?.key === confirmationKey && confirmation.bypass;
+  const confirmationOpen = confirmation?.key === confirmationKey && canAdminMerge;
+  const canConfirmAutoMerge = canAutoMerge && autoAction === "enable-auto-merge";
+  const confirmAction = pullRequestMergeConfirmationAction({
+    bypass,
+    requirementsUnmet,
+    canConfirmAutoMerge,
+  });
+  if (confirmation !== null && (!canAdminMerge || confirmation.key !== confirmationKey))
+    setConfirmation(null);
+  const perform = async (
+    action: "merge" | "enable-auto-merge" | "disable-auto-merge",
+    adminOverride = false,
+  ) => {
     if (
       pending.current ||
       (action !== "disable-auto-merge" && !method) ||
-      (action === "merge" ? !canMerge : !canAutoMerge)
+      (action === "merge" ? (adminOverride ? !canAdminMerge : !canMerge) : !canAutoMerge)
     )
-      return;
+      return false;
     pending.current = true;
     setBusy(true);
-    const response = await runAction({
-      ...target,
-      input: {
-        ...target.input,
-        action,
-        ...(action === "merge" && method && stack.stack && scope
-          ? {
-              stackNumber: stack.stack.number,
-              expectedStackHeads: scope.heads,
-              mergeMethod: method,
-            }
-          : action === "merge" && method
+    return await (async () => {
+      const response = await runAction({
+        ...target,
+        input: {
+          ...target.input,
+          action,
+          ...(adminOverride
+            ? { adminOverride: true, mergeMethod: method, expectedHeadSha: pr.headSha ?? undefined }
+            : {}),
+          ...(action === "merge" && method && stack.stack && scope
             ? {
-                resolveMergeMethod: (fresh) => {
-                  if (
-                    !canPerformPullRequestAction(fresh, "merge") ||
-                    !allowedMergeMethods(fresh).includes(method)
-                  )
-                    throw new Error(
-                      gt(
-                        "The {term, select, mr {merge request} cr {change request} other {pull request}} changed. Refresh before merging.",
-                        {
-                          term: changeRequestTermKind(terminology),
-                        },
-                      ),
-                    );
-                  return method;
-                },
+                stackNumber: stack.stack.number,
+                expectedStackHeads: scope.heads,
+                mergeMethod: method,
               }
-            : action === "enable-auto-merge" && method
-              ? { mergeMethod: method }
-              : {}),
-      },
-    });
-    // A stack can partly merge before the provider reports a failure.
-    if (!AsyncResult.isSuccess(response)) refreshDetail();
-    refreshActivity();
-    stack.refresh();
-    pending.current = false;
-    setBusy(false);
-    if (AsyncResult.isFailure(response)) {
-      const cause = squashAtomCommandFailure(response);
-      Dialog.alert(
-        gt("Couldn't complete the merge action"),
-        cause instanceof Error
-          ? (errorDisplayMessage(cause, resolveMessage) ?? cause.message)
-          : gt("Try again."),
-      );
-    }
+            : action === "merge" && method && !adminOverride
+              ? {
+                  resolveMergeMethod: (fresh) => {
+                    if (
+                      !canPerformPullRequestAction(fresh, "merge") ||
+                      !allowedMergeMethods(fresh).includes(method)
+                    )
+                      throw new Error(
+                        gt(
+                          "The {term, select, mr {merge request} cr {change request} other {pull request}} changed. Refresh before merging.",
+                          { term: changeRequestTermKind(terminology) },
+                        ),
+                      );
+                    return method;
+                  },
+                }
+              : action === "enable-auto-merge" && method
+                ? { mergeMethod: method }
+                : {}),
+        },
+      });
+      if (response._tag === "Failure") throw squashAtomCommandFailure(response);
+      return true;
+    })()
+      .catch(async (cause: unknown) => {
+        Dialog.alert(
+          gt("Couldn't complete the merge action"),
+          cause instanceof Error
+            ? (errorDisplayMessage(cause, resolveMessage) ?? cause.message)
+            : gt("Try again."),
+        );
+        return false;
+      })
+      .finally(async () => {
+        // A stack can partly merge before the provider reports a failure.
+        refreshDetail();
+        refreshActivity();
+        stack.refresh();
+        pending.current = false;
+        setBusy(false);
+      });
   };
   const confirm = (action: "merge" | "enable-auto-merge" | "disable-auto-merge") => {
+    if (action === "merge" && canAdminMerge) {
+      setConfirmation({ key: confirmationKey, bypass: false });
+      return;
+    }
     const title =
       action === "merge"
         ? scope && scope.layers.length > 1
@@ -343,6 +386,100 @@ export function PullRequestMergeControls(props: {
       {permissions.connected && !status && reason ? (
         <Text className="px-1 text-xs text-foreground-muted">{reason}</Text>
       ) : null}
+      <Modal
+        visible={confirmationOpen}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        navigationBarTranslucent
+        onRequestClose={() => {
+          if (!pending.current) setConfirmation(null);
+        }}
+      >
+        <View className="flex-1 items-center justify-center bg-backdrop px-6">
+          <View className="w-full max-w-lg gap-4 rounded-[24px] bg-card px-5 py-5">
+            <View className="gap-1">
+              <Text className="text-lg font-t3-semibold">
+                {method
+                  ? m(MERGE_METHODS[method].title)
+                  : gt(
+                      "Merge {term, select, mr {merge request} cr {change request} other {pull request}}",
+                      { term: changeRequestTermKind(terminology) },
+                    )}
+              </Text>
+              <Text className="text-sm text-foreground-muted">
+                {bypass
+                  ? gt("Merge #{number} into {branch} before its requirements are met.", {
+                      number: pr.number,
+                      branch: pr.baseBranch,
+                    })
+                  : requirementsUnmet
+                    ? canConfirmAutoMerge || pr.autoMergeEnabled
+                      ? gt(
+                          "Merge requirements have not passed. Auto-merge waits for them to be met.",
+                        )
+                      : gt("Merge requirements have not passed.")
+                    : gt(
+                        "Merge #{number} into {branch} using {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}}.",
+                        {
+                          number: pr.number,
+                          branch: pr.baseBranch,
+                          kind: mergeMethodKind(method),
+                          method: method ?? "",
+                        },
+                      )}
+              </Text>
+            </View>
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityLabel={gt("Merge with admin permissions")}
+              accessibilityState={{ checked: bypass, disabled: busy }}
+              disabled={busy}
+              className="min-h-11 flex-row items-start gap-2 py-2"
+              onPress={() => setConfirmation({ key: confirmationKey, bypass: !bypass })}
+            >
+              <View
+                className={`mt-0.5 size-5 shrink-0 items-center justify-center rounded border ${bypass ? "border-primary bg-primary" : "border-border"}`}
+              >
+                {bypass ? (
+                  <SymbolView
+                    name="checkmark"
+                    size={12}
+                    tintColorClassName="accent-primary-foreground"
+                  />
+                ) : null}
+              </View>
+              <Text className="min-w-0 flex-1 text-sm text-danger-foreground">
+                {gt("Merge with admin permissions")}
+              </Text>
+            </Pressable>
+            <View className="flex-row flex-wrap justify-end gap-2">
+              <Button label={gt("Cancel")} disabled={busy} onPress={() => setConfirmation(null)} />
+              <Button
+                label={
+                  busy
+                    ? gt("Working…")
+                    : bypass
+                      ? gt("Bypass rules and merge")
+                      : confirmAction === "enable-auto-merge"
+                        ? gt("Enable auto-merge")
+                        : gt("Confirm merge")
+                }
+                tone={bypass ? "danger" : "primary"}
+                disabled={
+                  busy ||
+                  (!bypass && (confirmAction === "merge" ? !canMerge : !canConfirmAutoMerge))
+                }
+                loading={busy}
+                onPress={async () => {
+                  const completed = await perform(confirmAction, bypass);
+                  if (completed) setConfirmation(null);
+                }}
+              />
+            </View>
+          </View>
+        </View>
+      </Modal>
       {stack.error && stack.supportsStackActions ? (
         <Button label={gt("Retry stack lookup")} tone="text" onPress={stack.refresh} />
       ) : null}

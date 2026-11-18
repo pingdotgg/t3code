@@ -1,3 +1,4 @@
+import { hideWhitespaceChanges } from "@t3tools/client-runtime/review-diff-whitespace";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import {
@@ -9,14 +10,12 @@ import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
-import { msg } from "gt-react-native";
-
-import { m, type MessageResolver } from "../../i18n/messages";
+import { msg, mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
 const CHANGES_SECTION_ID = "git:branch-range";
-const CHANGES_TITLE = msg("Changes", { $context: "diff section: branch changes" });
 const UNCOMMITTED_SUBTITLE = msg("Staged, unstaged, and untracked files");
 
 export interface ReviewSectionItem {
@@ -113,11 +112,11 @@ export type ReviewParsedDiff =
       readonly notice: string | null;
     };
 
-function checkpointTitle(checkpoint: ThreadCheckpointSummary, resolve: MessageResolver): string {
+function checkpointTitle(checkpoint: ThreadCheckpointSummary, resolve: MFunctionType): string {
   return resolve(msg("Turn {count}", { count: checkpoint.checkpointTurnCount }));
 }
 
-function checkpointSubtitle(checkpoint: ThreadCheckpointSummary, resolve: MessageResolver): string {
+function checkpointSubtitle(checkpoint: ThreadCheckpointSummary, resolve: MFunctionType): string {
   const fileCount = checkpointFileTotals(checkpoint).count;
   if (checkpoint.status !== "ready") {
     return resolve(msg("Diff {status}", { status: checkpoint.status }));
@@ -144,7 +143,7 @@ const readyCheckpointOrder = Order.make<ThreadCheckpointSummary>(
   compareCheckpointTurnCountDescending,
 );
 
-function gitSubtitle(section: ReviewDiffPreviewSource, resolve: MessageResolver): string | null {
+function gitSubtitle(section: ReviewDiffPreviewSource, resolve: MFunctionType): string | null {
   if (section.kind === "working-tree") {
     return resolve(UNCOMMITTED_SUBTITLE);
   }
@@ -278,7 +277,7 @@ function countReviewRenderableCharacters(file: ReviewRenderableFile): number {
 
 export function getReviewFilePreviewState(
   file: ReviewRenderableFile,
-  resolve: MessageResolver = m,
+  resolve: MFunctionType = mFallback,
 ): ReviewFilePreviewState {
   const extension = getFileExtension(file.path);
   if (extension && NON_TEXT_FILE_EXTENSIONS.has(extension)) {
@@ -472,9 +471,9 @@ function completePatchSource(file: FileDiffMetadata, rawPatch: string | null | u
   };
 }
 
-function mapRenderableFile(
+export function mapRenderableFile(
   file: FileDiffMetadata,
-  id: string,
+  id: string = file.name,
   rawPatch?: string | null,
 ): ReviewRenderableFile {
   const path = file.name || file.prevName || "";
@@ -534,9 +533,9 @@ export function buildReviewSectionItems(input: {
   readonly gitSections: ReadonlyArray<ReviewDiffPreviewSource>;
   readonly turnDiffById: Readonly<Record<string, string | undefined>>;
   readonly loadingGitSections: boolean;
-  readonly resolve?: MessageResolver;
+  readonly resolve?: MFunctionType;
 }): ReadonlyArray<ReviewSectionItem> {
-  const resolve = input.resolve ?? m;
+  const resolve = input.resolve ?? mFallback;
   const turnItems = getReadyReviewCheckpoints(input.checkpoints).map<ReviewSectionItem>(
     (checkpoint) => {
       const id = getReviewSectionIdForCheckpoint(checkpoint);
@@ -567,14 +566,14 @@ export function buildReviewSectionItems(input: {
       truncated: section.truncated,
       isLoading: false,
     }));
-  const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
+  const hasChangesItem = gitItems.some((item) => item.kind === "working-tree");
   const visibleGitItems =
     input.loadingGitSections && !hasChangesItem
       ? [
           {
-            id: CHANGES_SECTION_ID,
-            kind: "branch-range",
-            title: resolve(CHANGES_TITLE),
+            id: "git:working-tree",
+            kind: "working-tree",
+            title: resolve(msg("Uncommitted changes")),
             subtitle: null,
             diff: null,
             isLoading: true,
@@ -586,10 +585,17 @@ export function buildReviewSectionItems(input: {
   return [...turnItems, ...visibleGitItems];
 }
 
+/** Opens Git on uncommitted changes, with branch and turn fallbacks for other sources. */
 export function getDefaultReviewSectionId(
   sections: ReadonlyArray<ReviewSectionItem>,
 ): string | null {
-  return (sections.find((section) => section.id === CHANGES_SECTION_ID) ?? sections[0])?.id ?? null;
+  return (
+    (
+      sections.find((section) => section.kind === "working-tree") ??
+      sections.find((section) => section.id === CHANGES_SECTION_ID) ??
+      sections[0]
+    )?.id ?? null
+  );
 }
 
 /**
@@ -609,7 +615,8 @@ export function resolveReviewSelectedSectionId(
 export function buildReviewParsedDiff(
   diff: string | null | undefined,
   cacheScope: string,
-  resolve: MessageResolver = m,
+  resolve: MFunctionType = mFallback,
+  ignoreWhitespace = false,
 ): ReviewParsedDiff {
   if (!diff?.trim()) {
     return { kind: "empty" };
@@ -642,7 +649,7 @@ export function buildReviewParsedDiff(
       Arr.flatMap((patch) => patch.files),
       Arr.map((file, index) =>
         mapRenderableFile(
-          file,
+          ignoreWhitespace ? hideWhitespaceChanges(file) : file,
           `${patchId}:f${index.toString(36)}`,
           rawFiles.get(
             `diff --git ${quoteGitPatchPath(`a/${file.name}`)} ${quoteGitPatchPath(`b/${file.name}`)}`,
@@ -693,7 +700,7 @@ export function buildReviewParsedDiff(
 export function applyReviewDiffMetadata(
   previewDiff: ReviewParsedDiff,
   selectedSection: Pick<ReviewSectionItem, "files" | "truncated"> | null,
-  resolve: MessageResolver = m,
+  resolve: MFunctionType = mFallback,
 ): ReviewParsedDiff {
   if (previewDiff.kind === "empty") return previewDiff;
   const notice = selectedSection?.truncated

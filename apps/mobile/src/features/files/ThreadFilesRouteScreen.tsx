@@ -21,6 +21,7 @@ import {
 } from "@t3tools/shared/filePreview";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
+import { AppTextInput } from "../../components/ui/AppText";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { filePreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
 import { DelimitedFilePreview } from "./DelimitedFilePreview";
@@ -254,6 +255,7 @@ function FileContent(props: {
   readonly initialLine: number | null;
   readonly truncated: boolean;
   readonly selectable: boolean;
+  readonly headerReserved?: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   const gt = useGT();
@@ -355,7 +357,7 @@ function FileContent(props: {
           contents={props.fileContents}
           path={props.relativePath}
           initialLine={props.initialLine}
-          headerInsetTop={props.truncated ? 0 : undefined}
+          headerInsetTop={props.truncated || props.headerReserved ? 0 : undefined}
           selectable={props.selectable}
           onRefresh={props.onRefresh}
         />
@@ -471,7 +473,12 @@ function FilesToolbarBottomFade() {
   );
 }
 
-export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
+export function ThreadFilesTreeScreen(
+  props: ThreadFilesRouteScreenProps & {
+    readonly workspaceTabs?: ReactNode;
+    readonly workspaceHeader?: ReactNode;
+  },
+) {
   const navigation = useNavigation();
   const gt = useGT();
   const { fileInspector } = useWorkspacePaneState();
@@ -543,6 +550,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
         projectName={projectName}
         selectedPath={null}
         onSelectFile={handleSelectFile}
+        toolbar={props.workspaceTabs}
       />
     ) : null;
   const handlePreviewFile = (relativePath: string) => {
@@ -596,15 +604,17 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     );
   }
 
-  return (
-    <View className="flex-1">
-      <FilesBrowserHeader
-        projectName={projectName}
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
-        onRefresh={entriesQuery.refresh}
-        onBack={handleReturnToThread}
-      />
+  const content = (
+    <>
+      {props.workspaceHeader ?? (
+        <FilesBrowserHeader
+          projectName={projectName}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          onRefresh={entriesQuery.refresh}
+          onBack={handleReturnToThread}
+        />
+      )}
       <ScreenContent>
         <FileTreeBrowser
           key={JSON.stringify([environmentId, cwd])}
@@ -627,14 +637,38 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
             entriesQuery.selectPath(path);
             handleSelectFile(path);
           }}
+          pinnedToolbar={props.workspaceHeader !== undefined}
+          toolbar={
+            props.workspaceHeader ? (
+              <>
+                {props.workspaceTabs}
+                <View className="px-3 py-2">
+                  <AppTextInput
+                    accessibilityLabel={gt("Search files")}
+                    placeholder={gt("Search files")}
+                    value={searchQuery}
+                    onChangeText={setSearchQuery}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    className="min-h-9 py-2 text-sm"
+                  />
+                </View>
+              </>
+            ) : (
+              props.workspaceTabs
+            )
+          }
         />
         <FilesToolbarBottomFade />
       </ScreenContent>
-    </View>
+    </>
   );
+  return <View className="flex-1">{content}</View>;
 }
 
-export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
+export function ThreadFileScreen(
+  props: ThreadFileRouteScreenProps & { readonly workspaceTabs?: ReactNode },
+) {
   const navigation = useNavigation();
   const gt = useGT();
   const { fileInspector } = useWorkspacePaneState();
@@ -1072,6 +1106,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         actions={fileMenuActions}
       />
       <ScreenContent>
+        {props.workspaceTabs ? (
+          <View
+            style={{
+              paddingTop: 0,
+            }}
+          >
+            {props.workspaceTabs}
+          </View>
+        ) : null}
         <FileContent
           key={previewKey}
           activeMode={resolvedActiveMode}
@@ -1090,6 +1133,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           threadId={threadId}
           truncated={fileData?.truncated ?? false}
           selectable={selectingText}
+          headerReserved={props.workspaceTabs !== undefined}
           onRefresh={() => fileQuery.refresh()}
         />
       </ScreenContent>

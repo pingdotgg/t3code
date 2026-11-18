@@ -1,15 +1,15 @@
 import { useGT } from "gt-react-native";
-
-import type { useReviewHeaderPresentation as useIosReviewHeaderPresentation } from "./useReviewHeaderPresentation";
+import { useReviewHeaderPresentation as useSharedReviewHeaderPresentation } from "./useReviewHeaderPresentation.shared";
 
 export function useReviewHeaderPresentation(
-  props: Parameters<typeof useIosReviewHeaderPresentation>[0],
-): ReturnType<typeof useIosReviewHeaderPresentation> {
+  props: Parameters<typeof useSharedReviewHeaderPresentation>[0],
+): ReturnType<typeof useSharedReviewHeaderPresentation> {
   const gt = useGT();
+  const presentation = useSharedReviewHeaderPresentation(props);
   return {
-    title: gt("Review changes"),
-    subtitle: props.androidSubtitle || gt("Select a diff"),
-    gitMenu: null,
+    ...presentation,
+    title: props.title,
+    subtitle: props.androidSubtitle || (props.title ? gt("Select a diff") : ""),
     menuIcon: "ellipsis.circle",
     refreshAction: {
       id: "refresh",

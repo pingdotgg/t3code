@@ -587,6 +587,10 @@
       "types": "./src/pinOrderKey.ts",
       "import": "./src/pinOrderKey.ts"
     },
+    "./reviewFileClassification": {
+      "types": "./src/reviewFileClassification.ts",
+      "import": "./src/reviewFileClassification.ts"
+    },
     "./usageLimitsCopy": {
       "types": "./src/usageLimitsCopy.ts",
       "import": "./src/usageLimitsCopy.ts"

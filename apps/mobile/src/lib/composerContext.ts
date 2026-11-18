@@ -10,6 +10,7 @@ import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
 import {
   COMPOSER_CONTEXT_MAX_RECORDS,
+  COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS,
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   ComposerContextId,
   type ComposerContextRecord,
@@ -304,4 +305,30 @@ export function serializeComposerMessageForServer(
     ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT
     : composerText;
   return { text, ...(context ? { context } : {}) };
+}
+
+/** A pending line comment as composer context, shaped like desktop's review-comment handoff. */
+export function pendingReviewCommentComposerContext(
+  pullRequest: PullRequestContextMetadata,
+  comment: {
+    readonly path: string;
+    readonly body: string;
+    readonly code?: string;
+    readonly rangeLabel: string;
+    readonly startLine: number;
+    readonly endLine: number;
+  },
+  id: string,
+): ReviewCommentContextRecord {
+  const startIndex = Math.max(0, Math.min(comment.startLine, comment.endLine) - 1);
+  return {
+    ...pullRequestComposerContext(pullRequest, id, comment.path),
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- context record sent to the agent
+    sectionTitle: `PR #${pullRequest.number} review`,
+    startIndex,
+    endIndex: Math.max(startIndex, comment.endLine - 1),
+    rangeLabel: comment.rangeLabel.slice(0, 255),
+    text: comment.body.slice(0, COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS),
+    diff: (comment.code ?? "").slice(0, COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS),
+  };
 }

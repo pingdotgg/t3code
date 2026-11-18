@@ -2,7 +2,7 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
 import { reviewCommentRangeText } from "~/lib/composerContextRecords";
 import { MessageCircle, Trash2 } from "lucide-react";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useState, type ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -15,6 +15,7 @@ import {
   type TextFieldSpeech,
 } from "~/speech/useTextFieldSpeech";
 import { textDirection } from "~/textDirection";
+import { isMacPlatform } from "~/lib/utils";
 
 import { isCommentSubmitShortcut } from "./commentSubmitShortcut";
 
@@ -44,6 +45,13 @@ interface DiffCommentAnnotationProps {
   focusOnMount?: boolean;
   /** Set only for pull request comments, where `@` completes the repository's users. */
   completionScope?: PullRequestCompletionScope | null;
+  renderAttachments?:
+    | ((
+        onTextChange: (text: string) => void,
+        onBusyChange: (busy: boolean) => void,
+        textarea: HTMLTextAreaElement | null,
+      ) => ReactNode)
+    | undefined;
 }
 
 export function DiffCommentAnnotation({
@@ -63,22 +71,27 @@ export function DiffCommentAnnotation({
   secondaryAction,
   focusOnMount = true,
   completionScope = null,
+  renderAttachments,
 }: DiffCommentAnnotationProps) {
   const gt = useGT();
   const messages = useMessages();
+  const commentLabel = submitLabel ?? gt("Comment", { $context: "verb, submit button" });
+  const [uploading, setUploading] = useState(false);
+  const blocked = pending || uploading;
   const [localDraftText, setLocalDraftText] = useState("");
   const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
   const trimmedText = displayedText.trim();
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [textarea, setTextarea] = useState<HTMLTextAreaElement | null>(null);
+  const modifierKey = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the draft textarea on the next animation frame after mount
   useLayoutEffect(() => {
     if (kind !== "draft" || !focusOnMount) return;
     const frame = window.requestAnimationFrame(() => {
-      textareaRef.current?.focus({ preventScroll: true });
+      textarea?.focus({ preventScroll: true });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [focusOnMount, kind]);
+  }, [focusOnMount, kind, textarea]);
 
   if (kind === "comment") {
     return (
@@ -117,7 +130,7 @@ export function DiffCommentAnnotation({
     allowEmpty = false,
   ) => {
     const finish = (value: string) => {
-      if (!pending && (allowEmpty || value.trim())) action(value.trim());
+      if (!blocked && (allowEmpty || value.trim())) action(value.trim());
     };
     if (speech) speech.submitAfterDictation(finish);
     else finish(displayedText);
@@ -127,16 +140,18 @@ export function DiffCommentAnnotation({
   const renderDraft = (speech?: TextFieldSpeech) => (
     <div
       data-diff-comment-annotation
+      data-review-attachment-composer
       className="px-3 py-2 font-sans text-foreground caret-foreground selection:bg-primary selection:text-primary-foreground"
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
       <PullRequestMarkdownTextarea
-        ref={textareaRef}
+        ref={setTextarea}
         completionScope={completionScope}
         readOnly={speech?.freezesEditor}
         autoFocus={focusOnMount}
         size="sm"
+        disabled={blocked}
         value={displayedText}
         dir={textDirection(displayedText)}
         placeholder={placeholder ?? gt("Add a comment…")}
@@ -149,22 +164,39 @@ export function DiffCommentAnnotation({
           event.currentTarget.setSelectionRange(end, end);
         }}
         onKeyDown={(event) => {
-          if (event.key === "Escape") {
+          if (event.key === "Escape" && !blocked) {
             event.preventDefault();
             if (speech && speech.state.phase !== "idle") speech.cancel();
             else onCancel();
           }
-          if (isCommentSubmitShortcut(event, trimmedText, pending, speech?.blocksSubmission)) {
+          if (isCommentSubmitShortcut(event, trimmedText, blocked, speech?.blocksSubmission)) {
             event.preventDefault();
-            submit(speech, onComment);
+            submit(
+              speech,
+              event.shiftKey && secondaryAction ? secondaryAction.onAction : onComment,
+            );
           }
         }}
       />
+      {renderAttachments?.(onTextChange ?? setLocalDraftText, setUploading, textarea)}
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
-        <span className="mr-auto text-3xs text-muted-foreground/70">
-          <T>⌘/Ctrl Enter to send</T>
+        <span className="mr-auto flex flex-col text-3xs text-muted-foreground/70">
+          <span>
+            {gt("{modifier}+Enter to {action}", {
+              modifier: modifierKey,
+              action: commentLabel.toLowerCase(),
+            })}
+          </span>
+          {secondaryAction ? (
+            <span>
+              {gt("{modifier}+Shift+Enter to {action}", {
+                modifier: modifierKey,
+                action: secondaryAction.label.toLowerCase(),
+              })}
+            </span>
+          ) : null}
         </span>
-        {speech ? <TextFieldSpeechControls speech={speech} disabled={pending} /> : null}
+        {speech ? <TextFieldSpeechControls speech={speech} disabled={blocked} /> : null}
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
           <T>Cancel</T>
         </Button>
@@ -174,7 +206,7 @@ export function DiffCommentAnnotation({
             variant="outline"
             disabled={
               speech?.preparing ||
-              pending ||
+              blocked ||
               (!speech?.blocksSubmission && !secondaryAction.allowEmpty && !trimmedText)
             }
             onClick={() => submit(speech, secondaryAction.onAction, secondaryAction.allowEmpty)}
@@ -185,10 +217,10 @@ export function DiffCommentAnnotation({
         ) : null}
         <Button
           size="xs"
-          disabled={speech?.preparing || pending || (!speech?.blocksSubmission && !trimmedText)}
+          disabled={speech?.preparing || blocked || (!speech?.blocksSubmission && !trimmedText)}
           onClick={() => submit(speech, onComment)}
         >
-          {submitLabel ?? gt("Comment", { $context: "verb, submit button" })}
+          {commentLabel}
         </Button>
       </div>
     </div>
@@ -200,9 +232,9 @@ export function DiffCommentAnnotation({
       projectId={projectId}
       ownerKey={ownerKey ?? rangeLabel}
       text={displayedText}
-      textareaRef={textareaRef}
+      textareaRef={{ current: textarea }}
       onTextChange={onTextChange ?? setLocalDraftText}
-      disabled={pending}
+      disabled={blocked}
     >
       {renderDraft}
     </SpeechTextField>

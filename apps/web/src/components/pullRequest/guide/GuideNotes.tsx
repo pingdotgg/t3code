@@ -28,7 +28,7 @@ export function GuideNotes({
   return (
     <section className={cn("flex min-w-0 flex-col gap-2", className)}>
       <h4 className="flex items-baseline justify-between gap-2 text-xs font-medium text-foreground">
-        <T>Notes on this stop</T>
+        <T>Notes on this chapter</T>
         <span className="font-normal text-muted-foreground tabular-nums">
           {gt("{count, plural, one {{count} note} other {{count} notes}}", {
             count: notes.length,

@@ -1,3 +1,8 @@
+import {
+  resolvedReviewCommentsLabel,
+  groupPendingReviewComments,
+} from "@t3tools/client-runtime/review-editing";
+import { reviewPositionAnchor } from "@t3tools/client-runtime/review-selection";
 import type { PullRequestReviewPosition, PullRequestReviewThread } from "@t3tools/contracts";
 import { msg } from "gt-react-native";
 
@@ -26,15 +31,49 @@ export function discussionCommentCountLabel(count: number, resolve: MessageResol
 }
 export function reviewPositionLabel(
   position: PullRequestReviewPosition,
+  startPosition?: PullRequestReviewPosition,
   resolve: MessageResolver = m,
 ) {
-  const oldSide =
-    position.kind === "deleted" || (position.kind === "context" && position.side === "left");
-  const line = reviewLine(position);
-  return oldSide
-    ? resolve(msg("Old line {line}", { line }))
-    : resolve(msg("Line {line}", { line }));
+  const end = reviewPositionAnchor(position);
+  const start = startPosition ? reviewPositionAnchor(startPosition) : undefined;
+  return reviewLineRangeLabel(
+    {
+      ...end,
+      ...(start && (start.line !== end.line || start.side !== end.side)
+        ? { startLine: start.line, startSide: start.side }
+        : {}),
+    },
+    resolve,
+  );
 }
+
+function reviewLineRangeLabel(
+  input: {
+    line: number | null;
+    side: "left" | "right";
+    startLine?: number;
+    startSide?: "left" | "right";
+  },
+  resolve: MessageResolver,
+) {
+  if (input.line === null)
+    return resolve(msg("File", { $context: "review comment on a whole file" }));
+  const line = input.line;
+  if (input.startLine === undefined)
+    return input.side === "left"
+      ? resolve(msg("Old line {line}", { line }))
+      : resolve(msg("Line {line}", { line }));
+  const start = input.startLine;
+  const startSide = input.startSide ?? input.side;
+  if (startSide === input.side)
+    return input.side === "left"
+      ? resolve(msg("Old lines {start}–{line}", { start, line }))
+      : resolve(msg("Lines {start}–{line}", { start, line }));
+  return startSide === "left"
+    ? resolve(msg("Old line {start} → line {line}", { start, line }))
+    : resolve(msg("Line {start} → old line {line}", { start, line }));
+}
+
 function reviewLine(position: PullRequestReviewPosition) {
   if (position.kind === "deleted" || (position.kind === "context" && position.side === "left"))
     return position.oldLine;
@@ -69,6 +108,7 @@ export function annotatePullRequestDiff(
     id: string,
     body: string,
     label: string,
+    state?: { commentPending?: boolean; commentResolvedSummary?: string },
   ) => {
     if (!anchor) return;
     const rows = anchors.get(anchor.id) ?? [];
@@ -79,6 +119,7 @@ export function annotatePullRequestDiff(
       filePath: anchor.filePath,
       commentText: body,
       commentRangeLabel: label,
+      ...state,
     });
     anchors.set(anchor.id, rows);
   };
@@ -92,20 +133,22 @@ export function annotatePullRequestDiff(
     attach(
       anchor,
       `discussion:${thread.id}`,
-      `${first?.author?.login ?? resolve(msg("Discussion"))}${
-        thread.isResolved
-          ? ` · ${resolve(msg("Resolved", { $context: "review thread state" }))}`
-          : ""
-      }\n${first?.body ?? ""}\n${resolve(
-        msg(
-          "{count, plural, one {{count} comment · Tap to open} other {{count} comments · Tap to open}}",
-          { count: thread.commentCount ?? thread.comments.length },
-        ),
-      )}`,
-      thread.line === null ? "file" : String(thread.line),
+      `${first?.author?.login ?? resolve(msg("Discussion"))}${thread.isResolved ? ` · ${resolve(msg("Resolved", { $context: "review thread state" }))}` : ""}\n${first?.body ?? ""}\n${resolve(msg("{count, plural, one {{count} comment · Tap to open} other {{count} comments · Tap to open}}", { count: thread.commentCount ?? thread.comments.length }))}`,
+      reviewLineRangeLabel(thread, resolve),
+      thread.isResolved
+        ? {
+            commentResolvedSummary: resolvedReviewCommentsLabel(
+              thread.commentCount ?? thread.comments.length,
+              thread.comments.map(
+                (comment) =>
+                  comment.author?.name ?? comment.author?.login ?? resolve(msg("Unknown author")),
+              ),
+            ),
+          }
+        : undefined,
     );
   }
-  for (const draft of drafts) {
+  for (const draft of groupPendingReviewComments(threads, drafts).pendingComments) {
     if (draft.headSha !== headSha) continue;
     const side =
       draft.position.kind === "deleted"
@@ -117,8 +160,9 @@ export function annotatePullRequestDiff(
     attach(
       lines.get(JSON.stringify([draft.path, side, line])),
       `draft:${draft.id}`,
-      `${resolve(msg("Pending review · Tap to edit"))}\n${draft.body}`,
-      String(line),
+      draft.body,
+      reviewPositionLabel(draft.position, draft.startPosition, resolve),
+      { commentPending: true },
     );
   }
   return { ...data, rows: data.rows.flatMap((row) => [row, ...(anchors.get(row.id) ?? [])]) };

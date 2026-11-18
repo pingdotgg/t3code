@@ -10,7 +10,7 @@ import {
   isFileViewed,
   isStaleViewedState,
   toFileViewedStates,
-} from "./pullRequestFilesViewed.logic";
+} from "@t3tools/client-runtime/review-file-viewed";
 
 export interface PullRequestFilesViewedView {
   readonly enabled: boolean;
@@ -20,6 +20,9 @@ export interface PullRequestFilesViewedView {
   readonly truncated: boolean;
   readonly error: string | null;
   readonly refresh: () => void;
+  readonly filePaths: ReadonlyArray<string> | null;
+  readonly ready: boolean;
+  readonly viewedCount: number;
 }
 
 const NO_OVERLAY = new Map<string, boolean>();
@@ -34,6 +37,8 @@ export function usePullRequestFilesViewed(options: {
   readonly environmentId: EnvironmentId;
   readonly reference: PullRequestRef;
   readonly enabled: boolean;
+  readonly paths: ReadonlyArray<string>;
+  readonly headSha?: string | null | undefined;
 }): PullRequestFilesViewedView {
   const { environmentId, reference, enabled } = options;
   const query = useEnvironmentQuery(
@@ -47,6 +52,12 @@ export function usePullRequestFilesViewed(options: {
 
   return {
     enabled,
+    filePaths:
+      query.error === null && query.data && !query.data.truncated
+        ? query.data.files.map((file) => file.path)
+        : null,
+    ready: query.error === null && query.data !== null,
+    viewedCount: options.paths.filter((path) => isFileViewed(path, states, overlay)).length,
     isViewed: (path: string) => isFileViewed(path, states, overlay),
     isStale: (path: string) => !overlay.has(path) && isStaleViewedState(states?.get(path)),
     setViewed: scope.setViewed,

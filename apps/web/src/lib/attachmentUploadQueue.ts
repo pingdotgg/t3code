@@ -142,7 +142,7 @@ function deletePendingUpload(environmentId: EnvironmentId, attachmentId: string)
   });
 }
 
-function uploadBytes(input: {
+export function uploadAttachmentBytes(input: {
   readonly url: string;
   readonly file: File;
   readonly mimeType: string;
@@ -278,7 +278,7 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
     transport: (url) =>
       Effect.tryPromise({
         try: (signal) =>
-          uploadBytes({
+          uploadAttachmentBytes({
             url,
             file,
             mimeType,

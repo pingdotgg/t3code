@@ -1,3 +1,4 @@
+import { usePullRequestActivity } from "./usePullRequestDiff";
 import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
@@ -18,7 +19,6 @@ import { PullRequestCardRow } from "./PullRequestControls";
 import { PullRequestAgentRow } from "./PullRequestAgentRow";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
 import { composerPullRequests } from "../../state/pull-requests";
-import { useEnvironmentQuery } from "../../state/query";
 import {
   allowedUpdateMethods,
   PR_ACTION_ICONS,
@@ -280,9 +280,7 @@ export function PullRequestReviewersRow(props: RowProps) {
   const navigation = useNavigation();
   const gt = useGT();
   const m = useMessages();
-  const activity = useEnvironmentQuery(
-    composerPullRequests.activity(pullRequestTarget(props.params)),
-  );
+  const activity = usePullRequestActivity(props.params);
   const summary = pullRequestReviewSummary(props.pr, activity.data, m);
   const canWrite = useAtomValue(
     composerPullRequests.requestReviewers.permissionAtom(

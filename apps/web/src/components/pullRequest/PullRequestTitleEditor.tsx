@@ -14,7 +14,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestDetailTitleRow } from "./PullRequestDetailLayout";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { readableFailure } from "./pullRequestDetail.logic";
-import { canEditPullRequestChangeRequest } from "@t3tools/client-runtime/pull-request-editing";
+import { canEditPullRequestChangeRequest } from "@t3tools/client-runtime/review-editing";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 

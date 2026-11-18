@@ -1,5 +1,5 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-
+import { orderReviewFiles } from "@t3tools/client-runtime/review-workspace";
 import { resolveFileDiffPath } from "~/lib/diffRendering";
 
 export type DiffFileTier = "source" | "test" | "generated";
@@ -141,9 +141,18 @@ function testedSourcePosition(path: string, sourcePositions: ReadonlyMap<string,
 
 export function orderDiffFiles(
   files: ReadonlyArray<FileDiffMetadata>,
+  groupByType = false,
 ): ReadonlyArray<FileDiffMetadata> {
+  if (groupByType) return orderReviewFiles(files, resolveFileDiffPath, true);
   const byPath = new Map<string, FileDiffMetadata>();
-  for (const file of files) byPath.set(resolveFileDiffPath(file), file);
+  const entriesByPath = new Map<string, FileDiffMetadata[]>();
+  for (const file of files) {
+    const path = resolveFileDiffPath(file);
+    byPath.set(path, file);
+    const entries = entriesByPath.get(path);
+    if (entries) entries.push(file);
+    else entriesByPath.set(path, [file]);
+  }
   const tiers = new Map<string, DiffFileTier>();
   for (const path of byPath.keys()) tiers.set(path, diffFileTier(path));
 
@@ -192,5 +201,7 @@ export function orderDiffFiles(
     .filter((path) => tiers.get(path) === "generated")
     .sort((left, right) => left.localeCompare(right));
 
-  return [...orderedSource, ...orderedTests, ...orderedGenerated].map((path) => byPath.get(path)!);
+  return [...orderedSource, ...orderedTests, ...orderedGenerated].flatMap((path) =>
+    entriesByPath.get(path)!,
+  );
 }
