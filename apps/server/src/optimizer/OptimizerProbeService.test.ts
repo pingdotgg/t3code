@@ -28,9 +28,9 @@ const success = (stdout: string): ProcessRunOutput => ({
 
 type ProbeDependenciesWithoutLifecycle = Omit<
   OptimizerProbeDependencies,
-  "spawnHeadroomProxy" | "sleep"
+  "spawnHeadroomProxy" | "sleep" | "getHeadroomUpstream"
 > &
-  Partial<Pick<OptimizerProbeDependencies, "spawnHeadroomProxy" | "sleep">>;
+  Partial<Pick<OptimizerProbeDependencies, "spawnHeadroomProxy" | "sleep" | "getHeadroomUpstream">>;
 
 const makeProbe = (dependencies: ProbeDependenciesWithoutLifecycle) =>
   makeWith({
@@ -42,6 +42,7 @@ const makeProbe = (dependencies: ProbeDependenciesWithoutLifecycle) =>
           new OptimizerStartError({ message: "No Headroom process stub was provided." }),
         )),
     sleep: dependencies.sleep ?? (() => Effect.void),
+    getHeadroomUpstream: dependencies.getHeadroomUpstream ?? Effect.succeed({}),
   });
 
 describe("OptimizerProbeService", () => {

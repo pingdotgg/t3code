@@ -6,7 +6,7 @@ import {
   DEFAULT_HEADROOM_PROXY_URL,
   normalizeHeadroomProxyUrl,
   type ProviderDriverKind,
-  type ProviderInstanceId,
+  ProviderInstanceId,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
@@ -22,6 +22,8 @@ import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
+const decodeClaudeSettingsUnsafe = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeCodexSettingsUnsafe = Schema.decodeUnknownSync(CodexSettings);
 const decodeClaudeRoutingSettings = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
@@ -44,15 +46,17 @@ interface ProviderRoutingConfig {
 export interface HeadroomSessionRoutingInput {
   readonly provider: ProviderDriverKind;
   readonly providerInstanceId: ProviderInstanceId;
-  readonly settings: Pick<ServerSettings, "headroomProxyUrl" | "providerInstances">;
+  readonly settings: Pick<ServerSettings, "headroomProxyUrl" | "providerInstances" | "cpa">;
   readonly cwd?: string;
   readonly environment?: NodeJS.ProcessEnv;
 }
 
 export interface HeadroomSessionRouting {
   readonly environment: Readonly<Record<string, string>>;
-  /** Codex routes per thread: `openai_base_url` in the thread's config overrides. */
-  readonly codexBaseUrl?: string;
+  /** Claude flag settings outrank a base URL in the user's settings file; the process env does not. */
+  readonly claudeBaseUrl?: string;
+  /** Codex routes per thread through these config overrides. */
+  readonly codexConfig?: Readonly<Record<string, string>>;
 }
 
 function isHeadroomRoutableProvider(
@@ -105,6 +109,16 @@ export interface CodexHeadroomRoutingConfig {
   readonly modelProvider: string | undefined;
   readonly openAiBaseUrl: string | undefined;
   readonly headroomBaseUrl: string | undefined;
+  readonly cpaBaseUrl: string | undefined;
+}
+
+/** True when `value` points at the CLIProxyAPI origin, with Codex's `/v1` suffix where expected. */
+export function isCpaUrl(
+  value: string | undefined,
+  provider: HeadroomRoutableProvider,
+  cpaUrl: string,
+): boolean {
+  return isHeadroomProxyUrl(value, provider, cpaUrl);
 }
 
 export function inspectCodexHeadroomRouting(contents: string): CodexHeadroomRoutingConfig {
@@ -112,6 +126,7 @@ export function inspectCodexHeadroomRouting(contents: string): CodexHeadroomRout
   let modelProvider: string | undefined;
   let openAiBaseUrl: string | undefined;
   let headroomBaseUrl: string | undefined;
+  let cpaBaseUrl: string | undefined;
 
   for (const line of contents.split(/\r?\n/)) {
     const table = /^\s*\[\s*([^\]]+)\s*\]\s*(?:#.*)?$/.exec(line);
@@ -125,15 +140,20 @@ export function inspectCodexHeadroomRouting(contents: string): CodexHeadroomRout
       openAiBaseUrl = stringAssignment(line, "openai_base_url") ?? openAiBaseUrl;
     } else if (section === "model_providers.headroom") {
       headroomBaseUrl = stringAssignment(line, "base_url") ?? headroomBaseUrl;
+    } else if (section === "model_providers.cpa") {
+      cpaBaseUrl = stringAssignment(line, "base_url") ?? cpaBaseUrl;
     }
   }
 
-  return { modelProvider, openAiBaseUrl, headroomBaseUrl };
+  return { modelProvider, openAiBaseUrl, headroomBaseUrl, cpaBaseUrl };
 }
 
-const resolveProviderRoutingConfig = Effect.fn(function* (
-  input: HeadroomSessionRoutingInput & { readonly provider: HeadroomRoutableProvider },
-): Effect.fn.Return<ProviderRoutingConfig | undefined> {
+const resolveProviderRoutingConfig = Effect.fn(function* (input: {
+  readonly provider: HeadroomRoutableProvider;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly settings: Pick<ServerSettings, "providerInstances">;
+  readonly environment?: NodeJS.ProcessEnv;
+}): Effect.fn.Return<ProviderRoutingConfig | undefined> {
   const explicit = input.settings.providerInstances[input.providerInstanceId];
   if (explicit !== undefined) {
     return {
@@ -163,6 +183,64 @@ function environmentHomePath(
 
 const readOptional = (fileSystem: FileSystem.FileSystem, filePath: string) =>
   fileSystem.readFileString(filePath).pipe(Effect.option);
+
+const claudeConfigDir = Effect.fn("HeadroomRouting.claudeConfigDir")(function* (
+  config: ClaudeSettings,
+  environment: NodeJS.ProcessEnv,
+  cwd: string | undefined,
+) {
+  const path = yield* Path.Path;
+  const configuredHome = config.homePath.trim();
+  return configuredHome.length > 0
+    ? path.resolve(expandHomePath(configuredHome, yield* HostProcess.HomeDirectory))
+    : (environmentHomePath(path, environment.CLAUDE_CONFIG_DIR, cwd) ??
+        path.join(yield* HostProcess.HomeDirectory, ".claude"));
+});
+
+const codexConfigDir = Effect.fn("HeadroomRouting.codexConfigDir")(function* (
+  config: CodexSettings,
+  environment: NodeJS.ProcessEnv,
+  cwd: string | undefined,
+) {
+  const path = yield* Path.Path;
+  const layout = yield* resolveCodexHomeLayout(config);
+  return (
+    layout.effectiveHomePath ??
+    environmentHomePath(path, environment.CODEX_HOME, cwd) ??
+    layout.sharedHomePath
+  );
+});
+
+/** The Claude `settings.json` and Codex `config.toml` the default provider instances read. */
+export const resolveDefaultCliConfigFiles = Effect.fn(
+  "HeadroomRouting.resolveDefaultCliConfigFiles",
+)(function* (settings: Pick<ServerSettings, "providerInstances">) {
+  const path = yield* Path.Path;
+  const instance = (provider: HeadroomRoutableProvider) =>
+    resolveProviderRoutingConfig({
+      provider,
+      providerInstanceId: ProviderInstanceId.make(provider),
+      settings,
+    });
+  const claude = yield* instance("claudeAgent");
+  const codex = yield* instance("codex");
+  const claudeConfig = decodeClaudeSettings(claude?.config ?? {});
+  const codexConfig = decodeCodexSettings(codex?.config ?? {});
+  const claudeDir = yield* claudeConfigDir(
+    Option.getOrElse(claudeConfig, () => decodeClaudeSettingsUnsafe({})),
+    claude?.environment ?? process.env,
+    undefined,
+  );
+  const codexDir = yield* codexConfigDir(
+    Option.getOrElse(codexConfig, () => decodeCodexSettingsUnsafe({})),
+    codex?.environment ?? process.env,
+    undefined,
+  );
+  return {
+    claudeSettingsPath: path.join(claudeDir, "settings.json"),
+    codexConfigPath: path.join(codexDir, "config.toml"),
+  };
+});
 
 const codexLaunchOverride = (launchArgs: string, key: string): string | undefined => {
   const args = tokenizeCliArgs(launchArgs);
@@ -223,6 +301,8 @@ const headroomEnvironment = (proxyUrl: string): Readonly<Record<string, string>>
 export interface ProviderHeadroomSessionRoutingInput {
   readonly provider: HeadroomRoutableProvider;
   readonly proxyUrl: string;
+  /** When set, a CLI config that routes to this CLIProxyAPI chains through Headroom instead of bailing. */
+  readonly cpaUrl?: string;
   readonly config: unknown;
   readonly cwd?: string;
   readonly environment: NodeJS.ProcessEnv;
@@ -250,17 +330,18 @@ export const resolveProviderHeadroomSessionRouting = Effect.fn(
     ) {
       return undefined;
     }
-    const configuredHome = config.value.homePath.trim();
-    const configDir =
-      configuredHome.length > 0
-        ? path.resolve(expandHomePath(configuredHome, yield* HostProcess.HomeDirectory))
-        : (environmentHomePath(path, input.environment.CLAUDE_CONFIG_DIR, input.cwd) ??
-          path.join(yield* HostProcess.HomeDirectory, ".claude"));
+    const configDir = yield* claudeConfigDir(config.value, input.environment, input.cwd);
     const contents = yield* readOptional(fileSystem, path.join(configDir, "settings.json"));
     const settingsRoute = Option.flatMap(contents, decodeClaudeRoutingSettings);
     const explicitBaseUrl =
       input.environment.ANTHROPIC_BASE_URL ??
       (Option.isSome(settingsRoute) ? settingsRoute.value.env?.ANTHROPIC_BASE_URL : undefined);
+    if (input.cpaUrl !== undefined && isCpaUrl(explicitBaseUrl, "claudeAgent", input.cpaUrl)) {
+      return {
+        environment: { ...headroomEnvironment(proxyUrl), ANTHROPIC_BASE_URL: proxyUrl },
+        claudeBaseUrl: proxyUrl,
+      };
+    }
     if (
       explicitBaseUrl !== undefined &&
       !isHeadroomProxyUrl(explicitBaseUrl, "claudeAgent", proxyUrl)
@@ -280,11 +361,7 @@ export const resolveProviderHeadroomSessionRouting = Effect.fn(
   const launchArgs =
     input.environment.T3CODE_CODEX_LAUNCH_ARGS?.trim() || config.value.launchArgs.trim();
   if (selectsCodexProfile(launchArgs)) return undefined;
-  const layout = yield* resolveCodexHomeLayout(config.value);
-  const configDir =
-    layout.effectiveHomePath ??
-    environmentHomePath(path, input.environment.CODEX_HOME, input.cwd) ??
-    layout.sharedHomePath;
+  const configDir = yield* codexConfigDir(config.value, input.environment, input.cwd);
   const contents = yield* readOptional(fileSystem, path.join(configDir, "config.toml"));
   const configContents = Option.getOrElse(contents, () => "");
   const inspected = inspectCodexHeadroomRouting(configContents);
@@ -298,6 +375,16 @@ export const resolveProviderHeadroomSessionRouting = Effect.fn(
     const overriddenBaseUrl = codexLaunchOverride(launchArgs, "model_providers.headroom.base_url");
     return isHeadroomProxyUrl(overriddenBaseUrl ?? inspected.headroomBaseUrl, "codex", proxyUrl)
       ? { environment: headroomEnvironment(proxyUrl) }
+      : undefined;
+  }
+  if (modelProvider === "cpa") {
+    const baseUrl =
+      codexLaunchOverride(launchArgs, "model_providers.cpa.base_url") ?? inspected.cpaBaseUrl;
+    return input.cpaUrl !== undefined && isCpaUrl(baseUrl, "codex", input.cpaUrl)
+      ? {
+          environment: headroomEnvironment(proxyUrl),
+          codexConfig: { "model_providers.cpa.base_url": `${proxyUrl}/v1` },
+        }
       : undefined;
   }
   if (modelProvider !== "openai") return undefined;
@@ -316,7 +403,7 @@ export const resolveProviderHeadroomSessionRouting = Effect.fn(
       ...headroomEnvironment(proxyUrl),
       OPENAI_BASE_URL: baseUrl,
     },
-    codexBaseUrl: baseUrl,
+    codexConfig: { openai_base_url: baseUrl },
   };
 });
 
@@ -330,6 +417,7 @@ export const resolveHeadroomSessionRouting = Effect.fn("HeadroomRouting.resolveS
   return yield* resolveProviderHeadroomSessionRouting({
     provider: input.provider,
     proxyUrl: input.settings.headroomProxyUrl,
+    cpaUrl: input.settings.cpa.url,
     config: resolved.config,
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
     environment: resolved.environment,

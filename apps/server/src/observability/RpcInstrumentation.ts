@@ -102,6 +102,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverReportClientActivity]: "server",
   [WS_METHODS.optimizersGetStatus]: "optimizers",
   [WS_METHODS.optimizersStartHeadroom]: "optimizers",
+  [WS_METHODS.optimizersStartCpa]: "optimizers",
+  [WS_METHODS.optimizersSetCpaRouting]: "optimizers",
   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",
   [WS_METHODS.scheduledTasksSetEnabled]: "scheduledTasks",

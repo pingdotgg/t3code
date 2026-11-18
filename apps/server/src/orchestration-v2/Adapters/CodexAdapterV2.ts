@@ -1656,9 +1656,7 @@ export function codexThreadRuntimeParams(input: {
               env: { ...optimizers.cbm.env },
             },
           }),
-      ...(optimizers?.headroom?.codexBaseUrl === undefined
-        ? {}
-        : { openai_base_url: optimizers.headroom.codexBaseUrl }),
+      ...optimizers?.headroom?.codexConfig,
     },
   };
 }
@@ -2298,10 +2296,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 threadId,
                 cwd,
                 capabilities: { rtk: true, headroom: true, cbm: true },
-                resolveHeadroom: (proxyUrl) =>
+                resolveHeadroom: (proxyUrl, cpaUrl) =>
                   HeadroomRouting.resolveProviderHeadroomSessionRouting({
                     provider: "codex",
                     proxyUrl,
+                    cpaUrl,
                     config: resolvedSettings,
                     ...(cwd === null ? {} : { cwd }),
                     environment: baseEnvironment,

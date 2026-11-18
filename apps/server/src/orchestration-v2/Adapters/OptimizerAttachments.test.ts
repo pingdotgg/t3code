@@ -28,7 +28,7 @@ const attachOptimizers = () =>
         HEADROOM_PROXY_URL: "http://127.0.0.1:6767",
         OPENAI_BASE_URL: "http://127.0.0.1:6767/v1",
       },
-      codexBaseUrl: "http://127.0.0.1:6767/v1",
+      codexConfig: { openai_base_url: "http://127.0.0.1:6767/v1" },
     },
     cbm: {
       command: "/tools/codebase-memory-mcp",

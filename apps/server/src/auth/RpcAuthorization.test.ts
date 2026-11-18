@@ -49,10 +49,14 @@ describe("RPC authorization scopes", () => {
     }
   });
 
-  it("requires environment maintenance permission to start Headroom", () => {
-    expect(requiredScopeForRpcMethod(WS_METHODS.optimizersStartHeadroom)).toBe(
-      AuthEnvironmentMaintainScope,
-    );
+  it("requires environment maintenance permission to start Headroom and CPA or reroute CPA", () => {
+    for (const method of [
+      WS_METHODS.optimizersStartHeadroom,
+      WS_METHODS.optimizersStartCpa,
+      WS_METHODS.optimizersSetCpaRouting,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthEnvironmentMaintainScope);
+    }
   });
 
   it("keeps triage, which seeds an agent that reads logs and the database, behind operate scope", () => {

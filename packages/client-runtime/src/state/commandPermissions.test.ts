@@ -557,13 +557,17 @@ it.effect("honors exact empty permissions and preserves legacy parent grants", (
   }),
 );
 
-it.effect("guards Headroom startup with environment maintenance permission", () =>
+it.effect.each([
+  WS_METHODS.optimizersStartHeadroom,
+  WS_METHODS.optimizersStartCpa,
+  WS_METHODS.optimizersSetCpaRouting,
+])("guards %s with environment maintenance permission", (method) =>
   Effect.scoped(
     Effect.gen(function* () {
       const registry = yield* setup;
-      const startHeadroom = createCommandPermissions(runtime, WS_METHODS.optimizersStartHeadroom);
+      const command = createCommandPermissions(runtime, method);
       registry.set(sessions(env), AsyncResult.success({ ...grant(true), permissions: [] }));
-      expect(registry.get(startHeadroom.permissionAtom(env))).toBe(false);
+      expect(registry.get(command.permissionAtom(env))).toBe(false);
       registry.set(
         sessions(env),
         AsyncResult.success({
@@ -572,8 +576,8 @@ it.effect("guards Headroom startup with environment maintenance permission", () 
           permissions: [AuthEnvironmentMaintainScope],
         }),
       );
-      expect(registry.get(startHeadroom.permissionAtom(env))).toBe(true);
-      yield* startHeadroom.authorize(registry, env);
+      expect(registry.get(command.permissionAtom(env))).toBe(true);
+      yield* command.authorize(registry, env);
     }),
   ),
 );

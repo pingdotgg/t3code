@@ -18,8 +18,10 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -33,6 +35,7 @@ import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshot
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CbmIndexService } from "./CbmIndexService.ts";
+import { cpaHeadroomUpstream, readCpaRoutingState } from "./CpaRouting.ts";
 
 const PROBE_TIMEOUT = Duration.seconds(4);
 const REFRESH_COOLDOWN_MS = 5_000;
@@ -99,8 +102,11 @@ export interface OptimizerProbeDependencies {
   readonly spawnHeadroomProxy: (input: {
     readonly host: string;
     readonly port: number;
+    readonly upstream: HeadroomUpstream;
     readonly scope: Scope.Scope;
   }) => Effect.Effect<OptimizerOwnedHeadroomProcess, OptimizerStartError>;
+  /** Where a T3-owned Headroom forwards; empty means Headroom's own defaults. */
+  readonly getHeadroomUpstream: Effect.Effect<HeadroomUpstream>;
   readonly getCbmBinaryPath: Effect.Effect<string, ServerSettingsError>;
   readonly getHeadroomProxyUrl: Effect.Effect<string, ServerSettingsError>;
   readonly listCbmIndexes: Effect.Effect<ReadonlyArray<CbmProjectIndexStatus>>;
@@ -108,6 +114,14 @@ export interface OptimizerProbeDependencies {
   readonly nowMs: Effect.Effect<number>;
   readonly sleep: (milliseconds: number) => Effect.Effect<void>;
 }
+
+export interface HeadroomUpstream {
+  readonly anthropic?: string;
+  readonly openai?: string;
+}
+
+const sameUpstream = (left: HeadroomUpstream, right: HeadroomUpstream) =>
+  left.anthropic === right.anthropic && left.openai === right.openai;
 
 export interface OptimizerOwnedHeadroomProcess {
   readonly isRunning: Effect.Effect<boolean, OptimizerStartError>;
@@ -127,7 +141,10 @@ export class OptimizerProbeService extends Context.Service<
       readonly refresh?: boolean | undefined;
       readonly force?: boolean | undefined;
     }) => Effect.Effect<OptimizerStatusSnapshot>;
+    /** Also restarts a T3-owned Headroom whose upstream no longer matches the CLI configs. */
     readonly startHeadroom: () => Effect.Effect<OptimizerStatusSnapshot, OptimizerStartError>;
+    /** The upstream of the Headroom this server started, or null when it did not start one. */
+    readonly ownedHeadroomUpstream: Effect.Effect<HeadroomUpstream | null>;
   }
 >()("t3/optimizer/OptimizerProbeService") {}
 
@@ -223,6 +240,7 @@ export const makeWith = Effect.fn("OptimizerProbeService.makeWith")(function* (
   );
   const ownedProcess = yield* Ref.make<{
     readonly proxyUrl: string;
+    readonly upstream: HeadroomUpstream;
     readonly scope: Scope.Closeable;
     readonly process: OptimizerOwnedHeadroomProcess;
   } | null>(null);
@@ -522,10 +540,15 @@ export const makeWith = Effect.fn("OptimizerProbeService.makeWith")(function* (
           });
         }
 
+        const upstream = yield* dependencies.getHeadroomUpstream;
         const prior = yield* Ref.get(ownedProcess);
         if (prior !== null) {
           const isRunning = yield* prior.process.isRunning.pipe(Effect.orElseSucceed(() => false));
-          if (!isRunning || prior.proxyUrl !== proxyUrl) {
+          if (
+            !isRunning ||
+            prior.proxyUrl !== proxyUrl ||
+            !sameUpstream(prior.upstream, upstream)
+          ) {
             yield* Scope.close(prior.scope, Exit.void);
             yield* Ref.set(ownedProcess, null);
           }
@@ -562,11 +585,12 @@ export const makeWith = Effect.fn("OptimizerProbeService.makeWith")(function* (
             .spawnHeadroomProxy({
               host,
               port,
+              upstream,
               scope: processScope,
             })
             .pipe(
               Effect.tap((process) =>
-                Ref.set(ownedProcess, { proxyUrl, scope: processScope, process }),
+                Ref.set(ownedProcess, { proxyUrl, upstream, scope: processScope, process }),
               ),
             );
           yield* waitForHeadroom(proxyUrl, spawned);
@@ -592,7 +616,14 @@ export const makeWith = Effect.fn("OptimizerProbeService.makeWith")(function* (
       }),
     );
 
-  return OptimizerProbeService.of({ getStatus, startHeadroom });
+  const ownedHeadroomUpstream = Effect.gen(function* () {
+    const owned = yield* Ref.get(ownedProcess);
+    if (owned === null) return null;
+    const running = yield* owned.process.isRunning.pipe(Effect.orElseSucceed(() => false));
+    return running ? owned.upstream : null;
+  });
+
+  return OptimizerProbeService.of({ getStatus, startHeadroom, ownedHeadroomUpstream });
 });
 
 const make = Effect.gen(function* () {
@@ -602,6 +633,8 @@ const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const hostPlatform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   return yield* makeWith({
     run: processRunner.run,
@@ -630,16 +663,28 @@ const make = Effect.gen(function* () {
         Effect.timeout(Duration.seconds(2)),
         Effect.mapError(() => new HeadroomStatsProbeError()),
       ),
-    spawnHeadroomProxy: ({ host, port, scope }) =>
+    spawnHeadroomProxy: ({ host, port, upstream, scope }) =>
       spawner
         .spawn(
-          ChildProcess.make("headroom", ["proxy", "--host", host, "--port", String(port)], {
-            extendEnv: true,
-            detached: false,
-            stdin: "ignore",
-            stdout: "inherit",
-            stderr: "inherit",
-          }),
+          ChildProcess.make(
+            "headroom",
+            [
+              "proxy",
+              "--host",
+              host,
+              "--port",
+              String(port),
+              ...(upstream.anthropic ? ["--anthropic-api-url", upstream.anthropic] : []),
+              ...(upstream.openai ? ["--openai-api-url", upstream.openai] : []),
+            ],
+            {
+              extendEnv: true,
+              detached: false,
+              stdin: "ignore",
+              stdout: "inherit",
+              stderr: "inherit",
+            },
+          ),
         )
         .pipe(
           Scope.provide(scope),
@@ -671,6 +716,13 @@ const make = Effect.gen(function* () {
     ),
     getHeadroomProxyUrl: settings.getSettings.pipe(
       Effect.map((current) => current.headroomProxyUrl),
+    ),
+    getHeadroomUpstream: settings.getSettings.pipe(
+      Effect.flatMap(readCpaRoutingState),
+      Effect.map(cpaHeadroomUpstream),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.orElseSucceed((): HeadroomUpstream => ({})),
     ),
     listCbmIndexes: cbmIndexes.listStatuses,
     now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),

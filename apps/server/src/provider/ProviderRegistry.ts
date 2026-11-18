@@ -33,6 +33,7 @@ import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
 import { refreshWindowsPath } from "../os-jank.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
+import * as CpaService from "../optimizer/CpaService.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import {
   hydrateCachedProvider,
@@ -400,6 +401,11 @@ export const layer = Layer.effect(
     const instanceRegistryMutator =
       yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
     const manifestService = yield* ModelManifest.ModelManifest;
+    // Optional so registry tests need no CLIProxyAPI.
+    const overlayUsageLimits = Option.match(yield* Effect.serviceOption(CpaService.CpaService), {
+      onNone: () => (provider: ServerProvider) => Effect.succeed(provider),
+      onSome: (cpa) => cpa.overlayUsageLimits,
+    });
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const serviceScope = yield* Effect.scope;
     const config = yield* ServerConfig.ServerConfig;
@@ -557,7 +563,7 @@ export const layer = Layer.effect(
       const manifest = yield* manifestService.current;
       const nextProvidersWithUpdateState = yield* Effect.forEach(
         nextProviders,
-        applyProviderUpdateState,
+        (provider) => applyProviderUpdateState(provider).pipe(Effect.flatMap(overlayUsageLimits)),
         {
           concurrency: "unbounded",
         },

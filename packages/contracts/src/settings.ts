@@ -42,6 +42,7 @@ import {
 import { ModelSelection } from "./modelSelection.ts";
 import {
   DEFAULT_CBM_BINARY_PATH,
+  DEFAULT_CPA_SETTINGS,
   DEFAULT_HEADROOM_PROXY_URL,
   HeadroomProxyUrl,
   ProjectOptimizerSettings,
@@ -1575,6 +1576,20 @@ export const ServerSettings = Schema.Struct({
   headroomProxyUrl: HeadroomProxyUrl.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_HEADROOM_PROXY_URL)),
   ),
+  cpa: Schema.Struct({
+    url: HeadroomProxyUrl.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_CPA_SETTINGS.url)),
+    ),
+    clientKeyPath: TrimmedNonEmptyString.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_CPA_SETTINGS.clientKeyPath)),
+    ),
+    managementKeyPath: TrimmedNonEmptyString.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_CPA_SETTINGS.managementKeyPath)),
+    ),
+    launchdLabel: TrimmedNonEmptyString.pipe(
+      Schema.withDecodingDefault(Effect.succeed(DEFAULT_CPA_SETTINGS.launchdLabel)),
+    ),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),

@@ -92,7 +92,7 @@ const make = Effect.gen(function* () {
       const rtkAttached = installable.rtk;
       const headroom =
         installable.headroom && input.resolveHeadroom !== undefined
-          ? yield* input.resolveHeadroom(settings.headroomProxyUrl)
+          ? yield* input.resolveHeadroom(settings.headroomProxyUrl, settings.cpa.url)
           : undefined;
       const cbmAttached = installable.cbm;
       const cbmCompletion = cbmAttached ? yield* Deferred.make<CbmProjectIndexStatus>() : undefined;

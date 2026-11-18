@@ -216,6 +216,7 @@ import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsag
 import * as UsageService from "./usage/UsageService.ts";
 import * as UsageWeeklyContext from "./usage/UsageWeeklyContext.ts";
 import * as CbmIndexService from "./optimizer/CbmIndexService.ts";
+import * as CpaService from "./optimizer/CpaService.ts";
 import * as OptimizerProbeService from "./optimizer/OptimizerProbeService.ts";
 import * as SessionOptimizerAttachmentsLive from "./optimizer/SessionOptimizerAttachments.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
@@ -299,11 +300,16 @@ const layerOptimizerProbe = OptimizerProbeService.layer.pipe(
   Layer.provide(layerServerSettings),
 );
 
-const layerOptimizer = SessionOptimizerAttachmentsLive.layer.pipe(
-  Layer.provideMerge(layerOptimizerProbe),
-  Layer.provideMerge(layerCbmIndex),
-  Layer.provideMerge(ProjectionStoreV2.layer),
-  Layer.provideMerge(layerServerSettings),
+const layerOptimizer = CpaService.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provideMerge(
+    SessionOptimizerAttachmentsLive.layer.pipe(
+      Layer.provideMerge(layerOptimizerProbe),
+      Layer.provideMerge(layerCbmIndex),
+      Layer.provideMerge(ProjectionStoreV2.layer),
+      Layer.provideMerge(layerServerSettings),
+    ),
+  ),
 );
 
 const layerNativeTelemetry = NativeTelemetryClient.layer.pipe(

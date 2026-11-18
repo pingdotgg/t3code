@@ -237,7 +237,7 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as EventLoopMonitor from "./observability/EventLoopMonitor.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
-import * as SessionOptimizerAttachments from "@t3tools/provider-core/server/sessionOptimizerAttachments";
+import * as CpaService from "./optimizer/CpaService.ts";
 import * as OptimizerProbeService from "./optimizer/OptimizerProbeService.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
@@ -1524,8 +1524,8 @@ export const layerWsRpc = (
             );
       const usage = yield* UsageService.UsageService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
-      const sessionOptimizers = yield* SessionOptimizerAttachments.SessionOptimizerAttachments;
       const optimizerProbe = yield* OptimizerProbeService.OptimizerProbeService;
+      const cpa = yield* CpaService.CpaService;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
       const repositoryIdentityResolver =
@@ -2390,8 +2390,10 @@ export const layerWsRpc = (
             Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
-        [WS_METHODS.optimizersGetStatus]: (input) => sessionOptimizers.getStatus(input),
+        [WS_METHODS.optimizersGetStatus]: (input) => cpa.getStatus(input),
         [WS_METHODS.optimizersStartHeadroom]: () => optimizerProbe.startHeadroom(),
+        [WS_METHODS.optimizersStartCpa]: () => cpa.start(),
+        [WS_METHODS.optimizersSetCpaRouting]: (input) => cpa.setRouting(input.enabled),
         [WS_METHODS.serverGetConfig]: (_input) =>
           loadServerConfig({
             usageLimitsCommand: false,

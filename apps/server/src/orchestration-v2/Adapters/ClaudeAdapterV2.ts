@@ -2213,7 +2213,7 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
-  /** Routes the session's model requests through the request-rules forwarder. */
+  /** Flag-settings base URL: the request-rules forwarder, or Headroom chained in front of CPA. */
   readonly requestForwarderUrl?: string;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
@@ -5978,10 +5978,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 threadId: input.threadId,
                 cwd: input.runtimePolicy.cwd,
                 capabilities: { rtk: false, headroom: true, cbm: true },
-                resolveHeadroom: (proxyUrl) =>
+                resolveHeadroom: (proxyUrl, cpaUrl) =>
                   HeadroomRouting.resolveProviderHeadroomSessionRouting({
                     provider: "claudeAgent",
                     proxyUrl,
+                    cpaUrl,
                     config: adapterOptions.settings,
                     ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
                     environment: adapterOptions.environment,
@@ -6160,10 +6161,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (forwarder === undefined || rules === undefined) return undefined;
           if (!(yield* rules).some((rule) => rule.enabled)) return undefined;
           // Against the same merged environment the query passes to the CLI.
-          const upstream = yield* resolveClaudeEnv(cwd, launchArgSettings, "ANTHROPIC_BASE_URL", {
-            ...adapterOptions.environment,
-            ...optimizerAttachments?.headroom?.environment,
-          });
+          const upstream =
+            optimizerAttachments?.headroom?.claudeBaseUrl ??
+            (yield* resolveClaudeEnv(cwd, launchArgSettings, "ANTHROPIC_BASE_URL", {
+              ...adapterOptions.environment,
+              ...optimizerAttachments?.headroom?.environment,
+            }));
           if (forwarderRoute !== undefined) {
             yield* forwarderRoute.setUpstream(upstream);
             return forwarderRoute.baseUrl;
@@ -13335,6 +13338,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ],
             { concurrency: "unbounded" },
           );
+          const flagBaseUrl = forwarderUrl ?? optimizerAttachments?.headroom?.claudeBaseUrl;
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           clearedNativeSessions.delete(nativeThreadId);
           if (existing !== null) {
@@ -13404,7 +13408,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
-            ...(forwarderUrl === undefined ? {} : { requestForwarderUrl: forwarderUrl }),
+            ...(flagBaseUrl === undefined ? {} : { requestForwarderUrl: flagBaseUrl }),
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")

@@ -63,6 +63,7 @@ model_provider = "other"
       modelProvider: "headroom",
       openAiBaseUrl: "http://127.0.0.1:6767/v1",
       headroomBaseUrl: "http://127.0.0.1:6767/v1",
+      cpaBaseUrl: undefined,
     });
   });
 
@@ -92,7 +93,7 @@ model_provider = "other"
             HEADROOM_PROXY_URL: "http://127.0.0.1:8787",
             OPENAI_BASE_URL: "http://127.0.0.1:8787/v1",
           },
-          codexBaseUrl: "http://127.0.0.1:8787/v1",
+          codexConfig: { openai_base_url: "http://127.0.0.1:8787/v1" },
         });
         expect(
           yield* resolveHeadroomSessionRouting({
@@ -202,6 +203,74 @@ model_provider = "other"
         });
       } finally {
         NodeFS.rmSync(home, { recursive: true, force: true });
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("chains through Headroom when the CLI configs route to CLIProxyAPI", () =>
+    Effect.gen(function* () {
+      const codexHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "headroom-codex-"));
+      const claudeHome = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "headroom-claude-"));
+      try {
+        NodeFS.writeFileSync(
+          NodePath.join(codexHome, "config.toml"),
+          [
+            'model_provider = "cpa"',
+            "[model_providers.cpa]",
+            'base_url = "http://127.0.0.1:8317/v1"',
+          ].join("\n"),
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(claudeHome, "settings.json"),
+          '{"apiKeyHelper":"cat ~/.config/cpa/key","env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:8317"}}',
+        );
+        const providerInstances = {
+          codex_work: { driver: "codex", config: { homePath: codexHome } },
+          claude_work: { driver: "claudeAgent", config: { homePath: claudeHome } },
+        };
+        const settings = decodeSettings({ providerInstances });
+        expect(
+          yield* resolveHeadroomSessionRouting({
+            provider: codex,
+            providerInstanceId: ProviderInstanceId.make("codex_work"),
+            settings,
+            environment: {},
+          }),
+        ).toEqual({
+          environment: { HEADROOM_ACTIVE: "1", HEADROOM_PROXY_URL: "http://127.0.0.1:6767" },
+          codexConfig: { "model_providers.cpa.base_url": "http://127.0.0.1:6767/v1" },
+        });
+        expect(
+          yield* resolveHeadroomSessionRouting({
+            provider: claude,
+            providerInstanceId: ProviderInstanceId.make("claude_work"),
+            settings,
+            environment: {},
+          }),
+        ).toEqual({
+          environment: {
+            HEADROOM_ACTIVE: "1",
+            HEADROOM_PROXY_URL: "http://127.0.0.1:6767",
+            ANTHROPIC_BASE_URL: "http://127.0.0.1:6767",
+          },
+          claudeBaseUrl: "http://127.0.0.1:6767",
+        });
+        // A CLIProxyAPI on another port is just a custom upstream.
+        const elsewhere = decodeSettings({
+          providerInstances,
+          cpa: { url: "http://127.0.0.1:9999" },
+        });
+        expect(
+          yield* resolveHeadroomSessionRouting({
+            provider: claude,
+            providerInstanceId: ProviderInstanceId.make("claude_work"),
+            settings: elsewhere,
+            environment: {},
+          }),
+        ).toBeUndefined();
+      } finally {
+        NodeFS.rmSync(codexHome, { recursive: true, force: true });
+        NodeFS.rmSync(claudeHome, { recursive: true, force: true });
       }
     }).pipe(Effect.provide(NodeServices.layer)),
   );

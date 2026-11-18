@@ -69,6 +69,18 @@ export const OptimizerAttachmentStatus = Schema.Struct({
 });
 export type OptimizerAttachmentStatus = typeof OptimizerAttachmentStatus.Type;
 
+/** The local CLIProxyAPI proxy and whether the Claude and Codex CLI configs route through it. */
+export const CpaStatus = Schema.Struct({
+  url: TrimmedNonEmptyString,
+  running: Schema.Boolean,
+  /** Derived from the CLI config files; "partial" means only one of Claude or Codex routes. */
+  routing: Schema.Literals(["on", "off", "partial"]),
+  canStart: Schema.Boolean,
+  /** A Headroom T3 cannot restart forwards to a different upstream than the switch implies. */
+  headroomUpstreamMismatch: Schema.Boolean,
+});
+export type CpaStatus = typeof CpaStatus.Type;
+
 export const OptimizerStatusSnapshot = Schema.Struct({
   optimizers: Schema.Array(OptimizerStatus),
   savings: Schema.Array(OptimizerSavingsSummary),
@@ -87,6 +99,7 @@ export const OptimizerStatusSnapshot = Schema.Struct({
   attachments: Schema.Array(OptimizerAttachmentStatus).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  cpa: Schema.optionalKey(CpaStatus),
 });
 export type OptimizerStatusSnapshot = typeof OptimizerStatusSnapshot.Type;
 
@@ -112,6 +125,13 @@ export type ProjectOptimizerSettingsPatch = typeof ProjectOptimizerSettingsPatch
 export const DEFAULT_CBM_BINARY_PATH = "codebase-memory-mcp";
 
 export const DEFAULT_HEADROOM_PROXY_URL = "http://127.0.0.1:6767";
+
+export const DEFAULT_CPA_SETTINGS = {
+  url: "http://127.0.0.1:8317",
+  clientKeyPath: "~/.config/cpa/key",
+  managementKeyPath: "~/.config/cpa/management-key",
+  launchdLabel: "com.nabeel.cliproxyapi",
+} as const;
 
 /** Return the canonical origin for a local Headroom proxy URL. */
 export function normalizeHeadroomProxyUrl(value: string): string | null {

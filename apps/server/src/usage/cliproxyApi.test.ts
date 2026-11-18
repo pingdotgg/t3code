@@ -340,6 +340,52 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("maps a local CLIProxyAPI's Claude and Codex quota bodies to weekly windows", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          { id: "claude.json", auth_index: "c", provider: "claude" },
+          { id: "codex.json", auth_index: "x", provider: "codex" },
+        ],
+        upstream: (request) => ({
+          status: 200,
+          body:
+            request.auth_index === "c"
+              ? {
+                  five_hour: null,
+                  seven_day: { utilization: 68.0, resets_at: "2026-11-22T09:59:59Z" },
+                  seven_day_opus: null,
+                }
+              : {
+                  plan_type: "pro",
+                  rate_limit: {
+                    allowed: true,
+                    limit_reached: false,
+                    primary_window: {
+                      used_percent: 43,
+                      limit_window_seconds: 604800,
+                      reset_after_seconds: 175622,
+                      reset_at: 1795215639,
+                    },
+                    secondary_window: null,
+                  },
+                },
+        }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(
+        result.map((account) => [
+          String(account.driver),
+          account.usageLimits.windows.map((window) => [window.kind, window.usedPercent]),
+        ]),
+      ).toEqual([
+        ["claudeAgent", [["weekly", 68]]],
+        ["codex", [["weekly", 43]]],
+      ]);
+    }),
+  );
+
   it.effect("maps Claude scoped windows without a scheduler plugin", () =>
     Effect.gen(function* () {
       const test = fixture({

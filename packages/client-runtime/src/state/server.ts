@@ -1559,6 +1559,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "optimizer:headroom-start",
       tag: WS_METHODS.optimizersStartHeadroom,
     }),
+    startCpa: createEnvironmentRpcCommand(runtime, {
+      label: "optimizer:cpa-start",
+      tag: WS_METHODS.optimizersStartCpa,
+    }),
+    setCpaRouting: createEnvironmentRpcCommand(runtime, {
+      label: "optimizer:cpa-routing",
+      tag: WS_METHODS.optimizersSetCpaRouting,
+    }),
     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry",
       tag: WS_METHODS.subscribeResourceTelemetry,

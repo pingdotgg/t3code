@@ -502,6 +502,8 @@ export const WS_METHODS = {
   // Optimizer methods
   optimizersGetStatus: "optimizers.getStatus",
   optimizersStartHeadroom: "optimizers.startHeadroom",
+  optimizersStartCpa: "optimizers.startCpa",
+  optimizersSetCpaRouting: "optimizers.setCpaRouting",
 
   // VCS methods
   vcsPull: "vcs.pull",
@@ -941,6 +943,18 @@ const WsOptimizersGetStatusRpc = Rpc.make(WS_METHODS.optimizersGetStatus, {
 
 const WsOptimizersStartHeadroomRpc = Rpc.make(WS_METHODS.optimizersStartHeadroom, {
   payload: Schema.Struct({}),
+  success: OptimizerStatusSnapshot,
+  error: Schema.Union([OptimizerStartError, EnvironmentAuthorizationError]),
+});
+
+const WsOptimizersStartCpaRpc = Rpc.make(WS_METHODS.optimizersStartCpa, {
+  payload: Schema.Struct({}),
+  success: OptimizerStatusSnapshot,
+  error: Schema.Union([OptimizerStartError, EnvironmentAuthorizationError]),
+});
+
+const WsOptimizersSetCpaRoutingRpc = Rpc.make(WS_METHODS.optimizersSetCpaRouting, {
+  payload: Schema.Struct({ enabled: Schema.Boolean }),
   success: OptimizerStatusSnapshot,
   error: Schema.Union([OptimizerStartError, EnvironmentAuthorizationError]),
 });
@@ -2363,6 +2377,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsCompletionNotificationsBulkOffRpc,
   WsOptimizersGetStatusRpc,
   WsOptimizersStartHeadroomRpc,
+  WsOptimizersStartCpaRpc,
+  WsOptimizersSetCpaRoutingRpc,
   WsServerGetSettingsRpc,
   WsServerReclaimDatabaseSpaceRpc,
   WsServerUpdateSettingsRpc,

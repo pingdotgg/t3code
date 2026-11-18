@@ -23,8 +23,10 @@ export interface SessionCbmAttachment {
 
 export interface SessionHeadroomAttachment {
   readonly environment: Readonly<Record<string, string>>;
-  /** Codex routes per thread: `openai_base_url` in the thread's config overrides. */
-  readonly codexBaseUrl?: string;
+  /** Claude flag settings outrank a base URL in the user's settings file; the process env does not. */
+  readonly claudeBaseUrl?: string;
+  /** Codex routes per thread through these config overrides. */
+  readonly codexConfig?: Readonly<Record<string, string>>;
 }
 
 export interface SessionOptimizerAttachmentDescriptor {
@@ -54,6 +56,7 @@ export class SessionOptimizerAttachments extends Context.Service<
       readonly capabilities: SessionOptimizerCapabilities;
       readonly resolveHeadroom?: (
         proxyUrl: string,
+        cpaUrl: string,
       ) => Effect.Effect<SessionHeadroomAttachment | undefined>;
     }) => Effect.Effect<SessionOptimizerAttachmentDescriptor | undefined, never, Scope.Scope>;
     readonly getStatus: (input: {
