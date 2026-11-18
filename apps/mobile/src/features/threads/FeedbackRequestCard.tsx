@@ -1,3 +1,4 @@
+import { T, msg, useMessages, useGT } from "gt-react-native";
 import { pipe } from "effect/Function";
 import {
   feedbackPreviewFields,
@@ -26,7 +27,7 @@ import { Button } from "../../components/ui/Button";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-const TITLE = "Feedback for the T3 team";
+const TITLE = msg("Feedback for the T3 team");
 const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
 
 export function FeedbackRequestCard(props: {
@@ -34,10 +35,11 @@ export function FeedbackRequestCard(props: {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly iconColor: ColorValue;
 }) {
+  const m = useMessages();
   const { item, visibility } = props.projectedItem;
   const [open, setOpen] = useState(false);
   if (item.type !== "feedback_request") return null;
-  const display = feedbackRequestDisplay(item, visibility);
+  const display = feedbackRequestDisplay(item, visibility, m);
   if (display.kind === "pending") {
     return <PendingFeedbackRequest environmentId={props.environmentId} item={item} />;
   }
@@ -57,7 +59,7 @@ export function FeedbackRequestCard(props: {
       >
         <SymbolView name={icon} size={13} tintColor={props.iconColor} type="monochrome" />
         <Text className="flex-1 font-sans text-sm text-foreground-muted" numberOfLines={2}>
-          {TITLE} · {display.label}
+          {m(TITLE)} · {display.label}
         </Text>
       </Pressable>
       {open ? <FeedbackPreview preview={item.preview} /> : null}
@@ -69,6 +71,8 @@ function PendingFeedbackRequest(props: {
   readonly environmentId: EnvironmentId;
   readonly item: FeedbackRequestItem;
 }) {
+  const m = useMessages();
+  const gt = useGT();
   const answer = useAtomCommand(serverEnvironment.answerFeedbackRequest, {
     label: "answer feedback request",
     reportFailure: false,
@@ -94,17 +98,21 @@ function PendingFeedbackRequest(props: {
       setSubmitting(false);
     });
     if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
-    pipe(squashAtomCommandFailure(result), feedbackRequestFailureMessage, setError);
+    pipe(
+      squashAtomCommandFailure(result),
+      (failure) => feedbackRequestFailureMessage(failure, m),
+      setError,
+    );
   };
 
   return (
     <View className="mb-3 gap-3 rounded-[20px] border border-border bg-card-alt p-4">
       <View className="gap-1">
         <Text className="font-t3-bold text-base text-foreground">
-          Send this report to the T3 team?
+          <T>Send this report to the T3 team?</T>
         </Text>
         <Text className="font-sans text-xs text-foreground-muted">
-          This is everything that leaves your machine. Nothing is sent unless you tap Send.
+          <T>This is everything that leaves your machine. Nothing is sent unless you tap Send.</T>
         </Text>
       </View>
       <FeedbackPreview preview={props.item.preview} />
@@ -114,18 +122,18 @@ function PendingFeedbackRequest(props: {
         </Text>
       ) : !canAnswer ? (
         <Text className="font-sans text-xs text-foreground-muted">
-          Only someone who can run agents on this machine can send or decline it.
+          <T>Only someone who can run agents on this machine can send or decline it.</T>
         </Text>
       ) : null}
       <Button
-        label="Send"
+        label={gt("Send")}
         tone="primary"
         fullWidth
         disabled={submitting || !canAnswer}
         onPress={() => void send("send")}
       />
       <Button
-        label="Don't send"
+        label={gt("Don't send")}
         tone="text"
         disabled={submitting || !canAnswer}
         onPress={() => void send("decline")}
@@ -135,10 +143,13 @@ function PendingFeedbackRequest(props: {
 }
 
 function FeedbackPreview({ preview }: { readonly preview: AgentFeedbackPreview }) {
+  const m = useMessages();
+  const gt = useGT();
+
   const [outlineOpen, setOutlineOpen] = useState(false);
   return (
     <View className="gap-2">
-      {feedbackPreviewFields(preview).map((field) => (
+      {feedbackPreviewFields(preview, m).map((field) => (
         <View key={field.label} className="gap-0.5">
           <Text className="font-sans text-xs text-foreground-muted">{field.label}</Text>
           <Text selectable className="font-sans text-sm text-foreground">
@@ -154,11 +165,11 @@ function FeedbackPreview({ preview }: { readonly preview: AgentFeedbackPreview }
             onPress={() => setOutlineOpen((value) => !value)}
           >
             <Text className="font-sans text-xs text-foreground-muted">
-              {feedbackTraceSummary(preview.trace)} · {outlineOpen ? "Hide" : "Show"}
+              {feedbackTraceSummary(preview.trace, m)} · {outlineOpen ? gt("Hide") : gt("Show")}
             </Text>
           </Pressable>
           {outlineOpen
-            ? feedbackTraceLines(preview.trace).map((entry) => (
+            ? feedbackTraceLines(preview.trace, m).map((entry) => (
                 <View key={entry.key} className="gap-0.5">
                   <Text className="font-mono text-xs text-foreground-muted">{entry.line}</Text>
                   {entry.text !== undefined ? (

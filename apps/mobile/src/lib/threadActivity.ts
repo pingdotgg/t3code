@@ -699,7 +699,7 @@ function itemSummary(
     case "secret_request":
       return item.label;
     case "feedback_request":
-      return "Feedback for the T3 team";
+      return resolve(msg("Feedback for the T3 team"));
     case "link_request":
       return resolve(msg("Link {target}", { target: linkRequestTargetName(item, resolve) }));
     case "dynamic_tool": {
