@@ -18,9 +18,10 @@ import {
 } from "effect/graphql";
 import { HttpClient } from "effect/http";
 import * as Headers from "effect/http/Headers";
-import { IssueTrackerKind } from "@t3tools/contracts";
 import { IssueTrackerError } from "@t3tools/source-control-core/server/IssueTracker";
 import * as IssueTrackerHost from "@t3tools/source-control-core/server/IssueTrackerHost";
+
+import { LINEAR_TRACKER } from "../shared/issueUrl.ts";
 
 import type {
   CommentCreateInput,
@@ -53,7 +54,7 @@ export type { LinearWorkflowState } from "./LinearApi.graphql.ts";
 export type LinearAttachment = Attachment;
 export type LinearHistoryEntry = IssueHistory;
 
-export const KIND = IssueTrackerKind.make("linear");
+export const KIND = LINEAR_TRACKER;
 const DEFAULT_API_URL = "https://api.linear.app/graphql";
 
 const LinearApiConfig = Config.all({

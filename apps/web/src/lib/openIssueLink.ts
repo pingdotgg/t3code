@@ -6,6 +6,8 @@ import type { MouseEvent } from "react";
 import { readIssueListPreferences } from "../components/issue/issueListPreferences";
 import { ISSUES_PANEL_REF, PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
 import { useProjects, useServerConfigs } from "../state/entities";
+import { issueTrackerEnvironment } from "../state/issueTrackers";
+import { useEnvironmentQuery } from "../state/query";
 
 /**
  * Opens an issue link beside the thread, and says whether it did. Anything else — a host no
@@ -27,6 +29,13 @@ export function useOpenIssueLink(
   const allProjects = useProjects();
   const serverConfigs = useServerConfigs();
   const navigate = useNavigate();
+  const threadEnvironmentId = threadRef?.environmentId;
+  const trackers = useEnvironmentQuery(
+    threadEnvironmentId !== undefined &&
+      serverConfigs.get(threadEnvironmentId)?.environment.capabilities.issues === true
+      ? issueTrackerEnvironment.connections({ environmentId: threadEnvironmentId, input: {} })
+      : null,
+  );
   return (event, targetUrl, targetEnvironmentId) => {
     if (event.metaKey || event.ctrlKey) return false;
     const resolvedPanelRef = panelRef ?? threadRef;
@@ -37,6 +46,7 @@ export function useOpenIssueLink(
     const target = resolveIssueLinkTarget({
       url: targetUrl,
       projects: allProjects.filter((project) => project.environmentId === environmentId),
+      trackerBindings: environmentId === threadEnvironmentId ? trackers.data?.bindings : undefined,
     });
     if (target === null) return false;
     event.preventDefault();

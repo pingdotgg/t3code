@@ -5,11 +5,12 @@ import {
   pullRequestCandidateForIssueLink,
 } from "../lib/pullRequestNavigation";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, type IssueTrackerConnectionList, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import { appAtomRegistry } from "../state/atom-registry";
 import { environmentServerConfigsAtom } from "../state/server";
+import { issueTrackerEnvironment } from "../state/issueTrackers";
 import { composerPullRequests } from "../state/pull-requests";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { withKnownPullRequestSummary } from "../state/use-thread-pr";
@@ -28,6 +29,10 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
     reportFailure: false,
     reportDefect: false,
   });
+  const readTrackers = useAtomQueryRunner(issueTrackerEnvironment.connections, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   return async (url: string, context: PullRequestContext | null) => {
     // Read at press time so a config push does not hand every link a new handler.
     const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
@@ -37,14 +42,21 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
     if (!destination) {
       // An issue link from the same text opens the issue; anything else leaves for the browser.
       const environmentId = context && EnvironmentId.make(context.environmentId);
-      const issue =
+      const resolveIssue = (trackerBindings?: IssueTrackerConnectionList["bindings"]) =>
         environmentId && serverConfigs.get(environmentId)?.environment.capabilities.issues === true
           ? resolveIssueLinkTarget({
               url,
               projects: projects.filter((project) => project.environmentId === environmentId),
               preferredProjectId: context.projectId,
+              trackerBindings,
             })
           : null;
+      let issue = resolveIssue();
+      if (!issue && environmentId) {
+        // Linear links resolve through the projects bound to a team in Settings.
+        const trackers = await readTrackers({ environmentId, input: {} });
+        if (trackers._tag === "Success") issue = resolveIssue(trackers.value.bindings);
+      }
       if (!issue || !environmentId) return tryOpenExternalUrl(url, "pull-request");
       const candidate = pullRequestCandidateForIssueLink(url, issue.ref);
       if (candidate) {

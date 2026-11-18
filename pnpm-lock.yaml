@@ -1525,6 +1525,9 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@t3tools/issue-tracker-linear':
+        specifier: workspace:*
+        version: link:../issue-tracker-linear
       '@t3tools/provider-acp-registry':
         specifier: workspace:*
         version: link:../provider-acp-registry
