@@ -673,7 +673,7 @@ export function serializeTableElementToHtml(table: Element): string {
     lines.push(...htmlTableSection(child.tagName.toLowerCase(), rows, rtl));
   }
   flushLooseRows();
-  const open = `<table${rtl ? ' dir="rtl"' : ""} style="${HTML_TABLE_STYLE}">`;
+  const open = `<table dir="${rtl ? "rtl" : "ltr"}" style="${HTML_TABLE_STYLE}">`;
   return lines.length > 0 ? [open, ...lines, "</table>"].join("\n") : "";
 }
 

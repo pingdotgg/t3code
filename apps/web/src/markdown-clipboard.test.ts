@@ -572,7 +572,7 @@ describe("copying a table as HTML", () => {
 
     expect(structure(table)).toBe(
       [
-        "<table>",
+        '<table dir="ltr">',
         "  <thead>",
         '    <tr><th align="left">Name</th><th align="right">Amount</th></tr>',
         "  </thead>",
@@ -607,7 +607,7 @@ describe("copying a table as HTML", () => {
 
     expect(structure(table)).toBe(
       [
-        "<table>",
+        '<table dir="ltr">',
         "  <thead>",
         '    <tr><th align="left" rowspan="2">Region</th><th align="left" colspan="2">Sales</th></tr>',
         '    <tr><th align="left">Q1</th><th align="left">Q2</th></tr>',
@@ -652,7 +652,7 @@ describe("copying a table as HTML", () => {
 
     expect(structure(table)).toBe(
       [
-        "<table>",
+        '<table dir="ltr">',
         "  <tbody>",
         "    <tr><td>first<br>second</td><td>one<br>two</td></tr>",
         "    <tr><td>a b</td><td>area \\(\\pi r^2\\)</td></tr>",
@@ -724,7 +724,7 @@ describe("copying a table as HTML", () => {
     const table = new FakeElement("TABLE").append(row(cell("TD", "only"), cell("TD", "cells")));
 
     expect(structure(table)).toBe(
-      "<table>\n  <tbody>\n    <tr><td>only</td><td>cells</td></tr>\n  </tbody>\n</table>",
+      '<table dir="ltr">\n  <tbody>\n    <tr><td>only</td><td>cells</td></tr>\n  </tbody>\n</table>',
     );
   });
 
