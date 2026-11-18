@@ -3689,53 +3689,85 @@ describe("UsageService", () => {
       }),
   );
 
-  it.effect("keeps retained history when an obsolete scan finishes after retention widens", () =>
-    Effect.gen(function* () {
-      const { transcript, settings, home } = yield* setup;
-      yield* TestClock.setTime(CURSOR_NOW);
-      const timestamp = CURSOR_NOW - 180 * 24 * HOUR_MS;
-      yield* Effect.promise(async () => {
-        await NodeFSP.writeFile(
-          transcript,
-          claudeLine(1, 11).replace(
-            "2026-08-01T10:00:00Z",
-            DateTime.formatIso(DateTime.makeUnsafe(timestamp)),
-          ),
-        );
-        await NodeFSP.utimes(transcript, timestamp / 1000, timestamp / 1000);
-      });
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      let scans = 0;
-      yield* Effect.gen(function* () {
-        const config = yield* ServerSettings.ServerSettingsService;
-        const service = yield* UsageService.make.pipe(
-          Effect.provideService(CursorUsageAccounts.CursorUsageAccounts, {
-            scan: () =>
-              Effect.gen(function* () {
-                if (++scans === 1) {
-                  yield* Deferred.succeed(started, undefined);
-                  yield* Deferred.await(release);
-                }
-                return [];
-              }),
-            awaitPersisted: Effect.void,
-          }),
-        );
-        const window = { ...WINDOW, sinceDay: UsageDay.make("2024-01-01") };
-        const oldScan = yield* service.readSummary(window).pipe(Effect.forkChild);
-        yield* Deferred.await(started);
-        yield* config.updateSettings({ usageHistoryRetentionDays: "unlimited" });
-        assert.strictEqual(totalOutputTokens(yield* service.readSummary(window)), 11);
-        yield* service.awaitPersisted;
-        yield* Effect.promise(() => NodeFSP.rm(transcript));
-        yield* Deferred.succeed(release, undefined);
-        yield* Fiber.join(oldScan);
-        yield* service.awaitPersisted;
-        const restarted = yield* UsageService.make;
-        assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(window)), 11);
-      }).pipe(Effect.provide(layerService({ prefix: "usage-retention-race", home, settings })));
-    }),
+  it.effect.each([false, true])(
+    "keeps retained history when an obsolete scan finishes after retention widens (cold overlap: %s)",
+    (coldOverlap) =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        yield* TestClock.setTime(CURSOR_NOW);
+        const timestamp = CURSOR_NOW - 180 * 24 * HOUR_MS;
+        yield* Effect.promise(async () => {
+          await NodeFSP.writeFile(
+            transcript,
+            claudeLine(1, 11).replace(
+              "2026-08-01T10:00:00Z",
+              DateTime.formatIso(DateTime.makeUnsafe(timestamp)),
+            ),
+          );
+          await NodeFSP.utimes(transcript, timestamp / 1000, timestamp / 1000);
+        });
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let scans = 0;
+        yield* Effect.gen(function* () {
+          const realFs = yield* Effect.promise(() =>
+            vi.importActual<typeof NodeFSP>("node:fs/promises"),
+          );
+          const originalOpen = realFs.open;
+          const firstOpened = Promise.withResolvers<void>();
+          const secondOpened = Promise.withResolvers<void>();
+          const releaseFirst = Promise.withResolvers<void>();
+          const releaseSecond = Promise.withResolvers<void>();
+          let opens = 0;
+          using _open = vi.spyOn(NodeFSP, "open").mockImplementation(async (...args) => {
+            if (coldOverlap && args[0] === transcript) {
+              if (++opens === 1) {
+                firstOpened.resolve();
+                await releaseFirst.promise;
+              } else if (opens === 2) {
+                secondOpened.resolve();
+                await releaseSecond.promise;
+              }
+            }
+            return originalOpen(...args);
+          });
+          const config = yield* ServerSettings.ServerSettingsService;
+          const service = yield* UsageService.make.pipe(
+            Effect.provideService(CursorUsageAccounts.CursorUsageAccounts, {
+              scan: () =>
+                Effect.gen(function* () {
+                  if (++scans === 1) {
+                    yield* Deferred.succeed(started, undefined);
+                    yield* Deferred.await(release);
+                  }
+                  return [];
+                }),
+              awaitPersisted: Effect.void,
+            }),
+          );
+          const window = { ...WINDOW, sinceDay: UsageDay.make("2024-01-01") };
+          const oldScan = yield* service.readSummary(window).pipe(Effect.forkChild);
+          yield* Deferred.await(started);
+          if (coldOverlap) yield* Effect.promise(() => firstOpened.promise);
+          yield* config.updateSettings({ usageHistoryRetentionDays: "unlimited" });
+          const newScan = yield* service.readSummary(window).pipe(Effect.forkChild);
+          if (coldOverlap) {
+            yield* Effect.promise(() => secondOpened.promise);
+            releaseFirst.resolve();
+            yield* Deferred.succeed(release, undefined);
+            yield* Fiber.join(oldScan);
+            releaseSecond.resolve();
+          }
+          assert.strictEqual(totalOutputTokens(yield* Fiber.join(newScan)), 11);
+          yield* service.awaitPersisted;
+          yield* Effect.promise(() => NodeFSP.rm(transcript));
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(oldScan);
+          yield* service.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(window)), 11);
+        }).pipe(Effect.provide(layerService({ prefix: "usage-retention-race", home, settings })));
+      }),
   );
 
   it.effect("credits the same copy of a duplicate after its transcripts are deleted", () =>

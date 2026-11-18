@@ -742,27 +742,13 @@ export const make = Effect.gen(function* () {
       { concurrency: TRANSCRIPT_READ_CONCURRENCY },
     );
     const parsedFiles = read.map(({ path, records, malformedRecords, update }) => {
-      if (update === undefined) {
-        const historical = historicalFileCache.get(path);
-        if (historical !== undefined && historical.mtimeMs >= retentionCutoffMs) {
-          historicalFileCache.delete(path);
-          fileCache.set(path, {
-            ...historical,
-            records: correctedBatch(historical.records),
-            tailRecords: correctedBatch(historical.tailRecords),
-          });
-          cacheDirty = true;
-        }
-        return { path, records, malformedRecords };
-      }
       // A scan of another window may have cached its own read of this file
       // meanwhile. Then keep whichever read saw the later file, so a slower
       // scan never replaces newer usage with older.
       const current = fileCache.get(path) ?? historicalFileCache.get(path);
       if (
-        current === update.replaces ||
-        current === undefined ||
-        isLaterRead(update.entry, current)
+        update !== undefined &&
+        (current === update.replaces || current === undefined || isLaterRead(update.entry, current))
       ) {
         const cache = update.entry.mtimeMs < retentionCutoffMs ? historicalFileCache : fileCache;
         if (cache === fileCache) historicalFileCache.delete(path);
@@ -773,6 +759,16 @@ export const make = Effect.gen(function* () {
           tailRecords: correctedBatch(update.entry.tailRecords),
         });
         if (cache === fileCache) cacheDirty = true;
+      }
+      const historical = historicalFileCache.get(path);
+      if (historical !== undefined && historical.mtimeMs >= retentionCutoffMs) {
+        historicalFileCache.delete(path);
+        fileCache.set(path, {
+          ...historical,
+          records: correctedBatch(historical.records),
+          tailRecords: correctedBatch(historical.tailRecords),
+        });
+        cacheDirty = true;
       }
       return { path, records, malformedRecords };
     });
