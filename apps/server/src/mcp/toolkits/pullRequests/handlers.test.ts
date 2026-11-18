@@ -248,7 +248,9 @@ describe("pull request toolkit handlers", () => {
       const error = yield* harness
         .call("link_pull_request", { threadId: bareId, number: 123 })
         .pipe(Effect.flip);
-      expect(error.message).toBe(`Thread ${bareId} was not found. Did you mean \`mcp:${bareId}\`?`);
+      expect(error.message).toBe(
+        `Thread ${bareId} was not found. Did you mean \`mcp:${bareId}\`? Thread ids belong to one environment: for a thread on a linked one, find it with \`t3_environment_links\` and pass its \`environmentId\` to a tool that takes one.`,
+      );
       expect(error).toMatchObject({ _tag: "OrchestratorMcpFailure", code: "thread_not_found" });
       expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
@@ -722,6 +724,36 @@ describe("pull request guide tools", () => {
       expect(result.guides[1]?.detail).toContain("Pass either url");
       expect((yield* Ref.get(harness.guideRequests)).map((ref) => ref.number)).toEqual([5]);
     }),
+  );
+
+  it.effect(
+    "reads a guide on a host readable without a checkout through the caller's project",
+    () =>
+      Effect.gen(function* () {
+        const api = makeProject({
+          canonicalKey: "bitbucket.org/acme/api",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "git@bitbucket.org:acme/api.git",
+          },
+          provider: SourceControlProviderKind.make("bitbucket"),
+          displayName: "acme/api",
+          owner: "acme",
+          name: "api",
+        });
+        const harness = yield* makeHarness({ project: api });
+        const result = yield* harness.call("read_pull_request_guide", {
+          url: "https://bitbucket.org/acme/web/pull-requests/123",
+        });
+        expect(result).toMatchObject({
+          host: "bitbucket.org",
+          repository: "acme/web",
+          number: 123,
+          guide: null,
+          currentHeadSha: "head-1",
+        });
+      }),
   );
 
   it.effect("finds an Azure DevOps checkout for a pull request named by its full path", () =>

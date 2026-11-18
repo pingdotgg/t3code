@@ -283,6 +283,8 @@ const boxToolkitLayer = (thread: BoxThread) => {
     getThreadShell: shellOf,
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
+    getRunCount: (threadId) =>
+      projectionOf(threadId).pipe(Effect.map((projection) => projection.runs.length)),
     waitForThread: (input) =>
       Effect.gen(function* () {
         yield* Ref.update(thread.waitedFor, (seen) => [...seen, input.runId]);
@@ -982,6 +984,15 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       expect(retried.taskId).toBe(delegated.taskId);
       expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(1);
 
+      // Its provider there has not started the turn yet.
+      yield* Ref.set(thread.status, "starting");
+      const starting = yield* a.call("task_status", { taskId: delegated.taskId });
+      expect(starting.structuredContent).toMatchObject({
+        status: "starting",
+        workState: "working",
+      });
+      yield* Ref.set(thread.status, "running");
+
       const historyReads: Array<string> = [];
       const historyTracer = Tracer.make({
         span(options) {
@@ -1462,6 +1473,11 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       expect(task?.result).toBe(
         `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${long}`,
       );
+      const status = yield* a.call("task_status", { taskId });
+      expect(status.structuredContent).toMatchObject({
+        status: "completed",
+        executedModel: "gpt-5.4-mini",
+      });
       // Every wait was for the run the launch started.
       const waits = yield* Ref.get(thread.waitedFor);
       expect(waits.length).toBeGreaterThan(0);
@@ -1487,6 +1503,7 @@ it.effect.each([null, "question", "approval"] as const)(
         const delegated = yield* delegateToBox(a);
 
         // The task's run there ends after delegating a review of its own.
+        yield* Ref.set(thread.executedModel, "gpt-5.4-mini");
         yield* Ref.set(thread.nested, true);
         yield* Ref.set(thread.nestedInput, pendingInput);
         yield* Ref.set(thread.reply, "Started a review; I will answer when it reports.");
@@ -1506,6 +1523,11 @@ it.effect.each([null, "question", "approval"] as const)(
         expect(yield* taskResult(a, delegated.taskId)).toMatchObject({
           status: "completed",
           result: "The review found two issues; both are fixed.",
+        });
+        const status = yield* a.call("task_status", { taskId: delegated.taskId });
+        expect(status.structuredContent).toMatchObject({
+          status: "completed",
+          executedModel: null,
         });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),

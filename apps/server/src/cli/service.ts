@@ -16,7 +16,7 @@ import { compareExactServiceVersions, SERVICE_ENV_FILE } from "../cloud/serviceP
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { resolveEntryPath } from "./invocation.ts";
+import { resolveEntryPath, resolveHostCliHint } from "./invocation.ts";
 
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
@@ -159,14 +159,19 @@ export function formatServiceChange(
   return `Service ${result.previouslyInstalled ? "updated" : "installed"} · t3@${packageJson.version}\nLog: ${result.plan.logPath}`;
 }
 
+const MEMORY_CONTROLLER_DISABLED =
+  "the kernel's memory cgroup controller is disabled. Add `cgroup_enable=memory` to the kernel command line and reboot.";
+
 function formatProtection(
   protection: ServiceProtection.ServiceProtectionState | undefined,
 ): ReadonlyArray<string> {
   if (protection === undefined) return [];
   return [
-    protection.unprotected === undefined
-      ? `  Memory protection: on${protection.setByProtect ? " (t3 service protect)" : ""}`
-      : `  Memory protection: off, ${protection.unprotected} grants none. Run \`t3 service protect\`.`,
+    !protection.memoryControllerAvailable
+      ? `  Memory protection: unavailable, ${MEMORY_CONTROLLER_DISABLED}`
+      : protection.unprotected === undefined
+        ? `  Memory protection: on${protection.setByProtect ? " (t3 service protect)" : ""}`
+        : `  Memory protection: off, ${protection.unprotected} grants none. Run \`t3 service protect\`.`,
     ...(protection.oomScoreAdj === undefined ? [] : [`  OOM score: ${protection.oomScoreAdj}`]),
   ];
 }
@@ -174,13 +179,14 @@ function formatProtection(
 function formatServiceStatus(
   status: BootService.BootServiceStatus,
   cliVersion: string,
+  commands: { readonly install: string; readonly restart: string; readonly update: string },
   protection?: ServiceProtection.ServiceProtectionState,
 ): string {
   if (!status.supported) {
     return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd, Windows with Task Scheduler";
   }
   if (!status.installed) {
-    return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
+    return `T3 Code service\n  Status: not installed\n  Next: Run \`${commands.install}\`.`;
   }
   if (status.otherBaseDir !== undefined) {
     return [
@@ -192,7 +198,7 @@ function formatServiceStatus(
   }
   const installedVersion = status.installedVersion ?? cliVersion;
   const problems = (status.problems ?? []).map(
-    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem)}`,
+    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem, commands)}`,
   );
   if (
     !status.current &&
@@ -206,7 +212,7 @@ function formatServiceStatus(
       `  Logs: ${status.logPath}`,
       ...formatProtection(protection),
       ...problems,
-      `  Next: Run \`t3 update ${installedVersion}\` to match it, or pass \`--allow-downgrade\` to \`t3 service install\` explicitly.`,
+      `  Next: Run \`${commands.update}\` to match it, or pass \`--allow-downgrade\` to \`${commands.install}\` explicitly.`,
     ].join("\n");
   }
   return [
@@ -216,7 +222,7 @@ function formatServiceStatus(
     `  Logs: ${status.logPath}`,
     ...formatProtection(protection),
     ...problems,
-    ...(status.current ? [] : ["  Next: Run `t3 service install` to repair it."]),
+    ...(status.current ? [] : [`  Next: Run \`${commands.install}\` to repair it.`]),
   ].join("\n");
 }
 
@@ -254,7 +260,8 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
         }
         yield* Console.log(formatServiceChange(result));
         if (!result.previouslyInstalled) {
-          yield* Console.log("Run `t3 up` to choose how your other devices reach it.");
+          const upCommand = yield* resolveHostCliHint("up", flags.baseDir);
+          yield* Console.log(`Run \`${upCommand}\` to choose how your other devices reach it.`);
         }
       }),
     ),
@@ -358,7 +365,14 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
                 Effect.provide(ProcessRunner.layer),
               )
             : undefined;
-        yield* Console.log(formatServiceStatus(status, packageJson.version, protection));
+        const commands = {
+          install: yield* resolveHostCliHint("service install", flags.baseDir),
+          restart: yield* resolveHostCliHint("service restart", flags.baseDir),
+          update: yield* resolveHostCliHint("update", flags.baseDir, [
+            status.installedVersion ?? packageJson.version,
+          ]),
+        };
+        yield* Console.log(formatServiceStatus(status, packageJson.version, commands, protection));
       }),
     ),
   ),
@@ -462,10 +476,16 @@ const serviceProtectCommand = Command.make("protect", {
               ...formatDropIns([plan.managerDefaults, ...plan.user]),
             ].join("\n"),
           );
+          const memoryController = yield* ServiceProtection.memoryControllerAvailable;
+          if (!memoryController) {
+            yield* Console.log(`Only the OOM scores can apply: ${MEMORY_CONTROLLER_DISABLED}`);
+          }
           if (!(yield* confirm(flags.yes, "Apply these settings?"))) return;
           yield* ServiceProtection.applyProtection(plan);
           yield* Console.log(
-            "Protected T3 Code. Memory protection applies now; the server takes its OOM score after `t3 service restart`. Undo with `t3 service protect --undo`.",
+            memoryController
+              ? "Protected T3 Code. Memory protection applies now; the server takes its OOM score after `t3 service restart`. Undo with `t3 service protect --undo`."
+              : "Protected T3 Code's OOM score; the server takes it after `t3 service restart`. Memory protection applies once the kernel's memory controller is enabled. Undo with `t3 service protect --undo`.",
           );
         }).pipe(Effect.provide(ProcessRunner.layer)),
       );
