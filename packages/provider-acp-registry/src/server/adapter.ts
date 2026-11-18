@@ -211,6 +211,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     registryAgentId === "kimi-code" ||
     (options.settings.source === "local" &&
       /^kimi(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? ""));
+  // Hermes Agent is not in the public registry; local installs run `hermes acp`.
+  const isHermes =
+    options.settings.source === "local" &&
+    /^hermes(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
   const isClaude =
     registryAgentId === "claude-acp" ||
     (options.settings.source === "local" &&
@@ -269,6 +273,8 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           extractSubagentSessionEvent: extractClaudeSubagentSessionEvent,
         }
       : {}),
+    // Hermes replies on the root session when a background process it started exits.
+    ...(isHermes ? { enablePostSettleContinuation: true } : {}),
     ...(isDevin
       ? {
           clientCapabilitiesMeta: {
