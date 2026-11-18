@@ -9,6 +9,13 @@ import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
 import {
+  agentAdditionRunEnd,
+  isAgentAddition,
+  summarizeAgentAdditions,
+  type AgentAddition,
+  type AgentAdditionsSummary,
+} from "@t3tools/client-runtime/work-log/agent-additions";
+import {
   IDLE_COMPACTING_LABELS,
   IDLE_COMPACTION_TITLES,
 } from "@t3tools/client-runtime/user-message";
@@ -675,7 +682,19 @@ type MessagesTimelineRowContent =
       itemId: TurnItemId;
       revision: string;
       mcpApp: McpAppReference;
+    }
+  | {
+      kind: "agent-additions";
+      id: string;
+      createdAt: string;
+      summary: AgentAdditionsSummary<AgentAdditionEntry>;
+      expanded: boolean;
     };
+
+export interface AgentAdditionEntry {
+  readonly entry: WorkLogEntry;
+  readonly item: AgentAddition;
+}
 
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
@@ -2066,6 +2085,39 @@ export function deriveMessagesTimelineRows(input: {
       continue;
     }
 
+    const additionItem =
+      timelineEntry.kind === "work" ? timelineEntry.entry.projectedItem?.item : undefined;
+    if (timelineEntry.kind === "work" && isAgentAddition(additionItem)) {
+      const end = agentAdditionRunEnd(timelineEntries, index + 1, (entry) =>
+        entry.kind === "work" &&
+        entry !== timelineEntries[activeTurnHeaderIndex] &&
+        entry.id !== activeWorkPlacementEntryId &&
+        !foldsByAnchorEntryId.has(entry.id) &&
+        !supersededFoldsByAnchorEntryId.has(entry.id) &&
+        !collapsedEntryIds.has(entry.id) &&
+        !collapsedSupersededEntryIds.has(entry.id) &&
+        !activeWorkEntryIds.has(entry.id)
+          ? entry.entry.projectedItem?.item
+          : undefined,
+      );
+      const additions: AgentAdditionEntry[] = [{ entry: timelineEntry.entry, item: additionItem }];
+      for (const next of timelineEntries.slice(index + 1, end)) {
+        const item = next.kind === "work" ? next.entry.projectedItem?.item : undefined;
+        if (next.kind === "work" && isAgentAddition(item))
+          additions.push({ entry: next.entry, item });
+      }
+      const id = `agent-additions:${timelineEntry.id}`;
+      nextRows.push({
+        kind: "agent-additions",
+        id,
+        createdAt: timelineEntry.createdAt,
+        summary: summarizeAgentAdditions(additions),
+        expanded: input.expandedWorkGroupIds?.has(id) ?? false,
+      });
+      index = end - 1;
+      continue;
+    }
+
     if (timelineEntry.kind === "work") {
       if (
         isPendingApproval(timelineEntry.entry) ||
@@ -2843,6 +2895,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "agent-additions": {
+      if (b.kind !== "agent-additions" || a.expanded !== b.expanded) return false;
+      const items = a.summary.groups.flatMap((group) => group.rows);
+      const nextItems = b.summary.groups.flatMap((group) => group.rows);
+      return (
+        items.length === nextItems.length &&
+        items.every((row, index) => row.item === nextItems[index]?.item)
+      );
+    }
 
     case "viewed-images": {
       const bv = b as typeof a;

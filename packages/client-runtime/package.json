@@ -459,6 +459,10 @@
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"
     },
+    "./work-log/agent-additions": {
+      "types": "./src/work-log/agentAdditions.ts",
+      "default": "./src/work-log/agentAdditions.ts"
+    },
     "./work-log/user-input": {
       "types": "./src/work-log/userInput.ts",
       "default": "./src/work-log/userInput.ts"
