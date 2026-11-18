@@ -300,21 +300,22 @@ export function createMergedIssueListAtoms<E>(
   ) => {
     for (const target of targets) registry.refresh(list(target));
   };
-  // Every listing asked for, so a write made elsewhere can refresh the ones still shown.
-  const asked = new Map<string, ReadonlyArray<IssueListTarget>>();
+  // The targets behind each listing atom, so a write made elsewhere can refresh the ones still
+  // shown. Weak, so a closed search goes with its atom once the registry drops it.
+  const targetsOf = new WeakMap<Atom.Atom<MergedIssueList>, ReadonlyArray<IssueListTarget>>();
   return {
     atom: (targets: ReadonlyArray<IssueListTarget>) => {
       if (targets.length === 0) return empty;
-      const key = JSON.stringify(targets);
-      asked.set(key, targets);
-      return family(key);
+      const atom = family(JSON.stringify(targets));
+      targetsOf.set(atom, targets);
+      return atom;
     },
     refresh,
     /** Refreshes each listing of `environmentId` that something still reads. */
     refreshEnvironment: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
-      const live = new Set(registry.getNodes().keys());
-      for (const [key, targets] of asked) {
-        if (!live.has(family(key))) continue;
+      for (const node of registry.getNodes().values()) {
+        const targets = targetsOf.get(node.atom);
+        if (targets === undefined) continue;
         refresh(
           registry,
           targets.filter((target) => target.environmentId === environmentId),
