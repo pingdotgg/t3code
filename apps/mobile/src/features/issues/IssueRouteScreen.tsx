@@ -1,7 +1,8 @@
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { issueEventSentence } from "@t3tools/client-runtime/issue-presentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
+import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import type {
   IssueComment,
   IssueEvent,
@@ -12,7 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { T, useGT, useMessages, Var } from "gt-react-native";
-import { useRef, useState } from "react";
+import { useContext, useState } from "react";
 import { Linking, Platform, Pressable, Share, View } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 
@@ -26,6 +27,7 @@ import { Chip } from "../../components/ui/Chip";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Menu } from "../../components/ui/Menu";
 import { RefreshControl } from "../../components/ui/RefreshControl";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useComposerBottomInset } from "../../components/ComposerSurface";
 import { ANDROID_READING_MAX_WIDTH, CHAT_CONTENT_MAX_WIDTH } from "../../lib/layout";
@@ -403,6 +405,9 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const detailAtom = issueEnvironment.detail(target);
   const detailQuery = useEnvironmentQuery(detailAtom);
   const pullRefresh = usePullToRefresh(detailAtom);
+  const registry = useContext(RegistryContext);
+  const [pager] = useState(() => createIssueCommentPager(detailAtom));
+  const { comments, nextCursor, loadingOlder, canLoadOlder } = useAtomValue(pager.view);
   const detail = detailQuery.data;
   const issue: IssueSummary | null = detail ?? params.initialSummary ?? null;
   const access = useIssueAccess(params, detail);
@@ -410,25 +415,13 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
   const postComment = useAtomCommand(issueEnvironment.comment, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
-  const [older, setOlder] = useState<{
-    readonly seed: string | null;
-    readonly comments: ReadonlyArray<IssueComment>;
-    readonly cursor: string | null;
-  } | null>(null);
-  const [busy, setBusy] = useState<"older" | "comment" | "state" | null>(null);
+  const [busy, setBusy] = useState<"comment" | "state" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState(0);
 
-  // Older pages are tied to the cursor the detail was read with; a refreshed detail starts over.
-  const olderComments = detail && older?.seed === detail.commentsCursor ? older.comments : [];
-  const nextCursor = !detail
-    ? null
-    : older?.seed === detail.commentsCursor
-      ? older.cursor
-      : detail.commentsCursor;
   const timeline = detail
     ? [
-        ...prependIssueComments(detail.comments, olderComments).map((comment) => ({
+        ...comments.map((comment) => ({
           key: `c:${comment.id}`,
           at: comment.createdAt,
           content: (
@@ -447,7 +440,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
     kind: NonNullable<typeof busy>,
     command: () => Promise<AsyncResult.AsyncResult<unknown, unknown>>,
   ) => {
-    if (busy !== null) return false;
+    if (busy !== null || registry.get(pager.view).loadingOlder) return false;
     setBusy(kind);
     setError(null);
     const failure = issueCommandError(await command());
@@ -457,28 +450,13 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
     if (failure === null) refreshIssueLists(target.environmentId);
     return failure === null;
   };
-  // Counts refreshes, so a page asked for before one is not laid over the read that follows it.
-  const refreshes = useRef(0);
   const loadOlder = async () => {
-    if (!detail || nextCursor === null || busy !== null) return;
-    const asked = refreshes.current;
-    setBusy("older");
-    setError(null);
-    const result = await loadComments({
-      ...target,
-      input: { ...target.input, cursor: nextCursor },
+    if (busy !== null) return;
+    const failure = await pager.loadOlder(registry, (cursor) => {
+      setError(null);
+      return loadComments({ ...target, input: { ...target.input, cursor } });
     });
-    setBusy(null);
-    if (asked !== refreshes.current) return;
-    if (AsyncResult.isFailure(result)) {
-      setError(gt("Older comments could not be read."));
-      return;
-    }
-    setOlder({
-      seed: detail.commentsCursor,
-      comments: prependIssueComments(olderComments, result.value.comments),
-      cursor: result.value.nextCursor,
-    });
+    if (failure) setError(gt("Older comments could not be read."));
   };
   const submitComment = (body: string) =>
     access?.comment === true
@@ -565,143 +543,142 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
             },
           ]}
         />
-        {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
-        {/* Not a bare marker: Android wraps a refreshable scroll view, which the marker rejects. */}
-        <NativeScrollView
-          className="flex-1"
-          contentInsetAdjustmentBehavior="automatic"
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          refreshControl={
-            <RefreshControl
-              refreshing={pullRefresh.refreshing}
-              onRefresh={() => {
-                // Older pages are cached under the cursor, which a refresh can hand back unchanged.
-                refreshes.current += 1;
-                setOlder(null);
-                pullRefresh.onRefresh();
-              }}
-            />
-          }
-          contentContainerStyle={{
-            paddingHorizontal: 16,
-            paddingTop: 8,
-            paddingBottom: showComposer ? composerHeight + 16 : 24,
-          }}
-        >
-          {!issue ? (
-            detailQuery.error && !detailQuery.isPending ? (
-              <EmptyState
-                title={gt("Couldn't load this issue")}
-                detail={detailQuery.error}
-                variant="plain"
+        <ScreenContent>
+          {!usesNativeWorkspaceColumns ? (
+            <NativeLayoutObserver onChange={setScreenMetrics} />
+          ) : null}
+          {/* Not a bare marker: Android wraps a refreshable scroll view, which the marker rejects. */}
+          <NativeScrollView
+            className="flex-1"
+            contentInsetAdjustmentBehavior="automatic"
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            refreshControl={
+              <RefreshControl
+                refreshing={pullRefresh.refreshing}
+                onRefresh={() => void pager.refresh(registry, pullRefresh.onRefresh)}
               />
-            ) : (
-              <AppActivityIndicator className="my-12" colorClassName="accent-icon" />
-            )
-          ) : (
-            <View className="gap-5">
-              <IssueIdentity
-                issue={issue}
-                access={access}
-                busy={busy === "state"}
-                onMove={moveTo}
-                onEditLabels={() => navigation.navigate("IssueLabels", identity)}
-                onEditAssignees={() => navigation.navigate("IssueAssignees", identity)}
-              />
-              {error || (detail && detailQuery.error) ? (
-                <Text selectable className="text-sm text-danger-foreground">
-                  {error ?? detailQuery.error}
-                </Text>
-              ) : null}
-              {!detail ? (
-                detailQuery.error && !detailQuery.isPending ? (
-                  <EmptyState
-                    title={gt("Couldn't load this issue")}
-                    detail={detailQuery.error}
-                    variant="plain"
-                  />
-                ) : (
-                  <IssueLoadingBody />
-                )
-              ) : (
-                <>
-                  <PullRequestDescription
-                    markdown={detail.body}
-                    footer={
-                      detail.reactions !== undefined ? (
-                        <IssueReactions
-                          params={params}
-                          reactions={detail.reactions}
-                          canReact={access?.react === true}
-                        />
-                      ) : undefined
-                    }
-                  />
-                  {detail.linkedPullRequests.length > 0 ? (
-                    <LinkedPullRequests params={params} links={detail.linkedPullRequests} />
-                  ) : null}
-                  <View className="gap-3">
-                    <PullRequestSectionHeading>
-                      {detail.commentCount > 0
-                        ? gt(
-                            "{count, plural, one {Activity · {count} comment} other {Activity · {count} comments}}",
-                            { count: detail.commentCount },
-                          )
-                        : gt("Activity")}
-                    </PullRequestSectionHeading>
-                    {nextCursor !== null ? (
-                      <Button
-                        label={busy === "older" ? gt("Loading…") : gt("Load older comments")}
-                        disabled={busy !== null}
-                        onPress={() => void loadOlder()}
-                      />
-                    ) : null}
-                    {timeline.length === 0 ? (
-                      <Text className="text-sm text-foreground-muted">
-                        <T>Nothing has happened here yet.</T>
-                      </Text>
-                    ) : null}
-                    {timeline.map((item) => (
-                      <View key={item.key}>{item.content}</View>
-                    ))}
-                  </View>
-                </>
-              )}
-            </View>
-          )}
-        </NativeScrollView>
-        {showComposer ? (
-          <KeyboardStickyView
-            // On the unfolded Duo the sidebar's search shares the keyboard; follow it only for ours.
-            enabled={deviceType !== "duo-unfolded" || composerFocused}
-            pointerEvents="box-none"
-            style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
-            offset={{ closed: 0, opened: composerBottomInset }}
+            }
+            contentContainerStyle={{
+              paddingHorizontal: 16,
+              paddingTop: 8,
+              paddingBottom: showComposer ? composerHeight + 16 : 24,
+            }}
           >
-            <View
+            {!issue ? (
+              detailQuery.error && !detailQuery.isPending ? (
+                <EmptyState
+                  title={gt("Couldn't load this issue")}
+                  detail={detailQuery.error}
+                  variant="plain"
+                />
+              ) : (
+                <AppActivityIndicator className="my-12" colorClassName="accent-icon" />
+              )
+            ) : (
+              <View className="gap-5">
+                <IssueIdentity
+                  issue={issue}
+                  access={access}
+                  busy={busy === "state"}
+                  onMove={moveTo}
+                  onEditLabels={() => navigation.navigate("IssueLabels", identity)}
+                  onEditAssignees={() => navigation.navigate("IssueAssignees", identity)}
+                />
+                {error || (detail && detailQuery.error) ? (
+                  <Text selectable className="text-sm text-danger-foreground">
+                    {error ?? detailQuery.error}
+                  </Text>
+                ) : null}
+                {!detail ? (
+                  detailQuery.error && !detailQuery.isPending ? (
+                    <EmptyState
+                      title={gt("Couldn't load this issue")}
+                      detail={detailQuery.error}
+                      variant="plain"
+                    />
+                  ) : (
+                    <IssueLoadingBody />
+                  )
+                ) : (
+                  <>
+                    <PullRequestDescription
+                      markdown={detail.body}
+                      footer={
+                        detail.reactions !== undefined ? (
+                          <IssueReactions
+                            params={params}
+                            reactions={detail.reactions}
+                            canReact={access?.react === true}
+                          />
+                        ) : undefined
+                      }
+                    />
+                    {detail.linkedPullRequests.length > 0 ? (
+                      <LinkedPullRequests params={params} links={detail.linkedPullRequests} />
+                    ) : null}
+                    <View className="gap-3">
+                      <PullRequestSectionHeading>
+                        {detail.commentCount > 0
+                          ? gt(
+                              "{count, plural, one {Activity · {count} comment} other {Activity · {count} comments}}",
+                              { count: detail.commentCount },
+                            )
+                          : gt("Activity")}
+                      </PullRequestSectionHeading>
+                      {nextCursor !== null ? (
+                        <Button
+                          label={loadingOlder ? gt("Loading…") : gt("Load older comments")}
+                          disabled={busy !== null || !canLoadOlder}
+                          onPress={() => void loadOlder()}
+                        />
+                      ) : null}
+                      {timeline.length === 0 ? (
+                        <Text className="text-sm text-foreground-muted">
+                          <T>Nothing has happened here yet.</T>
+                        </Text>
+                      ) : null}
+                      {timeline.map((item) => (
+                        <View key={item.key}>{item.content}</View>
+                      ))}
+                    </View>
+                  </>
+                )}
+              </View>
+            )}
+          </NativeScrollView>
+          {showComposer ? (
+            <KeyboardStickyView
+              // On the unfolded Duo the sidebar's search shares the keyboard; follow it only for ours.
+              enabled={deviceType !== "duo-unfolded" || composerFocused}
               pointerEvents="box-none"
-              style={{
-                position: "absolute",
-                bottom: controlInsets.bottom,
-                left: controlInsets.left,
-                right: controlInsets.right,
-              }}
+              style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
+              offset={{ closed: 0, opened: composerBottomInset }}
             >
-              <IssueCommentComposer
-                ownerKey={`issue-comment:${issueParamsKey(params)}`}
-                label={issue?.displayKey ?? params.issueKey}
-                blocked={commentBlocked}
-                posting={busy === "comment"}
-                bottomInset={composerBottomInset}
-                contentMaxWidth={contentMaxWidth}
-                onSubmit={submitComment}
-                onHeightChange={setComposerHeight}
-                onFocusChange={setComposerFocused}
-              />
-            </View>
-          </KeyboardStickyView>
-        ) : null}
+              <View
+                pointerEvents="box-none"
+                style={{
+                  position: "absolute",
+                  bottom: controlInsets.bottom,
+                  left: controlInsets.left,
+                  right: controlInsets.right,
+                }}
+              >
+                <IssueCommentComposer
+                  ownerKey={`issue-comment:${issueParamsKey(params)}`}
+                  label={issue?.displayKey ?? params.issueKey}
+                  blocked={commentBlocked}
+                  posting={busy === "comment"}
+                  bottomInset={composerBottomInset}
+                  contentMaxWidth={contentMaxWidth}
+                  onSubmit={submitComment}
+                  onHeightChange={setComposerHeight}
+                  onFocusChange={setComposerFocused}
+                />
+              </View>
+            </KeyboardStickyView>
+          ) : null}
+        </ScreenContent>
       </View>
     </PullRequestMarkdownRepository>
   );
