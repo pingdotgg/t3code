@@ -1,4 +1,4 @@
-import { formattingLocale } from "@t3tools/client-runtime/locales";
+import { formattingLocales } from "@t3tools/client-runtime/locales";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createMessageTimeFormatter } from "./messageTimestamp";
@@ -94,8 +94,8 @@ describe("createMessageTimeFormatter", () => {
     { deviceLocale: "en_GB", preferredLanguages: ["en-US"] },
     { deviceLocale: "nl-NL", preferredLanguages: ["nl-NL", "en-US"] },
   ])("uses the date order for $deviceLocale when English is active", (testCase) => {
-    const locale = formattingLocale("en", testCase.preferredLanguages, testCase.deviceLocale);
-    const format = createMessageTimeFormatter(true, locale);
+    const locales = formattingLocales("en", testCase.preferredLanguages, testCase.deviceLocale);
+    const format = createMessageTimeFormatter(true, locales);
     const june = new Date(2026, 5, 1, 20, 0).getTime();
     expect(format(new Date(2026, 2, 5, 15, 7).toISOString(), june)).toBe("05/03 15:07");
   });
