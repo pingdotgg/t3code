@@ -1,3 +1,5 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { msg, T, useMessages } from "gt-react";
 import { useState } from "react";
 
 import {
@@ -7,16 +9,17 @@ import {
 } from "~/state/desktopCliCommand";
 import { useEnvironmentQuery } from "~/state/query";
 import { Button } from "../ui/button";
+import { m } from "../../i18n/messages";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const FAILURE_TITLES = {
-  install: "Could not install t3",
-  uninstall: "Could not remove t3",
-  addToPath: "Could not add t3 to PATH",
-  installWsl: "Could not install t3 in WSL",
-  uninstallWsl: "Could not remove t3 from WSL",
+  install: msg("Could not install t3"),
+  uninstall: msg("Could not remove t3"),
+  addToPath: msg("Could not add t3 to PATH"),
+  installWsl: msg("Could not install t3 in WSL"),
+  uninstallWsl: msg("Could not remove t3 from WSL"),
 } as const;
 
 /** The desktop `t3` command's state, and its actions with a toast on failure. */
@@ -34,8 +37,11 @@ export function useDesktopCliCommand() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: FAILURE_TITLES[action],
-            description: error instanceof Error ? error.message : "Something went wrong.",
+            title: m(FAILURE_TITLES[action]),
+            description:
+              error instanceof Error
+                ? (thrownErrorMessage(error, m) ?? error.message)
+                : m(msg("Something went wrong.")),
           }),
         );
       })
@@ -50,20 +56,46 @@ export function useDesktopCliCommand() {
 }
 
 export function CliCommandSettingsRow() {
+  const searchableSetting = useSearchableSetting();
   const { state, busy, run } = useDesktopCliCommand();
+  const resolve = useMessages();
 
   if (!state?.supported) return null;
   const installed = state.installedPath !== null;
   const wslInstalled = state.wslInstalledPath !== null;
   const description = state.shadowedBy
-    ? `Another t3 at ${state.shadowedBy} runs first in a new terminal. Remove it to use T3 Code's.`
+    ? resolve(
+        msg("Another t3 at {path} runs first in a new terminal. Remove it to use T3 Code's.", {
+          path: state.shadowedBy,
+        }),
+      )
     : !installed
-      ? "Run T3 Code's CLI as `t3` from any terminal."
+      ? resolve(msg("Run T3 Code's CLI as `t3` from any terminal."))
       : state.onPath
-        ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
+        ? resolve(
+            msg("Installed at {path}. Open a new terminal to use it.", {
+              path: state.installedPath,
+            }),
+          )
         : state.pathSetup?.added
-          ? `Installed at ${state.installedPath} and added to PATH in ${state.pathSetup.file}. Open a new terminal to use it.`
-          : `Installed at ${state.installedPath}, which is not on your PATH yet.${state.pathSetup ? "" : " Add its folder to your PATH to run `t3`."}`;
+          ? resolve(
+              msg(
+                "Installed at {path} and added to PATH in {file}. Open a new terminal to use it.",
+                { path: state.installedPath, file: state.pathSetup.file },
+              ),
+            )
+          : state.pathSetup
+            ? resolve(
+                msg("Installed at {path}, which is not on your PATH yet.", {
+                  path: state.installedPath,
+                }),
+              )
+            : resolve(
+                msg(
+                  "Installed at {path}, which is not on your PATH yet. Add its folder to your PATH to run `t3`.",
+                  { path: state.installedPath },
+                ),
+              );
 
   return (
     <>
@@ -74,7 +106,7 @@ export function CliCommandSettingsRow() {
           <div className="flex gap-2">
             {state.pathSetup && !state.pathSetup.added ? (
               <Button size="sm" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
-                Add to PATH
+                <T>Add to PATH</T>
               </Button>
             ) : null}
             <Button
@@ -83,7 +115,9 @@ export function CliCommandSettingsRow() {
               disabled={busy || (!installed && Boolean(state.shadowedBy))}
               onClick={() => run(installed ? "uninstall" : "install")}
             >
-              {installed ? "Remove" : "Install"}
+              {installed
+                ? resolve(msg("Remove", { $context: "verb, uninstalls the t3 command" }))
+                : resolve(msg("Install", { $context: "verb, installs the t3 command" }))}
             </Button>
           </div>
         }
@@ -91,15 +125,40 @@ export function CliCommandSettingsRow() {
       {state.wslSupported ? (
         <SettingsRow
           {...searchableSetting("wsl-cli-command")}
-          title="t3 command in WSL"
+          title={resolve(msg("t3 command in WSL"))}
           description={
             state.wslStatusUnavailable
-              ? `Could not check the t3 command in ${state.wslInstalledDistro ?? "WSL"}. Check that the distro is available.`
+              ? resolve(
+                  msg(
+                    "Could not check the t3 command in {distro}. Check that the distro is available.",
+                    { distro: state.wslInstalledDistro ?? "WSL" },
+                  ),
+                )
               : wslInstalled
-                ? `Installed at ${state.wslInstalledPath} in ${state.wslInstalledDistro ?? "WSL"}. Ensure ~/.local/bin is on your shell PATH.${state.wslBackendEnabled ? "" : " Enable the WSL backend to open projects."}`
+                ? state.wslBackendEnabled
+                  ? resolve(
+                      msg(
+                        "Installed at {path} in {distro}. Ensure ~/.local/bin is on your shell PATH.",
+                        { path: state.wslInstalledPath, distro: state.wslInstalledDistro ?? "WSL" },
+                      ),
+                    )
+                  : resolve(
+                      msg(
+                        "Installed at {path} in {distro}. Ensure ~/.local/bin is on your shell PATH. Enable the WSL backend to open projects.",
+                        { path: state.wslInstalledPath, distro: state.wslInstalledDistro ?? "WSL" },
+                      ),
+                    )
                 : !state.wslBackendEnabled
-                  ? "Enable the WSL backend in Sharing & access before installing the WSL command."
-                  : "Run t3 app from WSL to open the current Linux project in the Windows desktop app."
+                  ? resolve(
+                      msg(
+                        "Enable the WSL backend in Sharing & access before installing the WSL command.",
+                      ),
+                    )
+                  : resolve(
+                      msg(
+                        "Run t3 app from WSL to open the current Linux project in the Windows desktop app.",
+                      ),
+                    )
           }
           control={
             <Button
@@ -108,7 +167,9 @@ export function CliCommandSettingsRow() {
               disabled={busy || (!wslInstalled && !state.wslBackendEnabled)}
               onClick={() => run(wslInstalled ? "uninstallWsl" : "installWsl")}
             >
-              {wslInstalled ? "Remove" : "Install"}
+              {wslInstalled
+                ? resolve(msg("Remove", { $context: "verb, uninstalls the t3 command" }))
+                : resolve(msg("Install", { $context: "verb, installs the t3 command" }))}
             </Button>
           }
         />

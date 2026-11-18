@@ -2,6 +2,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { useEffect } from "react";
 import { Pressable, View } from "react-native";
 import { AppBar } from "../../../components/ui/AppBar";
@@ -37,11 +38,11 @@ export type GuideStopParams = PullRequestParams & {
 };
 
 const attentionLabels = {
-  tradeoff: "A tradeoff to weigh",
-  contract: "A contract to check",
-  product: "A product call",
-  risk: "A risk to judge",
-  accessibility: "An accessibility call",
+  tradeoff: msg("A tradeoff to weigh"),
+  contract: msg("A contract to check"),
+  product: msg("A product call"),
+  risk: msg("A risk to judge"),
+  accessibility: msg("An accessibility call"),
 };
 
 export function PullRequestGuideContent({
@@ -57,7 +58,9 @@ export function PullRequestGuideContent({
   return (
     <Animated.View layout={PR_ROW_LAYOUT} className="w-full max-w-[760px] self-center">
       {!state.enabled ? (
-        <Text>Review guides are disabled for this server.</Text>
+        <Text>
+          <T>Review guides are disabled for this server.</T>
+        </Text>
       ) : (
         <>
           <GuideNotice state={state} />
@@ -96,6 +99,8 @@ export function PullRequestGuideContent({
 
 export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideStopParams>) {
   const navigation = useNavigation();
+  const gt = useGT();
+  const m = useMessages();
   const state = useReviewGuide(route.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(pullRequestTarget(route.params)));
   const permissions = usePullRequestPermissions(route.params, detail.data);
@@ -129,16 +134,19 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
   return (
     <View className="flex-1 bg-screen">
       <AppBar
-        title={`Stop ${route.params.position + 1} of ${guide?.stops.length ?? "…"}`}
+        title={gt("Stop {position} of {total}", {
+          position: route.params.position + 1,
+          total: guide?.stops.length ?? "…",
+        })}
         onBack={() => navigation.goBack()}
         menus={[
           {
-            title: "Guide options",
+            title: gt("Guide options"),
             icon: "ellipsis",
             items: [
               {
                 id: "word-wrap",
-                title: "Word wrap",
+                title: gt("Word wrap"),
                 icon: "text.alignleft",
                 selected: appearance.codeWordBreak,
                 onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
@@ -154,11 +162,15 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
         >
           <View className="w-full max-w-[760px] self-center gap-5">
             {!state.enabled ? (
-              <Text>Review guides are disabled for this server.</Text>
+              <Text>
+                <T>Review guides are disabled for this server.</T>
+              </Text>
             ) : changedGuide ? (
-              <Text>This guide was rewritten. Go back to start the new tour.</Text>
+              <Text>
+                <T>This guide was rewritten. Go back to start the new tour.</T>
+              </Text>
             ) : !stop ? (
-              <Text>{state.error ?? "Loading stop…"}</Text>
+              <Text>{state.error ?? gt("Loading stop…")}</Text>
             ) : (
               <>
                 <GuideNotice state={state} />
@@ -169,7 +181,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                     <View className="flex-row items-center gap-2">
                       <SymbolView name="eye" size={17} tintColorClassName="accent-icon-muted" />
                       <Text className="text-sm font-t3-semibold">
-                        {attentionLabels[stop.attention.kind]}
+                        {m(attentionLabels[stop.attention.kind])}
                       </Text>
                     </View>
                     <PullRequestMarkdown lineBreaks={false} markdown={stop.attention.note} />
@@ -177,7 +189,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                 ) : null}
                 {stale ? (
                   <Text className="text-sm text-foreground-muted">
-                    Excerpts are hidden until the guide is rewritten for the current head.
+                    <T>Excerpts are hidden until the guide is rewritten for the current head.</T>
                   </Text>
                 ) : (
                   stop.excerpts.map((excerpt) => (
@@ -201,7 +213,9 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                 {diff.error ? <Text className="text-danger-foreground">{diff.error}</Text> : null}
                 {notes.length ? (
                   <View className="gap-4">
-                    <Text className="font-t3-semibold">Notes on this stop</Text>
+                    <Text className="font-t3-semibold">
+                      <T>Notes on this stop</T>
+                    </Text>
                     {notes.map(({ marker, note }) => (
                       <View key={marker} className="flex-row gap-3">
                         <View className="h-7 w-7 items-center justify-center rounded-lg bg-grouped-card">
@@ -239,7 +253,9 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                 ) : null}
                 {stop.questions.length ? (
                   <View className="gap-3">
-                    <Text className="font-t3-semibold">Questions to consider</Text>
+                    <Text className="font-t3-semibold">
+                      <T>Questions to consider</T>
+                    </Text>
                     {stop.questions.map((question) => (
                       <PullRequestMarkdown key={question} lineBreaks={false} markdown={question} />
                     ))}
@@ -249,10 +265,10 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                   accessibilityRole="button"
                   accessibilityLabel={
                     guide && position < guide.stops.length - 1
-                      ? "Next stop"
+                      ? gt("Next stop")
                       : canReview
-                        ? "Finish review"
-                        : "Finish tour"
+                        ? gt("Finish review")
+                        : gt("Finish tour")
                   }
                   className="mt-2 flex-row items-center gap-4 border-t border-border-subtle pt-5 pb-2 active:opacity-60"
                   onPress={() =>
@@ -274,15 +290,18 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                   <View className="min-w-0 flex-1 gap-1">
                     <Text className="text-xs text-foreground-muted">
                       {guide && position < guide.stops.length - 1
-                        ? `Next · ${position + 2} of ${guide.stops.length}`
-                        : "End of guide"}
+                        ? gt("Next · {position} of {total}", {
+                            position: position + 2,
+                            total: guide.stops.length,
+                          })
+                        : gt("End of guide")}
                     </Text>
                     <Text className="text-base font-t3-semibold">
                       {guide && position < guide.stops.length - 1
                         ? guide.stops[position + 1]?.title
                         : canReview
-                          ? "Finish review"
-                          : "Finish tour"}
+                          ? gt("Finish review")
+                          : gt("Finish tour")}
                     </Text>
                   </View>
                   <View className="h-11 w-11 items-center justify-center rounded-full bg-foreground">
