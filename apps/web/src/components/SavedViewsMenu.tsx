@@ -266,7 +266,7 @@ export function SavedViewsMenu<Preferences extends Stored, Stored, Encoded>({
                   }
                 />
                 {nameError && editor?.name ? (
-                  <p id={errorId} className="text-sm text-destructive-foreground">
+                  <p id={errorId} className="text-body text-destructive-foreground">
                     {nameError}
                   </p>
                 ) : null}

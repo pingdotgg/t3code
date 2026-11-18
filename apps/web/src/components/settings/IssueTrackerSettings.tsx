@@ -142,7 +142,7 @@ function TrackerRow({
                 )}
               />
             </span>
-            <span className="truncate text-sm font-medium text-foreground">
+            <span className="truncate text-label text-foreground">
               {tracker.displayName}
             </span>
             {tracker.connected && tracker.account === null ? (
@@ -151,7 +151,7 @@ function TrackerRow({
               </Badge>
             ) : null}
           </div>
-          <p className="text-xs leading-normal text-muted-foreground/80">{summary}</p>
+          <p className="text-meta text-muted-foreground/80">{summary}</p>
         </div>
         <Button
           size="icon-xs"

@@ -210,7 +210,6 @@ function Message({
   readonly description: string;
   readonly children?: ReactNode;
 }) {
-  const gt = useGT();
   return (
     <StandalonePage>
       <StandalonePageHeader title={title} description={description} />

@@ -80,11 +80,12 @@ export const DiffStatBlocks = memo(function DiffStatBlocks(props: {
   additions: number;
   deletions: number;
 }) {
+  const gt = useGT();
   const { additions, deletions } = props;
   return (
     <span
       role="group"
-      aria-label={`${additions} additions, ${deletions} deletions`}
+      aria-label={gt("{additions} additions, {deletions} deletions", { additions, deletions })}
       className="inline-flex shrink-0 items-center gap-2.5 text-meta tabular-nums"
     >
       <span aria-hidden="true" className="inline-flex items-center gap-1">

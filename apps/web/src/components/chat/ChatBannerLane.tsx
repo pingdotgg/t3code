@@ -6,6 +6,7 @@ import type {
   ThreadId,
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
+import { useMessages } from "gt-react";
 import { type Dispatch, type SetStateAction, useState } from "react";
 import { getDefaultServerModel } from "../../providerModels";
 import {
@@ -68,6 +69,7 @@ export function useChatBannerLane(input: {
     setThreadError,
     setThreadErrorBannerDismissTick,
   } = input;
+  const messages = useMessages();
   const [lowLimitDismissals, setLowLimitDismissals] = useState(readLowLimitDismissals);
   const lowLimitSignal = resolveLowLimitSignal(
     activeProviderStatus,
@@ -92,6 +94,7 @@ export function useChatBannerLane(input: {
     onDismiss: () => dismissProviderStatusBannerForSession(providerStatusDismissalKey),
     onOpenProviderSetup,
     onOpenTerminal,
+    resolve: messages,
   });
   if (providerItem) items.push(providerItem);
   const errorItem = threadErrorBannerItem({
@@ -106,7 +109,7 @@ export function useChatBannerLane(input: {
       dismissThreadErrorBannerForSession(threadErrorBannerKey);
       setThreadErrorBannerDismissTick((tick) => tick + 1);
     },
-  });
+  }, messages);
   if (errorItem) items.push(errorItem);
   if (lowLimitVisible && lowLimitSignal !== null) {
     items.push(
@@ -125,6 +128,7 @@ export function useChatBannerLane(input: {
               }
             : null,
         onDismissed: setLowLimitDismissals,
+        resolve: messages,
       }),
     );
   }

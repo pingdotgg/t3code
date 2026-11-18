@@ -1449,8 +1449,10 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                     {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                       <span className="inline-flex items-center gap-1 text-meta font-normal text-info-foreground">
                         <AlarmClockIcon aria-hidden className="size-3 shrink-0" />
-                        <span className="sr-only">Snoozed until </span>
-                        {props.snoozeWakeLabelText}
+                        <T>
+                          <span className="sr-only">Snoozed until </span>
+                          <Var>{props.snoozeWakeLabelText}</Var>
+                        </T>
                       </span>
                     ) : (inFolder ? isWokeStatus : isWoke) ? (
                       <SidebarWokeLabel onDismiss={handleAcknowledgeWokeClick} />

@@ -144,7 +144,7 @@ export function SnapShotSettings() {
   const webOnly = !bridge && !(typeof window !== "undefined" && window.desktopBridge);
   const captureAvailable = Boolean(bridge) && state !== null && state.mode !== "unavailable";
   const feedbackUnavailable = snapShotFeedbackUnavailableMessage(state, messages);
-  const captureHelper = snapShotCaptureHelperStatus(state);
+  const captureHelper = snapShotCaptureHelperStatus(state, messages);
   const managedShortcut = state?.linuxBackend === "niri" || state?.linuxBackend === "hyprland";
   const shortcutChanged = !managedShortcut && !sameSnapShotShortcut(candidate, savedShortcut);
   const displayShortcut = shortcutChanged ? candidate : (state?.shortcut ?? savedShortcut);

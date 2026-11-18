@@ -2718,7 +2718,7 @@ export function ChatComposer(props: ChatComposerProps) {
       setComposerSubmissionError(null);
       setPromptLengthDismissed(true);
     },
-  });
+  }, m);
   const bannerStackItems = [...(promptLengthItem ? [promptLengthItem] : []), ...bannerItems];
   const shelfItems =
     pendingUserInputs.length > 0

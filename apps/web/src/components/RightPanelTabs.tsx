@@ -485,7 +485,6 @@ function RightPanelTab(
   },
 ) {
   const gt = useGT();
-  const messages = useMessages();
   const {
     dragDisabled,
     previewUrl,

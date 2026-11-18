@@ -121,10 +121,15 @@ export type MediaByteAction = "save" | "copy-image";
 export function useMediaByteAction(source: MediaActionSource) {
   const { save, copyImage } = useMediaActions(source);
   return async (action: MediaByteAction) => {
-    const noun = source.kind === "image" ? "image" : "video";
+    const isImage = source.kind === "image";
     const progressToast = toastManager.add({
       type: "loading",
-      title: action === "save" ? `Preparing ${noun} download…` : "Copying image…",
+      title:
+        action === "save"
+          ? isImage
+            ? m(msg("Preparing image download…"))
+            : m(msg("Preparing video download…"))
+          : m(msg("Copying image…")),
     });
     try {
       await (action === "save" ? save() : copyImage());
@@ -134,8 +139,13 @@ export function useMediaByteAction(source: MediaActionSource) {
         progressToast,
         stackedThreadToast({
           type: "error",
-          title: action === "save" ? `Could not save ${noun}` : "Could not copy image",
-          description: error instanceof Error ? error.message : "The media action failed.",
+          title:
+            action === "save"
+              ? isImage
+                ? m(msg("Could not save image"))
+                : m(msg("Could not save video"))
+              : m(msg("Could not copy image")),
+          description: thrownErrorMessage(error, m) ?? m(msg("The media action failed.")),
         }),
       );
     }

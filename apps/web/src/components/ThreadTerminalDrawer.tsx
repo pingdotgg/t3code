@@ -1966,7 +1966,7 @@ export default function ThreadTerminalDrawer({
                   const terminalLabel = terminalLabelById.get(terminalId) ?? gt("Terminal");
                   const status = terminalStatusById?.get(terminalId) ?? "idle";
                   const statusLabel = terminalActivityStatusLabel(status, messages);
-                  const tabTitle = terminalTabTitle(terminalId, terminalLabel);
+                  const tabTitle = terminalTabTitle(terminalId, terminalLabel, messages);
                   const splitLabel =
                     terminalGroup.terminalIds.length < 2
                       ? null

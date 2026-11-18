@@ -2711,7 +2711,7 @@ export default function ChatView(props: ChatViewProps) {
     if (firstPendingApproval) {
       return {
         kind: "approval",
-        label: pendingApprovalSlotLabel(firstPendingApproval),
+        label: pendingApprovalSlotLabel(firstPendingApproval, messages),
         createdAt: firstPendingApproval.createdAt,
       };
     }

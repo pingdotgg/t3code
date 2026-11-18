@@ -1178,8 +1178,8 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       toastManager.add({
         type: "info",
-        title: "Your message changed, so it wasn't sent.",
-        description: "Send again when it's ready.",
+        title: m(msg("Your message changed, so it wasn't sent.")),
+        description: m(msg("Send again when it's ready.")),
       });
       return;
     }
@@ -1698,7 +1698,7 @@ export function useComposerSend(input: ComposerSendInput) {
     );
     if (!isAtomCommandInterrupted(startResult)) {
       const error = squashAtomCommandFailure(startResult);
-      setThreadError(threadIdForSend, error instanceof Error ? error.message : "Retry failed.");
+      setThreadError(threadIdForSend, error instanceof Error ? error.message : m(msg("Retry failed.")));
     }
   }
 

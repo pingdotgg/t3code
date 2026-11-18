@@ -122,6 +122,7 @@ export function secretProviderUses(
             {
               id: `voice:${provider}`,
               label: resolve(
+                // oxlint-disable-next-line t3code/no-dot-separated-text -- Main's secret usage label; the redesign restyles it later.
                 msg("Voice · {provider}", { provider: CLOUD_SPEECH_LABELS[provider] }),
               ),
             },

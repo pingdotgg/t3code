@@ -111,7 +111,7 @@ function ReadinessRow({
     <Collapsible
       open={open}
       onOpenChange={setOpen}
-      data-pull-request-summary-section
+      data-pull-request-summary-section="checks"
       aria-label={
         revealUrl !== undefined ? gt("Checks", { $context: "CI checks section" }) : undefined
       }

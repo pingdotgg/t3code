@@ -279,7 +279,7 @@ export default function ProjectScriptsControl({
             >
               <ScriptIcon icon={script.icon} className="size-4" />
               <MenuItemLabel>
-                {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
+                {projectScriptMenuLabel(script, messages)}
               </MenuItemLabel>
               <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end ps-4">
                 {shortcutLabel ? (

@@ -63,7 +63,9 @@ export function scheduleLabel(
     const minutes = schedule.everyMs / 60_000;
     if (minutes >= 60 && minutes % 60 === 0) {
       const hours = minutes / 60;
-      return hours === 1 ? "Every hour" : `Every ${hours} hours`;
+      return resolve(
+        msg("{hours, plural, one {Every hour} other {Every {hours} hours}}", { hours }),
+      );
     }
     return Number.isInteger(minutes)
       ? resolve(msg("Every {minutes} min", { minutes }))

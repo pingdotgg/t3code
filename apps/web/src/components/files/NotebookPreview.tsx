@@ -134,7 +134,9 @@ export default function NotebookPreview(props: {
             >
               <div className="flex items-center gap-3 border-b border-border/60 bg-muted/30 px-3 py-1.5 text-meta text-muted-foreground">
                 <Tooltip>
-                  <TooltipTrigger render={<span tabIndex={0} />}>Cell {index + 1}</TooltipTrigger>
+                  <TooltipTrigger render={<span tabIndex={0} />}>
+                    {gt("Cell {number}", { number: String(index + 1) })}
+                  </TooltipTrigger>
                   <TooltipPopup>
                     {cell.kind === "code" ? props.notebook.language : cell.kind}
                   </TooltipPopup>

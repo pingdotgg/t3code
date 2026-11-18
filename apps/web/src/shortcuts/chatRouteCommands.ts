@@ -188,7 +188,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
           toastManager.add(
             stackedThreadToast({
               type: "info",
-              title: "Can't start a thread without a project",
+              title: m(msg("Can't start a thread without a project")),
               description: reason,
             }),
           );

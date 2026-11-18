@@ -1,7 +1,7 @@
-import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { heldPullRequestListEntriesAtom } from "@t3tools/client-runtime/state/pull-requests";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { cn } from "~/lib/utils";
+import { m } from "~/i18n/messages";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
 import { pullRequestCopyTarget } from "@t3tools/client-runtime/thread-reference";
@@ -1306,7 +1306,7 @@ export function PullRequestsPage() {
         ? environmentLabels.get(scopedEnvironmentId)
         : undefined,
     projectLabel: scopedProject?.title,
-  });
+  }, resolve);
   const clearListFilters = () =>
     updateListScope({
       state: "open",
@@ -1636,7 +1636,7 @@ export function PullRequestsPage() {
     const { shortLabel } = (
       sourceControlClients.findByChangeRequestUrl(url) ?? sourceControlClients.get(undefined)
     ).changeRequest;
-    void copyThreadReference(pullRequestCopyTarget(url, shortLabel));
+    void copyThreadReference(pullRequestCopyTarget(url, shortLabel, m));
   });
   const closeActiveSurfaceFromShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (activePullRequestSurface === null) return;

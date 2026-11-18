@@ -2,6 +2,7 @@ import { pipe } from "effect/Function";
 import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 import { useSyncExternalStore } from "react";
 import {
   applyThemePalette,
@@ -50,10 +51,10 @@ type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
 export type AppearanceChoice = ThemePreferenceMode | "black-chrome";
 
 export const APPEARANCE_CHOICES: ReadonlyArray<{ choice: AppearanceChoice; label: string }> = [
-  { choice: "system", label: "System" },
-  { choice: "light", label: "Light" },
-  { choice: "black-chrome", label: "Black chrome" },
-  { choice: "dark", label: "Dark" },
+  { choice: "system", label: msg("System") },
+  { choice: "light", label: msg("Light") },
+  { choice: "black-chrome", label: msg("Black chrome") },
+  { choice: "dark", label: msg("Dark") },
 ];
 
 const STORAGE_KEY = "t3code:theme";

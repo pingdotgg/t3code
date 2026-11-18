@@ -1155,7 +1155,9 @@ export default function DiffPanel({
                   className="w-full min-w-0 grid-cols-[1rem_minmax(0,1fr)]"
                   value={AUTOMATIC_BASE_REF}
                 >
-                  <span className="block min-w-0 truncate">Automatic</span>
+                  <span className="block min-w-0 truncate">
+                    <T context="compare against the default base ref">Automatic</T>
+                  </span>
                 </ComboboxItem>
                 {baseRefChoices.map((choice) => {
                   const item = valueForBaseRefChoice(choice);

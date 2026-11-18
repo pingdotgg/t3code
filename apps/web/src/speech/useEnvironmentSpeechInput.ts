@@ -157,6 +157,7 @@ export function useSpeechUnavailableReason(speech: {
   readonly available: boolean;
   readonly status: EnvironmentSpeechStatus | null;
 }) {
+  const gt = useGT();
   const hydrated = useClientSettingsHydrated();
   const choice = useAudioChoice();
   const grant = choice === "off" ? null : choice;
@@ -168,19 +169,33 @@ export function useSpeechUnavailableReason(speech: {
     Boolean(navigator.mediaDevices?.getUserMedia) &&
     typeof AudioWorkletNode !== "undefined";
   if (!canCapture || speech.available) return null;
-  const where = destination.label ?? "The voice destination";
+  const where = destination.label;
   if (destination.prepared) {
-    return speech.status?.supported === false ? speech.status.reason : "Checking voice input.";
+    return speech.status?.supported === false
+      ? speech.status.reason
+      : gt("Checking voice input.");
   }
-  if (!hydrated) return "Loading voice settings.";
-  if (!grant) return "Voice input is off. Turn it on in Settings > Voice.";
+  if (!hydrated) return gt("Loading voice settings.");
+  if (!grant) return gt("Voice input is off. Turn it on in Settings > Voice.");
   if (!connection || !environment?.serverConfig) {
-    return `${where} is not connected. Check Settings > Voice.`;
+    return where
+      ? gt("{destination} is not connected. Check Settings > Voice.", { destination: where })
+      : gt("The voice destination is not connected. Check Settings > Voice.");
   }
   if (environment.serverConfig.environment.capabilities.voiceTranscription !== true) {
-    return `${where} can't transcribe voice. Pick another destination in Settings > Voice.`;
+    return where
+      ? gt("{destination} can't transcribe voice. Pick another destination in Settings > Voice.", {
+          destination: where,
+        })
+      : gt(
+          "The voice destination can't transcribe voice. Pick another destination in Settings > Voice.",
+        );
   }
-  return `Voice input is not ready on ${where}. Check Settings > Voice.`;
+  return where
+    ? gt("Voice input is not ready on {destination}. Check Settings > Voice.", {
+        destination: where,
+      })
+    : gt("Voice input is not ready on the voice destination. Check Settings > Voice.");
 }
 
 export function useEnvironmentSpeechInput(input: HookInput) {

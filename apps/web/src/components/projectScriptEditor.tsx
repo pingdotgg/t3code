@@ -93,6 +93,7 @@ function keybindingKeyCaps(value: string): ReadonlyArray<string> {
     .filter((part) => part.length > 0)
     .map((part) => {
       if (part === "mod") return mac ? "\u2318" : "Ctrl";
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- key names stay English
       if (part === "meta") return mac ? "\u2318" : "Meta";
       if (part === "ctrl") return mac ? "\u2303" : "Ctrl";
       if (part === "alt") return mac ? "\u2325" : "Alt";

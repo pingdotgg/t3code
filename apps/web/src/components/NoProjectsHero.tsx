@@ -1,6 +1,6 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomValue } from "@effect/atom-react";
-import { T, useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import {
   DownloadIcon,
   FolderPlusIcon,
@@ -33,12 +33,13 @@ import { WorkspacePageHeader } from "./WorkspacePageHeader";
  */
 export function NoProjectsHero() {
   const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, scratchUnavailableReason, startScratchThread } =
     useScratchProject();
   const scratchTargetEnvironmentId = scratchEnvironmentId(primaryEnvironmentId);
-  const scratchOffReason = scratchUnavailableReason(primaryEnvironmentId);
+  const scratchOffReason = scratchUnavailableReason(primaryEnvironmentId, messages);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const openAddProject = () => openCommandPalette({ open: "add-project" });
 

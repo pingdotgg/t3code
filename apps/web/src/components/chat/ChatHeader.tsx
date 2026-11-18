@@ -10,7 +10,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { GitForkIcon, SquarePenIcon, SquareTerminal } from "lucide-react";
 import {
   memo,
@@ -123,6 +123,7 @@ export const ChatHeader = memo(function ChatHeader({
   onNewSideChat,
 }: ChatHeaderProps) {
   const gt = useGT();
+  const messages = useMessages();
   const { tabId: layoutTabId } = useLayoutPane();
   // Drag the tab out of its notch to split (pen T5Hy0Q).
   const handleTabPointerDown = (event: React.PointerEvent) => {
@@ -313,7 +314,7 @@ export const ChatHeader = memo(function ChatHeader({
     ? `${activeProjectName} / ${activeThreadTitle}`
     : activeThreadTitle;
   const tabTooltip = ghostShown
-    ? ghostTabTooltip(ghostOf ? activeThreadTitle : plainTooltip, ghostParent?.title)
+    ? ghostTabTooltip(ghostOf ? activeThreadTitle : plainTooltip, ghostParent?.title, messages)
     : plainTooltip;
   // The parent's own tab already leads this one in the strip.
   const parentTabShown =

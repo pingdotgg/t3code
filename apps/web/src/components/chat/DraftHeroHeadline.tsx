@@ -3,7 +3,7 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 import {
   FolderPlusIcon,
   FoldersIcon,
@@ -57,6 +57,7 @@ interface DraftHeroHeadlineProps {
  * way to every project, then the no-project and add-project rows.
  */
 export function useProjectPickerModel(activeProjectRef: ScopedProjectRef | null) {
+  const messages = useMessages();
   const projects = useProjects();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -106,6 +107,7 @@ export function useProjectPickerModel(activeProjectRef: ScopedProjectRef | null)
   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
   const scratchOffReason = scratchUnavailableReason(
     activeProjectRef?.environmentId ?? primaryEnvironmentId,
+    messages,
   );
 
   const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();

@@ -11,7 +11,7 @@ import {
   remainingPercent,
   type ResetCreditChoice,
 } from "@t3tools/shared/usageLimits";
-import { T, useGT, useMessages } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
@@ -672,7 +672,9 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
         {label}
         {pool.accounts.length > 1 ? (
           <span className="text-xs font-normal text-dim-foreground">
-            {pool.accounts.length} accounts, pooled
+            <T>
+              <Var>{pool.accounts.length}</Var> accounts, pooled
+            </T>
           </span>
         ) : null}
       </h2>

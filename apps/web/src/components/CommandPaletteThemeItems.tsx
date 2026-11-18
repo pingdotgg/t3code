@@ -194,8 +194,8 @@ export function useCommandPaletteThemeItems() {
         items: APP_ICON_OPTIONS.map((option) => ({
           kind: "action",
           value: `app-icon:${option.id}`,
-          title: option.label,
-          searchTerms: [option.label, "app icon"],
+          title: messages(option.label),
+          searchTerms: [messages(option.label), option.label, "app icon"],
           icon: <img alt="" className="size-4" draggable={false} src={option.src} />,
           titleTrailingContent:
             currentAppIcon.id === option.id ? (

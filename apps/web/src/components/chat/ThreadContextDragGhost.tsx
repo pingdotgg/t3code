@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { MessagesSquareIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -11,6 +12,7 @@ import { useThreadContextDragGhost } from "./threadContextDrag";
  * tokens, so light, black chrome lifts a dark card like the sidebar's.
  */
 export function ThreadContextDragGhost({ children }: { children?: ReactNode }) {
+  const gt = useGT();
   const ghost = useThreadContextDragGhost();
   if (ghost === null || (children === undefined && (ghost.width ?? 0) > 0)) return null;
   return createPortal(
@@ -27,7 +29,7 @@ export function ThreadContextDragGhost({ children }: { children?: ReactNode }) {
         {children ?? (
           <li className="flex max-w-72 items-center gap-2 px-3 py-2 text-body">
             <MessagesSquareIcon className="size-4 shrink-0 text-muted-foreground" />
-            <span className="truncate">{ghost.title ?? "Thread"}</span>
+            <span className="truncate">{ghost.title ?? gt("Thread")}</span>
           </li>
         )}
       </ul>

@@ -1,5 +1,6 @@
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestRef, PullRequestStack } from "@t3tools/contracts";
+import { T, Var } from "gt-react";
 import { RefreshCwIcon } from "lucide-react";
 import { RelativeTime } from "~/components/RelativeTime";
 import { MenuItem, MenuGroupLabel, MenuSeparator } from "../ui/menu";
@@ -67,7 +68,11 @@ export function PullRequestStackLayers({
             <span className={`flex items-center gap-2 ${MENU_ROW_TEXT_CLASS}`}>
               <RefreshCwIcon aria-hidden className="size-4 shrink-0" />
               <span>
-                Synced <RelativeTime timestamp={new Date(syncedAt).toISOString()} />
+                <T>
+                  Synced <Var>
+                    <RelativeTime timestamp={new Date(syncedAt).toISOString()} />
+                  </Var>
+                </T>
               </span>
             </span>
           </MenuGroupLabel>

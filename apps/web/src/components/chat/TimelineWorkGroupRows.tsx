@@ -1470,7 +1470,13 @@ function workingWindowHasActiveCompaction(window: WorkingWindow | undefined): bo
 export function SlashCommandTimelineRow({ command }: { command: TimelineSlashCommand }) {
   const ctx = use(TimelineRowCtx);
   const { activeTurnStartedAt } = use(TimelineRowActivityCtx);
-  const { icon: Icon, verb, target } = presentSlashCommand(command, command.state, command.result);
+  const messages = useMessages();
+  const { icon: Icon, verb, target } = presentSlashCommand(
+    command,
+    command.state,
+    command.result,
+    messages,
+  );
   const skill = command.skill ? ctx.skills.find((entry) => entry.name === command.name) : undefined;
   const compacting = command.name === "compact" && !command.skill && command.state === "running";
   return (

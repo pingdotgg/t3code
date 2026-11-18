@@ -645,7 +645,7 @@ export function PullRequestDetailPanel({
       event.preventDefault();
       event.stopPropagation();
       if (!event.repeat)
-        void copyThreadReference(pullRequestCopyTarget(url, terminology.shortLabel));
+        void copyThreadReference(pullRequestCopyTarget(url, terminology.shortLabel, m));
       return;
     }
     if (command !== "pullRequest.copyNumber") return;
