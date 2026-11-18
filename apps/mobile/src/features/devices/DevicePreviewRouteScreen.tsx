@@ -18,7 +18,7 @@ import {
 } from "@react-navigation/native";
 import { EnvironmentId, ThreadId, type DeviceSession } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { msg, T, useGT } from "gt-react-native";
+import { msg, T, useGT, Var } from "gt-react-native";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
@@ -172,7 +172,7 @@ export function DevicePreviewScreen({
       input: { threadId: holder.threadId, hostId: holder.hostId, deviceId: holder.deviceId },
     });
     if (result._tag === "Failure") {
-      Dialog.alert("Could not take over device", String(Cause.squash(result.cause)));
+      Dialog.alert(gt("Could not take over device"), String(Cause.squash(result.cause)));
     }
   };
   const holderBanners = holders.map((holder) => (
@@ -182,7 +182,10 @@ export function DevicePreviewScreen({
       holder={holder}
       onOpenThread={() =>
         navigation.dispatch(
-          StackActions.replace("Thread", { environmentId, threadId: holder.threadId }),
+          (embedded ? StackActions.push : StackActions.replace)("Thread", {
+            environmentId,
+            threadId: holder.threadId,
+          }),
         )
       }
       onTakeOver={() => takeOver(holder)}
@@ -425,28 +428,52 @@ function DeviceHolderBanner(props: {
   readonly onOpenThread: () => void;
   readonly onTakeOver: () => Promise<void>;
 }) {
+  const gt = useGT();
   const shell = useThreadShell(scopeThreadRef(props.environmentId, props.holder.threadId));
   const running =
     threadRuntimeIsActive(shell?.runtime) ||
     backgroundWorkHoldsCompletion(shell?.pendingBackgroundTasks ?? []);
   const [takingOver, setTakingOver] = useState(false);
-  const title = shell?.title.trim() || "another thread";
+  const title = shell?.title.trim() || gt("another thread");
   return (
     <GlassSurface className="flex-row items-center gap-3 px-3 py-2">
       <Pressable
         accessibilityRole="link"
-        accessibilityLabel={`Open thread ${title}`}
+        accessibilityLabel={gt("Open thread {title}", { title })}
         className="min-w-0 flex-1"
         onPress={props.onOpenThread}
       >
         <AppText numberOfLines={2} className="text-sm text-foreground-muted">
-          Busy in <AppText className="font-t3-medium text-sm text-foreground">{title}</AppText>
-          {running ? ", which is running." : shell ? ", which isn't running." : "."}
+          {running ? (
+            <T>
+              Busy in{" "}
+              <AppText className="font-t3-medium text-sm text-foreground">
+                <Var>{title}</Var>
+              </AppText>
+              , which is running.
+            </T>
+          ) : shell ? (
+            <T>
+              Busy in{" "}
+              <AppText className="font-t3-medium text-sm text-foreground">
+                <Var>{title}</Var>
+              </AppText>
+              , which isn't running.
+            </T>
+          ) : (
+            <T>
+              Busy in{" "}
+              <AppText className="font-t3-medium text-sm text-foreground">
+                <Var>{title}</Var>
+              </AppText>
+              .
+            </T>
+          )}
         </AppText>
       </Pressable>
       <Button
-        label="Take over"
-        accessibilityLabel={`Take over from ${title}`}
+        label={gt("Take over")}
+        accessibilityLabel={gt("Take over from {title}", { title })}
         tone="primary"
         size="compact"
         loading={takingOver}

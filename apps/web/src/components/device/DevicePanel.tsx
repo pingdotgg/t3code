@@ -431,37 +431,53 @@ function DeviceHolderNotice(props: {
   readonly holder: DeviceSession;
   readonly onTakeOver: () => Promise<unknown>;
 }) {
+  const gt = useGT();
   const shell = useThreadShell(scopeThreadRef(props.environmentId, props.holder.threadId));
   const running =
     threadRuntimeIsActive(shell?.runtime) ||
     backgroundWorkHoldsCompletion(shell?.pendingBackgroundTasks ?? []);
   const [takingOver, setTakingOver] = useState(false);
+  const holderLink = (
+    <ThreadContextChip
+      record={{
+        environmentId: props.environmentId,
+        threadId: props.holder.threadId,
+        title: gt("another thread"),
+      }}
+    />
+  );
   return (
     <div
       role="status"
       className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-2 text-xs text-muted-foreground"
     >
       <span className="min-w-0 flex-1 basis-56">
-        Busy in{" "}
-        <ThreadContextChip
-          record={{
-            environmentId: props.environmentId,
-            threadId: props.holder.threadId,
-            title: "another thread",
-          }}
-        />
-        {running ? ", which is running." : shell ? ", which isn't running." : "."}
+        {running ? (
+          <T>
+            Busy in <Var>{holderLink}</Var>, which is running.
+          </T>
+        ) : shell ? (
+          <T>
+            Busy in <Var>{holderLink}</Var>, which isn't running.
+          </T>
+        ) : (
+          <T>
+            Busy in <Var>{holderLink}</Var>.
+          </T>
+        )}
       </span>
       <Button
         size="xs"
-        aria-label={`Take over from ${shell?.title.trim() || "another thread"}`}
+        aria-label={gt("Take over from {title}", {
+          title: shell?.title.trim() || gt("another thread"),
+        })}
         disabled={takingOver}
         onClick={() => {
           setTakingOver(true);
           void props.onTakeOver().finally(() => setTakingOver(false));
         }}
       >
-        {takingOver ? "Taking over…" : "Take over"}
+        {takingOver ? gt("Taking over…") : gt("Take over")}
       </Button>
     </div>
   );

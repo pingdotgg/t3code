@@ -1945,6 +1945,7 @@
   "9e33004237e3c6a0": "Verstanden",
   "0cf35ae8d7452516": "Gerät konnte nicht heruntergefahren werden",
   "94f8e4fd2497326d": "Versionen der Geräte-Tools",
+  "b632b6f918e8bd7b": "Gerät konnte nicht übernommen werden",
   "84718257bae3bc62": "{host} erneut versuchen",
   "30c35ac54f6f8a88": "Versionen der Geräte-Tools prüfen",
   "67ac0604fc3d0a97": "Stream neu laden",
@@ -1960,7 +1961,50 @@
   "9f69be831934bb6d": "Gerätesteuerung ausblenden",
   "4dfe18eea6b9c818": "Gerätevorschau schließen",
   "41bfb61ffe885a86": "Gerätesteuerung anzeigen",
+  "cfae7ef07c37220e": "einem anderen Thread",
+  "2025fc2a5f89a7fb": "Thread {title} öffnen",
+  "746c576ea195806b": "Übernehmen",
+  "23d5d026ee80963b": "Von {title} übernehmen",
   "59235647923be335": "Geräteoptionen",
+  "70029129d72da676": [
+    "Belegt durch ",
+    {
+      "t": "AppText",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    ", läuft gerade."
+  ],
+  "52cdbb23d4f9ebd8": [
+    "Belegt durch ",
+    {
+      "t": "AppText",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    ", läuft gerade nicht."
+  ],
+  "6c426aaaa138b8eb": [
+    "Belegt durch ",
+    {
+      "t": "AppText",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    "."
+  ],
   "a373590cbd15c434": "Verbindung zum Gerät wird hergestellt...",
   "bf9ade51c568a251": "Geräte-Viewer konnte nicht starten. Verbinde dich erneut, um es noch einmal zu versuchen.",
   "e51517909200c9ea": "Geräte-Viewer wurde beendet. Verbinde dich erneut, um es noch einmal zu versuchen.",

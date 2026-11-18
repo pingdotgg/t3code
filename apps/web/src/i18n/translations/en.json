@@ -5071,6 +5071,10 @@
   "4b4ef3f2e2ed2c56": "Start {name}",
   "08098a6fb84e8a34": "Open",
   "c71a5080b2026870": "Start",
+  "cfae7ef07c37220e": "another thread",
+  "23d5d026ee80963b": "Take over from {title}",
+  "01e8d054b2d2f232": "Taking over…",
+  "746c576ea195806b": "Take over",
   "a34247bae083cebf": "Dismiss device error",
   "191353bd8f033118": "{first} and {second} lists on {host} may be incomplete.",
   "b17bcd4cbf80442e": "{platform} list on {host} may be incomplete.",
@@ -5089,6 +5093,33 @@
   ],
   "e902f208c4e6146f": "No Android virtual devices found. Create one in Android Studio's Device Manager, then refresh.",
   "d9a71f3db685cb0e": "Refresh devices",
+  "ce2da8d9521a3ef4": [
+    "Busy in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", which is running."
+  ],
+  "5fae5a165e609f5a": [
+    "Busy in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", which isn't running."
+  ],
+  "9c4958e3e914e8e8": [
+    "Busy in ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "4ad8ced64defdf73": "Interactive 3D device. Drag the screen to interact. Drag outside it or swipe with two fingers to turn.",
   "84e4baf07ad8883d": "Enable this environment to open simulators and emulators, whether they run here or on a remote device host.",
   "771365c337509a82": "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.",
