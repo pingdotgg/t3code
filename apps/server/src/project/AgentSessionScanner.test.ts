@@ -225,6 +225,24 @@ function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
     : records;
 }
 
+// Pi retains every entry, keeping tool results as links outside the history budget.
+function makePiToolResultTranscript(sessionId: string, cwd: string, recordCount: number): string {
+  const entry = (id: number, message: { readonly role: string; readonly content: string }) =>
+    encodeTranscriptRecord({
+      type: "message",
+      id: `e${id}`,
+      parentId: id === 0 ? null : `e${id - 1}`,
+      message,
+    });
+  return [
+    encodeTranscriptRecord({ type: "session", version: 3, id: sessionId, cwd }),
+    entry(0, { role: "user", content: "Imported prompt" }),
+    ...Array.from({ length: recordCount - 2 }, (_, index) =>
+      entry(index + 1, { role: "toolResult", content: "Tool output" }),
+    ),
+  ].join("\n");
+}
+
 const makeFileIdentityFixture = Effect.fn("AgentSessionScanner.test.makeFileIdentityFixture")(
   function* (originalInode = 10_000_000_000_000_001n, replacementInode = 10_000_000_000_000_000n) {
     const path = yield* Path.Path;
@@ -2282,22 +2300,20 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const claudeHomePath = yield* makeTempDir("t3code-record-budget-claude-");
         const codexHomePath = yield* makeTempDir("t3code-record-budget-codex-");
         const workspace = yield* makeTempDir("t3code-record-budget-workspace-");
-        const exactLimit = makeRecordLimitTranscript(workspace, false);
-        // The newer transcript has 100,001 records; the older one has exactly 100,000.
-        for (const [sessionId, contents, mtimeMs] of [
-          ["excessive", exactLimit.replace("record-limit-session", "excessive") + "{}\n", nowMs],
-          ["older", exactLimit, nowMs - 1_000],
+        // The newer transcript retains 100,001 records; the older one exactly 100,000.
+        for (const [sessionId, recordCount, mtimeMs] of [
+          ["excessive", 100_001, nowMs],
+          ["older", 100_000, nowMs - 1_000],
         ] as const) {
           yield* writeTranscript({
             filePath: path.join(
-              codexHomePath,
+              claudeHomePath,
+              "pi-agent",
               "sessions",
-              "2026",
-              "08",
-              "24",
-              `rollout-${sessionId}.jsonl`,
+              "--workspace--",
+              `${sessionId}.jsonl`,
             ),
-            contents,
+            contents: makePiToolResultTranscript(sessionId, workspace, recordCount),
             mtimeMs,
           });
         }
@@ -2307,9 +2323,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           workspaceRoot: workspace,
         });
         expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
-        expect(outcomes[1]).toMatchObject({
-          thread: { providerSessionId: "record-limit-session" },
-        });
+        expect(outcomes[1]).toMatchObject({ thread: { providerSessionId: "older" } });
       }),
     );
 
@@ -2326,26 +2340,13 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         for (const [index, recordCount] of recordCounts.entries()) {
           yield* writeTranscript({
             filePath: path.join(
-              codexHomePath,
+              claudeHomePath,
+              "pi-agent",
               "sessions",
-              "2026",
-              "08",
-              "24",
-              `rollout-${index}.jsonl`,
+              "--workspace--",
+              `${index}.jsonl`,
             ),
-            contents:
-              [
-                encodeTranscriptRecord({
-                  type: "session_meta",
-                  payload: { id: `session-${index}`, cwd: workspace },
-                }),
-                encodeTranscriptRecord({
-                  type: "event_msg",
-                  payload: { type: "user_message", message: "Imported prompt" },
-                }),
-              ].join("\n") +
-              "\n" +
-              "{}\n".repeat(recordCount - 2),
+            contents: makePiToolResultTranscript(`session-${index}`, workspace, recordCount),
             mtimeMs: nowMs - index * 1_000,
           });
         }
@@ -2675,15 +2676,25 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "ok" }],
           },
         });
+        // Claude Code's own command output is not a message and must not take a history slot.
+        const commandOutput = record({
+          type: "user",
+          message: {
+            role: "user",
+            content: "<local-command-stdout>Compacted</local-command-stdout>",
+          },
+        });
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-slug", "long-session.jsonl"),
           contents: [
             record({ type: "attachment", cwd: workspace, aiTitle: "Old title" }),
+            commandOutput,
             record({ type: "user", message: { role: "user", content: "First prompt" } }),
             record({
               type: "assistant",
               message: { role: "assistant", model: "claude-opus-5-5", content: "First reply" },
             }),
+            ...Array.from({ length: 200 }, () => commandOutput),
             // Small tool records exceed the real 32 MiB selected-history budget in aggregate.
             ...Array.from({ length: 20_000 }, () => toolResult),
             record({ type: "user", message: { role: "user", content: "Latest prompt" } }),
@@ -3283,6 +3294,20 @@ describe("parseAgentSessionTranscript", () => {
           sessionId: "claude-session",
           message: { role: "user", content: [{ type: "tool_result", text: "hidden" }] },
         }),
+        ...[
+          "<command-name>/review</command-name>\n<command-message>review</command-message>\n<command-args>the login flow</command-args>",
+          "<local-command-stdout>Enabled plan mode</local-command-stdout>",
+          "<bash-input>npm test</bash-input>",
+          "<bash-stdout>1 passed</bash-stdout><bash-stderr></bash-stderr>",
+          "<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n</task-notification>",
+          "[Request interrupted by user for tool use]",
+        ].map((content) =>
+          JSON.stringify({
+            type: "user",
+            sessionId: "claude-session",
+            message: { role: "user", content },
+          }),
+        ),
         JSON.stringify({
           type: "assistant",
           sessionId: "claude-session",
@@ -3314,6 +3339,8 @@ describe("parseAgentSessionTranscript", () => {
       model: "claude-sonnet-5",
       messages: [
         { role: "user", text: "Fix authentication" },
+        { role: "user", text: "/review the login flow" },
+        { role: "user", text: "!npm test" },
         { role: "assistant", text: "Updated the login flow" },
         { role: "assistant", text: "The provider request failed" },
       ],
@@ -3324,6 +3351,16 @@ describe("parseAgentSessionTranscript", () => {
     { customTitles: ["Refactor auth module"], expected: "Refactor auth module" },
     // Claude writes an empty customTitle when the user clears a rename.
     { customTitles: ["Refactor auth module", ""], expected: "Generated title" },
+    // Some launchers rename the session to the raw markup of its opening command.
+    {
+      customTitles: ["<command-message>pstack:poteto-mode</command-message>"],
+      expected: "Generated title",
+    },
+    {
+      customTitles: ["<local-command-stdout>Enabled plan mode</local-command-stdout>"],
+      expected: "Generated title",
+    },
+    { customTitles: ["<bash-input>npm test</bash-input>"], expected: "Generated title" },
   ])("uses Claude custom titles $customTitles over the AI title", ({ customTitles, expected }) => {
     const aiTitle = JSON.stringify({
       type: "ai-title",
@@ -3336,7 +3373,7 @@ describe("parseAgentSessionTranscript", () => {
           type: "user",
           sessionId: "claude-session",
           timestamp: "2026-08-24T10:00:00.000Z",
-          message: { role: "user", content: "<command-name>/effort</command-name>" },
+          message: { role: "user", content: "Tighten the session checks" },
         }),
         // Claude rewrites both records on every metadata flush with ai-title
         // last, so a later ai-title must not override the user's rename.
@@ -3352,6 +3389,33 @@ describe("parseAgentSessionTranscript", () => {
     });
 
     expect(thread?.title).toBe(expected);
+  });
+
+  it.each([
+    {
+      first:
+        "<command-name>/pstack:arena</command-name><command-args>Compare designs</command-args>",
+      title: "Compare designs",
+    },
+    {
+      first: "<command-name>/clear</command-name><command-message>clear</command-message>",
+      title: "Plan the release",
+    },
+    { first: "/Users/me/app fails to build", title: "/Users/me/app fails to build" },
+  ])("titles a Claude thread after its request, not command markup: $title", ({ first, title }) => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [first, "Plan the release"]
+        .map((content) =>
+          JSON.stringify({ type: "user", sessionId: "claude-session", message: { content } }),
+        )
+        .join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe(title);
   });
 
   it.each([199, 200])("keeps the canonical first prompt with %s later Codex messages", (count) => {
@@ -3788,18 +3852,38 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread?.title).toBe(prompt);
   });
 
-  it("skips sessions without a visible user message", () => {
+  it.each([
+    {
+      name: "only an assistant reply",
+      records: [{ type: "assistant", message: { content: "Done" } }],
+      expected: null,
+    },
+    {
+      name: "only a bare command",
+      records: [{ type: "user", message: { content: "<command-name>/clear</command-name>" } }],
+      expected: null,
+    },
+    {
+      name: "a bare command the agent answered",
+      records: [
+        { type: "user", message: { content: "<command-name>/review</command-name>" } },
+        { type: "assistant", message: { content: "Found two issues" } },
+      ],
+      expected: { title: "/review", texts: ["/review", "Found two issues"] },
+    },
+  ])("imports a Claude session only if it got a request: $name", ({ records, expected }) => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
-      contents: JSON.stringify({
-        type: "assistant",
-        message: { role: "assistant", content: "Done" },
-      }),
+      contents: records.map((record) => JSON.stringify(record)).join("\n"),
       source: "claudeAgent",
       providerInstanceId: ProviderInstanceId.make("claudeAgent"),
       fallbackSessionId: "claude-session",
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
-    expect(thread).toBeNull();
+    expect(
+      thread === null
+        ? null
+        : { title: thread.title, texts: thread.messages.map((message) => message.text) },
+    ).toEqual(expected);
   });
 });
