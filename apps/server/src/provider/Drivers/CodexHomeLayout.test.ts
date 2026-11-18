@@ -53,6 +53,13 @@ const makeShadowLayout = Effect.fn("CodexHomeLayout.test.makeShadowLayout")(func
   return { sharedHome, shadowHome, layout };
 });
 
+/** What a launch gets for a SQLite home: on Windows, T3 also pins it as a Codex argument. */
+const routedTo = Effect.fn("CodexHomeLayout.test.routedTo")(function* (sqliteHome: string) {
+  return (yield* HostProcess.isWindows)
+    ? { CODEX_SQLITE_HOME: sqliteHome, T3CODE_CODEX_SQLITE_HOME: sqliteHome }
+    : { CODEX_SQLITE_HOME: sqliteHome };
+});
+
 it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
   describe("resolveCodexHomeLayout", () => {
     it.effect("uses the shared home for continuation and the shadow home for runtime", () =>
@@ -393,7 +400,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
           const environment = yield* materializeCodexShadowHome(layout, { KEEP: "1" });
 
-          expect(environment).toEqual({ KEEP: "1", CODEX_SQLITE_HOME: sharedHome });
+          expect(environment).toEqual({ KEEP: "1", ...(yield* routedTo(sharedHome)) });
           const shadowEntries = yield* fileSystem.readDirectory(shadowHome);
           expect(shadowEntries.filter((entry) => entry.includes(".sqlite"))).toEqual([]);
         }),
@@ -464,9 +471,10 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           expect(error).toMatchObject({ entryName: "state_5.sqlite-wal" });
           expect(yield* fileSystem.readFileString(shadowWal)).toBe("uncheckpointed frames");
           expect(yield* fileSystem.exists(path.join(shadowHome, "sessions"))).toBe(false);
+          // Windows resolves a rooted path onto the working directory's drive.
           expect(
             yield* materializeCodexShadowHome(layout, { CODEX_SQLITE_HOME: " /elsewhere " }),
-          ).toEqual({ CODEX_SQLITE_HOME: "/elsewhere" });
+          ).toEqual(yield* routedTo(path.resolve("/elsewhere")));
         }),
     );
 
@@ -803,15 +811,11 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     // directory resolved it differently.
     it.effect.skipIf(!symlinksSupported)("refuses a relative Windows CODEX_SQLITE_HOME", () =>
       Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
-        yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "db");
-        yield* fileSystem.symlink(
-          path.join(sharedHome, "goals_1.sqlite"),
-          path.join(shadowHome, "goals_1.sqlite"),
-        );
-        const relativeShadow = path.relative(path.resolve("."), shadowHome);
+        const { layout } = yield* makeShadowLayout();
+        // Written out, not derived from the temp shadow: on Windows a temp directory on another
+        // drive has no path relative to the working directory.
+        const relativeShadow = path.join("codex", "shadow");
 
         for (const run of [materializeCodexShadowHome, codexHomeEnvironment]) {
           expect(
