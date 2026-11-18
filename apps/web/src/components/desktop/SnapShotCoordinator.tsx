@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   type DesktopBridge,
   type DesktopPendingSnapShot,
@@ -6,7 +7,10 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+
+import { m } from "../../i18n/messages";
 
 import {
   type DraftId,
@@ -171,7 +175,7 @@ export async function deliverSnapShot(
   const compressed = await compressImageToByteLimit(original, PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
   if (!compressed.ok) {
     finishSnapShotAnimation(item.id);
-    throw new Error("The captured window is too large to attach.");
+    throw new Error(m(msg("The captured window is too large to attach.")));
   }
   const file = compressed.file;
   await readComposerImageBytes(file);
@@ -199,7 +203,7 @@ export async function deliverSnapShot(
         ? store.addImage(target, image)
         : questionAttachmentCount < PROVIDER_SEND_TURN_MAX_ATTACHMENTS &&
           store.addImages(target, [image]).includes(capture.id);
-    if (!added) throw new Error("Remove an attachment, then try this capture again.");
+    if (!added) throw new Error(m(msg("Remove an attachment, then try this capture again.")));
   }
   const persisted: PersistedComposerImageAttachment = {
     id: capture.id,
@@ -215,7 +219,7 @@ export async function deliverSnapShot(
       ?.persistedAttachments.filter((attachment) => attachment.id !== capture.id) ?? [];
   await store.syncPersistedAttachments(target, [...persistedAttachments, persisted]);
   if (!store.getComposerDraft(target)?.persistedAttachments.some(({ id }) => id === capture.id)) {
-    throw new Error("The captured window could not be saved to the draft.");
+    throw new Error(m(msg("The captured window could not be saved to the draft.")));
   }
 
   // Paint the attachment before removing the capture overlay to avoid missing frames at landing.
@@ -376,8 +380,8 @@ export function SnapShotCoordinator() {
               "missing-project",
               stackedThreadToast({
                 type: "error",
-                title: "Snapshot taken, but no project is available",
-                description: "Add a project, then capture the window again.",
+                title: m(msg("Snapshot taken, but no project is available")),
+                description: m(msg("Add a project, then capture the window again.")),
               }),
             );
             continue;
@@ -400,10 +404,13 @@ export function SnapShotCoordinator() {
               "delivery",
               stackedThreadToast({
                 type: "error",
-                title: "Snapshot failed",
-                description: `Capture ${item.id}: ${
-                  error instanceof Error ? error.message : "Try the capture again."
-                }`,
+                title: m(msg("Snapshot failed")),
+                description: m(
+                  msg("Capture {id}: {error}", {
+                    id: item.id,
+                    error: thrownErrorMessage(error, m) ?? m(msg("Try the capture again.")),
+                  }),
+                ),
               }),
             );
           }
@@ -416,8 +423,8 @@ export function SnapShotCoordinator() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Snapshot failed",
-            description: error instanceof Error ? error.message : "Try the capture again.",
+            title: m(msg("Snapshot failed")),
+            description: thrownErrorMessage(error, m) ?? m(msg("Try the capture again.")),
           }),
         );
       })
@@ -485,8 +492,8 @@ export function SnapShotCoordinator() {
             toastManager.add(
               stackedThreadToast({
                 type: "error",
-                title: "Snapshot failed",
-                description: state.message ?? "Try the capture again.",
+                title: m(msg("Snapshot failed")),
+                description: state.message ?? m(msg("Try the capture again.")),
               }),
             );
           });

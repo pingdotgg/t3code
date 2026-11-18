@@ -1,12 +1,14 @@
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   RuntimeRequestId,
+  ThreadId,
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2ThreadProjection,
@@ -19,7 +21,10 @@ import {
 } from "../../../../packages/client-runtime/src/state/orchestrationV2TestFixtures";
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
-import { sendApprovalFeedback } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  makeThreadRequestsResolvedAnnouncer,
+  sendApprovalFeedback,
+} from "@t3tools/client-runtime/state/thread-requests";
 import { DateTime } from "effect";
 import { AsyncResult, type Atom } from "effect/reactivity";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -42,6 +47,11 @@ const state = vi.hoisted(() => ({
   compactDueAt: "",
   setFreshPending: vi.fn(),
   clearDraft: vi.fn(),
+  appendAttachments: vi.fn(),
+  questionDrafts: {} as Record<
+    string,
+    { text: string; attachments: DraftComposerImageAttachment[] }
+  >,
   approve: vi.fn(),
   answer: vi.fn(),
   feedback: vi.fn(),
@@ -78,6 +88,15 @@ vi.mock("react", () => ({
   ],
 }));
 vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
+vi.mock("gt-react-native", async (importOriginal) => {
+  const gt = await importOriginal<typeof import("gt-react-native")>();
+  return {
+    ...gt,
+    useGT: () => gt.mFallback,
+    useLocale: () => "en",
+    useMessages: () => gt.mFallback,
+  };
+});
 vi.mock("@t3tools/client-runtime/state/context-window", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/context-window")>()),
   compactBeforeSendTokens: (input: { readonly selection: ModelSelection; readonly now: string }) =>
@@ -168,13 +187,13 @@ vi.mock("./use-composer-drafts", async () => {
     updateComposerDraftSettings: state.updateSettings,
     ensureComposerDraftsLoaded: () => {},
     scheduleUnusedComposerAttachmentCleanup: () => {},
-    appendComposerDraftAttachments: vi.fn(),
+    appendComposerDraftAttachments: state.appendAttachments,
     appendComposerDraftText: vi.fn(),
     mergeComposerDraftContent: vi.fn(),
     removeComposerDraftAttachment: vi.fn(),
     useComposerDraft: () => state.draft,
     useComposerDraftSettings: () => state.draft,
-    questionAttachmentDraftsAtom: () => Atom.make({}),
+    questionAttachmentDraftsAtom: () => Atom.make(state.questionDrafts),
   };
 });
 vi.mock("../lib/composerImages", () => ({
@@ -195,6 +214,7 @@ vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError:
 import { Alert } from "react-native";
 import { useThreadComposerState } from "./use-thread-composer-state";
 import { useSelectedThreadRequests } from "./use-selected-thread-requests";
+import { questionAttachmentDraftKey } from "./question-attachments";
 
 const NO_SIDE_CHATS = { startSideChat: async () => false };
 
@@ -208,6 +228,7 @@ beforeEach(() => {
     runtimeMode: undefined,
   };
   state.freshPending = false;
+  state.questionDrafts = {};
   state.compactModel = null;
   state.compactDueAt = "";
   state.thread.latestRun = null;
@@ -505,6 +526,36 @@ describe("mobile task permissions", () => {
     });
   });
 });
+
+it.each(["cancelled", "expired"] as const)(
+  "returns unsent attachments to the thread composer when a question is %s",
+  (status) => {
+    const environmentId = EnvironmentId.make("secondary");
+    const threadId = ThreadId.make("thread");
+    const notes = {
+      id: "notes",
+      type: "file",
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 5,
+    } as unknown as DraftComposerImageAttachment;
+    state.questionDrafts = {
+      [questionAttachmentDraftKey(environmentId, threadId, "input", "language")]: {
+        text: "",
+        attachments: [notes],
+      },
+    };
+    makeThreadRequestsResolvedAnnouncer(
+      environmentId,
+      threadId,
+    )([{ id: RuntimeRequestId.make("input"), status }]);
+    expect(state.appendAttachments).toHaveBeenCalledWith(
+      "secondary:thread",
+      [notes],
+      expect.objectContaining({ appendReference: true }),
+    );
+  },
+);
 
 describe("mobile handoff preview and submission", () => {
   it("follows project enablement and provider availability for the selected destination", async () => {

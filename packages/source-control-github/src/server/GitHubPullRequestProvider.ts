@@ -66,7 +66,7 @@ const UNAVAILABLE_REQUIREMENT = {
   missing:
     "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
   unauthenticated:
-    "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
+    "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source control & issues.",
 };
 
 /**
@@ -144,9 +144,9 @@ function gitHubProviderFailure(
 
 const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, string> = {
   settings:
-    "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control.",
+    "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source control & issues.",
   env: "The server's environment token can't see it. Give it access, or unset it.",
-  gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source Control.",
+  gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source control & issues.",
 };
 
 function withAvatar(

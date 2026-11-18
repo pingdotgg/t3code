@@ -7,10 +7,13 @@ import { assetEnvironment } from "./state/assets";
 import { themeEnvironmentIdAtom } from "./state/primaryEnvironment";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
 import { environmentSession } from "./state/session";
+import { getCustomThemes } from "./themePalette";
 
 const THEME_BACKGROUND_VARIABLE = "--theme-background-image";
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000];
 
+// The editor's draft preview replaces the root's theme id, so retries track this instead.
+let appliedThemeId: string | undefined;
 let shownKey: string | null = null;
 let loading: AbortController | null = null;
 let objectUrl: string | null = null;
@@ -54,9 +57,11 @@ async function loadBackground(
  */
 export function applyThemeBackground(themeId: string | undefined): void {
   if (typeof document === "undefined") return;
+  appliedThemeId = themeId;
   const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
+  // A saved theme wins its id over a published one, so the published image is not its.
   const revision =
-    themeId === undefined
+    themeId === undefined || getCustomThemes().some((theme) => theme.id === themeId)
       ? undefined
       : appAtomRegistry.get(themeServerEnvironmentThemesAtom)?.find((theme) => theme.id === themeId)
           ?.background;
@@ -108,7 +113,7 @@ export function applyThemeBackground(themeId: string | undefined): void {
  * Coming back online retries a download that failed; a shown image is left alone.
  */
 export function startThemeBackground(): () => void {
-  const reapply = () => applyThemeBackground(document.documentElement.dataset.themeId);
+  const reapply = () => applyThemeBackground(appliedThemeId);
   const unsubscribe = subscribeAtomChanges(themeServerEnvironmentThemesAtom, reapply);
   window.addEventListener("online", reapply);
   return () => {

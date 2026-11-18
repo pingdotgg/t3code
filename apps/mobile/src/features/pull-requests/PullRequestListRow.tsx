@@ -1,7 +1,6 @@
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
+import { useGT, useMessages } from "gt-react-native";
 import { memo } from "react";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -33,6 +32,27 @@ import {
 } from "./pullRequestStatus";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
 
+/** A label as list rows show it: small, tinted by its color, truncating. */
+export function ListRowLabel(props: {
+  readonly label: { readonly name: string; readonly color: string | null };
+  readonly textClassName: string;
+}) {
+  const color = pullRequestLabelColor(props.label.color);
+  return (
+    <View
+      className="min-w-0 shrink flex-row items-center gap-1 rounded-md bg-subtle px-1.5 py-0.5"
+      style={{ maxWidth: 160, ...(color ? { backgroundColor: `${color}20` } : {}) }}
+    >
+      {color ? (
+        <View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: color }} />
+      ) : null}
+      <Text className={cn("shrink text-2xs font-t3-medium", props.textClassName)} numberOfLines={1}>
+        {props.label.name}
+      </Text>
+    </View>
+  );
+}
+
 export const PullRequestListRow = memo(
   function PullRequestListRow(props: {
     readonly item: EnvironmentPullRequestListEntry;
@@ -59,9 +79,25 @@ export const PullRequestListRow = memo(
       : props.sidebar
         ? "text-drawer-foreground-muted"
         : "text-foreground-tertiary";
-    const status = pullRequestStatus(item);
-    const conflict = pullRequestConflict(item);
-    const review = pullRequestListReviewStatus(item);
+    const gt = useGT();
+    const m = useMessages();
+    const status = pullRequestStatus(item, m);
+    const conflict = pullRequestConflict(item, m);
+    const review = pullRequestListReviewStatus(item, m);
+    const checksSpoken = item.checksState
+      ? {
+          passing: gt("checks passing"),
+          failing: gt("checks failing"),
+          pending: gt("checks pending"),
+        }[item.checksState]
+      : null;
+    const checksLabel = item.checksState
+      ? {
+          passing: gt("Checks passing"),
+          failing: gt("Checks failing"),
+          pending: gt("Checks pending"),
+        }[item.checksState]
+      : undefined;
     const checks = item.checksState ? pullRequestChecksStatus(item.checksState) : null;
     return (
       <View style={props.sidebar ? THREAD_LIST_V2_SIDEBAR_ROW_CONTAINER_STYLE : undefined}>
@@ -74,8 +110,37 @@ export const PullRequestListRow = memo(
           <Pressable
             accessibilityRole="button"
             accessibilityState={{ selected: props.selected, busy: props.busy }}
-            accessibilityLabel={`${capitalizeTerm(sourceControlClients.get(item.provider).changeRequest.singular)} ${item.number}, ${item.title}, ${status.label}${conflict ? `, ${conflict.label.toLowerCase()}` : ""}, by ${item.author?.login ?? "unknown author"}${review ? `, ${review.accessibleLabel}` : ""}${item.checksState ? `, checks ${item.checksState}` : ""}${item.stack ? `, stack ${item.stack.position} of ${item.stack.size}` : ""}${item.labels.length ? `, ${item.labels.map((label) => label.name).join(", ")}` : ""}, ${item.additions} additions, ${item.deletions} deletions`}
-            accessibilityHint="Double tap to open. Touch and hold for quick actions."
+            accessibilityLabel={[
+              gt(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} {number}",
+                {
+                  term: changeRequestTermKind(
+                    sourceControlClients.get(item.provider).changeRequest,
+                  ),
+                  number: item.number,
+                },
+              ),
+              item.title,
+              status.label,
+              conflict ? conflict.label.toLowerCase() : null,
+              gt("by {author}", { author: item.author?.login ?? gt("unknown author") }),
+              review ? review.accessibleLabel : null,
+              checksSpoken,
+              item.stack
+                ? gt("stack {position} of {size}", {
+                    position: item.stack.position,
+                    size: item.stack.size,
+                  })
+                : null,
+              item.labels.length ? item.labels.map((label) => label.name).join(", ") : null,
+              gt("{additions} additions, {deletions} deletions", {
+                additions: item.additions,
+                deletions: item.deletions,
+              }),
+            ]
+              .filter((part) => part !== null)
+              .join(", ")}
+            accessibilityHint={gt("Double tap to open. Touch and hold for quick actions.")}
             onPress={() => props.onSelect(item)}
             disabled={props.busy}
             style={props.sidebar ? THREAD_LIST_V2_SIDEBAR_ROW_STYLE : undefined}
@@ -144,31 +209,9 @@ export const PullRequestListRow = memo(
               </Text>
               <View className="flex-row items-center gap-1.5">
                 <View className="min-w-0 flex-1 flex-row items-center gap-1">
-                  {item.labels.slice(0, 2).map((label) => {
-                    const color = pullRequestLabelColor(label.color);
-                    return (
-                      <View
-                        key={label.name}
-                        className="min-w-0 shrink flex-row items-center gap-1 rounded-md bg-subtle px-1.5 py-0.5"
-                        style={{
-                          maxWidth: 160,
-                          ...(color ? { backgroundColor: `${color}20` } : {}),
-                        }}
-                      >
-                        {color ? (
-                          <View
-                            style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: color }}
-                          />
-                        ) : null}
-                        <Text
-                          className={cn("shrink text-2xs font-t3-medium", mutedForeground)}
-                          numberOfLines={1}
-                        >
-                          {label.name}
-                        </Text>
-                      </View>
-                    );
-                  })}
+                  {item.labels.slice(0, 2).map((label) => (
+                    <ListRowLabel key={label.name} label={label} textClassName={mutedForeground} />
+                  ))}
                   {item.labels.length > 2 ? (
                     <Text className={cn("shrink-0 text-2xs", tertiaryForeground)}>
                       +{item.labels.length - 2}
@@ -176,7 +219,7 @@ export const PullRequestListRow = memo(
                   ) : null}
                 </View>
                 {checks ? (
-                  <View className="shrink-0" accessibilityLabel={`Checks ${item.checksState}`}>
+                  <View className="shrink-0" accessibilityLabel={checksLabel}>
                     <SymbolView name={checks.icon} size={13} tintColorClassName={checks.tint} />
                   </View>
                 ) : null}

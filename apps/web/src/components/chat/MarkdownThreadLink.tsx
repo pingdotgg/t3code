@@ -1,11 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useGT, useMessages } from "gt-react";
 import {
   formatHostedThreadLink,
   guessThreadLinkRef,
   threadLinkCandidates,
   type ThreadLink,
-  unknownThreadLinkLabel,
 } from "@t3tools/shared/threadLinks";
+import { unknownThreadLinkLabel } from "@t3tools/shared/threadLinksCopy";
 
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useThreadRefs, useThreadShell } from "../../state/entities";
@@ -21,6 +22,8 @@ export function MarkdownThreadLink(props: {
   readonly link: ThreadLink;
   readonly label: string | null;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const candidates = threadLinkCandidates(props.link, props.environmentId);
   const writtenRef = candidates[0]!;
   const written = useThreadShell(writtenRef);
@@ -56,11 +59,11 @@ export function MarkdownThreadLink(props: {
   const remote = useThreadShell(remoteRef);
   const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
   if (missing && resolved === null) {
-    const unknown = unknownThreadLinkLabel(props.link, props.environmentId);
+    const unknown = unknownThreadLinkLabel(props.link, props.environmentId, messages);
     return <UnresolvedChip label={props.label ?? unknown} tooltip={unknown} />;
   }
   const ref = resolved?.ref ?? writtenRef;
-  const title = resolved?.metadata.title.trim() || props.label || "Thread";
+  const title = resolved?.metadata.title.trim() || props.label || gt("Thread");
   return (
     <ThreadContextChip
       record={{ ...ref, title }}

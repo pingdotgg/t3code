@@ -1,5 +1,8 @@
 import type { OrchestrationV2RunStatus, RunId } from "@t3tools/contracts";
 
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../i18n/messages";
 import type { SidebarThreadSummary } from "../types";
 import {
   runOutcomeText,
@@ -54,12 +57,13 @@ export function nextBackgroundThreadAnnouncement(
   previous: BackgroundThreadMemory,
   threads: ReadonlyArray<BackgroundThreadSnapshot>,
   openThreadKey: string | null,
+  resolve: MessageResolver = m,
 ): { readonly memory: BackgroundThreadMemory; readonly announcement: string | null } {
   const memory = new Map<string, BackgroundThreadMemoryEntry>();
   const announcements: string[] = [];
   for (const thread of threads) {
     const before = previous.get(thread.key);
-    const outcome = runOutcomeText(thread.runStatus);
+    const outcome = runOutcomeText(thread.runStatus, resolve);
     const settled = outcome !== null || thread.runStatus === "rolled_back";
     memory.set(thread.key, {
       request: thread.request,
@@ -71,14 +75,23 @@ export function nextBackgroundThreadAnnouncement(
       thread.request !== null &&
       (thread.request !== before.request || thread.requestId !== before.requestId)
     ) {
-      announcements.push(`${THREAD_STATUS_TEXT[thread.request]}: ${thread.title}`);
+      announcements.push(
+        resolve(
+          msg("{status}: {title}", {
+            status: resolve(THREAD_STATUS_TEXT[thread.request]),
+            title: thread.title,
+          }),
+        ),
+      );
     }
     // While another run still works, the latest run's ending (a queued message
     // cancelled before it started) isn't the thread finishing. The shell then
     // only reports the latest run, so the working run's own ending stays quiet.
     const anotherRunWorking = thread.activeRunId !== null && thread.activeRunId !== thread.runId;
     if (outcome !== null && thread.runId !== before.settledRunId && !anotherRunWorking) {
-      announcements.push(`${outcome}: ${thread.title}`);
+      announcements.push(
+        resolve(msg("{status}: {title}", { status: outcome, title: thread.title })),
+      );
     }
   }
   return {

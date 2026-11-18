@@ -8,12 +8,16 @@ const URL_NOT_LOCAL = /url\((?![ \t\n\f\r]*["']?(?:data:|#))/i;
 const URL_OR_STRING =
   /url\((?![ \t\n\f\r]*["'])[^)]*|url\([ \t\n\f\r]*("[^"\n\r\f]*"|'[^'\n\r\f]*')|"[^"\n\r\f]*"|'[^'\n\r\f]*'/gi;
 
-function fetchesByText(code: string): boolean {
-  const outsideStrings = code.replace(URL_OR_STRING, (token, urlString: string | undefined) => {
+/** The code with its strings removed, keeping `url(` where a quoted url() can load a file. */
+function withoutStrings(code: string): string {
+  return code.replace(URL_OR_STRING, (token, urlString: string | undefined) => {
     if (urlString !== undefined) return /^["'](?:data:|#)/i.test(urlString) ? "" : "url(";
     return token.startsWith('"') || token.startsWith("'") ? "" : token;
   });
-  return FETCHES_BY_STRING.test(outsideStrings) || URL_NOT_LOCAL.test(outsideStrings);
+}
+
+function fetchesOutsideStrings(code: string): boolean {
+  return FETCHES_BY_STRING.test(code) || URL_NOT_LOCAL.test(code);
 }
 
 /**
@@ -22,13 +26,13 @@ function fetchesByText(code: string): boolean {
  * so every value that still has a backslash is refused.
  */
 export function themeCssValueFetches(value: string): boolean {
-  return value.includes("\\") || fetchesByText(value);
+  return value.includes("\\") || fetchesOutsideStrings(withoutStrings(value));
 }
 
 /** A text check for early feedback. CSS escapes can dodge it; the client check is the guard. */
 export function themeCssLoadsRemoteFiles(css: string): boolean {
-  const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  return /@import/i.test(code) || fetchesByText(code);
+  const code = withoutStrings(css.replace(/\/\*[\s\S]*?\*\//g, ""));
+  return /@import/i.test(code) || fetchesOutsideStrings(code);
 }
 
 /**
