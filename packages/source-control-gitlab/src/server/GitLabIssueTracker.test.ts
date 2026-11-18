@@ -92,13 +92,15 @@ function answer(path: string): string {
       },
     ]);
   }
+  if (path.startsWith("projects/acme%2Fweb/issues/42/award_emoji")) {
+    return encode([{ id: 11, name: "eyes", user: { username: "theo" } }]);
+  }
   if (path === "graphql") {
     return encode({
       data: {
         currentUser: { username: "julius" },
         project: {
           mergeRequest: {
-            awardEmoji: { nodes: [{ name: "eyes", user: { username: "theo" } }] },
             notes: {
               pageInfo: { hasNextPage: false },
               nodes: [
