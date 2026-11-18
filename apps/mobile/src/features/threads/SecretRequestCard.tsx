@@ -120,7 +120,7 @@ function PendingSecretRequestForm(props: {
       void send({ type: "reference", source, reference });
     }
   };
-  const draft = source === null ? secret : reference;
+  const draft = source === null ? secret : reference.trim();
   const link = secretRequestLink(item);
 
   return (
@@ -219,7 +219,7 @@ function PendingSecretRequestForm(props: {
         label="Save securely"
         tone="primary"
         fullWidth
-        disabled={submitting || draft.trim().length === 0}
+        disabled={submitting || draft.length === 0}
         onPress={save}
       />
       <View className="flex-row items-center justify-between gap-2">
