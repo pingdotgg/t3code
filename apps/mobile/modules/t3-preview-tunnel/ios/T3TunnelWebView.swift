@@ -130,6 +130,7 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
       "code": error.code,
       "description": error.localizedDescription,
       "url": failingUrl ?? "",
+      "debug": "\(error.domain) \(error.code), port \(proxyPort.map(String.init) ?? "none"), " + T3TunnelDiagnostics.shared.summary,
     ])
   }
 }
