@@ -857,6 +857,7 @@ function makeReplayQueryRunner(
         reconnectMcpServer: () => Effect.die("unexpected MCP reconnect in replay"),
         callMcpTool: () => Effect.die("unexpected MCP tool call in replay"),
         listPermissionRules: Effect.die("unexpected permission rules read in replay"),
+        contextLimits: Effect.never,
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });
         }),
