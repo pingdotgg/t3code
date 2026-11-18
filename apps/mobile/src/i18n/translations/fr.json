@@ -4661,6 +4661,8 @@
   "9e665ecb41862e2b": "Chargement des fils…",
   "792fd010fcd31023": "Impossible de rechercher dans les messages des fils",
   "ad3d36993b64b932": "Aucun fil dans {project}",
+  "1bde086d5b9c4daa": "Relâchez pour un nouveau fil",
+  "867beb6fb99d7199": "Tirez pour un nouveau fil",
   "2e8ef6c4f106a92a": "{term, select, mr {Merge requests associées} cr {Demandes de modification associées} other {Pull requests associées}}",
   "dfc280cae289597e": "{open} ouvertes · {linked} associées",
   "339ac9045f4aac8e": "{term, select, mr {Aucune merge request associée.} cr {Aucune demande de modification associée.} other {Aucune pull request associée.}}",

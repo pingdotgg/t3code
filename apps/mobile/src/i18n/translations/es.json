@@ -4660,6 +4660,8 @@
   "9e665ecb41862e2b": "Cargando hilos…",
   "792fd010fcd31023": "No se pudo buscar en los mensajes de los hilos",
   "ad3d36993b64b932": "No hay hilos en {project}",
+  "1bde086d5b9c4daa": "Suelta para un nuevo hilo",
+  "867beb6fb99d7199": "Desliza para un nuevo hilo",
   "2e8ef6c4f106a92a": "{term, select, mr {Merge requests vinculadas} cr {Solicitudes de cambios vinculadas} other {Pull requests vinculadas}}",
   "dfc280cae289597e": "{open} abiertas · {linked} vinculadas",
   "339ac9045f4aac8e": "{term, select, mr {No hay merge requests vinculadas.} cr {No hay solicitudes de cambios vinculadas.} other {No hay pull requests vinculadas.}}",

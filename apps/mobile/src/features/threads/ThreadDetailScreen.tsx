@@ -1587,6 +1587,7 @@ function ThreadDetailBody(
                   skills={selectedProviderSkills}
                   onCiteAssistantText={canCiteAssistantText ? handleCiteAssistantText : undefined}
                   onUseArtifactTemplate={handleUseArtifactTemplate}
+                  canPullNewThread={props.canOperateThread}
                 />
               </ColumnWidth>
             </WorkspaceMutationIdProvider>

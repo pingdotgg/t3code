@@ -281,8 +281,10 @@ describe("newTaskDestination", () => {
     readonly current?: EnvironmentProject;
     readonly filtered?: EnvironmentProject;
     readonly last?: { readonly environmentId: string; readonly projectId: string };
+    readonly currentProjectOnly?: boolean;
   }) {
     return newTaskDestination({
+      currentProjectOnly: options.currentProjectOnly,
       projects: options.projects,
       requestId: "request",
       useLastProject: options.useLastProject,
@@ -392,6 +394,25 @@ describe("newTaskDestination", () => {
         last: { environmentId: "environment", projectId: "only" },
       }),
     ).toEqual(picker);
+  });
+
+  it("starts in the current project only, whatever the preference, when asked to", () => {
+    const projects = [makeProject("remembered"), makeProject("current")];
+    const last = { environmentId: "environment", projectId: "remembered" };
+    expect(
+      destination({
+        useLastProject: false,
+        projects,
+        current: projects[1],
+        last,
+        currentProjectOnly: true,
+      }),
+    ).toEqual({
+      draft: { requestId: "request", environmentId: "environment", projectId: "current" },
+    });
+    expect(destination({ useLastProject: true, projects, last, currentProjectOnly: true })).toEqual(
+      picker,
+    );
   });
 });
 

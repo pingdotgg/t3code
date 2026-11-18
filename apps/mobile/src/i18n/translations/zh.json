@@ -4650,6 +4650,8 @@
   "9e665ecb41862e2b": "正在加载会话…",
   "792fd010fcd31023": "无法搜索会话消息",
   "ad3d36993b64b932": "{project} 中没有会话",
+  "1bde086d5b9c4daa": "松开以新建会话",
+  "867beb6fb99d7199": "上拉以新建会话",
   "2e8ef6c4f106a92a": "{term, select, mr {已关联的 MR} cr {已关联的 change request} other {已关联的 PR}}",
   "dfc280cae289597e": "{open} 个打开 · {linked} 个已关联",
   "339ac9045f4aac8e": "{term, select, mr {没有已关联的 merge request。} cr {没有已关联的 change request。} other {没有已关联的 pull request。}}",

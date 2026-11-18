@@ -206,6 +206,7 @@ function useStableActions(actions: Required<AdaptiveWorkspaceActions>): Adaptive
   });
   const [stable] = useState((): AdaptiveWorkspaceActions => ({
     startNewTask: () => latest.current.startNewTask(),
+    startNewTaskInCurrentProject: () => latest.current.startNewTaskInCurrentProject(),
     selectDetail: (detail, sheet) => latest.current.selectDetail(detail, sheet),
     registerWorkspaceInspector: (content, routeKey, revealKey) =>
       latest.current.registerWorkspaceInspector(content, routeKey, revealKey),
@@ -587,7 +588,7 @@ function AdaptiveWorkspaceLayoutContent(
   const compactAndroidSettings =
     Platform.OS === "android" && androidSettingsOpen && !layout.usesSplitView;
   // Reads the open page when pressed, so the layout context doesn't change on every navigation.
-  const handleStartNewTask = () => {
+  const startNewTask = (currentProjectOnly: boolean) => {
     const state = rootStackState(navigation);
     const currentRoute = workspaceRoutesOf(
       state?.routes.slice(0, state.index + 1) ?? [],
@@ -644,9 +645,11 @@ function AdaptiveWorkspaceLayoutContent(
             )
           : undefined,
         lastProject: saved?.lastThreadProject,
+        currentProjectOnly,
       }),
     );
   };
+  const handleStartNewTask = () => startNewTask(false);
 
   useHardwareKeyboardCommand("newTask", () => {
     handleStartNewTask();
@@ -938,6 +941,7 @@ function AdaptiveWorkspaceLayoutContent(
 
   const actions = useStableActions({
     startNewTask: handleStartNewTask,
+    startNewTaskInCurrentProject: () => startNewTask(true),
     selectDetail: handleSelectDetail,
     registerWorkspaceInspector,
     setPrimarySidebarSearchQuery,

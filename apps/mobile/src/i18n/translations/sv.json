@@ -4667,6 +4667,8 @@
   "9e665ecb41862e2b": "Läser in trådar…",
   "792fd010fcd31023": "Kunde inte söka i trådmeddelanden",
   "ad3d36993b64b932": "Inga trådar i {project}",
+  "1bde086d5b9c4daa": "Släpp för ny tråd",
+  "867beb6fb99d7199": "Dra för ny tråd",
   "2e8ef6c4f106a92a": "{term, select, mr {Länkade merge requests} cr {Länkade ändringsbegäranden} other {Länkade pull requests}}",
   "dfc280cae289597e": "{open} öppna · {linked} länkade",
   "339ac9045f4aac8e": "{term, select, mr {Inga länkade merge requests.} cr {Inga länkade ändringsbegäranden.} other {Inga länkade pull requests.}}",

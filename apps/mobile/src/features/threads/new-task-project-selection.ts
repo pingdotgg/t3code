@@ -227,6 +227,7 @@ export function newTaskDestination(options: {
   readonly currentProject: ProjectRef | undefined;
   readonly filteredProject: ProjectRef | undefined;
   readonly lastProject: ProjectRef | undefined;
+  readonly currentProjectOnly?: boolean;
 }) {
   const find = (ref: ProjectRef | undefined) =>
     ref &&
@@ -235,8 +236,9 @@ export function newTaskDestination(options: {
     );
   // A remembered project that was archived since opens the picker; the current one still wins.
   const last = find(options.lastProject);
-  const project =
-    options.useLastProject === false
+  const project = options.currentProjectOnly
+    ? find(options.currentProject)
+    : options.useLastProject === false
       ? undefined
       : (find(options.currentProject) ??
         find(options.filteredProject) ??

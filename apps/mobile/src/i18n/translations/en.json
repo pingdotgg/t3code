@@ -4669,6 +4669,8 @@
   "9e665ecb41862e2b": "Loading threads…",
   "792fd010fcd31023": "Couldn't search thread messages",
   "ad3d36993b64b932": "No threads in {project}",
+  "1bde086d5b9c4daa": "Release for new thread",
+  "867beb6fb99d7199": "Pull for new thread",
   "2e8ef6c4f106a92a": "{term, select, mr {Linked merge requests} cr {Linked change requests} other {Linked pull requests}}",
   "dfc280cae289597e": "{open} open · {linked} linked",
   "339ac9045f4aac8e": "{term, select, mr {No linked merge requests.} cr {No linked change requests.} other {No linked pull requests.}}",
