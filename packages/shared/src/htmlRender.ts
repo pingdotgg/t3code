@@ -39,7 +39,7 @@ function readMeasuredHeights(value: unknown) {
     entry[0] <= 10_000 &&
     typeof entry[1] === "number" &&
     Number.isFinite(entry[1])
-      ? [[entry[0] as number, clampHtmlRenderHeight(entry[1])] as const]
+      ? [[entry[0] as number, clampHtmlRenderFitHeight(Math.round(entry[1]))] as const]
       : [],
   );
   return heights.length === value.length
@@ -82,12 +82,11 @@ export function htmlRenderReferencesEqual(left: HtmlRenderReference, right: Html
   );
 }
 
-// Use the taller neighboring measurement because breakpoints can select either height.
-function measuredHeight(heights: NonNullable<HtmlRenderReference["heights"]>, width: number) {
+function neighboringHeights(heights: NonNullable<HtmlRenderReference["heights"]>, width: number) {
   const above = heights.findIndex(([measuredWidth]) => measuredWidth >= width);
   const high = above === -1 ? heights.length - 1 : above;
   const low = heights[high]![0] === width ? high : Math.max(0, high - 1);
-  return Math.max(heights[low]![1], heights[high]![1]);
+  return [heights[low]![1], heights[high]![1]] as const;
 }
 
 /**
@@ -101,21 +100,37 @@ export function htmlRenderFrameHeight(
   width: number,
   contentHeight?: number,
 ) {
-  if (contentHeight !== undefined) {
-    return Math.min(
-      HTML_RENDER_MAX_FIT_HEIGHT,
-      Math.max(HTML_RENDER_MIN_HEIGHT, Math.ceil(contentHeight)),
-    );
-  }
+  if (contentHeight !== undefined) return clampHtmlRenderFitHeight(Math.ceil(contentHeight));
   const heights = reference.heights;
   if (heights === undefined || heights.length === 0) {
     return clampHtmlRenderHeight(reference.height);
   }
+  // Use the taller neighboring measurement because breakpoints can select either height.
+  const measuredHeight = (at: number) => Math.max(...neighboringHeights(heights, at));
   const cap =
-    measuredHeight(heights, HTML_RENDER_COLUMN_WIDTH) > reference.height
+    measuredHeight(HTML_RENDER_COLUMN_WIDTH) > reference.height
       ? reference.height
       : HTML_RENDER_MAX_HEIGHT;
-  return clampHtmlRenderHeight(Math.min(cap, measuredHeight(heights, width)));
+  return clampHtmlRenderHeight(Math.min(cap, measuredHeight(width)));
+}
+
+/**
+ * The height a frame that fits its page opens at before the page reports one.
+ * It rises above the capped frame height only as far as both neighboring
+ * measurements reach: a breakpoint between them can give the page either one.
+ */
+export function htmlRenderFitHeight(reference: HtmlRenderReference, width: number) {
+  const capped = htmlRenderFrameHeight(reference, width);
+  const heights = reference.heights;
+  if (
+    heights === undefined ||
+    heights.length === 0 ||
+    width < heights[0]![0] ||
+    width > heights[heights.length - 1]![0]
+  ) {
+    return capped;
+  }
+  return Math.max(capped, Math.min(...neighboringHeights(heights, width)));
 }
 
 export function htmlRenderFileName(title: string) {
@@ -130,6 +145,10 @@ export function htmlRenderFileName(title: string) {
 
 export function clampHtmlRenderHeight(height: number): number {
   return Math.min(HTML_RENDER_MAX_HEIGHT, Math.max(HTML_RENDER_MIN_HEIGHT, Math.round(height)));
+}
+
+function clampHtmlRenderFitHeight(height: number): number {
+  return Math.min(HTML_RENDER_MAX_FIT_HEIGHT, Math.max(HTML_RENDER_MIN_HEIGHT, height));
 }
 
 export interface HtmlRenderFonts {

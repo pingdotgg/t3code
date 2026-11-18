@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  htmlRenderFitHeight,
+  htmlRenderFrameHeight,
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
+  readHtmlRenderReference,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
@@ -155,6 +158,45 @@ describe("readHtmlRenderImageRequest", () => {
     // An index that does not point at the clicked image falls back to that image alone.
     expect(request({ index: 0 })).toEqual({ images: [b], index: 0 });
     expect(request({ index: -1 })).toEqual({ images: [b], index: 0 });
+  });
+});
+
+describe("htmlRenderFitHeight", () => {
+  const read = (heights: ReadonlyArray<readonly [number, number]>) => {
+    const parsed = readHtmlRenderReference({ ...reference, height: 2000, heights });
+    if (parsed === undefined) throw new Error("reference did not parse");
+    return parsed;
+  };
+
+  it("keeps measured page heights above the frame cap for a frame that fits its page", () => {
+    const parsed = read([
+      [640, 6623],
+      [728, 3684],
+      [1144, 30_000],
+    ]);
+
+    expect(parsed.heights).toEqual([
+      [640, 6623],
+      [728, 3684],
+      [1144, 20_000],
+    ]);
+    expect(htmlRenderFrameHeight(parsed, 728)).toBe(2000);
+    expect(htmlRenderFitHeight(parsed, 728)).toBe(3684);
+    expect(htmlRenderFitHeight(parsed, 1200)).toBe(2000);
+  });
+
+  // A breakpoint between two samples can give the page either height, so the frame opens at
+  // the shorter one and can only grow.
+  it.each([
+    { name: "the taller neighbor", at728: 3684, expected: 3684 },
+    { name: "the shorter neighbor", at728: 2000, expected: 2000 },
+  ])("does not open past $name between measured widths", ({ at728, expected }) => {
+    const parsed = read([
+      [640, 6623],
+      [728, at728],
+    ]);
+
+    expect(htmlRenderFitHeight(parsed, 700)).toBe(expected);
   });
 });
 

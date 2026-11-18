@@ -31,6 +31,12 @@ const sizeChanged = (height: number) => ({
   params: { height },
 });
 
+const sized = (width: number) => {
+  const container = document.createElement("div");
+  container.style.width = `${width}px`;
+  return { container };
+};
+
 describe("HtmlRenderFrame", () => {
   it("reports leaving full screen when it unmounts while expanded", async () => {
     setup();
@@ -52,7 +58,7 @@ describe("HtmlRenderFrame", () => {
     expect(onFullscreenChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("reopens at the page height it last measured", async () => {
+  it("reopens at the page height it last measured, at the width it measured it at", async () => {
     setup();
     using page = (() => {
       const html = `<script>parent.postMessage(${JSON.stringify(sizeChanged(1500))}, "*");</script>`;
@@ -71,13 +77,17 @@ describe("HtmlRenderFrame", () => {
 
     assetUrl.current = page.url;
     {
-      await using first = await render(frame());
+      await using first = await render(frame(), sized(600));
       await vi.waitFor(() => expect(frameHeight(first)).toBe("1500px"));
     }
 
     // A page that never reports its height, so only the remembered measurement can size the frame.
     assetUrl.current = "about:blank";
-    await using second = await render(frame());
-    expect(frameHeight(second)).toBe("1500px");
+    {
+      await using sameWidth = await render(frame(), sized(600));
+      expect(frameHeight(sameWidth)).toBe("1500px");
+    }
+    await using otherWidth = await render(frame(), sized(400));
+    expect(frameHeight(otherWidth)).toBe("200px");
   });
 });
