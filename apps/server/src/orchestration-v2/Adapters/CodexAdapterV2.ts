@@ -54,7 +54,7 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { appendGeneratedImageEmbeds } from "@t3tools/shared/generatedImageMarkdown";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import { mcpToolResultOutput } from "@t3tools/shared/toolOutput";
 import type {
   ChatAttachment,
@@ -1571,6 +1571,19 @@ const decodeCodexChildThread = Schema.decodeUnknownEffect(
   }),
 );
 
+// npm and Homebrew upgrades replace the file behind the launch path; a running app-server keeps the old one.
+const readCodexBinaryFingerprint = Effect.fn("CodexAdapterV2.readCodexBinaryFingerprint")(
+  function* (binaryPath: string, env: NodeJS.ProcessEnv) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const executablePath = yield* resolveCommandPath(binaryPath, { env });
+    if (executablePath === null) return undefined;
+    const realPath = yield* fileSystem.realPath(executablePath);
+    const info = yield* fileSystem.stat(realPath);
+    return `${realPath}:${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}:${Option.getOrUndefined(info.ino)}`;
+  },
+  Effect.orElseSucceed(() => undefined),
+);
+
 // Without a deadline the spawner waits indefinitely for a process that ignores SIGTERM.
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds";
 
@@ -1844,6 +1857,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const serverConfig = yield* ServerConfig;
+  const pathService = yield* Path.Path;
   const homeLayout = yield* resolveCodexHomeLayout(config);
 
   yield* materializeCodexShadowHome(homeLayout).pipe(
@@ -1876,6 +1890,11 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     serverConfig,
     continuationRequests,
     watchCommandStops: portDiscovery.watchAgentCommandStops,
+    readBinaryFingerprint: (binaryPath, env) =>
+      readCodexBinaryFingerprint(binaryPath, env).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
+      ),
     ...hooks,
   });
 });
@@ -1904,6 +1923,11 @@ export interface CodexAdapterV2Options {
   };
   /** Omitting this reports a command the user stopped as one that finished by itself. */
   readonly watchCommandStops?: PortScanner.PortDiscovery["Service"]["watchAgentCommandStops"];
+  /** Omitting this keeps a session on its launched binary until it is released. */
+  readonly readBinaryFingerprint?: (
+    binaryPath: string,
+    env: NodeJS.ProcessEnv,
+  ) => Effect.Effect<string | undefined>;
 }
 
 export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
@@ -1940,13 +1964,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
+        const launchSettings = resolvedRuntime?.config ?? adapterOptions.settings;
+        const launchEnvironment = resolvedRuntime?.environment ?? adapterOptions.environment;
+        const readBinaryFingerprint = adapterOptions.readBinaryFingerprint?.(
+          launchSettings.binaryPath,
+          launchEnvironment,
+        );
+        // Read before spawning: a reinstall in between then reopens rather than going unnoticed.
+        const launchedBinaryFingerprint =
+          readBinaryFingerprint === undefined ? undefined : yield* readBinaryFingerprint;
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
           providerSessionId: input.providerSessionId,
           runtimePolicy: input.runtimePolicy,
-          settings: resolvedRuntime?.config ?? adapterOptions.settings,
-          environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+          settings: launchSettings,
+          environment: launchEnvironment,
         });
         const codexZone = codexTimeZone(resolvedRuntime?.environment ?? adapterOptions.environment);
         const additionalContextByThread = yield* Ref.make(
@@ -7897,6 +7930,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           events: Stream.fromEffectRepeat(Queue.take(events)),
           canReuseContextUsage: canReuseCodexContextUsage,
           normalizeThreadLoadModelSelection: normalizeCodexThreadLoadModelSelection,
+          ...(readBinaryFingerprint === undefined || launchedBinaryFingerprint === undefined
+            ? {}
+            : {
+                binaryReplaced: readBinaryFingerprint.pipe(
+                  Effect.map(
+                    (current) => current !== undefined && current !== launchedBinaryFingerprint,
+                  ),
+                ),
+              }),
           // Idle release can beat delayed subagent resumes: Codex reports them completed between turns with no resume-expected signal.
           hasPendingBackgroundWork: Effect.gen(function* () {
             for (const items of (yield* Ref.get(runningCommandItemsByTurn)).values()) {

@@ -2192,34 +2192,63 @@ export const layerWithOptions = (
       });
 
       /** An exclusive runtime configures MCP at open, so it reopens once nothing would be lost. */
-      const releaseForLinkedEnvironments = Effect.fn(
-        "ProviderSessionManager.releaseForLinkedEnvironments",
-      )(function* (entry: LiveSessionEntry) {
-        if (
-          entry.supportsMultipleProviderThreads ||
-          entry.runtime.canResumeAfterRestart === false ||
-          entry.openedWithLinkedEnvironments === undefined ||
-          entry.busyTurns.size > 0
-        ) {
+      const outdatedSessionDetail = Effect.fn("ProviderSessionManager.outdatedSessionDetail")(
+        function* (entry: LiveSessionEntry) {
+          if (
+            !entry.supportsMultipleProviderThreads &&
+            entry.openedWithLinkedEnvironments !== undefined
+          ) {
+            const linkedEnvironments = yield* readLinkedEnvironments;
+            if (
+              typeof linkedEnvironments === "boolean" &&
+              linkedEnvironments !== entry.openedWithLinkedEnvironments
+            ) {
+              return "Linked environments changed; reopening the provider session.";
+            }
+          }
+          if (entry.runtime.binaryReplaced !== undefined && (yield* entry.runtime.binaryReplaced)) {
+            return "The provider CLI was reinstalled; reopening the provider session.";
+          }
+          return undefined;
+        },
+      );
+
+      const releaseIfOutdated = Effect.fn("ProviderSessionManager.releaseIfOutdated")(function* (
+        entry: LiveSessionEntry,
+      ) {
+        if (entry.runtime.canResumeAfterRestart === false || entry.busyTurns.size > 0) {
           return;
         }
-        const linkedEnvironments = yield* readLinkedEnvironments;
-        if (
-          typeof linkedEnvironments !== "boolean" ||
-          linkedEnvironments === entry.openedWithLinkedEnvironments
-        ) {
-          return;
-        }
+        const detail = yield* outdatedSessionDetail(entry);
+        if (detail === undefined) return;
         const providerSessionId = entry.runtime.providerSessionId;
         // Any activity during these reads bumps the generation and keeps the runtime.
         const generation = entry.idleGeneration;
         const hasPendingWork =
-          entry.runtime.hasPendingBackgroundWork === undefined
+          (entry.runtime.hasPendingBackgroundWork === undefined
             ? false
             : yield* entry.runtime.hasPendingBackgroundWork.pipe(
                 Effect.catchCause(() => Effect.succeed(true)),
-              );
+              )) ||
+          Option.isSome(
+            yield* Effect.findFirst(entry.idleThreadUnloads.keys(), (threadId) =>
+              delegatedChildArchive(threadId).pipe(
+                Effect.map((child) => child === "awaiting_delivery"),
+              ),
+            ),
+          );
         if (hasPendingWork) return;
+        yield* Effect.forEach(
+          entry.idleThreadUnloads,
+          ([threadId, pending]) =>
+            unloadIdleThread({
+              providerSessionId,
+              threadId,
+              generation: pending.generation,
+              archiveOnly: true,
+            }),
+          { discard: true },
+        );
         // Checked under the request permit so a runless request mid-persist is not cancelled.
         const hasUnfinishedRecords = Effect.forEach(entry.attachedThreadIds, (threadId) =>
           projectionStore.getThreadRecords(threadId, ["runtimeRequests", "providerThreads"], {
@@ -2246,7 +2275,7 @@ export const layerWithOptions = (
         yield* releaseEntry({
           providerSessionId,
           reason: "idle_timeout",
-          detail: "Linked environments changed; reopening the provider session.",
+          detail,
           onlyIfIdleGeneration: generation,
           keepIf: hasUnfinishedRecords,
         }).pipe(logReleaseFailure(providerSessionId));
@@ -2998,7 +3027,7 @@ export const layerWithOptions = (
               }
               const key = sessionKey(input.providerSessionId);
               const live = (yield* Ref.get(sessions)).get(key);
-              if (live !== undefined) yield* releaseForLinkedEnvironments(live);
+              if (live !== undefined) yield* releaseIfOutdated(live);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
