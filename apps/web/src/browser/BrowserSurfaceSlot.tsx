@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef } from "react";
+import { type ReactNode, useLayoutEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 
 import { observeResize } from "../lib/observeResize";
 import { acquireBrowserSurface, type BrowserSurfacePlacement } from "./browserSurfaceStore";
@@ -90,6 +91,19 @@ function resolveClipPath(rect: DOMRect, scale: number, ancestors: readonly ClipA
   return `inset(${insets.map((inset) => `${inset}px`).join(" ")}${round})`;
 }
 
+function placeAboveWebview(
+  layer: HTMLElement,
+  placement: BrowserSurfacePlacement,
+  width: number,
+  height: number,
+) {
+  layer.style.width = `${width}px`;
+  layer.style.height = `${height}px`;
+  layer.style.transform = `translate(${placement.x}px, ${placement.y}px) scale(${placement.scale})`;
+  layer.style.clipPath = placement.clipPath;
+  layer.inert = !placement.interactive;
+}
+
 export function BrowserSurfaceSlot(props: {
   readonly tabId: string;
   readonly visible: boolean;
@@ -98,6 +112,7 @@ export function BrowserSurfaceSlot(props: {
   readonly layoutVersion?: string | number;
   readonly className?: string;
   readonly fitSourceContent?: boolean;
+  readonly aboveWebview?: ReactNode;
 }) {
   const {
     tabId,
@@ -107,9 +122,11 @@ export function BrowserSurfaceSlot(props: {
     layoutVersion,
     className,
     fitSourceContent = false,
+    aboveWebview,
   } = props;
   const presentationRef = useRef({ visible, cornerRadius, zIndex });
   const updateRef = useRef<((phase: BrowserSurfaceSlotPhase) => boolean) | null>(null);
+  const aboveWebviewRef = useRef<HTMLDivElement | null>(null);
 
   // The lease lives as long as this element for one tab, so the ref callback owns it.
   const attachSurface = (element: HTMLDivElement) => {
@@ -127,8 +144,9 @@ export function BrowserSurfaceSlot(props: {
       const shown = presentation.visible && element.offsetWidth > 0 && element.offsetHeight > 0;
       if (phase !== "frame") ancestors = clipAncestorsOf(element);
       const key = `${width}:${height}:${shown}:${presentation.cornerRadius}:${presentation.zIndex}`;
+      const presentationChanged = key !== presented;
       // Position alone reaches the store once it settles; size and visibility at once.
-      if (key !== presented || phase !== "frame") {
+      if (presentationChanged || phase !== "frame") {
         const box = {
           x: Math.round(rect.x),
           y: Math.round(rect.y),
@@ -162,6 +180,9 @@ export function BrowserSurfaceSlot(props: {
         placed.clipPath !== next.clipPath ||
         placed.interactive !== next.interactive;
       if (moved || phase !== "frame") lease.place(next);
+      if (aboveWebviewRef.current && (moved || presentationChanged || phase !== "frame")) {
+        placeAboveWebview(aboveWebviewRef.current, next, width, height);
+      }
       placed = next;
       return moved;
     };
@@ -198,5 +219,21 @@ export function BrowserSurfaceSlot(props: {
     zIndex,
   ]);
 
-  return <div ref={attachSurface} className={className} data-browser-surface-slot={tabId} />;
+  return (
+    <>
+      <div ref={attachSurface} className={className} data-browser-surface-slot={tabId} />
+      {aboveWebview === undefined
+        ? null
+        : createPortal(
+            <div
+              ref={aboveWebviewRef}
+              className="pointer-events-none fixed top-0 left-0 origin-top-left"
+              style={{ zIndex: zIndex + 1, borderRadius: cornerRadius }}
+            >
+              {aboveWebview}
+            </div>,
+            document.body,
+          )}
+    </>
+  );
 }
