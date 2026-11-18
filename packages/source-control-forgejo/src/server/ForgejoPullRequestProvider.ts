@@ -297,22 +297,22 @@ export const make = Effect.gen(function* () {
     return markRequiredForgejoChecks(forgejoChecks(statuses.items, pr.html_url), policy);
   });
   /** Undefined when the timeline is too long to reach its end, or the server has none to read. */
-  const readAutoMerge = (input: ProviderRepositoryRef & { readonly number: number }) =>
-    page(
-      { ...input, path: `${issuePath(input)}/timeline` },
-      ForgejoTimelineEvent,
-      TIMELINE_LIMIT,
-    ).pipe(
-      Effect.map(({ items, truncated }) =>
-        truncated ? undefined : forgejoAutoMergeScheduled(items),
-      ),
-      Effect.catchTags({
-        PullRequestProviderError: (error) =>
-          Effect.logWarning("could not read Forgejo auto-merge state", { error }).pipe(
-            Effect.as(undefined),
-          ),
-      }),
-    );
+  const readAutoMerge = Effect.fn("ForgejoPullRequestProvider.readAutoMerge")(
+    function* (input: ProviderRepositoryRef & { readonly number: number }) {
+      const { items, truncated } = yield* page(
+        { ...input, path: `${issuePath(input)}/timeline` },
+        ForgejoTimelineEvent,
+        TIMELINE_LIMIT,
+      );
+      return truncated ? undefined : forgejoAutoMergeScheduled(items);
+    },
+    Effect.catchTags({
+      PullRequestProviderError: (error) =>
+        Effect.logWarning("could not read Forgejo auto-merge state", { error }).pipe(
+          Effect.as(undefined),
+        ),
+    }),
+  );
   /** Forgejo's merge endpoint both merges and, with `merge_when_checks_succeed`, schedules one. */
   const merge = Effect.fn("ForgejoPullRequestProvider.merge")(function* (
     input: ProviderRepositoryRef & {
