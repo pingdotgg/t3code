@@ -13261,7 +13261,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           // Read before closing the live process so a bad path leaves it running.
-          const [appendSystemPromptFileText, toolSearchOverride] = yield* Effect.all(
+          const [appendSystemPromptFileText, toolSearchOverride, forwarderUrl] = yield* Effect.all(
             [
               readClaudeAppendSystemPromptFile({
                 settings: adapterOptions.settings,
@@ -13270,6 +13270,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 path,
               }),
               resolveToolSearchOverride(turnInput.runtimePolicy.cwd, launchArgSettings),
+              requestForwarderUrl(turnInput.runtimePolicy.cwd, launchArgSettings),
             ],
             { concurrency: "unbounded" },
           );
@@ -13292,10 +13293,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const additions = yield* adapterOptions.claudeAdditions ?? Effect.undefined;
-          const forwarderUrl = yield* requestForwarderUrl(
-            turnInput.runtimePolicy.cwd,
-            launchArgSettings,
-          );
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
