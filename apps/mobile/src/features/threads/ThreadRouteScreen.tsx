@@ -481,16 +481,17 @@ function ThreadRouteContent(
   const handlePopOut = () => {
     if (!selectedThread || popOutBusyRef.current) return;
     if (popOutAvailability === "blocked") {
-      Dialog.alert("Can't pop out yet", "Wait for it to finish or stop it first.");
+      Dialog.alert(gt("Can't pop out yet"), gt("Wait for it to finish or stop it first."));
       return;
     }
     const environmentId = selectedThread.environmentId;
     const threadId = selectedThread.id;
     Dialog.confirm({
-      title: "Pop out to top level?",
-      message:
+      title: gt("Pop out to top level?"),
+      message: gt(
         "It becomes an ordinary thread in your list and stops reporting to the thread that started it.",
-      confirmText: "Pop out",
+      ),
+      confirmText: gt("Pop out"),
       onConfirm: () => {
         if (popOutBusyRef.current) return;
         popOutBusyRef.current = true;
@@ -499,8 +500,8 @@ function ThreadRouteContent(
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
               Dialog.alert(
-                "Could not pop out thread",
-                error instanceof Error ? error.message : "Try again.",
+                gt("Could not pop out thread"),
+                error instanceof Error ? error.message : gt("Try again."),
               );
             }
           })

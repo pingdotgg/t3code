@@ -2,10 +2,11 @@ import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import type { ThreadPopOutAvailability } from "@t3tools/client-runtime/state/thread-relationships";
 
-export const POP_OUT_BLOCKED_HINT = "Wait for it to finish or stop it first";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../i18n/messages";
+
+const POP_OUT_BLOCKED_HINT = msg("Wait for it to finish or stop it first");
 
 export type ThreadActionMenuId =
   | "find"
@@ -221,9 +222,11 @@ export function buildThreadActionMenuItems(
       ? [
           {
             id: "pop-out" as const,
-            label: "Pop out to top level",
+            label: resolve(msg("Pop out to top level")),
             icon: "square-arrow-out-up-right",
-            ...(state.popOut === "blocked" ? { disabled: true, detail: POP_OUT_BLOCKED_HINT } : {}),
+            ...(state.popOut === "blocked"
+              ? { disabled: true, detail: resolve(POP_OUT_BLOCKED_HINT) }
+              : {}),
           },
         ]
       : []),

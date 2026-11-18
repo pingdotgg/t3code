@@ -48,9 +48,9 @@ export function ThreadHeader(props: {
     : [];
   if (props.onPopOut) {
     actions.push({
-      accessibilityLabel: "Pop out to top level",
+      accessibilityLabel: gt("Pop out to top level"),
       icon: "arrow.up.right.circle",
-      subtitle: "Make it an ordinary thread",
+      subtitle: gt("Make it an ordinary thread"),
       overflowOnly: true,
       separateBackground: false,
       onPress: props.onPopOut,

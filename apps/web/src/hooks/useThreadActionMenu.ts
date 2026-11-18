@@ -288,7 +288,7 @@ export function useThreadActionMenu(input: {
           markThreadUnread(threadRef);
           return;
         case "pop-out":
-          await reportFailure("Failed to pop out thread", () => popOutThread(threadRef));
+          await reportFailure(m(msg("Failed to pop out thread")), () => popOutThread(threadRef));
           return;
         case "share-guest":
           openGuestShareDialog(threadRef);

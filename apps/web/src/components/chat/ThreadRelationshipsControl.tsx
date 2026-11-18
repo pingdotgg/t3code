@@ -92,7 +92,6 @@ import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadR
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 import { resolveThreadOpenRoute } from "../../lib/sideChatPane";
 import { usePopOutThread } from "../../hooks/useThreadActions";
-import { POP_OUT_BLOCKED_HINT } from "../threadActionMenu.logic";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -233,7 +232,9 @@ function relationshipHint(
       : resolve(msg("Open parent agent in this chat"));
   }
   if (edge.kind === "popped_out") {
-    return edge.sourceThreadId === currentThreadId ? "Popped out" : "Former parent";
+    return edge.sourceThreadId === currentThreadId
+      ? resolve(msg("Popped out"))
+      : resolve(msg("Former parent"));
   }
   return edge.sourceThreadId === currentThreadId
     ? resolve(msg("Open fork in this chat"))
@@ -788,7 +789,7 @@ export function ThreadRelationshipsPanel(props: {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Could not pop out thread",
+        title: gt("Could not pop out thread"),
         description: error instanceof Error ? error.message : undefined,
       });
     }
@@ -1056,7 +1057,7 @@ export function ThreadRelationshipsPanel(props: {
                       size="icon-xs"
                       variant="ghost"
                       part="icon"
-                      aria-label={`Pop out ${threadTitle} to top level`}
+                      aria-label={gt("Pop out {threadTitle} to top level", { threadTitle })}
                       disabled={poppingOutId !== null}
                       // Still focusable and hoverable, so the blocked hint can show.
                       aria-disabled={popOutAvailability === "blocked" || undefined}
@@ -1074,8 +1075,8 @@ export function ThreadRelationshipsPanel(props: {
                 </TooltipTrigger>
                 <TooltipPopup side="left">
                   {popOutAvailability === "blocked"
-                    ? `Pop out to top level. ${POP_OUT_BLOCKED_HINT}.`
-                    : "Pop out to top level"}
+                    ? gt("Pop out to top level. Wait for it to finish or stop it first.")
+                    : gt("Pop out to top level")}
                 </TooltipPopup>
               </Tooltip>
             ) : null}
