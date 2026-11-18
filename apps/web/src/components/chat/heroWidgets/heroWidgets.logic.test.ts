@@ -82,7 +82,7 @@ describe("heroWidgetArea", () => {
       detailsLeft: 1542,
     });
     expect(center(beside)).toBe(1018 / 2);
-    expect(378 + beside.left + beside.width).toBeLessThanOrEqual(1542 - DETAILS_CARD_CLEARANCE);
+    expect(378 + beside.left + beside.width).toBe(1542 - DETAILS_CARD_CLEARANCE);
     // The details card at 730 pulls the composer lane left to 48..698.
     expect(
       heroWidgetArea({ ...pane, stackLeft: 48, stackWidth: 650, detailsLeft: 730 }),

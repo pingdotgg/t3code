@@ -162,7 +162,7 @@ export function heroWidgetArea(pane: HeroPane): HeroArea {
   );
   const axis = pane.stackLeft + pane.stackWidth / 2;
   const half = Math.max(0, Math.min(axis - gutter, end - axis));
-  const width = 2 * Math.floor(Math.min(maxWidth, 2 * half) / 2);
+  const width = Math.floor(Math.min(maxWidth, 2 * half));
   return {
     left: (pane.stackWidth - width) / 2,
     width,
