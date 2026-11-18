@@ -2,10 +2,11 @@
 // app. `t3-mobile.ts` is the same for the iOS app.
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { test as base } from "@e2e-dev/web";
-import { expect } from "e2e";
+import { test as base, type Cookie } from "@e2e-dev/web";
 import { CommandId, EnvironmentHttpApi, type ProjectMutation, ProjectId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { getPairingTokenFromUrl } from "@t3tools/shared/remote";
+import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,7 +14,7 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import { Cookies, FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
 import { APP_DIR, T3_HOME } from "../e2e.config.ts";
 import { run, ScenarioError } from "./shell.ts";
@@ -223,6 +224,41 @@ const readPairingPath = Effect.gen(function* () {
   return yield* fs.readFileString(path.join(T3_HOME, "pairing-path"));
 });
 
+const sameSite = { lax: "Lax", strict: "Strict", none: "None" } as const;
+
+/**
+ * Signs in the way the pairing page does and returns the session cookies. Opening the page
+ * instead races its reload after sign-in against the test's next `app.open`.
+ */
+const signIn = Effect.fn("scenario.signIn")(function* (baseUrl: string) {
+  const credential = getPairingTokenFromUrl(new URL(yield* readPairingPath, baseUrl));
+  if (credential === null) {
+    return yield* new ScenarioError({ message: "The pairing link holds no token." });
+  }
+  const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl });
+  // Only the cookies are read: a proof runs this against a base server whose body may differ.
+  const response = yield* client.auth
+    .browserSession({ payload: { credential }, responseMode: "response-only" })
+    .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+  // Drops the expired cookies that only clear an older session.
+  const cookies = Cookies.mergeIntoArray(
+    [],
+    baseUrl,
+    response.cookies,
+    yield* Clock.currentTimeMillis,
+  );
+  return cookies.map(({ name, value, options = {} }): Cookie => ({
+    name,
+    value,
+    // The server sets no Domain and `Path=/`, which is what a cookie for the origin gets.
+    url: baseUrl,
+    ...(options.expires && { expires: Math.floor(options.expires.getTime() / 1000) }),
+    ...(options.httpOnly !== undefined && { httpOnly: options.httpOnly }),
+    ...(options.secure !== undefined && { secure: options.secure }),
+    ...(options.sameSite && { sameSite: sameSite[options.sameSite] }),
+  }));
+}, Effect.provide(FetchHttpClient.layer));
+
 /** The id every thread link starts with, asked of the server the app talks to. */
 const environmentId = (baseUrl: string) =>
   HttpClient.get(`${baseUrl}/.well-known/t3/environment`).pipe(
@@ -240,14 +276,13 @@ export const test = base.extend<{ t3: T3 }>({
     await use({
       ...state,
       open: async (target = "/") => {
-        await app.open(await runPromise(readPairingPath));
-        // The pairing page signs in and then leaves itself. Going anywhere before it has done
-        // so cancels the sign-in, and the next page is the pairing page again.
-        await expect(browser).not.toHaveURL(/\/pair(?:[?#]|$)/, { timeout: 60_000 });
-        if (typeof target !== "string") {
-          const environment = await runPromise(environmentId(app.baseUrl ?? ""));
-          await app.open(`/${environment}/${target.threadId}`);
-        } else if (target !== "/") await app.open(target);
+        const baseUrl = app.baseUrl ?? "";
+        await browser.setCookies(await runPromise(signIn(baseUrl)));
+        await app.open(
+          typeof target === "string"
+            ? target
+            : `/${await runPromise(environmentId(baseUrl))}/${target.threadId}`,
+        );
       },
     });
     await runPromise(cleanup);
