@@ -127,9 +127,11 @@ export function BrowserSurfaceSlot(props: {
   const presentationRef = useRef({ visible, cornerRadius, zIndex });
   const updateRef = useRef<((phase: BrowserSurfaceSlotPhase) => boolean) | null>(null);
   const aboveWebviewRef = useRef<HTMLDivElement | null>(null);
+  const slotRef = useRef<HTMLDivElement | null>(null);
 
   // The lease lives as long as this element for one tab, so the ref callback owns it.
   const attachSurface = (element: HTMLDivElement) => {
+    slotRef.current = element;
     let lease = acquireBrowserSurface(tabId, fitSourceContent);
     let ancestors = clipAncestorsOf(element);
     let presented = "";
@@ -200,6 +202,7 @@ export function BrowserSurfaceSlot(props: {
       kickBrowserSurfaceTracking();
     });
     return () => {
+      if (slotRef.current === element) slotRef.current = null;
       stopObserving();
       stopTracking();
       if (updateRef.current === update) updateRef.current = null;
@@ -227,6 +230,15 @@ export function BrowserSurfaceSlot(props: {
         : createPortal(
             <div
               ref={aboveWebviewRef}
+              onPointerDownCapture={(event) => {
+                // Portaled controls claim pane focus through their slot, as guest presses do.
+                slotRef.current?.dispatchEvent(
+                  new PointerEvent("pointerdown", {
+                    bubbles: true,
+                    pointerType: event.pointerType,
+                  }),
+                );
+              }}
               className="pointer-events-none fixed top-0 left-0 origin-top-left"
               style={{ zIndex: zIndex + 1, borderRadius: cornerRadius }}
             >

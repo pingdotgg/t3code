@@ -146,6 +146,8 @@ it("keeps a desktop browser's controls above its hosted webview from inside an i
     </RegistryContext.Provider>,
     { container: isolatedPane },
   );
+  const claimPaneFocus = vi.fn();
+  isolatedPane.addEventListener("pointerdown", claimPaneFocus);
   const hostedWebviewWrapper = document.createElement("div");
   hostedWebviewWrapper.style.cssText = `position:fixed;inset:0;z-index:${PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX}`;
   document.body.append(hostedWebviewWrapper);
@@ -165,4 +167,9 @@ it("keeps a desktop browser's controls above its hosted webview from inside an i
 
   await act(() => (close as HTMLElement).focus());
   expect(close.contains(hit(close))).toBe(true);
+  await page.getByRole("button", { name: "Close floating preview" }).click();
+  expect(claimPaneFocus).toHaveBeenCalledOnce();
+  expect(
+    selectThreadPreviewMiniPlayer(usePreviewMiniPlayerStore.getState().byThreadKey, threadRef),
+  ).toBeNull();
 });
