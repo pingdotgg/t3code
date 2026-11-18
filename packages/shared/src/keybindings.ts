@@ -71,6 +71,8 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
   { key: "mod+shift+d", command: "composer.dictation", when: "!terminalFocus" },
+  { key: "ctrl+shift+v", command: "voice.cycle", when: "!terminalFocus" },
+  { key: "ctrl+shift+b", command: "voice.off", when: "!terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
   { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
   { key: "ctrl+alt+[", command: "terminal.previous", when: "terminalFocus && !isMac" },

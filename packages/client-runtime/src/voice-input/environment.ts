@@ -245,6 +245,28 @@ export const cancelEnvironmentSpeechModelDownload = (
     run: ({ client, headers }) => client.cancelModelDownload({ headers, payload: { modelId } }),
   });
 
+/** Downloads and loads the reply voice, so the first spoken reply starts quickly. */
+export const prepareEnvironmentSpeech = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.prepareSpeech(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.prepareSpeech({ headers }),
+  });
+
+/** Reads one sentence aloud with the environment's voice; resolves to WAV bytes. */
+export const speakEnvironmentText = (prepared: PreparedConnection, text: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.speak(),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.speak({ headers, payload: { text } }),
+  });
+
 export const transcribeEnvironmentPcm = (
   prepared: PreparedConnection,
   pcm: Uint8Array,

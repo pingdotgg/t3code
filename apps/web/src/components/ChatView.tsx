@@ -390,6 +390,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { setVoiceThread, voiceThreadAtom } from "../speech/voiceReplies";
 import { assetEnvironment } from "../state/assets";
 import { readEnvironmentScope, readPreparedConnection } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -2948,6 +2949,26 @@ export default function ChatView(props: ChatViewProps) {
       ...threadLifecycleShortcuts,
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReference();
+      },
+      "voice.cycle": ({ event }) => {
+        if (!isServerThread || activeThreadRef === null) return false;
+        if (event.repeat) return;
+        void setVoiceThread(appAtomRegistry, activeThreadRef).then(
+          (saved) =>
+            saved &&
+            toastManager.add({
+              type: "info",
+              title: "Voice on",
+              description: "Replies in this thread are read aloud.",
+            }),
+        );
+      },
+      "voice.off": ({ event }) => {
+        if (appAtomRegistry.get(voiceThreadAtom) === null) return false;
+        if (event.repeat) return;
+        void setVoiceThread(appAtomRegistry, null).then(
+          (saved) => saved && toastManager.add({ type: "info", title: "Voice off" }),
+        );
       },
       "chat.find": () => {
         if (!isServerThread || serverConfig?.threadFind !== true || activeThreadKey === null)
