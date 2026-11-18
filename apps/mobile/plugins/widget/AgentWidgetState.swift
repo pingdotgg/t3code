@@ -10,6 +10,7 @@ enum AgentWidgetState {
       "updatedAt": ISO8601DateFormatter().string(from: now), "activities": [[String: Any]]()
     ]
     base = base.filter { !($0.value is NSNull) }
+    base["text"] = localObservation?["text"] as? [String: Any]
     base["isExpired"] = false
     base["isStale"] = false
     base["expiresAt"] = freshnessDeadline.timeIntervalSince1970 * 1000

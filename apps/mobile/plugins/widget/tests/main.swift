@@ -17,10 +17,12 @@ func row(_ environmentId: String, _ phase: String) -> [String: Any] {
 }
 func props(_ entry: [String: Any]) -> [String: Any] { entry["props"] as! [String: Any] }
 let running: [String: Any] = ["activeCount": 1, "totalCount": 1, "updatedAt": "old unchanged observation", "activities": [row("relay", "running")]]
-let local: [String: Any] = ["activeCount": 2, "totalCount": 3, "expiresAt": now.addingTimeInterval(600).timeIntervalSince1970 * 1000,
+let translatedText: [String: Any] = ["working": ["1": "1 en cours"], "done": "Terminé", "needAttention": ["1": "1 demande votre attention"]]
+let local: [String: Any] = ["text": translatedText, "activeCount": 2, "totalCount": 3, "expiresAt": now.addingTimeInterval(600).timeIntervalSince1970 * 1000,
   "activities": [row("relay", "running"), row("direct", "waiting_for_input"), row("direct", "failed")]]
 let entries = AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: local, now: now)
 assert(entries.count == 3)
+assert(entries.allSatisfy { (props($0)["text"] as? NSDictionary)?.isEqual(to: translatedText) == true })
 assert(props(entries[0])["activeCount"] as? Int == 2)
 let directExpired = props(entries[1])["activities"] as! [[String: Any]]
 assert(directExpired.map { $0["phase"] as! String } == ["running", "stale", "failed"])
