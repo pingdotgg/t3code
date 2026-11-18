@@ -678,6 +678,12 @@ describe("serverSettings helpers", () => {
 
     const removed = applyServerSettingsPatch(added, { usageLimitSources: { [hubA]: null } });
     expect(Object.keys(removed.usageLimitSources)).toEqual([hubB]);
+    const toggled = applyServerSettingsPatch(removed, {
+      usageLimitSources: { [hubA]: { threadAccounts: true }, [hubB]: { threadAccounts: true } },
+    });
+    expect(toggled.usageLimitSources).toEqual({
+      [hubB]: { ...source("http://b:8318"), threadAccounts: true },
+    });
   });
 
   it("upserts and removes secretProviders per entry so concurrent edits cannot clobber", () => {

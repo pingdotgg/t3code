@@ -503,11 +503,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
   // Pops the hub's usage queue: records read here are gone for every other reader.
   const readSessionAccounts = Effect.fn("CliproxyApi.readSessionAccounts")(function* (
     config: CliproxyHub,
+    shouldRead: Effect.Effect<boolean> = Effect.succeed(true),
   ) {
     // Accounts first: a failed lookup after the pop would lose those records for good.
     const accounts = new Map(
       (yield* authFiles(config)).map((account) => [account.auth_index, account]),
     );
+    if (!(yield* shouldRead)) return [];
     // Records without a session or account, or not JSON objects, carry nothing to match.
     const records = (yield* decodeUsageQueue(
       yield* management(config, "usage-queue?count=1000"),

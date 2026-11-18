@@ -589,7 +589,14 @@ it.effect("drops a queue read that lands after Thread accounts was switched off"
           request,
           url.pathname.endsWith("/auth-files")
             ? Response.json({
-                files: [{ id: "claude-a.json", auth_index: "a", provider: "claude" }],
+                files: [
+                  {
+                    id: "claude-a.json",
+                    auth_index: "a",
+                    provider: "claude",
+                    email: "a@example.com",
+                  },
+                ],
               })
             : Response.json({ status_code: 200, body: JSON.stringify({}) }),
         ),
@@ -628,6 +635,10 @@ it.effect("drops a queue read that lands after Thread accounts was switched off"
     yield* Deferred.await(completed);
 
     const snapshots = yield* sources.current;
+    expect(snapshots[0]?.accounts[0]).toMatchObject({
+      id: "claude-a.json",
+      email: "a@example.com",
+    });
     expect(snapshots[0]?.accounts[0]?.sessionIds).toBe(undefined);
   }).pipe(
     Effect.provide([

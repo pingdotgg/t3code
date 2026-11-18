@@ -1973,7 +1973,12 @@ export const ServerSettingsPatch = Schema.Struct({
   providerInstances: Schema.optionalKey(Schema.Record(ProviderInstanceId, ProviderInstanceConfig)),
   // Merge per source to avoid racing other edits; null removes an entry.
   usageLimitSources: Schema.optionalKey(
-    Schema.Record(UsageLimitSourceId, Schema.NullOr(UsageLimitSourceConfig)),
+    Schema.Record(
+      UsageLimitSourceId,
+      Schema.NullOr(
+        Schema.Union([UsageLimitSourceConfig, Schema.Struct({ threadAccounts: Schema.Boolean })]),
+      ),
+    ),
   ),
   // Merge per entry like usageLimitSources; null removes an entry.
   textGenerators: Schema.optionalKey(

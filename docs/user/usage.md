@@ -194,10 +194,10 @@ instance is skipped. With several hub accounts, or while a hub cannot be read, t
 check **Usage → Limits**.
 
 To show the right account when a hub has several, turn on **Thread accounts** for that hub. T3 then
-reads which account served each thread from the hub's usage queue and shows that account's limits,
+reads which account served each thread from the hub's usage queue and, after finding a matching record, shows that account's limits,
 even when the CLI itself is signed in to another account, as Codex can be while it sends through the hub. The
 hub needs `usage-statistics-enabled` and session affinity turned on. Reading the queue removes its
-records, so another tool or environment reading the same queue misses the ones T3 took.
+records, so another tool or environment reading the same queue misses the ones T3 took. Until T3 sees a matching record, including when another reader took it, the thread keeps its native limits or the single-account fallback above.
 
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same

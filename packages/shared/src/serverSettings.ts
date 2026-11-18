@@ -22,6 +22,7 @@ import {
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
+  type UsageLimitSourceConfig,
   withIdleCompaction,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
@@ -248,6 +249,19 @@ function mergeSettingsEntries<Value>(
     }
   }
   return Object.fromEntries(next);
+}
+
+function mergeUsageLimitSources(
+  current: ServerSettings["usageLimitSources"],
+  patch: NonNullable<ServerSettingsPatch["usageLimitSources"]>,
+): Record<string, UsageLimitSourceConfig> {
+  const next: Record<string, UsageLimitSourceConfig> = { ...current };
+  for (const [id, config] of Object.entries(patch)) {
+    if (config === null) delete next[id];
+    else if ("kind" in config) next[id] = config;
+    else if (next[id]) next[id] = { ...next[id], threadAccounts: config.threadAccounts };
+  }
+  return next;
 }
 
 // Secret persistence keys tokens by trimmed, lowercased host, so merge on the same key.
@@ -614,7 +628,7 @@ export function applyServerSettingsPatch(
       : {}),
     ...(usageLimitSourcesPatch !== undefined
       ? {
-          usageLimitSources: mergeSettingsEntries(
+          usageLimitSources: mergeUsageLimitSources(
             current.usageLimitSources,
             usageLimitSourcesPatch,
           ),

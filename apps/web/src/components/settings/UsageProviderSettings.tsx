@@ -89,7 +89,7 @@ export function UsageProviderSettings({
                       disabled={readOnly}
                       onCheckedChange={(threadAccounts) =>
                         updateSettings({
-                          usageLimitSources: { [id]: { ...source, threadAccounts } },
+                          usageLimitSources: { [id]: { threadAccounts } },
                         })
                       }
                     />

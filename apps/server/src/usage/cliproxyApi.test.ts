@@ -471,6 +471,18 @@ describe("CLIProxyAPI built-in management API", () => {
         ],
       });
       const api = yield* test.api;
+      expect(
+        yield* api.readSessionAccounts(
+          config,
+          Effect.sync(() => {
+            expect(test.requests.some((request) => request.path.endsWith("/auth-files"))).toBe(
+              true,
+            );
+            return false;
+          }),
+        ),
+      ).toEqual([]);
+      expect(test.requests.some((request) => request.path.endsWith("/usage-queue"))).toBe(false);
       expect(yield* api.readSessionAccounts(config)).toEqual([
         {
           sessionId: "session-1",

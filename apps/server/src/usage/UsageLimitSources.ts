@@ -287,7 +287,16 @@ export const make = Effect.gen(function* () {
         readManagementKey(config).pipe(
           Effect.flatMap((managementKey) =>
             managementKey.length > 0
-              ? api.readSessionAccounts({ url: config.url, managementKey })
+              ? api.readSessionAccounts(
+                  { url: config.url, managementKey },
+                  Effect.gen(function* () {
+                    const latest = yield* settingsService.getSettings;
+                    const current = latest.usageLimitSources[id as UsageLimitSourceId];
+                    if (!current?.enabled || !current.threadAccounts || current.url !== config.url)
+                      return false;
+                    return (yield* readManagementKey(current)) === managementKey;
+                  }).pipe(Effect.orElseSucceed(() => false)),
+                )
               : Effect.succeed([]),
           ),
           Effect.orElseSucceed(() => []),
