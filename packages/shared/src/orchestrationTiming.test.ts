@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  deriveSubagentElapsedMs,
-  formatDuration,
-  formatLiveDuration,
-} from "./orchestrationTiming.ts";
+import { deriveSubagentElapsedMs, formatDuration } from "./orchestrationTiming.ts";
+import { formatLiveDuration } from "./orchestrationTimingCopy.ts";
 
 describe("formatDuration", () => {
   it.each([

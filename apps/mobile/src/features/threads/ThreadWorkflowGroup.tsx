@@ -10,11 +10,9 @@ import {
   type OrchestrationV2Subagent,
   type ServerProvider,
 } from "@t3tools/contracts";
-import {
-  deriveSubagentElapsedMs,
-  formatDuration,
-  formatLiveDuration,
-} from "@t3tools/shared/orchestrationTiming";
+import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
+import { formatDuration, formatLiveDuration } from "@t3tools/shared/orchestrationTimingCopy";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useState, type ReactNode } from "react";
 import { ScrollView, View } from "react-native";
 
@@ -53,14 +51,16 @@ export function ThreadWorkflowGroup(props: {
   readonly onOpen: (threadId: ThreadId) => void;
 }) {
   const { group } = props;
+  const gt = useGT();
+  const m = useMessages();
   const provider = useEnvironmentServerConfig(props.environmentId)?.providers.find(
     (candidate) => candidate.instanceId === props.subagent.providerInstanceId,
   );
   const [selected, setSelected] = useState<string | null>(null);
-  const rail = workflowRail(group);
+  const rail = workflowRail(group, m);
   const open = rail.find((item) => item.key === selected);
   const label = group.workflow.workflowName ?? group.workflow.title;
-  const statusLabel = resolveSubagentRowPresentation(props.subagent).statusLabel;
+  const statusLabel = resolveSubagentRowPresentation(props.subagent, false, m).statusLabel;
 
   return (
     <View className="my-2">
@@ -68,8 +68,8 @@ export function ThreadWorkflowGroup(props: {
         <View className="flex-row items-center">
           <RowPressable
             accessibilityRole="button"
-            accessibilityLabel={`${label} workflow, ${statusLabel}`}
-            accessibilityHint={open ? "Collapses the workflow" : "Opens the current phase"}
+            accessibilityLabel={gt("{label} workflow, {status}", { label, status: statusLabel })}
+            accessibilityHint={open ? gt("Collapses the workflow") : gt("Opens the current phase")}
             accessibilityState={{ expanded: open !== undefined }}
             disabled={rail.length === 0}
             onPress={() => setSelected(nextWorkflowSelection(rail, selected))}
@@ -113,7 +113,24 @@ export function ThreadWorkflowGroup(props: {
                   icon={RAIL_ICON[item.tone]}
                   label={count ? `${count} ${item.title}` : item.title}
                   selected={item.key === selected}
-                  accessibilityLabel={`${item.title} phase, ${item.tone}${count ? `, ${count} completed` : ""}`}
+                  accessibilityLabel={
+                    count
+                      ? gt(
+                          "{title} phase, {tone, select, working {working} completed {completed} failed {failed} stopped {stopped} other {queued}}, {count} completed",
+                          {
+                            title: item.title,
+                            tone: item.tone,
+                            count,
+                          },
+                        )
+                      : gt(
+                          "{title} phase, {tone, select, working {working} completed {completed} failed {failed} stopped {stopped} other {queued}}",
+                          {
+                            title: item.title,
+                            tone: item.tone,
+                          },
+                        )
+                  }
                   onPress={() => setSelected(nextWorkflowSelection(rail, selected, item.key))}
                 />
               );
@@ -125,7 +142,7 @@ export function ThreadWorkflowGroup(props: {
             textRole="footnote"
             className="border-t border-border-subtle px-4 py-3 text-foreground-muted"
           >
-            No agents yet
+            <T>No agents yet</T>
           </Text>
         ) : (
           open.members.map((member) => (
@@ -150,20 +167,26 @@ function WorkflowMemberRow(props: {
   readonly onOpen: (threadId: ThreadId) => void;
 }) {
   const { member } = props;
+  const gt = useGT();
+  const m = useMessages();
   const threadId = member.childThreadId === null ? null : ThreadId.make(member.childThreadId);
   const shell = useThreadShell(
     threadId === null ? null : scopeThreadRef(props.environmentId, threadId),
   );
   const canOpen = threadId !== null && shell !== null;
-  const presentation = resolveSubagentRowPresentation({
-    title: member.title,
-    prompt: "",
-    status: member.status,
-    result: null,
-    childThreadId: threadId,
-  });
+  const presentation = resolveSubagentRowPresentation(
+    {
+      title: member.title,
+      prompt: "",
+      status: member.status,
+      result: null,
+      childThreadId: threadId,
+    },
+    false,
+    m,
+  );
   const { detail, error } = workflowMemberDetail(member);
-  const metadata = workflowMemberMetadata(member, props.provider);
+  const metadata = workflowMemberMetadata(member, props.provider, m);
   const labels = [metadata.model, metadata.effort].filter((value) => value !== null);
   return (
     <RowPressable
@@ -175,7 +198,9 @@ function WorkflowMemberRow(props: {
         ...(metadata.speed === null ? [] : [metadata.speed]),
         ...(error === null ? [] : [error]),
       ].join(", ")}
-      accessibilityHint={canOpen ? "Opens this agent's thread" : "Its thread is not available yet"}
+      accessibilityHint={
+        canOpen ? gt("Opens this agent's thread") : gt("Its thread is not available yet")
+      }
       disabled={!canOpen}
       onPress={() => threadId !== null && props.onOpen(threadId)}
       className="min-h-11 flex-row gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
@@ -288,7 +313,8 @@ type ElapsedTiming = Parameters<typeof deriveSubagentElapsedMs>[0];
 function useElapsedLabel(timing: ElapsedTiming): string | null {
   const live = isActiveSubagentStatus(timing.status);
   const nowMs = useVisibleSecondClock(live);
+  const messages = useMessages();
   const elapsedMs = deriveSubagentElapsedMs(timing, nowMs);
   if (elapsedMs === null || (!live && elapsedMs === 0)) return null;
-  return live ? formatLiveDuration(elapsedMs) : formatDuration(elapsedMs);
+  return live ? formatLiveDuration(elapsedMs, messages) : formatDuration(elapsedMs, messages);
 }
