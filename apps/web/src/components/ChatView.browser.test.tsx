@@ -31,6 +31,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadDetails } from "~/state/threads";
+import { serverEnvironment } from "~/state/server";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
@@ -613,6 +614,37 @@ it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel"
   await userEvent.keyboard("{Control>}t{/Control}");
   await expect.element(page.getByRole("menuitem", { name: /Files/ })).toBeVisible();
   await expect.element(toggle).toHaveAttribute("aria-pressed", "true");
+});
+
+it("a custom scroll shortcut works after clicking assistant text without typing in the composer", async () => {
+  await page.viewport(1280, 800);
+  const thread = threadWithHistory("thread-scroll-shortcut", 1);
+  const config = serverEnvironment.configProjection({ environmentId: ENVIRONMENT_ID, input: {} });
+  using _config = { [Symbol.dispose]: () => appAtomRegistry.refresh(config) };
+  using _environment = installFakeEnvironment([thread], {
+    keybindings: mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "g", command: "chat.scrollToEnd", when: "messageAreaFocus || composerFocus" },
+      ]),
+    ),
+  });
+  appAtomRegistry.refresh(config);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using screen = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await userEvent.click(screen.getByText("Answer 0 for thread-scroll-shortcut.", { exact: true }));
+  expect(document.activeElement?.hasAttribute("data-assistant-citation-source")).toBe(true);
+  await userEvent.keyboard("g");
+  expect(screen.getByTestId("composer-editor").element().textContent).toBe("");
 });
 
 it("selecting a side-chat tab focuses that side chat's composer", async () => {
