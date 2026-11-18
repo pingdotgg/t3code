@@ -3372,7 +3372,6 @@ export default function ChatView(props: ChatViewProps) {
           state={deviceState}
         />
       )}
-      {rightPanelControlsAtRoot && !embedded ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -4085,6 +4084,9 @@ export default function ChatView(props: ChatViewProps) {
           {rightPanelContent}
         </ChatRightPanel>
       ) : null}
+
+      {/* Electron caption hit-testing gives later no-drag regions precedence. */}
+      {rightPanelControlsAtRoot && !embedded ? panelLayoutControls : null}
 
       <RevertConfirmHost
         threadKey={routeThreadKey}
