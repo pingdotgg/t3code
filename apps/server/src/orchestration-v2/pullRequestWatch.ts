@@ -37,6 +37,16 @@ const isFailedCheck = (check: PullRequestCheck) =>
 const workflowRunOf = (url: string | null) => url?.match(/^.*\/actions\/runs\/\d+/)?.[0] ?? null;
 const approvalKey = (check: PullRequestCheck) => workflowRunOf(check.url) ?? check.name;
 
+function immutableFailureKey(head: string | null, check: PullRequestCheck): string | undefined {
+  // GitHub allocates a new job id for every run attempt. URLs without that
+  // immutable identity retain the existing transition-based reporting policy.
+  const job = check.url?.match(
+    /^(https:\/\/[^/]+\/[^/]+\/[^/]+\/actions\/runs\/\d+(?:\/attempts\/\d+)?\/job\/\d+)(?:$|[?#])/,
+  )?.[1];
+  if (head === null || job === undefined) return;
+  return JSON.stringify([head, job.toLowerCase(), check.status]);
+}
+
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
@@ -61,6 +71,7 @@ export function evaluatePullRequestWatch(
 
   // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
+  const reportedFailures = new Set(watch.reportedFailures ?? []);
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
@@ -77,7 +88,16 @@ export function evaluatePullRequestWatch(
   if (checks.length > 0) {
     // A run awaiting approval waits on a person, like a review, so only running checks count.
     checksPending = checks.some((check) => check.status === "pending");
-    const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
+    const newlyFailed = failed.filter((check) => {
+      const key = immutableFailureKey(headSha, check);
+      return key !== undefined && watch.reportedFailures !== undefined
+        ? !reportedFailures.has(key)
+        : !failedChecks.includes(check.name);
+    });
+    for (const check of failed) {
+      const key = immutableFailureKey(headSha, check);
+      if (key !== undefined) reportedFailures.add(key);
+    }
     if (!checksBaseline && newlyFailed.length > 0) {
       changes.push({ kind: "checks-failed", failed: newlyFailed });
     }
@@ -238,6 +258,9 @@ export function evaluatePullRequestWatch(
       startedAt: watch.startedAt,
       headSha,
       failedChecks,
+      ...(reportedFailures.size > 0 || watch.reportedFailures !== undefined
+        ? { reportedFailures: [...reportedFailures] }
+        : {}),
       passed,
       passedChecks,
       owedChecks,
