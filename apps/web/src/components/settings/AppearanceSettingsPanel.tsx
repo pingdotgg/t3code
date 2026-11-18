@@ -23,7 +23,15 @@ import { useCustomThemes } from "../../hooks/useCustomThemes";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { useTheme } from "../../hooks/useTheme";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  Select,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ThemeLibrary } from "./ThemeSettings";
 import {
@@ -37,6 +45,8 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
+import { CodeFontPreview } from "./SettingsFontPreviews";
+import { CODE_THEME_OPTIONS, IMPORTED_CODE_THEME_PREFIX } from "../../lib/diffRendering";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: msg("Artwork"),
@@ -84,6 +94,105 @@ const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
   label: msg("Word", { $context: "show effort as a word" }),
   bars: msg("Bars", { $context: "show effort as bars" }),
 };
+
+function CodeThemeSettingsRow() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const customThemes = useCustomThemes();
+  const halves = [
+    {
+      appearance: "light",
+      label: gt("Light", { $context: "appearance" }),
+      ariaLabel: gt("Light code theme"),
+      value: settings.codeThemeLight,
+    },
+    {
+      appearance: "dark",
+      label: gt("Dark", { $context: "appearance" }),
+      ariaLabel: gt("Dark code theme"),
+      value: settings.codeThemeDark,
+    },
+  ] as const;
+  const isDefault =
+    settings.codeThemeLight === DEFAULT_UNIFIED_SETTINGS.codeThemeLight &&
+    settings.codeThemeDark === DEFAULT_UNIFIED_SETTINGS.codeThemeDark;
+  return (
+    <SettingsRow
+      {...searchableSetting("code-theme")}
+      description={gt("Syntax colors for code in chat, files, and diffs.")}
+      resetAction={
+        isDefault ? null : (
+          <SettingResetButton
+            ariaLabel={gt("Reset code theme to default")}
+            onClick={() =>
+              updateSettings({
+                codeThemeLight: DEFAULT_UNIFIED_SETTINGS.codeThemeLight,
+                codeThemeDark: DEFAULT_UNIFIED_SETTINGS.codeThemeDark,
+              })
+            }
+          />
+        )
+      }
+      control={
+        <div className="flex w-full gap-2 sm:w-auto">
+          {halves.map(({ appearance, label, ariaLabel, value }) => {
+            const importedOptions = customThemes.flatMap((theme) =>
+              theme.syntax?.[appearance]
+                ? [{ id: `${IMPORTED_CODE_THEME_PREFIX}${theme.id}`, label: theme.label }]
+                : [],
+            );
+            const selected = [...CODE_THEME_OPTIONS[appearance], ...importedOptions].find(
+              (option) => option.id === value,
+            );
+            return (
+              <Select
+                key={appearance}
+                value={selected?.id ?? ""}
+                onValueChange={(next) => {
+                  const codeTheme = next ?? "";
+                  updateSettings(
+                    appearance === "light"
+                      ? { codeThemeLight: codeTheme }
+                      : { codeThemeDark: codeTheme },
+                  );
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0 sm:w-40" aria-label={ariaLabel}>
+                  <span className="text-muted-foreground">{label}</span>
+                  <SelectValue>{selected?.label ?? gt("Default")}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="">{gt("Default")}</SelectItem>
+                  {CODE_THEME_OPTIONS[appearance].map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                  {importedOptions.length > 0 ? (
+                    <SelectGroup>
+                      <SelectGroupLabel>
+                        {gt("Imported", { $context: "imported themes" })}
+                      </SelectGroupLabel>
+                      {importedOptions.map((option) => (
+                        <SelectItem key={option.id} value={option.id}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ) : null}
+                </SelectPopup>
+              </Select>
+            );
+          })}
+        </div>
+      }
+    >
+      <CodeFontPreview />
+    </SettingsRow>
+  );
+}
 
 export function AppearanceSettingsPanel() {
   const searchableSetting = useSearchableSetting();
@@ -261,6 +370,8 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+
+        <CodeThemeSettingsRow />
 
         <SettingsRow
           {...searchableSetting("chat-width")}

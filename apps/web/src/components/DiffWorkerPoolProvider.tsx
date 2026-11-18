@@ -5,12 +5,12 @@ import * as Schema from "effect/Schema";
 import { T } from "gt-react";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { getRenderedAppearance, subscribeRenderedAppearance } from "../hooks/useTheme";
-import { resolveDiffThemeName } from "../lib/diffRendering";
+import { getDiffThemeNames, subscribeDiffThemeNames } from "../hooks/useSettings";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 
 export class DiffWorkerError extends Schema.TaggedError<DiffWorkerError>()("DiffWorkerError", {
   operation: Schema.Literals(["create-worker", "get-render-options", "set-render-options"]),
-  themeName: Schema.Literals(["pierre-dark", "t3-light"]),
+  themeName: Schema.String,
   cause: Schema.Defect(),
 }) {
   override get message(): string {
@@ -33,13 +33,18 @@ let sharedWorkerPool:
     }
   | undefined;
 
-function applyDiffWorkerTheme(pool: WorkerPoolManager) {
-  const themeName = resolveDiffThemeName(getRenderedAppearance());
+function currentDiffThemeName() {
+  return getDiffThemeNames()[getRenderedAppearance()];
+}
+
+export function applyDiffWorkerTheme(pool: WorkerPoolManager) {
+  const themeName = currentDiffThemeName();
   let operation: DiffWorkerError["operation"] = "get-render-options";
   void (async () => {
     try {
+      // Always forward the latest name: the pool skips no-op requests itself, and comparing
+      // against its committed options would let a pending older request win.
       const current = pool.getDiffRenderOptions();
-      if (current.theme === themeName) return;
       operation = "set-render-options";
       await pool.setRenderOptions({ ...current, theme: themeName });
     } catch (cause) {
@@ -48,10 +53,10 @@ function applyDiffWorkerTheme(pool: WorkerPoolManager) {
   })();
 }
 
-// The pool follows the rendered appearance for as long as it lives, so it never depends on a
-// mounted provider to carry a theme change across.
+// The pool follows the rendered appearance and code theme for as long as it lives, so it never
+// depends on a mounted provider to carry a theme change across.
 function createDiffWorkerPool(poolSize: number) {
-  const themeName = resolveDiffThemeName(getRenderedAppearance());
+  const themeName = currentDiffThemeName();
   const pool = new WorkerPoolManager(
     {
       workerFactory: () => {
@@ -71,9 +76,14 @@ function createDiffWorkerPool(poolSize: number) {
       useTokenTransformer: true,
     },
   );
+  const unsubscribeAppearance = subscribeRenderedAppearance(() => applyDiffWorkerTheme(pool));
+  const unsubscribeCodeTheme = subscribeDiffThemeNames(() => applyDiffWorkerTheme(pool));
   return {
     pool,
-    unsubscribeTheme: subscribeRenderedAppearance(() => applyDiffWorkerTheme(pool)),
+    unsubscribeTheme: () => {
+      unsubscribeAppearance();
+      unsubscribeCodeTheme();
+    },
     consumers: 0,
     idleTimer: undefined,
   };
