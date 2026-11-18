@@ -609,7 +609,15 @@ describe("Vibe adapter against an in-memory app-server", () => {
         let modelWrites = 0;
         let starts = 0;
         let failNextResume = false;
-        let failNextHistory = false;
+        let historyFailure: "buffered-terminal" | "snapshot-terminal" | undefined;
+        const answer = (turnId: string, text: string, generationStatus: string) => ({
+          id: `answer-${turnId}`,
+          turnId,
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text }],
+          generationStatus,
+        });
         const resumedAgents: unknown[] = [];
         const vibe = yield* openFakeVibe((method, params) => {
           if (method === "session/resume") {
@@ -618,22 +626,62 @@ describe("Vibe adapter against an in-memory app-server", () => {
               failNextResume = false;
               return { error: { code: "unavailable", message: "Plan resume failed" } };
             }
+            if (historyFailure !== undefined) {
+              const session = { id: "native-session" };
+              return {
+                result: {
+                  state: {
+                    session,
+                    eventId: 11,
+                    ...(historyFailure === "snapshot-terminal"
+                      ? {
+                          turns: [{ id: "turn-3", sessionId: session.id, status: "completed" }],
+                          history: [answer("turn-3", "Final answer", "completed")],
+                        }
+                      : { history: [answer("turn-1", "Hello", "in_progress")] }),
+                  },
+                },
+              };
+            }
           }
           if (method === "config/model/write" && ++modelWrites === 2) {
             return { result: { failures: ["Model unavailable"] } };
           }
           if (method === "turn/start") starts += 1;
           if (method === "session/history/list") {
-            if (failNextHistory) {
-              failNextHistory = false;
+            if (historyFailure !== undefined) {
+              const notificationMode = historyFailure;
+              historyFailure = undefined;
               return {
                 error: { code: "unavailable", message: "History read failed after resume" },
-                notifications: [
-                  {
-                    method: "turn/interrupted",
-                    params: { sessionId: "native-session", turn: { id: "turn-1" } },
-                  },
-                ],
+                ...(notificationMode === "buffered-terminal"
+                  ? {
+                      notifications: [
+                        {
+                          method: "history/entryUpdated",
+                          params: {
+                            eventId: 10,
+                            sessionId: "native-session",
+                            entryId: "answer-turn-1",
+                            patch: [{ op: "append", path: "/content/0/text", value: " duplicate" }],
+                          },
+                        },
+                        {
+                          method: "history/entryUpdated",
+                          params: {
+                            eventId: 12,
+                            sessionId: "native-session",
+                            entryId: "answer-turn-1",
+                            patch: [{ op: "append", path: "/content/0/text", value: " world" }],
+                          },
+                        },
+                        {
+                          method: "turn/interrupted",
+                          params: { sessionId: "native-session", turn: { id: "turn-1" } },
+                        },
+                      ],
+                    }
+                  : {}),
               };
             }
             return { result: { items: [] } };
@@ -725,10 +773,15 @@ describe("Vibe adapter against an in-memory app-server", () => {
         expect(
           (yield* Effect.flip(runtime.resumeThread({ providerThread, runtimePolicy })))._tag,
         ).toBe("ProviderAdapterProtocolError");
-        failNextHistory = true;
+        yield* notify("history/entryAdded", { entry: answer("turn-1", "Hello", "in_progress") });
+        expect((yield* takeEvent("message.updated")).message.text).toBe("Hello");
+        historyFailure = "buffered-terminal";
         expect(
           (yield* Effect.flip(runtime.resumeThread({ providerThread, runtimePolicy })))._tag,
         ).toBe("ProviderAdapterProtocolError");
+        let finalMessage = (yield* takeEvent("message.updated")).message;
+        while (finalMessage.streaming) finalMessage = (yield* takeEvent("message.updated")).message;
+        expect(finalMessage.text).toBe("Hello world");
         expect((yield* takeEvent("provider_turn.updated")).providerTurn).toMatchObject({
           id: first.id,
           nodeId: input(1).rootNodeId,
@@ -811,6 +864,20 @@ describe("Vibe adapter against an in-memory app-server", () => {
         yield* runtime.startTurn(input(4));
         expect(resumedAgents).toHaveLength(7);
         expect(resumedAgents.at(-1)).toMatchObject({ agent: "accept-edits" });
+        const last = (yield* takeEvent("provider_turn.updated")).providerTurn;
+        historyFailure = "snapshot-terminal";
+        expect(
+          (yield* Effect.flip(runtime.resumeThread({ providerThread, runtimePolicy })))._tag,
+        ).toBe("ProviderAdapterProtocolError");
+        expect((yield* takeEvent("message.updated")).message).toMatchObject({
+          text: "Final answer",
+          streaming: false,
+        });
+        expect((yield* takeEvent("provider_turn.updated")).providerTurn).toMatchObject({
+          id: last.id,
+          status: "completed",
+        });
+        expect(yield* takeEvent("turn.terminal")).toMatchObject({ runOrdinal: 4 });
       }).pipe(Effect.provide(layerTest)),
     ),
   );
