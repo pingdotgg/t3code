@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import { useState } from "react";
+import { useGT } from "gt-react-native";
 import type { AssistantCitation } from "@t3tools/contracts";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { AssistantCitationSheet } from "../components/AssistantCitationSheet";
@@ -23,6 +24,7 @@ export type {
 
 export function SelectableMarkdownText(props: SelectableMarkdownTextProps) {
   const [citation, setCitation] = useState<AssistantCitation | null>(null);
+  const gt = useGT();
   const hasCitations = props.markdown.includes("t3-citation:");
   const theme = useUniwindTheme();
   const selectionColor = themeColorWithAlpha(theme["--color-focus"], 0.32);
@@ -50,10 +52,10 @@ export function SelectableMarkdownText(props: SelectableMarkdownTextProps) {
             ? (href) =>
                 parseAssistantCitationHref(href)
                   ? {
-                      title: "Assistant quote",
+                      title: gt("Assistant quote"),
                       actions: [
-                        { id: "open-quote", title: "Open quote" },
-                        { id: "copy-quote", title: "Copy quote" },
+                        { id: "open-quote", title: gt("Open quote") },
+                        { id: "copy-quote", title: gt("Copy quote") },
                       ],
                     }
                   : props.fileContextMenu?.(href)

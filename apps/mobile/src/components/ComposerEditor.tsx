@@ -223,8 +223,10 @@ export function ComposerEditor({
             props.value.slice(0, selected.start) + next + props.value.slice(selected.end);
           if (!assistantCitationDraftWithinLimit(text)) {
             Dialog.alert(
-              "Could not update quote",
-              "This comment would make the message too long to send. Shorten the comment or draft.",
+              gt("Could not update quote"),
+              gt(
+                "This comment would make the message too long to send. Shorten the comment or draft.",
+              ),
             );
             return;
           }

@@ -1323,6 +1323,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
+  const gt = useGT();
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const [quoteSelection, setQuoteSelection] = useState<{
     markdown: string;
@@ -1364,16 +1365,18 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
                 if (!text.trim()) return;
                 if (text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH) {
                   Dialog.alert(
-                    "Quote is too long",
-                    `Select up to ${ASSISTANT_CITATION_MAX_TEXT_LENGTH.toLocaleString()} characters to cite.`,
+                    gt("Quote is too long"),
+                    gt("Select up to {max} characters to cite.", {
+                      max: ASSISTANT_CITATION_MAX_TEXT_LENGTH.toLocaleString(),
+                    }),
                   );
                   return;
                 }
                 const selectors = collectMobileAssistantTextSelectors(liveMarkdown, path, text);
                 if (selectors.length === 0) {
                   Dialog.alert(
-                    "Unable to locate quote",
-                    "Select more surrounding text to cite its source accurately.",
+                    gt("Unable to locate quote"),
+                    gt("Select more surrounding text to cite its source accurately."),
                   );
                   return;
                 }
@@ -1390,16 +1393,21 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         models={models}
       />
       {quoteChoices.length > 0 && props.onCiteAssistantText ? (
-        <Sheet title="Choose quote source" onClose={() => setQuoteSelection(null)}>
+        <Sheet title={gt("Choose quote source")} onClose={() => setQuoteSelection(null)}>
           <ScrollView
             contentInsetAdjustmentBehavior="automatic"
             contentContainerStyle={{ padding: 20 }}
           >
-            <ListSection title="This text appears more than once. Choose the passage you selected.">
+            <ListSection
+              title={gt("This text appears more than once. Choose the passage you selected.")}
+            >
               {quoteChoices.map((choice) => (
                 <ListActionRow
                   key={choice.selector.start}
-                  label={`Occurrence ${choice.index + 1} of ${choice.count}`}
+                  label={gt("Occurrence {index} of {count}", {
+                    index: choice.index + 1,
+                    count: choice.count,
+                  })}
                   description={`${choice.selector.prefix}${choice.selector.text}${choice.selector.suffix}`}
                   onPress={() => cite(choice)}
                 />

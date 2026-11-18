@@ -451,7 +451,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             props.onCiteText
               ? [
                   {
-                    text: "Cite",
+                    text: gt("Cite", { $context: "verb, quote selected text" }),
                     icon: "quote.bubble",
                     onPress: ({ text }) => props.onCiteText?.(text),
                   },

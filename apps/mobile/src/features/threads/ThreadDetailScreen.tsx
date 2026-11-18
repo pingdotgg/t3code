@@ -1378,8 +1378,10 @@ function ThreadDetailBody(
     const text = target.text.slice(0, target.start) + value + target.text.slice(target.end);
     if (!assistantCitationDraftWithinLimit(text)) {
       Dialog.alert(
-        "Could not add quote",
-        "This quote would make the message too long to send. Shorten the draft or select less text.",
+        gt("Could not add quote"),
+        gt(
+          "This quote would make the message too long to send. Shorten the draft or select less text.",
+        ),
       );
       return;
     }

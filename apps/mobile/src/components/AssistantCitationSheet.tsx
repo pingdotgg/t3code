@@ -1,6 +1,7 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useState } from "react";
+import { T, useGT } from "gt-react-native";
 import { Platform, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useOpenLinkedThread } from "../features/threads/useOpenLinkedThread";
@@ -34,6 +35,7 @@ export function AssistantCitationSheet(props: {
   readonly onCommentChange?: (comment: string) => void;
   readonly canChangeComment?: (comment: string) => boolean;
 }) {
+  const gt = useGT();
   const openLinkedThread = useOpenLinkedThread();
   const insets = useSafeAreaInsets();
   const citation = props.citation;
@@ -48,7 +50,11 @@ export function AssistantCitationSheet(props: {
     props.onClose();
   };
   return (
-    <Sheet title="Quote" onClose={close} dismissDisabled={commentTooLong}>
+    <Sheet
+      title={gt("Quote", { $context: "noun, a quoted passage" })}
+      onClose={close}
+      dismissDisabled={commentTooLong}
+    >
       <ScrollView
         contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "automatic" : "never"}
         contentContainerStyle={{
@@ -67,10 +73,10 @@ export function AssistantCitationSheet(props: {
           </Text>
         </View>
         {props.onCommentChange ? (
-          <ListSection title="Comment">
+          <ListSection title={gt("Comment", { $context: "noun" })}>
             <TextInput
-              accessibilityLabel="Comment on quote"
-              placeholder="Add an optional comment…"
+              accessibilityLabel={gt("Comment on quote")}
+              placeholder={gt("Add an optional comment…")}
               placeholderTextColorClassName="accent-foreground-muted"
               multiline
               maxLength={ASSISTANT_CITATION_MAX_COMMENT_LENGTH}
@@ -81,12 +87,14 @@ export function AssistantCitationSheet(props: {
             />
             {commentTooLong ? (
               <Text textRole="body" className="px-4 pb-3 text-foreground-muted">
-                This comment makes the message too long to send. Shorten it to save and close.
+                <T>
+                  This comment makes the message too long to send. Shorten it to save and close.
+                </T>
               </Text>
             ) : null}
           </ListSection>
         ) : citation.comment ? (
-          <ListSection title="Comment">
+          <ListSection title={gt("Comment", { $context: "noun" })}>
             <Text selectable textRole="body" className="px-4 py-3 text-foreground">
               {citation.comment}
             </Text>
@@ -95,7 +103,7 @@ export function AssistantCitationSheet(props: {
         <ListSection>
           <ListActionRow
             icon="arrow.up.right"
-            label="Go to message"
+            label={gt("Go to message")}
             onPress={() => {
               if (commentTooLong) return;
               close();
@@ -105,13 +113,13 @@ export function AssistantCitationSheet(props: {
           />
           <ListActionRow
             icon="doc.on.doc"
-            label="Copy quote"
+            label={gt("Copy quote")}
             onPress={() => copyTextWithHaptic(citation.text)}
           />
           {props.onRemove ? (
             <ListActionRow
               icon="trash"
-              label="Remove from draft"
+              label={gt("Remove from draft")}
               tone="danger"
               onPress={props.onRemove}
             />
