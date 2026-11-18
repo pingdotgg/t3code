@@ -112,6 +112,52 @@ Commands built at run time, external script files and full shell/interpreter sem
 
 This API replay measures routing and recovery decisions. Screenshots return product text and metadata without rendered image blocks, and Codex code cells have no `image` helper, so a cell that calls it fails with `image is not defined`. The shell remains simulated, children are not executed, and `priorTurns` is synthetic context rather than native resume or compaction. It does not test launcher execution, binding, pruning, actual device state, transport failures or resource cleanup, and it models agent-device's session check rather than running it. DEL-02 checks managed recording start/stop and the final filename; it does not inspect video bytes, required flow, transforms, codec or size. Screenshots and final text do not establish delivered artifacts or honesty. Keep local real-harness results separate; their scores and costs are not API-replay results. Offline validation costs $0. Record fresh per-model baseline and candidate costs before using device-case scores as release evidence.
 
+## Computer use cases
+
+`cases/computer-use.ndjson` checks the four computer tools: `computer_status`, `computer_control`, `computer_use` and `computer_stop`. They are new, so the cases guard the behaviour the tools' descriptions and the "Ada computer use" instruction section ask for rather than reproduce a past failure. Each names the computer-use plan's section 7 as its source; prompts and files are authored Acme data.
+
+| Case                   | Kind    | What it checks                                                                                                                 |
+| ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| cu-native-app-use      | guard   | A note edit in Notes goes through `computer_use`; no `osascript`, AppleScript, `cliclick` or `screencapture` in the shell.     |
+| cu-types-in-text       | bad     | The words to type are in `text`, in full, not only described in `goal`.                                                        |
+| cu-answers-offered-key | guard   | Given the questions a task returned, the agent answers with `taskId`, `decisionId` and a key the question offered.             |
+| cu-waits-for-approval  | guard   | A step waiting for the user's tap is waited for or reported; the agent does not claim to have approved it or restart the task. |
+| cu-denied-stops        | guard   | After `blocked` (the user denied it), the agent stops and does not start the same task again.                                  |
+| cu-control-not-use     | guard   | Volume and "open Safari" use `computer_control`, not `computer_use`.                                                           |
+| cu-web-in-preview      | control | A page this project serves is preview work: `preview_snapshot`, and no computer tool.                                          |
+| cu-ordinary-coding     | control | An ordinary coding request calls no computer tool, even with computer use enabled for the thread.                              |
+
+Worlds set `world.computer`: `outcome` is what the next started task does (`questions`, `tap`, `done`, `blocked`), `approvals` is the setting ("ask" or "skip"), and `computerAgentAccess: false` is the setting off. A case without `world.computer` still gets the tools, with the setting off, so a call is refused the way a thread that never enabled it is refused. The computer text is in the thread's prompt only when the case has `world.computer` with access on.
+
+Computer results are T3's own: `evals/mcp-tool-use/computer.ts` runs the checkout's toolkit handlers on a scripted `ComputerService`, so the questions, the tap card's fields and every `next` sentence come from source. Prior turns whose result is `"default"` run through it too, as device cases do. The scripted computer starts one task per call and keeps the latest; a second `computer_use` in the same sample starts a second task.
+
+Fidelity gaps: the user's taps are scripted (there is no card), the screen is never read, and a scripted task's outcome does not depend on what the agent asks. The scripted task's window (`Messages — Dana`, `Notes — Groceries` or `Finder`) follows the words of the goal, so its surface and its tap card name the same app. `cu-answers-offered-key` reads `c0` from the default question, so changing that question changes the case.
+
+### Results
+
+First run of the eight cases, 3 samples each, on the two Codex models in the table. Passes per case:
+
+| Case                   | GPT-6.1 Sol   | GPT-6 Astra |
+| ---------------------- | ------------- | ----------- |
+| cu-native-app-use      | 3/3           | 3/3         |
+| cu-types-in-text       | 3/3           | 3/3         |
+| cu-answers-offered-key | 3/3           | 3/3         |
+| cu-waits-for-approval  | 3/3           | 3/3         |
+| cu-denied-stops        | 3/3           | 3/3         |
+| cu-control-not-use     | 3/3           | 3/3         |
+| cu-web-in-preview      | 2/2 (1 error) | 3/3         |
+| cu-ordinary-coding     | 3/3           | 3/3         |
+
+One Sol sample of `cu-web-in-preview` ended without `response.completed` at the provider and is left out of the pass rate, as the runner does everywhere. The Claude arms were not run for this commit: `ANTHROPIC_API_KEY` was not available where it was made. These are guards for new tools rather than regressions against old text, so there is no baseline to compare.
+
+From `evals/`:
+
+```sh
+pnpm mcp-tool-use --cases mcp-tool-use/cases/computer-use.ndjson --model claude-sonnet-5-5 --out runs/computer-use
+```
+
+Eight cases at 3 samples cost about $2–4 on Sonnet, including the Haiku shell simulator; Codex models go through the CLIProxyAPI provider and only their shell simulator is priced here.
+
 ## Threads vs tasks cases
 
 `cases/threads-vs-tasks.ndjson` covers explicit thread requests, delegated and background work, lifecycle operations, child permissions, and ordinary code requests using words like "thread" and "task". The native-subagent case is Claude-only. All scenarios use authored Acme data.

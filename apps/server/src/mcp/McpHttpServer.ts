@@ -78,6 +78,8 @@ import {
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
+import * as ComputerHandlers from "./toolkits/computer/handlers.ts";
+import { ComputerToolkit } from "./toolkits/computer/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { MessageToolkit } from "./toolkits/message/tools.ts";
 import * as MessageHandlers from "./toolkits/message/handlers.ts";
@@ -1299,6 +1301,13 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+const layerComputerToolkitRegistration = toolkitRegistration(
+  ComputerToolkit,
+  ComputerHandlers.layer,
+);
+
+export const layerComputerToolkit = layerComputerToolkitRegistration;
+
 /**
  * `McpServer` for in-process calls, which provide `McpInvocationContext`
  * around `callTool` as the auth middleware does for each /mcp request.
@@ -1344,6 +1353,7 @@ export const layerTools = layerInToolNameOrder(
     layerWorktreeToolkitRegistration,
     layerPullRequestsToolkit,
     layerDeviceToolkit,
+    layerComputerToolkit,
     layerHtmlToolkit,
     layerMessageToolkit,
   ),
