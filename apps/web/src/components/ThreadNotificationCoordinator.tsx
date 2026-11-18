@@ -276,7 +276,7 @@ export function startThreadNotifications(
       toastType: "info",
       icon: <BellIcon aria-hidden className="size-4 text-info-foreground" />,
       // Its own tag, so the thread's next status notification does not replace the message.
-      tag: `${threadNotificationTag(environmentId, alert.threadId)}:alert`,
+      tag: `${threadNotificationTag(environmentId, alert.threadId)}:alert:${alert.id}`,
       requireInteraction: false,
     });
   };
@@ -373,6 +373,17 @@ export function startThreadNotifications(
       }),
     };
     let threads: ReadonlyArray<OrchestrationV2ThreadShell> | null = null;
+    const pendingAlerts: Array<AgentAlert> = [];
+    const receiveAlert = (alert: AgentAlert) => {
+      if (threads === null) {
+        if (pendingAlerts.length === 32) pendingAlerts.shift();
+        pendingAlerts.push(alert);
+        return;
+      }
+      const thread = threads.find((candidate) => candidate.id === alert.threadId);
+      if (thread === undefined || thread.archivedAt !== null) return;
+      presentAgentAlert(environmentId, alert, thread.title || "T3 Code");
+    };
     const unsubscribeShell = registry.subscribe(
       environmentShell.stateValueAtom(environmentId),
       (shell) => {
@@ -382,6 +393,7 @@ export function startThreadNotifications(
             : null;
         if (threads !== null) {
           observeThreads(environmentId, entry, threads);
+          pendingAlerts.splice(0).forEach(receiveAlert);
           return;
         }
         entry.reconnecting = true;
@@ -412,10 +424,7 @@ export function startThreadNotifications(
           const seen = shownAlertId;
           shownAlertId = alert?.id ?? null;
           if (seen === undefined || alert === null || alert.id === seen) return;
-          const thread = threads?.find((candidate) => candidate.id === alert.threadId);
-          // An archived thread never notifies, and archiving takes it off the live list.
-          if (thread === undefined || thread.archivedAt !== null) return;
-          presentAgentAlert(environmentId, alert, thread.title || "T3 Code");
+          receiveAlert(alert);
         },
         { immediate: true },
       );
@@ -438,6 +447,7 @@ export function startThreadNotifications(
       unsubscribeDelegated();
       unsubscribeConfig();
       unsubscribeAlerts?.();
+      pendingAlerts.length = 0;
       entry.gate.clear();
     };
     return entry;

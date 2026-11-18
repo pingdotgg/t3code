@@ -478,11 +478,15 @@ it("shows an agent's alert once as a desktop notification that opens its thread"
   await using app = setup();
   // Left in the atom by an earlier subscription.
   app.alert("one", { id: "tool-0", threadId: "thread", body: "already shown" });
+  state.shells.set("one", { ...shell(), status: "synchronizing" });
   app.start();
   const alert = { id: "tool-1", threadId: "thread", body: "fleet.lock stuck" };
   app.alert("one", alert);
+  expect(TestNotification.sent).toEqual([]);
+  state.shells.set("one", shell());
   // A reconnect replays the last alert the stream held.
   app.alert("one", { ...alert });
+  app.alert("one", { ...alert, id: "tool-1b", body: "another alert" });
   app.alert("one", { ...alert, id: "tool-2", threadId: "gone" });
   app.alert("two", { ...alert, id: "tool-3" });
   state.shells.set("one", shell({ archivedAt: "2026-09-13T07:00:00.000Z" }));
@@ -490,8 +494,10 @@ it("shows an agent's alert once as a desktop notification that opens its thread"
 
   expect(TestNotification.sent.map(({ title, options }) => [title, options.body])).toEqual([
     ["Test thread", "fleet.lock stuck"],
+    ["Test thread", "another alert"],
   ]);
-  expect(state.badge).toHaveBeenLastCalledWith(1);
+  expect(state.badge).toHaveBeenLastCalledWith(2);
+  expect(TestNotification.sent[0]!.close).not.toHaveBeenCalled();
   TestNotification.sent[0]!.dispatchEvent(new Event("click"));
   expect(state.navigate).toHaveBeenCalledWith({
     to: "/$environmentId/$threadId",
