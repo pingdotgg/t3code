@@ -36,6 +36,7 @@ export class CloudEnvironmentLinkError extends Schema.TaggedError<CloudEnvironme
     message: Schema.String,
     cause: Schema.optional(Schema.Defect()),
     traceId: Schema.optional(Schema.String),
+    relayLinkCommitted: Schema.optionalKey(Schema.Literal(true)),
   },
 ) {}
 
@@ -53,7 +54,11 @@ const isEnvironmentCloudApiError = Schema.is(
 const MANAGED_ENDPOINT_PROVIDER_KIND =
   "cloudflare_tunnel" satisfies RelayManagedEndpointProviderKind;
 
-function cloudEnvironmentLinkError(message: string, withDetail: (detail: string) => string) {
+function cloudEnvironmentLinkError(
+  message: string,
+  withDetail: (detail: string) => string,
+  options?: { readonly relayLinkCommitted: true },
+) {
   return (cause: unknown) => {
     const environmentError = findEnvironmentCloudApiError(cause);
     const traceId = findErrorTraceId(cause);
@@ -63,6 +68,7 @@ function cloudEnvironmentLinkError(message: string, withDetail: (detail: string)
     return new CloudEnvironmentLinkError({
       message: detail,
       cause,
+      ...options,
       ...(traceId === null ? {} : { traceId }),
     });
   };
@@ -308,6 +314,7 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
         cloudEnvironmentLinkError(
           m(msg("Could not configure environment relay access.")),
           (detail) => m(msg("Could not configure environment relay access: {detail}", { detail })),
+          { relayLinkCommitted: true },
         ),
       ),
     );

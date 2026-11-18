@@ -76,11 +76,12 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
       );
       const failure = results.find(({ result }) => Result.isFailure(result));
       if (failure && Result.isFailure(failure.result)) {
-        const updatedEnvironments = results.flatMap(({ connection, result }) =>
-          Result.isSuccess(result) && result.success === "updated"
-            ? [connection.environmentLabel]
-            : [],
-        );
+        const updatedEnvironments = results.flatMap(({ connection, result }) => {
+          const changed = Result.isSuccess(result)
+            ? result.success === "updated"
+            : result.failure.relayLinkCommitted === true;
+          return changed ? [connection.environmentLabel] : [];
+        });
         if (updatedEnvironments.length === 0) return yield* failure.result.failure;
         return yield* new LiveActivityEnvironmentUpdateError({
           updatedEnvironments,

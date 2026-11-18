@@ -121,6 +121,41 @@ describe("liveActivityPreferences", () => {
     }).pipe(Effect.provide(layerTest));
   });
 
+  it.effect("reports a relay preference committed before environment configuration fails", () => {
+    const failure = new CloudEnvironmentLinkError({
+      message: "environment configuration failed",
+      relayLinkCommitted: true,
+    });
+    updateEnvironment.mockReturnValueOnce(Effect.succeed("unlinked"));
+    vi.mocked(linkEnvironmentToCloudWithPreference).mockReturnValueOnce(Effect.fail(failure));
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        setLiveActivityUpdatesEnabled({
+          updateEnvironment,
+          enabled: true,
+          previousEnabled: false,
+          clerkToken: "clerk-token",
+          connections: [connection],
+          canConfigureEnvironment: () => true,
+          canUpdateEnvironment: () => true,
+        }),
+      );
+
+      expect(Exit.findErrorOption(exit)).toEqual(
+        Option.some(
+          expect.objectContaining({
+            updatedEnvironments: [connection.environmentLabel],
+            cause: failure,
+          }),
+        ),
+      );
+      expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenLastCalledWith({
+        liveActivitiesEnabled: false,
+      });
+    }).pipe(Effect.provide(layerTest));
+  });
+
   it.effect("only creates missing links when the session can configure Connect", () => {
     updateEnvironment.mockReturnValueOnce(Effect.succeed("unlinked" as const));
     const readOnlyConnection: SavedRemoteConnection = {
