@@ -1,6 +1,6 @@
 // Formatters pin the default zone when built, and Hermes keeps Date's local offset until a cold
 // start (react/react-native#59131), so formatting and day checks follow the zone Intl reports.
-function buildFormatters(timeZone: string, dateLocale: string | undefined, is24Hour?: boolean) {
+function buildFormatters(timeZone: string, dateLocales: Intl.LocalesArgument, is24Hour?: boolean) {
   return {
     timeZone,
     time: new Intl.DateTimeFormat(undefined, {
@@ -9,14 +9,14 @@ function buildFormatters(timeZone: string, dateLocale: string | undefined, is24H
       timeZone,
       ...(is24Hour === undefined ? {} : { hourCycle: is24Hour ? "h23" : "h12" }),
     }),
-    date: new Intl.DateTimeFormat(dateLocale, { month: "numeric", day: "numeric", timeZone }),
-    dateWithYear: new Intl.DateTimeFormat(dateLocale, {
+    date: new Intl.DateTimeFormat(dateLocales, { month: "numeric", day: "numeric", timeZone }),
+    dateWithYear: new Intl.DateTimeFormat(dateLocales, {
       month: "numeric",
       day: "numeric",
       year: "numeric",
       timeZone,
     }),
-    year: new Intl.DateTimeFormat(dateLocale, { year: "numeric", timeZone }),
+    year: new Intl.DateTimeFormat(dateLocales, { year: "numeric", timeZone }),
   };
 }
 
@@ -33,15 +33,18 @@ function currentTimeZone(): string {
 }
 
 /**
- * Time uses the device locale and clock preference. Older messages also show the date in `dateLocale`.
+ * Time uses the device locale and clock preference. Older messages also show the date in `dateLocales`.
  */
-export function createMessageTimeFormatter(is24Hour: boolean | undefined, dateLocale?: string) {
+export function createMessageTimeFormatter(
+  is24Hour: boolean | undefined,
+  dateLocales?: Intl.LocalesArgument,
+) {
   let f: ReturnType<typeof buildFormatters> | null = null;
   return (input: string, nowMs: number = Date.now()): string => {
     const timestamp = Date.parse(input);
     if (Number.isNaN(timestamp)) return "";
     const zone = currentTimeZone();
-    if (f?.timeZone !== zone) f = buildFormatters(zone, dateLocale, is24Hour);
+    if (f?.timeZone !== zone) f = buildFormatters(zone, dateLocales, is24Hour);
     const time = f.time.format(timestamp);
     const dateWithYear = f.dateWithYear.format(timestamp);
     if (dateWithYear === f.dateWithYear.format(nowMs)) return time;

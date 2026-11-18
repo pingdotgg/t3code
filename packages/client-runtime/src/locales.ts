@@ -53,12 +53,15 @@ function parseSystemLocale(tag: string): Intl.Locale | undefined {
   }
 }
 
-/** Prefer a compatible system variant unless a formatting region was selected separately. */
-export function formattingLocale(
+/**
+ * Locales for Intl formatters: a compatible system variant or region first, then the UI locale,
+ * since Hermes on Android formats a tag ICU lacks (such as de-US) in the device locale.
+ */
+export function formattingLocales(
   uiLocale: string,
   systemLocales: ReadonlyArray<string>,
   regionalLocale?: string,
-): string {
+): ReadonlyArray<string> {
   const ui = new Intl.Locale(uiLocale);
   const compatible = [uiLocale, ui.language];
   const preferredRegion = regionalLocale ? parseSystemLocale(regionalLocale)?.region : undefined;
@@ -75,7 +78,10 @@ export function formattingLocale(
   }
   const locale = variant ?? uiLocale;
   const formattingRegion = preferredRegion ?? (variant ? undefined : region);
-  if (ui.region || !formattingRegion) return locale;
-  const regional = new Intl.Locale(locale, { region: formattingRegion }).baseName;
-  return matchSupportedLocale(regional, compatible) ? regional : locale;
+  const regional =
+    ui.region || !formattingRegion
+      ? locale
+      : new Intl.Locale(locale, { region: formattingRegion }).baseName;
+  const preferred = matchSupportedLocale(regional, compatible) ? regional : locale;
+  return preferred === uiLocale ? [uiLocale] : [preferred, uiLocale];
 }
