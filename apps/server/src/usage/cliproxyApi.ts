@@ -408,6 +408,12 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
 
 export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
+  const accountIdentities = new WeakMap<
+    UsageLimitSourceAccount,
+    ReturnType<typeof listedIdentity>
+  >();
+  const accountIdentity = (account: UsageLimitSourceAccount) =>
+    accountIdentities.get(account) ?? account;
   const digest = yield* Digest.Digest;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
@@ -489,7 +495,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
         }),
       })),
     );
-    return { id: account.id, driver: provider.driver, ...reading };
+    const result = { id: account.id, driver: provider.driver, ...reading };
+    accountIdentities.set(result, listedIdentity(account));
+    return result;
   });
 
   // Pops the hub's usage queue: records read here are gone for every other reader.
@@ -595,5 +603,5 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
   });
-  return { readAccounts, readSessionAccounts, consume };
+  return { readAccounts, readSessionAccounts, accountIdentity, consume };
 });

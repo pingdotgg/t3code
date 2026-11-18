@@ -411,135 +411,152 @@ it.effect("the reset fallback refreshes its hub, and a stalled hub cannot hold t
   }),
 );
 
-it.effect("reads routed sessions from opted-in hubs, even with no client open", () =>
-  Effect.gen(function* () {
-    const queueReads: string[] = [];
-    let refused = false;
-    let email = "account@example.com";
-    let accountId = "claude-a.json";
-    const http = HttpClient.make((request) =>
-      Effect.sync(() => {
-        expect(request.headers.authorization).toBe("Bearer key");
-        const url = new URL(request.url);
-        if (url.pathname.endsWith("/usage-queue")) {
-          queueReads.push(url.host);
-          return HttpClientResponse.fromWeb(
-            request,
-            Response.json([{ session_id: "thread-session", auth_index: "a" }]),
-          );
-        }
-        if (url.pathname.endsWith("/auth-files")) {
+it.effect.each(["claude", "antigravity"])(
+  "reads routed sessions from opted-in hubs, even with no client open (%s)",
+  (provider) =>
+    Effect.gen(function* () {
+      const queueReads: string[] = [];
+      let refused = false;
+      let email = "account@example.com";
+      let accountId = "claude-a.json";
+      const http = HttpClient.make((request) =>
+        Effect.sync(() => {
+          expect(request.headers.authorization).toBe("Bearer key");
+          const url = new URL(request.url);
+          if (url.pathname.endsWith("/usage-queue")) {
+            queueReads.push(url.host);
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json([{ session_id: "thread-session", auth_index: "a" }]),
+            );
+          }
+          if (url.pathname.endsWith("/auth-files")) {
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                files: [
+                  {
+                    id: accountId,
+                    auth_index: "a",
+                    provider,
+                    project_id: "project-7",
+                    email,
+                  },
+                ],
+              }),
+            );
+          }
           return HttpClientResponse.fromWeb(
             request,
             Response.json({
-              files: [
-                {
-                  id: accountId,
-                  auth_index: "a",
-                  provider: "claude",
-                  email,
-                },
-              ],
+              status_code: refused ? 429 : 200,
+              body: JSON.stringify({
+                five_hour: { utilization: 12, resets_at: "2099-01-01T00:00:00Z" },
+                id: "google-42",
+                buckets: [
+                  {
+                    bucketId: "gemini-weekly",
+                    window: "weekly",
+                    remainingFraction: 0.88,
+                    resetTime: "2099-01-01T00:00:00Z",
+                  },
+                ],
+              }),
             }),
           );
-        }
-        return HttpClientResponse.fromWeb(
-          request,
-          Response.json({
-            status_code: refused ? 429 : 200,
-            body: JSON.stringify({
-              five_hour: { utilization: 12, resets_at: "2099-01-01T00:00:00Z" },
-            }),
-          }),
-        );
-      }),
-    );
-    const sources = yield* UsageLimitSources.make.pipe(
-      Effect.provideService(HttpClient.HttpClient, http),
-    );
-    yield* sources.refresh;
-    yield* TestClock.adjust("30 seconds");
+        }),
+      );
+      const sources = yield* UsageLimitSources.make.pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+      );
+      yield* sources.refresh;
+      yield* TestClock.adjust("30 seconds");
 
-    const snapshots = yield* sources.current;
-    expect(queueReads).toEqual(["routed.test"]);
-    expect(
-      snapshots.map((source) => [source.id, source.accounts.map((account) => account.sessionIds)]),
-    ).toEqual([
-      ["routed", [["thread-session"]]],
-      ["observed", [undefined]],
-    ]);
+      const snapshots = yield* sources.current;
+      expect(queueReads).toEqual(["routed.test"]);
+      expect(
+        snapshots.map((source) => [
+          source.id,
+          source.accounts.map((account) => account.sessionIds),
+        ]),
+      ).toEqual([
+        ["routed", [["thread-session"]]],
+        ["observed", [undefined]],
+      ]);
 
-    email = "replacement@example.com";
-    yield* TestClock.adjust("30 seconds");
-    expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toBeUndefined();
-    yield* sources.refresh;
-    const replaced = yield* sources.current;
-    expect(replaced[0]?.accounts[0]?.sessionIds).toBeUndefined();
-    yield* TestClock.adjust("30 seconds");
-    expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toEqual(["thread-session"]);
+      email = "replacement@example.com";
+      yield* TestClock.adjust("30 seconds");
+      expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toBeUndefined();
+      yield* sources.refresh;
+      const replaced = yield* sources.current;
+      expect(replaced[0]?.accounts[0]?.sessionIds).toBeUndefined();
+      yield* TestClock.adjust("30 seconds");
+      expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toEqual(["thread-session"]);
 
-    accountId = "claude-b.json";
-    yield* TestClock.adjust("30 seconds");
-    expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toBeUndefined();
-    yield* sources.refresh;
-    yield* TestClock.adjust("30 seconds");
-    expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toEqual(["thread-session"]);
+      accountId = "claude-b.json";
+      yield* TestClock.adjust("30 seconds");
+      expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toBeUndefined();
+      yield* sources.refresh;
+      yield* TestClock.adjust("30 seconds");
+      expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toEqual(["thread-session"]);
 
-    refused = true;
-    // Switching Thread accounts off drops the routes on that refresh, not on the next queue read.
-    const settings = yield* ServerSettings.ServerSettingsService;
-    yield* settings.updateSettings({
-      usageLimitSources: {
-        [UsageLimitSourceId.make("routed")]: {
-          kind: "cliproxy",
-          url: "https://routed.test",
-          managementKey: "key",
-          enabled: true,
-          threadAccounts: false,
-        },
-      },
-    });
-    yield* sources.refresh;
-    const afterOff = yield* sources.current;
-    expect(afterOff[0]?.accounts[0]?.usageLimits.windows[0]?.usedPercent).toBe(12);
-    expect(afterOff.find((source) => source.id === "routed")?.accounts[0]?.sessionIds).toBe(
-      undefined,
-    );
-  }).pipe(
-    Effect.provide([
-      Layer.succeed(SecretResolver.SecretResolver, {
-        read: (references) => Effect.succeed(references.map(() => "key")),
-        invalidate: () => Effect.void,
-        label: (provider) => Effect.succeed(provider),
-      }),
-      ServerSettings.layerTest({
+      refused = true;
+      // Switching Thread accounts off drops the routes on that refresh, not on the next queue read.
+      const settings = yield* ServerSettings.ServerSettingsService;
+      yield* settings.updateSettings({
         usageLimitSources: {
           [UsageLimitSourceId.make("routed")]: {
             kind: "cliproxy",
             url: "https://routed.test",
-            managementKey: {
-              provider: SecretProviderId.make("homelab"),
-              reference: "cliproxy#key",
-            },
-            enabled: true,
-            threadAccounts: true,
-          },
-          [UsageLimitSourceId.make("observed")]: {
-            kind: "cliproxy",
-            url: "https://observed.test",
             managementKey: "key",
             enabled: true,
+            threadAccounts: false,
           },
         },
-      }),
-      // No client lease: a turn that ends while nobody watches must still keep its route.
-      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-        shouldRunScopeWork: () => Effect.succeed(false),
-      }),
-      NodeCrypto.layer,
-    ]),
-    Effect.scoped,
-  ),
+      });
+      yield* sources.refresh;
+      const afterOff = yield* sources.current;
+      expect(afterOff[0]?.accounts[0]?.usageLimits.windows[0]?.usedPercent).toBe(
+        provider === "claude" ? 12 : undefined,
+      );
+      expect(afterOff.find((source) => source.id === "routed")?.accounts[0]?.sessionIds).toBe(
+        undefined,
+      );
+    }).pipe(
+      Effect.provide([
+        Layer.succeed(SecretResolver.SecretResolver, {
+          read: (references) => Effect.succeed(references.map(() => "key")),
+          invalidate: () => Effect.void,
+          label: (provider) => Effect.succeed(provider),
+        }),
+        ServerSettings.layerTest({
+          usageLimitSources: {
+            [UsageLimitSourceId.make("routed")]: {
+              kind: "cliproxy",
+              url: "https://routed.test",
+              managementKey: {
+                provider: SecretProviderId.make("homelab"),
+                reference: "cliproxy#key",
+              },
+              enabled: true,
+              threadAccounts: true,
+            },
+            [UsageLimitSourceId.make("observed")]: {
+              kind: "cliproxy",
+              url: "https://observed.test",
+              managementKey: "key",
+              enabled: true,
+            },
+          },
+        }),
+        // No client lease: a turn that ends while nobody watches must still keep its route.
+        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+          shouldRunScopeWork: () => Effect.succeed(false),
+        }),
+        NodeCrypto.layer,
+      ]),
+      Effect.scoped,
+    ),
 );
 
 it.effect("drops a queue read that lands after Thread accounts was switched off", () =>

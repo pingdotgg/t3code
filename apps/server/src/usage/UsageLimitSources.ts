@@ -52,21 +52,24 @@ interface SessionRoute {
   readonly identity: string;
 }
 
-function routeIdentity(account: UsageLimitSourceAccount): string {
+type AccountIdentity = Pick<UsageLimitSourceAccount, "email" | "workspaceId">;
+
+function routeIdentity(account: UsageLimitSourceAccount, identity: AccountIdentity): string {
   const fingerprint = account.usageLimits.credentialFingerprint;
   // Without a listed login or fingerprint, a route cannot survive another account reading.
   return JSON.stringify([
     account.driver,
-    account.email,
-    account.workspaceId,
+    identity.email,
+    identity.workspaceId,
     fingerprint,
-    account.email || account.workspaceId || fingerprint ? null : account.usageLimits.checkedAt,
+    identity.email || identity.workspaceId || fingerprint ? null : account.usageLimits.checkedAt,
   ]);
 }
 
 function withSessionIds(
   snapshots: ReadonlyArray<UsageLimitSourceSnapshot>,
   routes: ReadonlyMap<UsageLimitSourceId, ReadonlyMap<string, SessionRoute>>,
+  accountIdentity: (account: UsageLimitSourceAccount) => AccountIdentity,
 ): ReadonlyArray<UsageLimitSourceSnapshot> {
   return snapshots.map((source) => {
     const sessionIdsByAccount = new Map<string, string[]>();
@@ -75,7 +78,7 @@ function withSessionIds(
       if (
         !account ||
         source.endpoint !== route.endpoint ||
-        routeIdentity(account) !== route.identity
+        routeIdentity(account, accountIdentity(account)) !== route.identity
       )
         continue;
       const accountId = route.accountId;
@@ -216,7 +219,7 @@ export const make = Effect.gen(function* () {
         ([id]) => settings?.usageLimitSources[id]?.threadAccounts,
       ),
     );
-    const next = withSessionIds(yield* Ref.get(readsRef), routes);
+    const next = withSessionIds(yield* Ref.get(readsRef), routes, api.accountIdentity);
     const changed = yield* Ref.modify(stateRef, (previous) =>
       Equal.equals(previous, next) ? [false, previous] : [true, next],
     );
@@ -304,14 +307,14 @@ export const make = Effect.gen(function* () {
             !source ||
             !account ||
             account.driver !== driver ||
-            account.email !== email ||
-            account.workspaceId !== workspaceId
+            api.accountIdentity(account).email !== email ||
+            api.accountIdentity(account).workspaceId !== workspaceId
           )
             continue;
           routed.set(sessionId, {
             accountId: account.id,
             endpoint: source.endpoint,
-            identity: routeIdentity(account),
+            identity: routeIdentity(account, api.accountIdentity(account)),
           });
         }
         next.set(id, new Map([...routed].slice(-MAX_ROUTES_PER_SOURCE)));
