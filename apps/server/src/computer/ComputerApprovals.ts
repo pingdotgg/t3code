@@ -1,6 +1,6 @@
 // Ported from LocalRouter (github.com/jayleaton/localrouter @fe24726, apps/companion/src/executor/approvals.ts and
 // src/computer/approvals.zig), Apache-2.0, Copyright 2026 Jay Leaton. Modified for Ada.
-// SHA-256 over a binding is pure and runs inside Ref.modify, so it cannot yield to a service.
+// SHA-256 over a binding is pure and runs inside Ref.modify, so it cannot yield to the Effect Crypto service.
 // @effect-diagnostics nodeBuiltinImport:off
 import type {
   ComputerApproval,

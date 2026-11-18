@@ -1,6 +1,6 @@
 // Ported from LocalRouter (github.com/jayleaton/localrouter @fe24726, apps/companion/src/executor/audit.ts and
 // src/computer/audit.zig), Apache-2.0, Copyright 2026 Jay Leaton. Modified for Ada.
-// A typed digest is cheap and the line is written on the same tick as the step.
+// Typed text is digested in a pure helper that cannot yield to the Effect Crypto service.
 // @effect-diagnostics nodeBuiltinImport:off
 import type { ComputerAction, ComputerApprovalBinding } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
