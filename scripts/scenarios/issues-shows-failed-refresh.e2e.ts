@@ -120,5 +120,6 @@ test(
     await expect(
       screen.getByText("GitHub API rate limit exceeded.", { exact: false }),
     ).toBeVisible();
+    await expect(screen.getByText("Issue before the rate limit", { exact: true })).toBeVisible();
   },
 );
