@@ -120,12 +120,16 @@ export function buildFileContextMenuItems(input: {
   }
   items.push({
     id: "copy-relative-path",
-    label: "Copy relative path",
+    label: input.resolve(msg("Copy relative path")),
     icon: "copy",
     separatorBefore: items.length > 0,
   });
   if (resolveFileContextMenuAbsoluteCopyPath(input.target) !== null) {
-    items.push({ id: "copy-absolute-path", label: "Copy absolute path", icon: "copy" });
+    items.push({
+      id: "copy-absolute-path",
+      label: input.resolve(msg("Copy absolute path")),
+      icon: "copy",
+    });
   }
   return items;
 }
@@ -165,7 +169,8 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
           ? target.filePath
           : resolveFileContextMenuAbsoluteCopyPath(target);
       if (path === null) return;
-      const label = action === "copy-relative-path" ? "Relative path" : "Absolute path";
+      const copiedTitle =
+        action === "copy-relative-path" ? msg("Relative path copied") : msg("Absolute path copied");
       try {
         const copied = await writeTextToClipboard(path, {
           target: "file path",
@@ -173,13 +178,13 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
           failureMessage: msg("Failed to copy file path to the clipboard."),
         });
         if (copied) {
-          toastManager.add({ type: "success", title: `${label} copied`, description: path });
+          toastManager.add({ type: "success", title: resolve(copiedTitle), description: path });
         }
       } catch (error) {
         toastManager.add({
           type: "error",
-          title: "Failed to copy file path",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: resolve(msg("Failed to copy file path")),
+          description: error instanceof Error ? error.message : resolve(msg("An error occurred.")),
         });
       }
       return;
