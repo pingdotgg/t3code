@@ -9,7 +9,8 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText } from "../../components/ui/AppText";
 import { deriveSharedTopBand } from "../../lib/reserved-regions";
 import { isDarkThemeColor, themeColorWithAlpha } from "../../lib/mobileTheme";
-import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
+import { isDuoDevice } from "../../lib/device-type";
+import { useDeviceType, useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 /**
@@ -32,6 +33,7 @@ export function BrowserBar(props: {
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const band = deriveSharedTopBand(useNativeColumnLayoutMetrics());
+  const duo = isDuoDevice(useDeviceType());
   const { themeVariables } = useAppearancePreferences();
   const surface = props.pageColor || themeVariables["--color-sheet-solid"];
   const ink: Ink = isDarkThemeColor(surface) ? "light" : "dark";
@@ -39,9 +41,9 @@ export function BrowserBar(props: {
 
   if (props.compact && draft === null) {
     return (
-      // Not the band: a compact bar is only as tall as its pill, under whatever top inset remains.
-      <TopArea band={null} surface={surface} ink={ink} hairline>
-        <View className="items-center pb-1.5 pt-0.5">
+      // Like Safari, the Duo hides its status for a compact bar and puts the pill at the very top.
+      <TopArea band={null} topInset={!duo} surface={surface} ink={ink} hairline>
+        <View className={duo ? "items-center py-1.5" : "items-center pb-1.5 pt-0.5"}>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Address ${props.url}. Show the browser controls`}
@@ -181,6 +183,7 @@ function TopArea(props: {
   readonly surface: string;
   readonly ink: Ink;
   readonly hairline?: boolean;
+  readonly topInset?: boolean;
   readonly children: ReactNode;
 }) {
   const backdrop = (
@@ -208,7 +211,7 @@ function TopArea(props: {
   );
   if (!props.band) {
     return (
-      <SafeAreaView edges={["top"]}>
+      <SafeAreaView edges={props.topInset === false ? [] : ["top"]}>
         {backdrop}
         {props.children}
       </SafeAreaView>
