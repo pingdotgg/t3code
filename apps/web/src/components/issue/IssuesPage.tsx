@@ -216,7 +216,13 @@ export function IssuesPage() {
     input: listInput,
   }));
   const list = useIssueList(targets);
-  useLiveRefresh(list.refresh, { key: JSON.stringify(targets) });
+  // Refreshing a list still loading would cancel it and start over, losing the scopes already read.
+  useLiveRefresh(
+    () => {
+      if (!list.isPending) list.refresh();
+    },
+    { key: JSON.stringify(targets) },
+  );
 
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
   const held = holdIssuePages(list.answers, pages);
