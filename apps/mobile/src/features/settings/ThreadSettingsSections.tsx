@@ -162,11 +162,13 @@ export function AutoSettleSettingsRows(props: {
         </SettingsSection>
       ) : null}
       {!projectSelected && supportsScheduledTaskSnooze ? (
-        <SettingsSection title="Scheduled tasks">
+        <SettingsSection title={gt("Scheduled tasks")}>
           <SettingsSwitchRow
             icon="clock"
-            label="Snooze until scheduled task runs"
-            subtitle="When a turn ends and the thread has a scheduled task coming up, snooze the thread until the task runs."
+            label={gt("Snooze until scheduled task runs")}
+            subtitle={gt(
+              "When a turn ends and the thread has a scheduled task coming up, snooze the thread until the task runs.",
+            )}
             value={uniformMobileSetting(displayTargets, "snoozeThreadsUntilScheduledTask")}
             disabled={disabledFor("snoozeThreadsUntilScheduledTask")}
             onValueChange={(value) => writeToAll({ snoozeThreadsUntilScheduledTask: value })}

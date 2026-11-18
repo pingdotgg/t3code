@@ -74,7 +74,8 @@ The progress count describes reported steps; different agents' lists can overlap
 
 Usage comes from recorded turns. Missing provider reports, unavailable children, and limits on
 large families are marked as partial. Input includes cache tokens, and output includes reasoning.
-Extra provider usage that may overlap child turns is shown without adding it again.
+Extra provider usage that may overlap child turns is flagged; its token counts are not displayed
+or included in the totals.
 
 Cost is an estimate at standard API rates for turns with one reported model. Missing cache
 breakdowns are treated as uncached input. Mixed or unknown models and turns whose aggregate

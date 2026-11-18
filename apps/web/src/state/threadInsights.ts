@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 import { Atom, AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -16,9 +18,10 @@ export const threadInsightsViewAtom = Atom.family((key: string) =>
     const answers = new Map<string, ThreadInsightsAnswer>();
     const queue = [target];
     const visited = new Set<string>();
+    const rowKeys = new Set<string>();
     const queries: ReturnType<typeof orchestrationEnvironment.threadInsights>[] = [];
     const errors = new Set<string>();
-    for (let index = 0; index < queue.length && visited.size < 200; index++) {
+    for (let index = 0; index < queue.length && visited.size < 200 && rowKeys.size < 200; index++) {
       const ref = queue[index]!;
       const nextKey = scopedThreadKey(ref);
       if (visited.has(nextKey)) continue;
@@ -29,16 +32,20 @@ export const threadInsightsViewAtom = Atom.family((key: string) =>
         input: { threadId: ref.threadId },
       });
       queries.push(query);
+      rowKeys.add(nextKey);
       const result = get(query);
       if (AsyncResult.isFailure(result)) {
-        errors.add("An environment could not report tasks and usage.");
+        errors.add(m(msg("An environment could not report tasks and usage.")));
         continue;
       }
       const data = Option.getOrNull(AsyncResult.value(result));
       if (data === null) continue;
       answers.set(nextKey, { target: ref, data });
+      for (const row of data.rows) {
+        rowKeys.add(scopedThreadKey({ environmentId: ref.environmentId, threadId: row.threadId }));
+      }
       queue.push(...data.remotes);
     }
-    return { ...mergeThreadInsights(target, answers), queries, errors: [...errors] };
+    return { ...mergeThreadInsights(target, answers, m), queries, errors: [...errors] };
   }),
 );

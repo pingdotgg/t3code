@@ -569,7 +569,15 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           false,
           undefined,
           undefined,
-        ).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))));
+        ).pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: { T3CODE_DESKTOP_UPDATE_REPOSITORY: "LaMarCab76/t3code" },
+              }),
+            ),
+          ),
+        );
         assert.deepStrictEqual(forkRelease.publish, [
           {
             provider: "github",

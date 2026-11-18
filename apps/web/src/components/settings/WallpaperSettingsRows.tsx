@@ -1,3 +1,4 @@
+import { msg, useGT, useMessages } from "gt-react";
 import {
   type AppWallpaper,
   DEFAULT_UNIFIED_SETTINGS,
@@ -9,12 +10,12 @@ import type { CSSProperties } from "react";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
-const WALLPAPER_LABELS: Record<AppWallpaper, string> = {
-  none: "None",
-  "f1-race": "F1 race",
-};
+const WALLPAPER_LABELS = {
+  none: msg("None"),
+  "f1-race": msg("F1 race"),
+} satisfies Record<AppWallpaper, string>;
 
 function sliderStyle(value: number, max: number): CSSProperties {
   const ratio = value / max;
@@ -62,19 +63,22 @@ function WallpaperSlider(props: {
 
 /** Picks a picture behind the app, and how much it is blurred and darkened so text stays readable. */
 export function WallpaperSettingsRows() {
+  const gt = useGT();
+  const setting = useSearchableSetting();
+  const m = useMessages();
   const wallpaper = useClientSettings((settings) => settings.wallpaper);
   const blur = useClientSettings((settings) => settings.wallpaperBlur);
   const dim = useClientSettings((settings) => settings.wallpaperDim);
   return (
     <>
       <SettingsRow
-        {...searchableSetting("wallpaper")}
+        {...setting("wallpaper")}
         devicePreference
-        description="Show a picture behind the sidebar and chat."
+        description={gt("Show a picture behind the sidebar and chat.")}
         resetAction={
           wallpaper !== DEFAULT_UNIFIED_SETTINGS.wallpaper ? (
             <SettingResetButton
-              label="wallpaper"
+              ariaLabel={gt("Reset wallpaper")}
               onClick={() =>
                 updateClientSettings({ wallpaper: DEFAULT_UNIFIED_SETTINGS.wallpaper })
               }
@@ -91,12 +95,12 @@ export function WallpaperSettingsRows() {
                 }
               }}
             >
-              <SelectTrigger size="sm" aria-label="Wallpaper">
-                <SelectValue>{WALLPAPER_LABELS[wallpaper]}</SelectValue>
+              <SelectTrigger size="sm" aria-label={gt("Wallpaper")}>
+                <SelectValue>{m(WALLPAPER_LABELS[wallpaper])}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="none">{WALLPAPER_LABELS.none}</SelectItem>
-                <SelectItem value="f1-race">{WALLPAPER_LABELS["f1-race"]}</SelectItem>
+                <SelectItem value="none">{m(WALLPAPER_LABELS.none)}</SelectItem>
+                <SelectItem value="f1-race">{m(WALLPAPER_LABELS["f1-race"])}</SelectItem>
               </SelectPopup>
             </Select>
           </div>
@@ -105,13 +109,13 @@ export function WallpaperSettingsRows() {
       {wallpaper === "none" ? null : (
         <>
           <SettingsRow
-            {...searchableSetting("setting-wallpaper-blur")}
+            {...setting("setting-wallpaper-blur")}
             devicePreference
-            description="Blur the wallpaper so text in front of it is easier to read."
+            description={gt("Blur the wallpaper so text in front of it is easier to read.")}
             resetAction={
               blur !== DEFAULT_UNIFIED_SETTINGS.wallpaperBlur ? (
                 <SettingResetButton
-                  label="wallpaper blur"
+                  ariaLabel={gt("Reset wallpaper blur")}
                   onClick={() =>
                     updateClientSettings({ wallpaperBlur: DEFAULT_UNIFIED_SETTINGS.wallpaperBlur })
                   }
@@ -121,7 +125,7 @@ export function WallpaperSettingsRows() {
             control={
               <WallpaperSlider
                 id="wallpaper-blur"
-                label="Wallpaper blur"
+                label={gt("Wallpaper blur")}
                 value={blur}
                 max={MAX_WALLPAPER_BLUR}
                 unit="px"
@@ -130,13 +134,13 @@ export function WallpaperSettingsRows() {
             }
           />
           <SettingsRow
-            {...searchableSetting("setting-wallpaper-dim")}
+            {...setting("setting-wallpaper-dim")}
             devicePreference
-            description="Darken the wallpaper toward the theme's background."
+            description={gt("Darken the wallpaper toward the theme's background.")}
             resetAction={
               dim !== DEFAULT_UNIFIED_SETTINGS.wallpaperDim ? (
                 <SettingResetButton
-                  label="wallpaper dimming"
+                  ariaLabel={gt("Reset wallpaper dimming")}
                   onClick={() =>
                     updateClientSettings({ wallpaperDim: DEFAULT_UNIFIED_SETTINGS.wallpaperDim })
                   }
@@ -146,7 +150,7 @@ export function WallpaperSettingsRows() {
             control={
               <WallpaperSlider
                 id="wallpaper-dim"
-                label="Wallpaper dimming"
+                label={gt("Wallpaper dimming")}
                 value={dim}
                 max={MAX_WALLPAPER_DIM}
                 unit="%"

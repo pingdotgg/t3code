@@ -357,7 +357,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "wallpaper",
-    title: "Wallpaper",
+    title: msg("Wallpaper"),
     to: "/settings/appearance",
     searchTerms: ["background image picture photo formula 1 f1 race cars"],
   },
@@ -366,7 +366,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "setting-wallpaper-blur",
     // The row shows only while a wallpaper is set; the picker is always there.
     targetId: "wallpaper",
-    title: "Wallpaper blur",
+    title: msg("Wallpaper blur"),
     to: "/settings/appearance",
     searchTerms: ["background blur difuminado soften readability"],
   },
@@ -374,7 +374,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     // Prefixed because the slider control already owns the `wallpaper-dim` id.
     id: "setting-wallpaper-dim",
     targetId: "wallpaper",
-    title: "Wallpaper dimming",
+    title: msg("Wallpaper dimming"),
     to: "/settings/appearance",
     searchTerms: ["background darken dim brightness readability"],
   },
@@ -503,7 +503,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "snooze-until-scheduled-task",
     requiresScheduledTaskSnooze: true,
-    title: "Snooze until scheduled task runs",
+    title: msg("Snooze until scheduled task runs"),
     to: "/settings/threads",
     searchTerms: ["scheduled task schedule automation recurring wake hide next run"],
     environmentOnly: true,

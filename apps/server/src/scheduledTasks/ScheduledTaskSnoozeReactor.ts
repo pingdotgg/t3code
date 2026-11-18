@@ -43,10 +43,11 @@ const make = Effect.gen(function* () {
       if (message?.notification !== undefined || message?.delegatedCompletion !== undefined) {
         return;
       }
+      if (message?.scheduledTaskId !== undefined && run.startedAt === null) return;
       const nextRun = yield* nextRunForThread(
         event.threadId,
         yield* DateTime.now,
-        message?.scheduledTaskId === undefined ? undefined : run.requestedAt,
+        message?.scheduledTaskId === undefined ? undefined : (run.startedAt ?? undefined),
       ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
       if (nextRun === null) return;
       // Completion is re-emitted (checkpoints, delegated rewrites); one id per run keeps a

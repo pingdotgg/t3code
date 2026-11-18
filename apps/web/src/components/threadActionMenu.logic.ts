@@ -151,8 +151,12 @@ export function buildThreadActionMenuItems(
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
     ...(state.canViewInsights
       ? [
-          { id: "view-tasks" as const, label: "View tasks", icon: "list-todo" },
-          { id: "view-usage" as const, label: "View usage", icon: "chart-no-axes-combined" },
+          { id: "view-tasks" as const, label: resolve(msg("View tasks")), icon: "list-todo" },
+          {
+            id: "view-usage" as const,
+            label: resolve(msg("View usage")),
+            icon: "chart-no-axes-combined",
+          },
         ]
       : []),
     ...(state.canFind

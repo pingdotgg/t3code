@@ -613,7 +613,7 @@ function surfaceTitle(
     case "device":
       return surface.title ?? surface.target?.name ?? resolve(msg("Device"));
     case "thread-insights":
-      return "Tasks & usage";
+      return resolve(msg("Tasks & usage"));
     case "side-chat":
       return resolve(msg("Side chat"));
     case "preview": {

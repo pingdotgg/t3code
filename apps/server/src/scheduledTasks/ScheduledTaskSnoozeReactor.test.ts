@@ -87,6 +87,7 @@ const insertTask = (
 const completeTurn = Effect.fn("test.completeTurn")(function* (
   message: { scheduledTaskId?: ScheduledTaskId } = {},
   options: {
+    startedAt?: string | null;
     queueAnother?: boolean;
     pendingQuestion?: boolean;
     sendBeforeHandle?: boolean;
@@ -174,7 +175,17 @@ const completeTurn = Effect.fn("test.completeTurn")(function* (
     threadId,
     runId: run.id,
     occurredAt: now,
-    payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+    payload: {
+      ...run,
+      status: "completed",
+      startedAt:
+        options.startedAt === null
+          ? null
+          : options.startedAt === undefined
+            ? now
+            : DateTime.makeUnsafe(options.startedAt),
+      completedAt: now,
+    },
   } satisfies OrchestrationV2DomainEvent;
   events.push(completed);
   yield* eventSink.write({ events });
@@ -265,11 +276,27 @@ it.effect.each([
   }).pipe(Effect.provide(layerTest(scenario.setting))),
 );
 
-it.effect("snoozes after a task's own run that schedules a follow-up task", () =>
+it.effect.each([
+  { created: "1970-01-01T00:00:30.000Z", startedAt: "1970-01-01T00:01:00.000Z", expected: null },
+  {
+    created: "1970-01-01T00:01:30.000Z",
+    startedAt: "1970-01-01T00:01:00.000Z",
+    expected: NEXT_RUN,
+  },
+  { created: "1970-01-01T00:01:30.000Z", startedAt: null, expected: null },
+])("snoozes only for tasks created during execution: $created / $startedAt", (scenario) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* insertTask(sql, { id: "follow-up", threadId, next: NEXT_RUN });
-    yield* completeTurn({ scheduledTaskId: ScheduledTaskId.make("current") });
-    assert.strictEqual(yield* snoozedUntil, NEXT_RUN);
+    yield* insertTask(sql, {
+      id: "follow-up",
+      threadId,
+      next: NEXT_RUN,
+      created: scenario.created,
+    });
+    yield* completeTurn(
+      { scheduledTaskId: ScheduledTaskId.make("current") },
+      { startedAt: scenario.startedAt },
+    );
+    assert.strictEqual(yield* snoozedUntil, scenario.expected);
   }).pipe(Effect.provide(layerTest(true))),
 );

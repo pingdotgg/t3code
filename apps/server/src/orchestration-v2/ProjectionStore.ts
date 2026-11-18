@@ -5763,7 +5763,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ? undefined
           : yield* getPlan(threadId, PlanId.make(runless[0].plan_id));
       },
-      (effect, threadId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
+      (effect, threadId) =>
+        sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
     );
 
     const latestTodoOwner = (threadId: ThreadId) => sql<{

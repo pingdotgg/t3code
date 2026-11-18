@@ -1,12 +1,14 @@
+import { useGT } from "gt-react";
 import type { OrchestrationV2CommandProgress } from "@t3tools/contracts";
 
 import { formatCommandProgress } from "./useCommandProgress";
 
 export function CommandProgressMeter({ progress }: { progress: OrchestrationV2CommandProgress }) {
+  const gt = useGT();
   return (
     <span
       role="progressbar"
-      aria-label="Command progress"
+      aria-label={gt("Command progress")}
       aria-valuemin={0}
       aria-valuemax={progress.total}
       aria-valuenow={progress.completed}

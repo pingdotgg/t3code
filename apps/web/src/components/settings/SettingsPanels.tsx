@@ -496,12 +496,12 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity
       ? [gt("Glass opacity")]
       : []),
-    ...(settings.wallpaper !== DEFAULT_UNIFIED_SETTINGS.wallpaper ? ["Wallpaper"] : []),
+    ...(settings.wallpaper !== DEFAULT_UNIFIED_SETTINGS.wallpaper ? [gt("Wallpaper")] : []),
     ...(settings.wallpaperBlur !== DEFAULT_UNIFIED_SETTINGS.wallpaperBlur
-      ? ["Wallpaper blur"]
+      ? [gt("Wallpaper blur")]
       : []),
     ...(settings.wallpaperDim !== DEFAULT_UNIFIED_SETTINGS.wallpaperDim
-      ? ["Wallpaper dimming"]
+      ? [gt("Wallpaper dimming")]
       : []),
     ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
       ? [gt("Diff colors")]
@@ -560,7 +560,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.snoozeThreadsUntilScheduledTask !==
     DEFAULT_UNIFIED_SETTINGS.snoozeThreadsUntilScheduledTask
-      ? ["Snooze until scheduled task runs"]
+      ? [gt("Snooze until scheduled task runs")]
       : []),
     ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? [gt("Word wrap")] : []),
     ...(settings.persistComposerContextStrip !==
@@ -2006,8 +2006,10 @@ export function ThreadsSettingsPanel() {
           {supportsScheduledTaskSnooze ? (
             <SettingsRow
               serverScoped
-              {...searchableSetting("snooze-until-scheduled-task")}
-              description="When a turn ends and the thread has a scheduled task coming up, snooze the thread until the task runs."
+              {...setting("snooze-until-scheduled-task")}
+              description={gt(
+                "When a turn ends and the thread has a scheduled task coming up, snooze the thread until the task runs.",
+              )}
               settingKeys={["snoozeThreadsUntilScheduledTask"]}
               control={
                 <ScopedSwitch
@@ -2016,7 +2018,7 @@ export function ThreadsSettingsPanel() {
                   onCheckedChange={(checked) =>
                     updateSettings({ snoozeThreadsUntilScheduledTask: Boolean(checked) })
                   }
-                  aria-label="Snooze until scheduled task runs"
+                  aria-label={gt("Snooze until scheduled task runs")}
                 />
               }
             />

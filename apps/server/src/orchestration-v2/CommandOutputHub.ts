@@ -139,16 +139,22 @@ export const make = Effect.gen(function* () {
       },
     );
 
-  const threadProgress = (threadId: ThreadId): Array<OrchestrationV2CommandProgress> => {
+  const threadProgress = (
+    threadId: ThreadId,
+    snapshots: ReadonlyMap<string, OrchestrationV2CommandProgress>,
+  ): Array<OrchestrationV2CommandProgress> => {
     const prefix = threadKeyPrefix(threadId);
-    const items: Array<OrchestrationV2CommandProgress> = [];
+    const items = new Map(snapshots);
     for (const [key, tail] of tails) {
       if (!key.startsWith(prefix)) continue;
       const progress = commandOutputProgress(tail.text);
-      if (progress) items.push({ itemId: TurnItemId.make(key.slice(prefix.length)), ...progress });
+      if (progress) {
+        const itemId = TurnItemId.make(key.slice(prefix.length));
+        items.set(itemId, { itemId, ...progress });
+      }
     }
     // Appends reorder `tails`, so sort to keep unchanged counts from looking like a new frame.
-    return items.toSorted((left, right) => left.itemId.localeCompare(right.itemId));
+    return [...items.values()].toSorted((left, right) => left.itemId.localeCompare(right.itemId));
   };
 
   const wakeAll = (key: string, chunk: string) =>
@@ -220,6 +226,36 @@ export const make = Effect.gen(function* () {
             }
           }),
         );
+        const snapshots = new Map<string, OrchestrationV2CommandProgress>();
+        const observe = (item: OrchestrationV2TurnItem) => {
+          if (item.type !== "command_execution") return;
+          const progress =
+            isOrchestrationV2WorkActive(item.status) && item.output !== undefined
+              ? commandOutputProgress(persistedCommandOutput(item.output).text)
+              : null;
+          if (progress)
+            setBounded(snapshots, item.id, { itemId: item.id, ...progress }, MAX_LIVE_COMMANDS);
+          else snapshots.delete(item.id);
+        };
+        const fromSequence = yield* eventSink.latestSequence({ threadId }).pipe(Effect.orDie);
+        yield* eventSink
+          .stream({ threadId, afterSequence: fromSequence, eventType: "turn-item.updated" })
+          .pipe(
+            Stream.runForEach((stored) =>
+              Effect.sync(() => {
+                if (stored.event.type === "turn-item.updated") observe(stored.event.payload);
+              }).pipe(Effect.andThen(Queue.offer(wake, undefined))),
+            ),
+            Effect.orDie,
+            Effect.forkScoped,
+          );
+        const { turnItems } = yield* projections
+          .getThreadRecords(threadId, ["turnItems"], {
+            turnItemTypes: ["command_execution"],
+            turnItemStatuses: ["pending", "running", "waiting"],
+          })
+          .pipe(Effect.orDie);
+        for (const item of turnItems) observe(item);
         yield* Queue.offer(wake, undefined);
         let sent: string | undefined;
         let lastReadAt: number | undefined;
@@ -231,7 +267,7 @@ export const make = Effect.gen(function* () {
               yield* Effect.sleep(COMMAND_PROGRESS_FRAME_INTERVAL_MS - (now - lastReadAt));
             }
             lastReadAt = yield* Clock.currentTimeMillis;
-            const items = threadProgress(threadId);
+            const items = threadProgress(threadId, snapshots);
             const signature = items
               .map((item) => `${item.itemId}:${item.completed}/${item.total}`)
               .join("\n");

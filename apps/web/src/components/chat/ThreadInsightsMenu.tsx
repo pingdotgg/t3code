@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { useEnvironmentScope } from "../../state/session";
 import { AuthOrchestrationReadScope, type ScopedThreadRef } from "@t3tools/contracts";
@@ -16,6 +17,7 @@ export function ThreadInsightsMenu({
   target: ScopedThreadRef;
   placement?: "inline" | "overlay";
 }) {
+  const gt = useGT();
   const supported = useServerConfigs().get(target.environmentId)?.threadInsights === true;
   const canRead = useEnvironmentScope(target.environmentId, AuthOrchestrationReadScope);
   if (!supported || !canRead) return null;
@@ -26,9 +28,9 @@ export function ThreadInsightsMenu({
       <MenuTrigger
         render={
           placement === "overlay" ? (
-            <ThreadDetailsControl part="icon" aria-label="Tasks and usage" />
+            <ThreadDetailsControl part="icon" aria-label={gt("Tasks and usage")} />
           ) : (
-            <Button size="icon-xs" variant="ghost" aria-label="Tasks and usage" />
+            <Button size="icon-xs" variant="ghost" aria-label={gt("Tasks and usage")} />
           )
         }
       >
@@ -37,11 +39,11 @@ export function ThreadInsightsMenu({
       <MenuPopup>
         <MenuItem onClick={() => open("tasks")}>
           <ListTodoIcon />
-          View tasks
+          <T>View tasks</T>
         </MenuItem>
         <MenuItem onClick={() => open("usage")}>
           <ChartNoAxesCombinedIcon />
-          View usage
+          <T>View usage</T>
         </MenuItem>
       </MenuPopup>
     </Menu>

@@ -2706,7 +2706,7 @@ export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig"
   const rawRepo = (
     Option.getOrUndefined(env.updateRepository)?.trim() ||
     Option.getOrUndefined(env.githubRepository)?.trim() ||
-    "LaMarCab76/t3code"
+    ""
   ).trim();
   if (!rawRepo) return undefined;
 

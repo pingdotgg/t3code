@@ -307,6 +307,18 @@ layer("CommandOutputHub", (it) => {
         });
       }
       assert.deepStrictEqual(yield* Queue.take(frames), { items: [] });
+      yield* TestClock.adjust("1 second");
+      yield* writeCommandItem(threadId, { status: "running", output: "snapshot 12/20" });
+      assert.deepStrictEqual(yield* Queue.take(frames), {
+        items: [{ itemId: ITEM_ID, completed: 12, total: 20 }],
+      });
+      yield* TestClock.adjust("1 second");
+      yield* writeCommandItem(threadId, {
+        status: "completed",
+        output: "snapshot 20/20",
+        exitCode: 0,
+      });
+      assert.deepStrictEqual(yield* Queue.take(frames), { items: [] });
     }),
   );
 
