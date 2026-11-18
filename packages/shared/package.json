@@ -311,6 +311,10 @@
       "types": "./src/queuedMessageMerge.ts",
       "import": "./src/queuedMessageMerge.ts"
     },
+    "./queuedMessageMergeCopy": {
+      "types": "./src/queuedMessageMergeCopy.ts",
+      "import": "./src/queuedMessageMergeCopy.ts"
+    },
     "./composerContextLegacy": {
       "types": "./src/composerContextLegacy.ts",
       "import": "./src/composerContextLegacy.ts"

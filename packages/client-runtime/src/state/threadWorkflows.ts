@@ -7,6 +7,7 @@ import {
 import { copySorted } from "@t3tools/shared/Array";
 import { isSlashCommandText, modelSelectionsEqual } from "@t3tools/shared/model";
 import { mergeQueuedMessages } from "@t3tools/shared/queuedMessageMerge";
+import { queuedMessageMergeBlockedReason } from "@t3tools/shared/queuedMessageMergeCopy";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -228,7 +229,7 @@ export function deriveThreadQueueWorkflowState(
     sendAsOneBlockedReason: !queueIsContiguous
       ? resolve(msg("A notification is waiting between these messages."))
       : merged._tag === "Blocked"
-        ? merged.reason
+        ? queuedMessageMergeBlockedReason(merged.kind, resolve)
         : canSendNow || promoteSkipsCompaction
           ? null
           : !canPromoteToSteer

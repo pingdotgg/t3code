@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ThreadProjection,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+} from "@t3tools/contracts";
+import { mFallback } from "gt-i18n";
 
 import {
   canForkProjectedAssistantItem,
@@ -458,6 +463,29 @@ describe("thread workflows", () => {
       each: cannotJoin,
     },
     {
+      name: "too many attachments",
+      second: {
+        attachments: Array.from({ length: PROVIDER_SEND_TURN_MAX_ATTACHMENTS + 1 }, (_, index) => ({
+          ...image,
+          id: `image-${index}`,
+        })),
+      },
+      asOne: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+      each: null,
+    },
+    {
+      name: "images too large to send together",
+      second: {
+        attachments: Array.from({ length: 9 }, (_, index) => ({
+          ...image,
+          id: `image-${index}`,
+          sizeBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+        })),
+      },
+      asOne: "Images can total up to 80 MiB per message. Use smaller images or send fewer at once.",
+      each: null,
+    },
+    {
       name: "attachments the turn cannot take",
       provider: { steerAttachments: false },
       second: { attachments: [image] },
@@ -498,7 +526,7 @@ describe("thread workflows", () => {
         ordinal,
         ...fields,
       });
-      const state = deriveThreadQueueWorkflowState({
+      const projection = {
         thread: { id: "thread", activeProviderThreadId: "provider-thread" },
         runs: [
           {
@@ -552,11 +580,16 @@ describe("thread workflows", () => {
             }),
           },
         ],
-      } as never);
+      } as never;
+      const state = deriveThreadQueueWorkflowState(
+        projection,
+        (encoded) => `«${mFallback(encoded)}»` as never,
+      );
 
+      const translated = (reason: string | null) => (reason === null ? null : `«${reason}»`);
       expect([state.sendAsOneBlockedReason, state.sendEachBlockedReason]).toEqual([
-        row.asOne,
-        row.each,
+        translated(row.asOne),
+        translated(row.each),
       ]);
     },
   );

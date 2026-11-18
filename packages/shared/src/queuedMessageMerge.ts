@@ -3,6 +3,7 @@ import {
   COMPOSER_CONTEXT_MAX_RECORDS,
   type ComposerContextRecord,
   getProviderAttachmentLimitError,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type OrchestrationMessageContext,
   type OrchestrationV2ConversationMessage,
@@ -42,6 +43,28 @@ export interface QueuedMessageMergePart {
     | undefined;
 }
 
+export type QueuedMessageMergeBlockedKind =
+  | "tooFew"
+  | "loading"
+  | "guest"
+  | "automated"
+  | "command"
+  | "freshContext"
+  | "continuation"
+  | "modelMismatch"
+  | "sharedAttachment"
+  | "tooManyAttachments"
+  | "imagesTooLarge"
+  | "conflictingContext"
+  | "tooMuchContext"
+  | "tooLong";
+
+interface QueuedMessageMergeBlocked {
+  readonly _tag: "Blocked";
+  readonly kind: QueuedMessageMergeBlockedKind;
+  readonly reason: string;
+}
+
 export type QueuedMessageMerge =
   | {
       readonly _tag: "Merged";
@@ -49,18 +72,27 @@ export type QueuedMessageMerge =
       readonly attachments: ReadonlyArray<ChatAttachment>;
       readonly context: OrchestrationMessageContext | undefined;
     }
-  | { readonly _tag: "Blocked"; readonly reason: string };
+  | QueuedMessageMergeBlocked;
 
 const ULTRATHINK_PREFIX = /^Ultrathink:\s*/i;
 
-function partBlockedReason(
+const blocked = (
+  kind: QueuedMessageMergeBlockedKind,
+  reason: string,
+): QueuedMessageMergeBlocked => ({
+  _tag: "Blocked",
+  kind,
+  reason,
+});
+
+function partBlocked(
   part: QueuedMessageMergePart,
   first: QueuedMessageMergePart,
-): string | null {
+): QueuedMessageMergeBlocked | null {
   const { run, message } = part;
-  if (message === undefined) return "Some queued messages are still loading.";
+  if (message === undefined) return blocked("loading", "Some queued messages are still loading.");
   if (message.context?.guest !== undefined) {
-    return "A guest's message can't be combined with others.";
+    return blocked("guest", "A guest's message can't be combined with others.");
   }
   if (
     message.createdBy !== "user" ||
@@ -71,21 +103,23 @@ function partBlockedReason(
     message.delegatedCompletion !== undefined ||
     message.notification !== undefined
   ) {
-    return "Messages from agents and automations are sent on their own.";
+    return blocked("automated", "Messages from agents and automations are sent on their own.");
   }
-  if (isSlashCommandText(message.text)) return "Commands are sent on their own.";
+  if (isSlashCommandText(message.text)) {
+    return blocked("command", "Commands are sent on their own.");
+  }
   if (run.freshContext === true) {
-    return "A message that starts a fresh session is sent on its own.";
+    return blocked("freshContext", "A message that starts a fresh session is sent on its own.");
   }
   if (
     run.sourcePlanRef !== undefined ||
     run.restartContinuationOfRunId !== undefined ||
     run.usageLimitContinuationOfRunId !== undefined
   ) {
-    return "Plan and continuation messages are sent on their own.";
+    return blocked("continuation", "Plan and continuation messages are sent on their own.");
   }
   if (!modelSelectionsEqual(run.modelSelection, first.run.modelSelection)) {
-    return "Queued messages use different models.";
+    return blocked("modelMismatch", "Queued messages use different models.");
   }
   return null;
 }
@@ -95,30 +129,37 @@ export function mergeQueuedMessages(
 ): QueuedMessageMerge {
   const first = parts[0];
   if (first === undefined || parts.length < 2) {
-    return { _tag: "Blocked", reason: "Queue two or more messages to send them as one." };
+    return blocked("tooFew", "Queue two or more messages to send them as one.");
   }
   for (const part of parts) {
-    const reason = partBlockedReason(part, first);
-    if (reason !== null) return { _tag: "Blocked", reason };
+    const partResult = partBlocked(part, first);
+    if (partResult !== null) return partResult;
   }
   const messages = parts.flatMap(({ message }) => (message === undefined ? [] : [message]));
   const attachments = messages.flatMap((message) => message.attachments);
   if (new Set(attachments.map((attachment) => attachment.id)).size !== attachments.length) {
-    return { _tag: "Blocked", reason: "Queued messages share an attachment." };
+    return blocked("sharedAttachment", "Queued messages share an attachment.");
   }
   const attachmentLimitError = getProviderAttachmentLimitError(attachments);
-  if (attachmentLimitError !== undefined) return { _tag: "Blocked", reason: attachmentLimitError };
+  if (attachmentLimitError !== undefined) {
+    return blocked(
+      attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+        ? "tooManyAttachments"
+        : "imagesTooLarge",
+      attachmentLimitError,
+    );
+  }
   const recordsById = new Map<ComposerContextRecord["contextId"], ComposerContextRecord>();
   for (const record of messages.flatMap((message) => message.context?.records ?? [])) {
     const previous = recordsById.get(record.contextId);
     if (previous !== undefined && !Equal.equals(previous, record)) {
-      return { _tag: "Blocked", reason: "Queued messages have conflicting context." };
+      return blocked("conflictingContext", "Queued messages have conflicting context.");
     }
     recordsById.set(record.contextId, record);
   }
   const records = [...recordsById.values()];
   if (records.length > COMPOSER_CONTEXT_MAX_RECORDS) {
-    return { _tag: "Blocked", reason: "Queued messages carry too much context to send as one." };
+    return blocked("tooMuchContext", "Queued messages carry too much context to send as one.");
   }
   const ultrathink = messages.some((message) => ULTRATHINK_PREFIX.test(message.text));
   const body = messages
@@ -131,7 +172,7 @@ export function mergeQueuedMessages(
     attachments.length > 0,
   );
   if (text.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
-    return { _tag: "Blocked", reason: "Queued messages are too long to send as one." };
+    return blocked("tooLong", "Queued messages are too long to send as one.");
   }
   return {
     _tag: "Merged",
