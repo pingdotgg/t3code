@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   htmlRenderFrameHeight,
+  htmlRenderMeasuredPageHeight,
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
@@ -161,7 +162,7 @@ describe("readHtmlRenderImageRequest", () => {
 });
 
 describe("readHtmlRenderReference", () => {
-  it("keeps measured page heights above the reference cap", () => {
+  it("keeps measured page heights above the reference cap, for the widths they were measured at", () => {
     const parsed = readHtmlRenderReference({
       ...reference,
       height: 2000,
@@ -176,6 +177,8 @@ describe("readHtmlRenderReference", () => {
       [1144, 20_000],
     ]);
     expect(parsed && htmlRenderFrameHeight(parsed, 728)).toBe(2000);
+    expect(parsed && htmlRenderMeasuredPageHeight(parsed, 728)).toBe(3684);
+    expect(parsed && htmlRenderMeasuredPageHeight(parsed, 900)).toBeUndefined();
   });
 });
 

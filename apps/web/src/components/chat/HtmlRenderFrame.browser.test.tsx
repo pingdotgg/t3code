@@ -31,6 +31,13 @@ const sizeChanged = (height: number) => ({
   params: { height },
 });
 
+const sized = (width: number) => {
+  const container = document.createElement("div");
+  container.style.width = `${width}px`;
+  document.body.append(container);
+  return { container };
+};
+
 describe("HtmlRenderFrame", () => {
   it("reports leaving full screen when it unmounts while expanded", async () => {
     setup();
@@ -61,10 +68,14 @@ describe("HtmlRenderFrame", () => {
           attachmentId: "tall",
           title: "Tall mockup",
           height: 2000,
-          heights: [[728, 3684]],
+          heights: [
+            [400, 900],
+            [728, 3684],
+          ],
         }}
         threadRef={undefined}
       />,
+      sized(728),
     );
 
     expect(screen.getByTitle("Tall mockup").element().parentElement?.style.height).toBe("3684px");
@@ -86,12 +97,6 @@ describe("HtmlRenderFrame", () => {
     );
     const frameHeight = (screen: Screen) =>
       screen.getByTitle("Mockup").element().parentElement?.style.height;
-    const sized = (width: number) => {
-      const container = document.createElement("div");
-      container.style.width = `${width}px`;
-      document.body.append(container);
-      return { container };
-    };
 
     assetUrl.current = page.url;
     {
