@@ -16,9 +16,15 @@ final class T3SocksListener {
     self.requestAccess = requestAccess
   }
 
-  func start(onReady: @escaping (UInt16) -> Void) {
+  var isListening: Bool { listener?.state == .ready }
+
+  /// `port` asks for a specific port, so a restarted listener keeps the address WebKit was given.
+  func start(port: UInt16? = nil, onReady: @escaping (UInt16) -> Void) {
     let parameters = NWParameters.tcp
-    parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+    parameters.allowLocalEndpointReuse = true
+    parameters.requiredLocalEndpoint = .hostPort(
+      host: "127.0.0.1", port: port.flatMap(NWEndpoint.Port.init(rawValue:)) ?? .any
+    )
     guard let listener = try? NWListener(using: parameters) else { return }
     self.listener = listener
     listener.stateUpdateHandler = { [weak listener] state in
