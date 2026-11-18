@@ -974,10 +974,10 @@ it.live("a card an older server left naming a machine beside its address links n
   ),
 );
 
-it.live("an agent below full access may not ask, and no card is shown", () =>
+it.live("a supervised agent may not ask, and no card is shown", () =>
   withBoth((a, b) =>
     Effect.gen(function* () {
-      yield* seedThread(a, "auto");
+      yield* seedThread(a, "approval-required");
       const refused = yield* a.call({ url: b.url });
       expect(errorOf(refused)).toMatchObject({ code: "capability_denied" });
       expect(yield* cardOf(a)).toBeUndefined();

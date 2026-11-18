@@ -206,7 +206,7 @@ const handlers = {
     }),
   ),
   // A link lets every agent here reach the other environment, so it is an
-  // environment setting: full access, and never for linked work.
+  // environment setting: above Supervised, and never for linked work.
   t3_environment_link: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

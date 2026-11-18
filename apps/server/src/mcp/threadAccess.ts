@@ -217,8 +217,9 @@ export function assertLiveCaller({ caller, scope }: Caller) {
       );
 }
 
-export const assertFullAccess = (context: Caller, message: string) =>
-  context.limits.runtimeMode === "full-access" && context.limits.interactionMode === "default"
+/** Supervised stays refused: Claude pre-approves T3 tools, so its user would see no approval step. */
+export const assertMayChangeEnvironment = (context: Caller, message: string) =>
+  context.limits.runtimeMode !== "approval-required" && context.limits.interactionMode === "default"
     ? Effect.void
     : Effect.fail(new OrchestratorMcpFailure({ code: "capability_denied", message }));
 

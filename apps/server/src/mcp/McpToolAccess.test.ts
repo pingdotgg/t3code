@@ -28,6 +28,7 @@ import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 const supervisedThreadId = ThreadId.make("thread:supervised");
 const planThreadId = ThreadId.make("thread:plan");
 const fullAccessThreadId = ThreadId.make("thread:full-access");
+const autoThreadId = ThreadId.make("thread:auto");
 const endedThreadId = ThreadId.make("thread:ended");
 const backgroundThreadId = ThreadId.make("thread:background");
 const oldProviderThreadId = ThreadId.make("thread:old-provider-background");
@@ -48,6 +49,7 @@ const shells = new Map([
     liveThreadShell(planThreadId, { runtimeMode: "approval-required", interactionMode: "plan" }),
   ],
   [fullAccessThreadId, liveThreadShell(fullAccessThreadId)],
+  [autoThreadId, liveThreadShell(autoThreadId, { runtimeMode: "auto" })],
   [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
   [backgroundThreadId, backgroundShell(backgroundThreadId, ProviderInstanceId.make("codex"))],
   [oldProviderThreadId, backgroundShell(oldProviderThreadId, ProviderInstanceId.make("claude"))],
@@ -228,6 +230,7 @@ const call = (
 const supervised = threadCaller(supervisedThreadId);
 const plan = threadCaller(planThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
+const auto = threadCaller(autoThreadId);
 const ended = threadCaller(endedThreadId);
 const background = threadCaller(backgroundThreadId);
 const oldProviderBackground = threadCaller(oldProviderThreadId);
@@ -239,6 +242,7 @@ const mismatchedProvider = {
 };
 const supervisedClient = clientCaller("approval-required");
 const fullAccessClient = clientCaller("full-access");
+const autoAcceptEditsClient = clientCaller("auto-accept-edits");
 const readOnlyClient = clientCaller("read-only");
 const linkedClient: McpInvocationContext.McpInvocationScope = {
   ...supervisedClient,
@@ -317,9 +321,11 @@ it.effect.each([
   ["starts_threads", fullAccessClient, { runtimeMode: "full-access" }, "full-access/default"],
 
   ["writes_environment", fullAccess, {}, "ran"],
+  ["writes_environment", auto, {}, "ran"],
   ["writes_environment", supervised, {}, "capability_denied"],
   ["writes_environment", plan, {}, "capability_denied"],
   ["writes_environment", fullAccessClient, {}, "ran"],
+  ["writes_environment", autoAcceptEditsClient, {}, "ran"],
   ["writes_environment", supervisedClient, {}, "capability_denied"],
 ] as const)("%s from %o with %o: %s", ([tool, scope, args, expected]) =>
   call(tool, scope, args).pipe(
