@@ -516,6 +516,77 @@ it.effect.each([
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("a one-time task is removed once its turn completes", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-11-01T07:00:00.000Z"));
+    const projectId = ProjectId.make("project:test");
+    const ended = yield* Deferred.make<void>();
+    const sent = yield* Ref.make("");
+    const run = { id: "run:1", status: "completed", rootNodeId: "node:root" };
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) => Ref.set(sent, input.messageId).pipe(Effect.as({} as never)),
+            getThreadShell: () => Effect.succeed(threadShell(projectId)),
+            getProjectThreadRecords: () =>
+              Effect.map(
+                Ref.get(sent),
+                (userMessageId) => ({ runs: [{ ...run, userMessageId }] }) as never,
+              ),
+            waitForThread: (input) =>
+              Deferred.await(ended).pipe(
+                Effect.as({ threadId: input.threadId, run, timedOut: false } as never),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:once"),
+        title: "Release notes",
+        prompt: "Draft the release notes",
+        enabled: true,
+        schedule: { type: "once", runAt: "2026-11-01T07:01:00.000Z" },
+        projectId,
+        threadId: ThreadId.make("thread:once"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const dispatched = service.subscribeList().pipe(
+        Stream.map(({ tasks }) => tasks.find((candidate) => candidate.id === task.id)),
+        Stream.filter((current) => current?.lastRunStatus === "succeeded"),
+        Stream.runHead,
+      );
+      const removed = service.subscribeList().pipe(
+        Stream.filter(({ tasks }) => tasks.every((candidate) => candidate.id !== task.id)),
+        Stream.runHead,
+      );
+      const recorded = yield* Effect.forkChild(dispatched);
+      const gone = yield* Effect.forkChild(removed);
+      yield* TestClock.adjust("2 minutes");
+      // The dispatch alone keeps it: the turn can still fail.
+      assert.isNull(Option.getOrThrow(yield* Fiber.join(recorded))?.nextRunAt);
+      yield* Deferred.succeed(ended, undefined);
+      yield* Fiber.join(gone);
+      assert.lengthOf((yield* service.list()).tasks, 0);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("a bound run follows its thread when promotion moves it mid-send", () =>
   Effect.gen(function* () {
     const scratch = ProjectId.make("project:scratch");

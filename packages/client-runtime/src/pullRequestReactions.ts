@@ -1,3 +1,6 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+import { formatConjunctionList } from "./listFormat.ts";
 import type {
   PullRequestComment,
   PullRequestDetail,
@@ -38,46 +41,81 @@ const REACTION_EMOJI: Record<PullRequestReactionContent, string> = {
 };
 
 const REACTION_NAME: Record<PullRequestReactionContent, string> = {
-  "thumbs-up": "thumbs up",
-  "thumbs-down": "thumbs down",
-  laugh: "laugh",
-  hooray: "hooray",
-  confused: "confused",
-  heart: "heart",
-  rocket: "rocket",
-  eyes: "eyes",
+  "thumbs-up": msg("thumbs up", { $context: "reaction emoji name" }),
+  "thumbs-down": msg("thumbs down", { $context: "reaction emoji name" }),
+  laugh: msg("laugh", { $context: "reaction emoji name" }),
+  hooray: msg("hooray", { $context: "reaction emoji name" }),
+  confused: msg("confused", { $context: "reaction emoji name" }),
+  heart: msg("heart", { $context: "reaction emoji name" }),
+  rocket: msg("rocket", { $context: "reaction emoji name" }),
+  eyes: msg("eyes", { $context: "reaction emoji name" }),
 };
 
 export function pullRequestReactionEmoji(content: PullRequestReactionContent): string {
   return REACTION_EMOJI[content];
 }
 
-export function pullRequestReactionName(content: PullRequestReactionContent): string {
-  return REACTION_NAME[content];
+export function pullRequestReactionName(
+  content: PullRequestReactionContent,
+  resolve: MFunctionType = mFallback,
+): string {
+  return resolve(REACTION_NAME[content]);
 }
 
 const NAMED_ACTOR_LIMIT = 3;
 
-function joinNames(parts: ReadonlyArray<string>): string {
-  if (parts.length <= 1) return parts[0] ?? "";
-  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
-  return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
+function countRemainder(count: number, named: boolean, resolve: MFunctionType): string {
+  return named
+    ? resolve(msg("{count, plural, one {{count} other} other {{count} others}}", { count }))
+    : resolve(msg("{count, plural, one {{count} person} other {{count} people}}", { count }));
 }
 
-function countRemainder(count: number, named: boolean): string {
-  if (named) return `${count} ${count === 1 ? "other" : "others"}`;
-  return `${count} ${count === 1 ? "person" : "people"}`;
+function reactedWith(
+  content: PullRequestReactionContent,
+  names: string,
+  resolve: MFunctionType,
+): string {
+  switch (content) {
+    case "thumbs-up":
+      return resolve(msg("{names} reacted with thumbs up emoji", { names }));
+    case "thumbs-down":
+      return resolve(msg("{names} reacted with thumbs down emoji", { names }));
+    case "laugh":
+      return resolve(msg("{names} reacted with laugh emoji", { names }));
+    case "hooray":
+      return resolve(msg("{names} reacted with hooray emoji", { names }));
+    case "confused":
+      return resolve(msg("{names} reacted with confused emoji", { names }));
+    case "heart":
+      return resolve(msg("{names} reacted with heart emoji", { names }));
+    case "rocket":
+      return resolve(msg("{names} reacted with rocket emoji", { names }));
+    case "eyes":
+      return resolve(msg("{names} reacted with eyes emoji", { names }));
+  }
 }
 
 /** Hosts omit the viewer from actors; add You only if count has room, since viewer login is unavailable. */
-export function pullRequestReactionTooltip(reaction: PullRequestReaction): string {
+export function pullRequestReactionTooltip(
+  reaction: PullRequestReaction,
+  resolve: MFunctionType = mFallback,
+  locale = "en",
+): string {
   const viewerHasRoom = reaction.actors.length < reaction.count;
   const names =
-    reaction.viewerHasReacted && viewerHasRoom ? ["You", ...reaction.actors] : [...reaction.actors];
+    reaction.viewerHasReacted && viewerHasRoom
+      ? [
+          resolve(msg("You", { $context: "the viewer, in a list of people who reacted" })),
+          ...reaction.actors,
+        ]
+      : [...reaction.actors];
   const shown = names.slice(0, Math.min(NAMED_ACTOR_LIMIT, reaction.count));
   const others = Math.max(0, reaction.count - shown.length);
-  const parts = [...shown, ...(others > 0 ? [countRemainder(others, shown.length > 0)] : [])];
-  return `${joinNames(parts)} reacted with ${pullRequestReactionName(reaction.content)} emoji`;
+  const parts = [
+    ...shown,
+    ...(others > 0 ? [countRemainder(others, shown.length > 0, resolve)] : []),
+  ];
+  return reactedWith(reaction.content, formatConjunctionList(parts, locale, resolve), resolve);
 }
 
 /** Changes whenever the host reports different reactions, so pending overlays can reset. */
