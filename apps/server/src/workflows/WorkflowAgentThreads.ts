@@ -20,6 +20,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
+import * as ThreadIssueService from "../orchestration-v2/ThreadIssueService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -28,6 +29,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as WorkflowAgentLinks from "./WorkflowAgentLinks.ts";
 import { isProjectPath, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
+import { type IssueAddress, WorkflowForge } from "./WorkflowForge.ts";
 
 // A turn can run for hours. Each look is bounded so a wait that lost its event is asked again.
 const WAIT_SLICE = Duration.minutes(10);
@@ -45,6 +47,36 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettings.ServerSettingsService;
   const digest = yield* Digest.Digest;
   const linked = yield* WorkflowAgentLinks.make;
+  const forge = yield* WorkflowForge;
+  const threadIssues = yield* ThreadIssueService.ThreadIssueService;
+  // A tracker that is down must not cost the step its agent.
+  const showIssue = (issue: IssueAddress | undefined, threadId: string) =>
+    issue === undefined
+      ? Effect.void
+      : forge.issues.read(issue).pipe(
+          Effect.flatMap((detail) =>
+            threadIssues.link({
+              threadId: ThreadId.make(threadId),
+              ref: {
+                projectId: detail.projectId,
+                tracker: detail.tracker,
+                host: detail.host,
+                scope: detail.scope,
+                key: detail.key,
+              },
+              url: detail.url,
+              displayKey: detail.displayKey,
+              title: detail.title,
+              source: "agent",
+            }),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning("Could not link a workflow agent's thread to its issue", {
+              threadId,
+              reason: error.message,
+            }),
+          ),
+        );
   const here = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
   );
@@ -123,6 +155,7 @@ const make = Effect.gen(function* () {
             creationSource: "server",
           })
           .pipe(Effect.mapError(failed("Could not send to the thread")));
+        yield* showIssue(input.issue, threadId);
         return { threadId, turnId: sent.run.id };
       }
 
@@ -177,6 +210,7 @@ const make = Effect.gen(function* () {
           reason: `Thread ${launched.threadId} started without a turn for its first message.`,
         });
       }
+      yield* showIssue(input.issue, launched.threadId);
       return { threadId: launched.threadId, turnId: run.id };
     }),
     result: Effect.fn("WorkflowAgentThreads.result")(function* (turn, options) {

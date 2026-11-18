@@ -4,6 +4,8 @@ import type * as Duration from "effect/Duration";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import type { IssueAddress } from "./WorkflowForge.ts";
+
 export class WorkflowAgentError extends Schema.TaggedError<WorkflowAgentError>()(
   "WorkflowAgentError",
   { reason: Schema.String },
@@ -67,6 +69,8 @@ export class WorkflowAgents extends Context.Service<
       readonly environment: string | undefined;
       /** Continue this thread instead of starting one. */
       readonly thread: string | undefined;
+      /** An issue the thread is about, which it is linked to. */
+      readonly issue?: IssueAddress | undefined;
     }) => Effect.Effect<AgentTurn, WorkflowAgentError>;
     /**
      * Wait for the turn to end and return what it produced. With `quiet`, a turn that ended
