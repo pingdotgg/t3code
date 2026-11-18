@@ -658,6 +658,8 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   ),
   /** Models left out of `models`: unlisted visible models, or matches past the cap with `search`. */
   omittedModels: Schema.optional(NonNegativeInt),
+  /** `models` is a cached list the provider could not refresh: a missing model may still exist. */
+  modelsStale: Schema.optional(Schema.Boolean),
   runtimeModes: Schema.optional(Schema.Array(RuntimeMode)),
   canRunChildTask: Schema.Boolean,
   canRunCrossProviderChildTask: Schema.Boolean,

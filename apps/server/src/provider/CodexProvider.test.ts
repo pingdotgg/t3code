@@ -7,15 +7,18 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { CodexSettings } from "@t3tools/contracts";
 
 import {
   applyPreferredCodexDefaultModel,
+  checkCodexProviderStatus,
   codexCustomEndpoint,
   codexRoutesSpendNativeQuota,
   type CodexAppServerProviderSnapshot,
@@ -152,11 +155,13 @@ it.effect("reuses one Codex skills helper per launch until it idles out", () =>
   }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
 );
 
-it.effect("lists the catalog Codex refreshes after the probe stops waiting for it", () =>
+const defaultCodexSettings = Schema.decodeSync(CodexSettings)({});
+
+it.effect("marks a cached catalog Codex did not refresh in time as stale", () =>
   Effect.gen(function* () {
     // The TestClock starts at the epoch, so the probe's Codex spawns at 0 ms.
-    let cache = { fetched_at: "1969-12-31T23:59:00Z", models: ["gpt-old"] };
-    const { helpers, spawner } = makeFakeCodexAppServers({
+    const cache = { fetched_at: "1969-12-31T23:59:00Z", models: ["gpt-old"] };
+    const { spawner } = makeFakeCodexAppServers({
       "account/read": () => ({
         account: { type: "chatgpt", email: "dev@example.com", planType: "pro" },
         requiresOpenaiAuth: true,
@@ -202,16 +207,20 @@ it.effect("lists the catalog Codex refreshes after the probe stops waiting for i
       snapshot.models?.map((model) => model.slug),
       ["gpt-old"],
     );
+    assert.deepStrictEqual(snapshot.staleCatalog, { codexHome: "/codex-home", sinceMs: 0 });
     yield* Scope.close(probeScope, Exit.void);
-    assert.strictEqual(helpers[0]!.closed, false);
 
-    cache = { fetched_at: "1970-01-01T00:00:10Z", models: ["gpt-new", "gpt-old"] };
-    yield* TestClock.adjust("1 second");
-    const refreshed = yield* snapshot.refreshedModels!;
-    assert.deepStrictEqual(
-      refreshed?.map((model) => model.slug),
-      ["gpt-new", "gpt-old"],
+    const provider = yield* checkCodexProviderStatus(
+      defaultCodexSettings,
+      () => Effect.succeed(snapshot),
+      {},
+    ).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
+      Effect.provide(Path.layer),
     );
+    assert.strictEqual(provider.modelsStale, true);
+    assert.strictEqual(provider.status, "ready");
   }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
 );
 

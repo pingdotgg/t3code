@@ -2647,6 +2647,7 @@ const make = Effect.gen(function* () {
               };
             }),
             ...(omitted === 0 ? {} : { omittedModels: omitted }),
+            ...(provider.modelsStale ? { modelsStale: true } : {}),
             ...(provider.supportedRuntimeModes === undefined ||
             provider.supportedRuntimeModes.length === 0
               ? {}
