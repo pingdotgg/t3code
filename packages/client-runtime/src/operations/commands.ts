@@ -278,6 +278,7 @@ export interface EditQueuedRunInput extends ThreadCommandInput {
   readonly runId: RunId;
   readonly text: string;
   readonly expectedText?: string;
+  readonly expectedAttachmentIds?: ReadonlyArray<ChatAttachment["id"]>;
   /**
    * Full replacement attachment list for the queued message. Omitted =
    * text-only edit that leaves attachments untouched.
@@ -1188,13 +1189,16 @@ export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(func
     input.edit === undefined
       ? undefined
       : yield* persistAttachments(input.threadId, input.edit.messageId, input.edit.attachments);
-  return yield* dispatch({
+  const result = yield* dispatch({
     type: "queued-run.edit",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     runId: input.runId,
     text: input.text,
     ...(input.expectedText === undefined ? {} : { expectedText: input.expectedText }),
+    ...(input.expectedAttachmentIds === undefined
+      ? {}
+      : { expectedAttachmentIds: input.expectedAttachmentIds }),
     ...(attachments === undefined ? {} : { attachments }),
     ...(input.edit?.context && attachments
       ? {
@@ -1206,6 +1210,7 @@ export const editQueuedRun = Effect.fn("EnvironmentCommands.editQueuedRun")(func
         }
       : {}),
   });
+  return { ...result, attachments };
 });
 
 export type LinkThreadPullRequestInput = Omit<

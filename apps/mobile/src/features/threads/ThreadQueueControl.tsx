@@ -181,7 +181,12 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           runId,
           messageId: entry.messageId,
           originalText: entry.text,
-          ...(entry.message ? { expectedText: entry.message.text } : {}),
+          ...(entry.message
+            ? {
+                expectedText: entry.message.text,
+                expectedAttachmentIds: entry.message.attachments.map((attachment) => attachment.id),
+              }
+            : {}),
           existingAttachments: entry.attachments,
           ...(entry.context ? { context: entry.context } : {}),
         },

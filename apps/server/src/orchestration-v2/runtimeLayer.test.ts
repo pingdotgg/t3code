@@ -10820,6 +10820,40 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         "dropped files are queued for a cleanup that skips files the thread still references",
       );
 
+      assert.deepInclude(
+        yield* Effect.flip(
+          orchestrator.dispatch({
+            type: "queued-run.edit",
+            commandId: CommandId.make("runtime-layer-queued-edit-stale-attachments"),
+            threadId,
+            runId: queuedRun.id,
+            text: "Updated queued text with an attachment.",
+            expectedText: "Updated queued text with an attachment.",
+            expectedAttachmentIds: [],
+            attachments: [],
+          }),
+        ),
+        {
+          _tag: "OrchestratorCommandRejectedError",
+          cause: "This queued message changed since you started editing it.",
+        },
+      );
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).messages,
+        afterAttachmentEdit.messages,
+      );
+      assert.deepEqual(yield* effectRequests("runtime-layer-queued-edit-stale-attachments"), []);
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-layer-queued-edit-current-attachments"),
+        threadId,
+        runId: queuedRun.id,
+        text: "Updated queued text with an attachment.",
+        expectedText: "Updated queued text with an attachment.",
+        expectedAttachmentIds: [kept.id],
+        attachments: [kept],
+      });
+
       yield* orchestrator.dispatch({
         type: "queued-run.edit",
         commandId: CommandId.make("runtime-layer-queued-edit-text-only"),

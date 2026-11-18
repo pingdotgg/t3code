@@ -30,6 +30,16 @@ import { AppAtomRegistryProvider, appAtomRegistry } from "../../rpc/atomRegistry
 import { useQueuedRunEdit } from "./useQueuedRunEdit";
 import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 
+type EditQueuedRunResult =
+  | {
+      readonly _tag: "Success";
+      readonly value: { readonly attachments: ReadonlyArray<{ readonly id: string }> };
+    }
+  | { readonly _tag: "Failure" };
+
+const saveSucceeded = (attachments: ReadonlyArray<{ readonly id: string }> = []) =>
+  ({ _tag: "Success", value: { attachments } }) as const;
+
 interface RunStatus {
   readonly id: RunId;
   readonly status: string;
@@ -40,7 +50,7 @@ interface RunStatus {
 const mocks = await vi.hoisted(async () => {
   const { Atom } = await import("effect/reactivity");
   return {
-    editQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" | "Failure" }>>(),
+    editQueuedRun: vi.fn<(value: unknown) => Promise<EditQueuedRunResult>>(),
     promoteQueuedRun: vi.fn<(value: unknown) => Promise<{ readonly _tag: "Success" }>>(),
     promoteCommand: {},
     // The projection's runs per thread, written by each test to stand in for the server.
@@ -224,7 +234,7 @@ describe("useQueuedRunEdit", () => {
     "opens attachment-only edits without the placeholder and preserves effort on save (%j)",
     async (prefix) => {
       const { hook } = setup();
-      mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+      mocks.editQueuedRun.mockResolvedValue(saveSucceeded());
       await using screen = await render(view(THREAD_A, "queued", hook));
       using toast = vi.spyOn(toastManager, "add");
       const attachments = [
@@ -286,7 +296,7 @@ describe("useQueuedRunEdit", () => {
     "a saved edit sent as $submissionIntent/$dispatchMode steers: $steers",
     async (submission) => {
       const { hook } = setup();
-      mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+      mocks.editQueuedRun.mockResolvedValue(saveSucceeded());
       mocks.promoteQueuedRun.mockResolvedValue({ _tag: "Success" });
       const activeRun = RunId.make("run-active");
       const modelSelection = { instanceId: "claudeAgent", model: "claude-sonnet-4-6" };
@@ -314,7 +324,7 @@ describe("useQueuedRunEdit", () => {
 
   it("saves an effort-only prompt without claiming removed attachments remain", async () => {
     const { hook } = setup();
-    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+    mocks.editQueuedRun.mockResolvedValue(saveSucceeded());
     await using screen = await render(view(THREAD_A, "queued", hook));
     await act(() =>
       requireHook(hook).beginEdit({
@@ -353,7 +363,12 @@ describe("useQueuedRunEdit", () => {
     const messageId = MessageId.make("message-1");
     const text = `wait for ${formatInlineContextReference(threadContextReference(thread))} on ${formatInlineContextReference(environmentContextReference(machine))}`;
     const messages = [
-      { id: messageId, text, context: { version: 1, records: [thread, machine, unreferenced] } },
+      {
+        id: messageId,
+        text,
+        attachments: [],
+        context: { version: 1, records: [thread, machine, unreferenced] },
+      },
     ];
     await using _screen = await render(view(THREAD_A, "queued", hook, messages));
 
@@ -367,14 +382,16 @@ describe("useQueuedRunEdit", () => {
 
   it("saves only the thread mentions still in the edited message", async () => {
     const { hook } = setup();
-    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+    mocks.editQueuedRun.mockResolvedValue(saveSucceeded());
     const kept = threadContextRecord(THREAD_B, "Kept");
     const removed = threadContextRecord(THREAD_A, "Removed");
     const messageId = MessageId.make("message-1");
     const text = [kept, removed]
       .map((record) => formatInlineContextReference(threadContextReference(record)))
       .join(" and ");
-    const messages = [{ id: messageId, text, context: { version: 1, records: [kept, removed] } }];
+    const messages = [
+      { id: messageId, text, attachments: [], context: { version: 1, records: [kept, removed] } },
+    ];
     await using _screen = await render(view(THREAD_A, "queued", hook, messages));
     await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
     const target = requireHook(hook).draftTarget;
@@ -450,7 +467,7 @@ describe("useQueuedRunEdit", () => {
 
   it("does not copy a saved edit into the thread draft when the run starts mid-save", async () => {
     const { hook } = setup();
-    let finishSave: (result: { readonly _tag: "Success" }) => void = () => {};
+    let finishSave: (result: EditQueuedRunResult) => void = () => {};
     mocks.editQueuedRun.mockReturnValue(
       new Promise((resolve) => {
         finishSave = resolve;
@@ -466,7 +483,7 @@ describe("useQueuedRunEdit", () => {
     // reports the start before the edit's acknowledgement arrives.
     await act(() => setRuns(THREAD_A, "running"));
     await screen.rerender(view(THREAD_A, "running", hook));
-    finishSave({ _tag: "Success" });
+    finishSave(saveSucceeded());
     await act(() => saved);
 
     expect(requireHook(hook).isEditing).toBe(false);
@@ -481,9 +498,9 @@ describe("useQueuedRunEdit", () => {
     "settles saved attachments after $transition and $result",
     async ({ transition, result }) => {
       const { hook } = setup();
-      let finishSave!: (result: { readonly _tag: "Success" | "Failure" }) => void;
+      let finishSave!: (result: EditQueuedRunResult) => void;
       let started!: () => void;
-      const saving = new Promise<{ readonly _tag: "Success" | "Failure" }>((resolve) => {
+      const saving = new Promise<EditQueuedRunResult>((resolve) => {
         finishSave = resolve;
       });
       const requested = new Promise<void>((resolve) => {
@@ -530,7 +547,7 @@ describe("useQueuedRunEdit", () => {
       }
       expect(readAttachmentUpload(image.id)).toBeDefined();
       expect(revoke).not.toHaveBeenCalled();
-      finishSave({ _tag: result });
+      finishSave(result === "Success" ? saveSucceeded() : { _tag: result });
       await act(() => saved);
       if (transition === "cancel") {
         expect(readAttachmentUpload(image.id)).toBeUndefined();
@@ -545,16 +562,18 @@ describe("useQueuedRunEdit", () => {
     },
   );
 
-  it("expects the text the queued message had when the edit began, then the text it saved", async () => {
+  it("expects the message the edit began from, then the text and attachments it saved", async () => {
     const { hook } = setup();
-    let finishSave: (result: { readonly _tag: "Success" }) => void = () => {};
+    let finishSave: (result: EditQueuedRunResult) => void = () => {};
     mocks.editQueuedRun.mockReturnValueOnce(
       new Promise((resolve) => {
         finishSave = resolve;
       }),
     );
-    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
-    const messages = [{ id: MessageId.make("message-1"), text: "original" }];
+    mocks.editQueuedRun.mockResolvedValue(saveSucceeded());
+    const messages = [
+      { id: MessageId.make("message-1"), text: "original", attachments: [{ id: "merged-file" }] },
+    ];
     await using _screen = await render(view(THREAD_A, "queued", hook, messages));
     await beginChangedEdit(hook);
     // Not inside act(): act would hold the draft change until the save settles.
@@ -563,25 +582,31 @@ describe("useQueuedRunEdit", () => {
     await act(() =>
       useComposerDraftStore.getState().setPrompt(requireHook(hook).draftTarget, "newer"),
     );
-    finishSave({ _tag: "Success" });
+    finishSave(saveSucceeded([{ id: "persisted-image" }]));
     await act(() => saved);
     expect(requireHook(hook).isEditing).toBe(true);
 
     await act(() => requireHook(hook).saveEdit(savedContent("newer"), () => {}));
 
     expect(
-      mocks.editQueuedRun.mock.calls.map(
-        ([call]) => (call as { readonly input: { readonly expectedText?: string } }).input,
-      ),
+      mocks.editQueuedRun.mock.calls.map(([call]) => (call as { input: unknown }).input),
     ).toEqual([
-      expect.objectContaining({ text: "changed", expectedText: "original" }),
-      expect.objectContaining({ text: "newer", expectedText: "changed" }),
+      expect.objectContaining({
+        text: "changed",
+        expectedText: "original",
+        expectedAttachmentIds: ["merged-file"],
+      }),
+      expect.objectContaining({
+        text: "newer",
+        expectedText: "changed",
+        expectedAttachmentIds: ["persisted-image"],
+      }),
     ]);
   });
 
   it("leaves a newer edit alone when a save from before navigation finishes", async () => {
     const { hook } = setup();
-    let finishSave: (result: { readonly _tag: "Success" }) => void = () => {};
+    let finishSave: (result: EditQueuedRunResult) => void = () => {};
     mocks.editQueuedRun.mockReturnValue(
       new Promise((resolve) => {
         finishSave = resolve;
@@ -602,7 +627,7 @@ describe("useQueuedRunEdit", () => {
       useComposerDraftStore.getState().setPrompt(requireHook(hook).draftTarget, "newer"),
     );
 
-    finishSave({ _tag: "Success" });
+    finishSave(saveSucceeded());
     await act(() => saved);
 
     expect(requireHook(hook).editingRunId).toBe(RUN);

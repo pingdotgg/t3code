@@ -81,8 +81,8 @@ interface EditingQueuedRun {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
-  /** The stored text the edit began from, so a save can't overwrite another client's change. */
   readonly expectedText?: string | undefined;
+  readonly expectedAttachmentIds?: ReadonlyArray<ChatAttachment["id"]> | undefined;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext | undefined;
   /** Removing a server attachment changes the message even when the draft looks untouched. */
@@ -117,7 +117,14 @@ async function submitQueuedRunEdit(input: {
   readonly content: QueuedRunEditContent;
   readonly editQueuedRun: ReturnType<typeof useEditQueuedRunCommand>;
   readonly draftChanged: () => boolean;
-}): Promise<{ readonly error: string } | { readonly error: null; readonly savedText: string }> {
+}): Promise<
+  | { readonly error: string }
+  | {
+      readonly error: null;
+      readonly savedText: string;
+      readonly savedAttachmentIds: ReadonlyArray<ChatAttachment["id"]> | undefined;
+    }
+> {
   const { environmentId, draftTarget, editing, content } = input;
   const editText = content.prompt.trim();
   const newAttachments = [...content.images, ...content.files];
@@ -184,6 +191,9 @@ async function submitQueuedRunEdit(input: {
         runId: editing.runId,
         text,
         ...(editing.expectedText === undefined ? {} : { expectedText: editing.expectedText }),
+        ...(editing.expectedAttachmentIds === undefined
+          ? {}
+          : { expectedAttachmentIds: editing.expectedAttachmentIds }),
         edit: {
           messageId: editing.messageId,
           attachments: uploads,
@@ -200,14 +210,26 @@ async function submitQueuedRunEdit(input: {
         },
       },
     });
-    if (result._tag !== "Failure") return { error: null, savedText: text };
-    const currentText = appAtomRegistry
+    if (result._tag !== "Failure") {
+      return {
+        error: null,
+        savedText: text,
+        savedAttachmentIds: result.value.attachments?.map((attachment) => attachment.id),
+      };
+    }
+    const current = appAtomRegistry
       .get(environmentThreadDetails.quietThreadAtom({ environmentId, threadId: editing.threadId }))
-      ?.projection.messages.find((message) => message.id === editing.messageId)?.text;
+      ?.projection.messages.find((message) => message.id === editing.messageId);
     return {
       error:
-        queuedRunEditStaleReason({ expectedText: editing.expectedText, currentText }, m) ??
-        m(msg("Could not save the edited queued message.")),
+        queuedRunEditStaleReason(
+          {
+            expectedText: editing.expectedText,
+            expectedAttachmentIds: editing.expectedAttachmentIds,
+            current,
+          },
+          m,
+        ) ?? m(msg("Could not save the edited queued message.")),
     };
   } catch (error) {
     return {
@@ -309,6 +331,7 @@ export function useQueuedRunEdit(input: {
         messageId: request.messageId,
         originalText: text,
         expectedText: message?.text,
+        expectedAttachmentIds: message?.attachments.map((attachment) => attachment.id),
         existingAttachments: request.attachments,
         context,
       },
@@ -479,7 +502,13 @@ export function useQueuedRunEdit(input: {
     if (saved.error !== null) return;
     if (changedAfterSave) {
       queuedRunEdits.update(editKey, (edit) =>
-        edit.runId === editing.runId ? { ...edit, expectedText: saved.savedText } : edit,
+        edit.runId === editing.runId
+          ? {
+              ...edit,
+              expectedText: saved.savedText,
+              expectedAttachmentIds: saved.savedAttachmentIds,
+            }
+          : edit,
       );
       return;
     }

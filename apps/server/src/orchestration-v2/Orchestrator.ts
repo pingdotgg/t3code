@@ -11783,7 +11783,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Queued run ${queuedRun.id} has no user message.`,
       });
     }
-    if (command.expectedText !== undefined && command.expectedText !== queuedMessage.text) {
+    const { expectedText, expectedAttachmentIds } = command;
+    if (
+      (expectedText !== undefined && expectedText !== queuedMessage.text) ||
+      (expectedAttachmentIds !== undefined &&
+        (expectedAttachmentIds.length !== queuedMessage.attachments.length ||
+          expectedAttachmentIds.some((id, index) => queuedMessage.attachments[index]?.id !== id)))
+    ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,

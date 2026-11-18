@@ -32,8 +32,8 @@ export interface QueuedRunEdit {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
-  /** The stored text the edit began from, so a save can't overwrite another client's change. */
   readonly expectedText?: string;
+  readonly expectedAttachmentIds?: ReadonlyArray<ChatAttachment["id"]>;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext;
   /** Removing a server attachment changes the message even when the draft looks untouched. */
