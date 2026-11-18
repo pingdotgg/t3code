@@ -1,7 +1,13 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { requireNativeModule, requireNativeView } from "expo";
 import { useRef, type Ref } from "react";
-import { StyleSheet, View, type NativeSyntheticEvent, type ViewProps } from "react-native";
+import {
+  Platform,
+  StyleSheet,
+  View,
+  type NativeSyntheticEvent,
+  type ViewProps,
+} from "react-native";
 
 import { readPreviewTunnelUrl } from "../../state/previewTunnel";
 
@@ -11,6 +17,8 @@ export interface TunnelNavigation {
   readonly loading: boolean;
   readonly canGoBack: boolean;
   readonly canGoForward: boolean;
+  /** iOS only: the page's theme-color, else its background, as #rrggbb; empty when unknown. */
+  readonly pageColor?: string;
 }
 
 export interface TunnelWebViewRef {
@@ -29,6 +37,7 @@ const NativeTunnelWebView = requireNativeView<
     readonly ref?: Ref<TunnelWebViewRef>;
     readonly environmentId: string;
     readonly url: string;
+    readonly topInset?: number;
     readonly onAccessRequest: (event: NativeSyntheticEvent<{ requestId: string }>) => void;
     readonly onNavigationChange: (event: NativeSyntheticEvent<TunnelNavigation>) => void;
     readonly onLoadError: (
@@ -52,6 +61,7 @@ export function TunnelWebView({
   onLoadError,
   onScrollDirection,
   onAccess,
+  topInset,
   ...props
 }: ViewProps & {
   readonly environmentId: EnvironmentId;
@@ -71,6 +81,8 @@ export function TunnelWebView({
   }) => void;
   /** Whether the last connection could get into the environment's tunnel at all. */
   readonly onAccess?: (available: boolean) => void;
+  /** iOS only: room at the top the page scrolls under, for a bar laid over it. */
+  readonly topInset?: number;
   /** Reported every few dozen points the page scrolls; "up" also at the top. */
   readonly onScrollDirection?: (direction: "up" | "down") => void;
 }) {
@@ -83,6 +95,7 @@ export function TunnelWebView({
         ref={ref}
         environmentId={environmentId}
         url={url}
+        {...(Platform.OS === "ios" ? { topInset: topInset ?? 0 } : {})}
         onAccessRequest={({ nativeEvent }) => {
           void readPreviewTunnelUrl(environmentId).then((tunnelUrl) => {
             onAccess?.(tunnelUrl !== null);

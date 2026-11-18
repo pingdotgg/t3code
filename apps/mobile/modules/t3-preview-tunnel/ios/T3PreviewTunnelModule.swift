@@ -16,6 +16,10 @@ public final class T3PreviewTunnelModule: Module {
         view.setEnvironment(environmentId)
       }
 
+      Prop("topInset") { (view: T3TunnelWebView, inset: Double) in
+        view.setTopInset(CGFloat(inset))
+      }
+
       Prop("url") { (view: T3TunnelWebView, url: String) in
         view.load(url)
       }

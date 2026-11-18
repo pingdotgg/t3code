@@ -19,6 +19,7 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   private var failedUrl: URL?
   private var observations: [NSKeyValueObservation] = []
   private var reportedScrollY: CGFloat = 0
+  private var topInset: CGFloat = 0
 
   /// JavaScript remounts the view for another environment, so only the first one counts.
   func setEnvironment(_ environmentId: String) {
@@ -38,6 +39,10 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
     let webView = WKWebView(frame: bounds, configuration: configuration)
     webView.navigationDelegate = self
     webView.allowsBackForwardNavigationGestures = true
+    // The page scrolls under the browser bar, like Safari; `topInset` keeps its top clear.
+    webView.scrollView.contentInsetAdjustmentBehavior = .never
+    webView.isOpaque = false
+    applyTopInset(to: webView)
     webView.isInspectable = true
     addSubview(webView)
     self.webView = webView
@@ -47,6 +52,8 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
       webView.observe(\.isLoading) { [weak self] _, _ in self?.reportNavigation() },
       webView.observe(\.canGoBack) { [weak self] _, _ in self?.reportNavigation() },
       webView.observe(\.canGoForward) { [weak self] _, _ in self?.reportNavigation() },
+      webView.observe(\.themeColor) { [weak self] _, _ in self?.reportNavigation() },
+      webView.observe(\.underPageBackgroundColor) { [weak self] _, _ in self?.reportNavigation() },
       webView.scrollView.observe(\.contentOffset) { [weak self] scrollView, _ in
         self?.reportScroll(scrollView)
       },
@@ -83,6 +90,21 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
     webView.load(URLRequest(url: target))
   }
 
+  func setTopInset(_ inset: CGFloat) {
+    guard inset != topInset else { return }
+    topInset = inset
+    if let webView { applyTopInset(to: webView) }
+  }
+
+  /// A page resting at its top stays there when the bar grows or shrinks.
+  private func applyTopInset(to webView: WKWebView) {
+    let scrollView = webView.scrollView
+    let atTop = scrollView.contentOffset.y <= -scrollView.contentInset.top + 1
+    scrollView.contentInset.top = topInset
+    scrollView.verticalScrollIndicatorInsets.top = topInset
+    if atTop { scrollView.contentOffset.y = -topInset }
+  }
+
   func goBack() { webView?.goBack() }
   func goForward() { webView?.goForward() }
   // After a failed load the webview may show no page or the previous one, so retry what failed.
@@ -112,7 +134,17 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
       "loading": webView.isLoading,
       "canGoBack": webView.canGoBack,
       "canGoForward": webView.canGoForward,
+      // What Safari tints its bar with: the page's theme-color, else its background.
+      "pageColor": Self.hex(webView.themeColor ?? webView.underPageBackgroundColor) ?? "",
     ])
+  }
+
+  private static func hex(_ color: UIColor?) -> String? {
+    var (red, green, blue, alpha): (CGFloat, CGFloat, CGFloat, CGFloat) = (0, 0, 0, 0)
+    guard let color, color.getRed(&red, green: &green, blue: &blue, alpha: &alpha), alpha > 0
+    else { return nil }
+    let byte = { (value: CGFloat) in Int((min(max(value, 0), 1) * 255).rounded()) }
+    return String(format: "#%02x%02x%02x", byte(red), byte(green), byte(blue))
   }
 
   func webView(
