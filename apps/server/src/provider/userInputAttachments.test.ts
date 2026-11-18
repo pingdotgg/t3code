@@ -750,9 +750,9 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>First</w:t><w:cr/><w:t>Second</w:t><w:br/><w:t>Third</w:t><w:noBreakHyphen/><w:t>party</w:t><mc:AlternateContent xmlns:mc="urn:mc"><mc:Choice Requires="w"><w:noBreakHyphen/></mc:Choice><mc:Fallback><w:t>‑</w:t></mc:Fallback></mc:AlternateContent><w:t>End</w:t></w:r></w:p></w:body></w:document>',
+              '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>First</w:t><w:cr/><w:t>Second</w:t><w:br/><w:t>Third</w:t><w:noBreakHyphen/><w:t>party</w:t><mc:AlternateContent xmlns:mc="urn:mc"><mc:Choice Requires="w"><w:noBreakHyphen/></mc:Choice><mc:Fallback><w:t>‑</w:t></mc:Fallback></mc:AlternateContent><w:t>End</w:t></w:r></w:p><w:p><w:r><w:t>Invoice 104</w:t><w:ptab w:alignment="right" w:relativeTo="margin" w:leader="none"/><w:t>$700.00</w:t></w:r></w:p></w:body></w:document>',
           },
-          expected: ["First\nSecond\nThird\u2011party\u2011End"],
+          expected: ["First\nSecond\nThird\u2011party\u2011End\nInvoice 104\t$700.00"],
         },
         {
           ext: "docx",

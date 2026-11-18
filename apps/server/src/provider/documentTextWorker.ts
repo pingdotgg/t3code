@@ -143,7 +143,7 @@ function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNod
 }
 function* text(node: XmlNode): Generator<string, void> {
   if (HIDDEN.has(node.name)) return;
-  if (["tab", "cell"].includes(node.name)) yield "\t";
+  if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
   else if (node.name === "noBreakHyphen") yield "\u2011";
   else if (node.spaceCount !== undefined) {
