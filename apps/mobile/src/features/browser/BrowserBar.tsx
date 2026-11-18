@@ -60,7 +60,7 @@ export function BrowserBar(props: {
     <TopArea band={band} surface={surface} ink={ink}>
       <View
         className={
-          band ? "flex-row items-center gap-2 px-3" : "flex-row items-center gap-2 px-3 pb-2 pt-1"
+          band ? "flex-row items-center gap-1.5 px-2" : "flex-row items-center gap-2 px-3 pb-2 pt-1"
         }
       >
         <RoundButton icon="xmark" label="Close browser" ink={ink} onPress={props.onClose} />
@@ -70,7 +70,6 @@ export function BrowserBar(props: {
         {/* On a tablet the address stays a readable width, centered between the buttons. */}
         <View className="min-w-0 flex-1 items-center">
           <Glass ink={ink} className="h-11 w-full max-w-2xl flex-row items-center rounded-full">
-            <View className="w-11" />
             <TextInput
               accessibilityLabel="Address"
               editable={props.editable}
@@ -95,7 +94,7 @@ export function BrowserBar(props: {
               lineBreakModeIOS="middle"
               numberOfLines={1}
               textAlign={draft === null ? "center" : "left"}
-              className="h-11 min-w-0 flex-1 font-sans text-base"
+              className="h-11 min-w-0 flex-1 pl-3 font-sans text-[15px]"
               style={{ color: inkColor }}
             />
             <Pressable
@@ -103,7 +102,7 @@ export function BrowserBar(props: {
               accessibilityLabel="Reload page"
               disabled={!props.editable}
               onPress={props.onReload}
-              className="size-11 items-center justify-center"
+              className="h-11 w-9 items-center justify-center"
             >
               <SymbolView
                 name="arrow.clockwise"
@@ -131,7 +130,7 @@ function RoundButton(props: {
 }) {
   return (
     <Pressable accessibilityRole="button" accessibilityLabel={props.label} onPress={props.onPress}>
-      <Glass ink={props.ink} className="size-11 items-center justify-center rounded-full">
+      <Glass ink={props.ink} className="size-10 items-center justify-center rounded-full">
         <SymbolView
           name={props.icon}
           size={17}
