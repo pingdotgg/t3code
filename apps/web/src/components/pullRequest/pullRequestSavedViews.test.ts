@@ -1,5 +1,5 @@
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { pullRequestViewNameError } from "@t3tools/client-runtime/pull-request-saved-views";
+import { savedViewNameError } from "@t3tools/client-runtime/saved-views";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -78,10 +78,10 @@ describe("saved PR views", () => {
   });
 
   it("rejects blank and duplicate names while allowing a view to keep its own name", () => {
-    expect(pullRequestViewNameError("   ", [view])).toBeTruthy();
-    expect(pullRequestViewNameError("x".repeat(81), [view])).toBeTruthy();
-    expect(pullRequestViewNameError("  PRS REQUESTING MY REVIEW  ", [view])).toBeTruthy();
-    expect(pullRequestViewNameError(view.name, [view], view.id)).toBeNull();
-    expect(pullRequestViewNameError("  My PRs  ", [view])).toBeNull();
+    expect(savedViewNameError("   ", [view])).toBeTruthy();
+    expect(savedViewNameError("x".repeat(81), [view])).toBeTruthy();
+    expect(savedViewNameError("  PRS REQUESTING MY REVIEW  ", [view])).toBeTruthy();
+    expect(savedViewNameError(view.name, [view], view.id)).toBeNull();
+    expect(savedViewNameError("  My PRs  ", [view])).toBeNull();
   });
 });

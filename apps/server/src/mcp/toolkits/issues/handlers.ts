@@ -1,5 +1,6 @@
 import {
   threadIssueKeysEqual,
+  type IssueDetail,
   type IssueRef,
   type OrchestrationV2ThreadShell,
   type ProjectId,
@@ -31,6 +32,8 @@ interface ResolvedTarget extends IssueRef {
   readonly host: string;
   readonly url: string | null;
   readonly writable: boolean;
+  /** Present when resolving the URL already read the issue. */
+  readonly issue?: IssueDetail;
 }
 
 /** What the tools report from a thread shell; exported so the shape is testable without a layer. */
@@ -139,6 +142,9 @@ const make = Effect.gen(function* () {
     key: target.key,
   });
 
+  const readIssue = (target: ResolvedTarget) =>
+    target.issue === undefined ? issues.detail(refOf(target)) : Effect.succeed(target.issue);
+
   /** A link needs the issue's URL, which a key-only reference does not carry; one read fills it. */
   const linkFailure = <E>(cause: Cause.Cause<E>) =>
     Cause.hasInterruptsOnly(cause)
@@ -189,7 +195,7 @@ const make = Effect.gen(function* () {
     read_issue: McpToolAccess.reads((input) =>
       Effect.gen(function* () {
         const target = yield* resolveTarget(input);
-        const detail = yield* issues.detail(refOf(target));
+        const detail = yield* readIssue(target);
         return {
           ...identityOf(target),
           url: target.url ?? detail.url,
@@ -265,7 +271,7 @@ const make = Effect.gen(function* () {
           projectId: input.projectId ?? thread.projectId,
         });
         // Reading the issue proves it exists and names it for the thread's row.
-        const detail = yield* issues.detail(refOf(target));
+        const detail = yield* readIssue(target);
         const url = target.url ?? detail.url;
         const { alreadyLinked } = yield* threadIssues
           .link({

@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { act, render, type Screen } from "../../../test/render";
-import { PullRequestSavedViewsMenu } from "./PullRequestSavedViewsMenu";
-import type { PullRequestListPreferences } from "./pullRequestListPreferences";
-import { PULL_REQUEST_SAVED_VIEWS_KEY, type PullRequestSavedView } from "./pullRequestSavedViews";
+import { act, render, type Screen } from "../../test/render";
+import type { PullRequestListPreferences } from "./pullRequest/pullRequestListPreferences";
+import { PULL_REQUEST_SAVED_VIEWS } from "./pullRequest/pullRequestSavedViews";
+import { SavedViewsMenu, type SavedView } from "./SavedViewsMenu";
+
+const PULL_REQUEST_SAVED_VIEWS_KEY = PULL_REQUEST_SAVED_VIEWS.storageKey;
 
 const { toastAdd } = vi.hoisted(() => ({ toastAdd: vi.fn() }));
-vi.mock("../ui/toast", () => ({ toastManager: { add: toastAdd } }));
+vi.mock("./ui/toast", () => ({ toastManager: { add: toastAdd } }));
 
 const reviewing = {
   involvement: "reviewing",
@@ -23,7 +25,7 @@ function setup() {
   return {
     onApply,
     menu: (preferences: PullRequestListPreferences = reviewing) => (
-      <PullRequestSavedViewsMenu preferences={preferences} onApply={onApply} />
+      <SavedViewsMenu kind={PULL_REQUEST_SAVED_VIEWS} preferences={preferences} onApply={onApply} />
     ),
     [Symbol.dispose]() {
       localStorage.clear();
@@ -64,11 +66,11 @@ async function submit() {
   );
 }
 
-function storedViews(): ReadonlyArray<PullRequestSavedView> {
+function storedViews(): ReadonlyArray<SavedView<PullRequestListPreferences>> {
   return JSON.parse(localStorage.getItem(PULL_REQUEST_SAVED_VIEWS_KEY) ?? "[]");
 }
 
-describe("PullRequestSavedViewsMenu", () => {
+describe("SavedViewsMenu", () => {
   it("saves a named filter setup and restores it after remounting", async () => {
     using fixture = setup();
     const { menu } = fixture;
