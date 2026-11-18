@@ -173,7 +173,7 @@ export default function PdfViewer(props: {
   const loadSource = useEffectEvent(async (src: string, retry: boolean) => {
     if (!retry || !props.refreshSrc) return src;
     const refreshed = await props.refreshSrc();
-    if (refreshed === null) throw new Error("Reconnect to the environment and try again.");
+    if (refreshed === null) throw new Error(m(msg("Reconnect to the environment and try again.")));
     return refreshed;
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
@@ -217,7 +217,7 @@ export default function PdfViewer(props: {
         if (controller.signal.aborted) return;
         setPageWidth(first.width);
         setRatios(
-          savedPosition?.ratios.length === document.numPages
+          revision === 0 && savedPosition?.ratios.length === document.numPages
             ? savedPosition.ratios
             : Array.from(
                 { length: document.numPages },

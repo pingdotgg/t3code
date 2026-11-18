@@ -227,24 +227,40 @@ it("restores page, within-page offset and zoom after a remount", async () => {
 });
 
 it("renews the URL and keeps the latest reading position through a page error and retry", async () => {
-  const url = URL.createObjectURL(testPdf());
-  const renewed = URL.createObjectURL(testPdf());
+  const pages = Array.from({ length: 6 }, (_, index) => ({
+    box: index === 5 ? "0 0 612 2400" : "0 0 612 792",
+    rotate: 0,
+    text: "BT /F1 24 Tf 30 70 Td (Retry document) Tj ET",
+  }));
+  const url = URL.createObjectURL(testPdf(pages));
+  const renewed = URL.createObjectURL(testPdf(pages));
   try {
-    await using screen = await render(
+    const viewer = (key: number) => (
       <div className="flex h-[300px] w-[320px]">
-        <PdfViewer src={url} title="Retry PDF" refreshSrc={async () => renewed} />
-      </div>,
+        <PdfViewer
+          key={key}
+          src={url}
+          title="Retry PDF"
+          positionKey="retry:cached"
+          refreshSrc={async () => renewed}
+        />
+      </div>
     );
-    await expect.element(screen.getByText("1 / 2 pages")).toBeVisible();
+    await using screen = await render(viewer(1));
+    await expect.element(screen.getByText("1 / 6 pages")).toBeVisible();
+    await screen.rerender(viewer(2));
+    await expect.element(screen.getByText("1 / 6 pages")).toBeVisible();
     await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
-    await screen.getByRole("button", { name: "Next page", exact: true }).click();
-    await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
+    for (let page = 2; page <= 6; page++) {
+      await screen.getByRole("button", { name: "Next page", exact: true }).click();
+      await expect.element(screen.getByText(`${page} / 6 pages`)).toBeVisible();
+    }
     const region = () => screen.getByRole("region", { name: "Retry PDF" }).element();
     await act(async () => {
       const scrolled = new Promise((resolve) =>
         region().addEventListener("scroll", resolve, { once: true }),
       );
-      region().scrollTo({ top: region().scrollTop + 40, left: 60 });
+      region().scrollTo({ top: region().scrollTop + 1000, left: 60 });
       await scrolled;
     });
 
@@ -276,7 +292,7 @@ it("renews the URL and keeps the latest reading position through a page error an
     // Only a retry that renews the URL can load the document now.
     URL.revokeObjectURL(url);
     await screen.getByRole("button", { name: "Try again", exact: true }).click();
-    await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
+    await expect.element(screen.getByText("6 / 6 pages")).toBeVisible();
     await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(top, 0));
     expect(region().scrollLeft).toBe(left);
     expect(screen.container.textContent).toContain(zoom);
