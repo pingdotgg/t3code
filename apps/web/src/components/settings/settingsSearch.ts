@@ -1180,7 +1180,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Optimizers",
     to: "/settings/optimizers",
     searchTerms: [
-      "RTK Headroom Codebase Memory CBM token savings shell output proxy MCP environment project attachments",
+      "RTK Headroom Codebase Memory CBM token savings shell output proxy MCP environment project attachments CLIProxyAPI CPA routing",
     ],
   },
   {

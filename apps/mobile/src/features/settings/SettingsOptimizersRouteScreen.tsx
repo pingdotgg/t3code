@@ -138,20 +138,37 @@ export function SettingsOptimizersRouteScreen() {
   const startHeadroomProxy = async () => {
     if (!environmentId || !connected || !canStartHeadroom || startingHeadroom) return;
     setStartingHeadroom(true);
-    try {
-      const result = await startHeadroom({ environmentId, input: {} });
-      if (result._tag === "Success") {
-        status.refresh();
-      } else if (!isAtomCommandInterrupted(result)) {
-        Alert.alert("Could not start Headroom", String(squashAtomCommandFailure(result)));
-      }
-    } catch (failure) {
-      Alert.alert(
-        "Could not start Headroom",
-        failure instanceof Error ? failure.message : "Headroom could not be started.",
-      );
-    } finally {
-      setStartingHeadroom(false);
+    // Atom commands settle to a result rather than rejecting.
+    const result = await startHeadroom({ environmentId, input: {} }).finally(() =>
+      setStartingHeadroom(false),
+    );
+    if (result._tag === "Success") {
+      status.refresh();
+    } else if (!isAtomCommandInterrupted(result)) {
+      Alert.alert("Could not start Headroom", String(squashAtomCommandFailure(result)));
+    }
+  };
+
+  const canManageCpa = useAtomValue(serverEnvironment.setCpaRouting.permissionAtom(environmentId));
+  const startCpa = useAtomCommand(serverEnvironment.startCpa, {
+    label: "CLIProxyAPI start",
+    reportFailure: false,
+  });
+  const setCpaRouting = useAtomCommand(serverEnvironment.setCpaRouting, {
+    label: "CLIProxyAPI routing",
+    reportFailure: false,
+  });
+  const [cpaBusy, setCpaBusy] = useState(false);
+  const cpa = status.data?.cpa;
+
+  const runCpaCommand = async (run: () => ReturnType<typeof startCpa>, title: string) => {
+    if (!connected || !canManageCpa || cpaBusy) return;
+    setCpaBusy(true);
+    const result = await run().finally(() => setCpaBusy(false));
+    if (result._tag === "Success") {
+      status.refresh();
+    } else if (!isAtomCommandInterrupted(result)) {
+      Alert.alert(title, String(squashAtomCommandFailure(result)));
     }
   };
 
@@ -315,6 +332,60 @@ export function SettingsOptimizersRouteScreen() {
                 <Text className="text-sm font-t3-medium text-foreground">Refresh status</Text>
               </Pressable>
             </SettingsSection>
+
+            {cpa && environmentId ? (
+              <SettingsSection title="CLIProxyAPI (CPA)">
+                <View className="flex-row items-start gap-3 p-4">
+                  <View className="min-w-0 flex-1">
+                    <Text className="text-sm font-t3-medium text-foreground">CLIProxyAPI</Text>
+                    <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                      {cpa.running ? "Running" : "Not running"} · {cpa.url}
+                    </Text>
+                  </View>
+                  {!cpa.running && cpa.canStart ? (
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={cpaBusy ? "Starting CLIProxyAPI" : "Start CLIProxyAPI"}
+                      disabled={!connected || cpaBusy || !canManageCpa}
+                      onPress={() =>
+                        void runCpaCommand(
+                          () => startCpa({ environmentId, input: {} }),
+                          "Could not start CLIProxyAPI",
+                        )
+                      }
+                      className="rounded-lg border border-border-subtle px-3 py-2 active:opacity-70 disabled:opacity-40"
+                    >
+                      <Text className="text-sm font-t3-medium text-foreground">
+                        {cpaBusy ? "Starting…" : "Start"}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                <SettingsSwitchRow
+                  icon="arrow.triangle.branch"
+                  label="Route Claude Code and Codex through CPA"
+                  subtitle={
+                    cpa.routing === "partial"
+                      ? "Partly on: only one of Claude Code or Codex routes through CPA"
+                      : "Rewrites the host's Claude and Codex CLI config"
+                  }
+                  value={cpa.routing === "on"}
+                  disabled={!connected || cpaBusy || !canManageCpa}
+                  onValueChange={(enabled) =>
+                    void runCpaCommand(
+                      () => setCpaRouting({ environmentId, input: { enabled } }),
+                      "Could not change CPA routing",
+                    )
+                  }
+                />
+                {cpa.headroomUpstreamMismatch ? (
+                  <Text className="border-t border-border-subtle p-4 text-xs text-warning-foreground">
+                    Headroom was started outside T3, so it is not pointed at CPA. Restart it with
+                    --anthropic-api-url {cpa.url} --openai-api-url {cpa.url}/v1.
+                  </Text>
+                ) : null}
+              </SettingsSection>
+            ) : null}
 
             <SettingsSection title="Savings">
               {status.data?.savings.length ? (
