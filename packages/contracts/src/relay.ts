@@ -147,6 +147,8 @@ export const RelayAgentActivityAggregateState = Schema.Struct({
   title: TrimmedNonEmptyString,
   subtitle: TrimmedNonEmptyString,
   activeCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  // Agents that completed within the terminal display window; omitted when none.
+  doneCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   updatedAt: TrimmedNonEmptyString,
   activities: Schema.Array(RelayAgentActivityAggregateRow),
 });

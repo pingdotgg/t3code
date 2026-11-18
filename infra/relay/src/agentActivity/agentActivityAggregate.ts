@@ -111,10 +111,12 @@ export function makeAggregateState(input: {
   const updatedAt = [...activeStates, ...recentTerminalStates].reduce((latest, state) =>
     state.updatedAt.localeCompare(latest.updatedAt) > 0 ? state : latest,
   ).updatedAt;
+  const doneCount = recentTerminalStates.filter((state) => state.phase === "completed").length;
   return sanitizeAgentActivityAggregateState({
     title: "T3 Code",
     subtitle: "Agent work in progress",
     activeCount: activeStates.length,
+    ...(doneCount > 0 ? { doneCount } : {}),
     updatedAt,
     activities: displayedStates.map(aggregateRowForState),
   });

@@ -94,6 +94,7 @@ internal class ActivityPresentation(data: Map<String, String>, private val activ
     ?: rows.count { ActivityPhase.forStatus(it.status)?.finished != true }
   private val attentionCount = data["activity_attention_count"]?.toIntOrNull()?.coerceAtLeast(0)
     ?: rows.count { ActivityPhase.forStatus(it.status)?.needsUser == true }
+  private val doneCount = data["activity_done_count"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
   private val failedCount = rows.count { it.status == ActivityPhase.FAILED.status }
   val threadCount =
     activeCount + rows.count { ActivityPhase.forStatus(it.status)?.finished == true }
@@ -136,7 +137,8 @@ internal class ActivityPresentation(data: Map<String, String>, private val activ
       builder.setSubText(
         listOfNotNull(
           hero!!.project.takeIf { singleProject && it.isNotBlank() },
-          if (activeCount > 0) "$activeCount active" else "$threadCount threads"
+          if (activeCount > 0) "$activeCount active" else "$threadCount threads",
+          "$doneCount done".takeIf { activeCount > 0 && doneCount > 0 }
         ).joinToString(" · ")
       )
     }
