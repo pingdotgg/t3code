@@ -244,6 +244,7 @@ export const InferenceRouteInput = Schema.Struct({
   driver: InferenceDriver,
   hostLabel: Label,
   connection: Schema.optionalKey(InferenceHostConnection),
+  preserveProviderEnabled: Schema.optionalKey(Schema.Boolean),
 });
 export type InferenceRouteInput = typeof InferenceRouteInput.Type;
 export class InferenceProxyError extends Schema.TaggedError<InferenceProxyError>()(

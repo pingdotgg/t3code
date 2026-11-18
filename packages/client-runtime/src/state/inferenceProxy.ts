@@ -6,6 +6,7 @@ import {
   inferenceRouteIssue,
   isInferenceProviderConfig,
   ProviderDriverKind,
+  resolveProviderInstanceEnabled,
   type EnvironmentId,
   type InferenceConsumer,
   type InferenceDriver,
@@ -37,11 +38,16 @@ export interface InferenceFleetEnvironment extends InferenceConsumer {
   readonly serverConfig: EnvironmentServerConfig | null;
 }
 
-interface EnableInferenceRoutingInput {
+export interface InferenceRoutingOptions {
+  readonly preferredHostId?: EnvironmentId;
+  readonly onlyHostId?: EnvironmentId;
+  readonly preserveProviderEnabled?: boolean;
+}
+
+interface EnableInferenceRoutingInput extends InferenceRoutingOptions {
   readonly consumer: InferenceConsumer;
   readonly driver: InferenceDriver;
   readonly environments: ReadonlyArray<InferenceFleetEnvironment>;
-  readonly preferredHostId?: EnvironmentId;
 }
 
 export function inferenceHostRoutingIssue(
@@ -209,6 +215,7 @@ export function createInferenceProxyAtoms<R, E>(
         driver: InferenceDriver;
         fallback?: boolean;
         automatic?: boolean;
+        preserveProviderEnabled?: boolean;
       },
       registry: AtomRegistry.AtomRegistry,
     ) {
@@ -264,6 +271,7 @@ export function createInferenceProxyAtoms<R, E>(
             driver: input.driver,
             hostLabel: input.host.label,
             ...(connection ? { connection } : {}),
+            ...(input.preserveProviderEnabled ? { preserveProviderEnabled: true } : {}),
           },
         ),
       );
@@ -293,16 +301,34 @@ export function createInferenceProxyAtoms<R, E>(
   const enableInferenceRouting = createRuntimeCommand(runtime, {
     label: "inference:enable-routing",
     concurrency: {
-      mode: "singleFlight",
+      mode: "serial",
       key: (input: EnableInferenceRoutingInput) =>
         JSON.stringify([input.consumer.environmentId, input.driver]),
     },
     execute: Effect.fn("InferenceProxy.enableRouting")(
       function* (input: EnableInferenceRoutingInput, registry: AtomRegistry.AtomRegistry) {
         yield* consumerPermission.authorize(registry, input.consumer.environmentId);
+        if (input.preserveProviderEnabled) {
+          const consumer = input.environments.find(
+            (environment) => environment.environmentId === input.consumer.environmentId,
+          )?.serverConfig;
+          const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make(input.driver));
+          const instance = consumer?.settings.providerInstances[instanceId];
+          if (
+            instance &&
+            !resolveProviderInstanceEnabled(instance) &&
+            !consumer?.environment.capabilities.inferenceRoutePreservesEnablement
+          )
+            return yield* new InferenceProxyError({
+              message:
+                "Update this environment to reconnect without enabling the provider globally.",
+            });
+        }
         const connections = yield* EnvironmentRegistry;
         const candidates = inferenceHostCandidates(
-          input.environments,
+          input.onlyHostId === undefined
+            ? input.environments
+            : input.environments.filter((host) => host.environmentId === input.onlyHostId),
           input.consumer.environmentId,
           input.preferredHostId,
         );

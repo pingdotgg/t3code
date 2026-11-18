@@ -3,7 +3,7 @@ import { Atom } from "effect/reactivity";
 import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 
 const state = vi.hoisted(() => ({
   run: vi.fn(),
@@ -105,22 +105,66 @@ describe("inference provider accounts", () => {
     using _permission = vi
       .spyOn(serverEnvironment.inferenceProxy.manageInference, "permissionAtom")
       .mockReturnValue(Atom.make(true));
+    using config = vi
+      .spyOn(serverEnvironment, "configValueAtom")
+      .mockReturnValue(
+        Atom.make({ environment: { capabilities: { inferenceConfigureGuard: false } } }) as never,
+      );
     state.query.mockReturnValue({ data: { enabled: false } });
     state.run.mockResolvedValueOnce({ _tag: "Success", value: {} });
     const reconnect = vi.fn();
-    await using screen = await render(
+    const setupAccounts = () => (
       <InferenceProviderAccounts
         environmentId={host}
         driver="codex"
         enableLocalHosting
         onAccountsChanged={reconnect}
-      />,
+      />
     );
-    await userEvent.click(screen.getByRole("button", { name: "Start hosting here" }));
+    await using screen = await render(setupAccounts());
+    await expect
+      .element(screen.getByRole("link", { name: "Inference accounts" }))
+      .toHaveAttribute("href", "/settings/inference?machine=account-host");
+    await expect
+      .element(screen.getByRole("button", { name: "Start hosting here" }))
+      .not.toBeInTheDocument();
+    await screen.unmount();
+    config.mockReturnValue(
+      Atom.make({ environment: { capabilities: { inferenceConfigureGuard: true } } }) as never,
+    );
+    await using supportedScreen = await render(setupAccounts());
+    await userEvent.click(supportedScreen.getByRole("button", { name: "Start hosting here" }));
     expect(state.run).toHaveBeenCalledWith({
       environmentId: host,
       input: { operation: "configure", enabled: true, sharing: false, expectedEnabled: false },
     });
     expect(reconnect).toHaveBeenCalledOnce();
+  });
+
+  it("does not reconnect after leaving a pending account setup", async () => {
+    setup();
+    using _permission = vi
+      .spyOn(serverEnvironment.inferenceProxy.manageInference, "permissionAtom")
+      .mockReturnValue(Atom.make(true));
+    let finish: () => void = () => {};
+    state.run.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ _tag: "Success", value: { status: "ok" } });
+        }),
+    );
+    const reconnect = vi.fn();
+    await using screen = await render(
+      <InferenceProviderAccounts
+        environmentId={host}
+        driver="codex"
+        onAccountsChanged={reconnect}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Codex", exact: true }));
+    expect(state.run).toHaveBeenCalledOnce();
+    await screen.unmount();
+    await act(async () => finish());
+    expect(reconnect).not.toHaveBeenCalled();
   });
 });

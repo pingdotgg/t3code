@@ -10,6 +10,7 @@ import {
   isInferenceAccountReplaced,
   isInferenceProviderConfig,
   isCustomInferenceBackend,
+  isManagedSettingPath,
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthOrchestrationReadScope,
@@ -18,6 +19,7 @@ import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import type { InferenceRoutingOptions } from "@t3tools/client-runtime/state/inference-proxy";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -1486,7 +1488,7 @@ function ProviderInstanceRow({
               accountHostId={accountHostId}
               config={instance.config}
               hiddenNames={proxyHiddenNames}
-              disabled={readOnly || !canWriteSettings}
+              disabled={readOnly}
             />
             {setup}
           </>
@@ -1587,19 +1589,27 @@ function InferenceProxySetting({
   readonly disabled: boolean;
 }) {
   const route = isInferenceProviderConfig(config) ? config : null;
+  const managedPolicy = useManagedPolicy(environmentId);
+  const locked = isManagedSettingPath(
+    managedPolicy,
+    `providerInstances.${instanceId}.config.inferenceEnabled`,
+  );
   const [disabling, setDisabling] = useState(false);
   const [disableError, setDisableError] = useState<string | null>(null);
   const [localSetup, setLocalSetup] = useState(false);
   const manage = useAtomCommand(serverEnvironment.inferenceProxy.manageInference, {
     reportFailure: false,
   });
+  const canManage = useAtomValue(
+    serverEnvironment.inferenceProxy.manageInference.permissionAtom(environmentId),
+  );
   const { canConnect, pending, error, run } = useEnableInferenceRouting(
     environmentId,
     environmentLabel,
   );
   const usingProxy = accountHostId !== null;
-  async function enable(preferredHostId?: EnvironmentId) {
-    if (await run(driver, preferredHostId)) setLocalSetup(false);
+  async function enable(options?: InferenceRoutingOptions) {
+    if (await run(driver, options)) setLocalSetup(false);
   }
   const host = accountHostId === environmentId ? environmentLabel : route?.inferenceHostLabel;
   const accountBehavior = !INFERENCE_HARNESSES[driver].replacesAccounts
@@ -1614,7 +1624,9 @@ function InferenceProxySetting({
         title="Inference routing"
         description={
           usingProxy
-            ? `Using ${host || "the inference host"} for inference via the CLI proxy. ${accountBehavior}`
+            ? route
+              ? `Using ${host || "the inference host"} for inference via the CLI proxy. ${accountBehavior}`
+              : "This inference route is incomplete. Turn it off to use the native provider."
             : `Use the CLI proxy on this environment or a paired host. ${accountBehavior}`
         }
         status={
@@ -1646,10 +1658,19 @@ function InferenceProxySetting({
           <Switch
             aria-label="Inference routing"
             checked={usingProxy}
-            disabled={disabled || !canConnect || pending || disabling}
+            disabled={
+              disabled || locked || (usingProxy ? !canManage : !canConnect) || pending || disabling
+            }
             onCheckedChange={async (enabled) => {
               if (enabled) {
-                await enable(route?.inferenceHostId);
+                await enable(
+                  route
+                    ? {
+                        preferredHostId: route.inferenceHostId,
+                        preserveProviderEnabled: true,
+                      }
+                    : undefined,
+                );
                 return;
               }
               setDisabling(true);
@@ -1675,7 +1696,12 @@ function InferenceProxySetting({
           driver={driver}
           hostLabel={environmentLabel}
           enableLocalHosting
-          onAccountsChanged={() => void enable(environmentId)}
+          onAccountsChanged={() =>
+            void enable({
+              onlyHostId: environmentId,
+              ...(route ? { preserveProviderEnabled: true } : {}),
+            })
+          }
         />
       )}
     </>

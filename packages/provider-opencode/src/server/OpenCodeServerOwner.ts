@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -20,6 +21,7 @@ interface OpenCodeServerOwnerState {
 export class OpenCodeServerOwner extends Context.Service<
   OpenCodeServerOwner,
   {
+    readonly retire: Effect.Effect<void>;
     readonly withServer: <A, E, R>(
       use: (server: OpenCodeRuntime.OpenCodeServerProcess) => Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R>;
@@ -38,6 +40,8 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
     Scope.close(scope, Exit.void),
   );
   const mutex = yield* Semaphore.make(1);
+  const drained = yield* Deferred.make<void>();
+  let retiring = false;
   const state: OpenCodeServerOwnerState = {
     server: null,
     serverScope: null,
@@ -65,6 +69,7 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
     if (scope !== null) {
       yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
     }
+    if (retiring) yield* Deferred.succeed(drained, undefined);
   });
 
   const watchServerExit = Effect.fn("OpenCodeServerOwner.watchServerExit")(function* (
@@ -85,13 +90,18 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   const acquireServer = mutex.withPermit(
     Effect.gen(function* () {
       yield* cancelIdleClose();
-      if (state.server !== null) {
+      if (state.server !== null && (!retiring || state.borrowers > 0)) {
         if (yield* state.server.isRunning) {
           state.borrowers += 1;
           return state.server;
         }
         yield* closeServer(state.server);
       }
+      if (retiring)
+        return yield* new OpenCodeRuntime.OpenCodeRuntimeError({
+          operation: "startOpenCodeServerProcess",
+          detail: "The OpenCode model catalog has changed.",
+        });
 
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
@@ -137,6 +147,7 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
         if (state.borrowers > 0) {
           return;
         }
+        if (retiring) return yield* closeServer(server);
         yield* cancelIdleClose();
         state.idleCloseFiber = yield* Effect.sleep(OPENCODE_SERVER_IDLE_TTL).pipe(
           Effect.andThen(
@@ -166,6 +177,15 @@ export const make = Effect.fn("OpenCodeServerOwner.make")(function* (input: {
   );
 
   return OpenCodeServerOwner.of({
+    retire: Effect.gen(function* () {
+      const borrowed = yield* mutex.withPermit(
+        Effect.sync(() => {
+          retiring = true;
+          return state.server !== null && state.borrowers > 0;
+        }),
+      );
+      if (borrowed) yield* Deferred.await(drained);
+    }),
     withServer: Effect.fn("OpenCodeServerOwner.withServer")(function (use) {
       return Effect.uninterruptibleMask((restore) =>
         restore(acquireServer).pipe(

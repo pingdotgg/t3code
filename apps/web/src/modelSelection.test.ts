@@ -21,12 +21,14 @@ import {
   deriveProviderInstanceEntries,
   NO_PROVIDER_MODEL_SELECTION,
   providerInstanceEntriesFor,
+  resolveProjectDefaultProviderModelSelection,
 } from "./providerInstances";
 import {
   defaultModelSelectionsAreMixed,
   getAppModelOptionsForInstance,
   getCustomModelOptionsByInstance,
   getTextGenerationModelOptionsByInstance,
+  resolveAppModelSelection,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
   resolveEffectiveDefaultModelSelection,
@@ -247,6 +249,74 @@ describe("instance-scoped model selection", () => {
       );
     },
   );
+
+  it("keeps hosted models from an older server with their preferences and defaults", () => {
+    const instanceId = ProviderInstanceId.make("codex");
+    const driver = ProviderDriverKind.make("codex");
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [instanceId]: {
+          driver,
+          config: {
+            inferenceEnabled: true,
+            inferenceModels: ["gpt-hosted", "gpt-hosted-default", "gpt-hosted-hidden"],
+            customModels: ["native-custom"],
+          },
+        },
+      },
+      providerModelPreferences: {
+        [instanceId]: {
+          modelOrder: ["gpt-hosted-default", "gpt-hosted"],
+          hiddenModels: ["gpt-hosted-hidden"],
+        },
+      },
+    };
+    const snapshot = provider({ instanceId, provider: driver, models: ["gpt-hosted"] });
+    const providers: ReadonlyArray<ServerProvider> = [
+      {
+        ...snapshot,
+        models: [
+          ...snapshot.models,
+          {
+            slug: "gpt-hosted-default",
+            name: "Hosted Default",
+            isCustom: true,
+            isDefault: true,
+            aliases: ["hosted alias"],
+            badge: "new",
+            capabilities: {},
+          },
+          { slug: "gpt-hosted-hidden", name: "Hidden", isCustom: true, capabilities: {} },
+          { slug: "native-custom", name: "Native Custom", isCustom: true, capabilities: {} },
+        ],
+      },
+    ];
+    const [entry] = deriveProviderInstanceEntries(providers);
+
+    expect(getAppModelOptionsForInstance(settings, entry!)).toMatchObject([
+      {
+        slug: "gpt-hosted-default",
+        name: "Hosted Default",
+        isCustom: false,
+        isDefault: true,
+        aliases: ["hosted alias"],
+        badge: "new",
+      },
+      { slug: "gpt-hosted", isCustom: false },
+    ]);
+    expect(resolveAppModelSelectionForInstance(instanceId, settings, providers, null)).toBe(
+      "gpt-hosted-default",
+    );
+    expect(resolveAppModelSelection(driver, settings, providers, "hosted alias")).toBe(
+      "gpt-hosted-default",
+    );
+    expect(resolveAppModelSelection(driver, settings, providers, null)).toBe("gpt-hosted-default");
+    expect(resolveProjectDefaultProviderModelSelection(providers, settings, null)).toEqual({
+      instanceId,
+      model: "gpt-hosted-default",
+    });
+  });
 
   it("keeps custom models on the provider instance that declared them", () => {
     const providers = [

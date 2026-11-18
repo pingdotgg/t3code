@@ -27,6 +27,7 @@ import * as Stream from "effect/Stream";
 
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 
+import { isOpenCodeInferenceCatalogChange } from "../inference/routes.ts";
 import { buildUnavailableProviderSnapshot } from "./unavailableProviderSnapshot.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import type { AnyProviderDriver, ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -373,6 +374,7 @@ const makeReconcile = <R>(input: {
   carried?: ReadonlyMap<ProviderInstanceId, InstanceSecrets>,
 ) => Effect.Effect<void, never, R | SecretResolver.SecretResolver>) => {
   const { state, driversById, blockedReason, parentScope } = input;
+  const draining = new Map<ProviderInstanceId, Set<Scope.Closeable>>();
   return (configMap, rebuild = new Set(), deferSecrets = false, carried = new Map()) =>
     Effect.gen(function* () {
       const previousEntries = yield* Ref.get(state.entries);
@@ -383,7 +385,7 @@ const makeReconcile = <R>(input: {
         nextRaw.map(([raw]) => ProviderInstanceId.make(raw)),
       );
 
-      // Close changed/removed scopes before replacements to preserve one live scope per id.
+      // Remove changed scopes before publishing replacements so lookups see one instance per id.
       const removedIds: Array<ProviderInstanceId> = [];
       const replacedIds = new Set<ProviderInstanceId>();
       for (const [instanceId, live] of previousEntries) {
@@ -405,11 +407,45 @@ const makeReconcile = <R>(input: {
         for (const id of retiredIds) remaining.delete(id);
         yield* Ref.set(state.entries, remaining);
       }
-      for (const id of retiredIds) {
+      const retiringIds = new Set(retiredIds);
+      for (const id of draining.keys()) {
+        if (!previousEntries.has(id)) retiringIds.add(id);
+      }
+      for (const id of retiringIds) {
         const live = previousEntries.get(id);
-        if (live) {
-          yield* Scope.close(live.scope, Exit.void).pipe(Effect.ignore);
+        const next = configMap[id];
+        const retire = live?.instance.retireInferenceCatalog;
+        if (
+          live &&
+          retire &&
+          next &&
+          !rebuild.has(id) &&
+          isOpenCodeInferenceCatalogChange(live.entry, next)
+        ) {
+          yield* Effect.gen(function* () {
+            const scopes = draining.get(id) ?? new Set<Scope.Closeable>();
+            scopes.add(live.scope);
+            draining.set(id, scopes);
+            yield* retire.pipe(
+              Effect.ensuring(
+                Scope.close(live.scope, Exit.void).pipe(
+                  Effect.ensuring(
+                    Effect.sync(() => {
+                      scopes.delete(live.scope);
+                      if (scopes.size === 0) draining.delete(id);
+                    }),
+                  ),
+                ),
+              ),
+              Effect.interruptible,
+              Effect.forkIn(parentScope, { startImmediately: true }),
+            );
+          }).pipe(Effect.uninterruptible);
+          continue;
         }
+        for (const scope of draining.get(id) ?? [])
+          yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
+        if (live) yield* Scope.close(live.scope, Exit.void).pipe(Effect.ignore);
       }
 
       const parkedSnapshot = (instanceId: ProviderInstanceId, entry: ProviderInstanceConfig) => {

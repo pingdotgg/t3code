@@ -47,7 +47,8 @@ accounts on the current environment, then paired hosts with sharing enabled.
 The provider settings show which host it connects to. You can also choose
 **Use inference accounts** when adding a Codex or Claude account on web or desktop.
 If no host is ready, choose **Set up accounts here** to start hosting and add an account
-from the same screen.
+from the same screen. This connects only to the environment you set up. For an older
+environment that doesn't offer inline hosting, open **Inference accounts** to start hosting.
 
 To pick a host yourself, open **Inference accounts** and choose Codex, Claude,
 [OpenCode](./providers-opencode.md#shared-inference-accounts), or

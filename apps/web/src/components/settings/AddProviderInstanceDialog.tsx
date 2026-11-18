@@ -16,6 +16,7 @@ import {
   deriveInstanceId,
 } from "@t3tools/client-runtime/provider-instance-ids";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import type { InferenceRoutingOptions } from "@t3tools/client-runtime/state/inference-proxy";
 import {
   type AcpRegistrySearchAgent,
   AuthProvidersManageScope,
@@ -259,6 +260,9 @@ export function AddProviderInstanceDialog({
   const canUseInference =
     supportsInference &&
     (!defaultRoutingProvider || !isCustomInferenceBackend(defaultRoutingProvider));
+  const savedRoute = isInferenceProviderConfig(defaultRoutingProvider?.config)
+    ? defaultRoutingProvider.config
+    : null;
   const accountHostId = inferenceHarness(selection)?.replacesAccounts
     ? inferenceAccountHostId(settings.providerInstances, selection, environmentId)
     : null;
@@ -521,8 +525,11 @@ export function AddProviderInstanceDialog({
     onOpenChange(false);
   };
 
-  async function routeProvider(driver: InferenceDriver, preferredHostId?: EnvironmentId) {
-    const host = await inference.run(driver, preferredHostId);
+  async function routeProvider(driver: InferenceDriver, options?: InferenceRoutingOptions) {
+    const host = await inference.run(driver, {
+      ...(savedRoute ? { preserveProviderEnabled: true } : {}),
+      ...options,
+    });
     if (!host) return;
     setLocalSetup(false);
     setRoutedHost(host);
@@ -733,7 +740,9 @@ export function AddProviderInstanceDialog({
                       driver={inferenceDriver}
                       hostLabel={environmentLabel}
                       enableLocalHosting
-                      onAccountsChanged={() => void routeProvider(inferenceDriver, environmentId)}
+                      onAccountsChanged={() =>
+                        void routeProvider(inferenceDriver, { onlyHostId: environmentId })
+                      }
                     />
                   )}
                 </>
@@ -993,13 +1002,12 @@ export function AddProviderInstanceDialog({
                 <Button
                   size="sm"
                   disabled={inference.pending || !inference.canConnect}
-                  onClick={() => {
-                    const config = defaultRoutingProvider?.config;
+                  onClick={() =>
                     void routeProvider(
                       inferenceDriver,
-                      isInferenceProviderConfig(config) ? config.inferenceHostId : undefined,
-                    );
-                  }}
+                      savedRoute ? { preferredHostId: savedRoute.inferenceHostId } : undefined,
+                    )
+                  }
                 >
                   {inference.pending ? "Connecting…" : "Continue"}
                 </Button>

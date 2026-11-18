@@ -31,6 +31,7 @@ export class OpenCode2Server extends Context.Service<
     ) => Effect.Effect<A, E | OpenCodeRuntime.OpenCodeRuntimeError, R>;
     /** Drops a configured server's verified connection, so the next use reads its version again. */
     readonly forget: Effect.Effect<void>;
+    readonly retire?: Effect.Effect<void>;
   }
 >()("@t3tools/provider-opencode/server/v2/OpenCode2Server") {}
 
@@ -163,6 +164,7 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     verify: (url) => connectTo(url, password, false).pipe(Effect.flatMap(remember)),
   });
   return OpenCode2Server.of({
+    retire: owner.retire,
     withConnection: Effect.fn("OpenCode2Server.withConnection")(function (use) {
       return owner.withServer((server) =>
         latest?.url === server.url

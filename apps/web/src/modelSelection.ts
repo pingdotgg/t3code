@@ -21,9 +21,7 @@ import {
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { type ClientSettings, UnifiedSettings } from "@t3tools/contracts/settings";
 import { resolveModelPreferences } from "@t3tools/shared/serverSettings";
-import * as Arr from "effect/Array";
 import * as Equal from "effect/Equal";
-import * as Result from "effect/Result";
 import {
   getDefaultServerModel,
   getProviderModels,
@@ -36,6 +34,7 @@ import {
   type ProviderInstanceEntry,
   deriveProviderInstanceEntries,
   isProviderInstancePickerVisible,
+  normalizeHostedModelCatalog,
   NO_PROVIDER_MODEL_SELECTION,
   resolveDefaultProviderModelSelection,
   resolveProjectDefaultProviderModelSelection,
@@ -166,73 +165,22 @@ function normalizeCustomModelEntries(
   return normalizedModels;
 }
 
-function getAppModelOptions(
-  settings: UnifiedSettings,
-  providers: ReadonlyArray<ServerProvider>,
-  provider: ProviderDriverKind,
-  selectedModel?: string | null,
-): AppModelOption[] {
-  const rawModels = getProviderModels(providers, provider);
-  // Server custom-model snapshots can lag removals; rebuild custom rows from settings.
-  const options: AppModelOption[] = rawModels
-    .filter((model) => !model.isCustom)
-    .map((model) => toAppModelOption(model, provider));
-  const seen = new Set(options.map((option) => option.slug));
-  const builtInModelSlugs = new Set(
-    Arr.filterMap(getProviderModels(providers, provider), (model) =>
-      model.isCustom ? Result.failVoid : Result.succeed(model.slug),
-    ),
-  );
-
-  const defaultInstanceId = defaultInstanceIdForDriver(provider);
-  const customModels = readInstanceCustomModels(settings, defaultInstanceId, provider);
-  for (const entry of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
-    if (seen.has(entry.slug)) {
-      continue;
-    }
-
-    seen.add(entry.slug);
-    const shortName = resolveModelShortName(entry, provider);
-    options.push({
-      slug: entry.slug,
-      name: entry.name,
-      isCustom: true,
-      ...(shortName ? { shortName } : {}),
-    });
-  }
-
-  const preferences = readInstanceModelPreferences(settings, defaultInstanceId);
-  return appendUnavailableDynamicModelSelection(
-    applyInstanceModelPreferences(options, preferences),
-    rawModels,
-    provider,
-    selectedModel,
-    preferences.hiddenModels,
-  );
-}
-
 export function getAppModelOptionsForInstance(
   settings: UnifiedSettings,
-  entry: ProviderInstanceEntry,
+  entry: Pick<ProviderInstanceEntry, "instanceId" | "driverKind" | "models">,
   selectedModel?: string | null,
 ): AppModelOption[] {
-  const options: AppModelOption[] = entry.models
-    .filter((model) => !model.isCustom)
-    .map((model) => toAppModelOption(model, entry.driverKind));
-  const seen = new Set(options.map((option) => option.slug));
-  const builtInModelSlugs = new Set(
-    Arr.filterMap(entry.models, (model) =>
-      model.isCustom ? Result.failVoid : Result.succeed(model.slug),
-    ),
-  );
+  const config = settings.providerInstances[entry.instanceId]?.config;
+  const hostedModelCatalog = usesHostedModelCatalog(entry.instanceId, entry.driverKind, config);
+  // Server custom-model snapshots can lag removals; rebuild native custom rows from settings.
+  const serverModels = hostedModelCatalog
+    ? normalizeHostedModelCatalog(entry.models, config)
+    : entry.models.filter((model) => !model.isCustom);
+  const options = serverModels.map((model) => toAppModelOption(model, entry.driverKind));
+  const builtInModelSlugs = new Set(options.map((option) => option.slug));
 
   const customModels = readInstanceCustomModels(settings, entry.instanceId, entry.driverKind);
   for (const custom of normalizeCustomModelEntries(customModels, builtInModelSlugs)) {
-    if (seen.has(custom.slug)) {
-      continue;
-    }
-
-    seen.add(custom.slug);
     const shortName = resolveModelShortName(custom, entry.driverKind);
     options.push({
       slug: custom.slug,
@@ -259,9 +207,22 @@ export function resolveAppModelSelection(
   selectedModel: string | null | undefined,
 ): string {
   const resolvedProvider = resolveSelectableProvider(providers, provider);
-  const options = getAppModelOptions(settings, providers, resolvedProvider, selectedModel);
+  const instanceId = defaultInstanceIdForDriver(resolvedProvider);
+  const options = getAppModelOptionsForInstance(
+    settings,
+    {
+      instanceId,
+      driverKind: resolvedProvider,
+      models: getProviderModels(providers, resolvedProvider),
+    },
+    selectedModel,
+  );
+  const config = settings.providerInstances[instanceId]?.config;
   return (
     resolveSelectableModel(resolvedProvider, selectedModel, options) ??
+    (usesHostedModelCatalog(instanceId, resolvedProvider, config)
+      ? (options.find((option) => option.isDefault)?.slug ?? options[0]?.slug)
+      : undefined) ??
     getDefaultServerModel(providers, resolvedProvider)
   );
 }

@@ -22,6 +22,9 @@ import {
 } from "@t3tools/contracts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import { OpenCodeSettings } from "@t3tools/provider-opencode/settings";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
+import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
@@ -39,6 +42,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import { routeProvider } from "../inference/routes.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ClaudeDriver, type ClaudeDriverEnv } from "./Drivers/ClaudeDriver.ts";
@@ -909,6 +913,143 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 const DisabledByDefaultConfig = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
+const decodeOpenCodeConfig = Schema.decodeUnknownSync(OpenCodeSettings);
+
+it.effect("publishes a refreshed OpenCode catalog while its previous server is borrowed", () =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("opencode");
+    const driverKind = ProviderDriverKind.make("opencode");
+    const servers = new Map<ProviderInstance, OpenCode2Server.OpenCode2Server["Service"]>();
+    const running = new Set<string>();
+    let port = 4000;
+    const runtime = Layer.mock(OpenCodeRuntime.OpenCodeRuntime)({
+      createOpenCodeSdkClient: () => {
+        throw new Error("This fixture only supports the managed OpenCode 2 server.");
+      },
+      startOpenCodeServerProcess: ({ verify }) =>
+        Effect.gen(function* () {
+          const url = `http://127.0.0.1:${++port}`;
+          const version = yield* verify!(url);
+          running.add(url);
+          yield* Effect.addFinalizer(() => Effect.sync(() => running.delete(url)));
+          return {
+            url,
+            version,
+            isRunning: Effect.sync(() => running.has(url)),
+            exitCode: Effect.never,
+          };
+        }),
+    });
+    const driver: AnyProviderDriver = {
+      driverKind,
+      metadata: { displayName: "OpenCode" },
+      configSchema: OpenCodeSettings,
+      defaultConfig: () => ({}),
+      create: (input) =>
+        Effect.gen(function* () {
+          const server = yield* OpenCode2Server.make({
+            binaryPath: "opencode",
+            directory: "/project",
+            serverUrl: "",
+            serverPassword: "",
+            environment: {},
+          });
+          const config = decodeOpenCodeConfig(input.config);
+          const instance = {
+            instanceId: input.instanceId,
+            driverKind,
+            inferenceCatalog: config.inferenceModels,
+            retireInferenceCatalog: server.retire,
+          } as ProviderInstance;
+          servers.set(instance, server);
+          return instance;
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              runtime,
+              NodeCrypto.layer,
+              OpenCode2Client.layer.pipe(
+                Layer.provide(
+                  Layer.succeed(
+                    HttpClient.HttpClient,
+                    HttpClient.make((request) =>
+                      Effect.succeed(
+                        HttpClientResponse.fromWeb(
+                          request,
+                          Response.json({
+                            version: "2.3.0",
+                            pid: 1,
+                            urls: [],
+                            paths: { tmp: "/tmp" },
+                          }),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+    };
+    const configMap = (inferenceModels: string[], nativeConfig = "{}") => {
+      const config = {
+        inferenceEnabled: true,
+        inferenceHostId: EnvironmentId.make("host"),
+        inferenceHostLabel: "Host",
+        inferenceBaseUrl: "http://127.0.0.1:4000/api/inference/linked/opencode/host",
+        inferenceKey: "fixture-key",
+        inferenceModels,
+        inferenceHomePath: "/project",
+      };
+      const { environment } = routeProvider("opencode", null, {
+        baseUrl: config.inferenceBaseUrl,
+        key: config.inferenceKey,
+        models: config.inferenceModels,
+        homePath: config.inferenceHomePath,
+        current: () => nativeConfig,
+      });
+      return { [instanceId]: { driver: driverKind, enabled: true, config, environment } };
+    };
+    const initial = ["gpt-existing"];
+    const updated = [...initial, "gpt-new"];
+    const { registry, mutator } = yield* makeProviderInstanceRegistry({
+      drivers: [driver],
+      configMap: configMap(initial),
+    });
+    const oldInstance = (yield* registry.getInstance(instanceId))!;
+    const oldServer = servers.get(oldInstance)!;
+    const firstBorrowed = yield* Deferred.make<string>();
+    const finishTurn = yield* Deferred.make<void>();
+    const turn = yield* oldServer
+      .withConnection(({ url }) =>
+        Deferred.succeed(firstBorrowed, url).pipe(Effect.andThen(Deferred.await(finishTurn))),
+      )
+      .pipe(Effect.forkChild);
+    const firstUrl = yield* Deferred.await(firstBorrowed);
+    yield* mutator.reconcile(configMap(updated));
+    expect(running.has(firstUrl)).toBe(true);
+    const newInstance = (yield* registry.getInstance(instanceId))!;
+    expect(newInstance.inferenceCatalog).toEqual(updated);
+    const newServer = servers.get(newInstance)!;
+    const nextUrl = yield* newServer.withConnection(({ url }) => Effect.succeed(url));
+    expect(nextUrl).not.toBe(firstUrl);
+    yield* Deferred.succeed(finishTurn, undefined);
+    yield* Fiber.join(turn);
+    expect([...running]).toEqual([nextUrl]);
+    yield* oldServer.withConnection(() => Effect.void).pipe(Effect.flip);
+
+    yield* newServer.withConnection(() =>
+      Effect.gen(function* () {
+        const newest = [...updated, "gpt-newest"];
+        yield* mutator.reconcile(configMap(newest));
+        expect(running.has(nextUrl)).toBe(true);
+        yield* mutator.reconcile(configMap(newest, '{"theme":"dark"}'));
+        expect(running.has(nextUrl)).toBe(false);
+      }),
+    );
+  }).pipe(Effect.provide(Layer.mock(SecretResolver.SecretResolver)({}))),
+);
 
 describe("ProviderInstanceRegistry secret environment", () => {
   const driverKind = ProviderDriverKind.make("fake");

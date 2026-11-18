@@ -2,12 +2,14 @@ import {
   EnvironmentId,
   InferenceDriver,
   INFERENCE_HARNESSES,
+  isInferenceProviderConfig,
   type CustomModelSetting,
   type ServerProviderModel,
   type SettingsSecretValue,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -310,6 +312,41 @@ export function routeProvider(driver: InferenceDriver, label: string | null, rou
     config: harness.config(chatRoute),
     environment: harness.environment(chatRoute),
   };
+}
+
+export function isOpenCodeInferenceCatalogChange(
+  previous: ProviderInstanceConfig,
+  next: ProviderInstanceConfig,
+): boolean {
+  const current = previous.config;
+  const updated = next.config;
+  if (
+    previous.driver !== "opencode" ||
+    !isInferenceProviderConfig(current) ||
+    !current.inferenceEnabled ||
+    !isInferenceProviderConfig(updated) ||
+    Equal.equals(current.inferenceModels, updated.inferenceModels)
+  )
+    return false;
+  const environment = previous.environment;
+  const content = environment?.find(({ name }) => name === "OPENCODE_CONFIG_CONTENT");
+  const nativeContent = content?.value;
+  if (environment === undefined || typeof nativeContent !== "string") return false;
+  const generated = routeProvider("opencode", null, {
+    baseUrl: current.inferenceBaseUrl,
+    key: current.inferenceKey,
+    models: updated.inferenceModels,
+    homePath: current.inferenceHomePath,
+    current: () => nativeContent,
+  }).environment.find(({ name }) => name === "OPENCODE_CONFIG_CONTENT");
+  return Equal.equals(
+    {
+      ...previous,
+      config: { ...current, inferenceModels: updated.inferenceModels },
+      environment: environment.map((entry) => (entry === content ? generated : entry)),
+    },
+    next,
+  );
 }
 
 export function inferenceModelSlugs(config: {

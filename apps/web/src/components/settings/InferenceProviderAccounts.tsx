@@ -13,7 +13,7 @@ import {
   type InferenceUpstream,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -42,6 +42,11 @@ export function InferenceProviderAccounts({
 }) {
   const permitted = useAtomValue(inferenceProxy.manageInference.permissionAtom(environmentId));
   const canManage = permitted && !readOnly;
+  const supportsHostingGuard = useAtomValue(
+    serverEnvironment.configValueAtom(environmentId),
+    (config) => config?.environment.capabilities.inferenceConfigureGuard === true,
+  );
+  const canStartHosting = enableLocalHosting && supportsHostingGuard;
   const query = useEnvironmentQuery(
     canManage ? inferenceProxy.inferenceStatus({ environmentId, input: {} }) : null,
   );
@@ -51,10 +56,21 @@ export function InferenceProviderAccounts({
   const [login, setLogin] = useState<{ url: string; state: string } | null>(null);
   const [callback, setCallback] = useState("");
   const host = query.data;
+  const accountSetup = useRef({ active: false });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prevents an account operation from routing after its setup view closes
+  useEffect(() => {
+    const setup = { active: true };
+    accountSetup.current = setup;
+    return () => {
+      setup.active = false;
+    };
+  }, []);
   async function run(input: InferenceProxyAction) {
+    const setup = accountSetup.current;
     setBusy(true);
     setNotice("");
     const result = await command({ environmentId, input });
+    if (!setup.active) return;
     setBusy(false);
     if (result._tag === "Failure") {
       setNotice(String(squashAtomCommandFailure(result)));
@@ -99,13 +115,13 @@ export function InferenceProviderAccounts({
       <SettingsRow
         title={`Inference hosting is off on ${hostName}`}
         description={
-          enableLocalHosting
+          canStartHosting
             ? "Install and start CLIProxyAPI on this environment to use its accounts."
             : "Turn hosting on there to add and share accounts."
         }
         status={notice || undefined}
         control={
-          enableLocalHosting ? (
+          canStartHosting ? (
             <Button
               size="sm"
               variant="outline"

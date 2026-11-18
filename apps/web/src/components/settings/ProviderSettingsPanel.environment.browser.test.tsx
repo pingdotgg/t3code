@@ -76,6 +76,10 @@ vi.mock(import("../../state/server"), async (original) => {
       inferenceProxy: {
         ...actual.serverEnvironment.inferenceProxy,
         canConnect: () => Atom.make(state.canManageProviders),
+        manageInference: {
+          ...actual.serverEnvironment.inferenceProxy.manageInference,
+          permissionAtom: () => Atom.make(state.canManageProviders),
+        },
       },
     } as never,
   };
@@ -302,6 +306,7 @@ describe("EnvironmentProviderSettings routing", () => {
 
   it("enables inference routing directly and keeps the switch off when no host is available", async () => {
     await setup();
+    state.canWriteSettings = false;
     await act(async () =>
       appAtomRegistry.set(state.config, {
         environment: { capabilities: { inferenceProxy: true } },
@@ -313,6 +318,7 @@ describe("EnvironmentProviderSettings routing", () => {
 
     await using screen = await render(panel({ targetInstanceId: codexId }));
     const proxySwitch = screen.getByRole("switch", { name: "Inference routing" });
+    expect(proxySwitch.element()).toBeEnabled();
     await userEvent.click(proxySwitch);
     await expect.element(proxySwitch).toBeDisabled();
     await expect.element(proxySwitch).not.toBeChecked();
@@ -328,7 +334,7 @@ describe("EnvironmentProviderSettings routing", () => {
       .element(screen.getByRole("status"))
       .toHaveTextContent("No connected inference host.");
     await userEvent.click(screen.getByRole("button", { name: "Set up accounts here" }));
-    const localSetup = screen.getByText("Connect to Remote device to manage its accounts");
+    const localSetup = screen.getByText("Loading accounts…");
     await expect.element(localSetup).toBeVisible();
     await expect.element(proxySwitch).toBeEnabled();
     await expect.element(proxySwitch).not.toBeChecked();
@@ -345,7 +351,12 @@ describe("EnvironmentProviderSettings routing", () => {
     };
     await screen.rerender(panel({ targetInstanceId: codexId }));
     await expect.element(proxySwitch).toBeChecked();
+    await expect.element(screen.getByText(/This inference route is incomplete/)).toBeVisible();
     await userEvent.click(proxySwitch);
+    expect(state.manageInference).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { operation: "removeRoute", instanceId: codexId },
+    });
     state.settings = DEFAULT_UNIFIED_SETTINGS;
     await screen.rerender(panel({ targetInstanceId: codexId }));
     await expect.element(proxySwitch).not.toBeChecked();
@@ -408,6 +419,7 @@ describe("EnvironmentProviderSettings routing", () => {
         driver,
         environments: expect.any(Array),
         preferredHostId: environmentId,
+        preserveProviderEnabled: true,
       });
       state.settings = {
         ...state.settings,

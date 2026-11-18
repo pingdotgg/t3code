@@ -16,12 +16,14 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  DEFAULT_SERVER_SETTINGS,
   ThreadId,
   EnvironmentId,
   InferenceProxyError,
   isInferenceProviderConfig,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ScheduledTaskId,
   WS_METHODS,
@@ -130,6 +132,13 @@ describe("command permissions", () => {
     },
     { via: "a connected SSH fallback", ssh: true, mode: "fallback" },
     { via: "a paired host discovered at first enable", ssh: true, mode: "discovery" },
+    { via: "a saved route without enabling the provider globally", ssh: true, mode: "preserve" },
+    {
+      via: "an older consumer that cannot preserve provider enablement",
+      ssh: true,
+      mode: "legacy",
+    },
+    { via: "only the environment chosen for local setup", ssh: true, mode: "local-only" },
     { via: "a revoked host discovered at first enable", ssh: true, mode: "revoked" },
   ])("handles $via without forwarding the client's bearer credential", ({ ssh, mode }) =>
     Effect.gen(function* () {
@@ -164,7 +173,10 @@ describe("command permissions", () => {
       let selected: InferenceRouteInput | undefined;
       let automaticGrant: boolean | undefined;
       let selectedMethod: string | undefined;
-      const discovery = mode === "discovery" || mode === "revoked";
+      const discovery = mode !== "explicit" && mode !== "fallback";
+      const localOnly = mode === "local-only";
+      const legacyConsumer = mode === "legacy";
+      const preserveProviderEnabled = mode === "preserve" || legacyConsumer;
       const fallback = mode === "fallback";
       const checkedHosts: EnvironmentId[] = [];
       const hostStatus = {
@@ -261,13 +273,29 @@ describe("command permissions", () => {
       const hostIdentity = { environmentId: env, label: "Host" };
       const consumerIdentity = { environmentId: other, label: "Consumer" };
       const serverConfig = {
-        environment: { capabilities: { inferenceProxy: true } },
+        environment: {
+          capabilities: {
+            inferenceProxy: true,
+            inferenceRoutePreservesEnablement: !legacyConsumer,
+          },
+        },
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [ProviderInstanceId.make("codex")]: {
+              driver: ProviderDriverKind.make("codex"),
+              enabled: false,
+            },
+          },
+        },
       } as InferenceFleetEnvironment["serverConfig"];
       const result = discovery
         ? yield* Effect.promise(() =>
             enableInferenceRouting.run(registry, {
               consumer: consumerIdentity,
               driver: "codex",
+              ...(localOnly ? { onlyHostId: other } : {}),
+              ...(preserveProviderEnabled ? { preserveProviderEnabled } : {}),
               environments: [
                 { ...hostIdentity, connection: { phase: "offline" }, serverConfig },
                 { ...hostIdentity, connection: { phase: "connected" }, serverConfig },
@@ -283,8 +311,23 @@ describe("command permissions", () => {
               fallback,
             }),
           );
-      expect(automaticGrant).toBe(fallback || discovery || undefined);
-      expect(checkedHosts).toEqual(discovery ? [other, env] : []);
+      if (legacyConsumer) {
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure")
+          expect(Cause.squash(result.cause)).toMatchObject({
+            message: expect.stringContaining("without enabling the provider globally"),
+          });
+        expect(checkedHosts).toEqual([]);
+        expect(selected).toBeUndefined();
+        return;
+      }
+      expect(automaticGrant).toBe(!localOnly && (fallback || discovery) ? true : undefined);
+      expect(checkedHosts).toEqual(localOnly ? [other] : discovery ? [other, env] : []);
+      if (localOnly) {
+        expect(result._tag).toBe("Failure");
+        expect(selected).toBeUndefined();
+        return;
+      }
       if (mode === "revoked") {
         expect(result._tag).toBe("Failure");
         if (result._tag === "Failure")
@@ -303,6 +346,7 @@ describe("command permissions", () => {
         grant: issued,
         driver: "codex",
         hostLabel: "Host",
+        ...(preserveProviderEnabled ? { preserveProviderEnabled } : {}),
         ...(ssh ? { connection: { url: "http://127.0.0.1:43210", ssh: profile.target } } : {}),
       });
     }),

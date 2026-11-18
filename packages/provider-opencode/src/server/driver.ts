@@ -1,5 +1,6 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
+  isInferenceProviderConfig,
   ProviderDriverKind,
   settingsSecretLiteral,
   type ServerProviderModel,
@@ -412,6 +413,12 @@ export const OpenCodeDriver: ProviderDriver<
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
       Effect.provideService(OpenCode2Client.OpenCode2Client, openCode2Client),
     );
+    const inferenceCatalog =
+      isInferenceProviderConfig(config) &&
+      config.inferenceEnabled &&
+      environment.some(({ name }) => name === "T3_INFERENCE_KEY")
+        ? config.inferenceModels
+        : undefined;
     const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
       probe: runtimeProbe,
       resolve: resolveRuntime,
@@ -720,6 +727,9 @@ export const OpenCodeDriver: ProviderDriver<
       displayName,
       accentColor,
       enabled,
+      ...(inferenceCatalog === undefined || openCode2Server.retire === undefined
+        ? {}
+        : { inferenceCatalog, retireInferenceCatalog: openCode2Server.retire }),
       snapshot,
       // A scan never installs OpenCode: without an offline probe result it fails and keeps the
       // last inventory rather than guessing 1.x.

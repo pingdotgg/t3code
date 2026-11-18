@@ -293,6 +293,7 @@ export class ProviderSessionManagerV2 extends Context.Service<
 
 interface LiveSessionEntry {
   readonly continuationKey: string | undefined;
+  readonly inferenceCatalog: ReadonlyArray<string> | undefined;
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
   readonly loadedProviderThreadKeyByThread: ReadonlyMap<ThreadId, string>;
   /** null marks an unknown catalog; undefined means MCP refresh is not configured. */
@@ -2207,66 +2208,55 @@ export const layerWithOptions = (
         );
       });
 
-      /** An exclusive runtime configures MCP at open, so it reopens once nothing would be lost. */
-      const releaseForLinkedEnvironments = Effect.fn(
-        "ProviderSessionManager.releaseForLinkedEnvironments",
-      )(function* (entry: LiveSessionEntry) {
-        if (
-          entry.supportsMultipleProviderThreads ||
-          entry.runtime.canResumeAfterRestart === false ||
-          entry.openedWithLinkedEnvironments === undefined ||
-          entry.busyTurns.size > 0
-        ) {
-          return;
-        }
-        const linkedEnvironments = yield* readLinkedEnvironments;
-        if (
-          typeof linkedEnvironments !== "boolean" ||
-          linkedEnvironments === entry.openedWithLinkedEnvironments
-        ) {
-          return;
-        }
-        const providerSessionId = entry.runtime.providerSessionId;
-        // Any activity during these reads bumps the generation and keeps the runtime.
-        const generation = entry.idleGeneration;
-        const hasPendingWork =
-          entry.runtime.hasPendingBackgroundWork === undefined
-            ? false
-            : yield* entry.runtime.hasPendingBackgroundWork.pipe(
-                Effect.catchCause(() => Effect.succeed(true)),
-              );
-        if (hasPendingWork) return;
-        // Checked under the request permit so a runless request mid-persist is not cancelled.
-        const hasUnfinishedRecords = Effect.forEach(entry.attachedThreadIds, (threadId) =>
-          projectionStore.getThreadRecords(threadId, ["runtimeRequests", "providerThreads"], {
-            runtimeRequestStatuses: ["pending"],
-          }),
-        ).pipe(
-          Effect.map((projections) =>
-            projections.some(
-              (projection) =>
-                projection.runtimeRequests.some(
-                  (request) =>
-                    request.responseCapability.type === "live" &&
-                    request.responseCapability.providerSessionId === providerSessionId,
-                ) ||
-                projection.providerThreads.some(
-                  (providerThread) =>
-                    providerThread.providerSessionId === providerSessionId &&
-                    (providerThread.pendingBackgroundTasks ?? []).length > 0,
-                ),
+      const releaseForRuntimeChange = Effect.fn("ProviderSessionManager.releaseForRuntimeChange")(
+        function* (entry: LiveSessionEntry, reason: Effect.Effect<string | undefined>) {
+          if (entry.runtime.canResumeAfterRestart === false || entry.busyTurns.size > 0) {
+            return;
+          }
+          // Any activity during these reads bumps the generation and keeps the runtime.
+          const generation = entry.idleGeneration;
+          const detail = yield* reason;
+          if (detail === undefined) return;
+          const providerSessionId = entry.runtime.providerSessionId;
+          const hasPendingWork =
+            entry.runtime.hasPendingBackgroundWork === undefined
+              ? false
+              : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                  Effect.catchCause(() => Effect.succeed(true)),
+                );
+          if (hasPendingWork) return;
+          // Checked under the request permit so a runless request mid-persist is not cancelled.
+          const hasUnfinishedRecords = Effect.forEach(entry.attachedThreadIds, (threadId) =>
+            projectionStore.getThreadRecords(threadId, ["runtimeRequests", "providerThreads"], {
+              runtimeRequestStatuses: ["pending"],
+            }),
+          ).pipe(
+            Effect.map((projections) =>
+              projections.some(
+                (projection) =>
+                  projection.runtimeRequests.some(
+                    (request) =>
+                      request.responseCapability.type === "live" &&
+                      request.responseCapability.providerSessionId === providerSessionId,
+                  ) ||
+                  projection.providerThreads.some(
+                    (providerThread) =>
+                      providerThread.providerSessionId === providerSessionId &&
+                      (providerThread.pendingBackgroundTasks ?? []).length > 0,
+                  ),
+              ),
             ),
-          ),
-          Effect.orElseSucceed(() => true),
-        );
-        yield* releaseEntry({
-          providerSessionId,
-          reason: "idle_timeout",
-          detail: "Linked environments changed; reopening the provider session.",
-          onlyIfIdleGeneration: generation,
-          keepIf: hasUnfinishedRecords,
-        }).pipe(logReleaseFailure(providerSessionId));
-      });
+            Effect.orElseSucceed(() => true),
+          );
+          yield* releaseEntry({
+            providerSessionId,
+            reason: "idle_timeout",
+            detail,
+            onlyIfIdleGeneration: generation,
+            keepIf: hasUnfinishedRecords,
+          }).pipe(logReleaseFailure(providerSessionId));
+        },
+      );
 
       const observeActivity = (
         providerSessionId: ProviderSessionId,
@@ -3094,7 +3084,33 @@ export const layerWithOptions = (
               }
               const key = sessionKey(input.providerSessionId);
               const live = (yield* Ref.get(sessions)).get(key);
-              if (live !== undefined) yield* releaseForLinkedEnvironments(live);
+              if (live !== undefined) {
+                const model = input.modelSelection.model;
+                yield* releaseForRuntimeChange(
+                  live,
+                  Effect.gen(function* () {
+                    if (
+                      adapter.continuationKey === live.continuationKey &&
+                      model.startsWith("t3proxy/") &&
+                      live.inferenceCatalog !== undefined &&
+                      !live.inferenceCatalog.includes(model.slice("t3proxy/".length)) &&
+                      adapter.inferenceCatalog?.includes(model.slice("t3proxy/".length))
+                    ) {
+                      return "The hosted model catalog changed; reopening the provider session.";
+                    }
+                    if (
+                      live.supportsMultipleProviderThreads ||
+                      live.openedWithLinkedEnvironments === undefined
+                    )
+                      return undefined;
+                    const linked = yield* readLinkedEnvironments;
+                    return typeof linked === "boolean" &&
+                      linked !== live.openedWithLinkedEnvironments
+                      ? "Linked environments changed; reopening the provider session."
+                      : undefined;
+                  }),
+                );
+              }
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 if (
@@ -3206,6 +3222,7 @@ export const layerWithOptions = (
               );
               const entry: LiveSessionEntry = {
                 continuationKey: adapter.continuationKey,
+                inferenceCatalog: adapter.inferenceCatalog,
                 attachedThreadIds: new Set([input.threadId]),
                 loadedProviderThreadKeyByThread: new Map(),
                 openedWithLinkedEnvironments,

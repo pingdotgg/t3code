@@ -616,6 +616,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly continuation?: { readonly key: Ref.Ref<string>; readonly required: boolean };
+  readonly inferenceCatalog?: Ref.Ref<ReadonlyArray<string>>;
   readonly idleTimeoutMs: number;
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
@@ -701,17 +702,25 @@ function layerTest(input: {
         : { scopeCloseReached: input.scopeCloseReached }),
     }).pipe(
       Effect.map((adapter) =>
-        input.continuation === undefined
+        input.continuation === undefined && input.inferenceCatalog === undefined
           ? ProviderAdapterRegistry.layerSingle(adapter)
           : Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistryV2, {
               get: () =>
-                Ref.get(input.continuation!.key).pipe(
-                  Effect.map((continuationKey) => ({
+                Effect.gen(function* () {
+                  const { continuation, inferenceCatalog } = input;
+                  return {
                     ...adapter,
-                    continuationKey,
-                    requiresBoundContinuationIdentity: input.continuation!.required,
-                  })),
-                ),
+                    ...(continuation
+                      ? {
+                          continuationKey: yield* Ref.get(continuation.key),
+                          requiresBoundContinuationIdentity: continuation.required,
+                        }
+                      : {}),
+                    ...(inferenceCatalog
+                      ? { inferenceCatalog: yield* Ref.get(inferenceCatalog) }
+                      : {}),
+                  };
+                }),
               list: () => Effect.succeed([adapter.instanceId]),
             }),
       ),
@@ -1275,6 +1284,49 @@ it.effect("ProviderSessionManagerV2 opens provider sessions inside the installat
               update: () => Effect.die("unused"),
             }),
           ),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("reuses an idle session until a new hosted model needs an updated catalog", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const inferenceCatalog = yield* Ref.make<ReadonlyArray<string>>(["original"]);
+    const pendingWork = yield* Ref.make(true);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const threadId = ThreadId.make("thread-hosted-model-reconnect");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+        ],
+      });
+      const input = { threadId, providerSessionId, runtimePolicy };
+      const original = { ...modelSelection, model: "t3proxy/original" };
+      const initial = yield* manager.open({ ...input, modelSelection: original });
+      yield* Ref.set(inferenceCatalog, ["original", "added"]);
+      assert.strictEqual(yield* manager.open({ ...input, modelSelection: original }), initial);
+      const added = { ...modelSelection, model: "t3proxy/added" };
+      assert.strictEqual(yield* manager.open({ ...input, modelSelection: added }), initial);
+      yield* Ref.set(pendingWork, false);
+      const replaced = yield* manager.open({ ...input, modelSelection: added });
+      assert.notStrictEqual(replaced, initial);
+      assert.strictEqual(yield* manager.open({ ...input, modelSelection: added }), replaced);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          inferenceCatalog,
+          hasPendingBackgroundWork: Ref.get(pendingWork),
+          idleTimeoutMs: 60_000,
         }),
       ),
     );

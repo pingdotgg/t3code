@@ -574,6 +574,21 @@ it.effect(
                 operation: "removeRoute",
                 instanceId: ProviderInstanceId.make(route.driver),
               });
+            const incomplete = ProviderInstanceId.make("claudeAgent");
+            yield* settings.updateProviderInstance({
+              operation: "upsert",
+              instanceId: incomplete,
+              instance: {
+                driver: ProviderDriverKind.make("claudeAgent"),
+                enabled: false,
+                config: { inferenceEnabled: true },
+              },
+            });
+            yield* proxy.manage({ operation: "removeRoute", instanceId: incomplete });
+            expect((yield* settings.getSettings).providerInstances[incomplete]).toMatchObject({
+              enabled: false,
+              config: { inferenceEnabled: false },
+            });
             const startSharing = proxy.manage({
               operation: "configure",
               enabled: true,
@@ -1447,7 +1462,7 @@ it.effect(
                 return Effect.succeed({
                   instance: {
                     ...instance,
-                    ...(enabled ? { enabled: true } : {}),
+                    enabled,
                     config: { ...instance.config, enabled },
                   },
                   result: undefined,
@@ -1457,6 +1472,9 @@ it.effect(
             expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(false);
             expect(yield* proxy.routeCandidates(issued.key, hostId, "codex")).toBeNull();
             expect(yield* proxy.authorize(issued.key, hostId, "codex")).toBeNull();
+            expect((yield* proxy.status).routes.map((route) => route.instanceId)).not.toContain(
+              ProviderInstanceId.make("codex"),
+            );
             const inferenceProject = ProjectId.make("inference-project");
             const codexId = ProviderInstanceId.make("codex");
             yield* settings.updateSettings({
@@ -1467,6 +1485,9 @@ it.effect(
             expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(true);
             expect(yield* proxy.routeCandidates(issued.key, hostId, "codex")).toHaveLength(1);
             expect(yield* proxy.authorize(issued.key, hostId, "codex")).not.toBeNull();
+            expect((yield* proxy.status).routes.map((route) => route.instanceId)).toContain(
+              codexId,
+            );
             const oldCatalog = catalog;
             catalog = [...catalog, { id: "gpt-project-catalog-refresh", owned_by: "openai" }];
             yield* proxy.refreshModelCatalog(true);
@@ -1487,6 +1508,11 @@ it.effect(
             });
             expect(yield* proxy.routeCandidates(issued.key, hostId, "codex")).toBeNull();
             expect(yield* proxy.authorize(issued.key, hostId, "codex")).toBeNull();
+            yield* proxy.connect({ ...connect, grant: issued, preserveProviderEnabled: true });
+            const resumed = (yield* settings.getSettings).providerInstances[codexId]!;
+            expect(resumed.enabled).toBe(false);
+            expect(resumed.config).toMatchObject({ inferenceEnabled: true });
+            expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(true);
             yield* settings.updateSettings({
               projectSettingsOverrides: { [inferenceProject]: null },
             });
