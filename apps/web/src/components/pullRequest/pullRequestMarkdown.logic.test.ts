@@ -1,7 +1,7 @@
 import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
 import remarkParse from "remark-parse";
 import { unified, type PluggableList } from "unified";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { SourceControlProviderKind } from "@t3tools/contracts";
 
@@ -62,6 +62,9 @@ describe("remarkPullRequestAutolinks", () => {
   });
 
   it("links an issue body's references to the issue's repository, and nothing else", () => {
+    using _canParse = vi.spyOn(URL, "canParse").mockImplementation(() => {
+      throw new TypeError("URL.canParse is not a function");
+    });
     const plugins = issueMarkdownPlugins({
       tracker: "gitlab",
       url: "http://gitlab.internal:8080/team/app/-/issues/8",
@@ -84,6 +87,9 @@ describe("remarkPullRequestAutolinks", () => {
   });
 
   it("links only `#123` in a thread's words to its project's repository", () => {
+    using _canParse = vi.spyOn(URL, "canParse").mockImplementation(() => {
+      throw new TypeError("URL.canParse is not a function");
+    });
     const plugins = projectReferenceMarkdownPlugins({
       canonicalKey: "github.com/team/repo",
       provider: SourceControlProviderKind.make("github"),

@@ -12,6 +12,7 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
 } from "@t3tools/shared/markdownPipeline";
+import { parseUrl } from "@t3tools/shared/url";
 import type { Nodes } from "hast";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
@@ -137,7 +138,7 @@ export function issueMarkdownPlugins(issue: {
   readonly url: string;
   readonly scope: string;
 }): PluggableList {
-  const url = URL.canParse(issue.url) ? new URL(issue.url) : null;
+  const url = parseUrl(issue.url);
   const repositoryUrl =
     url &&
     (sourceControlClients.find(issue.tracker)?.repositoryUrlFromPage?.(url, true) ??
@@ -155,10 +156,11 @@ export function projectReferenceMarkdownPlugins(
     sourceControlClients.repositorySelector(identity) ?? "",
     1,
   );
+  const parsedUrl = url === null ? null : parseUrl(url);
   const repositoryUrl =
-    provider === undefined || url === null || !URL.canParse(url)
+    provider === undefined || parsedUrl === null
       ? null
-      : (sourceControlClients.get(provider).parseChangeRequestUrl(new URL(url))?.repositoryUrl ??
+      : (sourceControlClients.get(provider).parseChangeRequestUrl(parsedUrl)?.repositoryUrl ??
         null);
   return hostReferencePlugins(provider, repositoryUrl);
 }
