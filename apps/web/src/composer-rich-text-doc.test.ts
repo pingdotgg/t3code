@@ -609,24 +609,30 @@ describe("composer rich text document model", () => {
   });
 
   describe("a paragraph after a list", () => {
+    const skillLabelFor = (name: string) => ({ label: name, description: null });
     it.each([
-      ["a numbered list", "1. a\n2. b\n3. c"],
-      ["a bullet list", "- a\n- b"],
-      ["a task list", "- [ ] a"],
+      ["a numbered list", "1. a\n2. b\n3. c", 0],
+      ["a bullet list", "- a\n- b", 0],
+      ["a task list", "- [ ] a", 0],
+      ["a bullet list and an empty line", "- a", 1],
     ])(
       "is written after a blank line after %s, or Markdown folds it into the last item",
-      (_kind, list) => {
-        const listJson = buildDocJson(list, (name) => ({ label: name, description: null }));
+      (_kind, list, emptyLines) => {
+        const listJson = buildDocJson(list, skillLabelFor);
         const doc = ProseMirrorNode.fromJSON(schema, {
           type: "doc",
           content: [
             ...listJson.content,
+            ...Array.from({ length: emptyLines }, () => ({ type: "paragraph" })),
             { type: "paragraph", content: [{ type: "text", text: "d" }] },
           ],
         });
         doc.check();
-        expect(doc.childCount).toBe(2);
-        expect(serializeEditorDoc(doc).value).toBe(`${list}\n\nd`);
+        expect(doc.childCount).toBe(2 + emptyLines);
+        const { value } = serializeEditorDoc(doc);
+        expect(value).toBe(`${list}\n\n${"\n".repeat(emptyLines)}d`);
+        const reopened = ProseMirrorNode.fromJSON(schema, buildDocJson(value, skillLabelFor));
+        expect(reopened.toJSON()).toEqual(doc.toJSON());
       },
     );
   });

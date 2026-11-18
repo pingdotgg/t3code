@@ -1091,10 +1091,15 @@ export function buildTiptapContent(
       continue;
     }
     // The serializer separates a quote or list from the prose after it with one blank line; it is not an empty paragraph.
+    // After a list it precedes any empty paragraphs the user left, so those survive.
+    let proseIndex = entryIndex + 1;
+    if (openQuote === null && rootLists.length > 0 && isProseLine(entry, true)) {
+      while (isProseLine(entries[proseIndex], true)) proseIndex += 1;
+    }
     const blockSeparator =
       (openQuote !== null || rootLists.length > 0) &&
       isProseLine(entry, true) &&
-      isProseLine(entries[entryIndex + 1], false);
+      isProseLine(entries[proseIndex], false);
     flushQuote();
     if (blockSeparator) {
       flushLists();
@@ -1246,8 +1251,17 @@ function horizontalRuleSource(block: ProseMirrorNode): string {
 
 // A blank line keeps prose out of a quote or list (lazy continuation) and a dash rule from
 // underlining the line above into a setext heading; an empty paragraph already separates them.
-function needsBlankLineBetween(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
-  if (previous.type.name === "blockquote" || LIST_NODE_NAMES.has(previous.type.name)) {
+function needsBlankLineBetween(blocks: readonly ProseMirrorNode[], index: number): boolean {
+  const previous = blocks[index - 1]!;
+  const block = blocks[index]!;
+  const isEmptyParagraph = (node: ProseMirrorNode | undefined) =>
+    node?.type.name === "paragraph" && node.content.size === 0;
+  if (LIST_NODE_NAMES.has(previous.type.name)) {
+    let next = index;
+    while (isEmptyParagraph(blocks[next])) next += 1;
+    return blocks[next]?.type.name === "paragraph";
+  }
+  if (previous.type.name === "blockquote") {
     return block.type.name === "paragraph" && block.content.size > 0;
   }
   return (
@@ -1723,7 +1737,7 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
   let pmBlockStart = 0;
   blocks.forEach((block, blockIndex) => {
     if (blockIndex > 0 && !isTrailingLineAfterRule(doc, blockIndex)) pushBreakRun(acc);
-    if (blockIndex > 0 && needsBlankLineBetween(blocks[blockIndex - 1]!, block)) {
+    if (blockIndex > 0 && needsBlankLineBetween(blocks, blockIndex)) {
       pushBlankLineRun(acc, pmBlockStart + 1);
     }
     if (LIST_NODE_NAMES.has(block.type.name)) {
