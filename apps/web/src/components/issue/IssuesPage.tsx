@@ -32,7 +32,7 @@ import {
   UserCheckIcon,
   UsersIcon,
 } from "lucide-react";
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useEffectEvent, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { IssueDetailPanel } from "~/components/issue/IssueDetailPanel";
@@ -70,9 +70,10 @@ import {
 } from "~/components/ui/empty";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
 import { SidebarInset } from "~/components/ui/sidebar";
+import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
-import { shortcutLabelForCommand } from "~/keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { usePanelAnimationSettings, usePanelPresence } from "~/panelAnimations";
 import {
@@ -93,13 +94,13 @@ import { useDebouncedValue } from "~/state/queries";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
 export interface IssuesSearch extends IssueListPreferences {
-  readonly selectedEnvironmentId?: EnvironmentId;
-  readonly selectedProjectId?: ProjectId;
+  readonly selectedEnvironmentId?: EnvironmentId | undefined;
+  readonly selectedProjectId?: ProjectId | undefined;
   /** Part of the panel tab's identity, so a link reopens the tab a row press opened. */
-  readonly selectedHost?: string;
-  readonly tracker?: string;
-  readonly scope?: string;
-  readonly key?: string;
+  readonly selectedHost?: string | undefined;
+  readonly tracker?: string | undefined;
+  readonly scope?: string | undefined;
+  readonly key?: string | undefined;
 }
 
 const STATE_TABS = [
@@ -137,9 +138,16 @@ function getShortcutContext() {
   };
 }
 
-function hostOptionsFor(groups: ReturnType<typeof groupIssues>, chosen: string | undefined) {
+function hostOptionsFor(trackers: ReadonlyArray<IssueTrackerSummary>, chosen: string | undefined) {
   const hosts = new Map<string, IssueTrackerSummary>();
-  for (const group of groups) hosts.set(group.tracker.host, group.tracker);
+  const ordered = [...trackers].sort((a, b) =>
+    issueTrackerKey(a).localeCompare(issueTrackerKey(b)),
+  );
+  for (const tracker of ordered) {
+    const existing = hosts.get(tracker.host);
+    if (existing === undefined || (!existing.configured && tracker.configured))
+      hosts.set(tracker.host, tracker);
+  }
   return [
     { value: "", label: "All", Icon: Plug2Icon },
     // A remembered host no project is on any more stays listed, so the filter can be taken off.
@@ -220,10 +228,31 @@ export function IssuesPage() {
 
   // Rows grouped per tracker account, so a tracker that cannot be read says so where its rows
   // would be, and each tracker's rows carry on from their own cursors.
-  const groups = groupIssues(held, debouncedQuery, projects, search.order ?? "updated");
-  const filterScopes = issueFilterScopes(held, projects);
+  // The server names every tracker so the menu can switch hosts, but reads only the chosen one.
+  const chosenHost = search.host?.toLowerCase();
+  const shown = chosenHost
+    ? new Map(
+        [...held].map(([environmentId, page]) => [
+          environmentId,
+          {
+            ...page,
+            answer: {
+              ...page.answer,
+              trackers: page.answer.trackers.filter(
+                (tracker) => tracker.host.toLowerCase() === chosenHost,
+              ),
+            },
+          },
+        ]),
+      )
+    : held;
+  const groups = groupIssues(shown, debouncedQuery, projects, search.order ?? "updated");
+  const filterScopes = issueFilterScopes(shown, projects);
 
-  const hostOptions = hostOptionsFor(groups, search.host);
+  const hostOptions = hostOptionsFor(
+    [...held.values()].flatMap((page) => page.answer.trackers),
+    search.host,
+  );
 
   const updateSearch = (patch: { [Key in keyof IssuesSearch]?: IssuesSearch[Key] | undefined }) => {
     const merged = { ...search, ...patch };
@@ -375,6 +404,23 @@ export function IssuesPage() {
     useRightPanelStore.getState().show(rightPanelRef);
     selectSurfaceInUrl(panelSurface);
   };
+
+  const onRightPanelKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented || isCommandPaletteOpen() || panelSurface === null) return;
+    const command = resolveShortcutCommand(event, keybindings, {
+      context: { ...getShortcutContext(), rightPanelOpen: rightPanelState.isOpen },
+    });
+    if (command !== "rightPanel.toggle") return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) toggleRightPanel();
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the document right panel shortcut
+  useEffect(() => {
+    document.addEventListener("keydown", onRightPanelKeyDown);
+    return () => document.removeEventListener("keydown", onRightPanelKeyDown);
+  }, []);
 
   // Every writable scope the workspace has, for the composer.
 
