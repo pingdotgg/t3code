@@ -280,6 +280,15 @@ export function HomeScreen(props: HomeScreenProps) {
       animated: false,
     });
   });
+  const onScrollToTopRequest = workspace?.onScrollToTopRequest;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to tab bar re-taps, which arrive outside React
+  useEffect(
+    () =>
+      onScrollToTopRequest?.("threads", () => {
+        void listRef.current?.scrollToOffset({ offset: -contentTopInset, animated: true });
+      }),
+    [onScrollToTopRequest, contentTopInset],
+  );
   const swipeRowActivation = createSwipeRowActivation();
   const activateVisibleRows = (rows: ReadonlyArray<ThreadListV2ListItem>) => {
     const state = listRef.current?.getState();

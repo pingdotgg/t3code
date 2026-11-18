@@ -27,8 +27,10 @@ import {
   makeWindow,
   usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
-import { use, useRef, useState, type ReactNode } from "react";
-import { View } from "react-native";
+import { use, useEffect, useRef, useState, type ReactNode } from "react";
+import { type ScrollViewInstance, View } from "react-native";
+import { useContentTopInset } from "../../components/ui/useBarInset";
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -81,6 +83,18 @@ function UsageScreen(props: {
 }) {
   const insets = useSafeAreaInsets();
   const headerOnly = use(NativeWorkspaceTabActivityContext)?.headerOnly === true;
+  const scrollRef = useRef<ScrollViewInstance>(null);
+  const contentTopInset = useContentTopInset();
+  const workspaceTabs = useWorkspaceTabs();
+  const onScrollToTopRequest = props.workspace ? workspaceTabs?.onScrollToTopRequest : undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to tab bar re-taps, which arrive outside React
+  useEffect(
+    () =>
+      onScrollToTopRequest?.("usage", () => {
+        scrollRef.current?.scrollTo({ y: -contentTopInset, animated: true });
+      }),
+    [onScrollToTopRequest, contentTopInset],
+  );
   const [selection, setSelection] = useState(() => ({
     params: props.tabParam,
     view: (props.tabParam === "usage" ? "cost" : "limits") as UsageView,
@@ -222,6 +236,9 @@ function UsageScreen(props: {
     >
       {headerOnly ? null : (
         <ScrollView
+          ref={scrollRef}
+          // The top sits above the automatic inset, which React Native's scrollTo would clamp away.
+          scrollToOverflowEnabled
           contentInsetAdjustmentBehavior="automatic"
           showsVerticalScrollIndicator={false}
           className="flex-1"

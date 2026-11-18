@@ -7,7 +7,7 @@ import {
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
-import { use, useMemo, useRef, useState, type ReactNode } from "react";
+import { use, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { Keyboard, Platform, Pressable, View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
@@ -115,6 +115,15 @@ export function PullRequestsScreen(
       animated: false,
     });
   });
+  const onScrollToTopRequest = workspace.onScrollToTopRequest;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to tab bar re-taps, which arrive outside React
+  useEffect(
+    () =>
+      onScrollToTopRequest("pullRequests", () => {
+        void listRef.current?.scrollToOffset({ offset: -contentTopInset, animated: true });
+      }),
+    [onScrollToTopRequest, contentTopInset],
+  );
   const maintainVisiblePosition = {
     data: tab.searchMode === "resting",
     shouldRestorePosition: () => workspace.getScrollOffset("pullRequests") > 0,

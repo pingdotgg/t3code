@@ -220,6 +220,14 @@ export function WorkspaceNativeTabs(props: {
             setProvenance(nativeEvent.provenance);
             if (nativeEvent.actionOrigin === "programmatic-js") return;
             const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
+            // The list sits too deep for react-native-screens to find, so a re-tap scrolls it here.
+            if (
+              tab &&
+              tab !== "settings" &&
+              nativeEvent.isRepeated &&
+              !nativeEvent.hasTriggeredSpecialEffect
+            )
+              workspace.requestScrollToTop(tab);
             if (tab) selectTab(tab);
           }}
         >

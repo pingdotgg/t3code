@@ -12,9 +12,11 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
+import type { LegendListRef } from "@legendapp/list/react-native";
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { THREAD_LIST_ROW_LAYOUT } from "./threadListAnimations";
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -133,6 +135,16 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const { savedConnectionsById } = useSavedRemoteConnections();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const sidebarScrollGesture = useNativeGesture();
+  const androidListRef = useRef<LegendListRef>(null);
+  const onScrollToTopRequest = useWorkspaceTabs()?.onScrollToTopRequest;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to tab bar re-taps, which arrive outside React
+  useEffect(
+    () =>
+      onScrollToTopRequest?.("threads", () => {
+        void androidListRef.current?.scrollToOffset({ offset: 0, animated: true });
+      }),
+    [onScrollToTopRequest],
+  );
   const {
     archiveThread,
     confirmDeleteThread,
@@ -664,6 +676,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             <GestureDetector gesture={sidebarScrollGesture}>
               {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- The Android sidebar has no native header to register with. */}
               <AnimatedLegendList
+                ref={androidListRef}
                 itemLayoutAnimation={THREAD_LIST_ROW_LAYOUT}
                 data={listItems}
                 drawDistance={500}

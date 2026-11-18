@@ -52,7 +52,11 @@ export function WorkspaceSidebarTabs(props: {
       onSelectionChange={({ nativeEvent }) => {
         const tab = tabs.find((candidate) => candidate === nativeEvent.tab);
         if (tab === "settings") selectTab("settings");
-        else if (tab) selectTab(tab);
+        else if (tab) {
+          if (!workspace.settingsOpen && tab === workspace.state.selectedTab)
+            workspace.requestScrollToTop(tab);
+          selectTab(tab);
+        }
       }}
       // Keep the host stable while UIKit updates the bars' intrinsic size and safe area together.
       style={{

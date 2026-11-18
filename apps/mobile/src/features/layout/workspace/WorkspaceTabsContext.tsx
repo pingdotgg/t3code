@@ -30,6 +30,9 @@ export const WorkspaceTabsContext = createContext<{
   readonly recordScrollOffset: (tab: WorkspaceSearchTab, offset: number) => void;
   /** Leaves search and returns the list to where it was when search began. */
   readonly cancelSearch: (tab: WorkspaceSearchTab) => void;
+  /** Asks the tab's list to scroll to its top, as when its already selected tab is tapped again. */
+  readonly requestScrollToTop: (tab: WorkspaceTab) => void;
+  readonly onScrollToTopRequest: (tab: WorkspaceTab, listener: () => void) => () => void;
 } | null>(null);
 
 export function useWorkspaceTabs() {
@@ -68,6 +71,7 @@ function createWorkspaceTabsModel(selectedTab?: WorkspaceTab) {
     usage: 0,
     settings: 0,
   };
+  const scrollToTopListeners = new Set<{ tab: WorkspaceTab; listener: () => void }>();
   return {
     stored,
     resolved: Atom.make((get) =>
@@ -76,6 +80,16 @@ function createWorkspaceTabsModel(selectedTab?: WorkspaceTab) {
     getScrollOffset: (tab: WorkspaceSearchTab) => scrollOffsets[tab],
     recordScrollOffset: (tab: WorkspaceSearchTab, offset: number) => {
       scrollOffsets[tab] = offset;
+    },
+    requestScrollToTop: (tab: WorkspaceTab) => {
+      for (const entry of scrollToTopListeners) if (entry.tab === tab) entry.listener();
+    },
+    onScrollToTopRequest: (tab: WorkspaceTab, listener: () => void) => {
+      const entry = { tab, listener };
+      scrollToTopListeners.add(entry);
+      return () => {
+        scrollToTopListeners.delete(entry);
+      };
     },
   };
 }
@@ -102,6 +116,8 @@ export function WorkspaceTabsProvider(props: {
     settingsOpen: props.settingsOpen ?? false,
     getScrollOffset: model.getScrollOffset,
     recordScrollOffset: model.recordScrollOffset,
+    requestScrollToTop: model.requestScrollToTop,
+    onScrollToTopRequest: model.onScrollToTopRequest,
     cancelSearch: (tab: WorkspaceSearchTab) => {
       model.recordScrollOffset(tab, registry.get(model.resolved).tabs[tab].searchEntryOffset);
       dispatch({ type: "cancel", tab });

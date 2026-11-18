@@ -136,11 +136,17 @@ export function AndroidWorkspaceNavigation(props: {
         onTabSelected={(event) => {
           Keyboard.dismiss();
           const tab = event.nativeEvent.tab;
-          if (tab !== "settings") workspace.dispatch({ type: "select", tab });
           // Reset the root stack even when a nested settings navigator has focus.
           // The provider renders inside the root stack's layout, so the container's root state is
           // that stack's current state.
           const rootState = rootNavigationRef.getRootState();
+          // Like iOS, a re-tap over an open page only returns to the list; the next one scrolls it.
+          // Split view keeps the list in the sidebar, beside whatever page is open.
+          const listShown =
+            layout.usesSplitView || rootState?.routes[rootState.index]?.name === "Home";
+          if (tab !== "settings" && tab === selectedTab && listShown)
+            workspace.requestScrollToTop(tab);
+          if (tab !== "settings") workspace.dispatch({ type: "select", tab });
           if (root && rootState) {
             navigation.dispatch({
               ...CommonActions.reset(
