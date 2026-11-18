@@ -110,6 +110,10 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     const nested = readResult(content, budget, depth + 1);
     return { ...nested, failed: failed || nested.failed };
   }
+  // Factory Droid sends an MCP result over ACP as `{ text: <result JSON> }`.
+  if (typeof value.text === "string" && Object.keys(value).length === 1) {
+    return readResult(value.text, budget, depth + 1);
+  }
   return { data: value, failed };
 }
 

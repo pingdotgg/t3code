@@ -1120,6 +1120,13 @@ export function extractMcpToolCallIdentity(
   ) {
     return { server: kiroServer, tool: kiroToolId.slice(kiroServer.length + 2) };
   }
+  // Factory Droid tags MCP calls with `_meta.factory: { source: "mcp", server, tool }`.
+  const factory = isRecord(meta?.factory) ? meta.factory : undefined;
+  const factoryServer = typeof factory?.server === "string" ? factory.server.trim() : "";
+  const factoryTool = typeof factory?.tool === "string" ? factory.tool.trim() : "";
+  if (factory?.source === "mcp" && factoryServer.length > 0 && factoryTool.length > 0) {
+    return { server: factoryServer, tool: factoryTool };
+  }
   const claudeCode = isRecord(meta?.claudeCode) ? meta.claudeCode : undefined;
   const gooseToolCall = isRecord(meta?.goose)
     ? isRecord(meta.goose.toolCall)

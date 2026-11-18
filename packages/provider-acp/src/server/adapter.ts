@@ -4354,12 +4354,38 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             rawOutputRecord.type.trim().toLowerCase() === "bash" &&
             commandExitCode(rawOutput) !== undefined;
           const projectAsCommandExecution = inputVariant === "monitor" || outputIsBashResult;
-          const mcpIdentity = extractMcpToolCallIdentity(toolCall, {
+          let mcpIdentity = extractMcpToolCallIdentity(toolCall, {
             embeddedTerminalCommands: embeddedTerminalCommands(
               context.nativeThreadId,
               toolCall.toolCallId,
             ),
           });
+          if (mcpIdentity === undefined && status === "completed") {
+            // Some agents (Droid in script mode) report T3 calls with no MCP name or _meta; only a
+            // page this thread published identifies the call.
+            const reportedPage = htmlRenderFromToolItem({
+              toolName: `t3-code.${HTML_RENDER_TOOL_NAME}`,
+              output: acpMcpToolCallOutput(rawOutput),
+            });
+            if (
+              reportedPage !== undefined &&
+              (yield* mcpSessions.takeHtmlRender(context.input.threadId, {}, reportedPage)) !==
+                undefined
+            ) {
+              mcpIdentity = { server: "t3-code", tool: HTML_RENDER_TOOL_NAME };
+              // The page is taken now; later updates of this call identify it by this tag.
+              context.tools.set(toolCall.toolCallId, {
+                ...toolCall,
+                data: {
+                  ...toolCall.data,
+                  meta: {
+                    ...unknownRecord(toolCall.data.meta),
+                    factory: { source: "mcp", server: "t3-code", tool: HTML_RENDER_TOOL_NAME },
+                  },
+                },
+              });
+            }
+          }
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
             const summary = textFromUnknown(rawOutput);

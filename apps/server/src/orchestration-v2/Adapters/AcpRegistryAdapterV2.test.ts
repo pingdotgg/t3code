@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
@@ -2482,6 +2483,69 @@ describe("AcpRegistryAdapterV2", () => {
         text("replacement-more"),
         { type: "Text", text: "replacement-morePATCH" },
       ]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("shows an unnamed html_render call only for a page this thread published", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      // Droid 1.14 script-mode calls are titled "Tool" with no MCP name or _meta.
+      const args = { html: "<p>ACP render test</p>", title: "ACP render test", height: 160 };
+      const page = {
+        attachmentId: "thread-claude-lifecycle-page-html",
+        title: args.title,
+        height: 160,
+      };
+      const droidCall = (toolCallId: string, reference: typeof page) => [
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call",
+          toolCallId,
+          title: "Tool",
+          kind: "other",
+          status: "pending",
+          rawInput: args,
+        }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId,
+          status: "completed",
+          rawOutput: { text: JSON.stringify({ htmlRender: reference }) },
+        }),
+      ];
+      const session = yield* openClaudeReplaySession([
+        ...claudeFrames.open,
+        ...claudeFrames.prompt(1),
+        ...droidCall("droid-render", page),
+        ...droidCall("droid-unpublished", { ...page, attachmentId: "thread-other-page-html" }),
+        claudeMarker("tools complete"),
+        claudeFrames.idle("end_turn"),
+        claudeFrames.closeRequest,
+        claudeFrames.closed,
+      ]);
+      const input = session.turnInput(1);
+      yield* (yield* McpProviderSessions.McpProviderSessions).recordHtmlRender(
+        input.threadId,
+        args,
+        page,
+      );
+      yield* session.runtime.startTurn(input);
+      const events = yield* session.throughMarker("tools complete");
+      const lastItem = (nativeId: string) =>
+        events
+          .flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.nativeItemRef?.nativeId === nativeId
+              ? [event.turnItem]
+              : [],
+          )
+          .at(-1);
+      const rendered = lastItem("droid-render");
+      assert.equal(rendered?.toolName, "t3-code.html_render");
+      assert.deepEqual(rendered === undefined ? undefined : htmlRenderFromToolItem(rendered), page);
+      const unpublished = lastItem("droid-unpublished");
+      assert.equal(unpublished?.status, "completed");
+      assert.notEqual(unpublished?.toolName, "t3-code.html_render");
     }).pipe(Effect.provide(layerTest)),
   );
 
