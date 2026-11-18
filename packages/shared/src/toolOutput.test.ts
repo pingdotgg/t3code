@@ -19,6 +19,8 @@ describe("compactDynamicToolOutput", () => {
       { structuredContent: JSON.parse(json), content: "Ignored alternative body" },
       [{ type: "text", text: json }],
       { content: [{ text: { text: json } }], isError: false },
+      // Factory Droid's ACP tool_call_update carries the MCP result as rawOutput { text }.
+      { text: json },
       json,
     ]) {
       expect(compactDynamicToolOutput(value)).toEqual(metadata);

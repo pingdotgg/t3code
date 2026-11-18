@@ -1541,6 +1541,32 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("recovers T3 identity from Factory Droid's _meta.factory and display title", () => {
+    // Droid 1.14 titles MCP calls "<server>: <Sentence case tool>" and tags them in _meta.factory.
+    const created = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "droid-1",
+      title: "t3-code: Html render",
+      kind: "other",
+      name: "t3-code___html_render",
+      status: "pending",
+      rawInput: { attachmentPath: "page.html", title: "ACP render test", height: 160 },
+      _meta: { factory: { source: "mcp", server: "t3-code", tool: "html_render" } },
+    });
+    const completed = toolCallFromUpdate({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "droid-1",
+      name: "t3-code___html_render",
+      status: "completed",
+      rawOutput: { text: '{"htmlRender":{"attachmentId":"a-html","title":"t","height":160}}' },
+    });
+
+    expect(extractMcpToolCallIdentity(mergeToolCallState(created, completed))).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+  });
+
   it("recovers T3 identity from qwen serverId meta regardless of prefix format", () => {
     // qwen-code 0.21.12 serverId asserts MCP origin even when tool prefixes change.
     const toolCall = toolCallFromUpdate({
