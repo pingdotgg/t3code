@@ -301,10 +301,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         binary,
         cwd,
         env,
-        launchArgs: codexMcpListLaunchArgs(launchArgs),
+        launchArgs: codexMcpListLaunchArgs(launchArgs, effectiveEnvironment),
       });
       const mcpServersOff = codexMcpServersOff(enabledMcpServers);
-      const execLaunchArgs = codexExecLaunchArgs(launchArgs);
+      const execLaunchArgs = codexExecLaunchArgs(launchArgs, effectiveEnvironment);
       // A launch-arg mcp_servers={...} table replaces ours and can re-enable dotted names.
       const launchArgsSetMcpTable = execLaunchArgs.some((arg) => /\bmcp_servers\s*=/.test(arg));
       const spawnCommand = yield* resolveSpawnCommand(

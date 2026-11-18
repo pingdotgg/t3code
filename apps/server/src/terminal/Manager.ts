@@ -71,6 +71,7 @@ import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   codexHomeEnvironment,
+  isCodexShadowHomeSqliteError,
   resolveCodexHomeLayout,
 } from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
@@ -1748,9 +1749,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
             (cause) =>
               new TerminalProviderEnvironmentError({
                 providerInstanceId,
-                ...(cause._tag === "CodexShadowHomeSqliteConflictError"
-                  ? { detail: cause.message }
-                  : {}),
+                ...(isCodexShadowHomeSqliteError(cause) ? { detail: cause.message } : {}),
                 cause,
               }),
           ),

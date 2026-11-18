@@ -9,6 +9,11 @@ import * as Option from "effect/Option";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
+import {
+  CODEX_PINNED_SQLITE_HOME_ENV,
+  codexLaunchArgSettingSqliteHome,
+} from "../codexLaunchArgs.ts";
+
 export interface CodexHomeLayout {
   readonly mode: "direct" | "authOverlay";
   readonly sharedHomePath: string;
@@ -37,6 +42,8 @@ const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]
 const SQLITE_ENTRY_NAME = /\.sqlite(?:-(?:shm|wal|journal))?$/iu;
 const SQLITE_DATABASE_ENTRY_NAME = /\.sqlite$/iu;
 const SQLITE_DATA_SIDECAR_ENTRY_NAME = /^(.*\.sqlite)-(?:wal|journal)$/iu;
+// Any line that could assign the key counts, table or not: refusing one too many is the safe side.
+const SQLITE_HOME_CONFIG_KEY = /^[ \t]*["']?sqlite_home["']?[ \t]*=/mu;
 // Shadow homes may create local runtime locks first; replace them with shared links because they guard shared state.
 const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
   "mcp-oauth-locks",
@@ -84,7 +91,14 @@ export class CodexShadowHomeFileSystemError extends Schema.TaggedError<CodexShad
   "CodexShadowHomeFileSystemError",
   {
     ...CodexShadowHomeContext,
-    operation: Schema.Literals(["readLink", "makeDirectory", "readDirectory", "remove", "symlink"]),
+    operation: Schema.Literals([
+      "readLink",
+      "makeDirectory",
+      "readDirectory",
+      "readFile",
+      "remove",
+      "symlink",
+    ]),
     path: Schema.String,
     targetPath: Schema.optional(Schema.String),
     entryName: Schema.optional(Schema.String),
@@ -142,6 +156,30 @@ export class CodexShadowHomeSqliteConflictError extends Schema.TaggedError<Codex
   }
 }
 
+/** A setting T3 cannot honour while keeping a Windows shadow's databases in one directory. */
+class CodexShadowHomeSqliteSettingError extends Schema.TaggedError<CodexShadowHomeSqliteSettingError>()(
+  "CodexShadowHomeSqliteSettingError",
+  {
+    ...CodexShadowHomeContext,
+    setting: Schema.Literals(["relativeEnvironment", "configFile", "launchArgs"]),
+    /** The relative path, the config file, or the launch arg. */
+    value: Schema.String,
+  },
+) {
+  override get message(): string {
+    const why =
+      "On Windows every Codex process sharing a database must open it through one directory";
+    if (this.setting === "relativeEnvironment") {
+      return `CODEX_SQLITE_HOME is the relative path '${this.value}', which Codex resolves against each session's folder. ${why}. Set CODEX_SQLITE_HOME to an absolute path, or unset it to use the shared home '${this.sharedHomePath}', and retry. T3 did not change any SQLite files.`;
+    }
+    const where =
+      this.setting === "configFile"
+        ? `'${this.value}' sets sqlite_home`
+        : `The Codex launch arguments set sqlite_home ('${this.value}')`;
+    return `${where}, which Codex ranks above CODEX_SQLITE_HOME. ${why}, and T3 checks that directory only when CODEX_SQLITE_HOME names it. Remove the sqlite_home setting used by the shadow home '${this.effectiveHomePath}' and retry. To keep its directory, set CODEX_SQLITE_HOME to that path instead. T3 did not change any SQLite files.`;
+  }
+}
+
 export class CodexShadowHomePrivateEntrySymlinkError extends Schema.TaggedError<CodexShadowHomePrivateEntrySymlinkError>()(
   "CodexShadowHomePrivateEntrySymlinkError",
   {
@@ -160,9 +198,15 @@ export const CodexShadowHomeError = Schema.Union([
   CodexShadowHomePathConflictError,
   CodexShadowHomeEntryConflictError,
   CodexShadowHomeSqliteConflictError,
+  CodexShadowHomeSqliteSettingError,
   CodexShadowHomePrivateEntrySymlinkError,
 ]);
 export type CodexShadowHomeError = typeof CodexShadowHomeError.Type;
+
+/** The errors whose message tells the user how to fix their SQLite layout. */
+export const isCodexShadowHomeSqliteError = Schema.is(
+  Schema.Union([CodexShadowHomeSqliteConflictError, CodexShadowHomeSqliteSettingError]),
+);
 
 type LinkState =
   | {
@@ -247,23 +291,87 @@ const readHomeEntries = (
 export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironment")(function* (
   layout: CodexHomeLayout,
   environment: NodeJS.ProcessEnv,
+  /** The launch args Codex will get, so a `sqlite_home` among them is not silently outranked. */
+  launchArgs?: string,
 ) {
   const effectiveHomePath = layout.effectiveHomePath;
-  if (layout.mode !== "authOverlay" || !effectiveHomePath) return environment;
+  if (layout.mode !== "authOverlay" || !effectiveHomePath) {
+    // A T3 started from a Codex shell inherits that Codex's pin; only a shadow home sets one.
+    if (environment[CODEX_PINNED_SQLITE_HOME_ENV] === undefined) return environment;
+    const unpinned = { ...environment };
+    delete unpinned[CODEX_PINNED_SQLITE_HOME_ENV];
+    return unpinned;
+  }
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const override = environment.CODEX_SQLITE_HOME?.trim();
+  const windows = yield* HostProcess.isWindows;
+  const context = { sharedHomePath: layout.sharedHomePath, effectiveHomePath };
+  const base = { ...environment };
+  delete base[CODEX_PINNED_SQLITE_HOME_ENV];
+  const override = base.CODEX_SQLITE_HOME?.trim();
+  // Every Codex config layer outranks the variable, so Windows launches also pass the directory
+  // as an argument.
+  const route = (sqliteHomePath: string): NodeJS.ProcessEnv => ({
+    ...base,
+    CODEX_SQLITE_HOME: sqliteHomePath,
+    ...(windows ? { [CODEX_PINNED_SQLITE_HOME_ENV]: sqliteHomePath } : {}),
+  });
+
+  if (windows) {
+    // Codex run by hand in a provider terminal gets no argument from T3, and a setting T3 outranked
+    // without saying so would look like lost history.
+    const launchArg = codexLaunchArgSettingSqliteHome(launchArgs);
+    if (launchArg !== undefined) {
+      return yield* new CodexShadowHomeSqliteSettingError({
+        ...context,
+        setting: "launchArgs",
+        value: launchArg,
+      });
+    }
+    // A fresh shadow links the shared config.toml in, so that file counts before the link exists.
+    for (const homePath of [effectiveHomePath, layout.sharedHomePath]) {
+      const configPath = path.join(homePath, "config.toml");
+      const config = yield* fileSystem.readFileString(configPath).pipe(
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            cause.reason._tag === "NotFound"
+              ? Effect.succeed("")
+              : new CodexShadowHomeFileSystemError({
+                  ...context,
+                  operation: "readFile",
+                  path: configPath,
+                  cause,
+                }),
+        }),
+      );
+      if (SQLITE_HOME_CONFIG_KEY.test(config)) {
+        return yield* new CodexShadowHomeSqliteSettingError({
+          ...context,
+          setting: "configFile",
+          value: configPath,
+        });
+      }
+    }
+  }
+
   if (override) {
-    const launchEnvironment = { ...environment, CODEX_SQLITE_HOME: override };
-    // Codex expands `~` itself. A relative home resolves against each session's directory, which
-    // is unknown here, and the shared home is where every other Codex opens these databases.
-    const sqliteHomePath = expandHomePath(override, yield* HostProcess.HomeDirectory);
-    if (
-      !(yield* HostProcess.isWindows) ||
-      !path.isAbsolute(sqliteHomePath) ||
-      path.resolve(sqliteHomePath) === layout.sharedHomePath
-    ) {
-      return launchEnvironment;
+    // Codex expands `~` itself, and a relative home is safe where a link opens by its target.
+    if (!windows) return route(override);
+    const expanded = expandHomePath(override, yield* HostProcess.HomeDirectory);
+    // Probes, sessions and text generation each start Codex in a different directory.
+    if (!path.isAbsolute(expanded)) {
+      return yield* new CodexShadowHomeSqliteSettingError({
+        ...context,
+        setting: "relativeEnvironment",
+        value: override,
+      });
+    }
+    // One directory has many spellings: an alias, another letter case, a trailing separator.
+    const canonical = (directory: string) =>
+      fileSystem.realPath(directory).pipe(Effect.orElseSucceed(() => path.resolve(directory)));
+    const sqliteHomePath = yield* canonical(expanded);
+    if (sqliteHomePath.toLowerCase() === (yield* canonical(layout.sharedHomePath)).toLowerCase()) {
+      return route(layout.sharedHomePath);
     }
     // Naming a directory outright, the shadow included, must not reach a database through a link.
     for (const entryName of yield* readHomeEntries(
@@ -289,7 +397,7 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
         });
       }
     }
-    return launchEnvironment;
+    return route(sqliteHomePath);
   }
 
   const regularDatabases = new Set<string>();
@@ -336,9 +444,7 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
       entryName: stranded.entryName,
     });
   }
-  if (regularDatabases.size === 0) {
-    return { ...environment, CODEX_SQLITE_HOME: layout.sharedHomePath };
-  }
+  if (regularDatabases.size === 0) return route(layout.sharedHomePath);
   const sharedDatabases = (yield* readHomeEntries(
     fileSystem,
     layout,
@@ -360,7 +466,7 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
   const [sharedDatabase] = [...sharedDatabases, ...linkedDatabases].toSorted();
   const [privateDatabase] = [...regularDatabases].toSorted();
   // Linking the shared databases in would give each Windows connection its own WAL.
-  if (sharedDatabase && privateDatabase && (yield* HostProcess.isWindows)) {
+  if (sharedDatabase && privateDatabase && windows) {
     return yield* new CodexShadowHomeSqliteConflictError({
       sharedHomePath: layout.sharedHomePath,
       effectiveHomePath,
@@ -369,7 +475,7 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
     });
   }
   // Neither home holds every database, so the shadow keeps its own and links the shared ones.
-  return { ...environment, CODEX_SQLITE_HOME: effectiveHomePath };
+  return route(effectiveHomePath);
 });
 
 const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(function* (input: {
@@ -636,9 +742,10 @@ const materializeShadowHome = Effect.fn("CodexHomeLayout.materialize")(function*
 export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome")(function* (
   layout: CodexHomeLayout,
   environment: NodeJS.ProcessEnv,
+  launchArgs?: string,
 ) {
   // Refuse a stranded SQLite layout before touching the shadow home.
-  const launchEnvironment = yield* codexHomeEnvironment(layout, environment);
+  const launchEnvironment = yield* codexHomeEnvironment(layout, environment, launchArgs);
   // Windows never links a database, even one the shared home gained after the check above.
   yield* materializeShadowHome(
     layout,

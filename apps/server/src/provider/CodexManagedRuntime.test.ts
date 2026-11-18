@@ -139,7 +139,7 @@ it.live.each(
           assert.isUndefined(effective.environment.OPENAI_API_KEY);
           assert.isUndefined(effective.environment.OPENAI_BASE_URL);
           assert.isUndefined(effective.environment.T3CODE_CODEX_LAUNCH_ARGS);
-          const args = codexAppServerArgs(effective.config.launchArgs);
+          const args = codexAppServerArgs(effective.config.launchArgs, effective.environment);
           assert.include(args, 'model_provider="openai_token_sharing"');
           const provider = args.find((arg) =>
             arg.startsWith("model_providers.openai_token_sharing="),

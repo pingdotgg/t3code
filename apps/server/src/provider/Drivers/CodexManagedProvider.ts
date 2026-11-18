@@ -28,15 +28,11 @@ import {
   type ProviderDriverCreateInput,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
-import {
-  CodexShadowHomeSqliteConflictError,
-  codexContinuationIdentity,
-} from "./CodexHomeLayout.ts";
+import { codexContinuationIdentity, isCodexShadowHomeSqliteError } from "./CodexHomeLayout.ts";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { HttpClient } from "effect/http";
 const DRIVER = ProviderDriverKind.make("codex");
 const isProviderSetupError = Schema.is(ProviderSetupError);
-const isCodexShadowHomeSqliteConflictError = Schema.is(CodexShadowHomeSqliteConflictError);
 
 export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(function* (
   input: ProviderDriverCreateInput<CodexSettings>,
@@ -187,7 +183,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       ),
       Effect.catch((cause) => {
         const sqliteConflict =
-          isProviderSetupError(cause) && isCodexShadowHomeSqliteConflictError(cause.cause)
+          isProviderSetupError(cause) && isCodexShadowHomeSqliteError(cause.cause)
             ? cause.cause
             : undefined;
         return runtime.auth.read.pipe(

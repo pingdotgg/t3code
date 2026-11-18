@@ -9,12 +9,35 @@ export const resolveCodexLaunchArgs = (
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 
+/** Set by `codexHomeEnvironment` for a Windows shadow home: the SQLite directory T3 validated. */
+export const CODEX_PINNED_SQLITE_HOME_ENV = "T3CODE_CODEX_SQLITE_HOME";
+
+// Codex ranks `sqlite_home` from any config.toml above CODEX_SQLITE_HOME, and a later `-c` above
+// both, so this goes after the launch args.
+const pinnedSqliteHomeArgs = (environment: NodeJS.ProcessEnv | undefined) => {
+  const sqliteHome = environment?.[CODEX_PINNED_SQLITE_HOME_ENV];
+  if (!sqliteHome) return [];
+  // A TOML literal string takes a Windows path as written, but cannot hold an apostrophe.
+  const value = sqliteHome.includes("'") ? JSON.stringify(sqliteHome) : `'${sqliteHome}'`;
+  return ["-c", `sqlite_home=${value}`];
+};
+
+const SQLITE_HOME_LAUNCH_ARG = /sqlite_home["']?\s*=/u;
+
+/** The launch arg that sets `sqlite_home`, in any form Codex accepts for a config override. */
+export const codexLaunchArgSettingSqliteHome = (launchArgs?: string) =>
+  codexLaunchArgv(launchArgs).find((arg) => SQLITE_HOME_LAUNCH_ARG.test(arg));
+
 // T3 unsubscribes only when it unloads a thread; Codex's own unload delay would stack on that.
-export const codexAppServerArgs = (launchArgs?: string) => [
+export const codexAppServerArgs = (
+  launchArgs: string | undefined,
+  environment: NodeJS.ProcessEnv | undefined,
+) => [
   "app-server",
   "-c",
   "thread_unload_delay_secs=0",
   ...codexLaunchArgv(launchArgs),
+  ...pinnedSqliteHomeArgs(environment),
 ];
 
 interface LaunchArgFilter {
@@ -65,14 +88,22 @@ const filterLaunchArgs = (launchArgs: string | undefined, allowed: LaunchArgFilt
 const HOOK_FEATURES = new Set(["hooks", "codex_hooks"]);
 
 // Feature toggles beat config overrides, so a launch arg's hook enable would undo ours.
-export const codexExecLaunchArgs = (launchArgs?: string) => {
+export const codexExecLaunchArgs = (
+  launchArgs: string | undefined,
+  environment: NodeJS.ProcessEnv | undefined,
+) => {
   const args = filterLaunchArgs(launchArgs, EXEC_FILTER);
-  return args.filter((arg, index) => {
-    if (arg.startsWith("--enable=")) return !HOOK_FEATURES.has(arg.slice("--enable=".length));
-    if (arg === "--enable") return !HOOK_FEATURES.has(args[index + 1] ?? "");
-    return !(args[index - 1] === "--enable" && HOOK_FEATURES.has(arg));
-  });
+  return [
+    ...args.filter((arg, index) => {
+      if (arg.startsWith("--enable=")) return !HOOK_FEATURES.has(arg.slice("--enable=".length));
+      if (arg === "--enable") return !HOOK_FEATURES.has(args[index + 1] ?? "");
+      return !(args[index - 1] === "--enable" && HOOK_FEATURES.has(arg));
+    }),
+    ...pinnedSqliteHomeArgs(environment),
+  ];
 };
 
-export const codexMcpListLaunchArgs = (launchArgs?: string) =>
-  filterLaunchArgs(launchArgs, MCP_LIST_FILTER);
+export const codexMcpListLaunchArgs = (
+  launchArgs: string | undefined,
+  environment: NodeJS.ProcessEnv | undefined,
+) => [...filterLaunchArgs(launchArgs, MCP_LIST_FILTER), ...pinnedSqliteHomeArgs(environment)];

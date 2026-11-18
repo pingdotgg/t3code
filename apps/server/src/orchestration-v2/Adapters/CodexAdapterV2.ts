@@ -1779,6 +1779,7 @@ export const layerAppServerClientFactory: Layer.Layer<
           command: input.settings.binaryPath || "codex",
           args: codexAppServerArgs(
             resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+            input.environment,
           ),
           env: environment,
           threadId: input.threadId,
@@ -1852,7 +1853,11 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   );
   const processEnv =
     hooks.resolveRuntime === undefined
-      ? yield* materializeCodexShadowHome(homeLayout, environmentOverrides).pipe(
+      ? yield* materializeCodexShadowHome(
+          homeLayout,
+          environmentOverrides,
+          resolveCodexLaunchArgs(config.launchArgs, environmentOverrides),
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new ProviderAdapterDriverCreateError({

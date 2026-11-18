@@ -43,8 +43,10 @@ const writeTextFile = Effect.fn("CodexHomeLayout.test.writeTextFile")(function* 
 });
 
 const makeShadowLayout = Effect.fn("CodexHomeLayout.test.makeShadowLayout")(function* () {
-  const sharedHome = yield* makeTempDir("t3code-codex-shared-");
-  const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+  const fileSystem = yield* FileSystem.FileSystem;
+  // macOS hands out temp directories through a link, and Windows routing names real paths.
+  const sharedHome = yield* fileSystem.realPath(yield* makeTempDir("t3code-codex-shared-"));
+  const shadowHome = yield* fileSystem.realPath(yield* makeTempDir("t3code-codex-shadow-"));
   const layout = yield* resolveCodexHomeLayout(
     decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
   );
@@ -527,7 +529,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
                   entries.filter((entry) => entry.startsWith("goals_1.sqlite")).toSorted(),
                 ),
               );
-          // The provider prepares the shadow; a provider terminal only resolves its environment.
+          // One helper prepares the shadow and the other only resolves; they must agree.
           const launch = (environment: NodeJS.ProcessEnv) =>
             Effect.all([
               materializeCodexShadowHome(layout, environment).pipe(Effect.result),
@@ -592,7 +594,10 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           const routed = yield* materializeCodexShadowHome(layout, {
             CODEX_SQLITE_HOME: sharedHome,
           });
-          expect(routed).toEqual({ CODEX_SQLITE_HOME: sharedHome });
+          expect(routed).toEqual({
+            CODEX_SQLITE_HOME: sharedHome,
+            T3CODE_CODEX_SQLITE_HOME: sharedHome,
+          });
           expect(yield* codexHomeEnvironment(layout, { CODEX_SQLITE_HOME: sharedHome })).toEqual(
             routed,
           );
@@ -672,6 +677,147 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           expect(checked).toBe(true);
           expect(environment.CODEX_SQLITE_HOME).toBe(shadowHome);
           expect(yield* fileSystem.exists(path.join(shadowHome, "goals_1.sqlite"))).toBe(false);
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+    );
+
+    // regression: #24486 Codex ranks sqlite_home above CODEX_SQLITE_HOME, so a shadow whose config or
+    // launch args named it still opened the linked database while T3 reported the shared home.
+    it.effect.skipIf(!symlinksSupported)(
+      "pins the Windows SQLite home and refuses a sqlite_home setting that would outrank it",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          const sharedConfig = path.join(sharedHome, "config.toml");
+          const shadowConfig = path.join(shadowHome, "config.toml");
+          yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "db");
+          yield* fileSystem.symlink(
+            path.join(sharedHome, "goals_1.sqlite"),
+            path.join(shadowHome, "goals_1.sqlite"),
+          );
+          const launch = (launchArgs?: string) =>
+            Effect.all([
+              materializeCodexShadowHome(layout, {}, launchArgs).pipe(Effect.result),
+              codexHomeEnvironment(layout, {}, launchArgs).pipe(Effect.result),
+            ]);
+
+          for (const launched of yield* launch("--strict-config")) {
+            expect(launched).toMatchObject({
+              success: { CODEX_SQLITE_HOME: sharedHome, T3CODE_CODEX_SQLITE_HOME: sharedHome },
+            });
+          }
+          for (const launchArgs of [
+            `-c sqlite_home="${shadowHome}"`,
+            `--config=sqlite_home='${shadowHome}'`,
+            `-csqlite_home=${shadowHome}`,
+          ]) {
+            for (const refused of yield* launch(launchArgs)) {
+              expect(refused).toMatchObject({
+                _tag: "Failure",
+                failure: { _tag: "CodexShadowHomeSqliteSettingError", setting: "launchArgs" },
+              });
+            }
+          }
+
+          yield* writeTextFile(shadowConfig, `model = "gpt"\nsqlite_home = "${shadowHome}"\n`);
+          for (const refused of yield* launch()) {
+            expect(refused).toMatchObject({
+              _tag: "Failure",
+              failure: {
+                _tag: "CodexShadowHomeSqliteSettingError",
+                setting: "configFile",
+                value: shadowConfig,
+              },
+            });
+          }
+          // POSIX SQLite opens a link by its target, so Codex's own precedence is safe there.
+          expect(
+            yield* codexHomeEnvironment(layout, {}).pipe(
+              Effect.provideService(HostProcess.Platform, "linux"),
+            ),
+          ).toEqual({ CODEX_SQLITE_HOME: sharedHome });
+
+          // A fresh shadow links the shared config in, so that file counts before the link exists.
+          yield* fileSystem.remove(shadowConfig);
+          yield* writeTextFile(
+            sharedConfig,
+            `[features]\nx = true\n  "sqlite_home"='${shadowHome}'\n`,
+          );
+          for (const refused of yield* launch()) {
+            expect(refused).toMatchObject({
+              _tag: "Failure",
+              failure: { setting: "configFile", value: sharedConfig },
+            });
+          }
+          expect(yield* fileSystem.exists(shadowConfig)).toBe(false);
+
+          yield* writeTextFile(sharedConfig, `# sqlite_home = "${shadowHome}"\nmodel = "gpt"\n`);
+          for (const launched of yield* launch()) {
+            expect(launched).toMatchObject({ success: { CODEX_SQLITE_HOME: sharedHome } });
+          }
+        }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+    );
+
+    // regression: #24486 a relative CODEX_SQLITE_HOME skipped the Windows check, and each launch
+    // directory resolved it differently.
+    it.effect.skipIf(!symlinksSupported)("refuses a relative Windows CODEX_SQLITE_HOME", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+        yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "db");
+        yield* fileSystem.symlink(
+          path.join(sharedHome, "goals_1.sqlite"),
+          path.join(shadowHome, "goals_1.sqlite"),
+        );
+        const relativeShadow = path.relative(path.resolve("."), shadowHome);
+
+        for (const run of [materializeCodexShadowHome, codexHomeEnvironment]) {
+          expect(
+            yield* run(layout, { CODEX_SQLITE_HOME: relativeShadow }).pipe(Effect.flip),
+          ).toMatchObject({
+            _tag: "CodexShadowHomeSqliteSettingError",
+            setting: "relativeEnvironment",
+            value: relativeShadow,
+          });
+        }
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+    );
+
+    // regression: #24486 only the exact spelling of the shared home skipped the link check, so an
+    // alias of it was inspected, and every spelling was passed to Codex as written.
+    it.effect.skipIf(!symlinksSupported)(
+      "treats every spelling of the shared home as the shared home on Windows",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
+          // Left unset, T3 routes to the shared home without inspecting what it holds.
+          const elsewhere = path.join(
+            yield* makeTempDir("t3code-codex-elsewhere-"),
+            "goals.sqlite",
+          );
+          yield* writeTextFile(elsewhere, "db");
+          yield* fileSystem.symlink(elsewhere, path.join(sharedHome, "goals_1.sqlite"));
+          const alias = path.join(yield* makeTempDir("t3code-codex-alias-"), "shared");
+          yield* fileSystem.symlink(sharedHome, alias);
+
+          for (const spelling of [alias, `${sharedHome}${path.sep}`, sharedHome.toUpperCase()]) {
+            for (const run of [materializeCodexShadowHome, codexHomeEnvironment]) {
+              expect((yield* run(layout, { CODEX_SQLITE_HOME: spelling })).CODEX_SQLITE_HOME).toBe(
+                sharedHome,
+              );
+            }
+          }
+          // Any other directory is named by its real path, however the override reached it.
+          const shadowAlias = path.join(yield* makeTempDir("t3code-codex-alias-"), "shadow");
+          yield* fileSystem.symlink(shadowHome, shadowAlias);
+          expect(
+            (yield* codexHomeEnvironment(layout, { CODEX_SQLITE_HOME: shadowAlias }))
+              .CODEX_SQLITE_HOME,
+          ).toBe(shadowHome);
         }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
     );
 

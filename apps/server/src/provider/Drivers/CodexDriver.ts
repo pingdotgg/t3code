@@ -203,7 +203,11 @@ export const CodexDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    const processEnv = yield* materializeCodexShadowHome(homeLayout, environmentOverrides).pipe(
+    const processEnv = yield* materializeCodexShadowHome(
+      homeLayout,
+      environmentOverrides,
+      resolveCodexLaunchArgs(config.launchArgs, environmentOverrides),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new ProviderDriverError({
