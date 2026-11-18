@@ -48,6 +48,33 @@ it.each([3, SERVICE_LAUNCHER_PROTOCOL])(
   },
 );
 
+// regression: #38526 launchers from before the 30-minute trial deadline roll large migrations back on every retry
+it.each([
+  { launcherVersion: "0.0.46-nightly.20261003.2610", status: "blocked" },
+  { launcherVersion: "0.0.46-preview.20261010.2909", status: "blocked" },
+  { launcherVersion: "0.0.46-nightly.20261014.3105", status: "ready" },
+  { launcherVersion: "0.1.2-preview.20261020.3400", status: "ready" },
+])(
+  "is $status under a protocol-3 launcher from $launcherVersion",
+  ({ launcherVersion, status }) => {
+    const result = runServicePreflight({
+      databasePath: "/missing/state.sqlite",
+      launcherProtocol: 3,
+      launcherVersion,
+      version: "9.8.7",
+    });
+    if (status === "ready") {
+      expect(result).toEqual({ status: "ready", version: "9.8.7", launcherProtocol: 3 });
+      return;
+    }
+    expect(result).toMatchObject({ status: "blocked", version: "9.8.7" });
+    const reason = result.status === "blocked" ? result.reason : "";
+    expect(reason).toContain(`t3@${launcherVersion} launcher`);
+    expect(reason).toContain("T3CODE_VERSION=9.8.7 sh");
+    expect(reason).toContain("~/.local/bin/t3 service install");
+  },
+);
+
 it.layer(NodeServices.layer)("service preflight database", (it) => {
   it.effect("blocks a database that a newer build migrated", () =>
     Effect.gen(function* () {

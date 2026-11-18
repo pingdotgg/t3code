@@ -11,7 +11,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
@@ -41,14 +40,10 @@ import {
   pinnedRuntimePaths,
   prunePinnedRuntimes,
 } from "./pinnedRuntime.ts";
-import { bootServiceProgramOf, bootServiceUnitPath } from "./bootService.ts";
+import { bootServiceUnitProgram } from "./bootService.ts";
 import { runStagedServicePreflight } from "./servicePreflight.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
-import {
-  compareExactServiceVersions,
-  decodeServiceUnit,
-  isExactServiceVersion,
-} from "./serviceProtocol.ts";
+import { isExactServiceVersion } from "./serviceProtocol.ts";
 
 export function resolveServerSelfUpdateCapability(input: {
   readonly desktopManaged: boolean;
@@ -75,38 +70,6 @@ export class ServerSelfUpdate extends Context.Service<
   }
 >()("t3/cloud/selfUpdate/ServerSelfUpdate") {}
 
-const serviceUnitProgram = Effect.fn("cloud.server_self_update.service_unit_program")(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const unitPath = yield* bootServiceUnitPath();
-  const unit =
-    unitPath === undefined
-      ? Option.none<string>()
-      : yield* fs.readFile(unitPath).pipe(Effect.map(decodeServiceUnit), Effect.option);
-  return Option.flatMapNullishOr(unit, bootServiceProgramOf);
-});
-
-/** The first release whose launcher gives a trial 30 minutes, not 2, to finish migrations. */
-const LONG_TRIAL_LAUNCHER_VERSION = "0.0.46-nightly.20261014.3105";
-
-/**
- * Protocol-3 launchers never repoint their unit, so its program names the running launcher's
- * runtime. Those older than LONG_TRIAL_LAUNCHER_VERSION roll back any update whose migrations
- * outlast 2 minutes, and a remote update never replaces them.
- */
-const shortTrialLauncherVersion = Effect.fn(
-  "cloud.server_self_update.short_trial_launcher_version",
-)(function* (launcherProtocol: number | undefined) {
-  if (launcherProtocol !== 3) return undefined;
-  const path = yield* Path.Path;
-  const program = yield* serviceUnitProgram();
-  if (Option.isNone(program)) return undefined;
-  const version = path.basename(path.dirname(program.value));
-  return isExactServiceVersion(version) &&
-    compareExactServiceVersions(version, LONG_TRIAL_LAUNCHER_VERSION) < 0
-    ? version
-    : undefined;
-});
-
 /**
  * A server starting from the runtime its launcher settled on means runtimes left by earlier
  * updates can go. The boot service says so through its IPC context. The SSH launcher and the
@@ -125,7 +88,7 @@ export const pruneRuntimesOnStart = Effect.fn("cloud.server_self_update.prune_on
       return [];
     }
     // A stopped service's unit still names the launcher runtime it will start.
-    const program = yield* serviceUnitProgram();
+    const program = yield* bootServiceUnitProgram();
     // The unit may name it through another spelling of a symlinked T3 home.
     const references = Option.isNone(program)
       ? []
@@ -182,9 +145,6 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     Option.getOrUndefined(yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option));
   const inFlight = yield* Ref.make(false);
 
-  const shortTrialLauncher = yield* shortTrialLauncherVersion(launcher.protocol).pipe(
-    Effect.forkScoped,
-  );
   yield* pruneRuntimesOnStart({ baseDir: serverConfig.baseDir, managed: launcher.managed }).pipe(
     Effect.forkScoped,
   );
@@ -234,15 +194,6 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     if (capability === null || launcherProtocol === undefined) {
       return yield* failWith(
         "Remote updates require the T3 Code background service. Run `t3 service install` on the server machine.",
-      );
-    }
-    const shortTrialLauncherRuntime = yield* Fiber.join(shortTrialLauncher);
-    if (shortTrialLauncherRuntime !== undefined) {
-      return yield* failWith(
-        [
-          `The background service still runs the t3@${shortTrialLauncherRuntime} launcher, which rolls back an update whose database migrations take over 2 minutes.`,
-          `On the server machine, check that \`t3 --version\` prints ${packageJson.version} or newer, run \`t3 service install\` to replace the launcher, then update again.`,
-        ].join(" "),
       );
     }
 

@@ -14,6 +14,8 @@ import {
   PinnedRuntimePreflightBlockedError,
 } from "./pinnedRuntime.ts";
 import {
+  compareExactServiceVersions,
+  isExactServiceVersion,
   isSupportedLauncherProtocol,
   SERVICE_LAUNCHER_PROTOCOL,
   type SupportedLauncherProtocol,
@@ -36,9 +38,20 @@ export type ServicePreflightResult =
       readonly reason: string;
     };
 
+/** The first release whose launcher gives a trial 30 minutes, not 2, to finish migrations. */
+const LONG_TRIAL_LAUNCHER_VERSION = "0.0.46-nightly.20261014.3105";
+
+// Every 0.0.46 preview predates the 30-minute deadline but sorts after "nightly".
+const cutsTrialsShort = (launcherVersion: string) =>
+  isExactServiceVersion(launcherVersion) &&
+  (launcherVersion.startsWith("0.0.46-preview.") ||
+    compareExactServiceVersions(launcherVersion, LONG_TRIAL_LAUNCHER_VERSION) < 0);
+
 export function runServicePreflight(input: {
   readonly databasePath: string;
   readonly launcherProtocol: number;
+  /** The runtime the installed unit starts its launcher from, when known. */
+  readonly launcherVersion?: string | undefined;
   readonly version?: string;
 }): ServicePreflightResult {
   const version = input.version ?? packageJson.version;
@@ -54,6 +67,23 @@ export function runServicePreflight(input: {
         `On the server machine, install this exact CLI: \`curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION=${version} sh\`.`,
         `Check that \`t3 --version\` prints ${version} and that \`which -a t3\` lists no older t3 (such as an npm or nvm install) first, then run \`~/.local/bin/t3 service install\` (the installer's default path).`,
         "Updating the desktop app does not update this CLI, and `t3 service update` only repairs the service with whichever CLI runs it.",
+      ].join(" "),
+    };
+  }
+
+  // A remote update never replaces the launcher, and these roll back any trial that is
+  // still migrating after 2 minutes, so a large database would roll back on every retry.
+  if (
+    launcherProtocol === 3 &&
+    input.launcherVersion !== undefined &&
+    cutsTrialsShort(input.launcherVersion)
+  ) {
+    return {
+      status: "blocked",
+      version,
+      reason: [
+        `The background service still runs the t3@${input.launcherVersion} launcher, which rolls back an update whose database migrations take over 2 minutes.`,
+        `On the server machine, install this exact CLI: \`curl -fsSL https://t3.codes/install.sh | T3CODE_VERSION=${version} sh\`, then run \`~/.local/bin/t3 service install\` to replace the launcher.`,
       ].join(" "),
     };
   }

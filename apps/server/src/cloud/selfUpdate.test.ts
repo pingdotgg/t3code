@@ -27,8 +27,6 @@ interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
   readonly launcherProtocol?: 3 | typeof SERVICE_LAUNCHER_PROTOCOL;
-  /** The runtime the installed systemd unit starts its launcher from. */
-  readonly launcherUnitVersion?: string;
   readonly preflight?: "ready" | "blocked";
   readonly preflightDuration?: Duration.Input;
   readonly preflightStarted?: Deferred.Deferred<void>;
@@ -136,16 +134,6 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
         };
       }),
   });
-  const userHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-home-" });
-  if (options.launcherUnitVersion !== undefined) {
-    const unitDir = path.join(userHome, ".config", "systemd", "user");
-    yield* fs.makeDirectory(unitDir, { recursive: true });
-    const program = path.join(baseDir, "runtime", "versions", options.launcherUnitVersion, "t3");
-    yield* fs.writeFileString(
-      path.join(unitDir, "t3code.service"),
-      `[Service]\nExecStart=${program} __service-launcher\n`,
-    );
-  }
   const managed = options.managed ?? true;
   const launcher = ServiceLauncherClient.ServiceLauncherClient.of({
     managed,
@@ -178,8 +166,6 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     ),
     Effect.provideService(HostProcess.Platform, "linux"),
     Effect.provideService(HostProcess.Architecture, "x64"),
-    Effect.provideService(HostProcess.HomeDirectory, userHome),
-    Effect.provideService(HostProcess.Environment, {}),
     Effect.provide(
       Layer.merge(
         ServerConfig.layer({ ...config, mode: options.mode ?? "web" }),
@@ -252,32 +238,6 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         ),
       ).toEqual({ startedAt: 5_000, expiresAt: 65_000 });
     }),
-  );
-
-  // regression: #38526 a protocol-3 launcher from before 0.0.46-nightly.20261014.3105 kills a trial after 2 minutes
-  it.effect.each([
-    { launcherUnitVersion: "0.0.46-nightly.20261003.2610", refused: true },
-    { launcherUnitVersion: "0.0.46-nightly.20261014.3105", refused: false },
-  ])(
-    "refuses an update up front only under a launcher from $launcherUnitVersion that cuts trials short",
-    ({ launcherUnitVersion, refused }) =>
-      Effect.gen(function* () {
-        const { selfUpdate, order } = yield* makeHarness({
-          launcherProtocol: 3,
-          launcherUnitVersion,
-        });
-        const result = yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.result);
-        if (refused) {
-          expect(result._tag).toBe("Failure");
-          if (result._tag === "Failure") {
-            expect(result.failure.reason).toContain(`t3@${launcherUnitVersion} launcher`);
-            expect(result.failure.reason).toContain("`t3 service install`");
-          }
-          expect(order).toEqual([]);
-        } else {
-          expect(order).toEqual(["download", "extract", "preflight", "accept"]);
-        }
-      }),
   );
 
   // regression: #5181 make remote updates rollback-safe

@@ -44,6 +44,7 @@ import {
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf as bootServiceBaseDirOf,
   serviceUnitEnvironmentValueOf,
+  serviceUnitProgramOf,
   parseServiceState,
   serviceStateActiveVersion,
   serviceStateHasPendingUpdate,
@@ -592,7 +593,7 @@ const readSystemdUnitDirectory = Effect.fn("cloud.boot_service.read_systemd_unit
 );
 
 /** Where this platform's service manager keeps the unit, whether or not one is installed. */
-export const bootServiceUnitPath = Effect.fn("cloud.boot_service.unit_path")(function* () {
+const bootServiceUnitPath = Effect.fn("cloud.boot_service.unit_path")(function* () {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const homeDir = yield* HostProcess.HomeDirectory;
@@ -607,6 +608,17 @@ export const bootServiceUnitPath = Effect.fn("cloud.boot_service.unit_path")(fun
     (yield* readSystemdUnitDirectory(yield* ProcessRunner.ProcessRunner)) ??
     defaultSystemdUnitDir(path, homeDir, (yield* HostProcess.Environment).XDG_CONFIG_HOME ?? "");
   return path.join(unitDir, BOOT_SERVICE_UNIT_FILE);
+});
+
+/** The program the installed unit starts: the runtime of the launcher it runs or will run. */
+export const bootServiceUnitProgram = Effect.fn("cloud.boot_service.unit_program")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const unitPath = yield* bootServiceUnitPath();
+  const unit =
+    unitPath === undefined
+      ? Option.none<string>()
+      : yield* fs.readFile(unitPath).pipe(Effect.map(decodeServiceUnit), Effect.option);
+  return Option.flatMapNullishOr(unit, serviceUnitProgramOf);
 });
 
 export class BootServiceUnsupportedError extends Schema.TaggedError<BootServiceUnsupportedError>()(

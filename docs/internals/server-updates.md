@@ -25,8 +25,8 @@ after a bump, and a target that refuses the previous protocol stops remote updat
 for every existing service. Refuse it only when the child cannot work under it.
 Protocol 4 changed the launcher alone, so its runtime still runs under protocol 3.
 Protocol 3 launchers before 0.0.46-nightly.20261014.3105 still give a trial only 2 minutes to
-report prepared, so a large database rolls back on every retry. The server refuses remote updates
-under them, naming the launcher by the runtime its unit starts, which protocol 3 never repoints.
+report prepared, so a large database rolls back on every retry. Target preflight refuses them,
+naming the launcher by the runtime its unit starts, which protocol 3 never repoints.
 The server names its launcher's protocol to preflight, not its own, since the two differ
 after the first such update.
 
