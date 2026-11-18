@@ -484,7 +484,7 @@ describe("IssueService", () => {
 
   it.effect("loads each All issues page in one GitHub request for a single repository", () =>
     Effect.gen(function* () {
-      const decodeRequest = Schema.decodeUnknownSync(
+      const decodeRequest = Schema.decodeUnknownEffect(
         Schema.fromJsonString(
           Schema.Struct({
             query: Schema.String,
@@ -501,32 +501,36 @@ describe("IssueService", () => {
           return Effect.die("Expected a GitHub GraphQL request.");
         }
         requests++;
-        const { query, variables } = decodeRequest(new TextDecoder().decode(request.body.body));
-        const search = /\bsearch\s*\(/.test(query);
-        const first = variables["cursor"] == null;
-        const data = {
-          viewer: { login: "julius" },
-          ...(search
-            ? {
-                search: {
-                  pageInfo: { hasNextPage: first, endCursor: first ? "next" : null },
-                  nodes: [
-                    {
-                      __typename: "Issue",
-                      ...issue(first ? "1" : "2"),
-                      number: first ? 1 : 2,
-                      state: "OPEN",
-                      stateReason: null,
-                      labels: { nodes: [] },
-                      assignees: { nodes: [] },
-                      comments: { totalCount: 0 },
+        return decodeRequest(new TextDecoder().decode(request.body.body)).pipe(
+          Effect.orDie,
+          Effect.map(({ query, variables }) => {
+            const search = /\bsearch\s*\(/.test(query);
+            const first = variables["cursor"] == null;
+            const data = {
+              viewer: { login: "julius" },
+              ...(search
+                ? {
+                    search: {
+                      pageInfo: { hasNextPage: first, endCursor: first ? "next" : null },
+                      nodes: [
+                        {
+                          __typename: "Issue",
+                          ...issue(first ? "1" : "2"),
+                          number: first ? 1 : 2,
+                          state: "OPEN",
+                          stateReason: null,
+                          labels: { nodes: [] },
+                          assignees: { nodes: [] },
+                          comments: { totalCount: 0 },
+                        },
+                      ],
                     },
-                  ],
-                },
-              }
-            : {}),
-        };
-        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ data })));
+                  }
+                : {}),
+            };
+            return HttpClientResponse.fromWeb(request, Response.json({ data }));
+          }),
+        );
       });
       const { issues: tracker } = yield* githubDriver.make.pipe(
         Effect.provide(
