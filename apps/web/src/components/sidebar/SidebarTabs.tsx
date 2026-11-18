@@ -6,6 +6,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
+import { msg, useGT, useMessages } from "gt-react";
 import { Activity, type ReactNode, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
@@ -23,10 +24,18 @@ export const SidebarTab = Schema.Literals(["active", "working", "snoozed", "sett
 export type SidebarTab = typeof SidebarTab.Type;
 
 const SIDEBAR_TABS = [
-  { value: "active", label: "Active", icon: InboxIcon },
-  { value: "working", label: "Working", icon: CircleDashedIcon },
-  { value: "snoozed", label: "Snoozed", icon: AlarmClockIcon },
-  { value: "settled", label: "Settled", icon: CheckIcon },
+  { value: "active", label: msg("Active", { $context: "sidebar section" }), icon: InboxIcon },
+  {
+    value: "working",
+    label: msg("Working", { $context: "sidebar section" }),
+    icon: CircleDashedIcon,
+  },
+  {
+    value: "snoozed",
+    label: msg("Snoozed", { $context: "sidebar section" }),
+    icon: AlarmClockIcon,
+  },
+  { value: "settled", label: msg("Settled", { $context: "sidebar section" }), icon: CheckIcon },
 ] as const satisfies ReadonlyArray<{ value: SidebarTab; label: string; icon: LucideIcon }>;
 
 function sidebarTabsFor(workingShelfEnabled: boolean) {
@@ -43,11 +52,13 @@ export function SidebarTabBar(props: {
   counts: Record<SidebarTab, number>;
   workingShelfEnabled: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
     // Wide sidebars label every tab, medium ones only the selected tab, narrow ones show icons.
     <div className="@container/sidebar-tabs mx-0.5 mt-1">
       <ToggleGroup
-        aria-label="Sidebar sections"
+        aria-label={gt("Sidebar sections")}
         variant="segmented"
         className="w-full"
         value={[props.value]}
@@ -57,7 +68,10 @@ export function SidebarTabBar(props: {
         }}
       >
         {sidebarTabsFor(props.workingShelfEnabled).map((tab) => {
-          const label = `${tab.label} (${props.counts[tab.value]})`;
+          const label = gt("{section} ({count})", {
+            section: m(tab.label),
+            count: props.counts[tab.value],
+          });
           return (
             <Tooltip key={tab.value}>
               <TooltipTrigger
@@ -72,7 +86,7 @@ export function SidebarTabBar(props: {
               >
                 <tab.icon aria-hidden className="size-3.5" />
                 <span className="hidden @[17rem]/sidebar-tabs:in-data-pressed:inline @[26rem]/sidebar-tabs:inline">
-                  {tab.label}
+                  {m(tab.label)}
                 </span>
               </TooltipTrigger>
               <TooltipPopup side="bottom">{label}</TooltipPopup>
