@@ -25,6 +25,14 @@ describe("resolveTerminalSessionLabel", () => {
     expect(resolveTerminalSessionLabel("term-2", { label: "sleep" }, japanese)).toBe("sleep");
     expect(resolveTerminalSessionLabel("term-2", { label: " " }, japanese)).toBe("ターミナル 2");
   });
+
+  it("keeps a running process name that matches the idle default", () => {
+    const summary = { label: "Terminal 2", hasRunningSubprocess: false };
+    expect(resolveTerminalSessionLabel("term-2", summary, japanese)).toBe("ターミナル 2");
+    expect(
+      resolveTerminalSessionLabel("term-2", { ...summary, hasRunningSubprocess: true }, japanese),
+    ).toBe("Terminal 2");
+  });
 });
 
 describe("nextTerminalId", () => {

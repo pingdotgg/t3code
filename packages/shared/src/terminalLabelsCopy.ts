@@ -16,11 +16,15 @@ export function getTerminalLabel(terminalId: string, resolve: MFunctionType = mF
  */
 export function resolveTerminalSessionLabel(
   terminalId: string,
-  summary: Pick<TerminalSummary, "label"> | null | undefined,
+  summary:
+    | (Pick<TerminalSummary, "label"> & Partial<Pick<TerminalSummary, "hasRunningSubprocess">>)
+    | null
+    | undefined,
   resolve: MFunctionType = mFallback,
 ): string {
   const trimmed = summary?.label?.trim();
-  return trimmed && trimmed !== getServerTerminalLabel(terminalId)
+  return trimmed &&
+    (summary?.hasRunningSubprocess || trimmed !== getServerTerminalLabel(terminalId))
     ? trimmed
     : getTerminalLabel(terminalId, resolve);
 }
