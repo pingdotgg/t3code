@@ -4,7 +4,7 @@ Import cookies from another browser into the desktop app's [preview browser](./b
 
 ## Import a profile
 
-1. Close the source browser.
+1. On Windows, close the source browser. On macOS and Linux, it can stay open.
 2. Open **Settings → Browser → Browser profiles → Add profile** and choose a browser under **Import from**.
 3. Allow any OS keyring unlock prompt.
 
