@@ -71,15 +71,37 @@ export type Observation = {
   window?: Rect;
   /** The walk stopped early (its node, control or time budget ran out): more may be on screen than is listed. */
   truncated?: boolean;
+  /** The window shows it is still loading (a spinner, a busy page): what is listed may not be all it will show. */
+  loading?: boolean;
+  /** A popup open over the window (autofill suggestions, a menu), its highlighted line marked ▸. */
+  popup?: string;
 };
+
+/** The keys a step may press: the ones that move, reveal or submit, and three browser shortcuts. */
+export type Key =
+  | "enter"
+  | "escape"
+  | "tab"
+  | "space"
+  | "up"
+  | "down"
+  | "left"
+  | "right"
+  | "cmd+l"
+  | "cmd+t"
+  | "cmd+w";
 
 export type ScreenAction =
   | { kind: "click"; ref: string }
   /** Focus the control and replace its text with `text`. */
   | { kind: "type"; ref: string; text: string }
-  | { kind: "press"; key: "enter" | "escape" | "tab" | "space" }
+  | { kind: "press"; key: Key }
   /** `ref`: the list or area to scroll (a control of this observation); the window's middle when absent. */
-  | { kind: "scroll"; direction: "up" | "down" | "top" | "bottom"; ref?: string };
+  | { kind: "scroll"; direction: "up" | "down" | "top" | "bottom"; ref?: string; amount?: number }
+  /** Open the control's context menu. */
+  | { kind: "menu"; ref: string }
+  /** Press the item of an open menu with this title. */
+  | { kind: "pick"; label: string };
 
 /**
  * How an action reached the app. `background`: without the person's real pointer, focus or keyboard (an accessibility
@@ -96,14 +118,43 @@ export type ActResult = {
   how?: string;
 };
 
-export type ObserveOptions = { signal?: AbortSignal };
+/** `app`: read that running app's window instead of the one in front, without bringing it forward. */
+export type ObserveOptions = { signal?: AbortSignal; app?: string };
+
+/** A window as a PNG. A screen point is `region` origin + pixel / `scale`. */
+export type Screenshot = {
+  png: Uint8Array;
+  width: number;
+  height: number;
+  region: Rect;
+  scale: number;
+  app: string;
+  title: string;
+};
+
+/** `region`: a part of the screen in points instead of the window; `app`: that app's window instead of the front one. */
+export type ScreenshotOptions = {
+  maxEdge?: number;
+  region?: Rect;
+  app?: string;
+  signal?: AbortSignal;
+};
+
+/** The longest image edge a screenshot is scaled to by default (what vision models read without resizing again). */
+export const SCREENSHOT_MAX_EDGE = 1568;
+
+/** The scale a capture of `w`×`h` image pixels needs so its longer edge is at most `maxEdge` (never above 1). */
+export function fitScale(w: number, h: number, maxEdge: number = SCREENSHOT_MAX_EDGE): number {
+  const edge = Math.max(w, h);
+  return edge > maxEdge && edge > 0 ? maxEdge / edge : 1;
+}
 
 /**
  * `signal` aborts an action under way (a stop): long typing stops between chunks, a running script is killed.
  * `allowPointer`: the person allowed the real pointer and keyboard for this one step. Without it a backend acts in the
  * background or throws NeedsPointer, and never touches the real pointer or global keyboard.
  */
-export type ActOptions = { signal?: AbortSignal; allowPointer?: boolean };
+export type ActOptions = { signal?: AbortSignal; allowPointer?: boolean; app?: string };
 
 /**
  * Thrown by a backend when an action cannot be done in the background (a canvas or game with no accessible control, an
@@ -135,6 +186,8 @@ export interface ScreenBackend {
   observe(options?: ObserveOptions): Promise<Observation>;
   /** Resolves with where the pointer was left when the action moved it (clicks, typing, scrolling). */
   act(action: ScreenAction, options?: ActOptions): Promise<ActResult | void>;
+  /** A window as an image, scaled so its longer edge is at most `maxEdge` (SCREENSHOT_MAX_EDGE). */
+  screenshot?(options?: ScreenshotOptions): Promise<Screenshot>;
   /** Where the pointer is now, for the local stop. */
   pointer?(): Promise<PointerReading>;
   /** Every display's bounds, in global coordinates (the local stop's corners are worked out from them). */
@@ -170,6 +223,8 @@ export interface BrowserTabs {
   groups?(): Promise<TabGroup[]>;
   /** Brings the browser forward and clicks the tab in its tab strip. */
   activate(tab: BrowserTab): Promise<void>;
+  /** Brings the browser forward and presses the tab through accessibility, without the real pointer. */
+  press?(tab: BrowserTab): Promise<void>;
   /** For when the browser's tabs cannot be read: switches with the browser's own tab search, or null when nothing matched. */
   search?(name: string): Promise<string | null>;
 }

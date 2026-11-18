@@ -3,6 +3,7 @@
 // Ada's RPC in place of a locked hub and a socket protocol, plan steps answered by an agent or a
 // configured grounder, and a setting that grants consequential steps without a tap.
 import type {
+  ComputerAct,
   ComputerAnswers,
   ComputerApprovalBinding,
   ComputerApprovalId,
@@ -18,7 +19,9 @@ import type {
   ComputerHostId,
   ComputerHostReply,
   ComputerHostView,
+  ComputerLook,
   ComputerObservation,
+  ComputerRect,
   ComputerPlannerAnswers,
   ComputerQuestions,
   ComputerSnapshot,
@@ -39,9 +42,11 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -55,6 +60,7 @@ import {
   APPROVAL_SKIPPED_AUDIT_EVENT,
   approvalAuditFields,
   clip,
+  textDigest,
 } from "./ComputerAudit.ts";
 import * as ComputerAudit from "./ComputerAudit.ts";
 import { afterJudge, control as controlPolicy, screen } from "./ComputerPolicy.ts";
@@ -75,6 +81,9 @@ const REPLY_TIMEOUT = Duration.millis(COMPUTER_LIMITS.replyTimeoutMs);
 const MAX_GOAL = 1_000;
 const MAX_TEXT = 4_000;
 const MAX_STEP_TEXT = 200;
+/** The visible text the grounder reads of one screen. */
+const MAX_SCREEN_TEXT = 1_500;
+const TYPED_TEXT = "[typed text]";
 /** Ended tasks kept for the strip and the tools; every snapshot carries them. */
 const MAX_ENDED_TASKS = 10;
 
@@ -110,6 +119,8 @@ type Task = {
   /** A grounder that failed once hands this task's clicks to the tap instead of asking again. */
   readonly grounderFailed: boolean;
   readonly approvalsMode: ComputerApprovalsMode;
+  /** The screen's visible text at the last decision, cleared by the next step. Empty when unknown. */
+  readonly screenText: string;
 };
 
 type Host = {
@@ -212,7 +223,21 @@ const taskView = (task: Task, withQuestions = true): ComputerTaskView => ({
         ? { id: task.decision.id, questions: task.decision.questions }
         : { id: task.decision.id },
   approvalsMode: task.approvalsMode,
+  ...(withQuestions && task.screenText !== "" ? { screenText: task.screenText } : {}),
 });
+
+const DecidedScreen = Schema.Struct({ screen: Schema.Struct({ visibleText: Schema.String }) });
+const decodeDecidedScreen = Schema.decodeUnknownOption(DecidedScreen);
+
+/** The visible text a host decided on, capped, with the task's typed text hidden as the helper hides it. */
+function screenTextOf(state: unknown, typed: string | null): string {
+  const text = Option.match(decodeDecidedScreen(state), {
+    onNone: () => "",
+    onSome: (decided) => decided.screen.visibleText,
+  });
+  const hidden = typed !== null && typed.length >= 3 ? text.split(typed).join(TYPED_TEXT) : text;
+  return hidden.slice(0, MAX_SCREEN_TEXT);
+}
 
 /** A control in words for the card and the log ("open Safari", "volume down"). */
 function describeControl(control: ComputerControl): string {
@@ -229,6 +254,28 @@ function describeControl(control: ComputerControl): string {
       return `dark mode ${control.action ?? "toggle"}`;
     case "lock_screen":
       return "lock the screen";
+  }
+}
+
+/** An agent's own step in words for the strip and the log; the text it types is never part of it. */
+function describeAct(act: ComputerAct, typed: string | null): string {
+  switch (act.action) {
+    case "click":
+      return act.label
+        ? `click “${clip(act.label)}”`
+        : act.ref
+          ? `click ${act.ref}`
+          : `click at ${act.x ?? 0},${act.y ?? 0}`;
+    case "type":
+      return `type ${typed === null ? 0 : Array.from(typed).length} characters`;
+    case "key":
+      return `press ${act.key ?? "a key"}`;
+    case "scroll":
+      return `scroll ${act.direction ?? "down"}`;
+    case "menu":
+      return `open the menu of ${act.label ? `“${clip(act.label)}”` : (act.ref ?? "a control")}`;
+    case "open_url":
+      return `open ${clip(act.url ?? "a page")}`;
   }
 }
 
@@ -261,6 +308,23 @@ export class ComputerService extends Context.Service<
       readonly threadId?: ThreadId;
       readonly projectId?: ProjectId;
     }) => Effect.Effect<ComputerTaskView, ComputerError>;
+    /** One step the agent chose, run as a one-step task through the same grants, approvals and audit. */
+    readonly act: (input: {
+      readonly act: ComputerAct;
+      readonly text?: string;
+      readonly hostId?: ComputerHostId;
+      readonly requester: string;
+      readonly threadId?: ThreadId;
+      readonly projectId?: ProjectId;
+    }) => Effect.Effect<ComputerTaskView, ComputerError>;
+    /** Reads a window without changing anything: no task and no approval. */
+    readonly look: (input: {
+      readonly hostId?: ComputerHostId;
+      readonly app?: string;
+      readonly screenshot?: boolean;
+      readonly region?: ComputerRect;
+      readonly requester: string;
+    }) => Effect.Effect<ComputerLook, ComputerError>;
     /** Answers the planner's questions for one step, and returns what the host was given. */
     readonly answerDecision: (input: {
       readonly taskId: ComputerTaskId;
@@ -541,7 +605,8 @@ const make = Effect.gen(function* () {
       hostId: task.hostId,
       hostName: task.hostName,
       goal: task.goal,
-      textLength: task.text === null ? null : new TextEncoder().encode(task.text).byteLength,
+      textLength: task.text === null ? null : textDigest(task.text).len,
+      textSha256: task.text === null ? null : textDigest(task.text).sha256,
       requester: task.requester,
       threadId: task.threadId,
     });
@@ -581,6 +646,7 @@ const make = Effect.gen(function* () {
       decision: null,
       grounderFailed: false,
       approvalsMode: mode,
+      screenText: "",
     };
     const created = yield* mutate((state) => {
       const host = state.hosts.find((candidate) => candidate.id === input.host.id);
@@ -776,53 +842,117 @@ const make = Effect.gen(function* () {
     },
   );
 
+  /** A task the host runs and asks here for each step: a goal it works toward, or one act. */
+  const begin = Effect.fnUntraced(function* (input: {
+    readonly goal: string;
+    readonly text?: string;
+    readonly act?: ComputerAct;
+    readonly hostId?: ComputerHostId;
+    readonly requester: string;
+    readonly threadId?: ThreadId;
+    readonly projectId?: ProjectId;
+  }) {
+    const goal = input.goal;
+    if (input.text !== undefined && input.text.length > MAX_TEXT) {
+      return yield* failure("refused", `The text is at most ${MAX_TEXT} characters.`);
+    }
+    const host = yield* pickHost(input.hostId);
+    if (host.taskId !== null) {
+      return yield* failure("busy", `${host.name} is busy with another task; stop it first.`, {
+        hostId: host.id,
+      });
+    }
+    const projectId = yield* projectFor(input);
+    const task = yield* newTask({
+      host,
+      kind: "use",
+      goal,
+      text: input.text ?? null,
+      requester: input.requester,
+      threadId: input.threadId ?? null,
+      projectId,
+    });
+    const started = yield* askHost(host, (requestId) => ({
+      kind: "start",
+      requestId,
+      taskId: task.id,
+      goal,
+      text: task.text,
+      limits: COMPUTER_LIMITS,
+      ...(input.act === undefined ? {} : { act: input.act }),
+    })).pipe(Effect.result);
+    if (started._tag === "Failure") {
+      yield* finishTask({
+        taskId: task.id,
+        status: "failed",
+        reason: started.failure.message,
+      });
+      return yield* started.failure;
+    }
+    if (!started.success.ok) {
+      const reason = started.success.error ?? "The computer refused the task.";
+      yield* finishTask({ taskId: task.id, status: "failed", reason });
+      return yield* failure("refused", reason, { taskId: task.id });
+    }
+    return taskView(task);
+  });
+
   const startUse: ComputerService["Service"]["startUse"] = Effect.fn("ComputerService.startUse")(
     function* (input) {
       const goal = input.goal.trim();
       if (goal.length === 0 || goal.length > MAX_GOAL) {
         return yield* failure("refused", `A goal is required, and at most ${MAX_GOAL} characters.`);
       }
-      if (input.text !== undefined && input.text.length > MAX_TEXT) {
-        return yield* failure("refused", `The text is at most ${MAX_TEXT} characters.`);
-      }
-      const host = yield* pickHost(input.hostId);
-      if (host.taskId !== null) {
-        return yield* failure("busy", `${host.name} is busy with another task; stop it first.`, {
-          hostId: host.id,
-        });
-      }
-      const projectId = yield* projectFor(input);
-      const task = yield* newTask({
-        host,
-        kind: "use",
-        goal,
-        text: input.text ?? null,
-        requester: input.requester,
-        threadId: input.threadId ?? null,
-        projectId,
+      return yield* begin({ ...input, goal });
+    },
+  );
+
+  const act: ComputerService["Service"]["act"] = Effect.fn("ComputerService.act")(
+    function* (input) {
+      const typed = input.act.action === "type" ? (input.text ?? "") : undefined;
+      if (typed === "") return yield* failure("refused", "Give the exact `text` to type.");
+      const { text: _text, ...rest } = input;
+      return yield* begin({
+        ...rest,
+        goal: describeAct(input.act, typed ?? null),
+        ...(typed === undefined ? {} : { text: typed }),
+        act: input.act,
       });
-      const started = yield* askHost(host, (requestId) => ({
-        kind: "start",
+    },
+  );
+
+  const look: ComputerService["Service"]["look"] = Effect.fn("ComputerService.look")(
+    function* (input) {
+      const host = yield* pickHost(input.hostId);
+      const reply = yield* askHost(host, (requestId) => ({
+        kind: "look",
         requestId,
-        taskId: task.id,
-        goal,
-        text: task.text,
-        limits: COMPUTER_LIMITS,
-      })).pipe(Effect.result);
-      if (started._tag === "Failure") {
-        yield* finishTask({
-          taskId: task.id,
-          status: "failed",
-          reason: started.failure.message,
-        });
-        return yield* started.failure;
+        screenshot: input.screenshot === true,
+        ...(input.app === undefined ? {} : { app: input.app }),
+        ...(input.region === undefined ? {} : { region: input.region }),
+      }));
+      if (!reply.ok || reply.look === undefined) {
+        return yield* failure(
+          "unavailable",
+          reply.error ?? `${host.name} could not read its screen.`,
+          {
+            hostId: host.id,
+          },
+        );
       }
-      if (!started.success.ok) {
-        const reason = started.success.error ?? "The computer refused the task.";
-        yield* finishTask({ taskId: task.id, status: "failed", reason });
-        return yield* failure("refused", reason, { taskId: task.id });
-      }
-      return taskView(task);
+      const seen = reply.look;
+      yield* record("look", {
+        hostId: host.id,
+        requester: input.requester,
+        app: clip(seen.app),
+        title: clip(seen.title),
+        controls: seen.controls.length,
+        screenshot:
+          seen.screenshot === undefined
+            ? null
+            : { width: seen.screenshot.width, height: seen.screenshot.height },
+      });
+      return seen;
     },
   );
 
@@ -955,8 +1085,13 @@ const make = Effect.gen(function* () {
     ) {
       return yield* failure("refused", "It was taking too long.", { taskId: task.id });
     }
+    const screenText = screenTextOf(input.state, task.text);
     yield* update((current) =>
-      patchTask(current, task.id, (running) => ({ ...running, decided: running.decided + 1 })),
+      patchTask(current, task.id, (running) => ({
+        ...running,
+        decided: running.decided + 1,
+        screenText,
+      })),
     );
     if (!task.grounderFailed) {
       const grounded = yield* decider.ask({ state: input.state, questions: input.questions });
@@ -990,7 +1125,11 @@ const make = Effect.gen(function* () {
     }
     const task = state.tasks.find((candidate) => candidate.id === input.taskId);
     if (task === undefined || task.kind !== "use" || task.hostId !== host.id) {
-      return { ok: false, denied: "That task is not this computer's running task." } as const;
+      return {
+        ok: false,
+        denied:
+          "Ada lost track of this task, so the step was not done. This is an internal error, not a denial.",
+      } as const;
     }
     if (task.status !== "running") {
       return { ok: false, denied: "It was stopped." } as const;
@@ -1010,7 +1149,7 @@ const make = Effect.gen(function* () {
       }
       return [
         true,
-        replaceTask(current, { ...running, authorized: running.authorized + 1 }),
+        replaceTask(current, { ...running, authorized: running.authorized + 1, screenText: "" }),
       ] as const;
     });
     if (!counted) {
@@ -1067,7 +1206,8 @@ const make = Effect.gen(function* () {
       goal: task.goal,
       requester: task.requester,
     };
-    if (mode === "skip") {
+    // The real pointer is the person's to lend, whatever the approvals setting.
+    if (mode === "skip" && input.action.kind !== "pointer") {
       yield* record(APPROVAL_SKIPPED_AUDIT_EVENT, approvalAuditFields(binding));
       yield* record("grant", {
         taskId: task.id,
@@ -1110,6 +1250,15 @@ const make = Effect.gen(function* () {
           taskId: input.taskId,
           hostId: host.id,
         });
+      }
+      if (input.event.type === "acted") {
+        yield* record("act", {
+          taskId: task.id,
+          kind: input.event.kind,
+          mode: input.event.mode,
+          how: clip(input.event.how),
+        });
+        return;
       }
       if (input.event.type === "step") {
         if (task.status !== "running") return;
@@ -1371,6 +1520,8 @@ const make = Effect.gen(function* () {
   return ComputerService.of({
     control,
     startUse,
+    act,
+    look,
     answerDecision,
     status,
     stop,

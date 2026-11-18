@@ -200,6 +200,14 @@ const MEDIA_DONE = {
  * A Notification Center banner, title and text as its argv. Shown by osascript, so macOS lists it
  * under Script Editor in System Settings › Notifications.
  */
+/** The app macOS opens a web address with: the person's default browser. */
+export const DEFAULT_BROWSER_SCRIPT = `ObjC.import('AppKit');
+function run(argv) {
+  var url = $.NSURL.URLWithString(argv[0]);
+  var app = url && !url.isNil() ? $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(url) : null;
+  return app && !app.isNil() ? ObjC.unwrap(app.URLByDeletingPathExtension.lastPathComponent) : '';
+}`;
+
 export const NOTIFY_SCRIPT = `function run(argv) {
   var app = Application.currentApplication();
   app.includeStandardAdditions = true;
@@ -362,6 +370,23 @@ export class MacControls {
   }
 
   /** Runs one control and returns a short sentence saying what was done. */
+  /** Opens a web address with `open`, as a person's click on a link would, and names the browser that took it. */
+  /** The app that opens web addresses on this Mac. */
+  async defaultBrowser(): Promise<string> {
+    return (await this.runner.run(...jxa(DEFAULT_BROWSER_SCRIPT, ["https://example.com"]))).trim();
+  }
+
+  async openUrl(url: string): Promise<string> {
+    if (!/^https?:\/\/[^\s/]+/i.test(url) || !URL.canParse(url))
+      throw new ControlError(
+        "invalid",
+        "Only a web address (http or https) is opened in the browser.",
+      );
+    const browser = (await this.runner.run(...jxa(DEFAULT_BROWSER_SCRIPT, [url]))).trim();
+    await this.runner.run("open", [url]);
+    return browser || "the default browser";
+  }
+
   async run(control: ComputerControl): Promise<{ done: string }> {
     if (!this.available)
       throw new ControlError("unavailable", "Computer controls work on macOS only");
@@ -632,6 +657,7 @@ export const SCRIPTS = {
   running: RUNNING_SCRIPT,
   bundle: BUNDLE_SCRIPT,
   notify: NOTIFY_SCRIPT,
+  defaultBrowser: DEFAULT_BROWSER_SCRIPT,
   quit: QUIT_SCRIPT,
   isRunning: IS_RUNNING_SCRIPT,
 };

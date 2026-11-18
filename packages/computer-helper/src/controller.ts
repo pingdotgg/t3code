@@ -7,8 +7,10 @@ import { needsPointer } from "./types.ts";
 import type {
   ActResult,
   BrowserTab,
+  Key,
   BrowserTabs,
   Observation,
+  ObserveOptions,
   PointerWatch,
   ScreenAction,
   ScreenBackend,
@@ -26,6 +28,24 @@ export type ComputerTask = {
   goal: string;
   /** Exact text to type (a message, a search), if the task types anything. */
   text: string | null;
+  /** One step the agent chose itself, done instead of working toward the goal. */
+  act?: ComputerAct;
+};
+
+/** An agent's own step on the window in front; a `type` step types the task's `text`. */
+export type ComputerAct = {
+  action: "click" | "type" | "key" | "scroll" | "menu" | "open_url";
+  ref?: string;
+  label?: string;
+  x?: number;
+  y?: number;
+  key?: Key | "return";
+  direction?: "up" | "down" | "top" | "bottom";
+  /** `scroll` up or down: how many screens. */
+  amount?: number;
+  url?: string;
+  /** The app whose window to act on; the app in front when left out. */
+  app?: string;
 };
 
 export type ComputerOutcome = {
@@ -48,9 +68,10 @@ export type AuthorizeAction =
   /** `field`: the text box typed into before this Enter. */
   | {
       kind: "press";
-      key: "enter" | "escape" | "tab" | "space";
+      key: Key;
       field?: { role: ScreenControl["role"]; label: string };
     }
+  | { kind: "open_url"; url: string }
   | { kind: "scroll"; direction: "up" | "down" | "top" | "bottom" }
   | { kind: "surface"; what: "tab" | "app"; name: string }
   /** The real pointer and keyboard for one step that cannot be done in the background (`step`: the action, `why`: the backend's reason). */
@@ -85,6 +106,8 @@ export type Session = {
   authorize: Authorize;
   /** Each thing it did, in words ("clicked the button “Search”"), as it happens. */
   onStep?: (text: string) => void;
+  /** How each action reached the app and where, for the audit and the overlay; never what it typed. */
+  onAct?: (action: ScreenAction, result: ActResult) => void;
 };
 
 export type Deps = Session & {
@@ -96,6 +119,15 @@ export type Deps = Session & {
   dock: { list(): Promise<string[]>; activate(name: string): Promise<unknown> } | null;
   /** Running app names, for apps that are not in the Dock, and bringing one to the front. */
   apps: { running(): Promise<string[]>; activate(name: string): Promise<void> } | null;
+  /** Opens a web address in the default browser and names that browser. */
+  /** `browser`: the default browser's name, so its open tabs can be reused. */
+  urls?: { open(url: string): Promise<string>; browser?(): Promise<string> } | null;
+  /** Where each site led (a sign-in host it redirected to), kept across tasks so its tab is found again. */
+  landed?: Map<string, string>;
+  /** The short refs the last look gave ("e7"), and the controls they named. */
+  refs?: Map<string, ScreenControl>;
+  /** The popup the agent last saw, from a look or a step, so a line it picks after the popup closed reopens it. */
+  popupSeen?: { text: string };
   log: Logger;
   minConfidence?: number;
   /** Time for the screen to settle after an action. */
@@ -184,6 +216,8 @@ type Run = {
   authorized: number;
   /** The text box the task typed into, for the Enter that follows. */
   typedInto: ScreenControl | null;
+  /** The app whose window an act targets; otherwise the app in front. */
+  app?: string;
 };
 
 type Decision =
@@ -196,6 +230,7 @@ export class ComputerUse {
   private readonly settleMs: number;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly clock: { now(): number; sleep(ms: number): Promise<void> };
 
   constructor(deps: Deps) {
     this.deps = deps;
@@ -203,6 +238,7 @@ export class ComputerUse {
     this.settleMs = deps.settleMs ?? 600;
     this.now = deps.now ?? Date.now;
     this.sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.clock = { now: this.now, sleep: this.sleep };
   }
 
   get available() {
@@ -210,6 +246,7 @@ export class ComputerUse {
   }
 
   async run(given: ComputerTask, options: RunOptions = {}): Promise<ComputerOutcome> {
+    if (given.act) return this.runAct(given, given.act, options);
     // "Go to example.com" carries the text to type in the goal itself: the address, taken literally.
     const task: ComputerTask =
       given.text === null ? { ...given, text: navigationText(given.goal) } : given;
@@ -258,9 +295,11 @@ export class ComputerUse {
       // question, with the decider told so: steering instead of retrying.
       const acted = new Set<string>();
       const avoidBy = new Map<string, Map<string, string>>();
+      const address = webAddress(navigationText(task.goal));
+      let opened = false;
       for (let step = 0; step < run.maxSteps; step += 1) {
         this.checkpoint(run);
-        const screen = await backend.observe({ signal: run.signal });
+        const screen = await settled(backend, this.where(run), this.clock);
         const key = screenKey(screen);
         const avoid = avoidBy.get(key) ?? new Map<string, string>();
         avoidBy.set(key, avoid);
@@ -268,6 +307,20 @@ export class ComputerUse {
         // Only going to an address: done once the page on screen is on that host, rather than leaving it to the decider.
         if (pureNavigation(task.goal) && navigationReached(task.goal, screen))
           return end("done", "");
+        // The address the goal names is opened directly, once: a small decider does not reliably pick the address bar.
+        if (address && this.deps.urls && !opened && !navigationReached(task.goal, screen)) {
+          opened = true;
+          await this.authorize(
+            run,
+            { app: screen.app, title: screen.title, ...(screen.url ? { url: screen.url } : {}) },
+            { kind: "open_url", url: address },
+          );
+          await this.beforeTouching(run);
+          const browser = await this.deps.urls.open(address);
+          this.record(run, `opened ${address} in ${browser}`);
+          await this.sleep(this.settleMs);
+          continue;
+        }
         const match = quoted.find((name) => !clicked.has(name));
         const direct = match ? matchControl(screen.controls, match) : null;
         if (match && direct) {
@@ -322,11 +375,113 @@ export class ComputerUse {
     }
   }
 
+  /** One step the agent chose: the same grant, background-first act and mouse fallback as a goal's step, no decider. */
+  private async runAct(
+    task: ComputerTask,
+    act: ComputerAct,
+    options: RunOptions,
+  ): Promise<ComputerOutcome> {
+    const run: Run = {
+      task,
+      secret: task.text,
+      signal: options.signal ?? new AbortController().signal,
+      watch: options.watch ?? null,
+      steps: [],
+      maxSteps: clampLimit(options.limits?.maxSteps, MAX_STEPS),
+      timeoutMs: clampLimit(options.limits?.timeoutMs, TIMEOUT_MS),
+      started: this.now(),
+      waited: 0,
+      authorized: 0,
+      typedInto: null,
+      ...(act.app ? { app: act.app } : {}),
+    };
+    let surface: string | null = null;
+    const end = (status: ComputerOutcome["status"], reason: string, where = surface) => {
+      this.deps.log.info("computer_use.acted", {
+        action: act.action,
+        status,
+        ms: this.now() - run.started,
+      });
+      return { status, reason: without(reason, run.secret), steps: run.steps, surface: where };
+    };
+    try {
+      this.checkpoint(run);
+      if (act.action === "open_url") {
+        const url = act.url ?? "";
+        if (!this.deps.urls)
+          return end("unavailable", "This computer cannot open web addresses.", null);
+        await this.authorize(run, { app: "", title: "" }, { kind: "open_url", url });
+        await this.beforeTouching(run);
+        const site = hostOf(url);
+        const hosts = new Set([site, this.deps.landed?.get(site) ?? site]);
+        const existing = await this.siteTab(hosts);
+        let browser: string;
+        if (existing) {
+          browser = existing.browser;
+          await existing.press();
+          this.record(run, `reused existing tab: “${clip(existing.tab.title, 60)}” in ${browser}`);
+        } else {
+          browser = await this.deps.urls.open(url);
+          this.record(run, `opened new tab: ${url} in ${browser}`);
+        }
+        // Ends once the page has loaded, so the agent's next look reads the page rather than its spinner.
+        if (this.deps.desktop) {
+          await settled(
+            this.deps.desktop,
+            { app: browser, signal: run.signal },
+            this.clock,
+            (seen) => sameSite(hostOf(seen.url ?? ""), site),
+            NAVIGATION_SETTLE_MS,
+          );
+        }
+        if (!existing) await this.noteLanding(site);
+        return end("done", "", browser);
+      }
+      const backend = this.deps.desktop;
+      if (!backend)
+        return end(
+          "unavailable",
+          "Computer use needs accessibility access on this computer.",
+          null,
+        );
+      const seen = await backend.observe(this.where(run));
+      surface = `${seen.app}: ${clip(seen.title, 60)}`;
+      const screen = await this.reopenPopup(run, backend, seen, act);
+      const chosen = actOn(screen, this.resolveRef(screen, act), task.text);
+      if ("stop" in chosen) return end("stuck", chosen.stop);
+      await this.act(run, backend, chosen.screen, chosen.action, chosen.said);
+      // A scroll that changed nothing says so, so the agent does not keep scrolling.
+      if (chosen.action.kind === "scroll") {
+        const after = await settled(backend, this.where(run), this.clock);
+        if (screenKey(after) === screenKey(seen))
+          this.record(run, "nothing moved: the view is at its end, or does not scroll");
+      }
+      // A browser closes its saved-account pickers within seconds, so the popup comes back with the step itself.
+      if (chosen.action.kind !== "type" && chosen.action.kind !== "scroll") {
+        let after = await backend.observe(this.where(run));
+        // Its lines arrive after the popup itself (saved accounts load late): wait until it stops changing.
+        if (after.popup)
+          after = await settled(backend, this.where(run), this.clock, () => true, POPUP_SETTLE_MS);
+        if (this.deps.popupSeen) this.deps.popupSeen.text = after.popup ?? "";
+        if (after.popup) this.record(run, `popup open now: ${clip(after.popup, 400)}`);
+      }
+      return end("done", "");
+    } catch (error) {
+      if (run.signal.aborted) return end("stopped", stopReason(run.signal));
+      if (error instanceof Halt) return end(error.status, error.message);
+      return end("failed", messageOf(error));
+    }
+  }
+
   /** Stops the run when it was aborted, or when its working time (waits for the server excluded) is up. */
   private checkpoint(run: Run) {
     if (run.signal.aborted) throw new Halt("stopped", stopReason(run.signal));
     if (this.now() - run.started - run.waited > run.timeoutMs)
       throw new Halt("stuck", "It was taking too long.");
+  }
+
+  private where(run: Run) {
+    return { signal: run.signal, ...(run.app ? { app: run.app } : {}) };
   }
 
   private record(run: Run, text: string) {
@@ -414,6 +569,72 @@ export class ComputerUse {
   }
 
   /** The local stop's last word before the helper touches anything. */
+  /**
+   * A short ref from the last look, as the control on this screen: the same path, else the same role and label (the
+   * page moved it). A short ref that look did not give, or whose control is gone, names nothing.
+   */
+  private resolveRef(screen: Observation, act: ComputerAct): ComputerAct {
+    const refs = this.deps.refs;
+    if (!refs || act.ref === undefined || !/^e\d+$/.test(act.ref)) return act;
+    const was = refs.get(act.ref);
+    const now =
+      was &&
+      (screen.controls.find((c) => c.ref === was.ref) ??
+        screen.controls.find((c) => c.role === was.role && c.label === was.label));
+    return { ...act, ref: now ? now.ref : act.ref };
+  }
+
+  /**
+   * A click on a line of the popup the agent last saw, after that popup closed (browsers close saved sign-ins within
+   * seconds): down in the focused field opens it again, and the screen once the line is back.
+   */
+  private async reopenPopup(
+    run: Run,
+    backend: ScreenBackend,
+    screen: Observation,
+    act: ComputerAct,
+  ): Promise<Observation> {
+    const label = act.label;
+    if (act.action !== "click" || label === undefined || act.ref !== undefined) return screen;
+    if (popupLines(screen).includes(label) || matchControl(screen.controls, label)) return screen;
+    if (!popupLinesOf(this.deps.popupSeen?.text ?? "").includes(label)) return screen;
+    if (!screen.controls.some((control) => control.focused)) return screen;
+    await this.act(
+      run,
+      backend,
+      screen,
+      { kind: "press", key: "down" },
+      "pressed down to reopen the popup",
+    );
+    return settled(backend, this.where(run), this.clock, (seen) =>
+      popupLines(seen).includes(label),
+    );
+  }
+
+  /** A tab of the default browser already on one of `hosts`, switched to in the background. */
+  private async siteTab(hosts: Set<string>) {
+    const { tabs, urls } = this.deps;
+    if (!tabs?.press || !urls?.browser) return null;
+    const press = tabs.press.bind(tabs);
+    try {
+      if ((await urls.browser()) !== tabs.browser) return null;
+      const tab = (await tabs.list()).find((candidate) => hosts.has(hostOf(candidate.url)));
+      return tab ? { tab, browser: tabs.browser, press: () => press(tab) } : null;
+    } catch (error) {
+      this.deps.log.warn("computer_use.tabs_unread", { error: messageOf(error) });
+      return null;
+    }
+  }
+
+  /** Remembers the host a new tab for `site` ended on (a sign-in page elsewhere), to find that tab next time. */
+  private async noteLanding(site: string) {
+    const { tabs, landed } = this.deps;
+    if (!tabs || !landed) return;
+    const active = (await tabs.list().catch(() => [])).find((tab) => tab.active && tab.url);
+    const host = active ? hostOf(active.url) : "";
+    if (host && host !== site && sameSite(host, site)) landed.set(site, host);
+  }
+
   private async beforeTouching(run: Run) {
     if (run.watch) await run.watch.check();
     this.checkpoint(run);
@@ -453,6 +674,16 @@ export class ComputerUse {
       result = await this.perform(run, backend, action, true);
     }
     if (action.kind === "type") run.typedInto = this.control(screen, action.ref);
+    if (!result.at && (action.kind === "click" || action.kind === "type")) {
+      const b = this.control(screen, action.ref).bounds;
+      if (b)
+        result = { ...result, at: { x: Math.round(b.x + b.w / 2), y: Math.round(b.y + b.h / 2) } };
+    }
+    try {
+      this.deps.onAct?.(action, result);
+    } catch (error) {
+      this.deps.log.warn("computer_use.act_report_failed", { error: messageOf(error) });
+    }
     this.record(
       run,
       result.mode === "pointer" ? `${said} (with your mouse, as you allowed)` : said,
@@ -469,7 +700,16 @@ export class ComputerUse {
   ) {
     if (action.kind !== "click" && action.kind !== "type") return;
     const chosen = this.control(screen, action.ref);
-    const now = await backend.observe({ signal: run.signal });
+    const now = await backend.observe(this.where(run));
+    // A screen point the agent named is what was approved: only the app under it must be the same.
+    if (chosen.role === "other" && chosen.ref.startsWith("v:")) {
+      if (now.app !== screen.app)
+        throw new Halt(
+          "stuck",
+          "The screen changed while it waited for your OK, so it did not act.",
+        );
+      return;
+    }
     const same = now.controls.find((control) => control.ref === action.ref);
     if (
       now.app !== screen.app ||
@@ -492,7 +732,7 @@ export class ComputerUse {
     let result: ActResult;
     try {
       result = (await backend.act(action, {
-        signal: run.signal,
+        ...this.where(run),
         ...(allowPointer ? { allowPointer: true } : {}),
       })) ?? { mode: "background" };
     } catch (error) {
@@ -539,6 +779,13 @@ export class ComputerUse {
           : { kind: "press", key: action.key };
       case "scroll":
         return { kind: "scroll", direction: action.direction };
+      // Opening a control's menu is a click on it; an item of an open menu is a click on that item.
+      case "menu": {
+        const control = this.control(screen, action.ref);
+        return { kind: "click", ref: action.ref, role: control.role, label: control.label };
+      }
+      case "pick":
+        return { kind: "click", ref: "menu", role: "menuitem", label: action.label };
     }
   }
 
@@ -731,6 +978,7 @@ export class ComputerUse {
         title: screen.title,
         ...(screen.url ? { url: screen.url } : {}),
         visibleText: clip(screen.text ?? "", 1_500),
+        ...(screen.popup ? { popup: screen.popup } : {}),
         ...(screen.visual ? { readFrom: VISUAL_NOTE } : {}),
       },
       stepsSoFar: run.steps.slice(-8),
@@ -782,7 +1030,9 @@ export class ComputerUse {
               }),
           ...(navigationUnmet(task.goal, screen)
             ? {}
-            : { done: "The goal is already done on this screen." }),
+            : {
+                done: "The goal is already done on this screen, or it only asks to read or report what this screen shows.",
+              }),
           stuck: "None of these moves toward the goal.",
         },
       },
@@ -844,6 +1094,121 @@ export class ComputerUse {
       action: { kind: "click", ref: control.ref },
       step: `clicked the ${describeControl(control)}`,
     };
+  }
+}
+
+/** The smallest control whose bounds hold a screen point. */
+function controlAt(controls: ScreenControl[], x: number, y: number): ScreenControl | undefined {
+  return controls
+    .filter(
+      (c) =>
+        c.bounds &&
+        x >= c.bounds.x &&
+        x <= c.bounds.x + c.bounds.w &&
+        y >= c.bounds.y &&
+        y <= c.bounds.y + c.bounds.h,
+    )
+    .sort(
+      (a, b) => (a.bounds?.w ?? 0) * (a.bounds?.h ?? 0) - (b.bounds?.w ?? 0) * (b.bounds?.h ?? 0),
+    )[0];
+}
+
+/** An agent's step as an action on this screen, or why it cannot be one. */
+/** The lines of a popup or menu open over the window, without the ▸ that marks the highlighted one. */
+function popupLines(screen: Observation): string[] {
+  return popupLinesOf(screen.popup ?? "");
+}
+
+function popupLinesOf(popup: string): string[] {
+  return popup.split(" | ").map((line) => line.replace(/^\u25b8 /, "").trim());
+}
+
+function actOn(
+  screen: Observation,
+  act: ComputerAct,
+  text: string | null,
+): { screen: Observation; action: ScreenAction; said: string } | { stop: string } {
+  const byRef = act.ref === undefined ? undefined : screen.controls.find((c) => c.ref === act.ref);
+  if (act.ref !== undefined && !byRef) return { stop: "That control is gone; look again." };
+  switch (act.action) {
+    case "click": {
+      const named = act.label === undefined ? null : matchControl(screen.controls, act.label);
+      // An item of a menu open over the window (a context menu) is pressed by its title.
+      if (act.label !== undefined && !byRef && !named && popupLines(screen).includes(act.label))
+        return {
+          screen,
+          action: { kind: "pick", label: act.label },
+          said: `picked “${clip(act.label, 60)}” from the menu`,
+        };
+      if (act.label !== undefined && !byRef && !named)
+        return { stop: `No single control “${clip(act.label, 60)}” is on screen; look again.` };
+      const at =
+        act.x !== undefined && act.y !== undefined
+          ? { x: Math.round(act.x), y: Math.round(act.y) }
+          : null;
+      const target = byRef ?? named ?? (at ? controlAt(screen.controls, at.x, at.y) : undefined);
+      if (target)
+        return {
+          screen,
+          action: { kind: "click", ref: target.ref },
+          said: `clicked the ${describeControl(target)}`,
+        };
+      if (!at) return { stop: "Name the control to click: its ref, its label, or x and y." };
+      const spot: ScreenControl = {
+        ref: `v:${at.x},${at.y}`,
+        role: "other",
+        label: `the point ${at.x},${at.y}`,
+      };
+      return {
+        screen: { ...screen, controls: [...screen.controls, spot] },
+        action: { kind: "click", ref: spot.ref },
+        said: `clicked at ${at.x},${at.y}`,
+      };
+    }
+    case "menu": {
+      const target =
+        byRef ?? (act.label === undefined ? null : matchControl(screen.controls, act.label));
+      if (!target) return { stop: "Name the control whose menu to open: its ref or its label." };
+      return {
+        screen,
+        action: { kind: "menu", ref: target.ref },
+        said: `opened the menu of the ${describeControl(target)}`,
+      };
+    }
+    case "type": {
+      if (!text) return { stop: "There is no text to type." };
+      const box = byRef ?? screen.controls.find((c) => c.role === "textbox" && c.focused);
+      if (!box) return { stop: "No text box has the focus: click one first, or pass its ref." };
+      return {
+        screen,
+        action: { kind: "type", ref: box.ref, text },
+        said: `typed the text into the ${describeControl(box)}`,
+      };
+    }
+    case "key": {
+      if (!act.key) return { stop: "Name the key to press." };
+      const key = act.key === "return" ? "enter" : act.key;
+      return { screen, action: { kind: "press", key }, said: `pressed ${act.key}` };
+    }
+    case "scroll": {
+      const direction = act.direction ?? "down";
+      const pages =
+        direction === "up" || direction === "down"
+          ? Math.min(10, Math.max(1, Math.round(act.amount ?? 1)))
+          : 1;
+      return {
+        screen,
+        action: {
+          kind: "scroll",
+          direction,
+          ...(byRef ? { ref: byRef.ref } : {}),
+          ...(pages > 1 ? { amount: pages } : {}),
+        },
+        said: `scrolled ${direction}${pages > 1 ? ` ${pages} pages` : ""}`,
+      };
+    }
+    case "open_url":
+      return { stop: "Opening a web address is not a step on the screen." };
   }
 }
 
@@ -916,7 +1281,10 @@ function actionKey(action: ScreenAction): string {
   switch (action.kind) {
     case "click":
     case "type":
+    case "menu":
       return `${action.kind}:${action.ref}`;
+    case "pick":
+      return `pick:${action.label}`;
     case "press":
       return `press:${action.key}`;
     case "scroll":
@@ -936,6 +1304,50 @@ const hostOf = (address: string) =>
  * Whether a navigation goal's page is not on screen yet: the goal names an address, the screen says which page it
  * shows, and that page is on another host. When the backend cannot read the page (no `url`), the decider's word stands.
  */
+/** Two hosts of one site: the same last two labels (appstoreconnect.apple.com and idmsa.apple.com). */
+function sameSite(a: string, b: string): boolean {
+  const site = (host: string) => host.split(".").slice(-2).join(".");
+  return a !== "" && b !== "" && site(a) === site(b);
+}
+
+/** How long a read waits for a loading page, and how often it reads again meanwhile. */
+const SETTLE_MAX_MS = 8_000;
+const SETTLE_POLL_MS = 400;
+const NAVIGATION_SETTLE_MS = 1_000;
+const POPUP_SETTLE_MS = 1_000;
+
+/**
+ * A read of the screen once it stops loading: read again while the window shows it is loading, then until its
+ * controls stop changing. Past the cap it is returned with `loading`, never as a page with nothing on it.
+ */
+export async function settled(
+  backend: ScreenBackend,
+  options: ObserveOptions,
+  clock: { now(): number; sleep(ms: number): Promise<void> },
+  ready: (seen: Observation) => boolean = () => true,
+  /** After a navigation a page can show neither its content nor its spinner for a moment: steadiness counts only after this. */
+  minMs = 0,
+): Promise<Observation> {
+  const started = clock.now();
+  let seen = await backend.observe(options);
+  if (minMs === 0 && !seen.loading && ready(seen)) return seen;
+  while (clock.now() - started < SETTLE_MAX_MS) {
+    if (options.signal?.aborted) return seen;
+    await clock.sleep(SETTLE_POLL_MS);
+    const next = await backend.observe(options);
+    const steady =
+      !next.loading &&
+      !seen.loading &&
+      ready(seen) &&
+      ready(next) &&
+      clock.now() - started >= minMs &&
+      screenKey(next) === screenKey(seen);
+    seen = next;
+    if (steady) return seen;
+  }
+  return { ...seen, loading: true };
+}
+
 export function navigationReached(goal: string, screen: Observation): boolean {
   const target = navigationText(goal);
   if (!target || !screen.url) return false;
@@ -969,7 +1381,9 @@ export function navigationUnmet(goal: string, screen: Observation): boolean {
  */
 export function navigationText(goal: string): string | null {
   // Never an address inside an email address ("bob@example.com").
-  const address = String.raw`(?<![@\w.-])(?:https?:\/\/[^\s"“”'‘’<>]+|(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|tv|app|dev|co|ai|me|edu|gov|uk|de|fr|jp|info|news|blog)(?:\/[^\s"“”'‘’<>]*)?)`;
+  // Any top-level domain, but not a file name ("notes.txt"), plus localhost and an IPv4 address, with a port.
+  const host = String.raw`(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?!${FILE_EXTENSIONS}\b)[a-z]{2,24}\b)`;
+  const address = String.raw`(?<![@\w.-])(?:https?:\/\/[^\s"“”'‘’<>]+|${host}(?::\d{2,5})?(?:\/[^\s"“”'‘’<>]*)?)`;
   // The address right after the verb: "go to example.com", "navigate Chrome to x.com", "take me to x.com"; not "open the
   // email from x.com" (the address is not what is opened).
   const toVerb = String.raw`\b(?:go|navigate|browse|head|get|take\s+me|bring\s+me|switch)(?:\s+\S+){0,3}?\s+to\s+`;
@@ -979,6 +1393,15 @@ export function navigationText(goal: string): string | null {
   return found ? found.replace(/[.,;:!?)]+$/, "") : null;
 }
 
+/** An address as a goal wrote it, made into a URL a browser opens: "example.com" → "https://example.com". */
+function webAddress(written: string | null): string | null {
+  if (!written) return null;
+  if (/^https?:\/\//i.test(written)) return written;
+  return `${/^(?:localhost|\d)/i.test(written) ? "http" : "https"}://${written}`;
+}
+
+const FILE_EXTENSIONS = String.raw`(?:txt|md|pdf|png|jpe?g|gif|svg|webp|heic|docx?|xlsx?|pptx?|csv|json|ya?ml|toml|js|ts|tsx|jsx|mjs|py|rb|go|rs|sh|zip|dmg|pkg|mov|mp3|mp4|wav|log|key|pages|numbers|html?|css|swift|java)`;
+
 /** What a screen shows, for telling whether an action changed it: title, page, controls and text. */
 export function screenKey(screen: Observation): string {
   return [
@@ -986,6 +1409,7 @@ export function screenKey(screen: Observation): string {
     screen.title,
     screen.url ?? "",
     screen.text ?? "",
+    screen.popup ?? "",
     ...screen.controls.map((c) => `${c.role}:${c.label}:${c.value ?? ""}:${c.focused ? 1 : 0}`),
   ].join("\u0001");
 }
@@ -1127,11 +1551,19 @@ function matchControl(controls: ScreenControl[], name: string): ScreenControl | 
 export function pureNavigation(goal: string): boolean {
   const address = navigationText(goal);
   if (!address) return false;
-  const rest = goal.replace(address, " ");
-  return !/\b(then|and then|scroll|type|write|send|message|search|find|fill|enter|reply|draft|play|pause|press|watch|mute|click|tap|select|log ?in|sign|buy|order|pay|download|upload|read|copy|paste|book|subscribe|post|share|delete|check)\b/i.test(
-    rest,
-  );
+  // Pure only when nothing but the address and words about getting there is left: any other word is more to do.
+  return goal
+    .replace(address, " ")
+    .toLowerCase()
+    .split(/[^a-z']+/)
+    .every((word) => word === "" || NAVIGATION_WORDS.has(word));
 }
+
+const NAVIGATION_WORDS = new Set(
+  "a an the to in on of my your user's users and please go navigate browse head get take bring me switch open visit load pull up show launch new tab window page site website web url address link browser default it there chrome google safari firefox edge arc brave opera".split(
+    " ",
+  ),
+);
 
 function plainClickGoal(task: ComputerTask) {
   // Going to a site is done when the page is there, not when a tab is clicked (a blank tab once counted as done).

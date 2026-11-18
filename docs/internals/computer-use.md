@@ -24,6 +24,15 @@ An approval is bound to a digest of host, task, step, app, window title, URL
 and the exact action, lasts 60 seconds and is taken once. The helper observes
 the screen again after a tap and refuses to act if the control changed.
 
+## Background first
+
+Every step is done without the person's pointer, focus or keyboard: an
+accessibility action, a value set and read back, or input posted to the app's
+own process. Only then can the local stop ignore the person's own input and
+let them keep working. A step that needs the real pointer is therefore the
+person's to lend: it asks even with approvals off, and only during that step
+does their movement count as taking over.
+
 ## The helper is a forked Node child
 
 macOS attaches Accessibility, Screen Recording and Automation grants to the

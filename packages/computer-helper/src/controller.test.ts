@@ -7,8 +7,10 @@ import {
   ComputerUseRuns,
   navigationText,
   navigationUnmet,
+  pureNavigation,
   quotedTargets,
   resolveTab,
+  settled,
   siteNamed,
   soundKey,
   unquotedTabName,
@@ -23,11 +25,13 @@ import type {
   Session,
 } from "./controller.ts";
 import type { Answer, Answers, Question } from "./decisions.ts";
+import { FakeNotes } from "./fake.ts";
 import { NeedsPointer } from "./types.ts";
 import type {
   BrowserTab,
   BrowserTabs,
   Observation,
+  ObserveOptions,
   ScreenAction,
   ScreenBackend,
   ScreenControl,
@@ -159,6 +163,17 @@ function skool() {
   return { page, tabs, actions, activated, state };
 }
 
+/** Time that passes only when the run waits, so a wait for a page never spins on the wall clock. */
+function fakeClock() {
+  let now = 0;
+  return {
+    now: () => now,
+    sleep: async (ms: number) => {
+      now += ms;
+    },
+  };
+}
+
 function computerWith(
   replies: Answers[],
   parts: { page: ScreenBackend; tabs: BrowserTabs | null },
@@ -175,7 +190,7 @@ function computerWith(
     apps: null,
     log: silentLogger,
     settleMs: 0,
-    sleep: async () => undefined,
+    ...fakeClock(),
     ...extra,
   });
   return { computer, asked };
@@ -731,6 +746,48 @@ describe("ComputerUse", () => {
       ]);
     });
 
+    it("opens the address a goal names itself, instead of leaving the address bar to the decider (TestFlight run, 2026-11-18)", async () => {
+      let url = "https://dev-box.example.ts.net/storage";
+      const page: ScreenBackend = {
+        kind: "desktop",
+        observe: async () => ({
+          backend: "desktop",
+          app: "Google Chrome",
+          title: url.includes("appstoreconnect") ? "Apps - App Store Connect" : "Agent Storage",
+          url,
+          controls: [control("0.7", "textbox", "Address and search bar")],
+        }),
+        act: async () => undefined,
+      };
+      const server = allowAll();
+      const { computer, asked } = computerWith(
+        [{ surface: choice("current") }, { next: choice("done") }],
+        { page, tabs: null },
+        server.authorize,
+        {
+          urls: {
+            open: async (address) => {
+              url = address;
+              return "Google Chrome";
+            },
+          },
+        },
+      );
+      const outcome = await computer.run({
+        goal: "Open https://appstoreconnect.apple.com/apps in the user's default browser. Go to the TestFlight section and report the latest build.",
+        text: null,
+      });
+      expect(outcome).toMatchObject({ status: "done" });
+      expect(url).toBe("https://appstoreconnect.apple.com/apps");
+      expect(server.requests.map((request) => request.action)).toContainEqual({
+        kind: "open_url",
+        url: "https://appstoreconnect.apple.com/apps",
+      });
+      // The decider's first look at the page is after it opened.
+      expect(asked).toHaveLength(2);
+      expect(asked[1]?.state).toMatchObject({ screen: { url } });
+    });
+
     it("a navigation goal is not done when a tab is clicked, nor until the page on screen is the one asked for (Windows run, 2026-10-25)", async () => {
       const blank: BrowserTab = {
         window: 0,
@@ -1088,6 +1145,283 @@ describe("ComputerUse", () => {
         label: "New Tab",
       });
     });
+  });
+});
+
+describe("an act the agent chose", () => {
+  const actWith = (extra: Partial<Deps> = {}) => {
+    const page = new FakeNotes();
+    const server = allowAll();
+    const acted: Array<{ kind: string; mode: string }> = [];
+    const { computer } = computerWith([], { page, tabs: null }, server.authorize, {
+      onAct: (action, result) => acted.push({ kind: action.kind, mode: result.mode }),
+      ...extra,
+    });
+    return { page, server, acted, computer };
+  };
+
+  it("clicks by label in the background, through the server's grant, with no decider", async () => {
+    const { page, server, acted, computer } = actWith();
+    const outcome = await computer.run({
+      goal: "",
+      text: null,
+      act: { action: "click", label: "New Note" },
+    });
+    expect(outcome).toMatchObject({ status: "done", steps: ["clicked the button “New Note”"] });
+    expect(server.requests[0]?.action).toEqual({
+      kind: "click",
+      ref: "new",
+      role: "button",
+      label: "New Note",
+    });
+    expect(page.notes.at(-1)).toBe("New Note");
+    expect(acted).toEqual([{ kind: "click", mode: "background" }]);
+  });
+
+  it("asks once for the mouse when the background cannot take the step", async () => {
+    const { page, server, acted, computer } = actWith();
+    page.pointerOnly.add("new");
+    await computer.run({ goal: "", text: null, act: { action: "click", ref: "new" } });
+    expect(server.requests.map((request) => request.action.kind)).toEqual(["click", "pointer"]);
+    expect(acted).toEqual([{ kind: "click", mode: "pointer" }]);
+  });
+
+  it("types into the focused box, or stops when none has the focus", async () => {
+    const { page, server, computer } = actWith();
+    expect(await computer.run({ goal: "", text: "milk", act: { action: "type" } })).toMatchObject({
+      status: "stuck",
+      reason: expect.stringMatching(/No text box has the focus/),
+    });
+    await computer.run({ goal: "", text: null, act: { action: "click", ref: "search" } });
+    await computer.run({ goal: "", text: "milk", act: { action: "type" } });
+    expect(server.requests.at(-1)?.action).toMatchObject({
+      kind: "type",
+      ref: "search",
+      text: "milk",
+    });
+    expect(page.query).toBe("milk");
+    await computer.run({ goal: "", text: null, act: { action: "key", key: "return" } });
+    expect(server.requests.at(-1)?.action).toMatchObject({ kind: "press", key: "enter" });
+    expect(page.searched).toBe(true);
+  });
+
+  it("opens a web address in the default browser once it is granted, and names the browser", async () => {
+    const opened: string[] = [];
+    const { server, computer } = actWith({
+      urls: {
+        open: async (url) => {
+          opened.push(url);
+          return "Safari";
+        },
+      },
+    });
+    const outcome = await computer.run({
+      goal: "",
+      text: null,
+      act: { action: "open_url", url: "https://example.com" },
+    });
+    expect(server.requests[0]?.action).toEqual({ kind: "open_url", url: "https://example.com" });
+    expect(opened).toEqual(["https://example.com"]);
+    expect(outcome).toMatchObject({
+      status: "done",
+      surface: "Safari",
+      steps: ["opened new tab: https://example.com in Safari"],
+    });
+  });
+
+  it("takes the short ref a look gave, and finds that control again even when its path moved", async () => {
+    const refs = new Map([["e1", control("0.9.search", "textbox", "Search")]]);
+    const { server, computer } = actWith({ refs });
+    await computer.run({ goal: "", text: null, act: { action: "click", ref: "e1" } });
+    expect(server.requests[0]?.action).toMatchObject({
+      kind: "click",
+      ref: "search",
+      label: "Search",
+    });
+    expect(
+      await computer.run({ goal: "", text: null, act: { action: "click", ref: "e9" } }),
+    ).toMatchObject({ status: "stuck", reason: "That control is gone; look again." });
+  });
+
+  it("opens a control's context menu and picks an item from it by label, in the background", async () => {
+    const { page, server, computer } = actWith();
+    expect(
+      await computer.run({ goal: "", text: null, act: { action: "menu", ref: "search" } }),
+    ).toMatchObject({
+      status: "done",
+      steps: ["opened the menu of the textbox “Search”", "popup open now: Paste | Select password"],
+    });
+    expect(
+      await computer.run({
+        goal: "",
+        text: null,
+        act: { action: "click", label: "Select password" },
+      }),
+    ).toMatchObject({
+      status: "done",
+      steps: [
+        "picked “Select password” from the menu",
+        "popup open now: Password for dana@acme.test",
+      ],
+    });
+    expect(
+      await computer.run({
+        goal: "",
+        text: null,
+        act: { action: "click", label: "Password for dana@acme.test" },
+      }),
+    ).toMatchObject({
+      status: "done",
+      steps: ["picked “Password for dana@acme.test” from the menu"],
+    });
+    expect(server.requests.map((request) => request.action)).toEqual([
+      { kind: "click", ref: "search", role: "textbox", label: "Search" },
+      { kind: "click", ref: "menu", role: "menuitem", label: "Select password" },
+      { kind: "click", ref: "menu", role: "menuitem", label: "Password for dana@acme.test" },
+    ]);
+    expect(page.picked).toEqual(["Select password", "Password for dana@acme.test"]);
+  });
+
+  it("acts on the window of the app it names, as a look does", async () => {
+    const { page, computer } = actWith();
+    const observed: Array<string | undefined> = [];
+    const acted: Array<string | undefined> = [];
+    const observe = page.observe.bind(page);
+    const act = page.act.bind(page);
+    page.observe = async (options?: ObserveOptions) => {
+      observed.push(options?.app);
+      return observe();
+    };
+    page.act = async (action, options) => {
+      acted.push(options?.app);
+      return act(action, options);
+    };
+    expect(
+      await computer.run({
+        goal: "",
+        text: null,
+        act: { action: "scroll", direction: "down", app: "Notes" },
+      }),
+    ).toMatchObject({
+      status: "done",
+      steps: ["scrolled down", "nothing moved: the view is at its end, or does not scroll"],
+    });
+    expect(new Set(observed)).toEqual(new Set(["Notes"]));
+    expect(acted).toEqual(["Notes"]);
+  });
+
+  it("scrolls by pages, and the screen after shows it moved", async () => {
+    const { page, computer } = actWith();
+    page.scrollable = true;
+    expect(
+      await computer.run({
+        goal: "",
+        text: null,
+        act: { action: "scroll", direction: "down", amount: 2 },
+      }),
+    ).toMatchObject({ status: "done", steps: ["scrolled down 2 pages"] });
+    expect((await page.observe()).text).toContain("page 3");
+  });
+
+  it("returns a popup once it has filled, not the first frame of it", async () => {
+    const { page, computer } = actWith();
+    await computer.run({ goal: "", text: null, act: { action: "click", ref: "search" } });
+    const observe = page.observe.bind(page);
+    let reads = 0;
+    page.observe = async () => {
+      if (page.menu.length)
+        page.menu =
+          ++reads > 1
+            ? ["Manage passwords…", "Password for dana@acme.test"]
+            : ["Manage passwords…"];
+      return observe();
+    };
+    expect(
+      await computer.run({ goal: "", text: null, act: { action: "key", key: "down" } }),
+    ).toMatchObject({
+      steps: ["pressed down", "popup open now: Manage passwords… | Password for dana@acme.test"],
+    });
+  });
+
+  it("reopens a popup that closed before its line was clicked, from the focused field, and picks the line", async () => {
+    const popupSeen = { text: "" };
+    const { page, server, computer } = actWith({ popupSeen });
+    await computer.run({ goal: "", text: null, act: { action: "click", ref: "search" } });
+    expect(
+      await computer.run({ goal: "", text: null, act: { action: "key", key: "down" } }),
+    ).toMatchObject({ steps: ["pressed down", "popup open now: Password for dana@acme.test"] });
+    page.menu = [];
+    expect(
+      await computer.run({
+        goal: "",
+        text: null,
+        act: { action: "click", label: "Password for dana@acme.test" },
+      }),
+    ).toMatchObject({
+      status: "done",
+      steps: [
+        "pressed down to reopen the popup",
+        "picked “Password for dana@acme.test” from the menu",
+      ],
+    });
+    expect(page.picked).toEqual(["Password for dana@acme.test"]);
+    expect(server.requests.at(-1)?.action).toEqual({
+      kind: "click",
+      ref: "menu",
+      role: "menuitem",
+      label: "Password for dana@acme.test",
+    });
+  });
+
+  it("switches to a tab already on the site, or the sign-in page it led to, instead of opening another", async () => {
+    const opened: string[] = [];
+    const pressed: string[] = [];
+    const tabs: BrowserTab[] = [
+      {
+        window: 0,
+        index: 0,
+        title: "Agent Storage",
+        url: "https://dev.example.net/",
+        active: true,
+      },
+    ];
+    let landedOn = "https://idmsa.apple.com/signin";
+    const { computer } = actWith({
+      tabs: {
+        browser: "Google Chrome",
+        list: async () => tabs,
+        activate: async () => {
+          throw new Error("the real pointer is never used to switch tabs");
+        },
+        press: async (tab) => {
+          pressed.push(tab.title);
+        },
+      },
+      urls: {
+        browser: async () => "Google Chrome",
+        open: async (url) => {
+          opened.push(url);
+          for (const tab of tabs) tab.active = false;
+          tabs.push({ window: 0, index: 1, title: "Sign In", url: landedOn, active: true });
+          return "Google Chrome";
+        },
+      },
+      landed: new Map(),
+    });
+    const open = () =>
+      computer.run({
+        goal: "",
+        text: null,
+        act: { action: "open_url", url: "https://appstoreconnect.apple.com/apps" },
+      });
+    expect((await open()).steps).toEqual([
+      "opened new tab: https://appstoreconnect.apple.com/apps in Google Chrome",
+    ]);
+    landedOn = "unused";
+    // The first open led to Apple's sign-in host: opening the same site again goes back to that tab.
+    expect((await open()).steps).toEqual(["reused existing tab: “Sign In” in Google Chrome"]);
+    expect(opened).toHaveLength(1);
+    expect(pressed).toEqual(["Sign In"]);
   });
 });
 
@@ -1470,6 +1804,77 @@ describe('a Chrome that refuses other apps (2026-09-26 10:17: "could not find �
   });
 });
 
+describe("settled", () => {
+  // Apple's sign-in page: a spinner, then the frame with the form arrives a few walks later.
+  const signIn = (spinnerWalks: number) => {
+    let walks = 0;
+    const page: ScreenBackend = {
+      kind: "desktop",
+      observe: async () => {
+        walks += 1;
+        const loading = walks <= spinnerWalks;
+        return {
+          backend: "desktop",
+          app: "Google Chrome",
+          title: "App Store Connect",
+          controls: loading
+            ? []
+            : [
+                control("0.4.2", "textbox", "Email or Phone Number"),
+                control("0.4.3", "button", "Continue"),
+              ],
+          ...(loading ? { loading: true } : {}),
+        };
+      },
+      act: async () => undefined,
+    };
+    let now = 0;
+    const clock = {
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+    };
+    return { page, clock, walks: () => walks };
+  };
+
+  it("reads again while the page shows it is loading, until its controls stop changing", async () => {
+    const { page, clock, walks } = signIn(3);
+    const seen = await settled(page, {}, clock);
+    expect(seen.controls.map((c) => c.label)).toEqual(["Email or Phone Number", "Continue"]);
+    expect(seen.loading).toBeUndefined();
+    expect(walks()).toBe(5);
+  });
+
+  it("reads once when nothing is loading, and says loading when the wait runs out", async () => {
+    const quiet = signIn(0);
+    await settled(quiet.page, {}, quiet.clock);
+    expect(quiet.walks()).toBe(1);
+    // Right after an open the old page is still up, loaded: it waits for the page asked for.
+    const opened = signIn(0);
+    let at = "https://example.com/old";
+    const old = opened.page.observe.bind(opened.page);
+    opened.page.observe = async (options) => {
+      const seen = await old(options);
+      if (opened.walks() === 3) at = "https://appstoreconnect.apple.com/login";
+      return { ...seen, url: at };
+    };
+    expect(
+      await settled(
+        opened.page,
+        {},
+        opened.clock,
+        (seen) => (seen.url ?? "").includes("appstoreconnect"),
+        1_000,
+      ),
+    ).toMatchObject({ url: "https://appstoreconnect.apple.com/login" });
+    expect(opened.walks()).toBe(4);
+    const slow = signIn(1_000);
+
+    expect(await settled(slow.page, {}, slow.clock)).toMatchObject({ loading: true, controls: [] });
+  });
+});
+
 describe("navigationText", () => {
   it("takes the address a navigation goal names, as written, and nothing else", () => {
     expect(navigationText("open Chrome and go to example.com")).toBe("example.com");
@@ -1483,5 +1888,14 @@ describe("navigationText", () => {
     expect(navigationText("reply to the email from example.com")).toBeNull();
     expect(navigationText("open the email from paypal.com and click unsubscribe")).toBeNull();
     expect(navigationText("open the website example.org")).toBe("example.org");
+    expect(navigationText("open Chrome and go to app.t3.codes")).toBe("app.t3.codes");
+    expect(navigationText("go to localhost:3000/settings")).toBe("localhost:3000/settings");
+    expect(navigationText("open notes.txt")).toBeNull();
+  });
+
+  it("calls a goal navigation only when nothing is left to do on the page", () => {
+    expect(pureNavigation("open Chrome and go to example.com")).toBe(true);
+    expect(pureNavigation("Open https://example.com in the user's default browser")).toBe(true);
+    expect(pureNavigation("go to example.com and report the latest build")).toBe(false);
   });
 });

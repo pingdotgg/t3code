@@ -10,6 +10,7 @@ import {
   type ComputerAnswers,
   type ComputerHostId,
   type ComputerHostView,
+  type ComputerLook,
   ComputerError,
   type ComputerPlannerAnswers,
   type ComputerQuestions,
@@ -35,7 +36,10 @@ import * as ComputerService from "../../apps/server/src/computer/ComputerService
 import * as McpHttpServer from "../../apps/server/src/mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { liveThreadsLayer } from "../../apps/server/src/mcp/McpToolAccess.testkit.ts";
-import { ComputerToolkit } from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
+import {
+  ComputerLookToolkit,
+  ComputerToolkit,
+} from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 
 /** What a started task does next, as a case's world scripts it. */
 export type ComputerOutcome = "questions" | "tap" | "done" | "blocked";
@@ -51,9 +55,14 @@ export interface ComputerWorld {
   readonly questions?: ComputerQuestions | undefined;
   /** Whether the user has approved consequential steps automatically. Defaults to "ask". */
   readonly approvals?: ComputerApprovalsMode | undefined;
+  /** The visible text an ended use task's screen showed. */
+  readonly screenText?: string | undefined;
+  /** What computer_look reads. Defaults to an empty Finder window. */
+  readonly screen?: ComputerLook | undefined;
 }
 
-export const isComputerTool = (name: string) => Object.hasOwn(ComputerToolkit.tools, name);
+export const isComputerTool = (name: string) =>
+  Object.hasOwn(ComputerToolkit.tools, name) || Object.hasOwn(ComputerLookToolkit.tools, name);
 
 const DEFAULT_QUESTIONS: ComputerQuestions = {
   next: {
@@ -111,6 +120,7 @@ const taskView = (input: {
   readonly outcome: ComputerOutcome;
   readonly questions: ComputerQuestions;
   readonly approvals: ComputerApprovalsMode;
+  readonly screenText: string | undefined;
 }): ComputerTaskView => {
   const ended = finished(input.outcome);
   return {
@@ -136,6 +146,9 @@ const taskView = (input: {
     pendingDecision:
       input.outcome === "questions" ? { id: "dec_eval", questions: input.questions } : null,
     approvalsMode: input.approvals,
+    ...(input.kind === "use" && ended !== null && input.screenText !== undefined
+      ? { screenText: input.screenText }
+      : {}),
   };
 };
 
@@ -220,6 +233,7 @@ export const makeComputerTools = Effect.fn("evaluateMcpToolUse.makeComputerTools
   const addTask = Effect.fn("evalComputer.addTask")(function* (
     kind: "control" | "use",
     goal: string,
+    scripted: ComputerOutcome = outcome,
   ) {
     const { next } = yield* Ref.get(state);
     const task = taskView({
@@ -227,9 +241,10 @@ export const makeComputerTools = Effect.fn("evaluateMcpToolUse.makeComputerTools
       kind,
       goal,
       hostName,
-      outcome,
+      outcome: scripted,
       questions,
       approvals,
+      screenText: world.screenText,
     });
     yield* Ref.update(state, (current) => ({
       next: next + 1,
@@ -248,6 +263,17 @@ export const makeComputerTools = Effect.fn("evaluateMcpToolUse.makeComputerTools
       ),
     ),
     startUse: Effect.fn("ComputerService.startUse")((input) => addTask("use", input.goal)),
+    // An act asks no questions: it ends, or waits for the user's tap or denial as the world says.
+    act: Effect.fn("ComputerService.act")((input) =>
+      addTask(
+        "use",
+        `${input.act.action} ${input.act.label ?? input.act.ref ?? input.act.key ?? input.act.url ?? ""}`.trim(),
+        outcome === "tap" || outcome === "blocked" ? outcome : "done",
+      ),
+    ),
+    look: Effect.fn("ComputerService.look")(() =>
+      Effect.succeed(world.screen ?? { app: "Finder", title: "", text: "", controls: [] }),
+    ),
     answerDecision: Effect.fn("ComputerService.answerDecision")(function* (input) {
       const { tasks } = yield* Ref.get(state);
       const task = tasks.find((candidate) => candidate.taskId === input.taskId);
@@ -290,7 +316,7 @@ export const makeComputerTools = Effect.fn("evaluateMcpToolUse.makeComputerTools
       })),
     ),
     subscribe: Effect.map(snapshot, (current) => Stream.make(current)),
-    // The toolkit's five calls above are the whole surface these cases use.
+    // The toolkit's calls above are the whole surface these cases use.
     stopForThread: Effect.fn("ComputerService.stopForThread")(() => Effect.void),
     respondToApproval: Effect.fn("ComputerService.respondToApproval")(() => Effect.void),
     auditTail: Effect.fn("ComputerService.auditTail")(() => Effect.succeed([])),

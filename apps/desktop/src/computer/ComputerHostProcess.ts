@@ -5,6 +5,7 @@ import * as NodeChildProcess from "node:child_process";
 
 import {
   COMPUTER_LIMITS,
+  type ComputerAct,
   type ComputerAction,
   type ComputerAnswers,
   type ComputerControl,
@@ -12,7 +13,9 @@ import {
   type ComputerHostEvent,
   type ComputerHostReply,
   type ComputerLimits,
+  type ComputerLook,
   type ComputerObservation,
+  type ComputerRect,
   type ComputerQuestion,
   type ComputerTaskOutcomeStatus,
 } from "@t3tools/contracts";
@@ -49,7 +52,15 @@ export type ComputerHostTask = {
   readonly goal: string;
   readonly text: string | null;
   readonly limits: ComputerLimits;
+  readonly act?: ComputerAct;
   readonly ask: ComputerHostAsk;
+};
+
+export type ComputerHostLook = {
+  readonly requestId: string;
+  readonly app?: string;
+  readonly screenshot: boolean;
+  readonly region?: ComputerRect;
 };
 
 export type ComputerHostStartResult =
@@ -69,6 +80,8 @@ export type ComputerHostProcess = {
     readonly control: ComputerControl;
   }) => Promise<ComputerHostReply>;
   readonly stop: (input: { readonly taskId: string; readonly reason: string }) => void;
+  /** Reads a window; it runs beside a task, since it changes nothing. */
+  readonly look: (input: ComputerHostLook) => Promise<ComputerHostReply>;
   /** Ends the running task, then the child. */
   readonly close: () => void;
 };
@@ -78,8 +91,19 @@ type ChildRequest =
   | {
       readonly id: string;
       readonly kind: "start";
-      readonly task: { readonly goal: string; readonly text: string | null };
+      readonly task: {
+        readonly goal: string;
+        readonly text: string | null;
+        readonly act?: ComputerAct;
+      };
       readonly limits: { readonly maxSteps: number; readonly timeoutMs: number };
+    }
+  | {
+      readonly id: string;
+      readonly kind: "look";
+      readonly app?: string;
+      readonly screenshot: boolean;
+      readonly region?: ComputerRect;
     }
   | { readonly id: string; readonly kind: "stop"; readonly taskId: string; readonly reason: string }
   | { readonly id: string; readonly kind: "control"; readonly control: ComputerControl }
@@ -104,6 +128,7 @@ type ChildAction =
     }
   | { readonly kind: "scroll"; readonly direction: string }
   | { readonly kind: "surface"; readonly what: string; readonly name: string }
+  | { readonly kind: "open_url"; readonly url: string }
   | {
       readonly kind: "pointer";
       readonly step: string;
@@ -133,6 +158,16 @@ type ChildMessage =
     }
   | { readonly id: string; readonly kind: "access"; readonly access: ComputerAccess }
   | { readonly id: string; readonly kind: "control"; readonly done: string }
+  | { readonly id: string; readonly kind: "look"; readonly look: ComputerLook }
+  | {
+      readonly id: string;
+      readonly kind: "acted";
+      readonly taskId: string;
+      readonly action: string;
+      readonly mode: "background" | "pointer";
+      readonly how: string;
+      readonly at?: { readonly x: number; readonly y: number };
+    }
   | { readonly id: string; readonly kind: "error"; readonly error: string }
   | {
       readonly id: string;
@@ -177,6 +212,8 @@ const toComputerAction = (action: ChildAction): ComputerAction => {
       return { kind: "scroll", direction: action.direction };
     case "surface":
       return { kind: "surface", what: action.what, name: action.name };
+    case "open_url":
+      return { kind: "open_url", url: action.url };
     case "pointer":
       return {
         kind: "pointer",
@@ -208,6 +245,12 @@ export type ComputerHostProcessOptions = {
   readonly fork?: (workerPath: string) => ComputerHostChild;
   /** The child ended for a reason of its own: the host has no helper until the next request forks one. */
   readonly onExit?: (reason: string) => void;
+  /** Where the helper just acted, for the overlay. */
+  readonly onActed?: (spot: {
+    readonly x: number;
+    readonly y: number;
+    readonly mode: "background" | "pointer";
+  }) => void;
   readonly log?: (event: string, fields?: Readonly<Record<string, unknown>>) => void;
 };
 
@@ -353,7 +396,15 @@ export function startComputerHostProcess(options: ComputerHostProcessOptions): C
       write(
         message.kind === "decide"
           ? { id: message.id, kind: "answers", answers: {} }
-          : { id: message.id, kind: "grant", grant: { ok: false, denied: "That task has ended." } },
+          : {
+              id: message.id,
+              kind: "grant",
+              grant: {
+                ok: false,
+                denied:
+                  "Ada lost track of this task, so the step was not done. This is an internal error, not a denial.",
+              },
+            },
       );
       return;
     }
@@ -426,10 +477,22 @@ export function startComputerHostProcess(options: ComputerHostProcessOptions): C
           settle(message.id)?.resolve(message);
           break;
         }
+        case "acted": {
+          if (message.at !== undefined) options.onActed?.({ ...message.at, mode: message.mode });
+          const running = task === null || task.taskId !== message.taskId ? null : task;
+          if (running === null) break;
+          void running.ask
+            .event({ type: "acted", kind: message.action, mode: message.mode, how: message.how })
+            .catch((error: unknown) =>
+              log("computer_host.acted_failed", { error: messageOf(error) }),
+            );
+          break;
+        }
         case "started":
         case "current":
         case "control":
         case "access":
+        case "look":
           settle(message.id)?.resolve(message);
           break;
         case "error": {
@@ -472,7 +535,11 @@ export function startComputerHostProcess(options: ComputerHostProcessOptions): C
         {
           id: next.taskId,
           kind: "start",
-          task: { goal: next.goal, text: next.text },
+          task: {
+            goal: next.goal,
+            text: next.text,
+            ...(next.act === undefined ? {} : { act: next.act }),
+          },
           limits: { maxSteps: next.limits.maxSteps, timeoutMs: next.limits.timeoutMs },
         },
         replyTimeoutMs,
@@ -508,6 +575,21 @@ export function startComputerHostProcess(options: ComputerHostProcessOptions): C
         }),
       );
     },
+    look: (input) =>
+      request<Extract<ChildMessage, { kind: "look" }>>({
+        id: input.requestId,
+        kind: "look",
+        screenshot: input.screenshot,
+        ...(input.app === undefined ? {} : { app: input.app }),
+        ...(input.region === undefined ? {} : { region: input.region }),
+      }).then(
+        (message) => ({ requestId: input.requestId, ok: true as const, look: message.look }),
+        (error: unknown) => ({
+          requestId: input.requestId,
+          ok: false as const,
+          error: messageOf(error),
+        }),
+      ),
     stop: (input) => {
       if (task?.taskId === input.taskId) clearTask();
       write({

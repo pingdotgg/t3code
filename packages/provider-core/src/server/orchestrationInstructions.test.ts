@@ -99,6 +99,8 @@ describe("T3 computer instructions", () => {
   it("route native-app work through computer_use and keep typed words in `text`", () => {
     for (const intent of [
       "`computer_use`",
+      "`computer_look`",
+      "`computer_act`",
       "`osascript`",
       "`text`",
       "`decisionId`",
@@ -111,7 +113,7 @@ describe("T3 computer instructions", () => {
     assert.include(T3_CODE_COMPUTER_TOOL_INSTRUCTIONS, "you cannot approve it");
     assert.notInclude(T3_CODE_COMPUTER_TOOL_INSTRUCTIONS, "ToolSearch");
     const loadLine =
-      " Load them with ToolSearch `select:mcp__t3-code__computer_status,mcp__t3-code__computer_control,mcp__t3-code__computer_use,mcp__t3-code__computer_stop`.";
+      " Load them with ToolSearch `select:mcp__t3-code__computer_status,mcp__t3-code__computer_look,mcp__t3-code__computer_act,mcp__t3-code__computer_control,mcp__t3-code__computer_use,mcp__t3-code__computer_stop`.";
     assert.include(T3_CODE_COMPUTER_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH, loadLine);
     assert.equal(
       T3_CODE_COMPUTER_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH.replace(loadLine, ""),

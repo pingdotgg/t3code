@@ -114,7 +114,7 @@ This API replay measures routing and recovery decisions. Screenshots return prod
 
 ## Computer use cases
 
-`cases/computer-use.ndjson` checks the four computer tools: `computer_status`, `computer_control`, `computer_use` and `computer_stop`. They are new, so the cases guard the behaviour the tools' descriptions and the "Ada computer use" instruction section ask for rather than reproduce a past failure. Each names the computer-use plan's section 7 as its source; prompts and files are authored Acme data.
+`cases/computer-use.ndjson` checks the computer tools: `computer_status`, `computer_look`, `computer_act`, `computer_control`, `computer_use` and `computer_stop`. Most cases guard the behaviour the tools' descriptions and the "Ada computer use" instruction section ask for and name the computer-use plan's section 7 as their source; `cu-reads-display` and `cu-types-address` reproduce live failures. Prompts and files are authored Acme data.
 
 | Case                   | Kind    | What it checks                                                                                                                 |
 | ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -124,10 +124,14 @@ This API replay measures routing and recovery decisions. Screenshots return prod
 | cu-waits-for-approval  | guard   | A step waiting for the user's tap is waited for or reported; the agent does not claim to have approved it or restart the task. |
 | cu-denied-stops        | guard   | After `blocked` (the user denied it), the agent stops and does not start the same task again.                                  |
 | cu-control-not-use     | guard   | Volume and "open Safari" use `computer_control`, not `computer_use`.                                                           |
+| cu-default-browser     | bad     | A signed-in site (a TestFlight check) goes through the computer tools with no browser named; no Safari guess and no preview.   |
+| cu-saved-sign-in       | bad     | At a sign-in page, the agent clicks the email field and presses down for the saved accounts; it never asks for a password.     |
 | cu-web-in-preview      | control | A page this project serves is preview work: `preview_snapshot`, and no computer tool.                                          |
 | cu-ordinary-coding     | control | An ordinary coding request calls no computer tool, even with computer use enabled for the thread.                              |
+| cu-reads-display       | bad     | Asked what an app shows, the agent reads it with `computer_look` and answers, instead of starting a task to read it.           |
+| cu-types-address       | bad     | Asked to open a web address, the agent opens or types it with `computer_act`, not a goal-only `computer_use`.                  |
 
-Worlds set `world.computer`: `outcome` is what the next started task does (`questions`, `tap`, `done`, `blocked`), `approvals` is the setting ("ask" or "skip"), and `computerAgentAccess: false` is the setting off. A case without `world.computer` still gets the tools, with the setting off, so a call is refused the way a thread that never enabled it is refused. The computer text is in the thread's prompt only when the case has `world.computer` with access on.
+Worlds set `world.computer`: `outcome` is what the next started task does (`questions`, `tap`, `done`, `blocked`; an act ends `done` unless it is `tap` or `blocked`), `screen` is what `computer_look` reads, `approvals` is the setting ("ask" or "skip"), and `computerAgentAccess: false` is the setting off. A case without `world.computer` still gets the tools, with the setting off, so a call is refused the way a thread that never enabled it is refused. The computer text is in the thread's prompt only when the case has `world.computer` with access on.
 
 Computer results are T3's own: `evals/mcp-tool-use/computer.ts` runs the checkout's toolkit handlers on a scripted `ComputerService`, so the questions, the tap card's fields and every `next` sentence come from source. Prior turns whose result is `"default"` run through it too, as device cases do. The scripted computer starts one task per call and keeps the latest; a second `computer_use` in the same sample starts a second task.
 
@@ -148,6 +152,8 @@ Eight cases, 3 samples each, on the two Codex models in the table, with the `gpt
 | cu-web-in-preview      | 3/3         | 3/3         |
 | cu-ordinary-coding     | 3/3         | 3/3         |
 
+`cu-default-browser` and `cu-saved-sign-in` reproduce a TestFlight run from 2026-11-18 and are not in the table: they have only been built with `--dry-run`, because no model provider the eval reads was configured where they were written. Run them on the text before and after the browser paragraph before relying on them.
+
 The Claude arms have not been run: `ANTHROPIC_API_KEY` was not available where these runs were made. These are guards for new tools rather than regressions against old text, so there is no baseline to compare.
 
 From `evals/`:
@@ -156,7 +162,7 @@ From `evals/`:
 pnpm mcp-tool-use --cases mcp-tool-use/cases/computer-use.ndjson --model claude-sonnet-5-5 --out runs/computer-use
 ```
 
-Eight cases at 3 samples cost about $2–4 on Sonnet, including the Haiku shell simulator; Codex models go through the CLIProxyAPI provider and only their shell simulator is priced here.
+The first eight cases at 3 samples cost about $2–4 on Sonnet, including the Haiku shell simulator; Codex models go through the CLIProxyAPI provider and only their shell simulator is priced here.
 
 ## Threads vs tasks cases
 

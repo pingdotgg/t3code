@@ -64,6 +64,8 @@ export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstr
 
 const T3_CODE_COMPUTER_TOOLS = [
   "computer_status",
+  "computer_look",
+  "computer_act",
   "computer_control",
   "computer_use",
   "computer_stop",
@@ -71,10 +73,13 @@ const T3_CODE_COMPUTER_TOOLS = [
 
 const computerToolInstructions = (loadTools: string) => `## ${APP_NAME} computer use
 
-For something on the user's own Mac rather than in the checkout (clicking through a native app, reading a window only that app shows, filling a form in their browser), use \`computer_use\`, not \`osascript\`, AppleScript, \`open\` or \`screencapture\` in the shell.${loadTools}
-Put any words the task must type in \`text\`, exactly and in full: \`goal\` says what to do and types nothing. \`computer_control\` is for the fixed actions only: open or quit an app, volume, media, dark mode, and locking the screen.
-A task that comes back with questions wants \`taskId\`, \`decisionId\` and \`answers\`, each choosing one of the keys it offered, with a confidence of high, medium or low; never invent a key. When a step waits for the user's approval, wait for them or report it: you cannot approve it, and working around it fails. When a task ends \`blocked\` (the user denied it) or \`stuck\`, stop and say so instead of starting it again. \`computer_status\` follows a running task and \`computer_stop\` ends one.
-A page the preview browser can open is preview work, not computer work, and a change in the checkout needs neither.`;
+For something on the user's own Mac rather than in the checkout (clicking through a native app, reading a window only that app shows, filling a form in their browser), use the computer tools, not \`osascript\`, AppleScript, \`open\` or \`screencapture\` in the shell.${loadTools}
+Drive it yourself whenever you can decide the next step: \`computer_look\` reads the window (controls with refs, visible text, an open \`popup\`, and \`loading\` if the page never settled), \`computer_act\` takes one step (click, type the exact \`text\`, a key, scroll, \`open_url\`), then look again before the next.
+\`computer_use\` hands a goal to a small decision model that sees only the current screen; use it for steps you cannot see ahead, and brief it like that model: one screen or sub-goal per task, the visible control or label to act on, getting to a page kept apart from what to read there (read that yourself with \`computer_look\`), any words to type in \`text\` (\`goal\` types nothing), and what the screen shows once it is done. \`computer_control\` is for the fixed actions only: open or quit an app, volume, media, dark mode, and locking the screen.
+A task that comes back with questions wants \`taskId\`, \`decisionId\` and \`answers\`, each choosing one of the keys it offered, with a confidence of high, medium or low; never invent a key. When a step waits for the user's approval, wait for them or report it: you cannot approve it, and working around it fails. When a task ends \`blocked\` or \`stuck\`, stop and say why instead of starting it again. \`computer_status\` follows a running task and \`computer_stop\` ends one.
+A site the user is signed in to is computer work in their default browser: never pick a browser by name unless the user did. \`open_url\` switches to a tab already on the site, or opens one, and waits for the page to load.
+On a sign-in page, try what the browser saved once: click the username or email field, press \`down\` if no \`popup\` came back, and click the saved account's line by its exact text as \`label\`. When no account is offered or nothing fills in, stop and ask the user to sign in in that browser, then continue. Never ask for a password or type one from chat; stop at a two-factor code too.
+Any other page the preview browser can open is preview work, not computer work, and a change in the checkout needs neither.`;
 
 /** Computer guidance for sessions holding the `computer` capability. */
 export const T3_CODE_COMPUTER_TOOL_INSTRUCTIONS = computerToolInstructions("");

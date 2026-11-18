@@ -152,8 +152,20 @@ function toChildRequest(frame: ComputerHostFrame): ChildRequest | null {
       return {
         id: frame.taskId,
         kind: "start",
-        task: { goal: frame.goal, text: frame.text },
+        task: {
+          goal: frame.goal,
+          text: frame.text,
+          ...(frame.act === undefined ? {} : { act: frame.act }),
+        },
         limits: { maxSteps: frame.limits.maxSteps, timeoutMs: frame.limits.timeoutMs },
+      };
+    case "look":
+      return {
+        id: frame.requestId,
+        kind: "look",
+        screenshot: frame.screenshot,
+        ...(frame.app === undefined ? {} : { app: frame.app }),
+        ...(frame.region === undefined ? {} : { region: frame.region }),
       };
     case "stop":
       return { id: frame.requestId, kind: "stop", taskId: frame.taskId, reason: frame.reason };
@@ -237,6 +249,19 @@ const makeSession = Effect.scoped(
             reply: { requestId: message.id, ok: true, done: message.done },
           });
           return;
+        case "look":
+          yield* computer.hostRespond({
+            hostId,
+            reply: { requestId: message.id, ok: true, look: message.look },
+          });
+          return;
+        case "acted":
+          yield* computer.hostEvent({
+            hostId,
+            taskId: message.taskId,
+            event: { type: "acted", kind: message.action, mode: message.mode, how: message.how },
+          });
+          return;
         case "error": {
           // A failed `start` carries the task id; a failed `control` carries its request id.
           const startRequest = starts.get(message.id);
@@ -304,9 +329,9 @@ const makeSession = Effect.scoped(
       ...hello,
       send: (frame) => {
         // A send is synchronous, so the map is written and read without a fiber between.
-        if (frame.kind === "start") {
-          starts.set(frame.taskId, frame.requestId);
-          // A grant made after this host attached reaches the server with the task it was made for.
+        if (frame.kind === "start") starts.set(frame.taskId, frame.requestId);
+        // A grant made after this host attached reaches the server with the task or look it was made for.
+        if (frame.kind === "start" || frame.kind === "look") {
           child.send({ id: "access", kind: "access" });
         }
         const request = toChildRequest(frame);

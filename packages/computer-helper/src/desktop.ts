@@ -16,7 +16,7 @@ import {
 } from "./validate.ts";
 import { execRunner } from "./runner.ts";
 import type { CommandOptions, CommandRunner } from "./runner.ts";
-import { CONTROL_ROLES, NeedsPointer } from "./types.ts";
+import { CONTROL_ROLES, fitScale, NeedsPointer, SCREENSHOT_MAX_EDGE } from "./types.ts";
 import type {
   ActOptions,
   ActResult,
@@ -29,6 +29,8 @@ import type {
   ScreenAction,
   ScreenBackend,
   ScreenControl,
+  Screenshot,
+  ScreenshotOptions,
 } from "./types.ts";
 
 /**
@@ -100,6 +102,38 @@ function children(el) {
   for (var i = 0; i < list.count; i++) out.push(list.objectAtIndex(i));
   return out;
 }
+// The items of a menu the app has open (a context menu), wherever it hangs: off the app, or inside a window's chrome
+// (Chrome's). The menu bar and the page itself are not searched.
+var MENU_PATH = { AXWindow: 1, AXGroup: 1, AXScrollArea: 1, AXMenu: 1, AXMenuItem: 1 };
+// Chrome's autofill and saved-password rows are pressable static texts in a popup window, not menu items.
+function popupRows(app, label) {
+  var wins = attr(app, 'AXWindows'), found = [];
+  for (var i = 0; wins && i < wins.count && !found.length; i++) {
+    var w = wins.objectAtIndex(i), sub = plain(w, 'AXSubrole');
+    if (sub === 'AXStandardWindow' || sub === 'AXDialog') continue;
+    var queue = [w], seen = 0;
+    while (queue.length && seen < 200 && !found.length) {
+      var kids = children(queue.shift());
+      for (var j = 0; j < kids.length; j++, seen++) {
+        var el = kids[j];
+        if (plain(el, 'AXRole') === 'AXStaticText' && String(plain(el, 'AXValue') || '').replace(/\\s+/g, ' ').trim() === label) { found.push(el); break; }
+        queue.push(el);
+      }
+    }
+  }
+  return found;
+}
+function openMenuItems(app) {
+  var queue = children(app).filter(function (el) { return plain(el, 'AXRole') !== 'AXMenuBar'; });
+  var items = [], seen = 0;
+  while (queue.length && seen < 1500) {
+    var el = queue.shift(); seen++;
+    var role = plain(el, 'AXRole');
+    if (role === 'AXMenuItem' && plain(el, 'AXTitle')) items.push(el);
+    if (MENU_PATH[role]) queue = queue.concat(children(el));
+  }
+  return items;
+}
 function center(el) {
   var p = pair(el, 'AXPosition'), s = pair(el, 'AXSize');
   return p && s && s[0] > 0 && s[1] > 0 ? [p[0] + s[0] / 2, p[1] + s[1] / 2] : null;
@@ -166,8 +200,9 @@ function pidOf(name) {
 // Posts an event to one process, so the person's own pointer and keyboard (the global tap) are untouched. A zero pid
 // falls back to the HID tap; CGEventPostToPid needs a real pid.
 function postToPid(pid, event, dryrun) { if (dryrun) return; if (pid > 0) $.CGEventPostToPid(pid, event); else $.CGEventPost($.kCGHIDEventTap, event); }
-function keyToPid(pid, code) {
+function keyToPid(pid, code, flags) {
   var down = $.CGEventCreateKeyboardEvent($(), code, true), up = $.CGEventCreateKeyboardEvent($(), code, false);
+  if (flags) { $.CGEventSetFlags(down, flags); $.CGEventSetFlags(up, flags); }
   postToPid(pid, down, false); postToPid(pid, up, false);
 }
 // Text typed as Unicode keyboard events to one process (CGEventKeyboardSetUnicodeString), never as a keystroke Apple
@@ -228,10 +263,19 @@ function clickAt(point, dryrun) {
 
 // The main window is used rather than "window 1" because apps often keep small floating panels
 // (input-method badges, palettes) ahead of the real window in the accessibility order.
-const FRONT = `
-function front() {
+const RUNNING = `
+function runningNamed(name) {
+  var apps = $.NSWorkspace.sharedWorkspace.runningApplications;
+  for (var i = 0; i < apps.count; i++) { var a = apps.objectAtIndex(i); if (ObjC.unwrap(a.localizedName) === name) return a; }
+  throw new Error('ADA_NO_APP_NAMED:' + name + ':');
+}
+`;
+
+/** `front(name)`: a running app read where it is, without bringing it forward. */
+const FRONT = `${RUNNING}
+function front(name) {
   trusted();
-  var running = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+  var running = name ? runningNamed(name) : $.NSWorkspace.sharedWorkspace.frontmostApplication;
   if (!running || running.isNil()) throw new Error('ADA_NO_APP');
   var app = axApp(running.processIdentifier);
   var win = attr(app, 'AXMainWindow') || attr(app, 'AXFocusedWindow');
@@ -268,36 +312,92 @@ function urlOf(el) {
   try { return ObjC.unwrap(value.absoluteString) || ''; } catch (error) { return ''; }
 }
 var WALK_MS = 4000;
-function run() {
-  var target = front();
+// Web pages nest deep: Apple's sign-in frame puts its fields 33 levels under Chrome's window. The node and time budgets bound the walk.
+var MAX_DEPTH = 64;
+var LOADER = /(^|[-_\\s])(load|loader|loading|spinner|progress)([-_\\s]|$)/i;
+// A page still loading shows it: a progress or busy indicator, a busy element, or a visible loader (Apple's sign-in
+// keeps a full-page "maison-loader-spinner" up until its form's frame arrives, while the page reports itself loaded).
+// A popup the app opened over its window (autofill suggestions, a menu) is a window of its own; its lines, the
+// highlighted one marked.
+function popupText(app) {
+  var wins = attr(app, 'AXWindows'), lines = [];
+  for (var i = 0; wins && i < wins.count; i++) {
+    var w = wins.objectAtIndex(i), sub = plain(w, 'AXSubrole'), s = pair(w, 'AXSize');
+    if (sub === 'AXStandardWindow' || sub === 'AXDialog' || !s || s[0] < 100 || s[1] < 30) continue;
+    var queue = [w], seen = 0;
+    while (queue.length && seen < 200) {
+      var kids = children(queue.shift());
+      for (var j = 0; j < kids.length; j++, seen++) {
+        var el = kids[j], role = plain(el, 'AXRole');
+        var words = role === 'AXStaticText' ? plain(el, 'AXValue') : role === 'AXList' || role === 'AXMenu' ? plain(el, 'AXTitle') : role === 'AXMenuItem' ? plain(el, 'AXTitle') : '';
+        words = clip(words, 120);
+        if (words && plain(el, 'AXSelected') === true) words = '\u25b8 ' + words;
+        if (words && lines.indexOf(words) < 0 && lines.indexOf('\u25b8 ' + words) < 0) lines.push(words);
+        queue.push(el);
+      }
+    }
+  }
+  return clip(lines.join(' | '), 400);
+}
+function showsLoading(el, role) {
+  if (role === 'AXProgressIndicator' || role === 'AXBusyIndicator') return true;
+  if (role !== 'AXGroup' && role !== 'AXWebArea') return false;
+  return plain(el, 'AXElementBusy') === true || LOADER.test(plain(el, 'AXDOMIdentifier') || '');
+}
+// A browser window's page: its first web area, found before the walk so the page, not the tabs, toolbar and bookmarks
+// around it, gets the walk's budget. Refs stay paths from the window.
+function pageOf(win) {
+  var queue = [{ el: win, path: [], depth: 0 }], seen = 0;
+  while (queue.length && seen < 600) {
+    var node = queue.shift(), kids = children(node.el);
+    for (var i = 0; i < kids.length; i++, seen++) {
+      var path = node.path.concat([i]);
+      if (plain(kids[i], 'AXRole') === 'AXWebArea') return { el: kids[i], path: path, depth: node.depth + 1 };
+      if (node.depth < 12) queue.push({ el: kids[i], path: path, depth: node.depth + 1 });
+    }
+  }
+  return null;
+}
+var MAX_TEXT = 8000, MAX_NODES = 4000, MAX_CONTROLS = 200;
+function run(argv) {
+  var target = front(argv && argv[0]);
   if (!target.win) return JSON.stringify({ app: target.name, title: '', controls: [], text: '' });
-  var win = target.win, started = Date.now(), truncated = false;
+  var win = target.win, started = Date.now(), truncated = false, loading = false;
   var wp = pair(win, 'AXPosition'), ws = pair(win, 'AXSize');
   var left = wp[0], top = wp[1], right = wp[0] + ws[0], bottom = wp[1] + ws[1];
-  var queue = [{ el: win, path: [], depth: 0 }], visited = 0, controls = [], text = '', url = '';
-  while (queue.length) {
-    if (visited >= 2500 || controls.length >= 150 || Date.now() - started > WALK_MS) { truncated = true; break; }
-    var node = queue.shift(), kids = children(node.el);
-    for (var i = 0; i < kids.length; i++) {
-      if (visited >= 2500 || controls.length >= 150) { truncated = true; break; }
+  var page = pageOf(win), url = page ? urlOf(page.el) : '';
+  // Depth first, in document order, so text reads as the page does: a heading, then its section.
+  var root = page || { el: win, path: [], depth: 0 };
+  var stack = [{ el: root.el, path: root.path, depth: root.depth, root: true }], visited = 0, controls = [], text = '';
+  // Chrome reports what is scrolled out of view as 1 point tall on the page's top or bottom edge.
+  var pp = page && pair(page.el, 'AXPosition'), psz = page && pair(page.el, 'AXSize');
+  var pageTop = pp ? pp[1] : -1e9, pageBottom = pp && psz ? pp[1] + psz[1] : 1e9;
+  while (stack.length) {
+    if (visited >= MAX_NODES || controls.length >= MAX_CONTROLS || Date.now() - started > WALK_MS) { truncated = true; break; }
+    var node = stack.pop(), el = node.el, role = plain(el, 'AXRole');
+    if (!node.root) {
       visited++;
-      var el = kids[i], role = plain(el, 'AXRole'), p = pair(el, 'AXPosition'), s = pair(el, 'AXSize');
+      var p = pair(el, 'AXPosition'), s = pair(el, 'AXSize');
       var sized = p && s && s[0] > 0 && s[1] > 0;
       if (sized && (p[0] >= right || p[1] >= bottom || p[0] + s[0] <= left || p[1] + s[1] <= top)) continue;
-      var path = node.path.concat([i]);
+      var pinned = p && s && s[1] <= 1 && (Math.abs(p[1] - pageTop) <= 1 || Math.abs(p[1] + s[1] - pageBottom) <= 1);
       if (role === 'AXWebArea' && !url) url = urlOf(el);
-      if (role === 'AXStaticText') {
+      if (!loading && sized && showsLoading(el, role)) loading = true;
+      if (pinned) {
+        // Scrolled out of view: neither listed nor read, but its children may be on screen.
+      } else if (role === 'AXStaticText') {
         var words = plain(el, 'AXValue');
-        if (text.length < 1500 && words) text += (text ? ' ' : '') + clip(words, 1500);
+        // A heading starts its own line, so the links and rows after it read as its section.
+        if (text.length < MAX_TEXT && words) text += node.heading ? (text ? '\\n' : '') + '## ' + clip(words, 200) + '\\n' : (text && !/\\n$/.test(text) ? ' ' : '') + clip(words, 1500);
       } else if (ROLES[role] && sized) {
         // A password field (subrole AXSecureTextField) is listed so it can be typed into, never with its value.
         var kind = ROLES[role], value = plain(el, 'AXSubrole') === 'AXSecureTextField' ? '' : plain(el, 'AXValue');
         var label = plain(el, 'AXTitle') || plain(el, 'AXDescription') || (kind === 'textbox' ? '' : value) ||
-          (kind === 'row' ? innerText(el, 0) : '') ||
+          (kind === 'row' || kind === 'link' || kind === 'button' ? innerText(el, 0) : '') ||
           (plain(el, 'AXSubrole') ? plain(el, 'AXRoleDescription') : '') || plain(el, 'AXHelp') || '';
         label = clip(label, 100);
         if (kind !== 'row' || label) {
-          var control = { ref: path.join('.'), role: kind, label: label, bounds: { x: p[0], y: p[1], w: s[0], h: s[1] } };
+          var control = { ref: node.path.join('.'), role: kind, label: label, bounds: { x: p[0], y: p[1], w: s[0], h: s[1] } };
           if (kind === 'textbox') {
             control.value = clip(value, 200);
             if (plain(el, 'AXFocused') === true) control.focused = true;
@@ -305,14 +405,26 @@ function run() {
           controls.push(control);
         }
       }
-      if (!LEAVES[role] && node.depth + 1 < 20) queue.push({ el: el, path: path, depth: node.depth + 1 });
+      if (LEAVES[role] || node.depth + 1 >= MAX_DEPTH) continue;
     }
+    var kids = children(el), heading = role === 'AXHeading';
+    for (var i = kids.length - 1; i >= 0; i--) stack.push({ el: kids[i], path: node.path.concat([i]), depth: node.depth + 1, heading: heading });
   }
   if (!url) { var doc = plain(win, 'AXDocument'); if (typeof doc === 'string' && /^(https?|file):/.test(doc)) url = doc; }
+  // A web card is often a link wrapping a link to the same place: one control, the outer one.
+  controls = controls.filter(function (c, i) {
+    return !controls.slice(0, i).some(function (o) {
+      return o.role === c.role && o.label === c.label && c.bounds.x >= o.bounds.x && c.bounds.y >= o.bounds.y &&
+        c.bounds.x + c.bounds.w <= o.bounds.x + o.bounds.w && c.bounds.y + c.bounds.h <= o.bounds.y + o.bounds.h;
+    });
+  });
   controls.sort(function (a, b) { return Math.round(a.bounds.y / 8) - Math.round(b.bounds.y / 8) || a.bounds.x - b.bounds.x; });
-  var out = { app: target.name, title: plain(win, 'AXTitle') || '', controls: controls, text: text.slice(0, 1500), window: { x: left, y: top, w: ws[0], h: ws[1] } };
+  var out = { app: target.name, title: plain(win, 'AXTitle') || '', controls: controls, text: text.slice(0, MAX_TEXT), window: { x: left, y: top, w: ws[0], h: ws[1] } };
   if (url) out.url = url;
   if (truncated) out.truncated = true;
+  if (loading) out.loading = true;
+  var popup = [popupText(target.app)].concat(openMenuItems(target.app).filter(function (item) { return plain(item, 'AXEnabled') !== false; }).map(function (item) { return clip(plain(item, 'AXTitle'), 80); })).filter(function (line) { return line; }).join(' | ').slice(0, 600);
+  if (popup) out.popup = popup;
   return JSON.stringify(out);
 }`;
 
@@ -322,8 +434,8 @@ function run() {
  * Recording access, which is also what a screenshot of it needs).
  */
 const WINDOW_LIST = `
-function frontWindow() {
-  var running = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+function frontWindow(name) {
+  var running = name ? runningNamed(name) : $.NSWorkspace.sharedWorkspace.frontmostApplication;
   if (!running || running.isNil()) throw new Error('ADA_NO_APP');
   var pid = running.processIdentifier;
   var list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements, 0))) || [];
@@ -341,6 +453,8 @@ function frontWindow() {
  * "v:x,y" is a spot read from a screenshot (the app refused accessibility), clicked where it was seen.
  */
 const ACT_SCRIPT = `${JXA_HELPERS}${FRONT}${WINDOW_LIST}
+// The app an act targets (computer_act's \`app\`); empty is the app in front.
+var TARGET_APP = '';
 function resolve(win, ref) {
   var el = win, parts = String(ref).split('.');
   for (var i = 0; i < parts.length; i++) {
@@ -353,12 +467,12 @@ function resolve(win, ref) {
 // The window's middle, from accessibility when the app answers, else from the window list.
 function middleOfWindow() {
   try {
-    var target = front();
+    var target = front(TARGET_APP);
     if (!target.win) throw new Error('ADA_NO_WINDOW');
     return center(target.win);
   } catch (error) {
     if (String(error.message).indexOf('ADA_UNREACHABLE') < 0) throw error;
-    var seen = frontWindow().window;
+    var seen = frontWindow(TARGET_APP).window;
     if (!seen) throw new Error('ADA_NO_WINDOW');
     return [seen.x + seen.w / 2, seen.y + seen.h / 2];
   }
@@ -387,6 +501,17 @@ function focusInPlace(el) {
   if ($.AXUIElementSetAttributeValue(el, $('AXFocused'), $.NSNumber.numberWithBool(true)) !== 0) return false;
   return true;
 }
+function webAreaOf(win) {
+  var queue = [{ el: win, depth: 0 }], seen = 0;
+  while (queue.length && seen < 600) {
+    var node = queue.shift(), kids = children(node.el);
+    for (var i = 0; i < kids.length; i++, seen++) {
+      if (plain(kids[i], 'AXRole') === 'AXWebArea') return kids[i];
+      if (node.depth < 12) queue.push({ el: kids[i], depth: node.depth + 1 });
+    }
+  }
+  return null;
+}
 // The scroll view a person would scroll: the largest scroll or web area inside the window (not a sidebar), else null.
 function scrollArea(win) {
   var queue = [{ el: win, depth: 0 }], seen = 0, best = null, bestArea = 0;
@@ -406,6 +531,14 @@ function scrollArea(win) {
 }
 // Whether the text box took the typing focus after the click: the app's focused element is it, or sits inside it
 // (a combo box's own field), and is a text element.
+// The control under a screen point, only when it belongs to the app in front (never the overlay or another app).
+function elementAt(point) {
+  var found = Ref(), pid = Ref();
+  if ($.AXUIElementCopyElementAtPosition($.AXUIElementCreateSystemWide(), point[0], point[1], found) !== 0) return null;
+  var el = ObjC.castRefToObject(found[0]);
+  if ($.AXUIElementGetPid(el, pid) !== 0) return null;
+  return pid[0] === $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier ? el : null;
+}
 function hasFocus(app, el) {
   var focused = attr(app, 'AXFocusedUIElement');
   if (!focused) return false;
@@ -455,35 +588,49 @@ function paste(app, text, events) {
 }
 function run(argv) {
   var op = argv[0], payload = JSON.parse(argv[1] || '{}'), dryrun = payload.dryrun === true;
+  TARGET_APP = typeof payload.app === 'string' ? payload.app : '';
   trusted();
   if (op === 'press') {
-    // A key to the app's own process (CGEventPostToPid), not the global tap, so the person's keyboard is untouched.
-    var app = front();
-    if (!dryrun) keyToPid(app.app ? pidOf(app.app) : 0, payload.code);
+    // A key to the app's own process (CGEventPostToPid), not the global tap, so the person's keyboard is untouched. A
+    // Command shortcut is the app's own menu item first, which does not depend on the keyboard layout.
+    var app = front(TARGET_APP);
+    if (dryrun) return JSON.stringify({ mode: 'background' });
+    var keyPid = app.name ? pidOf(app.name) : 0;
+    if (!payload.command) keyToPid(keyPid, payload.code);
+    else if (menuCommand(app.app, payload.command, 0)) return JSON.stringify({ mode: 'background', how: 'the app menu item' });
+    else keyToPid(keyPid, payload.code, $.kCGEventFlagMaskCommand);
     return JSON.stringify({ mode: 'background' });
   }
   if (op === 'scroll') {
-    var target = null;
+    var target = null, times = Math.min(10, Math.max(1, Number(payload.amount) || 1));
+    var spid = 0; try { spid = pidOf(front(TARGET_APP).name); } catch (e) { spid = 0; }
+    // A browser's page takes no wheel events posted to its process, but does take its page keys, in the background.
+    var shown = null; try { shown = !payload.ref && front(TARGET_APP).win ? webAreaOf(front(TARGET_APP).win) : null; } catch (e) { shown = null; }
+    if (shown && spid) {
+      var PAGE_KEYS = { down: 121, up: 116, top: 115, bottom: 119 };
+      var pageKey = PAGE_KEYS[payload.direction] || 121;
+      for (var t = 0; t < (pageKey === 115 || pageKey === 119 ? 1 : times); t++) if (!dryrun) keyToPid(spid, pageKey);
+      return JSON.stringify({ mode: 'background', how: 'page keys to the page' });
+    }
     if (payload.ref) {
-      var w = front().win;
+      var w = front(TARGET_APP).win;
       if (!w) throw new Error('ADA_NO_WINDOW');
       target = center(resolve(w, payload.ref));
       if (!target) throw new Error('ADA_GONE');
     } else {
-      try { var fw = front().win; target = fw ? scrollArea(fw) : null; } catch (error) { target = null; }
+      try { var fw = front(TARGET_APP).win; target = fw ? scrollArea(fw) : null; } catch (error) { target = null; }
       target = target || middleOfWindow();
     }
     if (!target) throw new Error('ADA_NO_WINDOW');
     if (!onScreen(target)) throw new Error('ADA_OFFSCREEN');
     var up = payload.direction === 'up' || payload.direction === 'top';
-    var steps = payload.direction === 'top' || payload.direction === 'bottom' ? 20 : 3;
+    var steps = payload.direction === 'top' || payload.direction === 'bottom' ? 20 : 3 * times;
     // Scroll wheel events to the window's process, at the scroll area: the person's pointer is not moved.
-    var spid = 0; try { spid = pidOf(front().app); } catch (e) { spid = 0; }
     for (var n = 0; n < steps; n++) { var ev = $.CGEventCreateScrollWheelEvent($(), $.kCGScrollEventUnitLine, 1, up ? 15 : -15); $.CGEventSetLocation(ev, $.CGPointMake(target[0], target[1])); postToPid(spid, ev, dryrun); }
     return JSON.stringify({ mode: 'background', at: { x: target[0], y: target[1] } });
   }
   if (op === 'setvalue') {
-    var box = resolve(front().win, payload.ref);
+    var box = resolve(front(TARGET_APP).win, payload.ref);
     // AXValue set directly on the field (no keyboard): a native field and Chrome's omnibox take it; others do not.
     if (dryrun) return JSON.stringify({ mode: 'background' });
     if ($.AXUIElementSetAttributeValue(box, $('AXValue'), $(payload.text)) !== 0) throw new Error('ADA_NEEDS_POINTER:this field does not accept text without the keyboard:');
@@ -497,10 +644,26 @@ function run(argv) {
     else typeText($.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier, String(payload.text), dryrun);
     return JSON.stringify({ mode: 'pointer' });
   }
+  if (op === 'menu') {
+    var owner = front(TARGET_APP);
+    if (!owner.win) throw new Error('ADA_NO_WINDOW');
+    var menuOf = resolve(owner.win, payload.ref), menuAt = center(menuOf);
+    if (!dryrun && $.AXUIElementPerformAction(menuOf, $('AXShowMenu')) !== 0) throw new Error('ADA_NEEDS_POINTER:that control has no menu:');
+    return JSON.stringify(menuAt ? { mode: 'background', at: { x: menuAt[0], y: menuAt[1] } } : { mode: 'background' });
+  }
+  if (op === 'pick') {
+    var items = openMenuItems(front(TARGET_APP).app).filter(function (item) { return plain(item, 'AXTitle') === payload.label; });
+    if (!items.length) items = popupRows(front(TARGET_APP).app, payload.label);
+    if (!items.length) throw new Error('ADA_GONE');
+    if (!dryrun && $.AXUIElementPerformAction(items[0], $('AXPress')) !== 0) throw new Error('ADA_GONE');
+    return JSON.stringify({ mode: 'background', how: 'the menu item' });
+  }
   var spot = /^v:(-?[\\d.]+),(-?[\\d.]+)$/.exec(String(payload.ref || '')), point, el = null, ax = null;
-  if (spot) point = [Number(spot[1]), Number(spot[2])];
-  else {
-    var here = front();
+  if (spot) {
+    point = [Number(spot[1]), Number(spot[2])];
+    if (op === 'click') el = elementAt(point);
+  } else {
+    var here = front(TARGET_APP);
     if (!here.win) throw new Error('ADA_NO_WINDOW');
     ax = here.app;
     el = resolve(here.win, payload.ref);
@@ -508,13 +671,21 @@ function run(argv) {
   }
   if (op === 'value') return JSON.stringify({ value: el && plain(el, 'AXSubrole') !== 'AXSecureTextField' ? plain(el, 'AXValue') : null });
   if (op === 'paste') {
-    if (!dryrun) paste(ax || front().app, payload.text, payload.events === true);
+    if (!dryrun) paste(ax || front(TARGET_APP).app, payload.text, payload.events === true);
     return 'ok';
   }
   if (op === 'click') {
     var at = point ? { x: point[0], y: point[1] } : null;
     if (el && pressable(el)) { if (dryrun || $.AXUIElementPerformAction(el, $('AXPress')) === 0) return JSON.stringify({ mode: 'background', at: at }); }
-    if (el && (dryrun ? focusable(el) : focusInPlace(el))) return JSON.stringify({ mode: 'background', at: at, how: 'focused through accessibility' });
+    if (el && (dryrun ? focusable(el) : focusInPlace(el))) {
+      // A button or link that offers no AXPress (a cross-site frame's) is activated the keyboard's way once focused.
+      var elRole = plain(el, 'AXRole');
+      if (!PRESS_ROLES[elRole] || dryrun) return JSON.stringify({ mode: 'background', at: at, how: 'focused through accessibility' });
+      var link = elRole === 'AXLink';
+      delay(0.05);
+      keyToPid(pidOf(here ? here.name : ''), link ? 36 : 49);
+      return JSON.stringify({ mode: 'background', at: at, how: 'focused, then pressed ' + (link ? 'Return' : 'Space') });
+    }
     if (payload.allow !== true) throw new Error('ADA_NEEDS_POINTER:that control has no accessible action:');
     if (!point) throw new Error('ADA_GONE');
     clickAt(point, dryrun);
@@ -541,8 +712,8 @@ function run(argv) {
 
 const FRONT_WINDOW_SCRIPT = `ObjC.import('AppKit');
 ObjC.import('CoreGraphics');
-${WINDOW_LIST}
-function run() { return JSON.stringify(frontWindow()); }`;
+${RUNNING}${WINDOW_LIST}
+function run(argv) { return JSON.stringify(frontWindow(argv && argv[0])); }`;
 
 type Window = { id: number; x: number; y: number; w: number; h: number; title: string };
 type FrontWindow = { app: string; window: Window | null };
@@ -616,17 +787,35 @@ export function visualControls(lines: OcrLine[], window: Window): ScreenControl[
     .map(({ label, x, y }) => ({ ref: `v:${x},${y}`, role: "text" as const, label }));
 }
 
-/** macOS virtual key codes for the keys a step may press. */
-const KEY_CODES = { enter: 36, escape: 53, tab: 48, space: 49 } as const;
+/** macOS virtual key codes for the keys a step may press (ANSI positions for the shortcut letters). */
+const KEY_CODES = {
+  enter: 36,
+  escape: 53,
+  tab: 48,
+  space: 49,
+  up: 126,
+  down: 125,
+  left: 123,
+  right: 124,
+  "cmd+l": 37,
+  "cmd+t": 17,
+  "cmd+w": 13,
+} as const;
 
 /** The JSON handed to the act script as argv: key codes for presses, otherwise the action's own fields. */
 function actionPayload(action: ScreenAction): object {
-  if (action.kind === "press") return { code: KEY_CODES[action.key] };
+  if (action.kind === "press")
+    return action.key.startsWith("cmd+")
+      ? { code: KEY_CODES[action.key], command: action.key.slice(4).toUpperCase() }
+      : { code: KEY_CODES[action.key] };
   if (action.kind === "scroll")
-    return action.ref
-      ? { direction: action.direction, ref: action.ref }
-      : { direction: action.direction };
+    return {
+      direction: action.direction,
+      ...(action.ref ? { ref: action.ref } : {}),
+      ...(action.amount ? { amount: action.amount } : {}),
+    };
   if (action.kind === "type") return { ref: action.ref, text: action.text };
+  if (action.kind === "pick") return { label: action.label };
   return { ref: action.ref };
 }
 
@@ -747,6 +936,9 @@ function observationShape(value: unknown): Omit<Observation, "backend"> {
   if (url) seen.url = url;
   if (window) seen.window = window;
   if (optional(raw.truncated, "observation truncated", boolean)) seen.truncated = true;
+  if (optional(raw.loading, "observation loading", boolean)) seen.loading = true;
+  const popup = optional(raw.popup, "observation popup", string);
+  if (popup) seen.popup = popup;
   return seen;
 }
 
@@ -836,7 +1028,11 @@ export class DesktopBackend implements ScreenBackend {
     let output: string;
     try {
       output = await this.runner.run(
-        ...jxa(OBSERVE_SCRIPT, [], options.signal ? { signal: options.signal } : {}),
+        ...jxa(
+          OBSERVE_SCRIPT,
+          options.app ? [options.app] : [],
+          options.signal ? { signal: options.signal } : {},
+        ),
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -902,7 +1098,11 @@ export class DesktopBackend implements ScreenBackend {
     const signal = options.signal;
     if (signal?.aborted) throw stopped(signal);
     if (action.kind === "type") return this.type(action.ref, action.text, options);
-    const payload = { ...actionPayload(action), ...(options.allowPointer ? { allow: true } : {}) };
+    const payload = {
+      ...actionPayload(action),
+      ...(options.allowPointer ? { allow: true } : {}),
+      ...(options.app ? { app: options.app } : {}),
+    };
     return resultOf(await this.call(ACT_SCRIPT, [action.kind, JSON.stringify(payload)], signal));
   }
 
@@ -913,27 +1113,36 @@ export class DesktopBackend implements ScreenBackend {
    */
   private async type(ref: string, text: string, options: ActOptions): Promise<ActResult> {
     const signal = options.signal;
+    const on = options.app ? { app: options.app } : {};
     if (!options.allowPointer) {
-      await this.call(ACT_SCRIPT, ["setvalue", JSON.stringify({ ref, text })], signal);
+      await this.call(ACT_SCRIPT, ["setvalue", JSON.stringify({ ref, text, ...on })], signal);
       await this.sleep(READBACK_MS);
-      if (!landed(await this.readValue(ref, signal), text))
+      if (!landed(await this.readValue(ref, signal, on), text))
         throw new Error("The text did not land in the text box, so it stopped.");
       return { mode: "background", how: "value set through accessibility" };
     }
     const events = await this.systemEvents();
     const left = resultOf(
-      await this.call(ACT_SCRIPT, ["focus", JSON.stringify({ ref, allow: true, events })], signal),
+      await this.call(
+        ACT_SCRIPT,
+        ["focus", JSON.stringify({ ref, allow: true, events, ...on })],
+        signal,
+      ),
     );
     if (KEYBOARD_TEXT.test(text)) {
       for (const chunk of chunks(text, KEY_CHUNK)) {
         if (signal?.aborted) throw stopped(signal);
-        await this.call(ACT_SCRIPT, ["keys", JSON.stringify({ text: chunk, events })], signal);
+        await this.call(
+          ACT_SCRIPT,
+          ["keys", JSON.stringify({ text: chunk, events, ...on })],
+          signal,
+        );
       }
     } else {
-      await this.call(ACT_SCRIPT, ["paste", JSON.stringify({ ref, text, events })], signal);
+      await this.call(ACT_SCRIPT, ["paste", JSON.stringify({ ref, text, events, ...on })], signal);
     }
     await this.sleep(READBACK_MS);
-    if (!landed(await this.readValue(ref, signal), text))
+    if (!landed(await this.readValue(ref, signal, on), text))
       throw new Error("The text did not land in the text box, so it stopped.");
     return {
       ...left,
@@ -944,10 +1153,14 @@ export class DesktopBackend implements ScreenBackend {
     };
   }
 
-  private async readValue(ref: string, signal: AbortSignal | undefined): Promise<string | null> {
+  private async readValue(
+    ref: string,
+    signal: AbortSignal | undefined,
+    on: { app?: string },
+  ): Promise<string | null> {
     const read = object(
       json(
-        (await this.call(ACT_SCRIPT, ["value", JSON.stringify({ ref })], signal)).trim(),
+        (await this.call(ACT_SCRIPT, ["value", JSON.stringify({ ref, ...on })], signal)).trim(),
         "typed value",
       ),
       "typed value",
@@ -955,6 +1168,71 @@ export class DesktopBackend implements ScreenBackend {
     return read.value === null || read.value === undefined
       ? null
       : string(read.value, "typed value");
+  }
+
+  /**
+   * A window, or a region of the screen, as a PNG scaled so its longer edge is at most `maxEdge` pixels (a Retina
+   * capture is twice the window's points). Without Screen Recording macOS returns the desktop instead (or opens its
+   * prompt), so access is checked first, never asking. The file is deleted at once.
+   */
+  async screenshot(options: ScreenshotOptions = {}): Promise<Screenshot> {
+    const access = await macAccess(this.runner);
+    if (!access.screenRecording)
+      throw new Error(
+        `${SCREEN_RECORDING_OFF} A screenshot needs it: allow Ada in System Settings › Privacy & Security › Screen Recording, then try again.`,
+      );
+    const front = frontWindowShape(
+      json(
+        (
+          await this.call(FRONT_WINDOW_SCRIPT, options.app ? [options.app] : [], options.signal)
+        ).trim(),
+        "front window",
+      ),
+    );
+    const window = front.window;
+    if (!options.region && !window) throw new Error("The app in front has no open window.");
+    const region = options.region ?? {
+      x: window?.x ?? 0,
+      y: window?.y ?? 0,
+      w: window?.w ?? 0,
+      h: window?.h ?? 0,
+    };
+    const file = this.tmp();
+    try {
+      const target = options.region
+        ? `-R${region.x},${region.y},${region.w},${region.h}`
+        : `-l${window?.id ?? 0}`;
+      await this.runner.run(
+        "screencapture",
+        ["-x", "-o", "-t", "png", target, file],
+        options.signal ? { signal: options.signal } : undefined,
+      );
+      let size = pixelSize(
+        await this.runner.run("sips", ["-g", "pixelWidth", "-g", "pixelHeight", file]),
+      );
+      const fit = fitScale(size.w, size.h, options.maxEdge ?? SCREENSHOT_MAX_EDGE);
+      if (fit < 1) {
+        await this.runner.run("sips", [
+          "--resampleWidth",
+          String(Math.max(1, Math.round(size.w * fit))),
+          file,
+        ]);
+        size = pixelSize(
+          await this.runner.run("sips", ["-g", "pixelWidth", "-g", "pixelHeight", file]),
+        );
+      }
+      return {
+        png: new Uint8Array(await NodeFSP.readFile(file)),
+        width: size.w,
+        height: size.h,
+        region,
+        scale: region.w > 0 ? size.w / region.w : 1,
+        app: front.app,
+        title: window?.title ?? "",
+      };
+    } finally {
+      await NodeFSP.rm(file, { force: true });
+    }
   }
 
   async pointer(): Promise<PointerReading> {
@@ -978,6 +1256,14 @@ export class DesktopBackend implements ScreenBackend {
       throw explain(error instanceof Error ? error.message : String(error)) ?? error;
     }
   }
+}
+
+/** `sips -g pixelWidth -g pixelHeight` output → the image's size. */
+export function pixelSize(output: string): { w: number; h: number } {
+  const w = Number(/pixelWidth:\s*(\d+)/.exec(output)?.[1]);
+  const h = Number(/pixelHeight:\s*(\d+)/.exec(output)?.[1]);
+  if (!(w > 0) || !(h > 0)) throw new Error("The screenshot could not be read.");
+  return { w, h };
 }
 
 /** An act script's result: its mode ("background" or "pointer"), where it acted (`at`) and where it left the real pointer. */
@@ -1015,6 +1301,8 @@ export const SCRIPTS = {
 /** A script failure in words a person can act on, or null to pass it through. */
 function explain(message: string): Error | null {
   if (message.includes("ADA_GONE")) return new Error("That control is gone; look again.");
+  const named = message.match(/ADA_NO_APP_NAMED:([^:]*):/);
+  if (named) return new Error(`No app named “${named[1] ?? ""}” is running on the Mac.`);
   if (message.includes("ADA_NO_APP")) return new Error("No app is in front on the Mac.");
   if (message.includes("ADA_NO_WINDOW")) return new Error("The app in front has no open window.");
   if (message.includes("ADA_OFFSCREEN"))

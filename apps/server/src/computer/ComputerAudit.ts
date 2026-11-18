@@ -77,6 +77,7 @@ export const actionAuditFields = (action: ComputerAction): Readonly<Record<strin
   ...(action.direction ? { direction: action.direction } : {}),
   ...(action.what ? { what: action.what } : {}),
   ...(action.name ? { name: clip(action.name) } : {}),
+  ...(action.url ? { url: clip(action.url) } : {}),
 });
 
 /** The fields an approval's audit line carries, whether it waited for a tap or ran with approvals off. */

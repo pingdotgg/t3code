@@ -35,6 +35,12 @@ export class FakeNotes implements ScreenBackend {
   query = "";
   searched = false;
   selected: number | null = null;
+  /** The open context menu's items, and the items picked from one. */
+  menu: string[] = [];
+  /** Whether the list scrolls, and how many pages down it is. */
+  scrollable = false;
+  page = 0;
+  readonly picked: string[] = [];
   private focus: "search" | null = null;
   private at: Point = { x: 400, y: 300 };
 
@@ -65,8 +71,15 @@ export class FakeNotes implements ScreenBackend {
         : "Notes";
     const text = this.searched
       ? `Search results for “${this.query}”: ${visible.map((index) => this.notes[index]).join("; ") || "no notes match"}`
-      : `${this.notes.length} notes`;
-    return { backend: "desktop", app: "Notes", title, controls, text };
+      : `${this.notes.length} notes${this.page ? `, page ${this.page + 1}` : ""}`;
+    return {
+      backend: "desktop",
+      app: "Notes",
+      title,
+      controls,
+      text,
+      ...(this.menu.length ? { popup: this.menu.join(" | ") } : {}),
+    };
   }
 
   /** Refs that cannot be acted on in the background (a canvas): acting on them needs the person's mouse. */
@@ -102,6 +115,9 @@ export class FakeNotes implements ScreenBackend {
         return done(point);
       }
       case "press":
+        // Like a browser's saved sign-ins, down in the focused box opens its suggestions.
+        if (action.key === "down" && this.focus === "search")
+          this.menu = ["Password for dana@acme.test"];
         if (action.key === "enter" && this.focus === "search" && this.query) this.searched = true;
         if (action.key === "escape") {
           this.query = "";
@@ -109,7 +125,22 @@ export class FakeNotes implements ScreenBackend {
         }
         return done(undefined);
       case "scroll":
+        if (this.scrollable)
+          this.page = Math.max(
+            0,
+            this.page + (action.direction === "up" ? -1 : 1) * (action.amount ?? 1),
+          );
         return done({ x: 400, y: 300 });
+      case "menu":
+        this.menu = action.ref === "search" ? ["Paste", "Select password"] : [];
+        return done(this.spot(action.ref));
+      case "pick":
+        if (!this.menu.includes(action.label))
+          throw new Error("That menu item is gone; look again.");
+        this.picked.push(action.label);
+        // Like a browser's "Select password", one item opens a picker of saved accounts.
+        this.menu = action.label === "Select password" ? ["Password for dana@acme.test"] : [];
+        return done(undefined);
     }
   }
 

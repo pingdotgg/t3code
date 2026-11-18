@@ -6,6 +6,10 @@ window by reading it through accessibility and clicking, typing and scrolling.
 Every step is checked by the environment first. Routine steps run at once;
 steps that type, send, buy or delete wait for your tap.
 
+Agents either take single steps themselves (read the window, then click, type,
+press a key, scroll or open a web address in your default browser) or hand
+computer use a goal to work through. Both are checked the same way.
+
 Computer use runs on macOS. Approving, stopping and settings work from any
 client, including the mobile app and browsers on Windows or Linux.
 
@@ -31,6 +35,16 @@ and whether it is ready.
 
 A device paired before computer use existed can see tasks and stop them but
 cannot approve steps. Pair it again to let it approve.
+
+## Working alongside it
+
+Steps run in the background: Ada presses controls and sets text through
+accessibility and sends keys to the app itself, so your pointer and keyboard
+stay yours and keep working while it acts. A ring shows where each step lands.
+
+A step that cannot be done that way, such as a click on a canvas, asks on an
+approval card for your mouse for a moment. Only that step uses the real
+pointer, shown as a filled dot, and moving your mouse during it stops the task.
 
 ## What needs a tap
 
@@ -61,7 +75,7 @@ its own setting until it is updated.
 ### Skip approvals
 
 Turn off **Ask before consequential actions** to let steps run without a tap.
-Refused actions stay refused, the step and time limits still apply, every
+A step that needs your mouse still asks. Refused actions stay refused, the step and time limits still apply, every
 skipped step is still written to the activity log, and running tasks show
 **approvals off**. Turning it back on applies from the next step of a task
 that is already running. A project can override this setting too.
