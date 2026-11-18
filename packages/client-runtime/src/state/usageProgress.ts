@@ -1,4 +1,6 @@
 import type { UsageProviderKind, UsageSummary } from "@t3tools/contracts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 interface UsageProgressEnvironment {
   readonly label: string;
@@ -46,10 +48,11 @@ export function emptyUsageReason(
 export function updatingProvidersLabel(
   providers: readonly UsageProviderKind[],
   providerLabel: (provider: UsageProviderKind) => string,
+  resolve: MFunctionType = mFallback,
 ) {
   return providers.length === 1
-    ? `Updating ${providerLabel(providers[0]!)}…`
-    : `Updating ${providers.length} providers…`;
+    ? resolve(msg("Updating {provider}…", { provider: providerLabel(providers[0]!) }))
+    : resolve(msg("Updating {count} providers…", { count: providers.length }));
 }
 
 export function usageProgress(
@@ -61,6 +64,7 @@ export function usageProgress(
     readonly refreshing?: boolean;
     readonly providerLabel: (provider: UsageProviderKind) => string;
   },
+  resolve: MFunctionType = mFallback,
 ) {
   const progress = environments.map((environment) => ({
     label: environment.label,
@@ -77,12 +81,12 @@ export function usageProgress(
       waiting.length === 0
         ? providers.length === 0
           ? null
-          : updatingProvidersLabel(providers, providerLabel)
+          : updatingProvidersLabel(providers, providerLabel, resolve)
         : environments.length === 1
-          ? "Updating…"
+          ? resolve(msg("Updating…"))
           : waiting.length === 1
-            ? `Updating ${waiting[0]!.label}…`
-            : `Updating ${waiting.length} environments…`,
+            ? resolve(msg("Updating {environment}…", { environment: waiting[0]!.label }))
+            : resolve(msg("Updating {count} environments…", { count: waiting.length })),
   };
 }
 
