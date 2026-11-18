@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useState, type ReactNode } from "react";
@@ -8,6 +9,7 @@ import { mobilePreferencesAtom } from "../state/preferences";
 import { ControlPill } from "./ui/ControlPill";
 
 export function PdfAppearance(props: { readonly children: ReactNode }) {
+  const gt = useGT();
   const preferences = useAtomValue(mobilePreferencesAtom);
   const appearance = AsyncResult.isSuccess(preferences)
     ? (preferences.value.pdfAppearance ?? "match-app")
@@ -23,7 +25,7 @@ export function PdfAppearance(props: { readonly children: ReactNode }) {
       <View className="items-end px-3 py-1">
         <ControlPill
           icon={dark ? "moon" : "sun.max"}
-          accessibilityLabel={dark ? "Restore original colors" : "Invert colors"}
+          accessibilityLabel={dark ? gt("Restore original colors") : gt("Invert colors")}
           variant={dark ? "primary" : "circle"}
           onPress={() => setOverride(!dark)}
         />
