@@ -140,9 +140,8 @@ const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT_MS = 3_000;
 const CODEX_CONFIG_PROBE_TIMEOUT_MS = 3_000;
 const CODEX_PLUGIN_RECONCILE_TIMEOUT_MS = 5_000;
-// A slow reconcile must leave the skills read enough of the discovery budget to answer.
-const CODEX_SKILLS_LIST_RESERVE_MS = 1_000;
-const JSON_RPC_METHOD_NOT_FOUND = -32601;
+// Codex answers a method it does not know with invalid request, not method not found.
+const CODEX_UNSUPPORTED_REQUEST_CODES: ReadonlySet<number> = new Set([-32600, -32601]);
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
 // Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
@@ -622,14 +621,33 @@ const loadCodexRemotePlugins = Effect.fn("loadCodexRemotePlugins")(function* (
     CODEX_PLUGIN_RECONCILE_TIMEOUT_MS,
   ).pipe(
     Effect.map((result) => result?.failedMaterializationRemotePluginIds.length === 0),
-    Effect.catch((cause) =>
-      Effect.logDebug("Codex plugin reconcile failed.", { cause }).pipe(
-        Effect.as(
-          cause._tag === "CodexAppServerRequestError" && cause.code === JSON_RPC_METHOD_NOT_FOUND,
-        ),
-      ),
-    ),
+    Effect.catch((cause) => {
+      const unsupported =
+        cause._tag === "CodexAppServerRequestError" &&
+        CODEX_UNSUPPORTED_REQUEST_CODES.has(cause.code);
+      return Effect.logDebug("Codex plugin reconcile failed.", {
+        errorTag: cause._tag,
+        unsupported,
+      }).pipe(Effect.as(unsupported));
+    }),
   );
+});
+
+/** Lists before and after reconcile, so one that outlasts the budget keeps the first answer. */
+const requestCodexCatalogSkills = Effect.fn("requestCodexCatalogSkills")(function* (input: {
+  readonly client: CodexClient.CodexAppServerClient["Service"];
+  readonly cwd: string;
+  readonly deadlineMs: number;
+}) {
+  const listSkills = withCodexDiscoveryDeadline(
+    input.client.request("skills/list", { cwds: [input.cwd] }),
+    input.deadlineMs,
+  );
+  const listed = yield* listSkills;
+  if (listed === undefined) return listed;
+  yield* loadCodexRemotePlugins(input.client, input.deadlineMs);
+  const reconciled = yield* listSkills.pipe(Effect.orElseSucceed(() => undefined));
+  return reconciled ?? listed;
 });
 
 /** Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models. */
@@ -799,14 +817,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const deadlineMs = spawnedAtMs + input.probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
   const [skillsResponse, models, { config, nativeUsage, rateLimits }] = yield* Effect.all(
     [
-      loadCodexRemotePlugins(client, deadlineMs - CODEX_SKILLS_LIST_RESERVE_MS).pipe(
-        Effect.andThen(
-          withCodexDiscoveryDeadline(
-            client.request("skills/list", { cwds: [input.cwd] }),
-            deadlineMs,
-          ),
-        ),
-      ),
+      requestCodexCatalogSkills({ client, cwd: input.cwd, deadlineMs }),
       accountResponse.account?.type === "chatgpt"
         ? requestCodexChatGptModels({
             client,

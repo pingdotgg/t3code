@@ -85,7 +85,10 @@ function makeFakeCodexAppServers() {
               helper.requests.push(frame.params);
               if (frame.method === "plugin/reconcile") {
                 if (helper.codexHome === OLD_CLI_HOME) {
-                  return respondError(frame.id, { code: -32601, message: "Method not found" });
+                  return respondError(frame.id, {
+                    code: -32600,
+                    message: "Invalid request: unknown variant `plugin/reconcile`",
+                  });
                 }
                 if (helper.reconcileFailuresLeft > 0) {
                   helper.reconcileFailuresLeft -= 1;
@@ -153,7 +156,6 @@ it.effect("reuses one Codex skills helper per launch until it idles out", () =>
         Effect.map((skills) => skills.map((skill) => skill.name)),
       );
 
-    // The first read on a fresh helper already includes remote plugin skills.
     assert.deepStrictEqual(yield* read("/alpha"), ["skill-in-/alpha", REMOTE_PLUGIN_SKILL]);
     assert.deepStrictEqual(yield* read("/beta"), ["skill-in-/beta", REMOTE_PLUGIN_SKILL]);
     assert.strictEqual(helpers.length, 1);
@@ -190,7 +192,7 @@ it.effect("reuses one Codex skills helper per launch until it idles out", () =>
     ]);
     assert.strictEqual(helpers.length, 4);
 
-    // A CLI without plugin/reconcile still lists the skills it has, and is not asked again.
+    // A CLI that rejects plugin/reconcile as unknown lists its skills and is not asked again.
     assert.deepStrictEqual(yield* read("/alpha", OLD_CLI_HOME), ["skill-in-/alpha"]);
     yield* TestClock.adjust("29 seconds");
     assert.deepStrictEqual(yield* read("/alpha", OLD_CLI_HOME), ["skill-in-/alpha"]);
