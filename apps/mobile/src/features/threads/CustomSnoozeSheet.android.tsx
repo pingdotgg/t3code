@@ -27,7 +27,7 @@ import {
   type CustomSnoozeInput,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { requireNativeModule } from "expo";
-import { msg, useGT, useMessages } from "gt-react-native";
+import { msg, useGT, useLocale, useMessages } from "gt-react-native";
 import { useEffect, useState } from "react";
 import { AppState, useWindowDimensions } from "react-native";
 
@@ -38,6 +38,7 @@ import {
   applySnoozePickerDate,
   applySnoozePickerTime,
   snoozeDateToPickerDate,
+  snoozePickerLabels,
 } from "./customSnoozeDate";
 
 type Props = {
@@ -64,6 +65,7 @@ function systemUses24HourClock() {
 export function CustomSnoozeSheet(props: Props) {
   const gt = useGT();
   const m = useMessages();
+  const locale = useLocale();
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const [is24Hour, setIs24Hour] = useState(systemUses24HourClock);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to re-read the native 24-hour clock setting when the app resumes
@@ -82,6 +84,7 @@ export function CustomSnoozeSheet(props: Props) {
   const [amount, setAmount] = useState(2);
   const [unit, setUnit] = useState<"minutes" | "hours" | "days">("hours");
   const [error, setError] = useState<string | null>(null);
+  const pickerLabels = snoozePickerLabels(date, locale, is24Hour);
   const submit = () => {
     const input: CustomSnoozeInput =
       mode === "date"
@@ -166,18 +169,8 @@ export function CustomSnoozeSheet(props: Props) {
                     <SegmentedControl
                       variant="card"
                       options={[
-                        {
-                          value: "date",
-                          label: date.toLocaleDateString([], { month: "short", day: "numeric" }),
-                        },
-                        {
-                          value: "time",
-                          label: date.toLocaleTimeString([], {
-                            hour: "numeric",
-                            minute: "2-digit",
-                            hourCycle: is24Hour ? "h23" : "h12",
-                          }),
-                        },
+                        { value: "date", label: pickerLabels.date },
+                        { value: "time", label: pickerLabels.time },
                       ]}
                       selected={picker}
                       onSelect={setPicker}
