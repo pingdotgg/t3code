@@ -79,6 +79,7 @@ function useFontDefaultFamilies() {
   return {
     sans,
     code: defaults.code ?? gt("System monospace"),
+    terminal: systemDefaults.code ?? gt("System monospace"),
     interfaceFamily: settings.fontFamilySans.trim() || sans,
   };
 }
@@ -234,7 +235,7 @@ function TerminalFontRow() {
       {...searchableSetting("terminal-font")}
       resetLabel={gt("Reset terminal font to default")}
       description={gt("Terminal output, independent from code blocks and diffs.")}
-      defaultFamily={defaults.code}
+      defaultFamily={defaults.terminal}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilyTerminal}
       value={settings.fontFamilyTerminal}
       onValueChange={(fontFamilyTerminal) => updateSettings({ fontFamilyTerminal })}
