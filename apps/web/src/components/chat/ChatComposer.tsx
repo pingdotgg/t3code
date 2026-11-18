@@ -14,7 +14,11 @@ import {
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
+import {
+  importPastedComposerText,
+  pastesCopiedComposerContext,
+  readPastedComposerContext,
+} from "../composerInlineTokenPaste";
 import {
   questionAttachmentDraftId,
   trackOpenQuestionAttachmentDraft,
@@ -2847,7 +2851,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
 
-    if (pastedContext) return;
+    if (!isLiteralPendingAnswer && pastesCopiedComposerContext(event.clipboardData)) return;
     if (!foldPastedText(plainText, bypassAutoAttachment)) {
       return;
     }

@@ -12,6 +12,7 @@ import {
   OrchestrationV2DispatchCommandError,
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_V2_WS_METHODS,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -67,7 +68,10 @@ const descriptor = {
   // A matching version, since a mismatch adds an update banner a typical user never sees.
   serverVersion: APP_VERSION,
   orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-  capabilities: { repositoryIdentity: true },
+  capabilities: {
+    repositoryIdentity: true,
+    fileAttachments: { maxUploadBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES },
+  },
 };
 const auth = {
   policy: "loopback-browser",
