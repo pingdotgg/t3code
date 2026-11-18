@@ -42,7 +42,10 @@ function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
 
 function withFakeAcpGrok<A, E, R>(
   env: Record<string, string>,
-  effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
+  effectFn: (
+    textGeneration: TextGeneration.TextGeneration["Service"],
+    grokHome: string,
+  ) => Effect.Effect<A, E, R>,
 ) {
   return Effect.gen(function* () {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-acp-"));
@@ -53,8 +56,12 @@ function withFakeAcpGrok<A, E, R>(
     );
     const binaryPath = makeAcpGrokWrapper(tempDir, env);
     const config = decodeGrokSettings({ binaryPath });
-    const textGeneration = yield* makeGrokTextGeneration(config);
-    return yield* effectFn(textGeneration);
+    const grokHome = NodePath.join(tempDir, "grok-home");
+    const textGeneration = yield* makeGrokTextGeneration(config, {
+      ...process.env,
+      GROK_HOME: grokHome,
+    });
+    return yield* effectFn(textGeneration, grokHome);
   }).pipe(Effect.scoped);
 }
 
@@ -89,7 +96,7 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
           body: "Wire up the ACP runtime and headless text generation path.",
         }),
       },
-      (textGeneration) =>
+      (textGeneration, grokHome) =>
         Effect.gen(function* () {
           const generated = yield* textGeneration.generateCommitMessage({
             cwd: process.cwd(),
@@ -119,6 +126,20 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
           expect(requests.find((request) => request.id === 9001)).toMatchObject({
             result: { outcome: { outcome: "cancelled" } },
           });
+
+          const sessionCwd = requests.find((request) => request.method === "session/new")?.params
+            ?.cwd as string;
+          expect(sessionCwd).not.toBe(process.cwd());
+          expect(NodeFS.existsSync(sessionCwd)).toBe(false);
+          expect(
+            NodeFS.existsSync(NodePath.join(grokHome, "sessions", encodeURIComponent(sessionCwd))),
+          ).toBe(false);
+          const promptText = (
+            requests.find((request) => request.method === "session/prompt")?.params?.prompt as
+              | ReadonlyArray<{ text?: string }>
+              | undefined
+          )?.[0]?.text;
+          expect(promptText).toMatch(/^Use only the input below\. Do not use tools/);
         }),
     );
   });

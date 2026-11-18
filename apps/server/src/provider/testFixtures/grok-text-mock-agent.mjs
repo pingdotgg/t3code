@@ -45,6 +45,13 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
       };
       break;
     case "session/new":
+      // Real Grok keeps a session folder per cwd under GROK_HOME.
+      if (process.env.GROK_HOME) {
+        NodeFS.mkdirSync(
+          `${process.env.GROK_HOME}/sessions/${encodeURIComponent(request.params.cwd)}`,
+          { recursive: true },
+        );
+      }
       result = {
         sessionId,
         models: {
