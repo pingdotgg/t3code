@@ -34,6 +34,7 @@ export interface DesktopAppActivationDependencies {
   readonly openThread: (
     projectRef: ScopedProjectRef,
   ) => Promise<{ readonly threadId: ThreadId } | null>;
+  readonly getOpenThread: (projectRef: ScopedProjectRef) => { readonly threadId: ThreadId } | null;
 }
 
 function failure(
@@ -91,10 +92,9 @@ export async function handleDesktopAppActivationRequest(
   }
 
   try {
-    const opened = await dependencies.openThread({
-      environmentId: target.environmentId,
-      projectId,
-    });
+    const projectRef = { environmentId: target.environmentId, projectId };
+    const opened =
+      (await dependencies.openThread(projectRef)) ?? dependencies.getOpenThread(projectRef);
     if (opened === null) {
       return failure(
         request.requestId,

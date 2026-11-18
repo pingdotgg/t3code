@@ -9,7 +9,7 @@ import {
 interface PendingActivation {
   readonly request: DesktopAppActivationRequest;
   readonly resolve: (response: DesktopAppActivationResponse) => void;
-  readonly timeout: ReturnType<typeof setTimeout>;
+  timeout: ReturnType<typeof setTimeout> | undefined;
   dispatched: boolean;
 }
 
@@ -41,7 +41,11 @@ export class DesktopAppActivationBroker {
     this.#activate = input.activate;
   }
 
-  request(request: DesktopAppActivationRequest): Promise<DesktopAppActivationResponse> {
+  // waitForRenderer starts the timeout at dispatch: a cold launch can outlast it, and no caller is blocked.
+  request(
+    request: DesktopAppActivationRequest,
+    options?: { readonly waitForRenderer?: boolean },
+  ): Promise<DesktopAppActivationResponse> {
     if (this.#closed) {
       return Promise.resolve(
         failure(request.requestId, "renderer-unavailable", "T3 Code is shutting down."),
@@ -54,19 +58,10 @@ export class DesktopAppActivationBroker {
     }
 
     const response = new Promise<DesktopAppActivationResponse>((resolve) => {
-      const timeout = setTimeout(() => {
-        this.#settle(
-          failure(
-            request.requestId,
-            "request-timeout",
-            "The desktop app did not finish opening the project in time.",
-          ),
-        );
-      }, this.#requestTimeoutMs);
       this.#pending.set(request.requestId, {
         request,
         resolve,
-        timeout,
+        timeout: options?.waitForRenderer ? undefined : this.#startTimeout(request.requestId),
         dispatched: false,
       });
     });
@@ -125,13 +120,32 @@ export class DesktopAppActivationBroker {
       if (pending.dispatched) continue;
       try {
         pending.dispatched = true;
+        pending.timeout ??= this.#startTimeout(pending.request.requestId);
         renderer(pending.request);
       } catch {
-        pending.dispatched = false;
         this.#renderer = null;
+        this.#settle(
+          failure(
+            pending.request.requestId,
+            "renderer-unavailable",
+            "The T3 Code window could not receive the project request.",
+          ),
+        );
       }
       return;
     }
+  }
+
+  #startTimeout(requestId: string): ReturnType<typeof setTimeout> {
+    return setTimeout(() => {
+      this.#settle(
+        failure(
+          requestId,
+          "request-timeout",
+          "The desktop app did not finish opening the project in time.",
+        ),
+      );
+    }, this.#requestTimeoutMs);
   }
 
   #settle(response: DesktopAppActivationResponse): void {

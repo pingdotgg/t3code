@@ -43,12 +43,20 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
+import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
 
 const ignoreWebLinks = DesktopWebLinks.DesktopWebLinks.of({
   receive: () => Effect.void,
   setRendererReady: () => Effect.void,
+});
+
+const ignoreAppActivation = DesktopAppActivation.DesktopAppActivation.of({
+  start: Effect.void,
+  setRendererReady: () => Effect.void,
+  complete: () => Effect.void,
+  openWorkspace: () => Effect.void,
 });
 
 const layerDesktopClerk = (
@@ -209,6 +217,7 @@ describe("DesktopClerk", () => {
         Effect.provideService(ElectronApp.ElectronApp, electronApp),
         Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
         Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+        Effect.provideService(DesktopAppActivation.DesktopAppActivation, ignoreAppActivation),
       );
     },
   );
@@ -250,6 +259,7 @@ describe("DesktopClerk", () => {
         ElectronWindow.ElectronWindow,
         {} as ElectronWindow.ElectronWindow["Service"],
       ),
+      Effect.provideService(DesktopAppActivation.DesktopAppActivation, ignoreAppActivation),
       Effect.provideService(
         DesktopWebLinks.DesktopWebLinks,
         DesktopWebLinks.DesktopWebLinks.of({
@@ -337,6 +347,7 @@ it.effect(
       Effect.provideService(ElectronApp.ElectronApp, electronApp),
       Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
       Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+      Effect.provideService(DesktopAppActivation.DesktopAppActivation, ignoreAppActivation),
     );
   },
 );
@@ -423,6 +434,7 @@ it.effect.each(["startup", "open-url", "early-second-instance"] as const)(
           {} as ElectronWindow.ElectronWindow["Service"],
         ),
         Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+        Effect.provideService(DesktopAppActivation.DesktopAppActivation, ignoreAppActivation),
       );
     }),
 );
@@ -473,6 +485,7 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
         ElectronWindow.ElectronWindow,
         {} as ElectronWindow.ElectronWindow["Service"],
       ),
+      Effect.provideService(DesktopAppActivation.DesktopAppActivation, ignoreAppActivation),
       Effect.provideService(
         DesktopWebLinks.DesktopWebLinks,
         DesktopWebLinks.DesktopWebLinks.of({
@@ -482,4 +495,74 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
       ),
     );
   }),
+);
+
+const electronAppWithListeners = (listeners: Map<string, (...args: unknown[]) => void>) =>
+  ({
+    whenReady: Effect.void,
+    on: (name: string, listener: (...args: unknown[]) => void) =>
+      Effect.sync(() => {
+        listeners.set(name, listener);
+      }),
+  }) as unknown as ElectronApp.ElectronApp["Service"];
+
+it.effect("opens --open-folder on Linux from the launch and from later instances", () =>
+  Effect.gen(function* () {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const opened: Array<string> = [];
+    const reveal = vi.fn(() => Effect.void);
+    const electronWindow = {
+      currentMainOrFirst: Effect.succeedSome({}),
+      reveal,
+    } as unknown as ElectronWindow.ElectronWindow["Service"];
+    yield* Effect.gen(function* () {
+      const clerk = yield* DesktopClerk.DesktopClerk;
+      listeners.get("second-instance")!({}, ["t3", "--open-folder=/work/queued"]);
+      yield* clerk.configure;
+      listeners.get("second-instance")!({}, ["t3", "--open-folder=/work/my project", "--flag"]);
+      yield* Effect.yieldNow;
+
+      assert.deepStrictEqual(opened, ["/work/launch", "/work/queued", "/work/my project"]);
+      assert.equal(reveal.mock.calls.length, 0);
+    }).pipe(
+      Effect.provide(layerDesktopClerk(true, [], "linux", undefined, undefined, listeners)),
+      Effect.provideService(HostProcess.Arguments, ["t3", "--open-folder=/work/launch"]),
+      Effect.provideService(ElectronApp.ElectronApp, electronAppWithListeners(listeners)),
+      Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+      Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+      Effect.provideService(DesktopAppActivation.DesktopAppActivation, {
+        ...ignoreAppActivation,
+        openWorkspace: (folder) => Effect.sync(() => void opened.push(folder)),
+      }),
+    );
+  }).pipe(Effect.scoped),
+);
+
+it.effect("does not treat --open-folder as a project on other platforms", () =>
+  Effect.gen(function* () {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+    const openWorkspace = vi.fn(() => Effect.void);
+    yield* Effect.gen(function* () {
+      const clerk = yield* DesktopClerk.DesktopClerk;
+      yield* clerk.configure;
+      yield* Effect.yieldNow;
+      assert.equal(openWorkspace.mock.calls.length, 0);
+    }).pipe(
+      Effect.provide(layerDesktopClerk(true, [], "win32")),
+      Effect.provideService(HostProcess.Arguments, ["t3", "--open-folder=/work/launch"]),
+      Effect.provideService(ElectronApp.ElectronApp, electronAppWithListeners(new Map())),
+      Effect.provideService(
+        ElectronWindow.ElectronWindow,
+        {} as unknown as ElectronWindow.ElectronWindow["Service"],
+      ),
+      Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+      Effect.provideService(DesktopAppActivation.DesktopAppActivation, {
+        ...ignoreAppActivation,
+        openWorkspace,
+      }),
+    );
+  }).pipe(Effect.scoped),
 );

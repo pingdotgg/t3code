@@ -1,3 +1,6 @@
+import { useRouter } from "@tanstack/react-router";
+import { useComposerDraftStore } from "../composerDraftStore";
+import { resolveThreadRouteTarget } from "../threadRoutes";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   findProjectByPath,
@@ -31,6 +34,7 @@ export function useOpenLocalWorkspace() {
     label: "project unarchive",
   });
   const openThread = useNewThreadHandler();
+  const router = useRouter();
   const shellHasSnapshot = useEnvironmentShellHasSnapshot(
     primaryEnvironment?.environmentId ?? null,
   );
@@ -95,6 +99,20 @@ export function useOpenLocalWorkspace() {
           }).then((result) => reportProjectFailure(m(msg("Failed to unarchive project")), result));
         }
         return openThread(projectRef);
+      },
+      getOpenThread: (projectRef) => {
+        const target = resolveThreadRouteTarget(
+          router.matchRoutes(router.state.location).at(-1)?.params ?? {},
+        );
+        const draft =
+          target?.kind === "draft"
+            ? useComposerDraftStore.getState().getDraftSession(target.draftId)
+            : null;
+        return draft?.environmentId === projectRef.environmentId &&
+          draft.projectId === projectRef.projectId &&
+          draft.promotedTo == null
+          ? { threadId: draft.threadId }
+          : null;
       },
     });
 

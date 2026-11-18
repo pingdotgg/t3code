@@ -31,6 +31,7 @@ function dependencies(
     createProject: vi.fn(async () => createdProjectId),
     waitForProject: vi.fn(async () => undefined),
     openThread: vi.fn(async () => ({ threadId })),
+    getOpenThread: vi.fn(() => null),
     ...overrides,
   };
 }
@@ -67,4 +68,22 @@ describe("desktop app activation", () => {
 
     expect(response).toMatchObject({ ok: false, code: "platform-mismatch" });
   });
+
+  it.each([true, false])(
+    "handles a concurrent draft open for the requested project: %s",
+    async (matching) => {
+      const deps = dependencies({
+        openThread: vi.fn(async () => null),
+        getOpenThread: vi.fn(() => (matching ? { threadId } : null)),
+      });
+
+      const response = await handleDesktopAppActivationRequest(request, deps);
+
+      expect(response).toMatchObject(
+        matching
+          ? { ok: true, projectId: existingProjectId, threadId }
+          : { ok: false, code: "thread-open-failed" },
+      );
+    },
+  );
 });
