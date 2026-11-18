@@ -136,6 +136,28 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("does not open a fence on a line of inline triple-backtick code", () => {
+    const code = "```\nhttps://example.com/b.png\n```";
+    expect(
+      splitPullRequestBody(
+        `\`\`\`npm test\`\`\` passes.\n\nhttps://example.com/demo.mp4\n\n${code}`,
+      ),
+    ).toEqual([
+      { id: "markdown:0", kind: "markdown", text: "```npm test``` passes.", sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+      { id: "markdown:2", kind: "markdown", text: code, sourceOffset: 54 },
+    ]);
+    const multilineSpan = "```foo`\nhttps://example.com/demo.mp4\nbar```";
+    expect(splitPullRequestBody(multilineSpan)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: multilineSpan, sourceOffset: 0 },
+    ]);
+  });
+
   it("leaves an indented code line alone even when it is only a video link", () => {
     const body = "    https://example.com/demo.mp4";
     expect(splitPullRequestBody(body)).toEqual([

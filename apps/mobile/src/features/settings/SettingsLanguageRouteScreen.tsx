@@ -3,23 +3,35 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { I18nProvider, useGT, useLanguagePreference } from "../../i18n/I18nProvider";
+import { useGT } from "gt-react-native";
+import { useLanguagePreference } from "../../i18n/I18nProvider";
 import { SYSTEM_LANGUAGE, nativeLanguageName } from "@t3tools/client-runtime/locales";
 import { SUPPORTED_LOCALES } from "../../i18n/locales";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
+import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 
-export function SettingsLanguageRouteScreen() {
+/** General's row that opens the language picker, showing the current choice. */
+export function LanguageSettingsSection() {
+  const gt = useGT();
+  const language = useLanguagePreference();
   return (
-    <I18nProvider>
-      <LanguageSettings />
-    </I18nProvider>
+    <SettingsSection>
+      <SettingsRow
+        icon="globe"
+        label={gt("Language")}
+        value={
+          SUPPORTED_LOCALES.includes(language) ? nativeLanguageName(language) : gt("System default")
+        }
+        target="SettingsLanguage"
+      />
+    </SettingsSection>
   );
 }
 
-function LanguageSettings() {
+export function SettingsLanguageRouteScreen() {
   const gt = useGT();
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
