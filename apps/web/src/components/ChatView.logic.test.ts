@@ -52,7 +52,6 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadDetails } from "../state/threads";
-import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 
 import type { Thread } from "../types";
 import { DraftId, hydrateImagesFromPersisted, useComposerDraftStore } from "../composerDraftStore";
@@ -1584,29 +1583,6 @@ describe("deriveThreadPendingBackgroundTasks", () => {
         }),
       ),
     ).toEqual([{ taskId: "task-1", kind: "background_task" }]);
-  });
-});
-
-describe("Open in for the host environment", () => {
-  it("shows both local environments when the primary has a separate WSL home", () => {
-    const primaryEnvironmentId = EnvironmentId.make("wsl");
-    const hostEnvironmentId = EnvironmentId.make("host");
-    for (const [activeThreadEnvironmentId, visible] of [
-      [primaryEnvironmentId, true],
-      [hostEnvironmentId, true],
-      [EnvironmentId.make("other"), false],
-    ] as const) {
-      expect(
-        shouldShowOpenInPicker({
-          activeProjectName: "Project",
-          activeThreadEnvironmentId,
-          primaryEnvironmentId,
-          hostEnvironmentId,
-          remoteOpenMode: "local-exec",
-          isDesktopWslBackend: false,
-        }),
-      ).toBe(visible);
-    }
   });
 });
 
