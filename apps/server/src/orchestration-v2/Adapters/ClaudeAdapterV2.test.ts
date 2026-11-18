@@ -6860,10 +6860,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
           appContext: [{ key: "mcp_app_item-1", text: note }],
         });
+        return lastOffered();
+      });
+      const lastOffered = () => {
         const content = harness.offeredMessages.at(-1)?.message.content;
         return typeof content === "string"
           ? content
           : (content ?? []).map((block) => (block.type === "text" ? block.text : "")).join("\n");
+      };
+      const steer = Effect.fnUntraced(function* (ordinal: number, note: string) {
+        const attemptId = `mcp-app-context-${ordinal}`;
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: RunId.make(`run-${attemptId}`),
+          providerThread: harness.providerThread,
+          providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make(`steer-${attemptId}-${harness.offeredMessages.length}`),
+            text: "What did the app report now?",
+            attachments: [],
+          },
+          appContext: [{ key: "mcp_app_item-1", text: note }],
+        });
+        return lastOffered();
       });
       const finishTurn = Effect.fnUntraced(function* (ordinal: number) {
         yield* harness.offerAndWait(
@@ -6886,8 +6910,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* finishTurn(1);
       // Already in Claude's history: resending it every turn would only grow the context.
       assert.notInclude(yield* runTurn(2, "Created Jira issue PROJ-42"), "PROJ-42");
+      // regression: #38541 a note the app changes mid-turn rides on the next steer, once.
+      assert.notInclude(yield* steer(2, "Created Jira issue PROJ-42"), "PROJ-42");
+      assert.include(yield* steer(2, "Created Jira issue PROJ-44"), "PROJ-44");
+      assert.notInclude(yield* steer(2, "Created Jira issue PROJ-44"), "PROJ-44");
       yield* finishTurn(2);
-      assert.include(yield* runTurn(3, "Created Jira issue PROJ-43"), "PROJ-43");
+      assert.notInclude(yield* runTurn(3, "Created Jira issue PROJ-44"), "PROJ-44");
+      yield* finishTurn(3);
+      assert.include(yield* runTurn(4, "Created Jira issue PROJ-43"), "PROJ-43");
       yield* harness.offerAndWait(
         claudeSdkFrame({
           type: "system",
@@ -6897,9 +6927,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           session_id: WAKE_NATIVE_SESSION,
         }),
       );
-      yield* finishTurn(3);
+      yield* finishTurn(4);
       // Compaction summarizes the note away, so the next turn carries it again.
-      assert.include(yield* runTurn(4, "Created Jira issue PROJ-43"), "PROJ-43");
+      assert.include(yield* runTurn(5, "Created Jira issue PROJ-43"), "PROJ-43");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
