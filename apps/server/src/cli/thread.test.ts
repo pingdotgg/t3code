@@ -158,6 +158,53 @@ it.effect("send --model and --effort switch the thread's model with the queued m
     using _session = vi.spyOn(McpBridge, "mcpToolSession").mockReturnValue(
       Effect.succeed({
         call: (tool, args) => {
+          if (tool === "t3_thread_read") {
+            return Effect.succeed({
+              structuredContent: { thread: { providerInstanceId: "provider" } },
+            });
+          }
+          if (tool === "orchestrator_capabilities") {
+            return Effect.succeed({
+              structuredContent: {
+                parentThreadId: null,
+                inheritedProviderInstanceId: null,
+                inheritedModel: null,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                providers: [
+                  {
+                    providerInstanceId: "provider",
+                    driverKind: args.search === "gpt-6.1-sol" ? "codex" : "claudeAgent",
+                    displayName: null,
+                    models: [
+                      {
+                        id: args.search,
+                        options: [
+                          {
+                            id: args.search === "gpt-6.1-sol" ? "reasoningEffort" : "effort",
+                            values: ["high"],
+                          },
+                        ],
+                      },
+                    ],
+                    canRunChildTask: true,
+                    canRunCrossProviderChildTask: true,
+                    constraints: [],
+                  },
+                ],
+                features: {
+                  appOwnedSubagents: true,
+                  asyncPolling: true,
+                  cancellation: true,
+                  batchThreadCreation: true,
+                  threadManagement: true,
+                  incrementalThreadRead: true,
+                  scheduledTasks: true,
+                  maxBatchThreads: 10,
+                },
+              },
+            });
+          }
           if (tool !== "t3_thread_send") return Effect.die(`unexpected ${tool} call`);
           sends.push(args);
           return Effect.succeed({
@@ -185,6 +232,7 @@ it.effect("send --model and --effort switch the thread's model with the queued m
     yield* run();
     yield* run("--model", "claude-sonnet-5-5", "--effort", "high");
     yield* run("--model", "claude-opus-5-5");
+    yield* run("--model", "gpt-6.1-sol", "--effort", "high");
 
     assert.deepStrictEqual(sends, [
       { threadId, message: "go", mode: "queue" },
@@ -198,6 +246,15 @@ it.effect("send --model and --effort switch the thread's model with the queued m
         },
       },
       { threadId, message: "go", mode: "queue", modelSelection: { model: "claude-opus-5-5" } },
+      {
+        threadId,
+        message: "go",
+        mode: "queue",
+        modelSelection: {
+          model: "gpt-6.1-sol",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      },
     ]);
   }).pipe(
     Effect.scoped,
