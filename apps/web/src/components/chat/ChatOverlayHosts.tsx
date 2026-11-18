@@ -211,11 +211,12 @@ export function RevertConfirmHost(props: {
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
-  // The server refuses file restore outside an isolated worktree.
+  const checkpoint =
+    pending === null ? undefined : findRevertCheckpoint(props.checkpoints ?? [], pending.turnCount);
+  // The server checks isolation of the workspace and repository worktrees before restoring.
   const canRestoreFiles =
-    pending !== null &&
-    props.worktreePath !== null &&
-    findRevertCheckpoint(props.checkpoints ?? [], pending.turnCount)?.status === "ready";
+    checkpoint?.status === "ready" &&
+    (props.worktreePath !== null || (checkpoint.repositories?.length ?? 0) > 0);
   const confirm = (restoreFiles: boolean) => {
     if (pending === null || (restoreFiles && !canRestoreFiles)) return;
     closeThreadOverlay(revertConfirmAtom);
