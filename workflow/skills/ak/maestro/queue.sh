@@ -70,7 +70,8 @@ live_statuses='["idle","preparing","queued","starting","running","waiting"]'
 
 log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*"; }
 
-# Issue numbers of a project's worker threads that are still alive, one per line.
+# Issue numbers of a project's worker threads that are still alive, one per line. The `mw-<n> `
+# title prefix is also how the web sidebar files them under Workers (sidebar/sidebarWorkers.ts).
 live_workers() {
   "${t3[@]}" thread list --project "$1" --json | jq -r --argjson live "$live_statuses" '.[]
     | select(.title | test("^mw-[0-9]+ "))
