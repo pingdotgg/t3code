@@ -12,6 +12,8 @@ import * as Layer from "effect/Layer";
 
 import type * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { suppressedWakeNotice, wakeSwitch } from "../orchestration-v2/NotificationMailbox.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 export const GOAL_CONTINUE_MESSAGE = "Continue working toward the thread goal.";
 
@@ -165,7 +167,10 @@ export class GoalLoopService extends Context.Service<
   }
 >()("t3/goals/GoalLoopService") {}
 
-const make = Effect.gen(function* () {
+const make = Effect.fn("GoalLoopService.make")(function* (options: {
+  /** Reads the `t3GoalContinuation` setting per check; on when omitted. */
+  readonly continueGoals?: Effect.Effect<boolean>;
+}) {
   const threads = yield* ThreadManagement.ThreadManagementService;
 
   const runThread = Effect.fn("GoalLoopService.runThread")(function* (
@@ -189,6 +194,20 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    // Checked before the iteration advances, so the goal stays where it is and continues from
+    // here once the switch is back on. The id is this turn's, so every later check records nothing new.
+    if (!(yield* options.continueGoals ?? Effect.succeed(true))) {
+      yield* threads.dispatch({
+        type: "thread.notice.record",
+        commandId: CommandId.make(`server:goal-not-continued:${thread.id}:${plan.key}`),
+        threadId: thread.id,
+        notification: suppressedWakeNotice(
+          "Goal not continued",
+          `${GOAL_CONTINUE_MESSAGE}\n\nTo continue, send a message or turn goal continuation back on in Settings.`,
+        ),
+      });
+      return;
+    }
     const expectedIterations = plan.advance ? loop.iterations + 1 : loop.iterations;
     if (plan.advance) {
       yield* threads.dispatch({
@@ -249,5 +268,17 @@ const make = Effect.gen(function* () {
   return GoalLoopService.of({ runDueWork });
 });
 
-export const layer: Layer.Layer<GoalLoopService, never, ThreadManagement.ThreadManagementService> =
-  Layer.effect(GoalLoopService, make);
+export const layerWith = (
+  options: Parameters<typeof make>[0],
+): Layer.Layer<GoalLoopService, never, ThreadManagement.ThreadManagementService> =>
+  Layer.effect(GoalLoopService, make(options));
+
+export const layer = layerWith({});
+
+/** The layer the server runs: follows the `t3GoalContinuation` setting. */
+export const layerLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    return layerWith({ continueGoals: wakeSwitch(settings, "t3GoalContinuation") });
+  }),
+);

@@ -1588,6 +1588,10 @@ export const ServerSettings = Schema.Struct({
   t3ContextHandoff: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   t3SideChatContext: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   t3RestartNote: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  t3WakeOnDelegateFinished: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  t3WakeOnDelegateQuestion: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  t3WakeOnPullRequestUpdate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  t3GoalContinuation: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** `block` refuses `t3_thread_send` from a thread outside the target's delegation tree and from linked environments. */
   agentMessagePolicy: AgentMessagePolicy.pipe(
     Schema.withDecodingDefault(Effect.succeed("allow" as const)),
@@ -2049,6 +2053,10 @@ export const ServerSettingsPatch = Schema.Struct({
   t3ContextHandoff: Schema.optionalKey(Schema.Boolean),
   t3SideChatContext: Schema.optionalKey(Schema.Boolean),
   t3RestartNote: Schema.optionalKey(Schema.Boolean),
+  t3WakeOnDelegateFinished: Schema.optionalKey(Schema.Boolean),
+  t3WakeOnDelegateQuestion: Schema.optionalKey(Schema.Boolean),
+  t3WakeOnPullRequestUpdate: Schema.optionalKey(Schema.Boolean),
+  t3GoalContinuation: Schema.optionalKey(Schema.Boolean),
   agentMessagePolicy: Schema.optionalKey(AgentMessagePolicy),
   claudeInstructionFiles: Schema.optionalKey(Schema.Boolean),
   claudeAutoMemory: Schema.optionalKey(Schema.Boolean),

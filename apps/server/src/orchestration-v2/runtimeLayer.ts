@@ -322,7 +322,7 @@ const layerScratchThreadPromotionProvided = ScratchThreadPromotion.layer.pipe(
     ).pipe(Layer.provideMerge(layerProjectService)),
   ),
 );
-const layerProviderContinuationWorkerProvided = ProviderContinuationService.layer.pipe(
+const layerProviderContinuationWorkerProvided = ProviderContinuationService.layerLive.pipe(
   Layer.provide(
     Layer.mergeAll(
       ProviderContinuationRequests.layer,
@@ -432,7 +432,7 @@ export const layerProduction = Layer.mergeAll(
     ),
   ),
   GoalLoopWorker.workerLive.pipe(
-    Layer.provide(GoalLoop.layer.pipe(Layer.provide(layerThreadManagementProvided))),
+    Layer.provide(GoalLoop.layerLive.pipe(Layer.provide(layerThreadManagementProvided))),
   ),
   layerProviderContinuationWorkerProvided,
   layerAgentSessionScannerProvided,

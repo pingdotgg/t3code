@@ -330,6 +330,72 @@ describe("ProviderContinuationService", () => {
   });
 
   it.effect(
+    "records a row and disposes a delegated completion once when its wake is switched off",
+    () =>
+      Effect.gen(function* () {
+        const cleared = yield* Ref.make(0);
+        const dispatched = yield* Queue.unbounded<unknown>();
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(delegatedProjection()),
+          dispatch: (command) => Queue.offer(dispatched, command).pipe(Effect.as({} as never)),
+        });
+        const layerWorker = ProviderContinuationService.layerWith({
+          wakeOnDelegateFinished: Effect.succeed(false),
+        }).pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            threadId,
+            providerThreadId,
+            driver,
+            detail: null,
+            delivery: "message_text",
+            clearIfCurrent: () => Ref.update(cleared, (count) => count + 1),
+            delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
+          });
+          yield* Effect.yieldNow;
+          const commands = (yield* Queue.takeAll(dispatched)) as ReadonlyArray<{
+            readonly type: string;
+            readonly commandId: string;
+            readonly taskId?: string;
+            readonly notification?: { readonly summary: string; readonly detail: string };
+          }>;
+          assert.deepEqual(
+            commands.map((command) => command.type),
+            [
+              "thread.notice.record",
+              "delegated_task.completion-delivery.dispose",
+              "delegated_task.completion-delivery.dispose",
+            ],
+          );
+          assert.equal(
+            commands[0]?.notification?.summary,
+            "Delegated tasks finished. T3 Code did not wake the agent (switched off in Settings)",
+          );
+          assert.include(commands[0]?.notification?.detail, "task_status");
+          assert.include(commands[0]?.commandId, delegatedMessageId);
+          assert.deepEqual(
+            commands.slice(1).map((command) => command.taskId),
+            ["node-provider-continuation-first", "node-provider-continuation-second"],
+          );
+          assert.equal(yield* Ref.get(cleared), 1);
+
+          yield* TestClock.adjust("1 hour");
+          yield* Effect.yieldNow;
+          assert.equal(yield* Queue.size(dispatched), 0);
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
+          Effect.scoped,
+        );
+      }),
+  );
+
+  it.effect(
     "a project-disabled instance refuses a delegated-completion wake exactly once, disposes it, and never retries",
     () => {
       return Effect.gen(function* () {

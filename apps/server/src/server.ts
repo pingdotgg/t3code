@@ -748,7 +748,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(
-    Layer.provide(PullRequestWatchReactor.layer),
+    Layer.provide(PullRequestWatchReactor.layerLive),
     Layer.provide(layerPullRequestService),
     Layer.provide(ProjectionStoreV2.layer),
   ),
@@ -757,7 +757,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       const service = yield* DelegatedTaskQuestionReactor.DelegatedTaskQuestionReactor;
       yield* service.start();
     }),
-  ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
+  ).pipe(
+    Layer.provide(DelegatedTaskQuestionReactor.layerLive),
+    Layer.provide(ProjectionStoreV2.layer),
+  ),
   ProviderUsageLimitsIngestion.layer,
   ResetCreditAutoRedeem.layer,
   layerProviderInstallationRefresh,

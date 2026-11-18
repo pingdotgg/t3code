@@ -150,6 +150,7 @@ import {
 import {
   isBufferedProviderNotification,
   isUndeliveredMailboxSteer,
+  threadNoticeTurnItemId,
 } from "./NotificationMailbox.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import {
@@ -10891,7 +10892,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: command.threadId,
         occurredAt: now,
         payload: {
-          id: TurnItemId.make(`turn-item:notice:${command.commandId}`),
+          id: threadNoticeTurnItemId(command.commandId),
           threadId: command.threadId,
           runId: null,
           nodeId: null,

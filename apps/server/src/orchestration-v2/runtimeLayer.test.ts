@@ -4777,6 +4777,128 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("records a row and advances the watch when the pull request wake is switched off", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-wake-off");
+      const projectId = ProjectId.make("pr-watch-wake-off-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch wake off",
+        workspaceRoot: "/workspace/watch-wake-off",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-wake-off-create"),
+        threadId,
+        projectId,
+        title: "Watch wake off",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const watch = (on: boolean, id: string) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-wake-off-${id}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 12,
+          watching: on,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/12", source: "agent" },
+        });
+      yield* watch(true, "start");
+
+      let headSha = "ad70160aaa";
+      let wakeOn = false;
+      const host = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(PullRequestService.PullRequestService)({
+          detail: () =>
+            Effect.sync(() => ({
+              ...watchedPullRequestDetail({
+                projectId,
+                number: 12,
+                at: "2026-10-02T12:00:00.000Z",
+              }),
+              headSha,
+              checks: ["lint", "test"].map((name) => ({
+                name,
+                status: "success" as const,
+                description: null,
+                url: null,
+                required: true,
+              })),
+            })),
+          activity: () =>
+            Effect.succeed({
+              comments: [],
+              commentCount: 0,
+              commentsTruncated: false,
+              reviewThreads: [],
+              commits: [],
+            }),
+        }),
+      );
+      const records = orchestrator.getThreadRecords(threadId, ["messages", "runs", "turnItems"]);
+      const wakes = Effect.map(records, ({ messages }) =>
+        messages.flatMap((message) => message.notification?.summary ?? []),
+      );
+      const notices = Effect.map(records, ({ turnItems }) =>
+        turnItems.flatMap((item) =>
+          item.type === "notification" && item.runId === null ? [item] : [],
+        ),
+      );
+      const reactor = yield* PullRequestWatchReactor.makeWith({
+        wakeOnUpdate: Effect.sync(() => wakeOn),
+      }).pipe(Effect.provide(host));
+      const pass = Effect.gen(function* () {
+        yield* TestClock.adjust("10 minutes");
+        yield* reactor.sweep;
+        yield* worker.drain();
+      });
+      yield* reactor.sweep;
+      yield* worker.drain();
+      const runsBefore = (yield* records).runs.length;
+
+      headSha = "bbbbbbbbbb";
+      yield* pass;
+      assert.deepEqual(yield* wakes, []);
+      assert.lengthOf((yield* records).runs, runsBefore);
+      const recorded = yield* notices;
+      assert.deepEqual(
+        recorded.map((item) => item.summary),
+        ["#12: checks passed. T3 Code did not wake the agent (switched off in Settings)"],
+      );
+      assert.include(recorded[0]?.detail, "#12");
+      assert.equal(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.headSha,
+        headSha,
+      );
+
+      // The watch already recorded that head, so switching back on replays nothing.
+      wakeOn = true;
+      yield* pass;
+      assert.deepEqual(yield* wakes, []);
+      assert.lengthOf(yield* notices, 1);
+
+      headSha = "cccccccccc";
+      yield* pass;
+      assert.deepEqual(yield* wakes, ["#12: checks passed"]);
+      assert.lengthOf(yield* notices, 1);
+      yield* watch(false, "end");
+    }),
+  );
+
   it.effect.each([
     ["an idle", false],
     ["a busy", true],

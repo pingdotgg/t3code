@@ -37,6 +37,8 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { suppressedWakeNotice, wakeSwitch } from "./NotificationMailbox.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   combinePullRequestWatchWakes,
   evaluatePullRequestWatch,
@@ -232,7 +234,11 @@ export class PullRequestWatchReactor extends Context.Service<
 >()("t3/orchestration-v2/PullRequestWatchReactor") {}
 
 /** @public */
-export const make = Effect.gen(function* () {
+export const makeWith = Effect.fn("PullRequestWatchReactor.make")(function* (options: {
+  /** Reads the `t3WakeOnPullRequestUpdate` setting per wake; on when omitted. */
+  readonly wakeOnUpdate?: Effect.Effect<boolean>;
+}) {
+  const wakeOnUpdate = options.wakeOnUpdate ?? Effect.succeed(true);
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
@@ -321,6 +327,8 @@ export const make = Effect.gen(function* () {
     endedWatch?: ThreadPullRequestWatch,
   ) {
     const uuid = yield* random.uuidV4();
+    // Switched off, the watch still records what it saw, so nothing is reported again later.
+    const notWoken = wake !== undefined && !(yield* wakeOnUpdate);
     yield* engine.dispatch({
       type: "thread.pull-request-watch.sync",
       commandId: CommandId.make(`server:pr-watch:${target.thread.id}:${uuid}`),
@@ -330,10 +338,18 @@ export const make = Effect.gen(function* () {
       watch: next,
       ...checksPendingBeforeOf(target),
       ...(endedWatch === undefined ? {} : { endedWatch }),
-      ...(wake === undefined
+      ...(wake === undefined || notWoken
         ? {}
         : { wake: { ...wake, messageId: MessageId.make(`message:pr-watch:${uuid}`) } }),
     });
+    if (notWoken) {
+      yield* engine.dispatch({
+        type: "thread.notice.record",
+        commandId: CommandId.make(`server:pr-watch-not-woken:${target.thread.id}:${uuid}`),
+        threadId: target.thread.id,
+        notification: suppressedWakeNotice(wake.notification.summary, wake.text),
+      });
+    }
   });
 
   const giveUp = (target: WatchTarget) =>
@@ -501,7 +517,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const sendHeld = Effect.suspend(() => {
+  const sendHeld = Effect.flatMap(wakeOnUpdate, (wakeOn) => {
     const byThread = new Map<string, Array<HeldWake>>();
     for (const item of held) {
       byThread.set(item.target.thread.id, [...(byThread.get(item.target.thread.id) ?? []), item]);
@@ -512,14 +528,17 @@ export const make = Effect.gen(function* () {
       ([first, ...rest]) =>
         rest.length === 0
           ? sendOne(first!)
-          : // A watch that ended or moved during the pass fails the whole command; each then
-            // goes on its own, as the orchestrator decides for it alone.
-            sendTogether([first!, ...rest]).pipe(
-              Effect.catchCauseIf(
-                (cause) => !Cause.hasInterruptsOnly(cause),
-                () => Effect.forEach([first!, ...rest], sendOne, { discard: true }),
+          : !wakeOn
+            ? // Nothing is sent, so each watch records its own state and its own row.
+              Effect.forEach([first!, ...rest], sendOne, { discard: true })
+            : // A watch that ended or moved during the pass fails the whole command; each then
+              // goes on its own, as the orchestrator decides for it alone.
+              sendTogether([first!, ...rest]).pipe(
+                Effect.catchCauseIf(
+                  (cause) => !Cause.hasInterruptsOnly(cause),
+                  () => Effect.forEach([first!, ...rest], sendOne, { discard: true }),
+                ),
               ),
-            ),
       { discard: true },
     );
   });
@@ -890,4 +909,16 @@ export const make = Effect.gen(function* () {
   return { start, sweep } satisfies PullRequestWatchReactor["Service"];
 });
 
-export const layer = Layer.effect(PullRequestWatchReactor, make);
+/** @public */
+export const make = makeWith({});
+
+/** The layer the server runs: follows the `t3WakeOnPullRequestUpdate` setting. */
+export const layerLive = Layer.effect(
+  PullRequestWatchReactor,
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    return yield* makeWith({
+      wakeOnUpdate: wakeSwitch(settings, "t3WakeOnPullRequestUpdate"),
+    });
+  }),
+);

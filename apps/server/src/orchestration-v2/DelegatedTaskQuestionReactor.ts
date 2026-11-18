@@ -19,6 +19,8 @@ import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { suppressedWakeNotice, threadNoticeTurnItemId, wakeSwitch } from "./NotificationMailbox.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 export class DelegatedTaskQuestionReactor extends Context.Service<
   DelegatedTaskQuestionReactor,
@@ -28,7 +30,10 @@ export class DelegatedTaskQuestionReactor extends Context.Service<
   }
 >()("t3/orchestration-v2/DelegatedTaskQuestionReactor") {}
 
-const make = Effect.gen(function* () {
+const make = Effect.fn("DelegatedTaskQuestionReactor.make")(function* (options: {
+  /** Reads the `t3WakeOnDelegateQuestion` setting per wake; on when omitted. */
+  readonly wakeOnQuestion?: Effect.Effect<boolean>;
+}) {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
 
@@ -43,16 +48,35 @@ const make = Effect.gen(function* () {
       request.responseCapability.type === "message"
         ? `Delegated task ${task.id} asked a question and is still working.`
         : `Delegated task ${task.id} is blocked on a question and cannot continue until it is answered.`;
+    const text = `${situation} Read it with t3_pending_request action read, threadId ${task.childThreadId}, and requestId ${request.id}. Answer it with action respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`;
+    const summary = `Delegated task${label === undefined ? "" : ` "${label}"`} has a question`;
+    // A question shown as not woken stays that way, so switching the wake back on fires nothing old.
+    const noticeCommandId = CommandId.make(`server:delegated-task-question-not-woken:${key}`);
+    const alreadyNoticed =
+      (yield* projections.getTurnItem({
+        threadId: task.threadId,
+        itemId: threadNoticeTurnItemId(noticeCommandId),
+      })) !== null;
+    if (alreadyNoticed) return;
+    if (!(yield* options.wakeOnQuestion ?? Effect.succeed(true))) {
+      yield* engine.dispatch({
+        type: "thread.notice.record",
+        commandId: noticeCommandId,
+        threadId: task.threadId,
+        notification: suppressedWakeNotice(summary, text),
+      });
+      return;
+    }
     yield* engine.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make(`server:delegated-task-question:${key}`),
       threadId: task.threadId,
       messageId: MessageId.make(`message:delegated-task-question:${key}`),
-      text: `${situation} Read it with t3_pending_request action read, threadId ${task.childThreadId}, and requestId ${request.id}. Answer it with action respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`,
+      text,
       notification: {
         source: { kind: "delegated_task", taskIds: [task.id], childThreadId: task.childThreadId },
         outcome: "updated",
-        summary: `Delegated task${label === undefined ? "" : ` "${label}"`} has a question`,
+        summary,
       },
       attachments: [],
       dispatchMode: { type: "queue_after_active" },
@@ -277,4 +301,15 @@ const make = Effect.gen(function* () {
   return { start, handle } satisfies DelegatedTaskQuestionReactor["Service"];
 });
 
-export const layer = Layer.effect(DelegatedTaskQuestionReactor, make);
+export const layerWith = (options: Parameters<typeof make>[0]) =>
+  Layer.effect(DelegatedTaskQuestionReactor, make(options));
+
+export const layer = layerWith({});
+
+/** The layer the server runs: follows the `t3WakeOnDelegateQuestion` setting. */
+export const layerLive = Layer.unwrap(
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    return layerWith({ wakeOnQuestion: wakeSwitch(settings, "t3WakeOnDelegateQuestion") });
+  }),
+);

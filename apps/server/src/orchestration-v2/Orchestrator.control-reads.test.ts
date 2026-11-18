@@ -1612,6 +1612,121 @@ it.effect("records a notice once at the end of the thread without starting a run
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("records a row and wakes nobody when the delegated question wake is switched off", () => {
+  let wakeOn = false;
+  return Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const reactor = yield* DelegatedTaskQuestionReactor.DelegatedTaskQuestionReactor;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const parentThreadId = ThreadId.make("thread:question-off-parent");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-question-off-parent"),
+      threadId: parentThreadId,
+      projectId: ProjectId.make("project:question-off"),
+      title: "Parent",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-question-off-parent"),
+      threadId: parentThreadId,
+      messageId: MessageId.make("message:question-off-parent"),
+      text: "Delegate the research",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const parentRun = (yield* projections.getThreadProjection(parentThreadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("delegate-question-off-task"),
+      parentThreadId,
+      parentRunId: parentRun.id,
+      parentNodeId: parentRun.rootNodeId!,
+      task: "Research the sources",
+      completionWake: "settled_only",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const task = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!;
+    const childRun = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"])).runs[0]!;
+    const now = yield* DateTime.now;
+    const ask = Effect.fnUntraced(function* (requestId: string) {
+      const event = {
+        id: EventId.make(`event:${requestId}`),
+        type: "runtime-request.updated",
+        threadId: task.childThreadId!,
+        runId: childRun.id,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make(requestId),
+          nodeId: childRun.rootNodeId!,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "user_input",
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      } satisfies OrchestrationV2DomainEvent;
+      yield* eventSink.write({ events: [event] });
+      yield* reactor.handle(event);
+      return event;
+    });
+    const parent = projections.getThreadProjection(parentThreadId);
+    const wakes = parent.pipe(
+      Effect.map(({ messages }) => messages.filter((message) => message.notification).length),
+    );
+    const notices = parent.pipe(
+      Effect.map(({ turnItems }) =>
+        turnItems.flatMap((item) =>
+          item.type === "notification" && item.runId === null ? [item] : [],
+        ),
+      ),
+    );
+    const runsBefore = (yield* parent).runs.length;
+
+    const first = yield* ask("request:question-off");
+    yield* reactor.handle(first);
+    assert.equal(yield* wakes, 0);
+    assert.equal((yield* parent).runs.length, runsBefore);
+    const recorded = yield* notices;
+    assert.lengthOf(recorded, 1);
+    assert.equal(
+      recorded[0]?.summary,
+      'Delegated task "Research the sources" has a question. T3 Code did not wake the agent (switched off in Settings)',
+    );
+    assert.include(recorded[0]?.detail, "request:question-off");
+
+    wakeOn = true;
+    yield* reactor.handle(first);
+    assert.equal(yield* wakes, 0);
+    assert.lengthOf(yield* notices, 1);
+    yield* ask("request:question-on");
+    assert.equal(yield* wakes, 1);
+    assert.lengthOf(yield* notices, 1);
+  }).pipe(
+    Effect.provide(
+      DelegatedTaskQuestionReactor.layerWith({
+        wakeOnQuestion: Effect.sync(() => wakeOn),
+      }).pipe(Layer.provideMerge(layerTest)),
+    ),
+  );
+});
+
 it.effect("wakes the parent once when its delegated task asks a question", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
