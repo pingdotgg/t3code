@@ -7319,7 +7319,7 @@
   "14a7693909929fde": "Reset math rendering to default",
   "eeca51fe648d9317": "Render math",
   "55ebbb396b90719e": "Make Thinking and running tool highlights move more smoothly. Uses more power while visible; respects reduced motion.",
-  "26b2baffce7374e1": "activity shimmer",
+  "dbbaff619bebf633": "Reset activity shimmer to default",
   "72d713b7d0f0c261": "Smoother activity shimmer",
   "5f5df3703ab56499": "Set how fast panels open and close.",
   "afa318f40bb22567": "Panel animation duration",

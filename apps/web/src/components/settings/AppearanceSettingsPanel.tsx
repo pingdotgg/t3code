@@ -379,7 +379,7 @@ export function AppearanceSettingsPanel() {
             resetAction={
               settings.smoothActivityShimmer !== DEFAULT_UNIFIED_SETTINGS.smoothActivityShimmer ? (
                 <SettingResetButton
-                  label={gt("activity shimmer")}
+                  ariaLabel={gt("Reset activity shimmer to default")}
                   onClick={() =>
                     updateSettings({
                       smoothActivityShimmer: DEFAULT_UNIFIED_SETTINGS.smoothActivityShimmer,
