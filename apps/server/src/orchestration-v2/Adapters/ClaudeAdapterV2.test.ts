@@ -8114,6 +8114,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       shown: false,
     },
     {
+      name: "drops the CLI's API error frame when a long 403 failure repeats it",
+      text: `API Error: 403 ${"access detail ".repeat(40)}`.trim(),
+      apiErrorStatus: 403,
+      shown: false,
+    },
+    {
       name: "keeps the CLI's API error frame when only the truncated failure matches it",
       text: `API Error: ${"safeguard detail ".repeat(40)}first ending`,
       result: `API Error: ${"safeguard detail ".repeat(40)}second ending`,
