@@ -104,6 +104,7 @@ const make = Effect.gen(function* () {
   );
   yield* Effect.addFinalizer(() => awaitPersisted);
 
+  const refreshLock = yield* Semaphore.make(2);
   const refreshAccount = Effect.fn("CursorUsageAccounts.refreshAccount")(function* (
     credential: CursorCredentialSource,
     credentialKey: string,
@@ -149,7 +150,7 @@ const make = Effect.gen(function* () {
     failures.delete(credentialKey);
     if (merged.changed) cacheDirty = true;
     yield* schedulePersist;
-  });
+  }, refreshLock.withPermit);
 
   const startRefresh = (
     credential: CursorCredentialSource,
@@ -197,11 +198,19 @@ const make = Effect.gen(function* () {
     let refreshing = false;
     if (
       (recentFailure === undefined || nowMs - recentFailure.atMs >= CURSOR_ACCOUNT_TTL_MS) &&
-      !isCursorCacheFresh(caches.get(credentialKey), nowMs)
+      !isCursorCacheFresh(caches.get(credentialKey), nowMs, retentionStartMs)
     ) {
       const refresh = yield* startRefresh(credential, credentialKey, retentionStartMs);
-      if (awaitRefresh) yield* Deferred.await(refresh);
-      else refreshing = true;
+      if (awaitRefresh) {
+        yield* Deferred.await(refresh);
+        if (
+          !failures.has(credentialKey) &&
+          !isCursorCacheFresh(caches.get(credentialKey), nowMs, retentionStartMs)
+        ) {
+          const retry = yield* startRefresh(credential, credentialKey, retentionStartMs);
+          yield* Deferred.await(retry);
+        }
+      } else refreshing = true;
     }
 
     const cache = caches.get(credentialKey);
@@ -256,6 +265,7 @@ const make = Effect.gen(function* () {
               retentionCutoffMs,
               awaitRefresh,
             ),
+          { concurrency: 2 },
         );
         // Keys for one account share its source, and a repeated source would count sessions twice.
         // A failed key can hold older records, so a current read wins, then a refresh the client
