@@ -474,6 +474,32 @@ const onlySummary = Effect.gen(function* () {
   return read.summary;
 });
 
+const adoptThreadProject = Effect.fn("test.adoptSummaryThreadProject")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const adoptedProjectId = ProjectId.make("adopted-project");
+  yield* sql`INSERT INTO projection_projects
+    (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+    SELECT ${adoptedProjectId}, title, workspace_root, scripts_json, created_at, updated_at
+    FROM projection_projects WHERE project_id = ${projectId}`;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  yield* projections.apply({
+    id: EventId.make("thread-project-adopted"),
+    type: "thread.metadata-updated",
+    threadId,
+    providerInstanceId: instanceId,
+    occurredAt: at,
+    payload: { ...threadPayload, projectId: adoptedProjectId },
+  });
+  const settings = yield* ServerSettings.ServerSettingsService;
+  yield* settings.updateSettings({
+    projectSettingsOverrides: {
+      ...optedIn.projectSettingsOverrides,
+      [adoptedProjectId]: { enableConversationSummaries: true },
+    },
+  });
+  return adoptedProjectId;
+});
+
 it.effect(
   "summarizes the settled range once with exact citations and no stored source text",
   () => {
@@ -507,6 +533,18 @@ it.effect(
       SELECT payload_json FROM conversation_summaries
     `;
       assert.isTrue(rows.every((row) => !row.payload_json.includes("Detail. Detail.")));
+
+      const adoptedProjectId = yield* adoptThreadProject();
+      yield* summarize;
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      const adopted = yield* service.list({ projectId: adoptedProjectId, threadId });
+      assert.equal(adopted.summaries.length, 1);
+      assert.deepInclude(adopted.summaries[0], {
+        state: "available",
+        summary: { ...summary, projectId: adoptedProjectId },
+      });
+      yield* summarize;
+      assert.equal(model.calls.length, 2);
     }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
   },
 );
@@ -2321,6 +2359,58 @@ it.effect("hands off almost all omitted history of a 600-item thread as summarie
         rawText(index),
         "the six newest messages arrive word for word",
       );
+
+    const sql = yield* SqlClient.SqlClient;
+    const originalIds = yield* sql<{ id: string }>`SELECT summary_id AS id
+      FROM conversation_summaries WHERE thread_id = ${threadId} ORDER BY summary_id`;
+    const adoptedProjectId = yield* adoptThreadProject();
+    for (let pass = 0, hasMore = true; hasMore; pass++) {
+      assert.isBelow(pass, 60, "the adopted thread converges");
+      hasMore = (yield* summarize).hasMore;
+    }
+    const stored = yield* sql<{ id: string; projectId: string; payloadProjectId: string }>`
+      SELECT summary_id AS id, project_id AS "projectId",
+        json_extract(payload_json, '$.projectId') AS "payloadProjectId"
+      FROM conversation_summaries WHERE thread_id = ${threadId} ORDER BY summary_id`;
+    assert.deepEqual(
+      stored.map((row) => row.id),
+      originalIds.map((row) => row.id),
+    );
+    assert.isTrue(
+      stored.every(
+        (row) => row.projectId === adoptedProjectId && row.payloadProjectId === adoptedProjectId,
+      ),
+    );
+    const adoptedScope = { projectId: adoptedProjectId, threadId };
+    const adopted = yield* service.list(adoptedScope);
+    assert.isTrue(adopted.summaries.every((read) => read.state === "available"));
+    const first = adopted.summaries[0];
+    if (first?.state !== "available") throw new Error("Expected an adopted root summary");
+    let hop = first.summary;
+    assert.equal(hop.sources[0]?.kind, "summary");
+    while (hop.sources[0]?.kind === "summary") {
+      const page = yield* service.expand({ ...adoptedScope, summaryId: hop.id, limit: 1 });
+      assert.equal(page.sources[0]?.result.state, "available");
+      const child = yield* service.describe({
+        ...adoptedScope,
+        summaryId: hop.sources[0].summaryId,
+      });
+      if (child.state !== "available") throw new Error("Expected an adopted child summary");
+      hop = child.summary;
+    }
+    const exact = yield* service.expand({ ...adoptedScope, summaryId: hop.id, limit: 1 });
+    assert.equal(
+      exact.sources[0]?.result.state === "available" ? exact.sources[0].result.text : null,
+      rawText(0),
+    );
+    assert.isAbove(
+      (yield* service.search({ ...adoptedScope, query: "Statement" })).summaries.length,
+      0,
+    );
+    assert.deepEqual((yield* service.search({ ...scope, query: "Statement" })).summaries, []);
+    const adoptedSpent = model.calls.length;
+    yield* summarize;
+    assert.equal(model.calls.length, adoptedSpent);
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 

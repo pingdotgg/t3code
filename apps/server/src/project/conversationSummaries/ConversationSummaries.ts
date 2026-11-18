@@ -1471,8 +1471,10 @@ const make = Effect.gen(function* () {
             ${summary.createdAt}, ${encodeSummary(summary)}
           )
           ON CONFLICT (summary_id) DO UPDATE SET
+            project_id = excluded.project_id,
             created_at = excluded.created_at, payload_json = excluded.payload_json
-          WHERE coalesce(json_extract(conversation_summaries.payload_json, '$.scrubbed'), 0) = 1
+          WHERE conversation_summaries.project_id != excluded.project_id
+            OR coalesce(json_extract(conversation_summaries.payload_json, '$.scrubbed'), 0) = 1
             OR json_extract(conversation_summaries.payload_json, '$.statements[0].text') = ${SCRUBBED_TEXT}
         `;
         return {
