@@ -328,7 +328,9 @@ function FileContent(props: {
       <View className="flex-1 items-center justify-center bg-sheet px-6">
         <EmptyState
           title={gt("No preview for this file")}
-          detail={gt("This file type can't be shown on mobile. Save or share it to open it in another app.")}
+          detail={gt(
+            "This file type can't be shown on mobile. Save or share it to open it in another app.",
+          )}
           actionLabel={props.savingFile ? gt("Preparing file…") : gt("Save or share")}
           onAction={props.onSaveFile}
         />
