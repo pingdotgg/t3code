@@ -1,12 +1,16 @@
 ---
 name: maestro
-description: Orchestrate parallel workers from GitHub issues inside T3 Code. The master (the user's thread) interviews requirements and files them as issues. A dedicated maestro thread dispatches one maestro-worker child per frontier issue. Workers ship through full-send (validate, review, merge) on their own, and label needs-help when a decision is needed. Use when the user asks to orchestrate parallel workers or to split a large body of work into issues that run in parallel, or when a thread is told to run as the maestro dispatcher. Do not use for a single task this session can do itself.
+description: Orchestrate parallel workers from GitHub issues inside T3 Code. The master (the user's thread) interviews requirements and files them as issues. A dispatcher, either the server's `queue.sh` daemon or a dedicated maestro thread, starts one maestro-worker per frontier issue. Workers ship through full-send (validate, review, merge) on their own, and label needs-help when a decision is needed. Use when the user asks to orchestrate parallel workers or to split a large body of work into issues that run in parallel, or when a thread is told to run as the maestro dispatcher. Do not use for a single task this session can do itself.
 ---
 
-Two roles, two threads. GitHub labels and native blocked-by edges are the only queue state, so the queue moves without the two threads talking.
+Two roles. GitHub labels and native blocked-by edges are the only queue state, so the queue moves without the two talking.
 
 - **Master**: the user's thread. It does intake, answers questions, and decides on `needs-help`. It never watches the queue.
-- **Maestro**: one long-lived top-level thread per repo, titled `maestro <owner/repo>`. Its only job is dispatch.
+- **Maestro**: the dispatcher, in one of two forms:
+  - **Daemon** (preferred where it runs): `queue.sh` beside this file, run by the T3 Code server as a daemon (Settings > Daemons). One per server covers every opted-in project, uses no model, and never stops.
+  - **Thread**: one long-lived top-level thread per repo, titled `maestro <owner/repo>`, following [Dispatcher](#dispatcher). Use it where no daemon can run, or when a repo needs per-issue judgment the script lacks, such as `provider:<instance>` labels.
+
+  Never run both for the same repo.
 
 If this thread was started with "run as the maestro dispatcher", skip to [Dispatcher](#dispatcher). Otherwise you are the master.
 
@@ -14,7 +18,20 @@ If this thread was started with "run as the maestro dispatcher", skip to [Dispat
 
 ### Start the maestro
 
-Ask the user once, as a structured question if your harness offers one: how many workers at once (default 2; use 1 if the project cannot run two dev stacks, for shared ports or one database), and confirm before starting. Check `t3_thread_list` for an existing `maestro <owner/repo>` thread first and nudge it instead of starting a second. Otherwise start it with `t3_thread_launch` (or ask the user to create the thread by hand) on the project root, titled `maestro <owner/repo>`, with this message:
+First look for a dispatcher already covering this repo: `t3 daemon list` for a `maestro queue` daemon whose command lists this project folder, and `t3_thread_list` for a `maestro <owner/repo>` thread. With a daemon, there is nothing to start: file the issues and it picks them up on its next tick. With a thread, nudge it instead of starting a second.
+
+Otherwise ask the user once, as a structured question if your harness offers one: daemon or thread, how many workers at once (default 2; use 1 if the project cannot run two dev stacks, for shared ports or one database), and confirm before starting.
+
+**Daemon.** The command lists each project folder, optionally followed by `=<master thread id>` so the daemon sends that thread the lines under [needs-help](#needs-help). One daemon per server: when a `maestro queue` daemon exists, add this folder to its command with `t3 daemon add --id <id> --name "maestro queue" --command "<new command>"` instead of adding a second.
+
+```bash
+t3 daemon add --name "maestro queue" --cwd "<project folder>" \
+  --command "MAESTRO_MAX_WORKERS=<N> <this skill's folder>/queue.sh --loop <project folder>=<master thread id>"
+```
+
+`t3` here is this server's own CLI. If the `t3` on PATH is an older release (no `daemon` command), use `node "$T3CODE_SOURCE_CHECKOUT/apps/server/dist/bin.mjs"` instead. The project needs a default model, or set `MAESTRO_PROVIDER` and `MAESTRO_MODEL` in the command. Settings > Daemons shows its terminal; each tick logs what it did.
+
+**Thread.** Start it with `t3_thread_launch` (or ask the user to create the thread by hand) on the project root, titled `maestro <owner/repo>`, with this message:
 
 ```
 Use the `maestro` skill and run as the maestro dispatcher for <owner/repo>. Master thread: <master thread id>. Max workers: <N>.
@@ -24,13 +41,13 @@ Use the `maestro` skill and run as the maestro dispatcher for <owner/repo>. Mast
 
 Issues that arrive without triage labels (filed by hand or from outside) go through the `triage-issues` skill first.
 
-Stress-test each requirement with `grilling`, then file tasks with `plan-to-issues`, or with `to-spec` and `to-tickets`. Plan very large work with `wayfinder` first. All of them write sub-issues of a parent, native blocking edges (`gh issue edit <n> --add-blocked-by <m>`), and `ready-for-agent`. Reach for `research`, `domain-modeling`, or `replan` when a requirement is unclear, not as a fixed step. After filing, send the maestro one line with `t3_thread_send`: `dispatch now`.
+Stress-test each requirement with `grilling`, then file tasks with `plan-to-issues`, or with `to-spec` and `to-tickets`. Plan very large work with `wayfinder` first. All of them write sub-issues of a parent, native blocking edges (`gh issue edit <n> --add-blocked-by <m>`), and `ready-for-agent`. Reach for `research`, `domain-modeling`, or `replan` when a requirement is unclear, not as a fixed step. After filing, a maestro thread needs one line with `t3_thread_send`: `dispatch now`. A daemon needs nothing.
 
-To run an issue on another provider, label it `provider:<instanceId>`, for example `provider:grok`.
+To run an issue on another provider, label it `provider:<instanceId>`, for example `provider:grok`. Only the maestro thread reads that label; the daemon starts every worker on its own model.
 
 ### needs-help
 
-The maestro sends you three kinds of line. `#<n> ready-for-human unblocked <issue url>` means a task for you or the user can start now. `#<n> epic done <url>` means a whole epic shipped: offer the user the `retro` skill on it. For a `#<n> needs-help: <reason> <issue url>` line, the issue carries a comment saying what is needed. Decide, or ask the user. When the decision belongs to someone else, turn it into a questionnaire for them with the `to-questionnaire` skill. When what is needed is a manual step (a credential, a dashboard setting, a CI secret), generate a `wizard` script for the user instead. Then either finish the task yourself (merge the PR, close the issue, and close its `epic` if that was the last open sub-issue), or comment your decision and remove `needs-help` so the issue rejoins the frontier and a fresh worker picks it up. Nudge the maestro afterwards. When several of these lines arrived since the user's last message, answer their next message with the `ketchup` skill.
+The maestro sends you three kinds of line. `#<n> ready-for-human unblocked <issue url>` means a task for you or the user can start now. `#<n> epic done <url>` means a whole epic shipped: offer the user the `retro` skill on it. For a `#<n> needs-help: <reason> <issue url>` line, the issue carries a comment saying what is needed. Decide, or ask the user. When the decision belongs to someone else, turn it into a questionnaire for them with the `to-questionnaire` skill. When what is needed is a manual step (a credential, a dashboard setting, a CI secret), generate a `wizard` script for the user instead. Then either finish the task yourself (merge the PR, close the issue, and close its `epic` if that was the last open sub-issue), or comment your decision and remove `needs-help` so the issue rejoins the frontier and a fresh worker picks it up. Nudge a maestro thread afterwards; a daemon notices on its next tick. When several of these lines arrived since the user's last message, answer their next message with the `ketchup` skill.
 
 ## Labels
 
@@ -44,13 +61,13 @@ Blocking is never a label. It lives in GitHub's native issue dependencies.
 | `needs-help`          | a worker or the maestro wants a decision from the master or the user                                      |
 | `provider:<instance>` | optional: dispatch this issue's worker on that provider instance instead of the maestro's own             |
 
-Keep an issue away from the maestro with `ready-for-human`, never with `needs-help`. `needs-help` means someone is blocked on you. Drop `in-progress` when you take a task back from a worker. `wayfinder` tickets carry only `wayfinder:*` labels, so the maestro never touches them.
+Keep an issue away from the maestro with `ready-for-human`, or by removing `ready-for-agent`, never with `needs-help`. There is no `hold` label. `needs-help` means someone is blocked on you. Drop `in-progress` when you take a task back from a worker. `wayfinder` tickets carry only `wayfinder:*` labels, so the maestro never touches them.
 
 Workers merge their own PRs. Nobody re-verifies a merged PR. When something on main turns out broken, file an issue and it becomes a task like any other.
 
 ## Dispatcher
 
-A server can run `queue.sh --loop <project-folder>...` as a daemon (Settings > Daemons) instead of a maestro thread; it requeues and dispatches without a model.
+This section is for the maestro thread. The daemon does the same requeue, dispatch, epic and master-notice steps in `queue.sh`, minus nudges, `provider:` labels and the heartbeat. A worker it cannot start gets `needs-help` with the start error instead of a requeue.
 
 Runs only in the maestro thread. There are no loops and no sleeps: each tick runs once and the turn ends. Spend as few tokens as you can: a tick with nothing to reap, requeue, dispatch or report ends with no message at all. A tick runs when:
 
