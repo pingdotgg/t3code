@@ -6,12 +6,7 @@ import { deviceDetailAtom, deviceDetailReadAtom, deviceEnvironment } from "~/sta
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { deviceForegroundAtom, NO_FOREGROUND_ATOM, NOOP_ATOM } from "./deviceHubAtoms";
-
-type ActionBody = DeviceActionInput extends infer A
-  ? A extends { readonly type: string }
-    ? Omit<A, "hostId" | "deviceId">
-    : never
-  : never;
+import type { DeviceActionBody } from "./deviceRecording.logic";
 
 /** Mount keyed by device. */
 export function useDeviceControls(options: {
@@ -38,7 +33,7 @@ export function useDeviceControls(options: {
   const busy = useRef(false);
 
   const available = detail !== null && visible;
-  const act = async (body: ActionBody) => {
+  const act = async (body: DeviceActionBody) => {
     if (busy.current || !available) return false;
     busy.current = true;
     setPending(true);
