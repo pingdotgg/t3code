@@ -97,6 +97,7 @@
   "289ec1df10840137": "Could not link: the other environment refused",
   "21be308917bd450e": "Could not link: {failure}",
   "acd01e781e2355cc": "Request ended",
+  "8855350e81d45c45": "That link was removed or expired. Link the machine again.",
   "97e4c50a99272f63": "Could not answer the request. Try again.",
   "605a491783d18b3f": "Could not read this thread through {via}",
   "50f19209548b70d9": "{via} may need an update before it can read linked threads.",

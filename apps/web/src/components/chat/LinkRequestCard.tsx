@@ -278,7 +278,15 @@ function LinkRequestDialog(props: {
     }
     return linkRequestAnswerInput(item, {
       type: "link",
-      target: target.kind === "machine" && target.urls.length > 0 ? target : { url: address },
+      target:
+        target.kind === "machine" && target.urls.length > 0
+          ? target
+          : {
+              url: address,
+              ...(target.kind === "machine"
+                ? { machine: { environmentId: target.environmentId, label: target.label } }
+                : {}),
+            },
       access,
       pairingCode: code,
     });

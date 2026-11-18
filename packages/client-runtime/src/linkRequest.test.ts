@@ -81,6 +81,20 @@ describe("linkRequestAnswerInput", () => {
         pairingCode: "abc",
       }),
     ).toMatchObject({ answer: { urls: ["https://box.ts.net"] } });
+    // A machine known by name but typed in by address must still answer as that machine.
+    expect(
+      linkRequestAnswerInput(item, {
+        type: "link",
+        target: {
+          url: "https://box.ts.net",
+          machine: { environmentId: vps.environmentId, label: "VPS" },
+        },
+        access: "auto",
+        pairingCode: "abc",
+      }),
+    ).toMatchObject({
+      answer: { environmentId: vps.environmentId, label: "VPS", urls: ["https://box.ts.net"] },
+    });
   });
 
   it("refuses a blank code, a blank address, or a machine with no address", () => {

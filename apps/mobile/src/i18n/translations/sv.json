@@ -97,6 +97,7 @@
   "289ec1df10840137": "Kunde inte länka: den andra miljön nekade",
   "21be308917bd450e": "Kunde inte länka: {failure}",
   "acd01e781e2355cc": "Begäran avslutades",
+  "8855350e81d45c45": "Länken har tagits bort eller gått ut. Länka maskinen igen.",
   "97e4c50a99272f63": "Kunde inte svara på begäran. Försök igen.",
   "605a491783d18b3f": "Det gick inte att läsa den här tråden via {via}",
   "50f19209548b70d9": "{via} kan behöva uppdateras innan den kan läsa länkade trådar.",

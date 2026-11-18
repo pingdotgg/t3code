@@ -361,10 +361,16 @@ export function linkRequestAnswerInput(
   answer:
     | {
         readonly type: "link";
-        /** The machine picked, or an address typed in its place. */
+        /**
+         * The machine picked, or an address typed in its place: for a machine this app knows
+         * by name but has no address for, the link must still answer as that machine.
+         */
         readonly target:
           | Pick<LinkableMachine, "environmentId" | "label" | "urls">
-          | { readonly url: string };
+          | {
+              readonly url: string;
+              readonly machine?: Pick<LinkableMachine, "environmentId" | "label">;
+            };
         readonly access: AuthMcpClientAccess;
         readonly pairingCode: string;
       }
@@ -379,7 +385,16 @@ export function linkRequestAnswerInput(
   if ("url" in target) {
     const url = target.url.trim();
     if (url.length === 0) return null;
-    return { ...base, answer: { type: "link", urls: [url], access: answer.access, pairingCode } };
+    return {
+      ...base,
+      answer: {
+        type: "link",
+        ...target.machine,
+        urls: [url],
+        access: answer.access,
+        pairingCode,
+      },
+    };
   }
   const [first, ...rest] = target.urls;
   if (first === undefined) return null;
@@ -412,6 +427,16 @@ export function linkRequestFailureMessage(
   failure: unknown,
   resolve: MFunctionType = mFallback,
 ): string {
+  if (
+    typeof failure === "object" &&
+    failure !== null &&
+    "_tag" in failure &&
+    failure._tag === "PeerLinkRequestError" &&
+    "reason" in failure &&
+    failure.reason === "link_gone"
+  ) {
+    return resolve(msg("That link was removed or expired. Link the machine again."));
+  }
   if (
     typeof failure === "object" &&
     failure !== null &&

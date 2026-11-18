@@ -97,6 +97,7 @@
   "289ec1df10840137": "Association impossible : l’autre environnement a refusé",
   "21be308917bd450e": "Association impossible : {failure}",
   "acd01e781e2355cc": "Demande terminée",
+  "8855350e81d45c45": "Cette association a été supprimée ou a expiré. Associez à nouveau la machine.",
   "97e4c50a99272f63": "Impossible de répondre à la demande. Réessayez.",
   "605a491783d18b3f": "Impossible de lire ce fil via {via}",
   "50f19209548b70d9": "{via} a peut-être besoin d’une mise à jour pour lire les fils associés.",
