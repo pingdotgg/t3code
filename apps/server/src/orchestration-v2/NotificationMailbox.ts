@@ -40,6 +40,7 @@ export const suppressedWakeNotice = (
   outcome: "cancelled",
   summary: `${what}. T3 Code did not wake the agent (switched off in Settings)`,
   detail: capNotificationDetail(detail),
+  addition: { group: "held" },
 });
 
 export function isBufferedProviderNotification(

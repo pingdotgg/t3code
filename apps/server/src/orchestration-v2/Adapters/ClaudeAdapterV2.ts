@@ -107,6 +107,7 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2NotificationAddition,
   type OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderGoal,
   type OrchestrationV2PlanArtifact,
@@ -9488,7 +9489,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             readonly nativeItemId: string;
             readonly summary: string;
             readonly detail: string;
+            readonly addition?: OrchestrationV2NotificationAddition;
           }> = [];
+          // The system prompt leads the panel the client gathers these rows into.
+          const prompt = entries.findLast((entry) => entry.kind === "systemPrompt");
+          if (prompt !== undefined && prompt.text !== state.systemPrompt) {
+            state.systemPrompt = prompt.text;
+            notices.push({
+              nativeItemId: `system-prompt:${context.providerTurnId}`,
+              summary: `Claude Code system prompt (${prompt.blocks.length} blocks, ${prompt.text.length.toLocaleString("en-US")} characters)`,
+              detail: prompt.text,
+              addition: {
+                group: "harness",
+                characters: prompt.text.length,
+                items: [
+                  {
+                    label: "System prompt",
+                    note: `${prompt.blocks.length} blocks`,
+                    characters: prompt.text.length,
+                  },
+                ],
+              },
+            });
+          }
           const added = entries.filter((entry) => entry.kind === "context");
           if (added.length > 0) {
             notices.push({
@@ -9497,15 +9520,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               detail: added
                 .map((entry) => `[${entry.label}, sent as ${entry.role}]\n${entry.text}`)
                 .join("\n\n"),
-            });
-          }
-          const prompt = entries.findLast((entry) => entry.kind === "systemPrompt");
-          if (prompt !== undefined && prompt.text !== state.systemPrompt) {
-            state.systemPrompt = prompt.text;
-            notices.push({
-              nativeItemId: `system-prompt:${context.providerTurnId}`,
-              summary: `Claude Code system prompt (${prompt.blocks.length} blocks, ${prompt.text.length.toLocaleString("en-US")} characters)`,
-              detail: prompt.text,
+              addition: {
+                group: "harness",
+                characters: added.reduce((total, entry) => total + entry.text.length, 0),
+                items: added.map((entry) => ({
+                  label: entry.label,
+                  note: `sent as ${entry.role}`,
+                  characters: entry.text.length,
+                })),
+              },
             });
           }
           if (read !== undefined) {
@@ -9518,6 +9541,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeItemId: `added-context-unavailable:${liveQuery.nativeThreadId}`,
               summary: "Claude Code's record of added context is not available for this session",
               detail: `T3 Code reads what Claude Code added from its session log. ${read === undefined ? "That log could not be found or read" : "That log records no added context"} (Claude Code ${liveQuery.claudeCodeVersion ?? "version unknown"}).`,
+              addition: { group: "harness" },
             });
           }
           const rewrites = turnRuleRewrites.get(context);
@@ -9542,6 +9566,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ),
                 ...(slow === undefined ? [] : [`Warning: ${slow}`]),
               ].join("\n\n"),
+              addition: {
+                group: "rules",
+                characters: rules.reduce((total, rule) => total + rule.added - rule.removed, 0),
+                items: rules.map((rule) => ({
+                  label: rule.name,
+                  note: requestCount(rule.requests),
+                  characters: rule.added - rule.removed,
+                })),
+              },
             });
           }
           for (const notice of notices) yield* emitNotice(context, notice);
@@ -9553,6 +9586,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             readonly nativeItemId: string;
             readonly summary: string;
             readonly detail: string;
+            readonly addition?: OrchestrationV2NotificationAddition;
+            readonly failed?: true;
           },
         ) {
           const now = yield* DateTime.now;
@@ -9583,9 +9618,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               completedAt: now,
               updatedAt: now,
               source: { kind: "system" },
-              outcome: "updated",
+              outcome: notice.failed ? "failed" : "updated",
               summary: notice.summary,
               detail: capNotificationDetail(notice.detail),
+              ...(notice.addition === undefined ? {} : { addition: notice.addition }),
             },
           });
         });
@@ -9645,6 +9681,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : `${failure.errorType}: ${failure.errorMessage ?? ""}`,
                 ...warningLines(failure.rules.flatMap((rule) => rule.warnings)),
               ].join("\n"),
+              addition: { group: "rules" },
+              failed: true,
             }),
           );
         });

@@ -167,6 +167,7 @@ export const makeRefuseBlockedSender = ({ threads, settings }: Dependencies) =>
           source: { kind: "system" },
           outcome: "cancelled",
           summary: `T3 Code blocked ${input.attempted} from ${sender.title} (other threads are blocked in Settings)`,
+          addition: { group: "blocked" },
           ...(input.text === ""
             ? {}
             : { detail: capNotificationDetail(input.text, BLOCKED_TEXT_LIMIT) }),

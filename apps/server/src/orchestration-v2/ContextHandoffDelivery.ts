@@ -65,6 +65,11 @@ export const turnAddedContextNotification = (
     outcome: "updated",
     summary: `T3 Code added context to this turn: ${sent.map((part) => part.label).join(", ")}`,
     detail: capNotificationDetail(sent.map((part) => `[${part.label}]\n${part.text}`).join("\n\n")),
+    addition: {
+      group: "t3",
+      characters: sent.reduce((total, part) => total + part.text.length, 0),
+      items: sent.map((part) => ({ label: part.label, characters: part.text.length })),
+    },
   };
 };
 
@@ -76,6 +81,7 @@ export const turnNotSentNotification = (
   source: { kind: "system" },
   outcome: "cancelled",
   summary: `T3 Code did not send the ${label} (switched off in Settings)`,
+  addition: { group: "held" },
   ...(detail === undefined || detail === "" ? {} : { detail: capNotificationDetail(detail) }),
 });
 

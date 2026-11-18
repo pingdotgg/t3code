@@ -1443,11 +1443,32 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
 );
 export type OrchestrationV2NotificationSource = typeof OrchestrationV2NotificationSource.Type;
 
+/**
+ * Marks a row as something that reached, or was kept from, the agent without the user typing it.
+ * Clients gather adjacent marked rows into one panel. `characters` is signed: rules that removed
+ * more than they added are negative.
+ */
+export const OrchestrationV2NotificationAddition = Schema.Struct({
+  group: Schema.Literals(["harness", "t3", "rules", "held", "blocked"]),
+  characters: Schema.optional(Schema.Number),
+  items: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        label: Schema.String,
+        note: Schema.optional(Schema.String),
+        characters: Schema.Number,
+      }),
+    ),
+  ),
+});
+export type OrchestrationV2NotificationAddition = typeof OrchestrationV2NotificationAddition.Type;
+
 export const OrchestrationV2Notification = Schema.Struct({
   source: OrchestrationV2NotificationSource,
   outcome: OrchestrationV2NotificationOutcome,
   summary: TrimmedNonEmptyString,
   detail: Schema.optional(Schema.String),
+  addition: Schema.optional(OrchestrationV2NotificationAddition),
 });
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 

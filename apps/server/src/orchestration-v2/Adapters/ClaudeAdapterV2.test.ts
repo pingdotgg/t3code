@@ -8967,12 +8967,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       yield* Queue.take(harness.terminalReceipts);
       assert.deepStrictEqual(notices(), [
+        { summary: "Claude Code system prompt (2 blocks, 8 characters)", detail: "one\n\ntwo" },
         {
           summary:
             "Claude Code added context to this turn: hook SessionStart:startup (9 characters)",
           detail: "[hook SessionStart:startup, sent as system]\nhook text",
         },
-        { summary: "Claude Code system prompt (2 blocks, 8 characters)", detail: "one\n\ntwo" },
       ]);
 
       yield* fileSystem.writeFileString(
