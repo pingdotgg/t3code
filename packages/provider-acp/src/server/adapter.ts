@@ -1285,13 +1285,14 @@ function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
 
 function acpBackendWebSearch(
   rawInput: Record<string, unknown> | undefined,
-  rawOutput: Record<string, unknown> | undefined,
+  rawOutput: unknown,
   title?: string | null,
 ):
   | { readonly query: string | undefined; readonly results: OrchestrationV2WebSearchResult[] }
   | undefined {
   const variant = typeof rawInput?.variant === "string" ? rawInput.variant.toLowerCase() : "";
-  const action = unknownRecord(rawOutput?.action);
+  const rawOutputRecord = unknownRecord(rawOutput);
+  const action = unknownRecord(rawOutputRecord?.action);
   const normalizedTitle = title?.toLowerCase().trim() ?? "";
   const isWebSearchTitle =
     normalizedTitle === "web search" ||
@@ -1310,9 +1311,9 @@ function acpBackendWebSearch(
     return undefined;
   }
   let args: Record<string, unknown> | undefined;
-  if (typeof rawOutput?.input === "string") {
+  if (typeof rawOutputRecord?.input === "string") {
     try {
-      args = unknownRecord(JSON.parse(rawOutput.input));
+      args = unknownRecord(JSON.parse(rawOutputRecord.input));
     } catch {
       args = undefined;
     }
@@ -1340,12 +1341,13 @@ function acpBackendWebSearch(
   const outputText =
     typeof rawOutput === "string"
       ? rawOutput
-      : typeof rawOutput?.output === "string"
-        ? rawOutput.output
+      : typeof rawOutputRecord?.output === "string"
+        ? rawOutputRecord.output
         : undefined;
   if (urls.size === 0 && outputText !== undefined) {
-    for (const match of outputText.matchAll(/https?:\/\/[^\s)\]]+/gu)) {
-      urls.add(match[0]);
+    for (const match of outputText.matchAll(/https?:\/\/[^\s)\]>]+/gu)) {
+      const url = match[0].replace(/[.,;:]+$/u, "");
+      if (url.length > 0) urls.add(url);
     }
   }
   return { query, results: [...urls].map((url) => ({ url })) };
@@ -4356,7 +4358,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               case "search": {
                 const backendSearch = acpBackendWebSearch(
                   rawInputRecord,
-                  rawOutputRecord,
+                  rawOutput,
                   toolCall.data.title ?? title ?? toolCall.title,
                 );
                 if (backendSearch !== undefined) {
@@ -4380,9 +4382,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   };
                   break;
                 }
+                const trimmedQuery =
+                  typeof rawInputRecord?.query === "string"
+                    ? rawInputRecord.query.trim()
+                    : undefined;
+                const trimmedPattern =
+                  typeof rawInputRecord?.pattern === "string"
+                    ? rawInputRecord.pattern.trim()
+                    : undefined;
                 const isPathFromQueryOrPattern =
-                  path !== undefined &&
-                  (rawInputRecord?.query === path || rawInputRecord?.pattern === path);
+                  path !== undefined && (trimmedQuery === path || trimmedPattern === path);
                 turnItem = {
                   ...base,
                   title:

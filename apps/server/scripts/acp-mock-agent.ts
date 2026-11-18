@@ -1320,11 +1320,9 @@ const program = Effect.gen(function* () {
             title: "Web search",
             kind: "search",
             status: "completed",
-            rawInput: { query: "top story on Hacker News today" },
-            rawOutput: {
-              output:
-                "Sources:\n[1] https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz",
-            },
+            rawInput: { query: "  top story on Hacker News today  " },
+            rawOutput:
+              "Sources:\n<https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz>.",
           },
           {
             sessionUpdate: "compaction_update",
