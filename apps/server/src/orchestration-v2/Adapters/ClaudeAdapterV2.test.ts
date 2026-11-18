@@ -11154,6 +11154,152 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect.each(["newer steer", "query close"] as const)(
+    "releases held steers in order and leaves none unreleased: %s mid-release",
+    (outcome) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const sending = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        let closing = false;
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+          // Pauses A mid-offer, then interrupts B as a closing query would.
+          offer: (message) => {
+            const text = JSON.stringify(message.message.content);
+            if (text.includes("Steer A")) {
+              return Deferred.succeed(sending, undefined).pipe(
+                Effect.andThen(Deferred.await(resume)),
+              );
+            }
+            return closing && text.includes("Steer B") ? Effect.interrupt : Effect.void;
+          },
+        });
+        const document = ChatFileAttachment.make({
+          type: "file",
+          id: ChatAttachmentId.make("held-steer-document"),
+          name: "held.pdf",
+          mimeType: "application/pdf",
+          sizeBytes: 19 * 1024 * 1024,
+        });
+        const pages = Buffer.from(
+          `%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Count 60 >> endobj\n${Array.from({ length: 60 }, (_, i) => `${i + 3} 0 obj << /Type /Page /Parent 2 0 R >> endobj`).join("\n")}\n`,
+        );
+        yield* fileSystem.writeFile(
+          path.join(harness.attachmentsDir, attachmentRelativePath(document)!),
+          Buffer.concat([
+            pages,
+            Buffer.alloc(document.sizeBytes - pages.length - 5, 32),
+            Buffer.from("%%EOF"),
+          ]),
+        );
+        const input = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`claude-held-release-${outcome}`),
+          text: "Keep orchestrating.",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(input);
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${input.attemptId}`,
+        });
+        const steer = (name: string, attachments: ReadonlyArray<ChatFileAttachment> = []) =>
+          harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId,
+            message: {
+              createdBy: "agent",
+              creationSource: "mcp",
+              messageId: MessageId.make(`held-${name}`),
+              text: `Steer ${name}.`,
+              attachments,
+            },
+          });
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            uuid: "00000000-0000-4000-8000-000000038711",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* steer("A");
+        yield* steer("B");
+        if (outcome === "query close") yield* steer("C", [document]);
+        const releasing = yield* harness
+          .offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "status",
+              status: null,
+              compact_result: "success",
+              uuid: "00000000-0000-4000-8000-000000038712",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          )
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(sending);
+
+        if (outcome === "newer steer") {
+          yield* steer("C");
+          yield* Deferred.succeed(resume, undefined);
+          yield* Fiber.join(releasing);
+          assert.deepEqual(
+            harness.offeredMessages
+              .slice(1)
+              .map((message) => /Steer (\w)\./.exec(JSON.stringify(message.message.content))?.[1]),
+            ["A", "B", "C"],
+          );
+          return;
+        }
+
+        // The query closes while B is offered, which interrupts the release mid-drain.
+        closing = true;
+        yield* Deferred.succeed(resume, undefined);
+        yield* Queue.take(harness.terminalReceipts);
+        // The undelivered PDF's pages are free again, so a new turn can send it natively.
+        const before = harness.offeredMessages.length;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("claude-held-release-after-stop"),
+            text: "Read this PDF.",
+            attachments: [document],
+            providerTurnOrdinal: 2,
+            nativeThreadHasTurns: true,
+          }),
+        );
+        const documents = harness.offeredMessages
+          .slice(before)
+          .flatMap((message) =>
+            Array.isArray(message.message.content)
+              ? message.message.content.filter((block) => block.type === "document")
+              : [],
+          );
+        assert.lengthOf(documents, 1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("names the notebook a Claude NotebookEdit changed", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;

@@ -5099,12 +5099,15 @@ interface ActiveClaudeTurnContext {
   // Claude may settle a turn with a result that echoes only a steer's uuid.
   readonly steerUuids: Set<string>;
   // A "now" steer aborts a running compaction, which Claude then restarts, so steers that
-  // arrive mid-compaction wait here, also in pendingSteers, until it settles.
+  // arrive mid-compaction wait here, also in pendingSteers, until it settles. Finalization
+  // releases what is still here; an entry taken for offering releases itself.
   readonly heldSteers: Array<{
     readonly uuid: string;
     readonly offer: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
     readonly release: Effect.Effect<void>;
   }>;
+  // Set while held steers are offered, so later steers queue behind them.
+  releasingHeldSteers: boolean;
   // Claude can run another model than requested, such as when an organization disallows it.
   executedModel: string | undefined;
 }
@@ -9246,9 +9249,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
 
+        // Taking the next steer and clearing the flag happen together, so none is left behind.
+        const takeHeldSteer = (context: ActiveClaudeTurnContext) => {
+          const next = context.steersClosed ? undefined : context.heldSteers.shift();
+          context.releasingHeldSteers = next !== undefined;
+          return next;
+        };
+
         const offerHeldSteers = Effect.fnUntraced(function* (context: ActiveClaudeTurnContext) {
-          for (const { uuid, offer } of context.heldSteers.splice(0)) {
+          if (context.releasingHeldSteers) return;
+          for (
+            let next = takeHeldSteer(context);
+            next !== undefined;
+            next = takeHeldSteer(context)
+          ) {
+            const { uuid, offer } = next;
             yield* offer.pipe(
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  context.releasingHeldSteers = false;
+                }),
+              ),
               Effect.catch((cause) => {
                 const steer = context.pendingSteers.get(uuid);
                 context.pendingSteers.delete(uuid);
@@ -13372,6 +13393,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               pendingSteers: new Map(),
               steerUuids: new Set(),
               heldSteers: [],
+              releasingHeldSteers: false,
               executedModel: undefined,
             };
             const attachTurn = Effect.gen(function* () {
@@ -13914,7 +13936,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               liveQuery: existing,
             });
             // Returns without waiting: a running steer effect would block this thread's Stop.
-            if (currentTurn.compaction?.status === "running") {
+            if (currentTurn.compaction?.status === "running" || currentTurn.releasingHeldSteers) {
               held = true;
               const release = Scope.close(reservationScope, Exit.void);
               currentTurn.heldSteers.push({
