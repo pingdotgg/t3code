@@ -1,5 +1,6 @@
 import type { ModelSelection, ProviderDriverKind } from "@t3tools/contracts";
 import { ComposerFavoriteFan } from "./ComposerFavoriteFan";
+import { useGT, useMessages } from "gt-react-native";
 import {
   buildTraitsTriggerDisplay,
   getPromptControlledTraits,
@@ -24,22 +25,27 @@ export function ComposerModelControl(props: {
   readonly onSelectFavorite: (model: ModelOption) => void;
   readonly onPress: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const descriptors = resolveProviderOptionDescriptors({
     capabilities: props.modelOption?.capabilities,
     selections: props.selection?.options,
   });
   const promptTraits = getPromptControlledTraits(descriptors, props.prompt);
   const summary = props.provider
-    ? buildTraitsTriggerDisplay({
-        descriptors,
-        primarySelectDescriptorId: promptTraits.primarySelectDescriptor?.id ?? null,
-        ultrathinkPromptControlled: promptTraits.ultrathinkPromptControlled,
-        modelSelection: props.selection,
-        reportedModelSelection: props.reportedSelection,
-      }).label
+    ? buildTraitsTriggerDisplay(
+        {
+          descriptors,
+          primarySelectDescriptorId: promptTraits.primarySelectDescriptor?.id ?? null,
+          ultrathinkPromptControlled: promptTraits.ultrathinkPromptControlled,
+          modelSelection: props.selection,
+          reportedModelSelection: props.reportedSelection,
+        },
+        m,
+      ).label
     : "";
   const badge = props.modelOption?.providerBadge;
-  const label = props.modelOption?.label ?? props.selection?.model ?? "Choose model";
+  const label = props.modelOption?.label ?? props.selection?.model ?? gt("Choose model");
   const providerNameLabel = badge
     ? providerInstanceNameLabel({
         provider: props.modelOption?.providerDriver,
@@ -58,10 +64,13 @@ export function ComposerModelControl(props: {
       {(gesture) => (
         <ComposerInlineControl
           {...(gesture
-            ? { tapOrHold: gesture, accessibilityHint: "Hold and slide to choose a favorite model" }
+            ? {
+                tapOrHold: gesture,
+                accessibilityHint: gt("Hold and slide to choose a favorite model"),
+              }
             : {})}
           accessibilityLabel={[
-            "Model and reasoning settings",
+            gt("Model and reasoning settings"),
             label,
             badge?.showBadge ? badge.displayName : null,
             summary,
