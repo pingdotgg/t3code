@@ -208,6 +208,7 @@ export interface PreviewStreamEvents {
 }
 
 export interface PreviewStreamClient {
+  readonly setFrameSize: (size: PreviewStreamViewport) => void;
   readonly send: (input: PreviewStreamInput) => boolean;
   readonly stop: () => void;
 }
@@ -224,7 +225,7 @@ export function createPreviewStreamClient(
     maxHeight: String(Math.max(1, Math.round(target.maxHeight))),
   });
   if (target.interactive === false) query.set("interactive", "false");
-  const url = withDeviceHubQuery(`${target.access.wsBase}/ws?${query.toString()}`, target.access);
+  let frameSizeChanged = false;
   let stopped = false;
   let socket: WebSocket | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -241,13 +242,16 @@ export function createPreviewStreamClient(
 
   const connect = () => {
     if (stopped) return;
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(
+      withDeviceHubQuery(`${target.access.wsBase}/ws?${query.toString()}`, target.access),
+    );
     ws.binaryType = "arraybuffer";
     socket = ws;
     let opened = false;
     ws.addEventListener("open", () => {
       if (socket !== ws) return;
       opened = true;
+      if (frameSizeChanged) sendFrameSize();
       events.onConnectedChange(true);
     });
     ws.addEventListener("message", (event) => {
@@ -385,9 +389,30 @@ export function createPreviewStreamClient(
     ws.addEventListener("error", () => ws.close());
   };
 
+  const sendFrameSize = () => {
+    if (socket?.readyState !== WebSocket.OPEN) return;
+    socket.send(
+      JSON.stringify({
+        type: "streamSize",
+        width: Number(query.get("maxWidth")),
+        height: Number(query.get("maxHeight")),
+      }),
+    );
+  };
+
   connect();
 
   return {
+    setFrameSize: ({ width, height }) => {
+      if (stopped) return;
+      const maxWidth = String(Math.max(1, Math.round(width)));
+      const maxHeight = String(Math.max(1, Math.round(height)));
+      if (query.get("maxWidth") === maxWidth && query.get("maxHeight") === maxHeight) return;
+      query.set("maxWidth", maxWidth);
+      query.set("maxHeight", maxHeight);
+      frameSizeChanged = true;
+      sendFrameSize();
+    },
     send: (input) => {
       if (socket?.readyState !== WebSocket.OPEN) return false;
       if (!control?.canOperate) return false;

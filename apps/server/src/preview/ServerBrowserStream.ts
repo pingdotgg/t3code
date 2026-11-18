@@ -41,8 +41,8 @@ const intParam = (params: URLSearchParams, name: string, fallback: number, max: 
 
 type Frame = Extract<ServerBrowser.ServerBrowserViewerOutput, { readonly _tag: "frame" }>;
 
-const isAck = (message: unknown) =>
-  typeof message === "object" && message !== null && "type" in message && message.type === "ack";
+const messageType = (message: unknown) =>
+  typeof message === "object" && message !== null && "type" in message ? message.type : undefined;
 
 const parseMessage = (chunk: Uint8Array | string): unknown => {
   try {
@@ -88,8 +88,8 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
           threadId,
           tabId,
           canOperate,
-          maxWidth: intParam(params, "maxWidth", 1280, 7680),
-          maxHeight: intParam(params, "maxHeight", 800, 4320),
+          maxWidth: intParam(params, "maxWidth", 1280, ServerBrowser.VIEWER_MAX_FRAME_WIDTH),
+          maxHeight: intParam(params, "maxHeight", 800, ServerBrowser.VIEWER_MAX_FRAME_HEIGHT),
           quality: intParam(params, "quality", DEFAULT_QUALITY, 100),
         })
         .pipe(
@@ -183,8 +183,10 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
         const message = parseMessage(chunk);
         // Ownership serializes actions in the service. Keep reading so dialog
         // replies and takeover can unblock an action already waiting on the page.
-        if (!isAck(message))
-          return yield* canOperate
+        const type = messageType(message);
+        if (type !== "ack")
+          // Read-only viewers may still size their own frames.
+          return yield* canOperate || type === "streamSize"
             ? viewer.input(message).pipe(Effect.forkScoped, Effect.asVoid)
             : Effect.void;
         const ack = inFlight;

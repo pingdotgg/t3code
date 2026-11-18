@@ -63,6 +63,30 @@ describe("preview stream control", () => {
     dialog: null,
   };
 
+  it("changes frame size on the same socket while watching or controlling", () => {
+    const { client, socket } = connect();
+    socket.control({ ...agent, canOperate: false });
+    client.setFrameSize({ width: 1600, height: 1000 });
+    expect(socket.sent).toEqual(['{"type":"streamSize","width":1600,"height":1000}']);
+    socket.control({ ...agent, controller: "you" });
+    client.setFrameSize({ width: 1800, height: 1200 });
+    expect(FakeSocket.current).toBe(socket);
+    expect(client.send({ type: "text", text: "still controlled" })).toBe(true);
+    expect(socket.sent.at(-1)).toBe('{"type":"text","text":"still controlled"}');
+    client.stop();
+  });
+
+  it("uses the latest frame size if it changes before the socket opens", () => {
+    const { client, socket } = connect();
+    socket.readyState = 0;
+    client.setFrameSize({ width: 1800, height: 1200 });
+    expect(socket.sent).toEqual([]);
+    socket.readyState = 1;
+    socket.dispatchEvent(new Event("open"));
+    expect(socket.sent).toEqual(['{"type":"streamSize","width":1800,"height":1200}']);
+    client.stop();
+  });
+
   it("does not grant control from malformed dialog metadata", () => {
     const { client, socket, onControl } = connect();
     socket.message(

@@ -116,6 +116,8 @@ const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
 // A viewer still is best-effort; a capture Chromium never answers must not hold the capture lock.
 const VIEWER_STILL_TIMEOUT_MS = 2_000;
 const VIEWER_OUTPUT_LIMIT = 64;
+export const VIEWER_MAX_FRAME_WIDTH = 7680;
+export const VIEWER_MAX_FRAME_HEIGHT = 4320;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
 const RECORDING_BINARY_EXPORT_MIN_BYTES = 8 * 1024 * 1024;
 const RECORDING_DOWNLOAD_TIMEOUT_MS = 5_000;
@@ -3197,6 +3199,8 @@ const make = Effect.gen(function* () {
         ),
     );
     const quality = Math.min(100, Math.max(1, Math.round(input.quality)));
+    let maxWidth = input.maxWidth;
+    let maxHeight = input.maxHeight;
     // Chromium may drop the final frame during a burst; send a still when it settles.
     let framesInFlight = 0;
     let mayHaveDropped = false;
@@ -3213,8 +3217,8 @@ const make = Effect.gen(function* () {
           .send("Page.startScreencast", {
             format: "jpeg",
             quality: screencastScale < 1 ? Math.min(quality, SCREENCAST_MOTION_QUALITY) : quality,
-            maxWidth: Math.max(1, Math.round(input.maxWidth * screencastScale)),
-            maxHeight: Math.max(1, Math.round(input.maxHeight * screencastScale)),
+            maxWidth: Math.max(1, Math.round(maxWidth * screencastScale)),
+            maxHeight: Math.max(1, Math.round(maxHeight * screencastScale)),
           })
           .catch(constVoid);
       });
@@ -3354,9 +3358,30 @@ const make = Effect.gen(function* () {
       output,
       input: (raw: unknown) =>
         Effect.promise(async () => {
-          if (!viewer.canOperate) return;
           const message = asRecord(raw);
           if (!message) return;
+          // Frame dimensions affect only this viewer, including read-only viewers.
+          if (message.type === "streamSize") {
+            const { width, height } = message;
+            if (
+              typeof width !== "number" ||
+              typeof height !== "number" ||
+              !Number.isFinite(width) ||
+              !Number.isFinite(height) ||
+              width < 1 ||
+              height < 1
+            )
+              return;
+            const nextWidth = Math.min(Math.round(width), VIEWER_MAX_FRAME_WIDTH);
+            const nextHeight = Math.min(Math.round(height), VIEWER_MAX_FRAME_HEIGHT);
+            if (maxWidth === nextWidth && maxHeight === nextHeight) return;
+            maxWidth = nextWidth;
+            maxHeight = nextHeight;
+            await startScreencast(screencastScale);
+            await pushStill();
+            return;
+          }
+          if (!viewer.canOperate) return;
           try {
             if (message.type === "takeControl") {
               const taking = tab.control.take(viewer.id);
