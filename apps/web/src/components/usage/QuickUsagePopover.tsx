@@ -9,7 +9,7 @@ import type { ProviderDriverKind, ServerProvider, UsageProviderKind } from "@t3t
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import { useGT, useMessages } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { InfoIcon } from "lucide-react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -366,7 +366,7 @@ export function QuickUsagePopover({
                 </p>
                 {usage.isPartial ? (
                   <p className="text-muted-foreground">
-                    {gt("Totals are partial while selected environments scan.")}
+                    <T>Totals are partial while selected environments scan.</T>
                   </p>
                 ) : null}
               </div>
