@@ -5,6 +5,7 @@ import {
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
+import { routedAutoLevel } from "@t3tools/shared/autoModel";
 
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -26,6 +27,8 @@ export interface CompiledClaudeModelSelection {
   readonly settings: Readonly<Record<string, boolean>>;
   /** The alias of a custom model named like one, which Claude Code would otherwise expand. */
   readonly pinnedAlias: string | undefined;
+  /** The level Auto routed this selection at; undefined for a hand-picked model. */
+  readonly autoLevel: string | undefined;
   readonly queryIdentity: string;
 }
 
@@ -65,17 +68,20 @@ export function compileClaudeModelSelection(
     resolveClaudeModelSlug(catalog, selection.model) === apiModelId
       ? apiModelId
       : undefined;
+  const autoLevel = routedAutoLevel(selection);
   return {
     apiModelId,
     effort,
     promptEffort,
     settings,
     pinnedAlias,
+    autoLevel,
     queryIdentity: JSON.stringify({
       apiModelId,
       effort: effort ?? null,
       settings,
       pinnedAlias: pinnedAlias ?? null,
+      autoLevel: autoLevel ?? null,
     }),
   };
 }
