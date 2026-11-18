@@ -479,7 +479,7 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
       }
       const revision = threadOutboxRevision(queuedMessage.messageId);
       if (queuedMessage.restoreToDraft === false) {
-        const removed = yield* storage("remove-rejected-command", queuedMessage.messageId, () =>
+        const removed = yield* storage("remove-unsendable", queuedMessage.messageId, () =>
           removeThreadOutboxMessage(queuedMessage, revision, () => !editing()),
         );
         if (!removed) return "deferred" as const;
