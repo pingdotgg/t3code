@@ -129,7 +129,7 @@ export function PullRequestLabelPicker({
         )
       }
     >
-      {(candidate) => {
+      {(candidate, busy) => {
         const dot = pullRequestLabelColor(candidate.color);
         return (
           <>

@@ -201,7 +201,7 @@ export function PullRequestReviewerPicker({
         )
       }
     >
-      {(candidate) => (
+      {(candidate, busy) => (
         <>
           <PullRequestActorLabel actor={candidate} className="flex-1" />
           {candidate.kind === "team" ? (
