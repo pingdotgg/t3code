@@ -59,10 +59,7 @@ const isProviderError = Schema.is(PullRequestProviderError);
 const providerFailureReason = (cause: Cause.Cause<PullRequestService.PullRequestError>) =>
   Option.match(Cause.findErrorOption(cause), {
     onNone: () => null,
-    onSome: (error) =>
-      error._tag === "PullRequestOperationError" && isProviderError(error.cause)
-        ? error.cause.reason
-        : null,
+    onSome: (error) => (isProviderError(error.cause) ? error.cause.reason : null),
   });
 
 const logFailure =

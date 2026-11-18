@@ -29,6 +29,7 @@ import {
   type PullRequestDetail,
   type PullRequestComment,
   PullRequestOperationError,
+  PullRequestUnavailableError,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -4028,23 +4029,27 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const readFailure = (
           operation: string,
           failure: "failed" | "not-found" | "forbidden" | "unauthenticated",
-        ) =>
-          new PullRequestOperationError({
+        ) => {
+          const cause = new PullRequestProviderError({
+            provider: SourceControlProviderKind.make("github"),
             operation,
+            reason: accessChanged
+              ? failure === "forbidden"
+                ? "unauthenticated"
+                : failure === "unauthenticated"
+                  ? "forbidden"
+                  : failure
+              : failure,
             detail: "host read failed",
-            cause: new PullRequestProviderError({
-              provider: SourceControlProviderKind.make("github"),
-              operation,
-              reason: accessChanged
-                ? failure === "forbidden"
-                  ? "unauthenticated"
-                  : failure === "unauthenticated"
-                    ? "forbidden"
-                    : failure
-                : failure,
-              detail: "host read failed",
-            }),
           });
+          return cause.reason === "unauthenticated"
+            ? new PullRequestUnavailableError({
+                reason: "cli-unauthenticated",
+                provider: cause.provider,
+                cause,
+              })
+            : new PullRequestOperationError({ operation, detail: "host read failed", cause });
+        };
         const makeReactor = PullRequestWatchReactor.make.pipe(
           Effect.provide(
             Layer.mergeAll(
