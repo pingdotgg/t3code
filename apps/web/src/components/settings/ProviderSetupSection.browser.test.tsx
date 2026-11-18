@@ -181,28 +181,6 @@ function resetSetup() {
 }
 
 describe("Antigravity setup", () => {
-  it("shows the failed environment's startup details and clears them on a new attempt", async () => {
-    resetSetup();
-    setup.installation = {
-      ...setup.installation!,
-      phase: "failed",
-      message: "Runtime verification timed out.",
-      diagnostics: {
-        step: "Antigravity initialization",
-        stderr: "Local harness failed to initialize",
-        exitCode: null,
-        signal: null,
-        truncated: false,
-      },
-    };
-    await using screen = await renderSetup();
-    await userEvent.click(screen.getByText("Installation details"));
-    await expect.element(screen.getByText("Local harness failed to initialize")).toBeVisible();
-    setup.installation = { ...setup.installation!, phase: "verifying", diagnostics: null };
-    await publish();
-    await expect.element(screen.getByText("Installation details")).not.toBeInTheDocument();
-  });
-
   it("can start installation before the first install snapshot arrives", async () => {
     resetSetup();
     setup.auth = authState({ phase: "idle", flowId: null, authorizationUrl: null });

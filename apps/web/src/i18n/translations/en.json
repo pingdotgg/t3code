@@ -8901,6 +8901,33 @@
   ],
   "a11d2816a2b3106c": "Loading sign-in terminal…",
   "b2f7638eb3def111": "If the final localhost page does not load, paste its full URL here.",
+  "2d7af575422e95d4": "Installation details",
+  "bedf6a1ed148ba26": [
+    "Attempt: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Exit code: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Exit signal: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "33139f49ca313a62": "No startup error output was captured for this check.",
+  "bb673f99be9e5122": "Some startup output was omitted or truncated.",
   "c749e91a6fec5cf9": "Clear {field}",
   "95e568730bdde867": "Variables",
   "134c2eb478dce8d9": "API keys, base URLs, and other per-instance CLI settings.",

@@ -8891,6 +8891,33 @@
   ],
   "a11d2816a2b3106c": "Cargando la terminal de inicio de sesión…",
   "b2f7638eb3def111": "Si la última página de localhost no carga, pega aquí su URL completa.",
+  "2d7af575422e95d4": "Detalles de la instalación",
+  "bedf6a1ed148ba26": [
+    "Intento: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Código de salida: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Señal de salida: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "33139f49ca313a62": "No se capturó salida de errores de inicio para esta comprobación.",
+  "bb673f99be9e5122": "Se omitió o truncó parte de la salida de inicio.",
   "c749e91a6fec5cf9": "Borrar {field}",
   "95e568730bdde867": "Variables",
   "134c2eb478dce8d9": "Claves de API, URL base y otros ajustes de la CLI por instancia.",

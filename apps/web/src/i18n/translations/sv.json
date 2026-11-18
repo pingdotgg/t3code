@@ -8899,6 +8899,33 @@
   ],
   "a11d2816a2b3106c": "Läser in inloggningsterminalen…",
   "b2f7638eb3def111": "Om den sista localhost-sidan inte laddas klistrar du in dess fullständiga URL här.",
+  "2d7af575422e95d4": "Installationsdetaljer",
+  "bedf6a1ed148ba26": [
+    "Försök: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Avslutningskod: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Avslutningssignal: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "33139f49ca313a62": "Ingen startfelsutdata fångades för den här kontrollen.",
+  "bb673f99be9e5122": "En del av startutdatan utelämnades eller kortades.",
   "c749e91a6fec5cf9": "Rensa {field}",
   "95e568730bdde867": "Variabler",
   "134c2eb478dce8d9": "API-nycklar, bas-URL:er och andra CLI-inställningar per instans.",

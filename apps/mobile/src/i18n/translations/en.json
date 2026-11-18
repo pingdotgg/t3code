@@ -3360,6 +3360,33 @@
   "16bc6f6dc21e6167": "Select a connected environment.",
   "229961ee1c32a532": "Limited permissions",
   "7cc151a4ae532ee7": "Configure a provider with in-app sign-in in web or desktop Settings.",
+  "2d7af575422e95d4": "Installation details",
+  "bedf6a1ed148ba26": [
+    "Attempt: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Exit code: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Exit signal: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "33139f49ca313a62": "No startup error output was captured for this check.",
+  "bb673f99be9e5122": "Some startup output was omitted or truncated.",
   "e91a8efa0de1b737": [
     "Enter code ",
     {

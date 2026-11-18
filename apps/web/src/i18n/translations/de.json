@@ -8893,6 +8893,33 @@
   ],
   "a11d2816a2b3106c": "Anmeldeterminal wird geladen…",
   "b2f7638eb3def111": "Falls die abschließende localhost-Seite nicht lädt, füge hier ihre vollständige URL ein.",
+  "2d7af575422e95d4": "Installationsdetails",
+  "bedf6a1ed148ba26": [
+    "Versuch: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Exit-Code: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Exit-Signal: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "33139f49ca313a62": "Für diese Prüfung wurde keine Startfehlerausgabe erfasst.",
+  "bb673f99be9e5122": "Ein Teil der Startausgabe wurde ausgelassen oder gekürzt.",
   "c749e91a6fec5cf9": "{field} leeren",
   "95e568730bdde867": "Variablen",
   "134c2eb478dce8d9": "API-Schlüssel, Basis-URLs und andere CLI-Einstellungen pro Instanz.",

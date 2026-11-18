@@ -3354,6 +3354,33 @@
   "16bc6f6dc21e6167": "Selecciona un entorno conectado.",
   "229961ee1c32a532": "Permisos limitados",
   "7cc151a4ae532ee7": "Configura un proveedor con inicio de sesión en la app en los ajustes de la web o el escritorio.",
+  "2d7af575422e95d4": "Detalles de la instalación",
+  "bedf6a1ed148ba26": [
+    "Intento: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Código de salida: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Señal de salida: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "33139f49ca313a62": "No se capturó salida de errores de inicio para esta comprobación.",
+  "bb673f99be9e5122": "Se omitió o truncó parte de la salida de inicio.",
   "e91a8efa0de1b737": [
     "Introduce el código ",
     {

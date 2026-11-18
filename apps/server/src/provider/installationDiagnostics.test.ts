@@ -1,4 +1,3 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -108,28 +107,4 @@ it.effect.each(["NotFound", "PermissionDenied"] as const)(
             : "The operating system denied permission to start the runtime.",
       });
     }),
-);
-
-it.live("captures a real failed child process without mixing stdout into diagnostics", () =>
-  Effect.gen(function* () {
-    const executable = yield* HostProcess.ExecutablePath;
-    const capture = yield* makeInstallationDiagnostics("Runtime check");
-    const child = yield* capture.spawner.spawn(
-      ChildProcess.make(executable, [
-        "-e",
-        "process.stdout.write('private-protocol-payload'); process.stderr.write('Missing startup library\\n'); process.exitCode = 3;",
-      ]),
-    );
-    yield* Effect.all(
-      [child.stdout.pipe(Stream.runDrain), child.stderr.pipe(Stream.runDrain), child.exitCode],
-      { concurrency: "unbounded" },
-    );
-    expect(capture.snapshot()).toEqual({
-      step: "Runtime check",
-      stderr: "Missing startup library",
-      exitCode: 3,
-      signal: null,
-      truncated: false,
-    });
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

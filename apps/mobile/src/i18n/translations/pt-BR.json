@@ -3354,6 +3354,33 @@
   "16bc6f6dc21e6167": "Selecione um ambiente conectado.",
   "229961ee1c32a532": "Permissões limitadas",
   "7cc151a4ae532ee7": "Configure um provedor com login no app nas Configurações da web ou do desktop.",
+  "2d7af575422e95d4": "Detalhes da instalação",
+  "bedf6a1ed148ba26": [
+    "Tentativa: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Código de saída: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Sinal de saída: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "33139f49ca313a62": "Nenhuma saída de erro de inicialização foi capturada nesta verificação.",
+  "bb673f99be9e5122": "Parte da saída de inicialização foi omitida ou truncada.",
   "e91a8efa0de1b737": [
     "Digite o código ",
     {

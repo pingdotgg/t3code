@@ -3359,6 +3359,33 @@
   "16bc6f6dc21e6167": "Wähle eine verbundene Umgebung.",
   "229961ee1c32a532": "Eingeschränkte Berechtigungen",
   "7cc151a4ae532ee7": "Konfiguriere einen Anbieter mit In-App-Anmeldung in den Einstellungen im Web oder auf dem Desktop.",
+  "2d7af575422e95d4": "Installationsdetails",
+  "bedf6a1ed148ba26": [
+    "Versuch: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Exit-Code: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Exit-Signal: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "33139f49ca313a62": "Für diese Prüfung wurde keine Startfehlerausgabe erfasst.",
+  "bb673f99be9e5122": "Ein Teil der Startausgabe wurde ausgelassen oder gekürzt.",
   "e91a8efa0de1b737": [
     "Gib den Code ",
     {

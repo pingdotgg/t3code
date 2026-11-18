@@ -3354,6 +3354,33 @@
   "16bc6f6dc21e6167": "Sélectionnez un environnement connecté.",
   "229961ee1c32a532": "Autorisations limitées",
   "7cc151a4ae532ee7": "Configurez un fournisseur avec connexion dans l’app dans les Paramètres web ou bureau.",
+  "2d7af575422e95d4": "Détails de l’installation",
+  "bedf6a1ed148ba26": [
+    "Tentative : ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Code de sortie : ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Signal de sortie : ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "33139f49ca313a62": "Aucune sortie d’erreur de démarrage n’a été capturée pour cette vérification.",
+  "bb673f99be9e5122": "Une partie de la sortie de démarrage a été omise ou tronquée.",
   "e91a8efa0de1b737": [
     "Saisissez le code ",
     {
