@@ -23,6 +23,12 @@ const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
   `https://agentclientprotocol.com/protocol/session-modes#${name}`;
 const modeOptionCategory = process.env.T3_ACP_MODE_OPTION_CATEGORY ?? "mode";
+// Comma-separated command names the mock advertises, so `/compact` support is testable.
+const advertisedCommandNames = (process.env.T3_ACP_AVAILABLE_COMMANDS ?? "")
+  .split(",")
+  .map((name) => name.trim())
+  .filter((name) => name.length > 0);
+const loadedCommandNames = process.env.T3_ACP_LOADED_COMMANDS?.split(",").filter(Boolean);
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -64,6 +70,9 @@ const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
+const loadReplyDelayMs = Number(process.env.T3_ACP_LOAD_REPLY_DELAY_MS ?? "0");
+const loadNeverReplies = process.env.T3_ACP_LOAD_NEVER_REPLIES === "1";
+const rejectPromptUntilLoaded = process.env.T3_ACP_REJECT_PROMPT_UNTIL_LOADED === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 // JSON for the `data` of an "Internal error" response to `session/new`, as
 // Antigravity sends when its runtime cannot reach its local harness.
@@ -76,6 +85,10 @@ const newSessionErrorData =
 const failPromptOrdinal = Number(process.env.T3_ACP_FAIL_PROMPT_ORDINAL);
 const compactionPromptOrdinals = new Set(
   (process.env.T3_ACP_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
+);
+// These prompts end while their compaction is still in progress.
+const openCompactionPromptOrdinals = new Set(
+  (process.env.T3_ACP_OPEN_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
 );
 const failSetModeConfigOption = process.env.T3_ACP_FAIL_SET_MODE_CONFIG_OPTION === "1";
 const emitEmptyDefaultAgentOption = process.env.T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION === "1";
@@ -112,6 +125,7 @@ let currentAgent = "";
 let authenticated = !requiresAuthentication;
 let promptCount = 0;
 const cancelledSessions = new Set<string>();
+const sessionsLoading = new Set<string>();
 let configuredProvider: AcpSchema.ProviderCurrentConfig | null = null;
 
 function promptIdFromRequestMeta(
@@ -610,6 +624,18 @@ const program = Effect.gen(function* () {
       if (antigravityProfile) {
         yield* publishAntigravityCommands(sessionId);
       }
+      if (advertisedCommandNames.length > 0) {
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: advertisedCommandNames.map((name) => ({
+              name,
+              description: `${name} command`,
+            })),
+          },
+        });
+      }
       return {
         sessionId,
         configOptions: configOptions(),
@@ -665,6 +691,16 @@ const program = Effect.gen(function* () {
   yield* agent.handleLoadSession((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      sessionsLoading.add(requestedSessionId);
+      if (loadedCommandNames !== undefined) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: loadedCommandNames.map((name) => ({ name, description: name })),
+          },
+        });
+      }
       if (failLoadSession) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
       }
@@ -698,6 +734,13 @@ const program = Effect.gen(function* () {
           content: { type: "text", text: "replay" },
         },
       });
+      if (loadNeverReplies) {
+        return yield* Effect.never;
+      }
+      if (Number.isFinite(loadReplyDelayMs) && loadReplyDelayMs > 0) {
+        yield* Effect.sleep(`${loadReplyDelayMs} millis`);
+      }
+      sessionsLoading.delete(requestedSessionId);
       return {
         configOptions: configOptions(),
       };
@@ -837,6 +880,12 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (rejectPromptUntilLoaded && sessionsLoading.has(requestedSessionId)) {
+        return yield* new AcpError.AcpRequestError({
+          code: -32002,
+          errorMessage: `Resource not found: ${requestedSessionId}`,
+        });
+      }
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
       if (idleError === "grok-background" && promptCount === 1) {
@@ -1342,6 +1391,16 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep(`${promptDelayMs} millis`);
       }
 
+      if (openCompactionPromptOrdinals.has(promptCount)) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "compaction_update",
+            compactionId: `compact-${promptCount}`,
+            status: "in_progress",
+          },
+        });
+      }
       if (compactionPromptOrdinals.has(promptCount)) {
         for (const status of ["in_progress", "completed"] as const) {
           yield* agent.client.sessionUpdate({
@@ -1353,10 +1412,6 @@ const program = Effect.gen(function* () {
             },
           });
         }
-      }
-
-      if (failPrompt || promptCount === failPromptOrdinal) {
-        return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 
       if (emitTrackedToolCallKindThenHang !== undefined) {
@@ -1371,7 +1426,11 @@ const program = Effect.gen(function* () {
             rawInput: { command: "git status" },
           },
         });
-        return yield* Effect.never;
+        if (!failPrompt && promptCount !== failPromptOrdinal) return yield* Effect.never;
+      }
+
+      if (failPrompt || promptCount === failPromptOrdinal) {
+        return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 
       if (hangPromptForever || (emitEmptySuccessfulBashThenHang && promptCount === 2)) {

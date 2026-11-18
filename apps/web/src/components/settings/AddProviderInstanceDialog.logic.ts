@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+
 export type WizardNavigation =
   | { readonly kind: "navigate"; readonly step: number }
   | { readonly kind: "blocked"; readonly step: number; readonly error: string };
@@ -5,9 +7,20 @@ export type WizardNavigation =
 const IDENTITY_STEP = 1;
 const ACP_REGISTRY_IDENTITY_STEP = 1;
 
-export const ADD_PROVIDER_WIZARD_STEPS = ["Provider", "Identity", "Config"] as const;
-export const ACP_REGISTRY_WIZARD_STEPS = ["Provider", "Identity", "Sign in"] as const;
-export const LOCAL_ACP_WIZARD_STEPS = ["Provider", "Identity"] as const;
+const PROVIDER_STEP = msg("Provider", { $context: "wizard step" });
+const IDENTITY_STEP_LABEL = msg("Identity", { $context: "wizard step" });
+
+export const ADD_PROVIDER_WIZARD_STEPS = [
+  PROVIDER_STEP,
+  IDENTITY_STEP_LABEL,
+  msg("Config", { $context: "wizard step" }),
+] as const;
+export const ACP_REGISTRY_WIZARD_STEPS = [
+  PROVIDER_STEP,
+  IDENTITY_STEP_LABEL,
+  msg("Sign in", { $context: "wizard step" }),
+] as const;
+export const LOCAL_ACP_WIZARD_STEPS = [PROVIDER_STEP, IDENTITY_STEP_LABEL] as const;
 
 export interface ProviderIdentityDraft {
   readonly label: string;

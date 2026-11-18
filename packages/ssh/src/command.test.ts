@@ -12,7 +12,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import { parseSshResolveOutput, remoteStateKey, runSshCommand } from "./command.ts";
+import { baseSshArgs, parseSshResolveOutput, remoteStateKey, runSshCommand } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
 
 const encoder = new TextEncoder();
@@ -76,6 +76,29 @@ describe("ssh command", () => {
       ),
     );
   });
+
+  it.effect("overrides an alias's RemoteCommand and RequestTTY", () =>
+    Effect.sync(() => {
+      assert.deepEqual(
+        baseSshArgs(
+          { alias: "devbox", hostname: "devbox", username: null, port: 2222 },
+          { batchMode: "yes" },
+        ),
+        [
+          "-o",
+          "BatchMode=yes",
+          "-o",
+          "ConnectTimeout=10",
+          "-o",
+          "RemoteCommand=none",
+          "-o",
+          "RequestTTY=no",
+          "-p",
+          "2222",
+        ],
+      );
+    }),
+  );
 
   // Remote servers store state under this key, so it must not change across releases.
   it.effect("derives a stable remote state key", () =>
@@ -147,6 +170,45 @@ describe("ssh command", () => {
           : `${redacted.slice(0, 4_000)}\n[truncated]`,
       );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "a timed-out command leaves no helper running that ignored SIGTERM",
+    () =>
+      Effect.gen(function* () {
+        const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Stands in for ssh and a ProxyCommand: ssh exits on SIGTERM, the proxy ignores it.
+        const spawner = ChildProcessSpawner.make((command) =>
+          nativeSpawner.spawn(
+            ChildProcess.make(
+              process.execPath,
+              [
+                "-e",
+                `const proxy = require("node:child_process").spawn("sh", ["-c", "trap '' TERM; exec sleep 60"], { stdio: "ignore" });
+              process.stdout.write(proxy.pid + "\\n");
+              setInterval(() => {}, 1000);`,
+              ],
+              command._tag === "StandardCommand" ? command.options : {},
+            ),
+          ),
+        );
+        const failure = yield* runSshCommand(
+          { alias: "synthetic-fixture", hostname: "synthetic-fixture", username: null, port: null },
+          { timeoutMs: 1_000, keepErrorOutputTail: true },
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.flip,
+        );
+        assert.instanceOf(failure, SshCommandError);
+        assert.equal(failure.message, "SSH command timed out after 1000ms.");
+        const proxyPid = Number(failure.stdout?.trim());
+        assert.isTrue(Number.isSafeInteger(proxyPid) && proxyPid > 1);
+        const state = (yield* nativeSpawner.string(
+          ChildProcess.make("ps", ["-p", String(proxyPid), "-o", "stat="]),
+        )).trim();
+        if (state !== "" && !state.startsWith("Z")) process.kill(proxyPid, "SIGKILL");
+        assert.isTrue(state === "" || state.startsWith("Z"), `proxy still running (${state})`);
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.live("enables server-alive checks for long remote commands", () =>
