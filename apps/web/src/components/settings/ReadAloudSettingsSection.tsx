@@ -11,11 +11,11 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
+  CloudSpeechProvider,
   AuthFilesystemReadScope,
   AuthSettingsWriteScope,
   READ_ALOUD_LABELS,
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
-  type CloudSpeechProvider,
   type ReadAloudSettings,
   type SpeechSynthesisCatalog,
   type SpeechSynthesisProvider,
@@ -25,7 +25,15 @@ import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 import { readAloudController } from "../../speech/readAloud";
-import { CheckIcon, DownloadIcon, StarIcon, XIcon } from "lucide-react";
+import {
+  CheckIcon,
+  DownloadIcon,
+  MonitorIcon,
+  StarIcon,
+  Trash2Icon,
+  UnlinkIcon,
+  XIcon,
+} from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -183,104 +191,104 @@ function LocalSpeechModel({
       ? 0
       : Math.min(100, (install.downloaded / install.size) * 100);
   return (
-    <SettingsRow
-      title={
-        <span className="flex flex-wrap items-center gap-1.5">
-          {model.name}
-          {recommended && (
-            <Badge variant="outline">
-              <StarIcon className="mr-1 size-3" />
-              Recommended
-            </Badge>
-          )}
-        </span>
-      }
-      description={
-        <>
-          {model.description}{" "}
-          {install.state === "installed"
-            ? `Installed on the selected environment (${formatSize(install.size)}).`
-            : `${formatSize(install.size)} download.`}
+    <div className="px-3 py-3">
+      <div className="flex flex-col gap-2.5 @min-[28rem]/voice-models:flex-row @min-[28rem]/voice-models:items-start @min-[28rem]/voice-models:gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-sm font-medium leading-5">{model.name}</span>
+            {recommended && (
+              <Badge variant="outline">
+                <StarIcon className="mr-1 size-3" />
+                Recommended
+              </Badge>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs leading-normal text-muted-foreground">
+            {model.description} {formatSize(install.size)}
+            {install.state === "installed" ? "." : " download."}
+          </p>
           {install.linkedFrom && (
-            <span className="mt-0.5 block break-all text-2xs">
+            <p className="mt-0.5 break-all text-2xs text-muted-foreground">
               Using your file at {install.linkedFrom}
-            </span>
+            </p>
           )}
           {downloading && (
-            <span className="mt-2 block">
-              <span
+            <div className="mt-2">
+              <div
                 role="progressbar"
                 aria-label={`${model.name} download progress`}
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={Math.round(progress)}
-                className="block h-1 overflow-hidden rounded-full bg-muted"
+                className="h-1 overflow-hidden rounded-full bg-muted"
               >
-                <span
-                  className="block h-full bg-primary transition-[width] duration-200"
+                <div
+                  className="h-full bg-primary transition-[width] duration-200"
                   style={{ width: `${progress}%` }}
                 />
-              </span>
-              <span className="mt-1 block text-2xs">
+              </div>
+              <p className="mt-1 text-2xs text-muted-foreground">
                 {install.state === "verifying"
                   ? "Verifying download…"
                   : `${Math.round(progress)}% downloaded`}
-              </span>
-            </span>
+              </p>
+            </div>
           )}
-          {error && <span role="alert"> {error}</span>}
-        </>
-      }
-      control={
-        downloading ? (
-          <Button
-            size="icon-sm"
-            variant="outline"
-            aria-label={`Cancel ${model.name} download`}
-            disabled={!canManage}
-            onClick={() => void run("cancel")}
-          >
-            <XIcon className="size-3.5" />
-          </Button>
-        ) : install.state === "installed" ? (
-          <div className="flex items-center gap-1.5">
-            {selected ? (
-              <Button size="sm" variant="secondary" disabled>
-                <CheckIcon />
-                Selected
-              </Button>
-            ) : (
-              <Button size="sm" variant="outline" onClick={onSelect}>
-                Use model
-              </Button>
-            )}
+          {error && (
+            <p role="alert" className="mt-1 text-xs text-destructive">
+              {error}
+            </p>
+          )}
+        </div>
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">
+          {downloading ? (
+            <Button
+              size="icon-sm"
+              variant="outline"
+              aria-label={`Cancel ${model.name} download`}
+              disabled={!canManage}
+              onClick={() => void run("cancel")}
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          ) : install.state === "downloadable" ? (
             <Button
               size="sm"
+              variant="outline"
+              disabled={!canManage || requesting}
+              onClick={() => void run("download")}
+            >
+              <DownloadIcon />
+              Download
+            </Button>
+          ) : selected ? (
+            <Button size="sm" variant="secondary" disabled>
+              <CheckIcon />
+              Selected
+            </Button>
+          ) : (
+            <Button size="sm" variant="outline" onClick={onSelect}>
+              Use model
+            </Button>
+          )}
+          {install.state === "installed" && (
+            <Button
+              size="icon-sm"
               variant="outline"
               disabled={!canManage || requesting}
               aria-label={
                 install.linkedFrom
                   ? `Stop using your ${model.name} file; the file stays on disk`
-                  : `Remove ${model.name}`
+                  : `Delete ${model.name}`
               }
               onClick={() => void run("remove")}
             >
-              {install.linkedFrom ? "Stop using" : "Remove"}
+              {install.linkedFrom ? <UnlinkIcon /> : <Trash2Icon />}
             </Button>
-          </div>
-        ) : (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!canManage || requesting}
-            onClick={() => void run("download")}
-          >
-            <DownloadIcon />
-            Download
-          </Button>
-        )
-      }
-    />
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -299,47 +307,41 @@ function LocalSpeechModelLink({
   const [error, setError] = useState("");
   if (!canManage || !canReadFiles) return null;
   return (
-    <SettingsRow
-      title="Use existing"
-      description={
-        <>
-          Already downloaded one of these models elsewhere on this environment? Paste the file or
-          folder path to use it in place.
-          {error && <span role="alert"> {error}</span>}
-        </>
-      }
+    <form
+      className="mb-2 flex flex-col items-start gap-2 @min-[28rem]/voice-models:flex-row @min-[28rem]/voice-models:items-center"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setLinking(true);
+        setError("");
+        void runEnvironmentSpeech(linkSpeechSynthesisModels(prepared, path))
+          .then(
+            () => setPath(""),
+            () => setError("No speech model file was found at that path."),
+          )
+          .finally(() => {
+            setLinking(false);
+            onChanged();
+          });
+      }}
     >
-      <form
-        className="mt-2 flex items-center gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setLinking(true);
-          setError("");
-          void runEnvironmentSpeech(linkSpeechSynthesisModels(prepared, path))
-            .then(
-              () => setPath(""),
-              () => setError("No speech model file was found at that path."),
-            )
-            .finally(() => {
-              setLinking(false);
-              onChanged();
-            });
-        }}
-      >
-        <div className="min-w-0 flex-1">
-          <Input
-            size="compact"
-            aria-label="Path to a speech model file or folder already on this environment"
-            placeholder="Model file or folder path"
-            value={path}
-            onChange={(event) => setPath(event.target.value)}
-          />
-        </div>
-        <Button type="submit" size="sm" variant="outline" disabled={linking || !path.trim()}>
-          Use existing
-        </Button>
-      </form>
-    </SettingsRow>
+      <div className="w-full min-w-0 flex-1">
+        <Input
+          size="compact"
+          aria-label="Path to a model file or folder already on this environment"
+          placeholder="Already downloaded elsewhere? Paste the model file or folder path"
+          value={path}
+          onChange={(event) => setPath(event.target.value)}
+        />
+        {error && (
+          <p role="alert" className="mt-1 text-xs text-destructive">
+            {error}
+          </p>
+        )}
+      </div>
+      <Button type="submit" size="sm" variant="outline" disabled={linking || !path.trim()}>
+        Use existing
+      </Button>
+    </form>
   );
 }
 
@@ -456,13 +458,19 @@ export function ReadAloudSettingsSection() {
               >
                 <SelectValue>
                   <span className="flex min-w-0 items-center gap-2">
-                    <SpeechProviderIcon provider={settings.provider} />
+                    {settings.provider === "local" ? (
+                      <MonitorIcon aria-hidden className="size-4" />
+                    ) : (
+                      <SpeechProviderIcon provider={settings.provider} />
+                    )}
                     <span className="truncate">
-                      {READ_ALOUD_LABELS[settings.provider]}
-                      {remote && (
+                      {settings.provider === "local"
+                        ? (selectedEnvironment?.label ?? "Chosen environment (unavailable)")
+                        : READ_ALOUD_LABELS[settings.provider]}
+                      {remote && settings.provider !== "local" && (
                         <span className="text-muted-foreground">
-                          {" "}
-                          via {selectedEnvironment?.label ?? "unavailable environment"}
+                          {" via "}
+                          {selectedEnvironment?.label ?? "unavailable environment"}
                         </span>
                       )}
                     </span>
@@ -485,23 +493,37 @@ export function ReadAloudSettingsSection() {
                     </span>
                   </SelectItem>
                 </SelectGroup>
+                {environments.length > 0 && (
+                  <SelectGroup>
+                    <SelectGroupLabel>On an environment</SelectGroupLabel>
+                    {environments.map((environment) => (
+                      <SelectItem
+                        key={environment.environmentId}
+                        value={`local:${environment.environmentId}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <MonitorIcon aria-hidden className="size-4" />
+                          {environment.label}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                )}
                 {environments.map((environment) => (
                   <SelectGroup key={environment.environmentId}>
-                    <SelectGroupLabel>Via {environment.label}</SelectGroupLabel>
-                    {(["local", "openai", "xai", "openrouter", "elevenlabs"] as const).map(
-                      (provider) => (
-                        <SelectItem
-                          key={provider}
-                          value={`${provider}:${environment.environmentId}`}
-                          aria-label={`${READ_ALOUD_LABELS[provider]} via ${environment.label}`}
-                        >
-                          <span className="flex items-center gap-2">
-                            <SpeechProviderIcon provider={provider} />
-                            {READ_ALOUD_LABELS[provider]}
-                          </span>
-                        </SelectItem>
-                      ),
-                    )}
+                    <SelectGroupLabel>Cloud via {environment.label}</SelectGroupLabel>
+                    {CloudSpeechProvider.literals.map((provider) => (
+                      <SelectItem
+                        key={provider}
+                        value={`${provider}:${environment.environmentId}`}
+                        aria-label={`${READ_ALOUD_LABELS[provider]} via ${environment.label}`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <SpeechProviderIcon provider={provider} />
+                          {READ_ALOUD_LABELS[provider]}
+                        </span>
+                      </SelectItem>
+                    ))}
                   </SelectGroup>
                 ))}
                 {remote && !selectedEnvironment && (
@@ -522,21 +544,32 @@ export function ReadAloudSettingsSection() {
               onSaved={() => setCatalogVersion((value) => value + 1)}
             />
           )}
-          {prepared &&
-            localModels.map((entry) => (
-              <LocalSpeechModel
-                key={`${prepared.environmentId}:${entry.id}`}
-                prepared={prepared}
-                model={entry}
-                selected={entry.id === model}
-                recommended={entry.id === catalog.defaultModel}
-                refreshing={catalogState.version !== catalogVersion}
-                onSelect={() => change({ model: entry.id, voice: "" })}
-                onChanged={refreshCatalog}
-              />
-            ))}
-          {prepared && localModels.some((entry) => entry.install?.state === "downloadable") && (
-            <LocalSpeechModelLink prepared={prepared} onChanged={refreshCatalog} />
+          {prepared && localModels.length > 0 && (
+            <SettingsRow
+              title="Models"
+              description="Downloaded once to the selected environment, which reads replies without the text leaving it."
+              className="@container/voice-models"
+            >
+              <div
+                className="mt-3 mb-2 divide-y divide-border/60 rounded-lg border border-border/60"
+                role="region"
+                aria-label="Read-aloud models"
+              >
+                {localModels.map((entry) => (
+                  <LocalSpeechModel
+                    key={`${prepared.environmentId}:${entry.id}`}
+                    prepared={prepared}
+                    model={entry}
+                    selected={entry.id === model}
+                    recommended={entry.id === catalog.defaultModel}
+                    refreshing={catalogState.version !== catalogVersion}
+                    onSelect={() => change({ model: entry.id, voice: "" })}
+                    onChanged={refreshCatalog}
+                  />
+                ))}
+              </div>
+              <LocalSpeechModelLink prepared={prepared} onChanged={refreshCatalog} />
+            </SettingsRow>
           )}
           {remote && error && (
             <p role="alert" className="text-destructive text-sm">

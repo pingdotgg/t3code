@@ -6,12 +6,12 @@ import * as Speech from "expo-speech";
 import { ScrollView, TextInput, View } from "react-native";
 import {
   AuthSettingsWriteScope,
+  CloudSpeechProvider,
   DEFAULT_READ_ALOUD_SETTINGS,
   READ_ALOUD_LABELS,
   EMPTY_SPEECH_SYNTHESIS_CATALOG,
   type ReadAloudSettings,
   type SpeechSynthesisCatalog,
-  type SpeechSynthesisProvider,
 } from "@t3tools/contracts";
 import {
   cancelSpeechSynthesisModelDownload,
@@ -162,6 +162,9 @@ export function ReadAloudSection() {
           id: voice,
           name: selectedModel?.voiceNames?.[voice] ?? voice,
         }));
+  const providerEnvironment = environments.find(
+    (environment) => environment.environmentId === settings.environmentId,
+  );
   return (
     <>
       <ListSection
@@ -170,7 +173,13 @@ export function ReadAloudSection() {
       >
         <ListActionRow
           label="Speech provider"
-          detail={READ_ALOUD_LABELS[settings.provider]}
+          detail={
+            settings.provider === "local"
+              ? (providerEnvironment?.label ?? "Unavailable environment")
+              : settings.provider === "off" || settings.provider === "system"
+                ? READ_ALOUD_LABELS[settings.provider]
+                : `${READ_ALOUD_LABELS[settings.provider]} via ${providerEnvironment?.label ?? "unavailable environment"}`
+          }
           onPress={() => {
             setSheet("source");
           }}
@@ -352,29 +361,53 @@ export function ReadAloudSection() {
                     />
                   ))}
                 </ListSection>
+                {environments.length > 0 && (
+                  <ListSection title="On an environment">
+                    {environments.map((environment) => (
+                      <ListChoiceRow
+                        key={environment.environmentId}
+                        label={environment.label}
+                        selected={
+                          settings.provider === "local" &&
+                          settings.environmentId === environment.environmentId
+                        }
+                        onPress={() => {
+                          change({
+                            provider: "local",
+                            environmentId: environment.environmentId,
+                            model: "",
+                            voice: "",
+                          });
+                          setSheet(null);
+                        }}
+                      />
+                    ))}
+                  </ListSection>
+                )}
                 {environments.map((environment) => (
-                  <ListSection key={environment.environmentId} title={`Via ${environment.label}`}>
-                    {(["local", "openai", "xai", "openrouter", "elevenlabs"] as const).map(
-                      (provider) => (
-                        <ListChoiceRow
-                          key={provider}
-                          label={READ_ALOUD_LABELS[provider]}
-                          selected={
-                            settings.provider === provider &&
-                            settings.environmentId === environment.environmentId
-                          }
-                          onPress={() => {
-                            change({
-                              provider: provider as SpeechSynthesisProvider,
-                              environmentId: environment.environmentId,
-                              model: "",
-                              voice: "",
-                            });
-                            setSheet(null);
-                          }}
-                        />
-                      ),
-                    )}
+                  <ListSection
+                    key={environment.environmentId}
+                    title={`Cloud via ${environment.label}`}
+                  >
+                    {CloudSpeechProvider.literals.map((provider) => (
+                      <ListChoiceRow
+                        key={provider}
+                        label={READ_ALOUD_LABELS[provider]}
+                        selected={
+                          settings.provider === provider &&
+                          settings.environmentId === environment.environmentId
+                        }
+                        onPress={() => {
+                          change({
+                            provider,
+                            environmentId: environment.environmentId,
+                            model: "",
+                            voice: "",
+                          });
+                          setSheet(null);
+                        }}
+                      />
+                    ))}
                   </ListSection>
                 ))}
               </>
