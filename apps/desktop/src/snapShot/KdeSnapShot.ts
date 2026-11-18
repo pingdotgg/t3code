@@ -215,7 +215,7 @@ export async function captureKdeWindow(
   options?: { readonly flash: boolean; readonly animate: boolean },
 ): Promise<LinuxWindowSnapshot> {
   const state = await new KdeCaptureSetup(paths).state();
-  if (state.status !== "ready") throw new CaptureSetupRequiredError(state.message);
+  if (state.status !== "ready") throw new CaptureSetupRequiredError({ state: state.message });
   const { executable } = kdeCapturePaths(paths);
   const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-kde-capture-"));
   let retained = false;

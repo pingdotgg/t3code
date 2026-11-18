@@ -3,6 +3,7 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Mac from "effect/crypto/Mac";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -80,6 +81,7 @@ const make = Effect.gen(function* () {
   const sender = yield* ApnsDeliveryQueueSender;
   const random = yield* SecureRandom.SecureRandom;
   const config = yield* RelayConfiguration.RelayConfiguration;
+  const mac = yield* Mac.Mac;
 
   return ApnsDeliveryQueue.of({
     enqueueLiveActivity: Effect.fn("relay.apns_delivery_queue.enqueue_live_activity")(
@@ -111,10 +113,10 @@ const make = Effect.gen(function* () {
           createdAt: DateTime.formatIso(now),
           expiresAt: expiresAtForJob(now.epochMilliseconds),
         });
-        const signed = signApnsDeliveryJob({
+        const signed = yield* signApnsDeliveryJob({
           secret: config.apnsDeliveryJobSigningSecret,
           payload,
-        });
+        }).pipe(Effect.provideService(Mac.Mac, mac));
         yield* sender.send(signed).pipe(
           Effect.mapError(
             (cause) =>
@@ -175,10 +177,10 @@ const make = Effect.gen(function* () {
           createdAt: DateTime.formatIso(now),
           expiresAt: expiresAtForJob(now.epochMilliseconds),
         });
-        const signed = signApnsDeliveryJob({
+        const signed = yield* signApnsDeliveryJob({
           secret: config.apnsDeliveryJobSigningSecret,
           payload,
-        });
+        }).pipe(Effect.provideService(Mac.Mac, mac));
         yield* sender.send(signed).pipe(
           Effect.mapError(
             (cause) =>
