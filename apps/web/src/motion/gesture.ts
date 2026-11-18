@@ -96,6 +96,36 @@ export function wheelDeltaPx(delta: number, event: WheelEvent): number {
 const WHEEL_EASE_MS = 40;
 const wheelChases = new WeakMap<HTMLElement, { target: number; time: number; position: number }>();
 let reducedMotion: MediaQueryList | null = null;
+const wheelStream = { last: Number.NEGATIVE_INFINITY, direct: false };
+
+function wholeTicks(ticks: number): boolean {
+  return Math.round(ticks) !== 0 && Math.abs(ticks - Math.round(ticks)) < 0.05;
+}
+
+function wheelSource(event: WheelEvent): "notched" | "trackpad" | "either" {
+  if (event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) return "notched";
+  const sideways = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+  const { wheelDeltaX = 0, wheelDeltaY = 0 } = event as WheelEvent & {
+    wheelDeltaX?: number;
+    wheelDeltaY?: number;
+  };
+  const [delta, other, legacy, otherLegacy] = sideways
+    ? [event.deltaX, event.deltaY, wheelDeltaX, wheelDeltaY]
+    : [event.deltaY, event.deltaX, wheelDeltaY, wheelDeltaX];
+  if (other !== 0 || otherLegacy !== 0) return "trackpad";
+  const ratio = window.devicePixelRatio;
+  const zoomed = !Number.isInteger(ratio) && wholeTicks((legacy * ratio) / 120);
+  if (!wholeTicks(legacy / 120) && !zoomed) return "trackpad";
+  if (Math.abs(legacy + delta) <= 1) return "trackpad";
+  return Math.abs(legacy + 3 * delta) <= 1 ? "either" : "notched";
+}
+
+function easesWheel(event: WheelEvent): boolean {
+  if (event.timeStamp - wheelStream.last > WHEEL_STREAM_IDLE_MS) wheelStream.direct = false;
+  wheelStream.last = event.timeStamp;
+  if (wheelSource(event) === "trackpad") wheelStream.direct = true;
+  return !wheelStream.direct;
+}
 
 export function wheelScrollTarget(
   position: number,
@@ -119,12 +149,15 @@ export function scrollLeftByWheel(element: HTMLElement, event: WheelEvent, delta
   const position = element.scrollLeft;
   const max = element.scrollWidth - element.clientWidth;
   reducedMotion ??= window.matchMedia("(prefers-reduced-motion: reduce)");
-  if (!isDiscreteWheel(event) || reducedMotion.matches) {
-    wheelChases.delete(element);
+  const chase = wheelChases.get(element);
+  if (!easesWheel(event) || reducedMotion.matches) {
+    if (chase) {
+      chase.position += delta;
+      chase.target = Math.min(Math.max(chase.target + delta, 0), Math.max(0, max));
+    }
     element.scrollLeft = position + delta;
     return Math.min(Math.max(position + delta, 0), max) !== position;
   }
-  const chase = wheelChases.get(element);
   const target = wheelScrollTarget(position, chase?.target, delta, max);
   if (chase) {
     chase.target = target;

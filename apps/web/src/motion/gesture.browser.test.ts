@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   isDiscreteWheel,
+  scrollLeftByWheel,
   sidewaysWheelScrollsStrip,
   wheelChaseStep,
   wheelScrollTarget,
@@ -102,5 +103,74 @@ describe("wheelChaseStep", () => {
     expect(wheelChaseStep(first, 100, 16)).toBeGreaterThan(first);
     expect(wheelChaseStep(99.8, 100, 16)).toBe(100);
     expect(wheelChaseStep(100, 0, 1000)).toBe(0);
+  });
+});
+
+describe("scrollLeftByWheel", () => {
+  function mountRow() {
+    const row = document.createElement("div");
+    row.style.cssText = "width: 300px; height: 40px; overflow-x: auto";
+    row.innerHTML = `<div style="width: 4000px; height: 40px"></div>`;
+    document.body.append(row);
+    return Object.assign(row, { [Symbol.dispose]: () => row.remove() });
+  }
+  const sideways = (timeStamp: number, deltaX: number, wheelDeltaX: number) =>
+    ({
+      deltaMode: 0,
+      deltaX,
+      deltaY: 0,
+      wheelDeltaX,
+      wheelDeltaY: 0,
+      timeStamp,
+    }) as unknown as WheelEvent;
+  const feed = (row: HTMLElement, events: readonly (readonly [number, number, number])[]) =>
+    events.map(([time, delta, legacy]) => {
+      scrollLeftByWheel(row, sideways(time, delta, legacy), delta);
+      return row.scrollLeft;
+    });
+
+  it("eases a notched mouse on macOS whose ticks match its line deltas", async () => {
+    using row = mountRow();
+    const positions = feed(row, [
+      [10_000, 120, -360],
+      [10_030, 160, -480],
+      [10_050, 200, -600],
+    ]);
+    expect(positions).toEqual([0, 0, 0]);
+    await vi.waitFor(() => expect(row.scrollLeft).toBe(480));
+  });
+
+  it("eases slow macOS notches with fractional deltas", async () => {
+    using row = mountRow();
+    row.scrollLeft = 100;
+    const positions = feed(row, [
+      [20_000, -4.0002, 120],
+      [20_040, -4.0002, 120],
+      [20_070, -8.0005, 120],
+    ]);
+    expect(positions).toEqual([100, 100, 100]);
+    await vi.waitFor(() => expect(row.scrollLeft).toBeCloseTo(84, 0));
+  });
+
+  it("keeps a trackpad swipe direct when it passes whole ticks mid-swipe", () => {
+    using row = mountRow();
+    const deltas = [3, 7, 18, 40, 33, 120, 61, 25, 9, 2];
+    const positions = feed(
+      row,
+      deltas.map((delta, index) => [30_000 + index * 16, delta, -3 * delta] as const),
+    );
+    let sum = 0;
+    expect(positions).toEqual(deltas.map((delta) => (sum += delta)));
+  });
+
+  it("finishes an eased first tick without losing it when the swipe turns out direct", async () => {
+    using row = mountRow();
+    const positions = feed(row, [
+      [40_000, 40, -120],
+      [40_016, 7, -21],
+      [40_032, 9, -27],
+    ]);
+    expect(positions).toEqual([0, 7, 16]);
+    await vi.waitFor(() => expect(row.scrollLeft).toBe(56));
   });
 });
