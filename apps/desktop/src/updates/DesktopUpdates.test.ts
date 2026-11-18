@@ -1194,8 +1194,14 @@ describe("DesktopUpdates", () => {
         harness.emit("update-available", { version: "1.2.4-nightly.20261027.1" });
         yield* flushCallbacks;
 
-        assert.equal((yield* updates.getState).channel, "nightly");
-        assert.isNull((yield* updates.getState).availableVersion);
+        const state = yield* updates.getState;
+        assert.equal(state.channel, "nightly");
+        assert.isNull(state.availableVersion);
+        assert.equal(state.status, "error");
+        assert.equal(state.errorContext, "check");
+        assert.isTrue(state.canRetry);
+        assert.include(state.message, "Stable build");
+        assert.include(state.message, "Nightly track");
         assert.deepEqual(harness.checkAllowedDowngrade, [false]);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));

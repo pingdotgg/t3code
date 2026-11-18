@@ -368,6 +368,12 @@ function getAutoUpdateDisabledReason(args: {
   return null;
 }
 
+const trackLabel = (channel: DesktopUpdateChannel) =>
+  channel === "nightly" ? "Nightly" : "Stable";
+
+const trackMismatchMessage = (build: DesktopUpdateChannel, saved: DesktopUpdateChannel) =>
+  `This ${trackLabel(build)} build can't update from the ${trackLabel(saved)} track on its own. Switch the update track back to ${trackLabel(build)}, or use Review beside Update track to retry the switch to ${trackLabel(saved)}.`;
+
 function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean {
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
 }
@@ -1070,7 +1076,18 @@ export const make = Effect.gen(function* () {
               channel: state.channel,
             });
             const checkedAt = yield* currentIsoTimestamp;
-            yield* setState(reduceDesktopUpdateStateOnNoUpdate(state, checkedAt));
+            const buildChannel = desktopUpdateChannelOf(environment.appVersion);
+            const awaitingSwitch =
+              Option.isNone(yield* Ref.get(releaseFloorRef)) && buildChannel !== state.channel;
+            yield* setState(
+              awaitingSwitch
+                ? reduceDesktopUpdateStateOnCheckFailure(
+                    state,
+                    trackMismatchMessage(buildChannel, state.channel),
+                    checkedAt,
+                  )
+                : reduceDesktopUpdateStateOnNoUpdate(state, checkedAt),
+            );
             yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
             return;
           }
