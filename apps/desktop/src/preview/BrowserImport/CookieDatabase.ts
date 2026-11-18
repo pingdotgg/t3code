@@ -95,12 +95,24 @@ const copyLockedDatabase = Effect.fn("CookieDatabase.copyLockedDatabase")(functi
   ).pipe(Effect.map((parts) => parts.join("|")));
   for (let attempt = 0; attempt < LOCKED_COPY_ATTEMPTS; attempt++) {
     const before = yield* fingerprint;
+    let complete = true;
     for (const file of files) {
       const target = path.join(directory, path.basename(file));
       yield* fileSystem.remove(target, { force: true });
-      if (yield* fileSystem.exists(file)) yield* fileSystem.copyFile(file, target);
+      if (!(yield* fileSystem.exists(file))) continue;
+      // SQLite deletes the WAL when the browser's last connection closes.
+      const copied = yield* fileSystem.copyFile(file, target).pipe(
+        Effect.as(true),
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.succeed(false),
+        ),
+      );
+      complete &&= copied;
     }
-    if ((yield* fingerprint) === before) return path.join(directory, path.basename(source));
+    if (complete && (yield* fingerprint) === before) {
+      return path.join(directory, path.basename(source));
+    }
   }
   return yield* new LockedCookieDatabaseCopyError({ cookiePath: source });
 });
