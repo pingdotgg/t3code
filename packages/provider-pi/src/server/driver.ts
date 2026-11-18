@@ -1,5 +1,9 @@
 // User-wide ~/.pi/agent state makes continuation identity use default instance grouping.
-import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  isInferenceProviderConfig,
+  ProviderDriverKind,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { PiSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -205,6 +209,11 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
       displayName,
       accentColor,
       enabled,
+      ...(isInferenceProviderConfig(config) &&
+      config.inferenceEnabled &&
+      environment.some(({ name }) => name === "T3_INFERENCE_KEY")
+        ? { inferenceCatalog: config.inferenceModels }
+        : {}),
       snapshot,
       snapshotForCwd: (workspaceCwd) =>
         !effectiveConfig.enabled

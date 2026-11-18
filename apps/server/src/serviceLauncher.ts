@@ -24,6 +24,7 @@ import {
   isExactServiceVersion,
   parseLegacyServiceState,
   disabledServiceTask,
+  preserveServiceTaskLogonType,
   parseServiceState,
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf,
@@ -115,13 +116,15 @@ export async function registerServiceTask(
 ): Promise<void> {
   const register = (xmlPath: string) => schtasks("/Create", "/XML", xmlPath, "/TN", taskName, "/F");
   const registered = await schtasks("/Query", "/TN", taskName, "/XML");
+  const savedUnit = await NodeFSP.readFile(unitPath, "utf8");
+  const unit = preserveServiceTaskLogonType(savedUnit, registered.stdout);
+  if (unit !== savedUnit) await replaceFileDurably(unitPath, unit);
   if (!serviceTaskIsDisabled(registered.stdout)) {
     await register(unitPath);
     return;
   }
   const disabledPath = `${unitPath}.${process.pid}.disabled`;
   try {
-    const unit = await NodeFSP.readFile(unitPath, "utf8");
     await NodeFSP.writeFile(disabledPath, disabledServiceTask(unit));
     await register(disabledPath);
   } finally {

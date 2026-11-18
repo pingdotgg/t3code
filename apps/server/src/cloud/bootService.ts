@@ -39,6 +39,7 @@ import {
   SERVICE_UNIT_ENV,
   compareExactServiceVersions,
   disabledServiceTask,
+  preserveServiceTaskLogonType,
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf as bootServiceBaseDirOf,
   serviceUnitEnvironmentValueOf,
@@ -1108,6 +1109,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const probe = (command: string, args: ReadonlyArray<string>) =>
     runner.run({ command, args, timeout: Duration.seconds(5) }).pipe(Effect.option);
+  const preserveWindowsTaskLogonType = Effect.fn("cloud.boot_service.preserve_task_logon_type")(
+    function* (unit: string) {
+      const registered = yield* probe("schtasks", ["/Query", ...windowsTask, "/XML"]);
+      return Option.isSome(registered) && registered.value.code === 0
+        ? preserveServiceTaskLogonType(unit, registered.value.stdout)
+        : unit;
+    },
+  );
   const succeeded = (result: Option.Option<ProcessRunner.ProcessRunOutput>) =>
     Option.isSome(result) && result.value.code === 0;
   const lingerArgs = [
@@ -1406,7 +1415,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
               return yield* new BootServiceUpdatePendingError();
             }
           }
-          const unit = manager.render(plan, previousUnit);
+          let unit = manager.render(plan, previousUnit);
+          if (manager.kind === "schtasks") {
+            unit = yield* preserveWindowsTaskLogonType(unit);
+          }
           yield* writeDurably(unitPath, unit);
           if (!start && manager.kind === "schtasks") yield* refreshWindowsTask(unit);
           return plan;
@@ -1455,7 +1467,17 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     ) {
       return "skipped" as const;
     }
-    // Writes no state, and the launcher lets an update transition in flight
+    if (manager.kind === "schtasks") {
+      yield* withSelectionLock(
+        unitPath,
+        Effect.gen(function* () {
+          const savedUnit = yield* fs.readFileString(unitPath);
+          const preserved = yield* preserveWindowsTaskLogonType(savedUnit);
+          if (preserved !== savedUnit) yield* writeDurably(unitPath, preserved);
+        }),
+      );
+    }
+    // Writes no service state, and the launcher lets an update transition in flight
     // finish before the queued stop tears it down.
     if (runningInsideService && manager.handoff !== undefined) {
       yield* runSteps(manager.handoff);

@@ -1457,6 +1457,7 @@ process.disconnect();
         activeVersion: "1.2.3",
       });
       expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual([
+        "schtasks /Query /TN t3code-PC-theo /XML",
         `schtasks /Create /XML ${plan.unitPath} /TN t3code-PC-theo /F`,
         "schtasks /Run /TN t3code-PC-theo",
       ]);
@@ -1501,7 +1502,7 @@ process.disconnect();
         "<LogonType>InteractiveToken</LogonType>",
         "<LogonType>S4U</LogonType>",
       );
-      yield* fs.writeFileString(plan.unitPath, headlessTask);
+      // Task Scheduler edits its registered copy without changing the saved XML.
       control.task = { xml: headlessTask, enabled: true };
       expect((yield* service.status).current).toBe(true);
 
@@ -1538,7 +1539,8 @@ process.disconnect();
 
   it.effect("hands an in-service install and restart to Task Scheduler on Windows", () =>
     Effect.gen(function* () {
-      const { service, fs, statePath, commands, makeService } = yield* makeHarness("win32");
+      const { service, fs, statePath, commands, control, makeService } =
+        yield* makeHarness("win32");
       const plan = yield* service.install();
       const inside = yield* makeService(undefined, "1.2.4", undefined, true);
       const handoff = [
@@ -1549,15 +1551,37 @@ process.disconnect();
       commands.length = 0;
 
       expect(yield* inside.install()).toMatchObject({ handedOff: true, logPath: plan.logPath });
-      expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual(handoff);
+      expect(commands.filter((command) => command.startsWith("schtasks "))).toEqual([
+        "schtasks /Query /TN t3code-PC-theo /XML",
+        ...handoff,
+      ]);
       expect(parseServiceState(yield* fs.readFileString(statePath))?.activeVersion).toBe("1.2.4");
       expect(
         yield* fs.readFileString(`${plan.baseDir}/runtime/${SERVICE_RESTART_PENDING_FILE}`),
       ).toBe("1.2.4\n");
 
+      control.task = {
+        xml: (yield* fs.readFileString(plan.unitPath)).replace(
+          "<LogonType>InteractiveToken</LogonType>",
+          "<LogonType>S4U</LogonType>",
+        ),
+        enabled: true,
+      };
       commands.length = 0;
       expect(yield* inside.restart).toBe("queued");
-      expect(commands).toEqual(handoff);
+      expect(commands).toEqual(["schtasks /Query /TN t3code-PC-theo /XML", ...handoff]);
+      expect(control.task.xml).toContain("<LogonType>S4U</LogonType>");
+      expect(yield* fs.readFileString(plan.unitPath)).toContain("<LogonType>S4U</LogonType>");
+
+      control.task.xml = control.task.xml.replace(
+        "<LogonType>S4U</LogonType>",
+        "<LogonType>InteractiveToken</LogonType>",
+      );
+      expect(yield* service.restart).toBe("restarted");
+      expect(control.task.xml).toContain("<LogonType>InteractiveToken</LogonType>");
+      expect(yield* fs.readFileString(plan.unitPath)).toContain(
+        "<LogonType>InteractiveToken</LogonType>",
+      );
     }),
   );
 

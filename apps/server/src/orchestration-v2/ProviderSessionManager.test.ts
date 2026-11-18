@@ -42,6 +42,10 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import { PiDriver } from "@t3tools/provider-pi/server";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as HttpClient from "effect/http/HttpClient";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -616,7 +620,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly continuation?: { readonly key: Ref.Ref<string>; readonly required: boolean };
-  readonly inferenceCatalog?: Ref.Ref<ReadonlyArray<string>>;
+  readonly inferenceCatalog?: Ref.Ref<ReadonlyArray<string> | undefined>;
   readonly idleTimeoutMs: number;
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
@@ -708,6 +712,7 @@ function layerTest(input: {
               get: () =>
                 Effect.gen(function* () {
                   const { continuation, inferenceCatalog } = input;
+                  const catalog = inferenceCatalog ? yield* Ref.get(inferenceCatalog) : undefined;
                   return {
                     ...adapter,
                     ...(continuation
@@ -716,9 +721,7 @@ function layerTest(input: {
                           requiresBoundContinuationIdentity: continuation.required,
                         }
                       : {}),
-                    ...(inferenceCatalog
-                      ? { inferenceCatalog: yield* Ref.get(inferenceCatalog) }
-                      : {}),
+                    ...(catalog === undefined ? {} : { inferenceCatalog: catalog }),
                   };
                 }),
               list: () => Effect.succeed([adapter.instanceId]),
@@ -1290,47 +1293,102 @@ it.effect("ProviderSessionManagerV2 opens provider sessions inside the installat
   }),
 );
 
-it.effect("reuses an idle session until a new hosted model needs an updated catalog", () =>
-  Effect.gen(function* () {
-    const state = yield* Ref.make(emptyState);
-    const inferenceCatalog = yield* Ref.make<ReadonlyArray<string>>(["original"]);
-    const pendingWork = yield* Ref.make(true);
-    yield* Effect.gen(function* () {
-      const eventSink = yield* EventSink.EventSinkV2;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const threadId = ThreadId.make("thread-hosted-model-reconnect");
-      const providerSessionId = yield* idAllocator.allocate.providerSession({
-        providerInstanceId: modelSelection.instanceId,
-        threadId,
+it.effect.each(["opencode", "pi", "native-pi"] as const)(
+  "reuses an idle session until a new hosted model needs an updated %s catalog",
+  (driver) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const readCatalog = Effect.fnUntraced(function* (
+        models: ReadonlyArray<string>,
+        routed = true,
+      ) {
+        if (driver === "opencode") return models;
+        const instance = yield* PiDriver.create({
+          instanceId: modelSelection.instanceId,
+          displayName: undefined,
+          enabled: true,
+          environment: routed
+            ? [
+                { name: "T3_INFERENCE_KEY", value: "fixture-key", sensitive: true },
+                {
+                  name: "T3_PI_INFERENCE_CONFIG",
+                  value: JSON.stringify({
+                    baseUrl: "http://127.0.0.1:4000/api/inference/linked/pi/host/v1",
+                    models,
+                  }),
+                  sensitive: false,
+                },
+              ]
+            : [],
+          config: {
+            ...PiDriver.defaultConfig(),
+            inferenceEnabled: routed,
+            inferenceHostId: EnvironmentId.make("host"),
+            inferenceHostLabel: "Host",
+            inferenceBaseUrl: "http://127.0.0.1:4000/api/inference/linked/pi/host",
+            inferenceHomePath: "/fixture",
+            inferenceKey: "fixture-key",
+            inferenceModels: models,
+          },
+        });
+        return instance.inferenceCatalog;
       });
-      yield* eventSink.write({
-        events: [
-          yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
-        ],
-      });
-      const input = { threadId, providerSessionId, runtimePolicy };
-      const original = { ...modelSelection, model: "t3proxy/original" };
-      const initial = yield* manager.open({ ...input, modelSelection: original });
-      yield* Ref.set(inferenceCatalog, ["original", "added"]);
-      assert.strictEqual(yield* manager.open({ ...input, modelSelection: original }), initial);
-      const added = { ...modelSelection, model: "t3proxy/added" };
-      assert.strictEqual(yield* manager.open({ ...input, modelSelection: added }), initial);
-      yield* Ref.set(pendingWork, false);
-      const replaced = yield* manager.open({ ...input, modelSelection: added });
-      assert.notStrictEqual(replaced, initial);
-      assert.strictEqual(yield* manager.open({ ...input, modelSelection: added }), replaced);
+      const inferenceCatalog = yield* Ref.make(
+        yield* readCatalog(["original"], driver !== "native-pi"),
+      );
+      const pendingWork = yield* Ref.make(true);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadId = ThreadId.make("thread-hosted-model-reconnect");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        const input = { threadId, providerSessionId, runtimePolicy };
+        const original = {
+          ...modelSelection,
+          model: driver === "native-pi" ? "native/original" : "t3proxy/original",
+        };
+        const initial = yield* manager.open({ ...input, modelSelection: original });
+        yield* Ref.set(inferenceCatalog, yield* readCatalog(["original", "added"]));
+        assert.strictEqual(yield* manager.open({ ...input, modelSelection: original }), initial);
+        const added = { ...modelSelection, model: "t3proxy/added" };
+        assert.strictEqual(yield* manager.open({ ...input, modelSelection: added }), initial);
+        yield* Ref.set(pendingWork, false);
+        const replaced = yield* manager.open({ ...input, modelSelection: added });
+        assert.notStrictEqual(replaced, initial);
+        assert.strictEqual(yield* manager.open({ ...input, modelSelection: added }), replaced);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            inferenceCatalog,
+            hasPendingBackgroundWork: Ref.get(pendingWork),
+            idleTimeoutMs: 60_000,
+          }),
+        ),
+      );
     }).pipe(
       Effect.provide(
-        layerTest({
-          state,
-          inferenceCatalog,
-          hasPendingBackgroundWork: Ref.get(pendingWork),
-          idleTimeoutMs: 60_000,
-        }),
+        Layer.mergeAll(
+          TestProviderHost.layer({ runBackgroundWork: false }),
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          ProviderLatestVersions.layer,
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("Unexpected HTTP")),
+          ),
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
       ),
-    );
-  }),
+    ),
 );
 
 it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
