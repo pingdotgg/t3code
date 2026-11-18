@@ -23,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
+import * as Predicate from "effect/Predicate";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import * as Sink from "effect/Sink";
@@ -74,6 +75,14 @@ it.effect(
         keychainState.onRead = undefined;
         const config = yield* ServerConfig.ServerConfig;
         const state = yield* ServerSecretStore.ServerSecretStore;
+        const savedPort = state.get("inference-proxy-state").pipe(
+          Effect.map((value) => {
+            const saved = JSON.parse(new TextDecoder().decode(Option.getOrThrow(value))) as {
+              port: number;
+            };
+            return saved.port;
+          }),
+        );
         const home = yield* fs.makeTempDirectoryScoped();
         const hostId = EnvironmentId.make("host");
         const peer = { environmentId: EnvironmentId.make("worker"), label: "Workstation" };
@@ -84,6 +93,8 @@ it.effect(
         const downloading = yield* Deferred.make<void>();
         const finishDownload = yield* Deferred.make<void>();
         let registryOffline = true;
+        let latestProxyVersion = proxyVersion;
+        let managementUnavailable = false;
         let tailnetCatalogDown = false;
         let linked = false;
         let linkedUrl = "http://127.0.0.1:23456";
@@ -120,9 +131,11 @@ it.effect(
         const releaseClaudeUsage = yield* Deferred.make<void>();
         let lan = false;
         let rejectNextLaunch = false;
-        let currentExit: Deferred.Deferred<void> | undefined;
+        let currentExit: Deferred.Deferred<void, PlatformError.PlatformError> | undefined;
         let expectRecovery = false;
         const recovered = yield* Deferred.make<void>();
+        const restoredCatalog = yield* Deferred.make<void>();
+        const recoveredCatalog = yield* Deferred.make<void>();
         let configPath = "";
         let starts = 0;
         let stops = 0;
@@ -138,8 +151,9 @@ it.effect(
                 method: "spawn",
               });
             }
-            const exited = yield* Deferred.make<void>();
+            const exited = yield* Deferred.make<void, PlatformError.PlatformError>();
             if (!tailscale) {
+              managementUnavailable = false;
               if (ChildProcess.isStandardCommand(command)) {
                 expect.soft(command.options.detached).toBe(false);
                 configPath = String(command.args[1]);
@@ -211,6 +225,10 @@ it.effect(
               ),
             );
           }
+          if (managementUnavailable && request.url.endsWith("/v0/management/auth-files"))
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
+            );
           if (request.url.endsWith("/v0/management/api-call")) {
             const body = request.body;
             if (body._tag !== "Uint8Array" || !body.text) throw new Error("Missing usage request");
@@ -281,13 +299,13 @@ it.effect(
               HttpClientResponse.fromWeb(
                 request,
                 Response.json({
-                  tag_name: "v8.0.61",
+                  tag_name: "v" + latestProxyVersion,
                   draft: false,
                   prerelease: false,
                   assets: [
                     {
                       id: 123,
-                      name: "CLIProxyAPI_8.0.61_darwin_aarch64.tar.gz",
+                      name: `CLIProxyAPI_${latestProxyVersion}_darwin_aarch64.tar.gz`,
                       size: 1,
                       digest: "sha256:" + "0".repeat(64),
                     },
@@ -438,11 +456,20 @@ it.effect(
           Layer.provide(
             Layer.succeed(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator, {
               reconcile: (instances) =>
-                Effect.sync(() => {
+                Effect.gen(function* () {
                   registryReconciles++;
                   const activeCodex = instances[ProviderInstanceId.make("codex")];
                   activeCodexConfig = activeCodex?.config;
                   activeCodexEnabled = activeCodex?.enabled;
+                  if (
+                    Predicate.hasProperty(activeCodexConfig, "customModels") &&
+                    Array.isArray(activeCodexConfig.customModels)
+                  ) {
+                    if (activeCodexConfig.customModels.includes("gpt-restored"))
+                      yield* Deferred.succeed(restoredCatalog, undefined);
+                    if (activeCodexConfig.customModels.includes("gpt-recovered"))
+                      yield* Deferred.succeed(recoveredCatalog, undefined);
+                  }
                 }),
               reloadSecrets: () => Effect.void,
               rebuild: () => Effect.void,
@@ -622,6 +649,8 @@ it.effect(
               sharing: true,
             });
             yield* startSharing;
+            const configuredHost = yield* proxy.grant({ environmentId: hostId, label: "Host" });
+            expect(yield* savedPort).toBe(Number(new URL(configuredHost.baseUrl).port));
             expect((yield* proxy.status).enabled).toBe(true);
             expect(importedCodexAuth).toMatchObject([
               {
@@ -1785,6 +1814,26 @@ it.effect(
             identity = hostId;
             yield* proxy.manage({ operation: "checkUpdate" }).pipe(Effect.flip);
             registryOffline = false;
+            managementUnavailable = true;
+            expect((yield* proxy.manage({ operation: "checkUpdate" })).update).toEqual({
+              current: proxyVersion,
+              available: null,
+            });
+            expect(stops).toBe(0);
+            expect((yield* proxy.manage({ operation: "update" })).update).toEqual({
+              current: proxyVersion,
+              available: null,
+            });
+            expect(stops).toBe(1);
+            yield* proxy.manage({ operation: "update" });
+            expect(stops).toBe(1);
+            managementUnavailable = true;
+            rejectNextLaunch = true;
+            yield* proxy.manage({ operation: "update" }).pipe(Effect.flip);
+            expect(stops).toBe(2);
+            yield* proxy.manage({ operation: "update" });
+            latestProxyVersion = "8.0.61";
+            yield* TestClock.adjust("15 minutes");
             expect((yield* proxy.manage({ operation: "checkUpdate" })).update).toEqual({
               current: proxyVersion,
               available: "8.0.61",
@@ -1797,7 +1846,7 @@ it.effect(
             yield* Deferred.succeed(finishDownload, undefined);
             expect((yield* Fiber.join(update)).message).toContain("checksum");
             expect((yield* proxy.status).version).toBe(proxyVersion);
-            expect(stops).toBe(0);
+            expect(stops).toBe(2);
             const staleRuntime = runtime.replace(proxyVersion, "8.0.58");
             const otherPlatform = staleRuntime.replace("darwin-arm64", "linux-x64");
             yield* fs.makeDirectory(staleRuntime);
@@ -1805,23 +1854,45 @@ it.effect(
             const installed = runtime.replace(proxyVersion, "8.0.61");
             yield* fs.makeDirectory(installed, { recursive: true });
             yield* fs.writeFileString(installed + "/cli-proxy-api", "");
+            yield* proxy.connect(connect);
+            const localCandidate = () =>
+              proxy.routeCandidates(local.key, hostId, "codex", "codex-auto-review");
+            expect(yield* localCandidate()).toMatchObject([{ baseUrl: local.baseUrl }]);
+            yield* NodeSocketServer.make({
+              host: "127.0.0.1",
+              port: Number(new URL(local.baseUrl).port),
+            });
             rejectNextLaunch = true;
             yield* proxy.manage({ operation: "update" }).pipe(Effect.flip);
             expect(yield* proxy.status).toMatchObject({ running: true, version: proxyVersion });
-            expect((yield* proxy.authorize(issued.key))?.key).toBeDefined();
+            const restoredUrl = (yield* proxy.authorize(issued.key))!.baseUrl;
+            expect(restoredUrl).not.toBe(local.baseUrl);
+            expect(yield* localCandidate()).toMatchObject([{ baseUrl: restoredUrl }]);
+            const restoredPort = Number(new URL(restoredUrl).port);
+            expect(yield* savedPort).toBe(restoredPort);
+            yield* NodeSocketServer.make({ host: "127.0.0.1", port: restoredPort });
+            catalog = [...catalog, { id: "gpt-upgraded", owned_by: "openai" }];
             yield* proxy.manage({ operation: "update" });
             expect((yield* proxy.status).version).toBe("8.0.61");
+            const upgradedUrl = (yield* proxy.authorize(issued.key))!.baseUrl;
+            expect(upgradedUrl).not.toBe(restoredUrl);
+            expect(
+              yield* proxy.routeCandidates(local.key, hostId, "codex", "gpt-upgraded"),
+            ).toMatchObject([{ baseUrl: upgradedUrl }]);
+            const upgradedPort = Number(new URL(upgradedUrl).port);
+            expect(yield* savedPort).toBe(upgradedPort);
             expect(yield* fs.exists(staleRuntime)).toBe(false);
             expect(yield* fs.exists(otherPlatform)).toBe(true);
             expect(yield* fs.exists(runtime)).toBe(true);
-            return { grant: issued, oldPort: Number(new URL(local.baseUrl).port) };
+            return { grant: issued, oldPort: upgradedPort };
           }).pipe(Effect.provide(service)),
         );
-        expect(stops).toBe(3);
+        expect(stops).toBe(5);
         const legacyConfig = config.stateDir + "/inference-proxy/config.yaml";
         expect(yield* fs.exists(configPath)).toBe(false);
         yield* NodeSocketServer.make({ host: "127.0.0.1", port: oldPort });
         yield* fs.writeFileString(legacyConfig, "occupied listener configuration");
+        catalog = [...catalog, { id: "gpt-restored", owned_by: "openai" }];
         yield* Effect.scoped(
           Effect.gen(function* () {
             const proxy = yield* InferenceProxy.InferenceProxy;
@@ -1832,6 +1903,11 @@ it.effect(
             const restoredUrl = (yield* proxy.authorize(grant.key))!.baseUrl;
             expect(restoredUrl).toMatch(/^http:\/\/127\.0\.0\.1:/);
             expect(new URL(restoredUrl).port).not.toBe(String(oldPort));
+            const local = yield* proxy.grant({ environmentId: hostId, label: "Local" });
+            yield* Deferred.await(restoredCatalog);
+            expect(
+              yield* proxy.routeCandidates(local.key, hostId, "codex", "gpt-restored"),
+            ).toMatchObject([{ baseUrl: restoredUrl }]);
             expect(yield* fs.readFileString(legacyConfig)).toBe("occupied listener configuration");
             yield* proxy.manage({ operation: "revoke", environmentId: peer.environmentId });
             expect(yield* proxy.authorize(grant.key)).toBeNull();
@@ -1844,19 +1920,32 @@ it.effect(
             expect(restored.key).not.toBe(grant.key);
             expect((yield* proxy.grant({ ...peer, automatic: true })).key).toBe(restored.key);
             expectRecovery = true;
-            yield* Deferred.succeed(currentExit!, undefined);
+            catalog = [...catalog, { id: "gpt-recovered", owned_by: "openai" }];
+            yield* Deferred.fail(
+              currentExit!,
+              PlatformError.systemError({
+                _tag: "Unknown",
+                module: "ChildProcess",
+                method: "exitCode",
+                description: "Process interrupted due to receipt of signal: 'SIGTERM'",
+              }),
+            );
             yield* TestClock.adjust("1 second");
             yield* Deferred.await(recovered);
             expect((yield* proxy.grant({ environmentId: hostId, label: "Local" })).baseUrl).toBe(
               restoredUrl,
             );
+            yield* Deferred.await(recoveredCatalog);
+            expect(
+              yield* proxy.routeCandidates(local.key, hostId, "codex", "gpt-recovered"),
+            ).toMatchObject([{ baseUrl: restoredUrl }]);
             yield* proxy.manage({ operation: "configure", enabled: false, sharing: false });
             expect((yield* proxy.status).consumers).toEqual([]);
             expect(Option.isSome(yield* state.get("inference-proxy-state"))).toBe(true);
           }).pipe(Effect.provide(service)),
         );
-        expect(starts).toBe(5);
-        expect(stops).toBe(5);
+        expect(starts).toBe(7);
+        expect(stops).toBe(7);
       }).pipe(
         Effect.provide(
           ServerSettings.layer.pipe(
