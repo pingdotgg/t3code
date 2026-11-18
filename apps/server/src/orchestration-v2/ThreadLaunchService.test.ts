@@ -2981,6 +2981,7 @@ it.effect("starts the agent of a new worktree thread only after its branch is re
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const threads = yield* ThreadManagement.ThreadManagementService;
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const input = launchInput({
         command: "launch:release-after-rename",
@@ -3002,7 +3003,17 @@ it.effect("starts the agent of a new worktree thread only after its branch is re
         ),
         Stream.runHead,
       );
+      yield* TestClock.adjust("30 seconds");
       yield* Deferred.succeed(allowBranchName, undefined);
+      yield* tracker.stream(launched.threadId).pipe(
+        Stream.filter((snapshot) => snapshot?.phase === "done"),
+        Stream.runHead,
+      );
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.thread.branch, "generated-branch");
+      assert.equal(harness.renameBranch.mock.calls.length, 1);
+      assert.equal(projection.runs[0]?.status, "starting");
+      assert.isUndefined(projection.turnItems.find((item) => item.type === "system_notice"));
       assert.isFalse(
         yield* Deferred.await(releasedAtRename),
         "the agent's run was released while its branch still had the temporary name",
@@ -3070,7 +3081,7 @@ it.effect("starts the agent on the temporary branch when branch naming hangs", (
         }),
       );
       yield* Deferred.await(branchNameStarted);
-      yield* TestClock.adjust("20 seconds");
+      yield* TestClock.adjust("45 seconds");
       yield* tracker.stream(launched.threadId).pipe(
         Stream.filter((snapshot) => snapshot?.phase === "done"),
         Stream.runHead,
@@ -3080,7 +3091,7 @@ it.effect("starts the agent on the temporary branch when branch naming hangs", (
       const notice = projection.turnItems.find((item) => item.type === "system_notice");
       assert.include(
         notice?.type === "system_notice" ? notice.message : "",
-        `stays ${projection.thread.branch}. Text generation failed in generateBranchName: Timed out after 20 seconds.`,
+        `stays ${projection.thread.branch}. Text generation failed in generateBranchName: Timed out after 45 seconds.`,
       );
     }).pipe(Effect.provide(harness.layer));
   }),

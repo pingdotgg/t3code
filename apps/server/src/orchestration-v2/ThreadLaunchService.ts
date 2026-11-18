@@ -63,7 +63,7 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as WorktreeBranches from "./WorktreeBranches.ts";
 
 // The agent waits for its branch name; a rate-limited provider would hold it for minutes.
-const BRANCH_NAME_TIMEOUT = "20 seconds";
+const BRANCH_NAME_TIMEOUT = "45 seconds";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
