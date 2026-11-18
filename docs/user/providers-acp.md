@@ -112,6 +112,11 @@ approval rules. They start in their own default mode, and their mode picker in t
 menu switches it. How far an agent is confined depends on that mode and the agent's own settings,
 so use its sandbox and permission controls when that matters.
 
+Mistral Vibe's modes are approval levels, so the thread's permission mode picks one and Vibe has no
+mode picker: **Supervised** runs Ask, **Auto-accept edits** runs Accept Edits, **Auto** runs Smart
+Approve, and **Full access** runs Auto Approve. When your Vibe setup hides Smart Approve or Auto
+Approve, the thread runs in the next stricter mode.
+
 When a registry agent asks for approval, T3 Code answers by the thread's
 [permission mode](./permission-modes.md): **Supervised** shows the request in the conversation,
 **Auto-accept edits** approves edits and shows the rest, and **Auto** and **Full access** approve
