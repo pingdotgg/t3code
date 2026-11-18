@@ -172,14 +172,17 @@ function LocalVersionStatusLabel() {
 }
 
 function HostSystemRow({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const gt = useGT();
   const { data } = useEnvironmentQuery(
     serverEnvironment.hostResources({ environmentId, input: {} }),
   );
   if (!data) return null;
   return (
     <SettingsRow
-      title="System"
-      description={<EnvironmentHostSummary environmentId={environmentId} />}
+      title={gt("System")}
+      description={
+        <EnvironmentHostSummary environmentId={environmentId} className="whitespace-normal" />
+      }
     />
   );
 }
@@ -1319,7 +1322,9 @@ function ConnectionsSettingsContent({
                 <ManagedByOrganization policy={accessServerConfig.managedPolicy} />
               </div>
             ) : null}
-            <HostSystemRow environmentId={accessEnvironmentId} />
+            {accessEnvironment?.connection.phase === "connected" ? (
+              <HostSystemRow environmentId={accessEnvironmentId} />
+            ) : null}
             {canManageLocalBackend ? (
               <SettingsRow
                 title={gt("Version")}

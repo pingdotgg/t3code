@@ -337,7 +337,7 @@ export function SavedBackendListRow({
           {enabled && isConnected ? (
             <EnvironmentHostSummary
               environmentId={environmentId}
-              className="text-muted-foreground text-xs"
+              className="whitespace-normal text-muted-foreground text-xs"
             />
           ) : null}
           {diagnosis ? (

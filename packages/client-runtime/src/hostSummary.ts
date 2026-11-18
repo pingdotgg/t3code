@@ -1,4 +1,6 @@
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 /** Short binary-unit size for at-a-glance machine stats, e.g. "11 GB" or "1.2 TB". */
 export function formatHostBytes(bytes: number): string {
@@ -20,16 +22,29 @@ export function isHostDiskLow(snapshot: HostResourcesSnapshot): boolean {
   );
 }
 
-/** One line for pickers and lists: "11 GB disk free · 9.4 GB RAM free · 3 updates". */
-export function hostResourcesSummary(snapshot: HostResourcesSnapshot): string {
+/** One line for pickers and lists: "11 GB free on home volume · 9.4 GB RAM free · 3 updates". */
+export function hostResourcesSummary(
+  snapshot: HostResourcesSnapshot,
+  resolve: MFunctionType = mFallback,
+): string {
   const updates = snapshot.osUpdates?.available ?? 0;
   return [
-    snapshot.disk ? `${formatHostBytes(snapshot.disk.availableBytes)} disk free` : null,
-    snapshot.totalMemoryBytes > 0
-      ? `${formatHostBytes(snapshot.availableMemoryBytes)} RAM free`
+    snapshot.disk
+      ? resolve(msg("{available} free on home volume"), {
+          available: formatHostBytes(snapshot.disk.availableBytes),
+        })
       : null,
-    updates > 0 ? `${updates} ${updates === 1 ? "update" : "updates"}` : null,
-    snapshot.rebootRequired ? "restart required" : null,
+    snapshot.totalMemoryBytes > 0
+      ? resolve(msg("{available} RAM free"), {
+          available: formatHostBytes(snapshot.availableMemoryBytes),
+        })
+      : null,
+    updates > 0
+      ? resolve(msg("{count, plural, one {{count} update} other {{count} updates}}"), {
+          count: updates,
+        })
+      : null,
+    snapshot.rebootRequired ? resolve(msg("restart required")) : null,
   ]
     .filter((part): part is string => part !== null)
     .join(" · ");

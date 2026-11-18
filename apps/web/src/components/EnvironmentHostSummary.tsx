@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import { hostResourcesSummary, isHostDiskLow } from "@t3tools/client-runtime/host-summary";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -13,11 +14,12 @@ export function EnvironmentHostSummary({
   readonly environmentId: EnvironmentId;
   readonly className?: string;
 }) {
+  const messages = useMessages();
   const { data } = useEnvironmentQuery(
     serverEnvironment.hostResources({ environmentId, input: {} }),
   );
   if (!data) return null;
-  const summary = hostResourcesSummary(data);
+  const summary = hostResourcesSummary(data, messages);
   if (!summary) return null;
   return (
     <span
