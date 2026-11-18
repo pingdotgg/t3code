@@ -104,9 +104,11 @@ export function createIssueCommentPager<E>(
       const current = registry.get(state);
       if (current.refreshing) return;
       // The refreshed detail can return the same cursor, so invalidate outstanding pages explicitly.
+      // A page still in flight is dropped here, so it no longer holds paging or posting.
       registry.set(state, {
         ...current,
         older: null,
+        loadingOlder: false,
         refreshing: true,
         refreshes: current.refreshes + 1,
       });
@@ -138,7 +140,10 @@ export function createIssueCommentPager<E>(
           },
         });
       } finally {
-        registry.set(state, { ...registry.get(state), loadingOlder: false });
+        const latest = registry.get(state);
+        if (latest.refreshes === current.refreshes) {
+          registry.set(state, { ...latest, loadingOlder: false });
+        }
       }
     },
   };
