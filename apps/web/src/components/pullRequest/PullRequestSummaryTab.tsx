@@ -314,7 +314,6 @@ function CollapsedComment({
   replyForm?: ((collapsed: boolean) => ReactNode) | null;
   onAddToChat?: (() => void) | undefined;
 }) {
-  const gt = useGT();
   const [open, setOpen] = useState(false);
   const statusTriggerRef = useRef<HTMLButtonElement>(null);
   return (
@@ -926,7 +925,11 @@ export function PullRequestSummaryTab({
         <div key={`${detail.url}:review:${item.id}`} className="space-y-2">
           {review === null ? (
             <div className="px-1 py-0.5">
-              <CommentIdentity comment={item} detail={detail} action={gt("reviewed", { $context: "review author action" })} />
+              <CommentIdentity
+                comment={item}
+                detail={detail}
+                action={gt("reviewed", { $context: "review author action" })}
+              />
             </div>
           ) : (
             renderCommentCard(review, undefined)
@@ -940,9 +943,7 @@ export function PullRequestSummaryTab({
       return renderCollapsed(
         item,
         threadReplies(item),
-        item.kind === "thread"
-          ? countOf(item.replies.length + item.moreReplies, "reply")
-          : null,
+        item.kind === "thread" ? countOf(item.replies.length + item.moreReplies, "reply") : null,
       );
     }
     if (item.kind === "comment") return renderCommentCard(item.comment, undefined);
