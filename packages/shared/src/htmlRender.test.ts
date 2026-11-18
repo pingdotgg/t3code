@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  htmlRenderFrameHeight,
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
+  readHtmlRenderReference,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
@@ -155,6 +157,25 @@ describe("readHtmlRenderImageRequest", () => {
     // An index that does not point at the clicked image falls back to that image alone.
     expect(request({ index: 0 })).toEqual({ images: [b], index: 0 });
     expect(request({ index: -1 })).toEqual({ images: [b], index: 0 });
+  });
+});
+
+describe("readHtmlRenderReference", () => {
+  it("keeps measured page heights above the reference cap", () => {
+    const parsed = readHtmlRenderReference({
+      ...reference,
+      height: 2000,
+      heights: [
+        [728, 3684],
+        [1144, 30_000],
+      ],
+    });
+
+    expect(parsed?.heights).toEqual([
+      [728, 3684],
+      [1144, 20_000],
+    ]);
+    expect(parsed && htmlRenderFrameHeight(parsed, 728)).toBe(2000);
   });
 });
 

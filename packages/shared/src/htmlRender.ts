@@ -39,7 +39,7 @@ function readMeasuredHeights(value: unknown) {
     entry[0] <= 10_000 &&
     typeof entry[1] === "number" &&
     Number.isFinite(entry[1])
-      ? [[entry[0] as number, clampHtmlRenderHeight(entry[1])] as const]
+      ? [[entry[0] as number, clampHtmlRenderFitHeight(entry[1])] as const]
       : [],
   );
   return heights.length === value.length
@@ -102,10 +102,7 @@ export function htmlRenderFrameHeight(
   contentHeight?: number,
 ) {
   if (contentHeight !== undefined) {
-    return Math.min(
-      HTML_RENDER_MAX_FIT_HEIGHT,
-      Math.max(HTML_RENDER_MIN_HEIGHT, Math.ceil(contentHeight)),
-    );
+    return clampHtmlRenderFitHeight(contentHeight);
   }
   const heights = reference.heights;
   if (heights === undefined || heights.length === 0) {
@@ -116,6 +113,12 @@ export function htmlRenderFrameHeight(
       ? reference.height
       : HTML_RENDER_MAX_HEIGHT;
   return clampHtmlRenderHeight(Math.min(cap, measuredHeight(heights, width)));
+}
+
+/** The page height the server measured at `width`, for a client that fits its frame to the page. */
+export function htmlRenderMeasuredPageHeight(reference: HtmlRenderReference, width: number) {
+  const heights = reference.heights;
+  return heights === undefined || heights.length === 0 ? undefined : measuredHeight(heights, width);
 }
 
 export function htmlRenderFileName(title: string) {
@@ -130,6 +133,10 @@ export function htmlRenderFileName(title: string) {
 
 export function clampHtmlRenderHeight(height: number): number {
   return Math.min(HTML_RENDER_MAX_HEIGHT, Math.max(HTML_RENDER_MIN_HEIGHT, Math.round(height)));
+}
+
+function clampHtmlRenderFitHeight(height: number): number {
+  return Math.min(HTML_RENDER_MAX_FIT_HEIGHT, Math.max(HTML_RENDER_MIN_HEIGHT, Math.ceil(height)));
 }
 
 export interface HtmlRenderFonts {
