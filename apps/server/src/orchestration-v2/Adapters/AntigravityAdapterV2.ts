@@ -30,6 +30,7 @@ import {
 import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
+  makeAntigravitySubagentStatusReader,
   describeAntigravitySubagentLaunches,
   readAntigravityTaskIds,
 } from "../../provider/acp/AntigravityChildWork.ts";
@@ -290,6 +291,12 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
+    ...(profileDirectory === undefined
+      ? {}
+      : {
+          makeSubagentStatusReader: (sessionId: string) =>
+            makeAntigravitySubagentStatusReader(profileDirectory, sessionId),
+        }),
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,

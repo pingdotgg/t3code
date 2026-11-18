@@ -517,6 +517,11 @@ export interface AcpAdapterV2Flavor {
     event: AcpSessionRuntime.AcpSessionRuntimeEvent,
   ) => Effect.Effect<void>;
   readonly subagentsIdleOnTurnCompletion?: boolean;
+  readonly makeSubagentStatusReader?: (
+    sessionId: string,
+  ) => (
+    tools: ReadonlyArray<AcpToolCallState>,
+  ) => Effect.Effect<ReadonlyMap<string, "idle" | "running">, Error>;
   readonly supportsCompaction?: boolean;
   /** Sends `/compact` as a prompt, only to sessions whose advertised commands include `compact`. */
   readonly compactViaAdvertisedCommand?: boolean;
@@ -9078,7 +9083,51 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 continuations += 1;
               }
             });
-            yield* runPromptLoop.pipe(
+            const readStatuses = flavor.makeSubagentStatusReader?.(requestedSessionId);
+            const observedPrompt =
+              readStatuses === undefined
+                ? runPromptLoop
+                : Effect.scoped(
+                    Effect.gen(function* () {
+                      yield* Effect.gen(function* () {
+                        yield* Effect.sleep("3 seconds");
+                        if (context.finalized || context.interrupted) return;
+                        const tools = [...context.subagents.keys()].flatMap((id) => {
+                          const tool = context.tools.get(id);
+                          return tool ? [tool] : [];
+                        });
+                        if (tools.length === 0) return;
+                        const statuses = yield* readStatuses(tools).pipe(Effect.option);
+                        if (Option.isNone(statuses)) return;
+                        yield* runRuntimeCallbackAtGeneration(
+                          promptGeneration,
+                          Effect.gen(function* () {
+                            if (context.finalized || context.interrupted) return;
+                            for (const [id, status] of statuses.value) {
+                              const child = context.subagents.get(id);
+                              if (!child || child.task.status === status) continue;
+                              if (child.task.status === "idle" && status === "running") {
+                                child.task = { ...child.task, status, completedAt: null };
+                                child.terminalStatusProjected = false;
+                              } else if (!acpSubagentStatusBlocksTurnSettlement(child.task.status))
+                                continue;
+                              yield* emitSubagent(context, {
+                                nativeTaskId: id,
+                                status,
+                                childSessionId: child.childSessionId,
+                                prompt: child.task.prompt,
+                                model: child.task.model,
+                                title: child.task.title,
+                                result: null,
+                              });
+                            }
+                          }).pipe(Effect.uninterruptible),
+                        );
+                      }).pipe(Effect.forever, Effect.forkScoped);
+                      return yield* runPromptLoop;
+                    }),
+                  );
+            yield* observedPrompt.pipe(
               // Settle the wire before the completion callback's permit so a settled-soft
               // Stop sees the native return.
               Effect.tap(() =>

@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
+import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
 import type {
   OrchestrationV2NativeChildStep,
@@ -574,6 +575,68 @@ async function readChildTranscript(
   } finally {
     await handle.close();
   }
+}
+
+export function makeAntigravitySubagentStatusReader(profileDirectory: string, sessionId: string) {
+  const children = new Map<string, ReadonlyArray<string>>();
+  return Effect.fn("readAntigravitySubagentStatuses")(function* (
+    tools: ReadonlyArray<AcpToolCallState>,
+  ) {
+    const missing = tools.filter((tool) => !children.has(tool.toolCallId));
+    if (missing.length > 0) {
+      const resolved = yield* readAntigravityTaskIds(
+        profileDirectory,
+        sessionId,
+        missing.map((tool) => ({
+          id: tool.toolCallId,
+          input: tool.data.rawInput,
+          command: false,
+        })),
+        [],
+      );
+      for (const tool of missing) {
+        const ids = resolved.get(tool.toolCallId);
+        if (ids && ids.length === antigravitySubagentLaunches(tool.data.rawInput)?.length) {
+          children.set(tool.toolCallId, ids);
+        }
+      }
+    }
+    const result = new Map<string, "idle" | "running">();
+    if (children.size === 0) return result;
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const root = await antigravityProfileRoot(profileDirectory);
+        if (root === undefined) return result;
+        for (const store of ["antigravity-cli", "antigravity-acp"]) {
+          const file = await antigravityManagedPath(
+            root,
+            [store, "conversation_summaries.db"],
+            "file",
+          );
+          if (file === undefined) continue;
+          const db = new NodeSqlite.DatabaseSync(file.path, { readOnly: true });
+          try {
+            const query = db.prepare(
+              "SELECT status FROM conversation_summaries WHERE conversation_id = ? AND parent_conversation_id = ?",
+            );
+            for (const tool of tools) {
+              const ids = children.get(tool.toolCallId);
+              if (!ids || result.has(tool.toolCallId)) continue;
+              const states = ids.map((id) => query.get(id, sessionId)?.status);
+              if (states.includes("CASCADE_RUN_STATUS_RUNNING"))
+                result.set(tool.toolCallId, "running");
+              else if (states.every((state) => state === "CASCADE_RUN_STATUS_IDLE"))
+                result.set(tool.toolCallId, "idle");
+            }
+          } finally {
+            db.close();
+          }
+        }
+        return result;
+      },
+      catch: (cause) => new AntigravityChildWorkReadError({ cause }),
+    });
+  });
 }
 
 class AntigravityChildWorkReadError extends Schema.TaggedError<AntigravityChildWorkReadError>()(

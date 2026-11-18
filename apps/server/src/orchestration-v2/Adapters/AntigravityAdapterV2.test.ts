@@ -67,7 +67,7 @@ function permissionRequest(
 }
 
 describe("AntigravityAdapterV2 flavor", () => {
-  it("keeps a successful subagent launch running until the parent turn becomes idle", () => {
+  it("treats a successful subagent launch as running, not as a child result", () => {
     const batch = flavor.extractSubagentUpdate?.({
       toolCallId: "trajectory:4",
       title: "Running start_subagent",
