@@ -47,9 +47,11 @@ describe("resolveEnvironmentIconGroups", () => {
         capabilities: { environmentIcon: true, environmentIconKinds: ["server", "ubuntu"] },
       },
     } as unknown as ServerConfig;
-    expect(resolveEnvironmentIconGroups(serverConfig)).toEqual([
-      { label: "Machines", kinds: ["server"] },
-      { label: "Linux distributions", kinds: ["ubuntu"] },
+    expect(
+      resolveEnvironmentIconGroups(serverConfig).map(({ key, kinds }) => ({ key, kinds })),
+    ).toEqual([
+      { key: "machines", kinds: ["server"] },
+      { key: "linux-distributions", kinds: ["ubuntu"] },
     ]);
   });
 });

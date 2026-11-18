@@ -1,4 +1,5 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import {
   CloudIcon,
   LaptopIcon,
@@ -88,26 +89,26 @@ const ICON_BY_KIND: Record<EnvironmentMachineKind, FunctionComponent<LucideProps
 };
 
 export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
-  server: "Server",
-  cloud: "Cloud VM",
-  linux: "Linux",
-  desktop: "Desktop",
-  laptop: "Laptop",
-  "mac-mini": "Mini PC",
-  "mac-studio": "Workstation",
-  "raspberry-pi": "Raspberry Pi",
-  docker: "Docker",
-  macos: "macOS",
-  windows: "Windows",
-  wsl: "WSL",
-  debian: "Debian",
-  ubuntu: "Ubuntu",
-  fedora: "Fedora",
-  arch: "Arch Linux",
-  mint: "Linux Mint",
-  opensuse: "openSUSE",
-  nixos: "NixOS",
-  alpine: "Alpine Linux",
+  server: msg("Server"),
+  cloud: msg("Cloud VM"),
+  linux: msg("Linux"),
+  desktop: msg("Desktop"),
+  laptop: msg("Laptop"),
+  "mac-mini": msg("Mini PC"),
+  "mac-studio": msg("Workstation"),
+  "raspberry-pi": msg("Raspberry Pi"),
+  docker: msg("Docker"),
+  macos: msg("macOS"),
+  windows: msg("Windows"),
+  wsl: msg("WSL"),
+  debian: msg("Debian"),
+  ubuntu: msg("Ubuntu"),
+  fedora: msg("Fedora"),
+  arch: msg("Arch Linux"),
+  mint: msg("Linux Mint"),
+  opensuse: msg("openSUSE"),
+  nixos: msg("NixOS"),
+  alpine: msg("Alpine Linux"),
 };
 
 export function environmentMachineIcon(
