@@ -1,4 +1,5 @@
 import type { PoolProjection } from "@t3tools/shared/usagePoolProjection";
+import { T, useGT } from "gt-react";
 import { useId, useLayoutEffect, useRef, useState } from "react";
 
 import { observeResize } from "../../lib/observeResize";
@@ -71,6 +72,7 @@ export function UsagePoolChart({
   readonly now: number;
   readonly formatTime: (at: number) => string;
 }) {
+  const gt = useGT();
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [hover, setHover] = useState<Point | null>(null);
@@ -119,7 +121,7 @@ export function UsagePoolChart({
           width={width}
           height={HEIGHT}
           role="img"
-          aria-label={`${label}: pooled quota left, recorded and projected`}
+          aria-label={gt("{label}: pooled quota left, recorded and projected", { label })}
           className="block overflow-visible text-2xs"
           onPointerMove={(event) => pick(event.clientX)}
           onPointerLeave={() => setHover(null)}
@@ -197,7 +199,7 @@ export function UsagePoolChart({
             className="stroke-muted-foreground/60"
           />
           <text x={x(now)} y={PAD.top - 12} textAnchor="middle" className="fill-muted-foreground">
-            Now
+            <T context="the current moment on a timeline">Now</T>
           </text>
           {start ? (
             <circle
@@ -224,7 +226,10 @@ export function UsagePoolChart({
                 textAnchor="middle"
                 className="fill-foreground/80"
               >
-                Empty {formatTime(projection.poolEmpty)}
+                {gt("Empty {time}", {
+                  time: formatTime(projection.poolEmpty),
+                  $context: "when the usage pool runs out",
+                })}
               </text>
             </g>
           ) : null}
@@ -238,7 +243,7 @@ export function UsagePoolChart({
         >
           <div className="text-muted-foreground">
             {formatTime(hover.at)}
-            {hover.at > now ? " · projected" : ""}
+            {hover.at > now ? ` · ${gt("projected", { $context: "a forecast value" })}` : ""}
           </div>
           <div className="font-semibold text-foreground tabular-nums">
             {percent(hover.remaining)} of {percent(projection.capacity)}

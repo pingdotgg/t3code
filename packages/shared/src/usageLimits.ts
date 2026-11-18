@@ -11,7 +11,6 @@ import {
   isProviderAvailable,
   PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
-  type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshot,
@@ -23,8 +22,6 @@ import * as DateTime from "effect/DateTime";
 import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
 
 const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
 
 export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
@@ -161,7 +158,9 @@ function cursorUsageWindowRank(id: string): number {
   return rank < 0 ? CURSOR_USAGE_WINDOWS.length : rank;
 }
 
-function providersWithLimits(providers: readonly ServerProvider[]): readonly ServerProvider[] {
+export function providersWithLimits(
+  providers: readonly ServerProvider[],
+): readonly ServerProvider[] {
   return providers.filter(
     (provider) =>
       provider.enabled &&
@@ -182,7 +181,10 @@ export type LimitPresentations = ReadonlyMap<
   }
 >;
 
-export function collectExternalUsageLinks(presentations: LimitPresentations) {
+export function collectExternalUsageLinks(
+  presentations: LimitPresentations,
+  accountLabel = (provider: string, environment: string) => `${provider} on ${environment}`,
+) {
   const links = new Map<
     string,
     {
@@ -196,7 +198,10 @@ export function collectExternalUsageLinks(presentations: LimitPresentations) {
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       const external = provider.usageLimits?.externalUsage;
       if (external && provider.auth.status === "authenticated") {
-        const account = `${provider.displayName ?? provider.instanceId} on ${presentation.entry.target.label}`;
+        const account = accountLabel(
+          provider.displayName ?? provider.instanceId,
+          presentation.entry.target.label,
+        );
         links.set(external.url, {
           ...external,
           message: provider.usageLimits?.unavailable?.message,
@@ -424,29 +429,6 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     }
   }
   return [...accounts.values()];
-}
-
-export function collectLimitNotices(presentations: LimitPresentations): readonly string[] {
-  const label = (environmentLabel: string, subject: string) =>
-    presentations.size > 1 ? `${environmentLabel} · ${subject}` : subject;
-  const notices = new Set<string>();
-  for (const presentation of presentations.values()) {
-    const environmentLabel = presentation.entry.target.label;
-    for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
-      if (provider.usageLimits?.unavailable?.reason === "unsupported") continue;
-      const notice = provider.usageLimits ? limitsNotice(provider.usageLimits) : null;
-      const name = provider.displayName?.trim() || String(provider.driver);
-      if (notice) notices.add(`${label(environmentLabel, name)}: ${notice}`);
-    }
-    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
-      if (source.error) {
-        notices.add(`${label(environmentLabel, source.label)}: ${source.error}`);
-      } else if (source.accounts.length === 0) {
-        notices.add(`${label(environmentLabel, source.label)}: No accounts reported.`);
-      }
-    }
-  }
-  return [...notices];
 }
 
 export interface LimitPoolMember {
@@ -705,7 +687,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
   return pools.sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind]);
 }
 
-export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
+function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   if (limits.unavailable?.reason === "unsupported") {
     return limits.unavailable.message ?? "This account has no subscription limits.";
   }
@@ -719,7 +701,7 @@ export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
 }
 
-function resetMillis(window: ServerProviderUsageWindow): number | null {
+export function resetMillis(window: ServerProviderUsageWindow): number | null {
   if (window.resetsAt === undefined) return null;
   const at = Date.parse(window.resetsAt);
   return Number.isFinite(at) ? at : null;
@@ -756,16 +738,6 @@ function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
   return "on";
 }
 
-export function formatDuration(ms: number): string {
-  const remaining = Math.max(0, ms);
-  const days = Math.floor(remaining / DAY);
-  const hours = Math.floor((remaining % DAY) / HOUR);
-  const minutes = Math.floor((remaining % HOUR) / MINUTE);
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
-}
-
 /** One redeemable reset as clients offer it; `input` already names the chosen credit. */
 export interface ResetCreditChoice {
   readonly key: string;
@@ -776,133 +748,20 @@ export interface ResetCreditChoice {
   readonly input: ProviderConsumeResetCreditInput;
 }
 
-export function resetCreditChoices(
-  credits: ServerProviderResetCredits,
-  input: ProviderConsumeResetCreditInput,
-  now: number,
-  compact = false,
-): ReadonlyArray<ResetCreditChoice> {
-  const expiresIn = (at: string | undefined) => (at ? formatDuration(Date.parse(at) - now) : null);
-  if (credits.options && "instanceId" in input) {
-    return credits.options.map((option) => {
-      const expires = expiresIn(option.expiresAt);
-      return {
-        key: option.creditId,
-        summary: `${option.label} · ${option.availableCount} left${expires ? ` · expires in ${expires}` : ""}`,
-        actionLabel: "Use",
-        confirmDescription: `${option.label}: ${option.description} This cannot be undone.`,
-        availableCount: option.availableCount,
-        input: { ...input, creditId: option.creditId },
-      };
-    });
-  }
-  const count = credits.availableCount;
-  const expires = expiresIn(credits.nextExpiresAt);
-  return [
-    {
-      key: "next",
-      summary:
-        count === 0
-          ? "No reset credits banked"
-          : compact
-            ? `${count} banked${expires ? ` · expires in ${expires}` : ""}`
-            : `${count} ${count === 1 ? "reset credit" : "reset credits"} banked${expires ? ` · next expires in ${expires}` : ""}`,
-      actionLabel: "Use reset",
-      confirmDescription:
-        "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
-      availableCount: count,
-      input,
-    },
-  ];
-}
+export type ResetCountdown =
+  | { readonly kind: "now" }
+  | { readonly kind: "momentarily" }
+  | { readonly kind: "in"; readonly ms: number };
 
-export function formatResetsIn(window: ServerProviderUsageWindow, now: number): string | null {
+export function resetCountdown(
+  window: ServerProviderUsageWindow,
+  now: number,
+): ResetCountdown | null {
   const resetsAt = resetMillis(window);
   if (resetsAt === null) return null;
-  if (resetsAt <= now) return "resets now";
-  if (resetsAt - now < MINUTE) return "Resets momentarily";
-  return `resets in ${formatDuration(resetsAt - now)}`;
-}
-
-export interface ResetCreditSuggestion {
-  readonly recommendation: "recommended" | "wait" | "save" | "hold" | "expiring_soon";
-  readonly actionLabel: string;
-  readonly reason: string;
-}
-
-export function suggestResetCredit(
-  account: LimitAccount,
-  window: ServerProviderUsageWindow,
-  poolMembers: ReadonlyArray<{
-    readonly account: LimitAccount;
-    readonly window?: ServerProviderUsageWindow | null;
-  }>,
-  now: number,
-): ResetCreditSuggestion | null {
-  const credits = account.limits.resetCredits;
-  if (!credits || credits.availableCount <= 0) return null;
-
-  const remaining = remainingPercent(window);
-  const resetsAt = resetMillis(window);
-  const resetsInMs = resetsAt !== null ? resetsAt - now : null;
-
-  // 1. Expiring soon: credit expires within 24 hours
-  const optionExpiries = (credits.options ?? [])
-    .filter((opt) => opt.availableCount > 0 && opt.expiresAt)
-    .map((opt) => Date.parse(opt.expiresAt!))
-    .filter(Number.isFinite);
-  const nextExpires = credits.nextExpiresAt ? Date.parse(credits.nextExpiresAt) : null;
-  if (nextExpires && Number.isFinite(nextExpires)) {
-    optionExpiries.push(nextExpires);
-  }
-  const soonestExpiry = optionExpiries.length > 0 ? Math.min(...optionExpiries) : null;
-  if (soonestExpiry !== null) {
-    const timeUntilExpiry = soonestExpiry - now;
-    if (timeUntilExpiry > 0 && timeUntilExpiry <= 24 * 3600 * 1000) {
-      return {
-        recommendation: "expiring_soon",
-        actionLabel: "Use before expiry",
-        reason: `Banked reset credit expires in ${formatDuration(timeUntilExpiry)}. Use it before it expires.`,
-      };
-    }
-  }
-
-  // 2. Natural reset is imminent (within 45 minutes)
-  if (resetsInMs !== null && resetsInMs > 0 && resetsInMs <= 45 * 60 * 1000) {
-    return {
-      recommendation: "wait",
-      actionLabel: "Wait for natural reset",
-      reason: `Window resets naturally in ${formatDuration(resetsInMs)}. Save your banked credit.`,
-    };
-  }
-
-  // 3. This account still has plenty of quota (> 20% remaining)
-  if (remaining > 20) {
-    return {
-      recommendation: "save",
-      actionLabel: "Save for later",
-      reason: `${remaining}% quota remaining. Reset only when depleted.`,
-    };
-  }
-
-  // 4. Other account in the same pool has plenty of quota (> 25% remaining)
-  const otherMembers = poolMembers.filter((m) => m.account.key !== account.key && m.window);
-  const otherMaxRemaining =
-    otherMembers.length > 0 ? Math.max(...otherMembers.map((m) => remainingPercent(m.window!))) : 0;
-  if (otherMaxRemaining > 25) {
-    return {
-      recommendation: "hold",
-      actionLabel: "Hold off (other account active)",
-      reason: `Auto mode has another account with ${otherMaxRemaining}% quota left. Save credit until both are depleted.`,
-    };
-  }
-
-  // 5. Recommended: Account is depleted and next reset is far away (or not soon)
-  return {
-    recommendation: "recommended",
-    actionLabel: "Recommended to use now",
-    reason: `Quota depleted and next natural reset is ${resetsInMs !== null && resetsInMs > 0 ? `in ${formatDuration(resetsInMs)}` : "hours away"}. Good time to reset.`,
-  };
+  if (resetsAt <= now) return { kind: "now" };
+  if (resetsAt - now < MINUTE) return { kind: "momentarily" };
+  return { kind: "in", ms: resetsAt - now };
 }
 
 export const USAGE_LIMITS_COMMAND = {

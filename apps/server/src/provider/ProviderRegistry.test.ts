@@ -43,6 +43,7 @@ import {
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { WindowsShellEnvironment } from "@t3tools/shared/shell";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { isAutoModelSlug } from "@t3tools/shared/autoModel";
 import { createModelCapabilities } from "@t3tools/shared/model";
@@ -2424,6 +2425,92 @@ it.layer(
             assert.strictEqual(yield* Ref.get(scans), 1);
           }).pipe(Effect.provide(runtimeServices));
         }),
+    );
+
+    it.effect(
+      "rebuilds only instances missing their CLI when a refresh finds a new Windows PATH",
+      () => {
+        const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows" };
+        return Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("codex");
+          const makeInstance = (id: string, installed: boolean): ProviderInstance => {
+            const instanceId = ProviderInstanceId.make(id);
+            const provider = {
+              instanceId,
+              driver,
+              status: installed ? "ready" : "error",
+              enabled: true,
+              installed,
+              auth: { status: "unknown" },
+              checkedAt: "1970-01-01T00:00:00.000Z",
+              version: null,
+              models: [],
+              slashCommands: [],
+              skills: [],
+            } as const satisfies ServerProvider;
+            return {
+              instanceId,
+              driverKind: driver,
+              continuationIdentity: { driverKind: driver, continuationKey: `codex:${id}` },
+              displayName: undefined,
+              enabled: true,
+              snapshot: {
+                resolveMaintenance: () =>
+                  Effect.succeed(
+                    makeManualOnlyProviderMaintenanceCapabilities({
+                      provider: driver,
+                      packageName: null,
+                    }),
+                  ),
+                getSnapshot: Effect.succeed(provider),
+                refresh: Effect.succeed(provider),
+                streamChanges: Stream.empty,
+                applyUsageLimits: () => Effect.void,
+              },
+              orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+              textGeneration: {} as ProviderInstance["textGeneration"],
+            };
+          };
+          const instances = [makeInstance("present", true), makeInstance("missing", false)];
+          const rebuilt: Array<ReadonlyArray<ProviderInstanceId>> = [];
+          const changes = yield* PubSub.unbounded<void>();
+          const registry = yield* ProviderRegistry.ProviderRegistry.pipe(
+            Effect.provide(
+              ProviderRegistry.layer.pipe(
+                Layer.provide(
+                  Layer.mock(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator)({
+                    rebuild: (ids) => Effect.sync(() => void rebuilt.push(ids)),
+                  }),
+                ),
+                Layer.provideMerge(
+                  Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                    getInstance: (id) => Effect.succeed(instances.find((i) => i.instanceId === id)),
+                    listInstances: Effect.succeed(instances),
+                    listUnavailable: Effect.succeed([]),
+                    streamChanges: Stream.fromPubSub(changes),
+                    subscribeChanges: PubSub.subscribe(changes),
+                  }),
+                ),
+                Layer.provideMerge(
+                  ServerConfig.layerTest(process.cwd(), { prefix: "t3-provider-registry-path-" }),
+                ),
+                Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+              ),
+            ),
+          );
+
+          yield* registry.refresh();
+
+          assert.strictEqual(env.PATH, "C:\\Windows;C:\\Tools");
+          assert.deepStrictEqual(rebuilt, [[ProviderInstanceId.make("missing")]]);
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(HostProcess.Environment, env),
+          Effect.provideService(WindowsShellEnvironment, () =>
+            Effect.succeed({ PATH: "C:\\Windows;C:\\Tools" }),
+          ),
+        );
+      },
     );
 
     it.effect("rescans a requested cwd whose snapshot is still current", () =>

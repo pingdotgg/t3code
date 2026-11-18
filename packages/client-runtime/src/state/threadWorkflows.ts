@@ -5,6 +5,8 @@ import {
   type OrchestrationV2ProviderCapabilities,
 } from "@t3tools/contracts";
 import { copySorted } from "@t3tools/shared/Array";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import type { ThreadStructure } from "./models.ts";
 
@@ -132,7 +134,10 @@ export function getUserQueuedThreadRuns(
   );
 }
 
-export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQueueWorkflowState {
+export function deriveThreadQueueWorkflowState(
+  projection: Projection,
+  resolve: MFunctionType = mFallback,
+): ThreadQueueWorkflowState {
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);
   const capabilities = session?.capabilities.turns;
@@ -157,7 +162,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     return {
       run,
       // A queued guest message shows the guest's words; the agent still gets the attributed text.
-      text: message?.context?.guest?.text ?? message?.text ?? "Queued message",
+      text: message?.context?.guest?.text ?? message?.text ?? resolve(msg("Queued message")),
       attachments: message?.attachments ?? [],
       messageId: run.userMessageId,
       ...(message?.context ? { context: message.context } : {}),
