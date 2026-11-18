@@ -6,6 +6,7 @@ import {
   type BrowserImportFailureReason,
   isRuntimeModeAbove,
   managedCapabilityDenial as contractsManagedCapabilityDenial,
+  managedAcpAgentDenial as contractsManagedAcpAgentDenial,
   managedUpdatesDenial as contractsManagedUpdatesDenial,
   type ManagedPolicySummary,
   type ProjectCloneSnapshot,
@@ -284,4 +285,33 @@ export function sourceControlInstallHintText(
 ): string {
   const known = INSTALL_HINTS.find((entry) => mFallback(entry) === hint);
   return known === undefined ? hint : resolve(known);
+}
+
+export function managedAcpAgentsNotice(
+  summary: ManagedPolicySummary | undefined,
+  resolve: MFunctionType = mFallback,
+): string | undefined {
+  return summary?.limits?.providers?.allowedAcpAgents === undefined
+    ? undefined
+    : resolve(
+        msg(
+          "{organization} chooses which ACP agents run here, so local commands and executable overrides are turned off.",
+          { organization: summary.organization },
+        ),
+      );
+}
+
+export function managedAcpAgentDenial(
+  summary: ManagedPolicySummary | undefined,
+  agentId: string,
+  resolve: MFunctionType = mFallback,
+): string | undefined {
+  return summary !== undefined && contractsManagedAcpAgentDenial(summary, agentId) !== undefined
+    ? resolve(
+        msg("{organization}'s policy does not allow the ACP agent {agentId}.", {
+          organization: summary.organization,
+          agentId,
+        }),
+      )
+    : undefined;
 }

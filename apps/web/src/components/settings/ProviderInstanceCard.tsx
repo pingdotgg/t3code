@@ -1,3 +1,4 @@
+import { managedAcpAgentsNotice } from "@t3tools/client-runtime/contract-labels";
 import { Spinner } from "~/components/ui/spinner";
 
 import {
@@ -50,11 +51,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
 import { ManagedControl, ManagedNotice } from "../ManagedPolicy";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
-import {
-  disallowedProviderMessage,
-  isManagedDriverAllowed,
-  managedAcpAgentsNotice,
-} from "@t3tools/contracts";
+import { disallowedProviderMessage, isManagedDriverAllowed } from "@t3tools/contracts";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type {
@@ -865,7 +862,7 @@ export function ProviderInstanceCard({
   const managedPolicy = useManagedPolicy(environmentId);
   const instanceLocks = managedInstanceLocks(managedPolicy, instance.driver, m);
   const acpAgentsNotice =
-    instance.driver === "acpRegistry" ? managedAcpAgentsNotice(managedPolicy) : undefined;
+    instance.driver === "acpRegistry" ? managedAcpAgentsNotice(managedPolicy, m) : undefined;
   const managedDriverReason = isManagedDriverAllowed(managedPolicy, instance.driver)
     ? undefined
     : disallowedProviderMessage(

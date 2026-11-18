@@ -1,3 +1,7 @@
+import {
+  managedAcpAgentsNotice,
+  managedAcpAgentDenial,
+} from "@t3tools/client-runtime/contract-labels";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -22,8 +26,6 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   isManagedDriverAllowed,
-  managedAcpAgentDenial,
-  managedAcpAgentsNotice,
 } from "@t3tools/contracts";
 
 import {
@@ -257,7 +259,7 @@ export function AddProviderInstanceDialog({
     : selectedAcp !== null
       ? null
       : isManualAcpConfiguration && manualAgentId.length > 0
-        ? (managedAcpAgentDenial(managedPolicy, manualAgentId) ?? null)
+        ? (managedAcpAgentDenial(managedPolicy, manualAgentId, m) ?? null)
         : gt("Select an ACP or configure one manually.");
   const wizardStepSummaries = isAcpRegistry
     ? ([
@@ -387,7 +389,7 @@ export function AddProviderInstanceDialog({
   // A policy that owns this driver's launch settings also rules out ChatGPT's own runtime.
   const driverLocks = managedInstanceLocks(managedPolicy, driver, m);
   const acpLocks = managedInstanceLocks(managedPolicy, ACP_REGISTRY_DRIVER_KIND, m);
-  const acpAgentsNotice = managedAcpAgentsNotice(managedPolicy);
+  const acpAgentsNotice = managedAcpAgentsNotice(managedPolicy, m);
 
   const handleSave = async () => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
