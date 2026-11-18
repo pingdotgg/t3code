@@ -1527,20 +1527,31 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             `for-each-ref --format=%(refname)%00%(objectname) refs/heads/${branch} `,
           ),
         ).length;
+      const metadataProbes = (branch: string) =>
+        gitCommands.filter(
+          (command) =>
+            command ===
+            `for-each-ref --format=%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/${branch}`,
+        ).length;
       yield* lookup("feature/visible");
       yield* lookup("feature/background");
       expect(probes("feature/visible")).toBe(1);
       expect(probes("feature/background")).toBe(1);
+      expect(metadataProbes("feature/visible")).toBe(1);
+      expect(metadataProbes("feature/background")).toBe(1);
 
       yield* manager.invalidateStatus(repoDir, { currentBranchOnly: true });
       yield* lookup("feature/background");
       expect(probes("feature/background")).toBe(1);
+      expect(metadataProbes("feature/background")).toBe(1);
       yield* lookup("feature/visible");
       expect(probes("feature/visible")).toBe(2);
+      expect(metadataProbes("feature/visible")).toBe(2);
 
       yield* manager.invalidateStatus(repoDir);
       yield* lookup("feature/background");
       expect(probes("feature/background")).toBe(2);
+      expect(metadataProbes("feature/background")).toBe(2);
     }),
   );
 

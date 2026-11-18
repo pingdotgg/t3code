@@ -2414,12 +2414,21 @@ export const make = Effect.gen(function* () {
     prLookupGitStateByKey.set(entryKey, { readAtMs, value });
     return value;
   });
-  const forgetPrLookupGitState = (cwd: string) =>
+  const forgetPrLookupGitState = (cwd: string, branch?: string) =>
     normalizeStatusCacheKey(cwd).pipe(
       Effect.map((cacheCwd) => {
         const prefix = `${cacheCwd}\u0000`;
         for (const key of prLookupGitStateByKey.keys()) {
-          if (key.startsWith(prefix)) prLookupGitStateByKey.delete(key);
+          if (!key.startsWith(prefix)) continue;
+          const metadataKey = key.slice(prefix.length);
+          // Fetch can change shared remote state, but not other branches' local refs or config.
+          const unrelatedBranch =
+            branch !== undefined &&
+            ((metadataKey.startsWith("branchRef\u0000") &&
+              metadataKey !== `branchRef\u0000${branch}`) ||
+              (metadataKey.startsWith("config\u0000branch.") &&
+                metadataKey !== `config\u0000branch.${branch}.remote`));
+          if (!unrelatedBranch) prLookupGitStateByKey.delete(key);
         }
       }),
     );
@@ -2678,7 +2687,7 @@ export const make = Effect.gen(function* () {
         yield* bumpPrLookupEpoch(cwd);
       }
       gitStateEpochByCwd.set(cacheCwd, gitStateEpoch(cacheCwd) + 1);
-      yield* forgetPrLookupGitState(cwd);
+      yield* forgetPrLookupGitState(cwd, branch ?? undefined);
     },
   );
 
