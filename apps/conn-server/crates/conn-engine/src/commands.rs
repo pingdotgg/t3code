@@ -187,6 +187,9 @@ pub(crate) fn refusal(command_type: &str) -> &'static str {
         "notification.delivery.accept" => {
             "Conn Server does not deliver background notifications yet."
         }
+        "thread.issue.link" | "thread.issue.unlink" => {
+            "Conn Server does not link issues to threads yet."
+        }
         "subagent.stop" => {
             "Conn Server cannot stop a single subagent yet; stop the thread instead."
         }

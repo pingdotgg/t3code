@@ -1,6 +1,6 @@
 {
- "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying this crate's testdata/grok-scenarios/grok_compact_update/grok_transcript.ndjson (hand-made, see tools/make-scenarios.mjs) through the orchestrator fixture runner at ea8a2d2e79; driver dropped.",
- "capturedOn": "2026-11-17",
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying this crate's testdata/grok-scenarios/grok_compact_update/grok_transcript.ndjson (hand-made, see tools/make-scenarios.mjs) through the orchestrator fixture runner at 444f032be7; driver dropped.",
+ "capturedOn": "2026-11-18",
  "outcome": "passed",
  "gates": [],
  "transcripts": [
@@ -4943,7 +4943,7 @@
      },
      "goal": null,
      "createdAt": "1970-01-01T00:00:00.001Z",
-     "updatedAt": "1970-01-01T00:00:00.004Z"
+     "updatedAt": "1970-01-01T00:00:00.003Z"
     },
     "message": {
      "messageId": "message:thread:thread%3Afixture%3Agrok_compact_update%3Aproject%3Aproject%253Afixture%253Agrok_compact_update%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:3:4f546d75-4aea-4531-b605-37a50b11eff2",

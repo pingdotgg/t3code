@@ -951,6 +951,89 @@ pub(crate) fn round_trip(
         "rpc::guest_share::create::Success" => {
             go::<conn_contract::rpc::guest_share::create::Success>(value)
         }
+        "rpc::issue_trackers::bind_project::Error" => {
+            go::<conn_contract::rpc::issue_trackers::bind_project::Error>(value)
+        }
+        "rpc::issue_trackers::bind_project::Payload" => {
+            go::<conn_contract::rpc::issue_trackers::bind_project::Payload>(value)
+        }
+        "rpc::issue_trackers::bind_project::Success" => {
+            go::<conn_contract::rpc::issue_trackers::bind_project::Success>(value)
+        }
+        "rpc::issue_trackers::connect::Error" => {
+            go::<conn_contract::rpc::issue_trackers::connect::Error>(value)
+        }
+        "rpc::issue_trackers::connect::Payload" => {
+            go::<conn_contract::rpc::issue_trackers::connect::Payload>(value)
+        }
+        "rpc::issue_trackers::connect::Success" => {
+            go::<conn_contract::rpc::issue_trackers::connect::Success>(value)
+        }
+        "rpc::issue_trackers::list::Error" => {
+            go::<conn_contract::rpc::issue_trackers::list::Error>(value)
+        }
+        "rpc::issue_trackers::list::Payload" => {
+            go::<conn_contract::rpc::issue_trackers::list::Payload>(value)
+        }
+        "rpc::issue_trackers::list::Success" => {
+            go::<conn_contract::rpc::issue_trackers::list::Success>(value)
+        }
+        "rpc::issues::candidates::Error" => {
+            go::<conn_contract::rpc::issues::candidates::Error>(value)
+        }
+        "rpc::issues::candidates::Payload" => {
+            go::<conn_contract::rpc::issues::candidates::Payload>(value)
+        }
+        "rpc::issues::candidates::Success" => {
+            go::<conn_contract::rpc::issues::candidates::Success>(value)
+        }
+        "rpc::issues::comment::Error" => go::<conn_contract::rpc::issues::comment::Error>(value),
+        "rpc::issues::comment::Payload" => {
+            go::<conn_contract::rpc::issues::comment::Payload>(value)
+        }
+        "rpc::issues::comment::Success" => {
+            go::<conn_contract::rpc::issues::comment::Success>(value)
+        }
+        "rpc::issues::comments::Error" => go::<conn_contract::rpc::issues::comments::Error>(value),
+        "rpc::issues::comments::Payload" => {
+            go::<conn_contract::rpc::issues::comments::Payload>(value)
+        }
+        "rpc::issues::comments::Success" => {
+            go::<conn_contract::rpc::issues::comments::Success>(value)
+        }
+        "rpc::issues::create::Error" => go::<conn_contract::rpc::issues::create::Error>(value),
+        "rpc::issues::create::Payload" => go::<conn_contract::rpc::issues::create::Payload>(value),
+        "rpc::issues::create::Success" => go::<conn_contract::rpc::issues::create::Success>(value),
+        "rpc::issues::detail::Error" => go::<conn_contract::rpc::issues::detail::Error>(value),
+        "rpc::issues::detail::Payload" => go::<conn_contract::rpc::issues::detail::Payload>(value),
+        "rpc::issues::detail::Success" => go::<conn_contract::rpc::issues::detail::Success>(value),
+        "rpc::issues::list::Error" => go::<conn_contract::rpc::issues::list::Error>(value),
+        "rpc::issues::list::Payload" => go::<conn_contract::rpc::issues::list::Payload>(value),
+        "rpc::issues::list::Success" => go::<conn_contract::rpc::issues::list::Success>(value),
+        "rpc::issues::react::Error" => go::<conn_contract::rpc::issues::react::Error>(value),
+        "rpc::issues::react::Payload" => go::<conn_contract::rpc::issues::react::Payload>(value),
+        "rpc::issues::react::Success" => go::<conn_contract::rpc::issues::react::Success>(value),
+        "rpc::issues::set_state::Error" => {
+            go::<conn_contract::rpc::issues::set_state::Error>(value)
+        }
+        "rpc::issues::set_state::Payload" => {
+            go::<conn_contract::rpc::issues::set_state::Payload>(value)
+        }
+        "rpc::issues::set_state::Success" => {
+            go::<conn_contract::rpc::issues::set_state::Success>(value)
+        }
+        "rpc::issues::templates::Error" => {
+            go::<conn_contract::rpc::issues::templates::Error>(value)
+        }
+        "rpc::issues::templates::Payload" => {
+            go::<conn_contract::rpc::issues::templates::Payload>(value)
+        }
+        "rpc::issues::templates::Success" => {
+            go::<conn_contract::rpc::issues::templates::Success>(value)
+        }
+        "rpc::issues::update::Error" => go::<conn_contract::rpc::issues::update::Error>(value),
+        "rpc::issues::update::Payload" => go::<conn_contract::rpc::issues::update::Payload>(value),
+        "rpc::issues::update::Success" => go::<conn_contract::rpc::issues::update::Success>(value),
         "rpc::mcp_apps::call_tool::Error" => {
             go::<conn_contract::rpc::mcp_apps::call_tool::Error>(value)
         }

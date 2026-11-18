@@ -1,14 +1,14 @@
 {
-  "roots": 1015,
-  "namedSchemas": 1808,
-  "references": 1477,
-  "rustItems": 1770,
-  "literalTypes": 508,
-  "methods": 237,
-  "methodsFullyTyped": 237,
+  "roots": 1054,
+  "namedSchemas": 1862,
+  "references": 1530,
+  "rustItems": 1823,
+  "literalTypes": 514,
+  "methods": 250,
+  "methodsFullyTyped": 250,
   "opaqueFallbacks": 0,
   "lax": 13,
-  "dedupedItems": 831,
+  "dedupedItems": 834,
   "passThroughLinksDropped": 9,
   "opaque": [],
   "laxDetails": [
@@ -66,8 +66,8 @@
     }
   ],
   "fixtures": {
-    "roots": 1011,
-    "samples": 3081,
+    "roots": 1050,
+    "samples": 3155,
     "sampleFailures": 4,
     "encodeForbidden": 6,
     "failed": [
@@ -76,7 +76,7 @@
       "rpc::attachments::create_upload_url::Success#0: SampleError",
       "rpc::server::check_otlp_endpoint::Payload#0: SampleError"
     ],
-    "keys": 1014
+    "keys": 1053
   },
   "methodTypes": [
     {
@@ -338,6 +338,123 @@
       "payload": "OrchestrationV2GetThreadFamilyInput",
       "success": "GuestShareCreateResult",
       "error": "GuestShareCreateError",
+      "typed": true
+    },
+    {
+      "tag": "issueTrackers.bindProject",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueTrackerBindProjectInput",
+      "success": "()",
+      "error": "IssueTrackersBindProjectError",
+      "typed": true
+    },
+    {
+      "tag": "issueTrackers.connect",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueTrackerConnectInput",
+      "success": "IssueTrackerConnection",
+      "error": "IssueTrackersBindProjectError",
+      "typed": true
+    },
+    {
+      "tag": "issueTrackers.list",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "IssueTrackerConnectionList",
+      "error": "IssueTrackersBindProjectError",
+      "typed": true
+    },
+    {
+      "tag": "issues.candidates",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueScopeRef",
+      "success": "IssueCandidates",
+      "error": "IssuesCandidatesError",
+      "typed": true
+    },
+    {
+      "tag": "issues.comment",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueCommentInput",
+      "success": "()",
+      "error": "IssuesCandidatesError",
+      "typed": true
+    },
+    {
+      "tag": "issues.comments",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueCommentsPageInput",
+      "success": "IssueCommentsPage",
+      "error": "IssuesCandidatesError",
+      "typed": true
+    },
+    {
+      "tag": "issues.create",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueCreateInput",
+      "success": "IssueCreateResult",
+      "error": "IssuesCandidatesError",
+      "typed": true
+    },
+    {
+      "tag": "issues.detail",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueRef",
+      "success": "IssueDetail",
+      "error": "IssuesCandidatesError",
+      "typed": true
+    },
+    {
+      "tag": "issues.list",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueListInput",
+      "success": "IssueListResult",
+      "error": "IssuesCandidatesError",
+      "typed": true
+    },
+    {
+      "tag": "issues.react",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueReactionInput",
+      "success": "()",
+      "error": "IssuesCandidatesError",
+      "typed": true
+    },
+    {
+      "tag": "issues.setState",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueSetStateInput",
+      "success": "()",
+      "error": "IssuesCandidatesError",
+      "typed": true
+    },
+    {
+      "tag": "issues.templates",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueScopeRef",
+      "success": "IssueTemplateList",
+      "error": "IssuesCandidatesError",
+      "typed": true
+    },
+    {
+      "tag": "issues.update",
+      "stream": false,
+      "origin": "official",
+      "payload": "IssueUpdateInput",
+      "success": "()",
+      "error": "IssuesCandidatesError",
       "typed": true
     },
     {

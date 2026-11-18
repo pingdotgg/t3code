@@ -195,6 +195,9 @@ pub mod lit {
     literal!(InternalError = "internal_error");
     literal!(Interval = "interval");
     literal!(InvalidRequest = "invalid_request");
+    literal!(IssueOperationError = "IssueOperationError");
+    literal!(IssueTrackerConnectionError = "IssueTrackerConnectionError");
+    literal!(IssueUnavailableError = "IssueUnavailableError");
     literal!(KeybindingsConfigParseError = "KeybindingsConfigParseError");
     literal!(KeybindingsInvalidEntry = "keybindings.invalid-entry");
     literal!(KeybindingsMalformedConfig = "keybindings.malformed-config");
@@ -476,6 +479,8 @@ pub mod lit {
     literal!(ThreadGuestMessageDismiss = "thread.guest-message.dismiss");
     literal!(ThreadGuestShareClose = "thread.guest-share.close");
     literal!(ThreadInteractionModeSet = "thread.interaction-mode.set");
+    literal!(ThreadIssueLink = "thread.issue.link");
+    literal!(ThreadIssueUnlink = "thread.issue.unlink");
     literal!(ThreadMarkUnread = "thread.mark-unread");
     literal!(ThreadMergeBack = "thread.merge_back");
     literal!(ThreadMetadataUpdate = "thread.metadata.update");
@@ -511,6 +516,7 @@ pub mod lit {
     literal!(TurnItemUpdated = "turn-item.updated");
     literal!(TurnItemUpdated2 = "turn_item.updated");
     literal!(TurnTerminal = "turn.terminal");
+    literal!(Unlimited = "unlimited");
     literal!(Unreachable = "unreachable");
     literal!(Unreachable2 = "Unreachable");
     literal!(Unsupported = "unsupported");
@@ -2056,7 +2062,7 @@ pub enum PullRequestState {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PullRequestActor {
+pub struct IssueActor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_bot: Option<bool>,
     pub login: String,
@@ -2091,7 +2097,7 @@ pub struct ThreadPullRequestSnapshot {
         skip_serializing_if = "Option::is_none",
         with = "crate::support::double_option"
     )]
-    pub author: Option<Option<PullRequestActor>>,
+    pub author: Option<Option<IssueActor>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub additions: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2199,6 +2205,29 @@ pub struct ThreadPullRequestLink {
     pub watch: Option<ThreadPullRequestWatch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_watch: Option<ThreadPullRequestWatch>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ThreadIssueLinkSource {
+    #[serde(rename = "manual")]
+    Manual,
+    #[serde(rename = "agent")]
+    Agent,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadIssueLink {
+    pub tracker: String,
+    pub host: String,
+    pub scope: String,
+    pub key: String,
+    pub project_id: String,
+    pub url: String,
+    pub source: ThreadIssueLinkSource,
+    pub linked_at: String,
+    pub display_key: String,
+    pub title: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -2361,6 +2390,8 @@ pub struct OrchestrationV2AppThread {
         with = "crate::support::double_option"
     )]
     pub branch_pull_request: Option<Option<ThreadLinkedPullRequest>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issues: Option<Vec<ThreadIssueLink>>,
     pub active_provider_thread_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_origin: Option<OrchestrationV2ThreadHistoryOrigin>,
@@ -2832,6 +2863,8 @@ pub struct OrchestrationV2ThreadShell {
         with = "crate::support::double_option"
     )]
     pub branch_pull_request: Option<Option<ThreadLinkedPullRequest>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issues: Option<Vec<ThreadIssueLink>>,
     pub lineage: OrchestrationV2AppThreadLineage,
     pub forked_from: Option<OrchestrationV2TurnItemForkSource>,
     pub active_provider_thread_id: Option<String>,
@@ -3549,6 +3582,35 @@ pub struct OrchestrationV2CommandThreadPullRequestLinkSync {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OrchestrationV2CommandThreadIssueLink {
+    pub r#type: lit::ThreadIssueLink,
+    pub command_id: String,
+    pub thread_id: String,
+    pub tracker: String,
+    pub host: String,
+    pub scope: String,
+    pub key: String,
+    pub project_id: String,
+    pub url: String,
+    pub display_key: String,
+    pub title: String,
+    pub source: ThreadIssueLinkSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestrationV2CommandThreadIssueUnlink {
+    pub r#type: lit::ThreadIssueUnlink,
+    pub command_id: String,
+    pub thread_id: String,
+    pub tracker: String,
+    pub host: String,
+    pub scope: String,
+    pub key: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OrchestrationV2CommandThreadPullRequestWatchLink {
     pub url: String,
     pub source: ThreadPullRequestLinkSource,
@@ -4258,7 +4320,7 @@ pub struct OrchestrationV2CommandProviderSwitch {
 
 tagged_union! {
     OrchestrationV2Command, "type",
-    variants { ThreadStop(OrchestrationV2CommandThreadStop), ThreadCreate(OrchestrationV2CommandThreadCreate), ThreadArchive(OrchestrationV2CommandThreadArchive), ThreadGuestShareClose(OrchestrationV2CommandThreadGuestShareClose), ThreadGuestMessageDismiss(OrchestrationV2CommandThreadGuestMessageDismiss), ThreadUnarchive(OrchestrationV2CommandThreadUnarchive), ThreadDelete(OrchestrationV2CommandThreadDelete), ThreadSettle(OrchestrationV2CommandThreadSettle), ThreadAutoSettle(OrchestrationV2CommandThreadAutoSettle), ThreadUnsettle(OrchestrationV2CommandThreadUnsettle), ThreadSnooze(OrchestrationV2CommandThreadSnooze), ThreadUnsnooze(OrchestrationV2CommandThreadUnsnooze), ThreadAutoSettleSet(OrchestrationV2CommandThreadAutoSettleSet), ThreadPin(OrchestrationV2CommandThreadPin), ThreadUnpin(OrchestrationV2CommandThreadUnpin), ThreadTagSet(OrchestrationV2CommandThreadTagSet), ThreadPinReorder(OrchestrationV2CommandThreadPinReorder), ThreadActiveReorder(OrchestrationV2CommandThreadActiveReorder), ThreadVisit(OrchestrationV2CommandThreadVisit), ThreadMarkUnread(OrchestrationV2CommandThreadMarkUnread), ThreadMetadataUpdate(OrchestrationV2CommandThreadMetadataUpdate), ThreadPullRequestLink(OrchestrationV2CommandThreadPullRequestLink), ThreadPullRequestUnlink(OrchestrationV2CommandThreadPullRequestUnlink), ThreadPullRequestLinkSync(OrchestrationV2CommandThreadPullRequestLinkSync), ThreadPullRequestWatch(OrchestrationV2CommandThreadPullRequestWatch), ThreadPullRequestSync(OrchestrationV2CommandThreadPullRequestSync), ThreadTitleRegenerationComplete(OrchestrationV2CommandThreadTitleRegenerationComplete), ThreadRuntimeModeSet(OrchestrationV2CommandThreadRuntimeModeSet), ThreadInteractionModeSet(OrchestrationV2CommandThreadInteractionModeSet), ThreadModelSelectionSet(OrchestrationV2CommandThreadModelSelectionSet), ProviderSessionDetach(OrchestrationV2CommandProviderSessionDetach), MessageDispatch(OrchestrationV2CommandMessageDispatch), PreparedRunRelease(OrchestrationV2CommandPreparedRunRelease), NotificationDeliveryAccept(OrchestrationV2CommandNotificationDeliveryAccept), PreparedRunProgress(OrchestrationV2CommandPreparedRunProgress), PreparedRunFail(OrchestrationV2CommandPreparedRunFail), PreparedRunRetry(OrchestrationV2CommandPreparedRunRetry), SubagentStop(OrchestrationV2CommandSubagentStop), RunInterrupt(OrchestrationV2CommandRunInterrupt), QueuedMessagePromoteToSteer(OrchestrationV2CommandQueuedMessagePromoteToSteer), QueueResume(OrchestrationV2CommandQueueResume), QueuedRunStart(OrchestrationV2CommandQueuedRunStart), QueuedRunReorder(OrchestrationV2CommandQueuedRunReorder), QueuedRunCancel(OrchestrationV2CommandQueuedRunCancel), QueuedRunEdit(OrchestrationV2CommandQueuedRunEdit), RuntimeRequestRespond(OrchestrationV2CommandRuntimeRequestRespond), ThreadUserInputDismiss(OrchestrationV2CommandThreadUserInputDismiss), CheckpointRollback(OrchestrationV2CommandCheckpointRollback), ThreadFork(OrchestrationV2CommandThreadFork), ThreadMergeBack(OrchestrationV2CommandThreadMergeBack), DelegatedTaskRequest(OrchestrationV2CommandDelegatedTaskRequest), DelegatedTaskWakePolicy(OrchestrationV2CommandDelegatedTaskWakePolicy), DelegatedTaskCompletionDeliveryAcknowledge(OrchestrationV2CommandDelegatedTaskCompletionDeliveryAcknowledge), DelegatedTaskCompletionDeliveryDispose(OrchestrationV2CommandDelegatedTaskCompletionDeliveryDispose), ThreadCreatedRecord(OrchestrationV2CommandThreadCreatedRecord), ProviderSwitch(OrchestrationV2CommandProviderSwitch) },
+    variants { ThreadStop(OrchestrationV2CommandThreadStop), ThreadCreate(OrchestrationV2CommandThreadCreate), ThreadArchive(OrchestrationV2CommandThreadArchive), ThreadGuestShareClose(OrchestrationV2CommandThreadGuestShareClose), ThreadGuestMessageDismiss(OrchestrationV2CommandThreadGuestMessageDismiss), ThreadUnarchive(OrchestrationV2CommandThreadUnarchive), ThreadDelete(OrchestrationV2CommandThreadDelete), ThreadSettle(OrchestrationV2CommandThreadSettle), ThreadAutoSettle(OrchestrationV2CommandThreadAutoSettle), ThreadUnsettle(OrchestrationV2CommandThreadUnsettle), ThreadSnooze(OrchestrationV2CommandThreadSnooze), ThreadUnsnooze(OrchestrationV2CommandThreadUnsnooze), ThreadAutoSettleSet(OrchestrationV2CommandThreadAutoSettleSet), ThreadPin(OrchestrationV2CommandThreadPin), ThreadUnpin(OrchestrationV2CommandThreadUnpin), ThreadTagSet(OrchestrationV2CommandThreadTagSet), ThreadPinReorder(OrchestrationV2CommandThreadPinReorder), ThreadActiveReorder(OrchestrationV2CommandThreadActiveReorder), ThreadVisit(OrchestrationV2CommandThreadVisit), ThreadMarkUnread(OrchestrationV2CommandThreadMarkUnread), ThreadMetadataUpdate(OrchestrationV2CommandThreadMetadataUpdate), ThreadPullRequestLink(OrchestrationV2CommandThreadPullRequestLink), ThreadPullRequestUnlink(OrchestrationV2CommandThreadPullRequestUnlink), ThreadPullRequestLinkSync(OrchestrationV2CommandThreadPullRequestLinkSync), ThreadIssueLink(OrchestrationV2CommandThreadIssueLink), ThreadIssueUnlink(OrchestrationV2CommandThreadIssueUnlink), ThreadPullRequestWatch(OrchestrationV2CommandThreadPullRequestWatch), ThreadPullRequestSync(OrchestrationV2CommandThreadPullRequestSync), ThreadTitleRegenerationComplete(OrchestrationV2CommandThreadTitleRegenerationComplete), ThreadRuntimeModeSet(OrchestrationV2CommandThreadRuntimeModeSet), ThreadInteractionModeSet(OrchestrationV2CommandThreadInteractionModeSet), ThreadModelSelectionSet(OrchestrationV2CommandThreadModelSelectionSet), ProviderSessionDetach(OrchestrationV2CommandProviderSessionDetach), MessageDispatch(OrchestrationV2CommandMessageDispatch), PreparedRunRelease(OrchestrationV2CommandPreparedRunRelease), NotificationDeliveryAccept(OrchestrationV2CommandNotificationDeliveryAccept), PreparedRunProgress(OrchestrationV2CommandPreparedRunProgress), PreparedRunFail(OrchestrationV2CommandPreparedRunFail), PreparedRunRetry(OrchestrationV2CommandPreparedRunRetry), SubagentStop(OrchestrationV2CommandSubagentStop), RunInterrupt(OrchestrationV2CommandRunInterrupt), QueuedMessagePromoteToSteer(OrchestrationV2CommandQueuedMessagePromoteToSteer), QueueResume(OrchestrationV2CommandQueueResume), QueuedRunStart(OrchestrationV2CommandQueuedRunStart), QueuedRunReorder(OrchestrationV2CommandQueuedRunReorder), QueuedRunCancel(OrchestrationV2CommandQueuedRunCancel), QueuedRunEdit(OrchestrationV2CommandQueuedRunEdit), RuntimeRequestRespond(OrchestrationV2CommandRuntimeRequestRespond), ThreadUserInputDismiss(OrchestrationV2CommandThreadUserInputDismiss), CheckpointRollback(OrchestrationV2CommandCheckpointRollback), ThreadFork(OrchestrationV2CommandThreadFork), ThreadMergeBack(OrchestrationV2CommandThreadMergeBack), DelegatedTaskRequest(OrchestrationV2CommandDelegatedTaskRequest), DelegatedTaskWakePolicy(OrchestrationV2CommandDelegatedTaskWakePolicy), DelegatedTaskCompletionDeliveryAcknowledge(OrchestrationV2CommandDelegatedTaskCompletionDeliveryAcknowledge), DelegatedTaskCompletionDeliveryDispose(OrchestrationV2CommandDelegatedTaskCompletionDeliveryDispose), ThreadCreatedRecord(OrchestrationV2CommandThreadCreatedRecord), ProviderSwitch(OrchestrationV2CommandProviderSwitch) },
     dispatch {
         "thread.stop" => [ThreadStop(OrchestrationV2CommandThreadStop)],
         "thread.create" => [ThreadCreate(OrchestrationV2CommandThreadCreate)],
@@ -4284,6 +4346,8 @@ tagged_union! {
         "thread.pull-request.link" => [ThreadPullRequestLink(OrchestrationV2CommandThreadPullRequestLink)],
         "thread.pull-request.unlink" => [ThreadPullRequestUnlink(OrchestrationV2CommandThreadPullRequestUnlink)],
         "thread.pull-request-link.sync" => [ThreadPullRequestLinkSync(OrchestrationV2CommandThreadPullRequestLinkSync)],
+        "thread.issue.link" => [ThreadIssueLink(OrchestrationV2CommandThreadIssueLink)],
+        "thread.issue.unlink" => [ThreadIssueUnlink(OrchestrationV2CommandThreadIssueUnlink)],
         "thread.pull-request.watch" => [ThreadPullRequestWatch(OrchestrationV2CommandThreadPullRequestWatch)],
         "thread.pull-request.sync" => [ThreadPullRequestSync(OrchestrationV2CommandThreadPullRequestSync)],
         "thread.title.regeneration.complete" => [ThreadTitleRegenerationComplete(OrchestrationV2CommandThreadTitleRegenerationComplete)],
@@ -4815,6 +4879,8 @@ pub enum OrchestrationV2DomainEventThreadArchivedType {
     ThreadMetadataUpdated,
     #[serde(rename = "thread.pull-request-synced")]
     ThreadPullRequestSynced,
+    #[serde(rename = "thread.issue-synced")]
+    ThreadIssueSynced,
     #[serde(rename = "thread.runtime-mode-updated")]
     ThreadRuntimeModeUpdated,
     #[serde(rename = "thread.interaction-mode-updated")]
@@ -5489,6 +5555,8 @@ pub struct OrchestrationV2ThreadCapabilities {
     pub can_rollback_thread: bool,
     pub can_fork_thread: bool,
     pub can_fork_from_turn: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub can_fork_while_source_running: Option<bool>,
     pub can_fork_from_subagent_thread: bool,
     pub exposes_native_thread_id: bool,
 }
@@ -5905,6 +5973,8 @@ pub struct OrchestrationV2ProviderTurn {
     pub node_id: String,
     pub run_attempt_id: Option<String>,
     pub native_turn_ref: Option<OrchestrationV2ProviderRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_thread_ref: Option<OrchestrationV2ProviderRef>,
     pub ordinal: i64,
     pub status: OrchestrationV2ProviderTurnStatus,
     pub started_at: Option<String>,
@@ -7596,7 +7666,7 @@ tagged_union! {
     variants { ThreadCreated(OrchestrationV2DomainEventThreadCreated), ThreadArchived(OrchestrationV2DomainEventThreadArchived), ThreadPullRequestLinkUpdated(OrchestrationV2DomainEventThreadPullRequestLinkUpdated), ThreadVisitRecorded(OrchestrationV2DomainEventThreadVisitRecorded), RunCreated(OrchestrationV2DomainEventRunCreated), RunUpdated(OrchestrationV2DomainEventRunUpdated), RunBackgroundWorkCancelled(OrchestrationV2DomainEventRunBackgroundWorkCancelled), RunAttemptCreated(OrchestrationV2DomainEventRunAttemptCreated), RunAttemptUpdated(OrchestrationV2DomainEventRunAttemptUpdated), NodeUpdated(OrchestrationV2DomainEventNodeUpdated), SubagentUpdated(OrchestrationV2DomainEventSubagentUpdated), ProviderSessionAttached(OrchestrationV2DomainEventProviderSessionAttached), ProviderSessionDetached(OrchestrationV2DomainEventProviderSessionDetached), ProviderThreadUpdated(OrchestrationV2DomainEventProviderThreadUpdated), ProviderTurnUpdated(OrchestrationV2DomainEventProviderTurnUpdated), RuntimeRequestUpdated(OrchestrationV2DomainEventRuntimeRequestUpdated), MessageUpdated(OrchestrationV2DomainEventMessageUpdated), TurnItemUpdated(OrchestrationV2DomainEventTurnItemUpdated), PlanUpdated(OrchestrationV2DomainEventPlanUpdated), CheckpointScopeCreated(OrchestrationV2DomainEventCheckpointScopeCreated), CheckpointCaptured(OrchestrationV2DomainEventCheckpointCaptured), CheckpointRollbackRequested(OrchestrationV2DomainEventCheckpointRollbackRequested), ContextHandoffUpdated(OrchestrationV2DomainEventContextHandoffUpdated), ContextTransferCreated(OrchestrationV2DomainEventContextTransferCreated), ContextTransferUpdated(OrchestrationV2DomainEventContextTransferUpdated) },
     dispatch {
         "thread.created" => [ThreadCreated(OrchestrationV2DomainEventThreadCreated)],
-        "thread.archived" | "thread.unarchived" | "thread.deleted" | "thread.settled" | "thread.unsettled" | "thread.snoozed" | "thread.unsnoozed" | "thread.pinned" | "thread.auto-settle-set" | "thread.unpinned" | "thread.pin-reordered" | "thread.active-reordered" | "thread.tags-updated" | "thread.visited" | "thread.marked-unread" | "thread.metadata-updated" | "thread.pull-request-synced" | "thread.runtime-mode-updated" | "thread.interaction-mode-updated" | "thread.model-selection-updated" | "thread.provider-switched" | "thread.guest-share-updated" => [ThreadArchived(OrchestrationV2DomainEventThreadArchived)],
+        "thread.archived" | "thread.unarchived" | "thread.deleted" | "thread.settled" | "thread.unsettled" | "thread.snoozed" | "thread.unsnoozed" | "thread.pinned" | "thread.auto-settle-set" | "thread.unpinned" | "thread.pin-reordered" | "thread.active-reordered" | "thread.tags-updated" | "thread.visited" | "thread.marked-unread" | "thread.metadata-updated" | "thread.pull-request-synced" | "thread.issue-synced" | "thread.runtime-mode-updated" | "thread.interaction-mode-updated" | "thread.model-selection-updated" | "thread.provider-switched" | "thread.guest-share-updated" => [ThreadArchived(OrchestrationV2DomainEventThreadArchived)],
         "thread.pull-request-link-updated" => [ThreadPullRequestLinkUpdated(OrchestrationV2DomainEventThreadPullRequestLinkUpdated)],
         "thread.visit-recorded" => [ThreadVisitRecorded(OrchestrationV2DomainEventThreadVisitRecorded)],
         "run.created" => [RunCreated(OrchestrationV2DomainEventRunCreated)],
@@ -7658,6 +7728,8 @@ pub enum OrchestrationV2DomainEventJsonThreadArchivedType {
     ThreadMarkedUnread,
     #[serde(rename = "thread.pull-request-synced")]
     ThreadPullRequestSynced,
+    #[serde(rename = "thread.issue-synced")]
+    ThreadIssueSynced,
     #[serde(rename = "thread.metadata-updated")]
     ThreadMetadataUpdated,
     #[serde(rename = "thread.runtime-mode-updated")]
@@ -7933,7 +8005,7 @@ tagged_union! {
     variants { ThreadCreated(OrchestrationV2DomainEventThreadCreated), ThreadArchived(OrchestrationV2DomainEventJsonThreadArchived), ThreadPullRequestLinkUpdated(OrchestrationV2DomainEventThreadPullRequestLinkUpdated), ThreadVisitRecorded(OrchestrationV2DomainEventThreadVisitRecorded), RunCreated(OrchestrationV2DomainEventRunCreated), RunUpdated(OrchestrationV2DomainEventRunUpdated), RunBackgroundWorkCancelled(OrchestrationV2DomainEventRunBackgroundWorkCancelled), RunAttemptCreated(OrchestrationV2DomainEventRunAttemptCreated), RunAttemptUpdated(OrchestrationV2DomainEventRunAttemptUpdated), NodeUpdated(OrchestrationV2DomainEventNodeUpdated), SubagentUpdated(OrchestrationV2DomainEventSubagentUpdated), ProviderSessionAttached(OrchestrationV2DomainEventProviderSessionAttached), ProviderSessionDetached(OrchestrationV2DomainEventProviderSessionDetached), ProviderThreadUpdated(OrchestrationV2DomainEventProviderThreadUpdated), ProviderTurnUpdated(OrchestrationV2DomainEventProviderTurnUpdated), RuntimeRequestUpdated(OrchestrationV2DomainEventRuntimeRequestUpdated), MessageUpdated(OrchestrationV2DomainEventMessageUpdated), TurnItemUpdated(OrchestrationV2DomainEventJsonTurnItemUpdated), PlanUpdated(OrchestrationV2DomainEventPlanUpdated), CheckpointScopeCreated(OrchestrationV2DomainEventCheckpointScopeCreated), CheckpointCaptured(OrchestrationV2DomainEventCheckpointCaptured), CheckpointRollbackRequested(OrchestrationV2DomainEventCheckpointRollbackRequested), ContextHandoffUpdated(OrchestrationV2DomainEventContextHandoffUpdated), ContextTransferCreated(OrchestrationV2DomainEventContextTransferCreated), ContextTransferUpdated(OrchestrationV2DomainEventContextTransferUpdated) },
     dispatch {
         "thread.created" => [ThreadCreated(OrchestrationV2DomainEventThreadCreated)],
-        "thread.archived" | "thread.unarchived" | "thread.deleted" | "thread.settled" | "thread.unsettled" | "thread.snoozed" | "thread.unsnoozed" | "thread.pinned" | "thread.auto-settle-set" | "thread.unpinned" | "thread.pin-reordered" | "thread.active-reordered" | "thread.tags-updated" | "thread.visited" | "thread.marked-unread" | "thread.pull-request-synced" | "thread.metadata-updated" | "thread.runtime-mode-updated" | "thread.interaction-mode-updated" | "thread.model-selection-updated" | "thread.provider-switched" | "thread.guest-share-updated" => [ThreadArchived(OrchestrationV2DomainEventJsonThreadArchived)],
+        "thread.archived" | "thread.unarchived" | "thread.deleted" | "thread.settled" | "thread.unsettled" | "thread.snoozed" | "thread.unsnoozed" | "thread.pinned" | "thread.auto-settle-set" | "thread.unpinned" | "thread.pin-reordered" | "thread.active-reordered" | "thread.tags-updated" | "thread.visited" | "thread.marked-unread" | "thread.pull-request-synced" | "thread.issue-synced" | "thread.metadata-updated" | "thread.runtime-mode-updated" | "thread.interaction-mode-updated" | "thread.model-selection-updated" | "thread.provider-switched" | "thread.guest-share-updated" => [ThreadArchived(OrchestrationV2DomainEventJsonThreadArchived)],
         "thread.pull-request-link-updated" => [ThreadPullRequestLinkUpdated(OrchestrationV2DomainEventThreadPullRequestLinkUpdated)],
         "thread.visit-recorded" => [ThreadVisitRecorded(OrchestrationV2DomainEventThreadVisitRecorded)],
         "run.created" => [RunCreated(OrchestrationV2DomainEventRunCreated)],
@@ -12819,6 +12891,623 @@ tagged_union! {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct IssueTrackerProjectBinding {
+    pub tracker: String,
+    pub scope: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTrackerBindProjectInput {
+    pub project_id: String,
+    pub binding: Option<IssueTrackerProjectBinding>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IssueTrackerConnectionErrorReason {
+    #[serde(rename = "unknown-tracker")]
+    UnknownTracker,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "failed")]
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTrackerConnectionError {
+    #[serde(rename = "_tag")]
+    pub tag: lit::IssueTrackerConnectionError,
+    pub tracker: String,
+    pub reason: IssueTrackerConnectionErrorReason,
+    pub detail: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::support::double_option"
+    )]
+    pub cause: Option<Option<Json>>,
+}
+
+tagged_union! {
+    IssueTrackersBindProjectError, "_tag",
+    variants { IssueTrackerConnectionError(IssueTrackerConnectionError), EnvironmentAuthorizationError(EnvironmentAuthorizationError) },
+    dispatch {
+        "IssueTrackerConnectionError" => [IssueTrackerConnectionError(IssueTrackerConnectionError)],
+        "EnvironmentAuthorizationError" => [EnvironmentAuthorizationError(EnvironmentAuthorizationError)],
+    },
+    fallback []
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTrackerConnectInput {
+    pub tracker: String,
+    pub token: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTrackerConnectionCredential {
+    pub label: String,
+    pub help_url: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTrackerScope {
+    pub key: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTrackerConnection {
+    pub tracker: String,
+    pub display_name: String,
+    pub host: String,
+    pub scope_noun: String,
+    pub credential: IssueTrackerConnectionCredential,
+    pub connected: bool,
+    pub account: Option<String>,
+    pub detail: Option<String>,
+    pub scopes: Vec<IssueTrackerScope>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTrackerConnectionList {
+    pub trackers: Vec<IssueTrackerConnection>,
+    pub bindings: Map<String, IssueTrackerProjectBinding>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueScopeRef {
+    pub project_id: String,
+    pub tracker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub scope: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueLabelCandidate {
+    pub name: String,
+    pub color: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueAssigneeCandidate {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_bot: Option<bool>,
+    pub login: String,
+    pub name: Option<String>,
+    pub avatar_url: Option<String>,
+    pub id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueCandidates {
+    pub labels: Vec<IssueLabelCandidate>,
+    pub assignees: Vec<IssueAssigneeCandidate>,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IssueUnavailableReason {
+    #[serde(rename = "tool-missing")]
+    ToolMissing,
+    #[serde(rename = "unauthenticated")]
+    Unauthenticated,
+    #[serde(rename = "tracker-unsupported")]
+    TrackerUnsupported,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueUnavailableError {
+    #[serde(rename = "_tag")]
+    pub tag: lit::IssueUnavailableError,
+    pub reason: IssueUnavailableReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracker: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::support::double_option"
+    )]
+    pub cause: Option<Option<Json>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IssueOperationErrorReason {
+    #[serde(rename = "not-found")]
+    NotFound,
+    #[serde(rename = "read-only")]
+    ReadOnly,
+    #[serde(rename = "rate-limited")]
+    RateLimited,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueOperationError {
+    #[serde(rename = "_tag")]
+    pub tag: lit::IssueOperationError,
+    pub operation: String,
+    pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<IssueOperationErrorReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_at: Option<JsNumber>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::support::double_option"
+    )]
+    pub cause: Option<Option<Json>>,
+}
+
+tagged_union! {
+    IssuesCandidatesError, "_tag",
+    variants { IssueUnavailableError(IssueUnavailableError), IssueOperationError(IssueOperationError), EnvironmentAuthorizationError(EnvironmentAuthorizationError) },
+    dispatch {
+        "IssueUnavailableError" => [IssueUnavailableError(IssueUnavailableError)],
+        "IssueOperationError" => [IssueOperationError(IssueOperationError)],
+        "EnvironmentAuthorizationError" => [EnvironmentAuthorizationError(EnvironmentAuthorizationError)],
+    },
+    fallback []
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueCommentInput {
+    pub project_id: String,
+    pub tracker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub scope: String,
+    pub key: String,
+    pub body: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueCommentsPageInput {
+    pub project_id: String,
+    pub tracker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub scope: String,
+    pub key: String,
+    pub cursor: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IssueReactionContent {
+    #[serde(rename = "thumbs-up")]
+    ThumbsUp,
+    #[serde(rename = "thumbs-down")]
+    ThumbsDown,
+    #[serde(rename = "laugh")]
+    Laugh,
+    #[serde(rename = "hooray")]
+    Hooray,
+    #[serde(rename = "confused")]
+    Confused,
+    #[serde(rename = "heart")]
+    Heart,
+    #[serde(rename = "rocket")]
+    Rocket,
+    #[serde(rename = "eyes")]
+    Eyes,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueReaction {
+    pub content: IssueReactionContent,
+    pub count: i64,
+    pub actors: Vec<String>,
+    pub viewer_has_reacted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueComment {
+    pub id: String,
+    pub author: Option<IssueActor>,
+    pub body: String,
+    pub created_at: String,
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reactions: Option<Vec<IssueReaction>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueCommentsPage {
+    pub comments: Vec<IssueComment>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueCreateInput {
+    pub project_id: String,
+    pub tracker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub scope: String,
+    pub title: String,
+    pub body: String,
+    pub labels: Vec<String>,
+    pub assignees: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueCreateResult {
+    pub key: String,
+    pub display_key: String,
+    pub url: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueRef {
+    pub project_id: String,
+    pub tracker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub scope: String,
+    pub key: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IssueStateCategory {
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "closed")]
+    Closed,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueState {
+    pub category: IssueStateCategory,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueLabel {
+    pub name: String,
+    pub color: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::support::double_option"
+    )]
+    pub description: Option<Option<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueCapabilities {
+    pub create: bool,
+    pub edit: bool,
+    pub comment: bool,
+    pub labels: bool,
+    pub assignees: bool,
+    pub reactions: bool,
+    pub templates: bool,
+    pub linked_pull_requests: bool,
+    pub events: bool,
+    pub search: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueViewerPermissions {
+    pub set_state: bool,
+    pub comment: bool,
+    pub edit: bool,
+    pub labels: bool,
+    pub assignees: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IssueEventKind {
+    #[serde(rename = "closed")]
+    Closed,
+    #[serde(rename = "reopened")]
+    Reopened,
+    #[serde(rename = "labeled")]
+    Labeled,
+    #[serde(rename = "unlabeled")]
+    Unlabeled,
+    #[serde(rename = "assigned")]
+    Assigned,
+    #[serde(rename = "unassigned")]
+    Unassigned,
+    #[serde(rename = "renamed")]
+    Renamed,
+    #[serde(rename = "referenced")]
+    Referenced,
+    #[serde(rename = "state-changed")]
+    StateChanged,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueEvent {
+    pub id: String,
+    pub kind: IssueEventKind,
+    pub actor: Option<IssueActor>,
+    pub created_at: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueLinkedPullRequest {
+    pub repository: String,
+    pub number: i64,
+    pub title: String,
+    pub url: String,
+    pub state: PullRequestState,
+    pub is_draft: bool,
+    pub closes_issue: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueDetail {
+    pub tracker: String,
+    pub host: String,
+    pub scope: String,
+    pub key: String,
+    pub display_key: String,
+    pub title: String,
+    pub url: String,
+    pub author: Option<IssueActor>,
+    pub state: IssueState,
+    pub created_at: String,
+    pub updated_at: String,
+    pub closed_at: Option<String>,
+    pub assignees: Vec<IssueActor>,
+    pub labels: Vec<IssueLabel>,
+    pub comment_count: i64,
+    pub project_id: String,
+    pub project_title: String,
+    pub writable: bool,
+    pub capabilities: IssueCapabilities,
+    pub viewer_permissions: IssueViewerPermissions,
+    pub states: Vec<IssueState>,
+    pub viewer: Option<String>,
+    pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reactions: Option<Vec<IssueReaction>>,
+    pub comments: Vec<IssueComment>,
+    pub comments_cursor: Option<String>,
+    pub events: Vec<IssueEvent>,
+    pub linked_pull_requests: Vec<IssueLinkedPullRequest>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IssueListState {
+    #[serde(rename = "all")]
+    All,
+    #[serde(rename = "open")]
+    Open,
+    #[serde(rename = "closed")]
+    Closed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IssueListInputInvolvement {
+    #[serde(rename = "all")]
+    All,
+    #[serde(rename = "assigned")]
+    Assigned,
+    #[serde(rename = "authored")]
+    Authored,
+    #[serde(rename = "mentioned")]
+    Mentioned,
+}
+
+pub type IssueListCursors = Map<String, String>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IssueListInputSort {
+    #[serde(rename = "updated")]
+    Updated,
+    #[serde(rename = "created")]
+    Created,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueListInput {
+    pub state: IssueListState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub involvement: Option<IssueListInputInvolvement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursors: Option<IssueListCursors>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<IssueListInputSort>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTrackerSummary {
+    pub tracker: String,
+    pub host: String,
+    pub project_count: i64,
+    pub capabilities: Option<IssueCapabilities>,
+    pub configured: bool,
+    pub detail: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueListEntry {
+    pub tracker: String,
+    pub host: String,
+    pub scope: String,
+    pub key: String,
+    pub display_key: String,
+    pub title: String,
+    pub url: String,
+    pub author: Option<IssueActor>,
+    pub state: IssueState,
+    pub created_at: String,
+    pub updated_at: String,
+    pub closed_at: Option<String>,
+    pub assignees: Vec<IssueActor>,
+    pub labels: Vec<IssueLabel>,
+    pub comment_count: i64,
+    pub project_id: String,
+    pub project_title: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueListProjectError {
+    pub project_id: String,
+    pub project_title: String,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueListResult {
+    pub viewers: Map<String, String>,
+    pub trackers: Vec<IssueTrackerSummary>,
+    pub entries: Vec<IssueListEntry>,
+    pub errors: Vec<IssueListProjectError>,
+    pub next_cursors: IssueListCursors,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scopes: Option<Vec<IssueScopeRef>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueReactionInput {
+    pub project_id: String,
+    pub tracker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub scope: String,
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_id: Option<String>,
+    pub content: IssueReactionContent,
+    pub reacted: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueSetStateInput {
+    pub project_id: String,
+    pub tracker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub scope: String,
+    pub key: String,
+    pub state: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTemplate {
+    pub key: String,
+    pub name: String,
+    pub about: String,
+    pub title: String,
+    pub body: String,
+    pub labels: Vec<String>,
+    pub assignees: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueExternalTemplate {
+    pub name: String,
+    pub about: String,
+    pub url: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueTemplateList {
+    pub templates: Vec<IssueTemplate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_templates: Option<Vec<IssueExternalTemplate>>,
+    pub blank_issues_enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueUpdateInput {
+    pub project_id: String,
+    pub tracker: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    pub scope: String,
+    pub key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub labels: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignees: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct McpAppCallToolInput {
     pub thread_id: String,
     pub item_id: String,
@@ -15232,41 +15921,12 @@ pub enum PullRequestCommentKind {
     Review,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum PullRequestReactionContent {
-    #[serde(rename = "thumbs-up")]
-    ThumbsUp,
-    #[serde(rename = "thumbs-down")]
-    ThumbsDown,
-    #[serde(rename = "laugh")]
-    Laugh,
-    #[serde(rename = "hooray")]
-    Hooray,
-    #[serde(rename = "confused")]
-    Confused,
-    #[serde(rename = "heart")]
-    Heart,
-    #[serde(rename = "rocket")]
-    Rocket,
-    #[serde(rename = "eyes")]
-    Eyes,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PullRequestReaction {
-    pub content: PullRequestReactionContent,
-    pub count: i64,
-    pub actors: Vec<String>,
-    pub viewer_has_reacted: bool,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestComment {
     pub id: String,
     pub kind: PullRequestCommentKind,
-    pub author: Option<PullRequestActor>,
+    pub author: Option<IssueActor>,
     pub body: String,
     pub created_at: String,
     #[serde(
@@ -15279,7 +15939,7 @@ pub struct PullRequestComment {
     pub path: Option<String>,
     pub review_state: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reactions: Option<Vec<PullRequestReaction>>,
+    pub reactions: Option<Vec<IssueReaction>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub can_edit: Option<bool>,
 }
@@ -15296,7 +15956,7 @@ pub enum PullRequestDiffSide {
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestThreadComment {
     pub id: String,
-    pub author: Option<PullRequestActor>,
+    pub author: Option<IssueActor>,
     pub body: String,
     pub created_at: String,
     #[serde(
@@ -15313,7 +15973,7 @@ pub struct PullRequestThreadComment {
     )]
     pub review_url: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reactions: Option<Vec<PullRequestReaction>>,
+    pub reactions: Option<Vec<IssueReaction>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub can_edit: Option<bool>,
 }
@@ -15365,7 +16025,7 @@ pub struct PullRequestCommit {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletions: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub authors: Option<Vec<PullRequestActor>>,
+    pub authors: Option<Vec<IssueActor>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -15376,9 +16036,9 @@ pub struct PullRequestActivity {
         skip_serializing_if = "Option::is_none",
         with = "crate::support::double_option"
     )]
-    pub author: Option<Option<PullRequestActor>>,
+    pub author: Option<Option<IssueActor>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reviewers: Option<Vec<PullRequestActor>>,
+    pub reviewers: Option<Vec<IssueActor>>,
     pub comments: Vec<PullRequestComment>,
     pub comment_count: i64,
     pub comments_truncated: bool,
@@ -15389,7 +16049,7 @@ pub struct PullRequestActivity {
     pub overview_threads: Option<Vec<PullRequestOverviewThread>>,
     pub commits: Vec<PullRequestCommit>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reactions: Option<Vec<PullRequestReaction>>,
+    pub reactions: Option<Vec<IssueReaction>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -15440,19 +16100,6 @@ pub enum PullRequestMergeability {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PullRequestLabel {
-    pub name: String,
-    pub color: Option<String>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        with = "crate::support::double_option"
-    )]
-    pub description: Option<Option<String>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PullRequestListEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stack: Option<PullRequestStackMembership>,
@@ -15464,7 +16111,7 @@ pub struct PullRequestListEntry {
     pub number: i64,
     pub title: String,
     pub url: String,
-    pub author: Option<PullRequestActor>,
+    pub author: Option<IssueActor>,
     pub head_branch: String,
     pub base_branch: String,
     pub state: PullRequestState,
@@ -15479,19 +16126,11 @@ pub struct PullRequestListEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_at: Option<f64>,
     pub viewer_review_requested: bool,
-    pub labels: Vec<PullRequestLabel>,
+    pub labels: Vec<IssueLabel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_decision: Option<PullRequestSummaryReviewDecision>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checks_state: Option<PullRequestSummaryChecksState>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PullRequestListProjectError {
-    pub project_id: String,
-    pub project_title: String,
-    pub message: String,
 }
 
 pub type PullRequestListCursors = Map<String, String>;
@@ -15502,7 +16141,7 @@ pub struct PullRequestListResult {
     pub viewers: Map<String, String>,
     pub providers: Vec<PullRequestProviderSummary>,
     pub entries: Vec<PullRequestListEntry>,
-    pub errors: Vec<PullRequestListProjectError>,
+    pub errors: Vec<IssueListProjectError>,
     pub truncated: bool,
     pub next_cursors: PullRequestListCursors,
 }
@@ -15785,7 +16424,7 @@ pub struct PullRequestDetail {
     pub title: String,
     pub body: String,
     pub url: String,
-    pub author: Option<PullRequestActor>,
+    pub author: Option<IssueActor>,
     pub state: PullRequestState,
     pub is_draft: bool,
     pub mergeability: PullRequestMergeability,
@@ -15810,8 +16449,8 @@ pub struct PullRequestDetail {
     pub observed_at: Option<f64>,
     pub merged_at: Option<String>,
     pub closed_at: Option<String>,
-    pub reviewers: Vec<PullRequestActor>,
-    pub labels: Vec<PullRequestLabel>,
+    pub reviewers: Vec<IssueActor>,
+    pub labels: Vec<IssueLabel>,
     pub checks: Vec<PullRequestCheck>,
     pub merge_capabilities: PullRequestMergeCapabilities,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -15930,8 +16569,8 @@ pub struct PullRequestFilterOptionsReferencesItem {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestFilterOptions {
-    pub labels: Vec<PullRequestLabel>,
-    pub authors: Vec<PullRequestActor>,
+    pub labels: Vec<IssueLabel>,
+    pub authors: Vec<IssueActor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub references: Option<Vec<PullRequestFilterOptionsReferencesItem>>,
     pub truncated: bool,
@@ -16212,7 +16851,7 @@ pub struct PullRequestPreview {
     pub number: i64,
     pub title: String,
     pub url: String,
-    pub author: Option<PullRequestActor>,
+    pub author: Option<IssueActor>,
     pub state: PullRequestState,
     pub is_draft: bool,
     pub created_at: String,
@@ -16460,7 +17099,7 @@ pub struct PullRequestSummary {
         skip_serializing_if = "Option::is_none",
         with = "crate::support::double_option"
     )]
-    pub author: Option<Option<PullRequestActor>>,
+    pub author: Option<Option<IssueActor>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub additions: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -16551,7 +17190,7 @@ pub struct PullRequestReactionInput {
     pub number: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_id: Option<String>,
-    pub content: PullRequestReactionContent,
+    pub content: IssueReactionContent,
     pub reacted: bool,
 }
 
@@ -17997,6 +18636,8 @@ pub struct ExecutionEnvironmentCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pull_request_checks: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issues: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side_chats: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vcs_branch_status: Option<bool>,
@@ -19278,6 +19919,13 @@ pub struct ServerSettingsSecretProvidersValue {
     pub config: Option<Json>,
 }
 
+kind_union! {
+    ServerSettingsUsageHistoryRetentionDays, {
+        number => Number(i64),
+        string => String(lit::Unlimited),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageModelPriceOverride {
@@ -19507,6 +20155,8 @@ pub struct ServerSettings {
     pub text_generators: Option<Map<String, ServerSettingsTextGeneratorsValue>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_providers: Option<Map<String, ServerSettingsSecretProvidersValue>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_history_retention_days: Option<ServerSettingsUsageHistoryRetentionDays>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_price_overrides: Option<Map<String, UsageModelPriceOverride>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -22110,6 +22760,8 @@ pub struct ClientServerSettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secret_providers: Option<Map<String, Option<ServerSettingsSecretProvidersValue>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_history_retention_days: Option<ServerSettingsUsageHistoryRetentionDays>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_price_overrides: Option<Map<String, Option<UsageModelPriceOverride>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_model_aliases: Option<Map<String, Option<String>>>,
@@ -23937,6 +24589,8 @@ pub const COMMAND_TYPES: &[&str] = &[
     "thread.pull-request.link",
     "thread.pull-request.unlink",
     "thread.pull-request-link.sync",
+    "thread.issue.link",
+    "thread.issue.unlink",
     "thread.pull-request.watch",
     "thread.pull-request.sync",
     "thread.title.regeneration.complete",
@@ -24194,6 +24848,101 @@ pub mod rpc {
             pub type Payload = OrchestrationV2GetThreadFamilyInput;
             pub type Success = GuestShareCreateResult;
             pub type Error = GuestShareCreateError;
+        }
+    }
+    pub mod issue_trackers {
+        /// `issueTrackers.bindProject`
+        pub mod bind_project {
+            use crate::{support::*, *};
+            pub type Payload = IssueTrackerBindProjectInput;
+            pub type Success = ();
+            pub type Error = IssueTrackersBindProjectError;
+        }
+        /// `issueTrackers.connect`
+        pub mod connect {
+            use crate::{support::*, *};
+            pub type Payload = IssueTrackerConnectInput;
+            pub type Success = IssueTrackerConnection;
+            pub type Error = IssueTrackersBindProjectError;
+        }
+        /// `issueTrackers.list`
+        pub mod list {
+            use crate::{support::*, *};
+            pub type Payload = ServerProbePayload;
+            pub type Success = IssueTrackerConnectionList;
+            pub type Error = IssueTrackersBindProjectError;
+        }
+    }
+    pub mod issues {
+        /// `issues.candidates`
+        pub mod candidates {
+            use crate::{support::*, *};
+            pub type Payload = IssueScopeRef;
+            pub type Success = IssueCandidates;
+            pub type Error = IssuesCandidatesError;
+        }
+        /// `issues.comment`
+        pub mod comment {
+            use crate::{support::*, *};
+            pub type Payload = IssueCommentInput;
+            pub type Success = ();
+            pub type Error = IssuesCandidatesError;
+        }
+        /// `issues.comments`
+        pub mod comments {
+            use crate::{support::*, *};
+            pub type Payload = IssueCommentsPageInput;
+            pub type Success = IssueCommentsPage;
+            pub type Error = IssuesCandidatesError;
+        }
+        /// `issues.create`
+        pub mod create {
+            use crate::{support::*, *};
+            pub type Payload = IssueCreateInput;
+            pub type Success = IssueCreateResult;
+            pub type Error = IssuesCandidatesError;
+        }
+        /// `issues.detail`
+        pub mod detail {
+            use crate::{support::*, *};
+            pub type Payload = IssueRef;
+            pub type Success = IssueDetail;
+            pub type Error = IssuesCandidatesError;
+        }
+        /// `issues.list`
+        pub mod list {
+            use crate::{support::*, *};
+            pub type Payload = IssueListInput;
+            pub type Success = IssueListResult;
+            pub type Error = IssuesCandidatesError;
+        }
+        /// `issues.react`
+        pub mod react {
+            use crate::{support::*, *};
+            pub type Payload = IssueReactionInput;
+            pub type Success = ();
+            pub type Error = IssuesCandidatesError;
+        }
+        /// `issues.setState`
+        pub mod set_state {
+            use crate::{support::*, *};
+            pub type Payload = IssueSetStateInput;
+            pub type Success = ();
+            pub type Error = IssuesCandidatesError;
+        }
+        /// `issues.templates`
+        pub mod templates {
+            use crate::{support::*, *};
+            pub type Payload = IssueScopeRef;
+            pub type Success = IssueTemplateList;
+            pub type Error = IssuesCandidatesError;
+        }
+        /// `issues.update`
+        pub mod update {
+            use crate::{support::*, *};
+            pub type Payload = IssueUpdateInput;
+            pub type Success = ();
+            pub type Error = IssuesCandidatesError;
         }
     }
     pub mod mcp_apps {

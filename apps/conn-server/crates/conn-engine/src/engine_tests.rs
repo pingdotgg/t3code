@@ -1300,7 +1300,7 @@ fn every_contract_command_is_handled_or_refused_with_a_reason() {
         }
     }
     assert_eq!(handled, 44);
-    assert_eq!(conn_contract::COMMAND_TYPES.len(), 56);
+    assert_eq!(conn_contract::COMMAND_TYPES.len(), 58);
 }
 
 #[tokio::test(flavor = "current_thread")]

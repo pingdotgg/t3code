@@ -162,6 +162,7 @@ pub(super) const CLIENT_PATCH_KEYS: &[&str] = &[
     "textGenerationModelSelection",
     "textGenerators",
     "threadTitleInstructions",
+    "usageHistoryRetentionDays",
     "usageLimitSources",
     "usageModelAliases",
     "usagePriceOverrides",

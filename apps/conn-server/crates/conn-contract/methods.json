@@ -1,5 +1,5 @@
 {
-  "contractDigest": "e63f9ed6f727891988f143caa8fec00e5d07023702b68aa9122b7d4cc5d62ed0",
+  "contractDigest": "455c4367f9a6a8a0c80229d2d309ea048de6bb61be4bfb12920ee2d374f615c5",
   "methods": [
     {
       "tag": "agentSessions.import",
@@ -143,6 +143,71 @@
     },
     {
       "tag": "guestShare.create",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issueTrackers.bindProject",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issueTrackers.connect",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issueTrackers.list",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issues.candidates",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issues.comment",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issues.comments",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issues.create",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issues.detail",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issues.list",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issues.react",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issues.setState",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issues.templates",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issues.update",
       "stream": false,
       "origin": "official"
     },
