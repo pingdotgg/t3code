@@ -7,6 +7,8 @@ import {
   combinePullRequestDiffPages,
   getCachedPullRequestDiffPages,
   retainPullRequestDiffPage,
+  withWithheldFiles,
+  type WithheldFileLoad,
 } from "./pullRequestDiffPages";
 
 const GITHUB = sourceControlClients.get("github").changeRequest;
@@ -110,18 +112,6 @@ describe("paged mobile pull request diffs", () => {
     expect(cached.files[0]).toBe(parsed.files[0]);
   });
 
-  it("points a withheld merge request diff at the merge request", () => {
-    const parsed = combinePullRequestDiffPages(
-      [{ cursor: null, result: withheldDiff() }],
-      new WeakMap(),
-      "mr",
-      sourceControlClients.get("gitlab").changeRequest,
-    );
-    expect(parsed.kind === "files" ? parsed.notice : null).toBe(
-      "Some file contents are unavailable. Open the merge request on its provider to see the full changes.",
-    );
-  });
-
   it("combines normal and withheld pages and refreshes counts with unchanged patch text", () => {
     const first = { ...diff("first.ts"), nextCursor: "second" };
     const withheld = withheldDiff();
@@ -167,5 +157,42 @@ describe("paged mobile pull request diffs", () => {
     const refreshed = retainPullRequestDiffPage(pages, null, diff("changed.ts"));
     expect(refreshed).toHaveLength(1);
     expect(refreshed[0]?.result.patch).toContain("changed.ts");
+  });
+
+  it("swaps a loaded withheld file in under its id and says what a tap does for the rest", () => {
+    const pages = [{ cursor: null, result: withheldDiff() }];
+    const parsed = combinePullRequestDiffPages(pages, new WeakMap(), "pr", GITHUB);
+    if (parsed.kind !== "files") throw new Error("Expected structured diff");
+    const placeholder = parsed.files[0];
+    let merged: ReviewParsedDiff = parsed;
+    const fileWith = (load: WithheldFileLoad | undefined, canLoad = true) => {
+      merged = withWithheldFiles(
+        parsed,
+        new Map(load === undefined ? [] : [["large.ts", load]]),
+        canLoad,
+        "pr",
+      );
+      return merged.kind === "files" ? merged.files[0] : undefined;
+    };
+    expect(fileWith(undefined)).toMatchObject({
+      notice: "Diff too large to display. Tap to load it.",
+      noticeTone: "warning",
+      noticeActionable: true,
+    });
+    expect(fileWith(undefined, false)).toMatchObject({
+      notice: "Diff too large to display here.",
+      noticeActionable: false,
+    });
+    expect(fileWith({ status: "loading" })).toMatchObject({ noticeActionable: false });
+    expect(fileWith({ status: "error" })).toMatchObject({
+      notice: "Couldn't load this diff. Tap to try again.",
+      noticeActionable: true,
+    });
+    const loaded = fileWith({ status: "loaded", result: diff("large.ts") });
+    expect(loaded).toMatchObject({ id: placeholder?.id, path: "large.ts" });
+    expect(loaded?.notice).toBeUndefined();
+    expect(loaded?.rows.length).toBeGreaterThan(0);
+    // The totals follow the loaded file, which may have changed since the page was read.
+    expect(merged).toMatchObject({ additions: 1, deletions: 1 });
   });
 });
