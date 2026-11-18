@@ -159,10 +159,69 @@ describe("orchestration V2 wire projection", () => {
     expect(JSON.stringify(shell).length).toBeLessThan(2_000);
   });
 
-  it("omits even small dynamic tool results while retaining input", () => {
+  it("omits dynamic tool results while retaining input and bounded generated image paths", () => {
     const item = { ...base, output: { ok: true } } satisfies OrchestrationV2TurnItem;
     expect(projectTurnItemForWire(item)).toEqual({ ...base, outputOmitted: true });
     expect(item.output).toEqual({ ok: true });
+
+    const image = {
+      ...base,
+      toolName: "image_gen.imagegen",
+      output: {
+        status: "completed",
+        savedPath: "/tmp/generated image.png",
+        threadId: "linked-thread",
+        data: "private-image-bytes",
+        unused: "private-output",
+      },
+    } satisfies OrchestrationV2TurnItem;
+    for (const savedPath of [image.output.savedPath, "/" + "a".repeat(4_095)]) {
+      const projected = projectTurnItemForWire({
+        ...image,
+        output: { ...image.output, savedPath },
+      });
+      expect(projected).toEqual({
+        ...base,
+        toolName: image.toolName,
+        output: { threadId: "linked-thread", status: "completed", savedPath },
+        outputOmitted: true,
+      });
+      expect(projectTurnItemForWire(projected)).toEqual(projected);
+      expect(decodeTurnItem(projected)).toEqual(projected);
+    }
+    expect(image.output.data).toBe("private-image-bytes");
+
+    const invalidOutputs = [
+      { status: "completed" },
+      { status: "failed", savedPath: image.output.savedPath },
+      { status: "completed", savedPath: image.output.savedPath, isError: true },
+      { status: "completed", savedPath: null },
+      ...[
+        "   ",
+        "/" + "a".repeat(4_096),
+        "/tmp/a\nb.png",
+        "/tmp/a\u0000b.png",
+        "/tmp/a\u007fb.png",
+        "/tmp/a\u0085b.png",
+        "/tmp/a\u2028b.png",
+        "/tmp/a\u2029b.png",
+        "data:image/png;base64,AAAA",
+        "  DaTa:image/png;base64,AAAA",
+      ].map((savedPath) => ({ status: "completed", savedPath })),
+      JSON.stringify(image.output),
+      [image.output],
+    ];
+    const invalidItems = [
+      ...invalidOutputs.map((output) => ({ ...image, output })),
+      ...(["running", "failed"] as const).map((status) => ({ ...image, status })),
+      { ...image, toolName: base.toolName },
+    ] satisfies ReadonlyArray<OrchestrationV2TurnItem>;
+    for (const invalid of invalidItems) {
+      const projected = projectTurnItemForWire(invalid);
+      expect(projected).not.toHaveProperty("output.savedPath");
+      expect(projected).not.toHaveProperty("output.status");
+      expect(projectTurnItemForWire(projected)).toEqual(projected);
+    }
   });
 
   it("uses encoded JSON bytes for strings near the dynamic-value limit", () => {

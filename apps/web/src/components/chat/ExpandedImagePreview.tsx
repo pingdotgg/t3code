@@ -20,8 +20,14 @@ import {
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import type { MediaActionSource } from "../media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
+import type { ImageEditorResult } from "../image-editor/ImageEditor";
+import type { ImageEditorOptions, ImageEditorSession } from "../image-editor/imageEditorSession";
 
 export interface ExpandedImageItem {
+  onApply?: (item: ExpandedImageItem, result: ImageEditorResult) => Promise<void>;
+  attachmentId?: string;
+  editorSession?: ImageEditorSession;
+  editorOptions?: ImageEditorOptions;
   src: string | null;
   name: string;
   mimeType?: string;
@@ -39,6 +45,9 @@ export interface ExpandedImageItem {
 export interface ExpandedImagePreview {
   images: ExpandedImageItem[];
   index: number;
+  gallery?: boolean;
+  edit?: boolean;
+  onApply?: (item: ExpandedImageItem, result: ImageEditorResult) => Promise<void>;
 }
 
 export async function resolveMarkdownMediaPreview(input: {
@@ -47,6 +56,7 @@ export async function resolveMarkdownMediaPreview(input: {
   cwd?: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
   httpBaseUrl?: string | undefined;
+  imageEmbed?: boolean | undefined;
   onOpenFile?: ((relativePath: string) => void) | undefined;
   createAssetUrl: (input: {
     environmentId: EnvironmentId;
@@ -57,6 +67,7 @@ export async function resolveMarkdownMediaPreview(input: {
     threadId: input.threadRef?.threadId,
     workspaceRoot: input.cwd,
     resolvedFilePath: input.resolvedFilePath,
+    imageEmbed: input.imageEmbed,
   });
   if (media === null) return null;
   const { kind, name, reference } = media;
@@ -192,6 +203,8 @@ export function buildExpandedImagePreview(
             name: image.name,
             mimeType: image.mimeType,
             source: image.source,
+            imageEditor: image.imageEditor,
+            editorOptions: image.imageEditRequest?.options ?? image.imageEditor?.options,
           },
         ]
       : [],
@@ -205,6 +218,7 @@ export function buildExpandedImagePreview(
   }
   return {
     images: previewableImages.map((image) => ({
+      attachmentId: image.id,
       src: image.src,
       name: image.name,
       mimeType: image.mimeType,
@@ -214,6 +228,8 @@ export function buildExpandedImagePreview(
             onCopySnapshot: onCopySnapshot ? () => onCopySnapshot(image.id) : undefined,
           }
         : {}),
+      ...(image.imageEditor ? { editorSession: image.imageEditor } : {}),
+      ...(image.editorOptions ? { editorOptions: image.editorOptions } : {}),
     })),
     index: selectedIndex,
   };

@@ -1,39 +1,11 @@
 import { useGT } from "gt-react";
-import { useImperativeHandle, useRef, useState, useSyncExternalStore, type Ref } from "react";
+import { useImperativeHandle, useRef, useState, type Ref } from "react";
 import { flushSync } from "react-dom";
 
-import {
-  onWindowControlsOverlayGeometryChange,
-  windowControlsOverlayHeight,
-} from "../../lib/windowControlsOverlay";
-
 import { AttachmentImage } from "../media/AttachmentImage";
+import { observeResize } from "~/lib/observeResize";
 
 const MAX_ZOOM = 8;
-
-// Subtract the caption strip, matching dialog CSS's --native-titlebar-height.
-function readViewerSize() {
-  return { width: window.innerWidth, height: window.innerHeight - windowControlsOverlayHeight() };
-}
-
-let viewerSize: ReturnType<typeof readViewerSize> | null = null;
-
-// Cached so an unchanged size keeps its identity: a new one resets the zoom.
-function getViewerSize() {
-  const next = readViewerSize();
-  if (next.width !== viewerSize?.width || next.height !== viewerSize.height) viewerSize = next;
-  return viewerSize;
-}
-
-function subscribeViewerSize(onChange: () => void) {
-  window.addEventListener("resize", onChange);
-  // Fullscreen caption-strip changes may not emit resize.
-  const stopOverlayListener = onWindowControlsOverlayGeometryChange(onChange);
-  return () => {
-    window.removeEventListener("resize", onChange);
-    stopOverlayListener();
-  };
-}
 
 export interface ZoomableImageHandle {
   pan: (key: string) => boolean;
@@ -44,18 +16,20 @@ export function ZoomableImage({
   name,
   mimeType,
   onError,
+  onViewportWidthChange,
   ref,
 }: {
   src: string;
   name: string;
   mimeType?: string | undefined;
   onError: () => void;
+  onViewportWidthChange?: (width: number) => void;
   ref?: Ref<ZoomableImageHandle>;
 }) {
   const gt = useGT();
   const viewportRef = useRef<HTMLDivElement>(null);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
-  const viewerSize = useSyncExternalStore(subscribeViewerSize, getViewerSize);
+  const [viewerSize, setViewerSize] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState(1);
   // A resized viewer refits the image.
   const [zoomViewerSize, setZoomViewerSize] = useState(viewerSize);
@@ -72,15 +46,27 @@ export function ZoomableImage({
   } | null>(null);
   const suppressClickRef = useRef(false);
   const [dragging, setDragging] = useState(false);
-  const maxHeight = Math.max(1, Math.min(viewerSize.height * 0.86, viewerSize.height - 160));
+  const maxHeight = viewerSize.height;
   // A vector scales without loss, and an SVG without width and height reports a tiny default size.
   const fit = Math.min(
     mimeType === "image/svg+xml" ? Infinity : 1,
-    (viewerSize.width * 0.92 - (viewerSize.width >= 640 ? 96 : 0)) / (naturalSize.width || 1),
+    viewerSize.width / (naturalSize.width || 1),
     maxHeight / (naturalSize.height || 1),
   );
   const width = naturalSize.width * fit * zoom;
   const height = naturalSize.height * fit * zoom;
+
+  const attachContainer = (container: HTMLDivElement) => {
+    // Measure the space left by the real toolbar and caption, including native
+    // titlebar padding, wrapped controls and interface font-size changes.
+    return observeResize(container, ([entry]) => {
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      setViewerSize((current) =>
+        current.width === width && current.height === height ? current : { width, height },
+      );
+    });
+  };
 
   useImperativeHandle(
     ref,
@@ -150,14 +136,23 @@ export function ZoomableImage({
       });
     };
     viewport.addEventListener("wheel", wheel, { passive: false });
+    const stopObserving = onViewportWidthChange
+      ? observeResize(viewport, ([entry]) => {
+          if (entry) onViewportWidthChange(entry.contentRect.width);
+        })
+      : undefined;
     return () => {
       viewport.removeEventListener("wheel", wheel);
+      stopObserving?.();
       viewportRef.current = null;
     };
   };
 
   return (
-    <div className="min-w-0">
+    <div
+      ref={attachContainer}
+      className="flex size-full min-h-0 min-w-0 items-center justify-center"
+    >
       <div
         ref={attachViewport}
         role="region"
@@ -166,11 +161,13 @@ export function ZoomableImage({
           "Click to zoom in or return to fit. Pinch or Ctrl+scroll to zoom, scroll or drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit.",
         )}
         tabIndex={0}
-        className="max-w-[var(--media-width)] overflow-auto overscroll-contain rounded-lg bg-background shadow-2xl ring-1 ring-border/70 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring"
+        className="max-w-full overscroll-contain rounded-lg bg-background shadow-2xl ring-1 ring-border/70 outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring"
         style={{
           width: width || undefined,
           height: height || undefined,
           maxHeight,
+          // A wheel at fit must not latch native scrolling that starts after zoom.
+          overflow: zoom > 1 ? "auto" : "hidden",
           cursor: zoom > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in",
         }}
         onClick={(event) => {

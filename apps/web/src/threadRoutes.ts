@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadState } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
@@ -113,6 +113,19 @@ export function resolveThreadRouteTarget(
     kind: "draft",
     draftId: params.draftId as DraftId,
   };
+}
+
+export function resolveThreadOverlayKey(
+  params: Readonly<Record<string, string | undefined>>,
+  getDraftThread: (draftId: DraftId) => DraftThreadRouteState | null,
+): string | null {
+  const target = resolveThreadRouteTarget(params);
+  if (target?.kind === "server") return scopedThreadKey(target.threadRef);
+  if (target?.kind !== "draft") return null;
+  const draft = getDraftThread(target.draftId);
+  return draft
+    ? scopedThreadKey(draft.promotedTo ?? scopeThreadRef(draft.environmentId, draft.threadId))
+    : null;
 }
 
 export function resolveActiveThreadRouteRef(

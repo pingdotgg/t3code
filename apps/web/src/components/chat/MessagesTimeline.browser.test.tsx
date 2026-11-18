@@ -164,6 +164,106 @@ function work(id: string, entry: Record<string, unknown>): Entry {
   } as Entry;
 }
 
+it.each([
+  "decoded",
+  "load failure",
+  "decode failure",
+  "Windows path",
+  "UNC path",
+  "blocked path",
+] as const)("keeps a generated image's skeleton until its image settles (%s)", async (result) => {
+  const props = baseProps();
+  const runId = RunId.make("image-readiness-run");
+  const savedPath =
+    result === "Windows path"
+      ? "C:\\Images\\Generated.png"
+      : result === "UNC path" || result === "blocked path"
+        ? "\\\\Host\\Images\\Generated.png"
+        : "/generated.png";
+  const markdownPath =
+    result === "Windows path"
+      ? "c:/images/generated.png"
+      : result === "UNC path" || result === "blocked path"
+        ? "file://host/images/generated.png"
+        : savedPath;
+  const fails =
+    result === "load failure" || result === "decode failure" || result === "blocked path";
+  const generation = (status: "running" | "completed"): Entry =>
+    work("generation", {
+      runId,
+      label: "Generate image",
+      tone: "tool",
+      toolLifecycleStatus: status === "running" ? "inProgress" : "completed",
+      structuredPayload: {
+        type: "dynamic_tool",
+        toolName: "image_gen.imagegen",
+        status,
+        output: status === "completed" ? { status, savedPath } : undefined,
+      },
+    });
+  const view = (entries: Entry[], completed = false) => (
+    <div style={{ height: 700 }}>
+      <MessagesTimeline
+        {...props}
+        markdownCwd={result === "UNC path" ? "\\\\host\\images" : undefined}
+        timelineEntries={entries}
+        isWorking={!completed}
+        latestRun={{
+          runId,
+          status: completed ? "completed" : "running",
+          startedAt: CREATED_AT,
+          completedAt: completed ? CREATED_AT : null,
+        }}
+      />
+    </div>
+  );
+  const originalUrl = stubbedAsset.url;
+  stubbedAsset.url =
+    result === "load failure"
+      ? "data:image/png;base64,invalid"
+      : "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+  using _asset = { [Symbol.dispose]: () => (stubbedAsset.url = originalUrl) };
+  let settleDecode!: (fails: boolean) => void;
+  const decoded = new Promise<void>((resolve, reject) => {
+    settleDecode = (fails) => (fails ? reject(new Error("Invalid image")) : resolve());
+  });
+  using _decode = vi.spyOn(HTMLImageElement.prototype, "decode").mockReturnValue(decoded);
+  await using screen = await render(view([generation("running")]));
+  await expect.element(screen.getByRole("img", { name: "Generating image…" })).toBeVisible();
+
+  await screen.rerender(view([generation("completed")]));
+  await expect.element(screen.getByRole("img", { name: "Generating image…" })).toBeVisible();
+  await screen.rerender(
+    view(
+      [
+        generation("completed"),
+        message(`![Generated](${markdownPath})`, { role: "assistant", runId }),
+      ],
+      true,
+    ),
+  );
+  if (result !== "load failure" && result !== "blocked path") {
+    await expect
+      .element(screen.getByRole("button", { name: "Preview Generated", exact: true }))
+      .toBeInTheDocument();
+    await vi.waitFor(() => expect(_decode).toHaveBeenCalled());
+    await expect.element(screen.getByRole("img", { name: "Generating image…" })).toBeVisible();
+    await act(() => settleDecode(fails));
+  }
+  if (!fails) {
+    await expect
+      .element(screen.getByRole("button", { name: "Preview Generated", exact: true }))
+      .toBeVisible();
+  } else {
+    await expect
+      .element(screen.getByText("Image unavailable · Generated", { exact: true }))
+      .toBeVisible();
+  }
+  await expect
+    .element(screen.getByRole("img", { name: "Generating image…" }))
+    .not.toBeInTheDocument();
+});
+
 function v2Item(type: string, fields: Record<string, unknown>) {
   const id = (fields.id as string | undefined) ?? type;
   return {

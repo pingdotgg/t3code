@@ -2413,6 +2413,185 @@ describe("deriveMessagesTimelineRows", () => {
     expect(viewedImages(true, new Set([runId]))).toEqual([{ after: "work-toggle", paths }]);
   });
 
+  it("keeps observed generations pending until their images settle without reviving history", () => {
+    const threadId = ThreadId.make("image-generation-thread");
+    const runId = RunId.make("image-generation-run");
+    const at = DateTime.makeUnsafe("2026-11-15T12:00:00.000Z");
+    type Status = "running" | "completed" | "failed" | "cancelled";
+    const tool = (id: string, ordinal: number, toolName: string, status: Status) => ({
+      id: TurnItemId.make(id),
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal,
+      status,
+      title: toolName === "image_gen.imagegen" ? "Generate image" : null,
+      startedAt: at,
+      completedAt: status === "running" ? null : at,
+      updatedAt: at,
+      type: "dynamic_tool" as const,
+      toolName,
+      input: { prompt: "Use imagegen to draw a tree" },
+    });
+    const input = (
+      tools: ReadonlyArray<ReturnType<typeof tool>>,
+      options: {
+        readonly runSettled?: boolean;
+        readonly runStatus?: "running" | "completed" | "failed" | "interrupted";
+        readonly settledImagePaths?: ReadonlySet<string>;
+        readonly followUp?: boolean;
+        readonly isWorking?: boolean;
+        readonly toolCallVisibility?: "hideAll" | "zen";
+      } = {},
+    ) => {
+      const prompt = (id: string, ordinal: number) => ({
+        ...tool(id, ordinal, "prompt", "completed"),
+        type: "user_message" as const,
+        messageId: MessageId.make(id),
+        text: "Draw a tree with imagegen",
+        attachments: [],
+        inputIntent: "turn_start" as const,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+      });
+      const items = [
+        prompt("prompt", 0),
+        ...tools,
+        ...(options.followUp ? [prompt("next", 9)] : []),
+      ];
+      return {
+        timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
+          visibleTurnItems: items.map((item, position) => ({
+            position,
+            visibility: "local" as const,
+            sourceThreadId: threadId,
+            sourceItemId: item.id,
+            item,
+          })),
+          optimisticMessages: [],
+        }),
+        latestRun: {
+          runId,
+          status: options.runStatus ?? (options.runSettled ? "completed" : "running"),
+          startedAt: DateTime.formatIso(at),
+          completedAt: options.runSettled ? DateTime.formatIso(at) : null,
+        },
+        runningRunId: options.runSettled ? null : runId,
+        isWorking: options.isWorking ?? !options.runSettled,
+        activeTurnStartedAt: options.runSettled ? null : DateTime.formatIso(at),
+        ...(options.toolCallVisibility ? { toolCallVisibility: options.toolCallVisibility } : {}),
+        settledImagePaths: options.settledImagePaths ?? new Set<string>(),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
+    };
+    const placeholderIds = (rows: ReadonlyArray<MessagesTimelineRow>) => {
+      const found = rows.filter((row) => row.kind === "image-generation");
+      expect(found.length).toBeLessThanOrEqual(1);
+      if (found.length === 1) expect(rows.at(-1)).toBe(found[0]);
+      return found[0]?.itemIds ?? null;
+    };
+    const placeholder = (...args: Parameters<typeof input>) =>
+      placeholderIds(deriveMessagesTimelineRows(input(...args)));
+    const image = (id: string, status: Status) => ({
+      ...tool(id, 1, "image_gen.imagegen", status),
+      ...(status === "completed"
+        ? { output: { status: "completed", savedPath: `/generated/${id}.png` } }
+        : {}),
+    });
+
+    expect(placeholder([image("a", "running")])).toEqual(["a"]);
+    expect(placeholder([image("a", "running")], { isWorking: false })).toEqual(["a"]);
+    // Unseen completed results are history, even when another generation is still running.
+    expect(placeholder([image("a", "running"), image("b", "running")])).toEqual(["a", "b"]);
+    expect(placeholder([image("a", "completed"), image("b", "running")])).toEqual(["b"]);
+    // The placeholder is the pending result, so hiding tool calls keeps it.
+    expect(placeholder([image("a", "running")], { toolCallVisibility: "hideAll" })).toEqual(["a"]);
+    expect(placeholder([image("a", "running")], { toolCallVisibility: "zen" })).toEqual(["a"]);
+    for (const status of ["completed", "failed", "cancelled"] as const) {
+      expect(placeholder([image("a", status)])).toBeNull();
+    }
+    // A running item left behind by a settled run or an older response is not a live attempt.
+    expect(placeholder([image("a", "running")], { runSettled: true })).toBeNull();
+    expect(placeholder([image("a", "running")], { followUp: true })).toBeNull();
+    // Only the tool identity counts, never prompt or command text that mentions image generation.
+    expect(placeholder([tool("shell", 1, "shell", "running")])).toBeNull();
+    expect(placeholder([tool("other", 1, "codex_apps.image_gen", "running")])).toBeNull();
+
+    const initial = deriveMessagesTimelineRowsWithState(
+      input([image("a", "running"), image("b", "running")]),
+    );
+    const completed = [image("a", "completed"), image("b", "completed")];
+    const betweenCompletionAndImage = deriveMessagesTimelineRowsWithState(
+      input(completed),
+      initial,
+    );
+    expect(placeholderIds(betweenCompletionAndImage.rows)).toEqual(["a", "b"]);
+    const settledRun = deriveMessagesTimelineRowsWithState(
+      input(completed, { runSettled: true }),
+      betweenCompletionAndImage,
+    );
+    expect(placeholderIds(settledRun.rows)).toEqual(["a", "b"]);
+    const firstReady = deriveMessagesTimelineRowsWithState(
+      input(completed, {
+        runSettled: true,
+        settledImagePaths: new Set(["/generated/a.png"]),
+      }),
+      settledRun,
+    );
+    expect(placeholderIds(firstReady.rows)).toEqual(["b"]);
+    const allReady = deriveMessagesTimelineRowsWithState(
+      input(completed, {
+        runSettled: true,
+        settledImagePaths: new Set(["/generated/a.png", "/generated/b.png"]),
+      }),
+      firstReady,
+    );
+    expect(placeholderIds(allReady.rows)).toBeNull();
+    expect(
+      placeholderIds(
+        deriveMessagesTimelineRowsWithState(input(completed, { runSettled: true }), allReady).rows,
+      ),
+    ).toBeNull();
+    // Opening history has no observed live generation to retain.
+    expect(placeholderIds(deriveMessagesTimelineRowsWithState(input(completed)).rows)).toBeNull();
+    expect(
+      placeholderIds(
+        deriveMessagesTimelineRowsWithState(input(completed, { followUp: true }), initial).rows,
+      ),
+    ).toBeNull();
+    for (const status of ["failed", "cancelled"] as const) {
+      expect(
+        placeholderIds(
+          deriveMessagesTimelineRowsWithState(input([image("a", status)]), initial).rows,
+        ),
+      ).toBeNull();
+    }
+    for (const runStatus of ["failed", "interrupted"] as const) {
+      expect(
+        placeholderIds(
+          deriveMessagesTimelineRowsWithState(
+            input(completed, { runSettled: true, runStatus }),
+            initial,
+          ).rows,
+        ),
+      ).toBeNull();
+    }
+    // Generic function-tool successes without a native image path cannot wait on an image.
+    expect(
+      placeholderIds(
+        deriveMessagesTimelineRowsWithState(
+          input([tool("a", 1, "image_gen.imagegen", "completed")]),
+          initial,
+        ).rows,
+      ),
+    ).toBeNull();
+  });
+
   it("keeps imported V1 turns folded once the thread's first V2 run starts", () => {
     const at = (second: number) => `2026-01-01T00:00:${String(second).padStart(2, "0")}Z`;
     const message = (

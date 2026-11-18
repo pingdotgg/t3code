@@ -158,16 +158,18 @@ async function renderMarkdown(text: string) {
   const anchor = () => screen.container.querySelector("a")!;
   return Object.assign(screen, {
     anchor,
-    openContextMenu: () =>
+    openContextMenu: (source: "mouse" | "keyboard" = "mouse") =>
       act(async () => {
-        anchor().dispatchEvent(
-          new MouseEvent("contextmenu", {
-            bubbles: true,
-            cancelable: true,
-            clientX: 10,
-            clientY: 10,
-          }),
-        );
+        const event = new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 10,
+          clientY: 10,
+          button: 2,
+        });
+        // Chromium's constructor clamps -1, which native keyboard context menus use.
+        if (source === "keyboard") Object.defineProperty(event, "button", { value: -1 });
+        anchor().dispatchEvent(event);
       }),
   });
 }
@@ -203,8 +205,8 @@ it.each(["[Docs](https://example.com/docs)", "[Readme](docs/readme.md)"])(
   async (text) => {
     using _setup = setup();
     await using screen = await renderMarkdown(text);
-    screen.anchor().focus();
-    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    // macOS Chromium doesn't map Shift+F10 to an anchor's context menu.
+    await screen.openContextMenu("keyboard");
     await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("keyboard"));
     await userEvent.click(screen.anchor(), { button: "right" });
     await vi.waitFor(() => expect(state.choose.mock.lastCall?.[2]).toBe("mouse"));

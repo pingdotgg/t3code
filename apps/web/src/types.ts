@@ -44,6 +44,8 @@ export interface ThreadTerminalGroup {
 
 export interface ChatImageAttachment extends ContractChatImageAttachment {
   readonly previewUrl?: string;
+  readonly imageEditor?: import("./components/image-editor/imageEditorSession").ImageEditorSession;
+  readonly imageEditRequest?: import("./components/image-editor/imageEditorSession").StagedImageEditRequest;
 }
 
 export interface ChatFileAttachment extends ContractChatFileAttachment {

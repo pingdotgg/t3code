@@ -2,7 +2,8 @@ import type {
   ComposerImageAttachment,
   PersistedComposerImageAttachment,
 } from "../../composerDraftStore";
-import { readFileAsDataUrl } from "../../lib/imageCompression";
+import { MAX_STASH_IMAGE_DATA_URL_CHARS, readFileAsDataUrl } from "../../lib/imageCompression";
+import { serializeImageEditorSession } from "../image-editor/imageEditorSession";
 
 export async function serializeComposerImages(
   images: ReadonlyArray<ComposerImageAttachment>,
@@ -14,8 +15,20 @@ export async function serializeComposerImages(
   const staged = await Promise.all(
     images.map(async (image) => {
       try {
-        const dataUrl =
-          existingPersistedById.get(image.id)?.dataUrl ?? (await readFileAsDataUrl(image.file));
+        const existing = existingPersistedById.get(image.id);
+        const dataUrl = existing?.dataUrl ?? (await readFileAsDataUrl(image.file));
+        const sessionFits =
+          image.imageEditor &&
+          4 * Math.ceil(image.imageEditor.originalFile.size / 3) +
+            image.imageEditor.originalFile.type.length +
+            13 <=
+            MAX_STASH_IMAGE_DATA_URL_CHARS;
+        const imageEditor =
+          existing?.imageEditor ??
+          (sessionFits
+            ? await serializeImageEditorSession(image.imageEditor).catch(() => undefined)
+            : undefined);
+        const imageEditRequest = image.imageEditRequest ?? image.imageEditor?.stagedRequest;
         return {
           id: image.id,
           name: image.name,
@@ -23,6 +36,8 @@ export async function serializeComposerImages(
           sizeBytes: image.sizeBytes,
           dataUrl,
           ...(image.source ? { source: image.source } : {}),
+          ...(imageEditor ? { imageEditor } : {}),
+          ...(imageEditRequest ? { imageEditRequest } : {}),
         };
       } catch {
         return existingPersistedById.get(image.id);

@@ -34,6 +34,7 @@ const EMPTY_RESPONDING_REQUEST_IDS: TimelineRowSharedState["respondingRequestIds
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
 
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import {
   memo,
@@ -78,6 +79,7 @@ import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection
 import { type AssistantCitationRequest } from "./AssistantCitationSource";
 import { useAssistantCitationTarget } from "./useAssistantCitationTarget";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import { workEntryGeneratedImagePath } from "@t3tools/client-runtime/work-log/presentation";
 import { resolveCitationPhase, type CitedHistory } from "./citationProcedure";
 import {
   resolveTimelineIsAtEnd,
@@ -91,6 +93,7 @@ import {
   liveAnswerPreview,
   type MessagesTimelineRow,
   type TimelineLatestRun,
+  timelineEntryStartsResponse,
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
@@ -122,6 +125,8 @@ import {
   WorkGroupToggleTimelineRow,
 } from "./TimelineWorkGroupRows";
 import { ViewedImagesTimelineRow } from "./TimelineWorkEntryRow";
+import { ImageGenerationTimelineRow } from "./ImageGenerationTimelineRow";
+import { GeneratedImageSettledContext } from "./imageGenerationReadiness";
 import { UserMessageRow } from "./TimelineUserMessageRow";
 import {
   AssistantTimelineRow,
@@ -738,6 +743,22 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const pendingApprovalRequestIds = new Set(
     pendingApprovals.filter(isVisiblePendingApproval).map((approval) => approval.requestId),
   );
+  const imageResponseKey = `${listIdentityKey}\0${timelineEntries.findLast(timelineEntryStartsResponse)?.id ?? ""}`;
+  const [settledImages, setSettledImages] = useState(() => ({
+    key: imageResponseKey,
+    paths: new Set<string>(),
+  }));
+  if (settledImages.key !== imageResponseKey) {
+    setSettledImages({ key: imageResponseKey, paths: new Set() });
+  }
+  const onGeneratedImageSettled = (path: string) => {
+    const normalized = normalizeProjectPathForComparison(path);
+    setSettledImages((current) =>
+      current.key !== imageResponseKey || current.paths.has(normalized)
+        ? current
+        : { key: imageResponseKey, paths: new Set(current.paths).add(normalized) },
+    );
+  };
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
     timelineEntries,
     pendingApprovalRequestIds,
@@ -756,8 +777,18 @@ const ConversationTimeline = memo(function ConversationTimeline({
     worktreeSetup,
     toolCallVisibility,
     revealedMessageId,
+    settledImagePaths: settledImages.paths,
   });
   const rows = useStableRows(rawRows, listIdentityKey);
+  const pendingGenerationIds = new Set(
+    rawRows.flatMap((row) => (row.kind === "image-generation" ? row.itemIds : [])),
+  );
+  const pendingImagePaths = new Set<string>();
+  for (const entry of pendingGenerationIds.size > 0 ? timelineEntries : []) {
+    if (entry.kind !== "work" || !pendingGenerationIds.has(entry.id)) continue;
+    const path = workEntryGeneratedImagePath(entry.entry);
+    if (path !== null) pendingImagePaths.add(path);
+  }
   const matchedApprovalRequestIds = new Set<string>();
   for (const row of pendingApprovalRequestIds.size > 0 ? rows : []) {
     const entries =
@@ -1121,6 +1152,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onRunShellCommand,
     findActive,
     onImageExpand,
+    generatedImageReadiness:
+      pendingImagePaths.size > 0
+        ? { paths: pendingImagePaths, onSettled: onGeneratedImageSettled }
+        : undefined,
     onFileOpen,
     onUseArtifactTemplate,
     onSendAppMessage,
@@ -1620,6 +1655,7 @@ function getItemType(item: MessagesTimelineRow) {
 }
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
+  const ctx = use(TimelineRowCtx);
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isSubagentGroup = row.kind === "event" && row.projectedItem.item.type === "subagent";
   const isWorkLogRow =
@@ -1632,79 +1668,91 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     row.expanded === true;
 
   return (
-    <div
-      className={cn(
-        isWorkLogRow || isSubagentGroup
-          ? undefined
-          : row.kind === "turn-fold" || row.kind === "working"
-            ? "pb-1.5"
-            : row.kind === "message" && row.groupedWithNext
-              ? "pb-1"
-              : (row.kind === "message" &&
-                    row.message.role === "assistant" &&
-                    !row.showAssistantMeta) ||
-                  row.kind === "worktree-setup" ||
-                  row.kind === "event" ||
-                  row.kind === "attempt-fold" ||
-                  row.kind === "html-render" ||
-                  row.kind === "sent-message" ||
-                  row.kind === "mcp-app" ||
-                  row.kind === "viewed-images"
-                ? "pb-2"
-                : "pb-4",
-        (row.kind === "message" && row.message.role === "assistant") ||
-          row.kind === "assistant-meta"
-          ? "group/assistant"
-          : null,
-      )}
-      data-timeline-row-id={row.id}
-      data-timeline-row-kind={row.kind}
-      data-message-id={
-        row.kind === "message" || row.kind === "assistant-meta" ? row.message.id : undefined
+    <GeneratedImageSettledContext
+      value={
+        (row.kind === "message" && row.message.role === "assistant") || row.kind === "sent-message"
+          ? (ctx.generatedImageReadiness ?? null)
+          : null
       }
-      data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
-      {isWorkLogRow ? (
-        <WorkLogBlock
-          continues={row.continuesWorkLog}
-          layout={
-            isExpandedToolGroup
-              ? "group-content"
-              : isExpandedToolGroupHeader
-                ? "group-header"
-                : "standalone"
-          }
-        >
-          {row.kind === "work" ? (
-            <WorkGroupSection
-              anchorKey={row.id}
-              groupedEntries={row.groupedEntries}
-              isExpandedToolGroup={row.isExpandedToolGroup}
-              displayLabel={row.displayLabel}
-            />
-          ) : null}
-          {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
-          {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
-          {row.kind === "thinking" ? <ThinkingTimelineRow row={row} /> : null}
-        </WorkLogBlock>
-      ) : null}
-      {row.kind === "turn-fold" ? <TurnFoldTimelineRow key={row.id} row={row} /> : null}
-      {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
-      {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "user" ? <UserMessageRow row={row} /> : null}
-      {row.kind === "message" && row.message.role === "assistant" ? (
-        <AssistantTimelineRow row={row} />
-      ) : null}
-      {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
-      {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
-      {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
-      {row.kind === "sent-message" ? <SentMessageTimelineRow row={row} /> : null}
-      {row.kind === "viewed-images" ? <ViewedImagesTimelineRow row={row} /> : null}
-      {row.kind === "mcp-app" ? <McpAppTimelineRow row={row} /> : null}
-      {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
-      {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
-      {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
-    </div>
+      <div
+        className={cn(
+          isWorkLogRow || isSubagentGroup
+            ? undefined
+            : row.kind === "turn-fold" || row.kind === "working"
+              ? "pb-1.5"
+              : row.kind === "message" && row.groupedWithNext
+                ? "pb-1"
+                : (row.kind === "message" &&
+                      row.message.role === "assistant" &&
+                      !row.showAssistantMeta) ||
+                    row.kind === "worktree-setup" ||
+                    row.kind === "event" ||
+                    row.kind === "attempt-fold" ||
+                    row.kind === "html-render" ||
+                    row.kind === "sent-message" ||
+                    row.kind === "mcp-app" ||
+                    row.kind === "viewed-images" ||
+                    row.kind === "image-generation"
+                  ? "pb-2"
+                  : "pb-4",
+          (row.kind === "message" && row.message.role === "assistant") ||
+            row.kind === "assistant-meta"
+            ? "group/assistant"
+            : null,
+        )}
+        data-timeline-row-id={row.id}
+        data-timeline-row-kind={row.kind}
+        data-message-id={
+          row.kind === "message" || row.kind === "assistant-meta" ? row.message.id : undefined
+        }
+        data-message-role={row.kind === "message" ? row.message.role : undefined}
+      >
+        {isWorkLogRow ? (
+          <WorkLogBlock
+            continues={row.continuesWorkLog}
+            layout={
+              isExpandedToolGroup
+                ? "group-content"
+                : isExpandedToolGroupHeader
+                  ? "group-header"
+                  : "standalone"
+            }
+          >
+            {row.kind === "work" ? (
+              <WorkGroupSection
+                anchorKey={row.id}
+                groupedEntries={row.groupedEntries}
+                isExpandedToolGroup={row.isExpandedToolGroup}
+                displayLabel={row.displayLabel}
+              />
+            ) : null}
+            {row.kind === "work-live" ? <LiveWorkEntryTimelineRow row={row} /> : null}
+            {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
+            {row.kind === "thinking" ? <ThinkingTimelineRow row={row} /> : null}
+          </WorkLogBlock>
+        ) : null}
+        {row.kind === "turn-fold" ? <TurnFoldTimelineRow key={row.id} row={row} /> : null}
+        {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
+        {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
+        {row.kind === "message" && row.message.role === "user" ? (
+          <UserMessageRow row={row} />
+        ) : null}
+        {row.kind === "message" && row.message.role === "assistant" ? (
+          <AssistantTimelineRow row={row} />
+        ) : null}
+        {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
+        {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
+        {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
+        {row.kind === "sent-message" ? <SentMessageTimelineRow row={row} /> : null}
+        {row.kind === "viewed-images" ? <ViewedImagesTimelineRow row={row} /> : null}
+        {row.kind === "image-generation" ? <ImageGenerationTimelineRow row={row} /> : null}
+        {row.kind === "mcp-app" ? <McpAppTimelineRow row={row} /> : null}
+        {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
+        {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
+        {row.kind === "event" ? <V2EventTimelineRow row={row} /> : null}
+      </div>
+    </GeneratedImageSettledContext>
   );
 });
 

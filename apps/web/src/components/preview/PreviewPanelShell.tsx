@@ -166,7 +166,8 @@ function PreviewPanelShellFrame(
           ? maximized
             ? // Maximizing meets the sidebar border or window edge; omit the duplicate border.
               "flex-1"
-            : "shrink-0 border-l border-border"
+            : // A docked image editor needs room beside the chat column, so the panel yields to both.
+              "shrink-0 border-l border-border group-has-[[data-docked-image-editor]]/image-workspace:max-w-[max(22.5rem,calc(100cqw-52.5rem))]"
           : "w-full",
         collapsible &&
           "[[data-panel-animations=true]_&]:transition-[width] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",

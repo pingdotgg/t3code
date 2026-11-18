@@ -38,6 +38,7 @@ import { projectEnvironment } from "~/state/projects";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -46,6 +47,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd,
   workspaceRoot,
   findActive = false,
+  onImageExpand,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
@@ -53,6 +55,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd: string | undefined;
   workspaceRoot: string | undefined;
   findActive?: boolean;
+  onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -211,6 +214,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               environmentId={environmentId}
               threadRef={threadRef}
+              onImageExpand={onImageExpand}
               isStreaming={false}
               headingLevelOffset={3}
             />
@@ -220,6 +224,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               environmentId={environmentId}
               threadRef={threadRef}
+              onImageExpand={onImageExpand}
               isStreaming={false}
               headingLevelOffset={3}
             />

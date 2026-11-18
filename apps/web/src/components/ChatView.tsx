@@ -170,9 +170,13 @@ import { buildThreadRouteParams } from "../threadRoutes";
 import { useTheme } from "../hooks/useTheme";
 import { copyThreadReference } from "../lib/copyThreadReference";
 import { subscribeSnapShotComposerFocus } from "../lib/desktopSnapShot";
+import { useElementMinWidth } from "../hooks/useElementMinWidth";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { FileMetadataThreadProvider } from "../hooks/FileMetadataThreadProvider";
-import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
+import {
+  DOCKED_EDITOR_BESIDE_PANEL_MIN_WORKSPACE_WIDTH,
+  RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY,
+} from "../rightPanelLayout";
 import { PopoverCreateHandle } from "./ui/popover";
 import {
   selectActiveRightPanel,
@@ -209,6 +213,14 @@ import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
+import { Button } from "./ui/button";
+import { ImagesIcon } from "lucide-react";
+import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
+import { readMediaBlob, readMediaPng } from "./media/mediaContent";
+import { ImageActionsContext, useMediaReadUrl } from "./media/MediaActions";
+import { conversationImageSources } from "./image-editor/imageGallery.logic";
+import { createImageEditorHandoff } from "./image-editor/imageEditorHandoff";
+import type { ImageEditorResult } from "./image-editor/ImageEditor";
 import { projectScriptIdFromCommand } from "~/projectScripts";
 import { newMessageId } from "~/lib/utils";
 import {
@@ -287,7 +299,11 @@ import {
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
-import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
+import {
+  canOpenExpandedImagePreview,
+  ExpandedImageDialogHost,
+  openExpandedImagePreview,
+} from "./chat/ExpandedImageDialog";
 import {
   BranchRestoreConfirmHost,
   DeviceSetupDialogHost,
@@ -315,7 +331,12 @@ import {
   ThreadPanelHeaderControl,
   WorkspaceTitlebarControls,
 } from "./chat/PanelLayoutControls";
-import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
+import {
+  resolveMarkdownMediaPreview,
+  type ExpandedImageItem,
+  type ExpandedImagePreview,
+} from "./chat/ExpandedImagePreview";
+import { environmentThreadDetails } from "../state/threads";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
@@ -487,6 +508,12 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
     refresh: true,
   });
+  const readImageUrl = useMediaReadUrl();
+  const [loadingImageGalleryThreadKey, setLoadingImageGalleryThreadKey] = useState<string | null>(
+    null,
+  );
+  const imageGalleryRequestRef = useRef<object | null>(null);
+  const loadingImageGallery = loadingImageGalleryThreadKey === routeThreadKey;
   const interruptThreadTurn = useOrchestrationCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -1136,6 +1163,12 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelMaximized =
     !embedded && canMaximizeRightPanel && rightPanelState.maximized === true;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
+  const dockEditorBesideRightPanel =
+    !embedded && inlineRightPanelOwnsTitleBar && !rightPanelMaximized;
+  const workspaceFitsDockedEditor = useElementMinWidth(
+    workspaceLayoutElement,
+    DOCKED_EDITOR_BESIDE_PANEL_MIN_WORKSPACE_WIDTH,
+  );
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
   const [chatCanvasStore] = useState(createChatCanvasStore);
 
@@ -3081,9 +3114,191 @@ export default function ChatView(props: ChatViewProps) {
     if (hasNewMessage && timelineLiveFollowEnabled) scrollToEnd(true);
   }, [routeThreadKey, pendingGuestMessageKey, timelineLiveFollowEnabled, scrollToEnd]);
   const onExpandTimelineImage = (preview: ExpandedImagePreview) => {
-    openExpandedImagePreview(routeThreadKey, preview);
+    openExpandedImagePreview(routeThreadKey, {
+      ...preview,
+      onApply:
+        preview.onApply ??
+        createImageEditorHandoff(routeThreadKey, currentRouteThreadKeyRef, composerRef),
+    });
   };
   const onExpandTimelineImageStable = useStableCallback(onExpandTimelineImage);
+  const assertImageEditThread = () => {
+    if (currentRouteThreadKeyRef.current !== routeThreadKey) {
+      throw new Error(gt("The thread changed while preparing the image. Reopen it and try again."));
+    }
+    if (!composerRef.current)
+      throw new Error(gt("Open the thread composer before adding image edits."));
+    return composerRef.current;
+  };
+  const applyImageEdit = (item: ExpandedImageItem, result: ImageEditorResult) =>
+    createImageEditorHandoff(routeThreadKey, currentRouteThreadKeyRef, composerRef)(item, result);
+  const applyImageEditStable = useStableCallback(applyImageEdit);
+  const applyImageBatch = async (items: ExpandedImageItem[], prompt: string) => {
+    assertImageEditThread();
+    const files: File[] = [];
+    for (const item of items) {
+      const url = await readImageUrl(
+        item.actionsSource ?? { kind: "image", name: item.name, src: item.src },
+      );
+      const original = await readMediaBlob(url);
+      const type = (original.type || item.mimeType || "").split(";", 1)[0]?.toLowerCase();
+      const supported =
+        type === "image/png" ||
+        type === "image/jpeg" ||
+        type === "image/webp" ||
+        type === "image/gif";
+      const blob = supported ? original : await readMediaPng(url);
+      files.push(
+        new File([blob], supported ? item.name : `${item.name.replace(/\.[^./\\]+$/, "")}.png`, {
+          type: blob.type || "image/png",
+        }),
+      );
+    }
+    await assertImageEditThread().stageImageEdit({
+      files,
+      prompt: `Apply the following feedback to all ${files.length} attached images, preserving a separate result for each image.\n\n${prompt}`,
+      mode: "edit",
+    });
+  };
+  const applyImageBatchStable = useStableCallback(applyImageBatch);
+  const loadImageGallery = async () => {
+    const connection = readPreparedConnection(environmentId);
+    if (!connection)
+      throw new Error(gt("Reconnect to this environment to open conversation images."));
+    let history = appAtomRegistry.get(environmentThreadDetails.historyAtom(routeThreadRef));
+    while (history.hasMoreHistory) {
+      if (currentRouteThreadKeyRef.current !== routeThreadKey)
+        throw new Error(gt("The thread changed while loading its images."));
+      const result = await loadEarlierThreadHistory({ environmentId, input: { threadId } });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      if (result.value._tag === "error") throw new Error(result.value.message);
+      const next = appAtomRegistry.get(environmentThreadDetails.historyAtom(routeThreadRef));
+      if (next.hasMoreHistory && next.historyCursor === history.historyCursor)
+        throw new Error(
+          gt("Conversation history is still loading. Try opening Images again once it finishes."),
+        );
+      history = next;
+    }
+    const rows = appAtomRegistry.get(environmentThreadDetails.visibleTurnItemsAtom(routeThreadRef));
+    const messages = rows.flatMap(({ item }) =>
+      item.type === "user_message" || item.type === "assistant_message"
+        ? [{ text: item.text, attachments: item.attachments }]
+        : [],
+    );
+    const sources = conversationImageSources(
+      [...messages, ...timelineMessages],
+      activeWorkspaceRoot,
+    );
+    const images: ExpandedImageItem[] = [];
+    for (const image of sources) {
+      if (currentRouteThreadKeyRef.current !== routeThreadKey)
+        throw new Error(gt("The thread changed while loading its images."));
+      if (image.kind === "markdown") {
+        const preview = await resolveMarkdownMediaPreview({
+          source: image.source,
+          cwd: activeWorkspaceRoot ?? undefined,
+          threadRef: routeThreadRef,
+          httpBaseUrl: connection.httpBaseUrl,
+          createAssetUrl: createAttachmentAssetUrl,
+          imageEmbed: true,
+        }).catch(() => null);
+        if (preview) images.push(...preview.images.filter((item) => item.type !== "video"));
+      } else {
+        const attachment = image.attachment;
+        const asset = {
+          environmentId,
+          resource: {
+            _tag: "attachment" as const,
+            attachmentId: attachment.id,
+            fileName: attachment.name,
+            mimeType: attachment.mimeType,
+          },
+        };
+        const result = await createAttachmentAssetUrl({
+          environmentId,
+          input: { resource: asset.resource },
+        });
+        if (result._tag === "Failure") continue;
+        const src = resolveAssetUrl(connection.httpBaseUrl, result.value.relativeUrl);
+        if (!src) continue;
+        images.push({
+          src,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          ...(attachment.source ? { source: attachment.source } : {}),
+          ...(attachment.imageEditor ? { editorSession: attachment.imageEditor } : {}),
+          actionsSource: { kind: "image", name: attachment.name, src, asset },
+        });
+      }
+    }
+    if (currentRouteThreadKeyRef.current !== routeThreadKey)
+      throw new Error(gt("The thread changed while loading its images."));
+    return images;
+  };
+  const loadImageGalleryStable = useStableCallback(loadImageGallery);
+  const openImageGallery = async () => {
+    if (loadingImageGallery) return;
+    if (!canOpenExpandedImagePreview()) return;
+    const request = {};
+    imageGalleryRequestRef.current = request;
+    setLoadingImageGalleryThreadKey(routeThreadKey);
+    const result = await loadImageGallery().then(
+      (images) => ({ images, error: null }),
+      (error: unknown) => ({ images: null, error }),
+    );
+    if (imageGalleryRequestRef.current !== request) return;
+    imageGalleryRequestRef.current = null;
+    setLoadingImageGalleryThreadKey((current) => (current === routeThreadKey ? null : current));
+    if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
+    if (result.images)
+      openExpandedImagePreview(routeThreadKey, {
+        images: result.images,
+        index: 0,
+        gallery: true,
+        onApply: createImageEditorHandoff(routeThreadKey, currentRouteThreadKeyRef, composerRef),
+      });
+    else
+      toastManager.add({
+        type: "error",
+        title: gt("Unable to open conversation images"),
+        description:
+          result.error instanceof Error ? result.error.message : gt("Try reopening the gallery."),
+      });
+  };
+  const openImageGalleryStable = useStableCallback(openImageGallery);
+  const editImageFrames = async (
+    _item: ExpandedImageItem,
+    file: File,
+    context: string,
+    original: File,
+  ) => {
+    assertImageEditThread();
+    openExpandedImagePreview(
+      routeThreadKey,
+      {
+        images: [
+          {
+            src: URL.createObjectURL(file),
+            name: file.name,
+            mimeType: "image/png",
+            ownsSrc: true,
+            onApply: createImageEditorHandoff(
+              routeThreadKey,
+              currentRouteThreadKeyRef,
+              composerRef,
+              {
+                original,
+                context,
+              },
+            ),
+          },
+        ],
+        index: 0,
+      },
+      { replaceCurrent: true },
+    );
+  };
+  const editImageFramesStable = useStableCallback(editImageFrames);
   const queuedRunsControl =
     isServerThread && activeThread ? (
       <>
@@ -3362,7 +3577,7 @@ export default function ChatView(props: ChatViewProps) {
   const content = (
     <div
       ref={setWorkspaceLayoutElement}
-      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      className="group/image-workspace @container/image-workspace relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
       {embedded ? null : (
         <DeviceSetupDialogHost
@@ -3422,6 +3637,20 @@ export default function ChatView(props: ChatViewProps) {
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
                 : {})}
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
+              actions={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={loadingImageGallery}
+                  onClick={() => {
+                    void openImageGalleryStable();
+                  }}
+                  aria-label={gt("Conversation images")}
+                >
+                  <ImagesIcon aria-hidden />
+                  {loadingImageGallery ? gt("Loading images…") : gt("Images")}
+                </Button>
+              }
             />
           </header>
         )}
@@ -4028,6 +4257,16 @@ export default function ChatView(props: ChatViewProps) {
         )}
       </div>
 
+      {/* Before the right panel, so a docked editor sits between the chat and the panel. */}
+      <ExpandedImageDialogHost
+        dockEditor={!rightPanelOpen || (dockEditorBesideRightPanel && workspaceFitsDockedEditor)}
+        dockBesidePanel={dockEditorBesideRightPanel}
+        threadKey={routeThreadKey}
+        onApply={applyImageEditStable}
+        onLoadGallery={loadImageGalleryStable}
+        onApplyBatch={applyImageBatchStable}
+        onFrameSheet={editImageFramesStable}
+      />
       {rightPanelPresent && activeThreadRef && !embedded ? (
         <ChatRightPanel
           sheet={shouldUsePlanSidebarSheet}
@@ -4100,7 +4339,6 @@ export default function ChatView(props: ChatViewProps) {
       />
       {embedded ? null : <LinkPullRequestDialogHost />}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
-      <ExpandedImageDialogHost threadKey={routeThreadKey} />
     </div>
   );
   return (
@@ -4109,7 +4347,23 @@ export default function ChatView(props: ChatViewProps) {
       cwd={activeWorkspaceRoot}
       checkpoints={serverProjection?.checkpoints}
     >
-      {content}
+      <ImageActionsContext
+        value={{
+          edit: (source) =>
+            onExpandTimelineImageStable({
+              images: [{ src: source.src, name: source.name, actionsSource: source }],
+              index: 0,
+              edit: true,
+            }),
+          openFile: (source) => useRightPanelStore.getState().openImage(routeThreadRef, source),
+          assertCurrent: () => {
+            if (currentRouteThreadKeyRef.current !== routeThreadKey)
+              throw new Error(gt("The thread changed. Reopen the image menu and try again."));
+          },
+        }}
+      >
+        {content}
+      </ImageActionsContext>
     </FileMetadataThreadProvider>
   );
 }

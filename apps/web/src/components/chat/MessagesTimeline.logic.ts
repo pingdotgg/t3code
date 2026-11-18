@@ -28,6 +28,8 @@ import {
   toolGroupSummaryKind,
   contextCompactionTokenCounts,
   workEntriesViewedImagePaths,
+  workEntryIsGeneratingImage,
+  workEntryGeneratedImagePath,
   type ToolGroupSummaryKind,
   liveThoughtLine,
   workEntryHiddenByToolCallVisibility,
@@ -595,6 +597,13 @@ type MessagesTimelineRowContent =
       paths: ReadonlyArray<string>;
     }
   | {
+      /** Stands in for images still generating; each finished image lands in the reply instead. */
+      kind: "image-generation";
+      id: string;
+      createdAt: string;
+      itemIds: ReadonlyArray<string>;
+    }
+  | {
       kind: "turn-fold";
       deferredWorkItemIds?: ReadonlyArray<string>;
       id: string;
@@ -724,6 +733,44 @@ function viewedImagesRows(
   return paths.length === 0
     ? []
     : [{ kind: "viewed-images", id: `${groupId}:viewed-images`, createdAt, paths }];
+}
+
+/**
+ * Reads entries before tool visibility filters and folds hide them: the placeholder is the pending
+ * result, not a tool row. Completed live generations wait for their rendered image.
+ */
+function imageGenerationRows(
+  entries: ReadonlyArray<TimelineEntry>,
+  runIsUnsettled: (runId: RunId | null) => boolean,
+  retainedItemIds: ReadonlySet<string>,
+  settledImagePaths: ReadonlySet<string>,
+  completedRunId: RunId | null,
+): Array<Extract<MessagesTimelineRow, { kind: "image-generation" }>> {
+  const generating = entries
+    .slice(lastResponseBoundaryIndex(entries) + 1)
+    .filter((entry): entry is Extract<TimelineEntry, { kind: "work" }> => {
+      if (entry.kind !== "work") return false;
+      const unsettled = runIsUnsettled(entry.entry.runId ?? null);
+      if (workEntryIsGeneratingImage(entry.entry) && unsettled) return true;
+      const path = workEntryGeneratedImagePath(entry.entry);
+      return (
+        retainedItemIds.has(entry.id) &&
+        (unsettled || (completedRunId !== null && entry.entry.runId === completedRunId)) &&
+        path !== null &&
+        !settledImagePaths.has(path)
+      );
+    });
+  const first = generating[0];
+  return first === undefined
+    ? []
+    : [
+        {
+          kind: "image-generation",
+          id: "image-generation-row",
+          createdAt: first.createdAt,
+          itemIds: generating.map((entry) => entry.id),
+        },
+      ];
 }
 
 export function resolveAssistantMessageCopyState({
@@ -1612,8 +1659,10 @@ export function deriveMessagesTimelineRows(
     worktreeSetup?: WorktreeSetupSnapshot | null;
     toolCallVisibility?: ToolCallVisibility;
     revealedMessageId?: MessageId | null;
+    settledImagePaths?: ReadonlySet<string>;
   },
   resolve: MessageResolver = m,
+  retainedImageGenerationItemIds: ReadonlySet<string> = new Set(),
 ): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input);
   const embeddedResultRunIds = new Set<RunId>();
@@ -2403,9 +2452,19 @@ export function deriveMessagesTimelineRows(
     }
   }
 
-  const result = attachTrailingToolGroupsToAssistant(
-    attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
-  );
+  const result = [
+    ...attachTrailingToolGroupsToAssistant(
+      attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
+    ),
+    // Not gated on isWorking: Codex keeps generating after its turn ends, with the run still open.
+    ...imageGenerationRows(
+      input.timelineEntries,
+      (runId) => (runId === null ? runlessWorkActive : runId === unsettledRunId),
+      retainedImageGenerationItemIds,
+      input.settledImagePaths ?? new Set(),
+      input.latestRun?.status === "completed" ? input.latestRun.runId : null,
+    ),
+  ];
   return result.map((row, index) => {
     if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])) {
       return { ...row, continuesWorkLog: true };
@@ -2725,7 +2784,14 @@ export function deriveMessagesTimelineRowsWithState(
     input,
     rows:
       (previous === null ? null : replaceStreamingMessageRows(input, previous)) ??
-      deriveMessagesTimelineRows(input, resolve),
+      deriveMessagesTimelineRows(
+        input,
+        resolve,
+        new Set(
+          previous?.rows.flatMap((row) => (row.kind === "image-generation" ? row.itemIds : [])) ??
+            [],
+        ),
+      ),
   };
 }
 
@@ -2808,6 +2874,15 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "image-generation": {
+      const bi = b as typeof a;
+      return (
+        a.createdAt === bi.createdAt &&
+        a.itemIds.length === bi.itemIds.length &&
+        a.itemIds.every((id, index) => id === bi.itemIds[index])
+      );
+    }
 
     case "viewed-images": {
       const bv = b as typeof a;

@@ -34,6 +34,7 @@ import { getRestingComposerImagePreviewCounts } from "../composerFooterLayout";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { AttachmentImage } from "../media/AttachmentImage";
+import { MediaActions } from "../media/MediaActions";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -227,36 +228,58 @@ export function ComposerAttachmentMediaRow({
               )}
             >
               {!ready || ready.previewUrl ? (
-                <button
-                  type="button"
-                  className={cn("h-full w-full", ready && "cursor-zoom-in")}
-                  aria-label={gt("Preview {name}", { name: image.name })}
-                  disabled={!ready}
-                  onClick={() => {
-                    const preview = buildExpandedImagePreview(images, image.id, onCopySnapshot);
-                    if (!preview) return;
-                    onExpandImage(preview);
+                <MediaActions
+                  source={{
+                    kind: "image",
+                    name: image.name,
+                    src: ready?.previewUrl ?? null,
+                    ...(ready ? { file: ready.file } : {}),
                   }}
+                  showTooltip={false}
+                  {...(ready
+                    ? {
+                        onEditImage: () => {
+                          const preview = buildExpandedImagePreview(
+                            images,
+                            image.id,
+                            onCopySnapshot,
+                          );
+                          if (preview) onExpandImage({ ...preview, edit: true });
+                        },
+                      }
+                    : {})}
                 >
-                  <ComposerImageThumbnail
-                    file={image.file}
-                    alt={image.name}
-                    className="h-full w-full object-cover"
-                    fallback={
-                      ready && isHeicImageFile({ name: ready.name, type: ready.mimeType }) ? (
-                        <AttachmentImage
-                          name={ready.name}
-                          mimeType={ready.mimeType}
-                          src={ready.previewUrl}
-                          alt=""
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <ComposerImageFallback />
-                      )
-                    }
-                  />
-                </button>
+                  <button
+                    type="button"
+                    className={cn("h-full w-full", ready && "cursor-zoom-in")}
+                    aria-label={gt("Preview {name}", { name: image.name })}
+                    disabled={!ready}
+                    onClick={() => {
+                      const preview = buildExpandedImagePreview(images, image.id, onCopySnapshot);
+                      if (!preview) return;
+                      onExpandImage(preview);
+                    }}
+                  >
+                    <ComposerImageThumbnail
+                      file={image.file}
+                      alt={image.name}
+                      className="h-full w-full object-cover"
+                      fallback={
+                        ready && isHeicImageFile({ name: ready.name, type: ready.mimeType }) ? (
+                          <AttachmentImage
+                            name={ready.name}
+                            mimeType={ready.mimeType}
+                            src={ready.previewUrl}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <ComposerImageFallback />
+                        )
+                      }
+                    />
+                  </button>
+                </MediaActions>
               ) : (
                 <ComposerImageFallback />
               )}

@@ -36,6 +36,7 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+const ImageFilePreview = lazy(() => import("../files/ImageFilePreview"));
 
 type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -242,6 +243,13 @@ export function RightPanelSurfaceContent(props: {
     case "files":
     case "file": {
       const files = props.files;
+      if (surface.kind === "file" && surface.image) {
+        return (
+          <Suspense fallback={null}>
+            <ImageFilePreview key={surface.id} source={surface.image} threadRef={threadRef} />
+          </Suspense>
+        );
+      }
       const attachment = surface.kind === "file" ? surface.attachment : undefined;
       if (!attachment && (files.projectName === null || !files.workspaceRoot)) return null;
       return (

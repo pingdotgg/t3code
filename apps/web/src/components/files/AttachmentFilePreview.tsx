@@ -21,6 +21,7 @@ import {
   Code2Icon,
   CopyIcon,
   EyeIcon,
+  PencilIcon,
   Table2Icon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
@@ -102,17 +103,19 @@ export function AttachmentFilePreview(props: {
   mimeType: string;
   sizeBytes: number;
   file?: Blob | null;
+  src?: string | null;
   asset?:
     | { environmentId: EnvironmentId; attachmentId: string }
     | {
         environmentId: EnvironmentId;
-        resource: Extract<AssetResource, { _tag: "media-file" | "draft-workspace-file" }>;
+        resource: AssetResource;
       };
   htmlRender?: boolean;
   threadRef?: ScopedThreadRef;
   origin?: string;
   onRemove?: () => void;
   onClose?: () => void;
+  onEditImage?: (() => void) | undefined;
 }) {
   const kind = filePreviewKind(props);
   const officeKind = officePreviewKind(props);
@@ -177,7 +180,7 @@ export function AttachmentFilePreview(props: {
   }, [props.file]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- authorizes a remote attachment URL from the server and ignores the result after cleanup
   useEffect(() => {
-    if (props.file) return;
+    if (props.file || !props.asset) return;
     let cancelled = false;
     // oxlint-disable-next-line react/set-state-in-effect -- A new preview request clears its previous URL and error.
     setRemoteUrl(null);
@@ -197,8 +200,8 @@ export function AttachmentFilePreview(props: {
       cancelled = true;
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry must reauthorize the remote file.
-  }, [props.file, refresh, revision]);
-  const url = props.file ? localUrl : remoteUrl;
+  }, [props.file, props.asset, refresh, revision]);
+  const url = props.file ? localUrl : props.asset ? remoteUrl : (props.src ?? null);
   const streamsText =
     kind === "text" &&
     (props.sizeBytes > FILE_TEXT_PREVIEW_MAX_BYTES ||
@@ -257,7 +260,7 @@ export function AttachmentFilePreview(props: {
     void settlePromise(async () => {
       let file = props.file;
       if (!file) {
-        const target = await prepareDownload();
+        const target = props.asset ? await prepareDownload() : props.src;
         if (!target) throw new Error(gt("Reconnect to the environment and try again."));
         const response = await fetch(target);
         if (!response.ok) throw new Error(gt("The file could not be loaded. Try again."));
@@ -483,6 +486,11 @@ export function AttachmentFilePreview(props: {
             }}
           >
             {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+          </FileSurfaceAction>
+        ) : null}
+        {kind === "image" && url && props.onEditImage ? (
+          <FileSurfaceAction label={gt("Edit image")} onPress={props.onEditImage}>
+            <PencilIcon className="size-3.5" />
           </FileSurfaceAction>
         ) : null}
         {url ? (

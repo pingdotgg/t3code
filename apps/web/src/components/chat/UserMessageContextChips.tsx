@@ -7,6 +7,7 @@ import { isSvgAttachment } from "@t3tools/shared/image";
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
+import { MediaActions } from "../media/MediaActions";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { COMPOSER_CONTEXT_KINDS } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
@@ -286,7 +287,7 @@ interface UserMessageContextRenderContext {
   attachment: ChatImageAttachment | ChatFileAttachment | null;
   resolvedTheme: "light" | "dark";
   copyMarkdown: string;
-  onExpandImage: (image: ChatImageAttachment) => void;
+  onExpandImage: (image: ChatImageAttachment, edit?: boolean) => void;
   onExpandVideo: (file: ChatFileAttachment) => void;
   onOpenFile: (file: ChatFileAttachment) => void;
   m: MessageResolver;
@@ -380,13 +381,38 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
         }
         const attachment = context.attachment;
         return (
-          <ImageChipButton
-            name={record.name}
-            previewUrl={attachment.previewUrl}
-            size={formatAttachmentSize(record.sizeBytes, context.m)}
-            data-markdown-copy={context.copyMarkdown}
-            onClick={() => context.onExpandImage(attachment)}
-          />
+          <MediaActions
+            source={{
+              kind: "image",
+              name: attachment.name,
+              src: attachment.previewUrl ?? null,
+              ...(/^(?:blob:|data:)/i.test(attachment.previewUrl ?? "")
+                ? {}
+                : {
+                    asset: {
+                      environmentId: context.environmentId,
+                      resource: {
+                        _tag: "attachment",
+                        attachmentId: attachment.id,
+                        fileName: attachment.name,
+                        mimeType: attachment.mimeType,
+                      },
+                    },
+                  }),
+            }}
+            showTooltip={false}
+            {...(attachment.previewUrl
+              ? { onEditImage: () => context.onExpandImage(attachment, true) }
+              : {})}
+          >
+            <ImageChipButton
+              name={record.name}
+              previewUrl={attachment.previewUrl}
+              size={formatAttachmentSize(record.sizeBytes, context.m)}
+              data-markdown-copy={context.copyMarkdown}
+              onClick={() => context.onExpandImage(attachment)}
+            />
+          </MediaActions>
         );
       },
     },
@@ -562,7 +588,7 @@ export function UserMessageContextReferenceChip(props: {
   record: KnownComposerContextRecord | undefined;
   annotationImage: ChatImageAttachment | null;
   attachment: ChatImageAttachment | ChatFileAttachment | null;
-  onExpandImage: (image: ChatImageAttachment) => void;
+  onExpandImage: (image: ChatImageAttachment, edit?: boolean) => void;
   onExpandVideo: (file: ChatFileAttachment) => void;
   onOpenFile: (file: ChatFileAttachment) => void;
 }) {
@@ -619,6 +645,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
             skills={ctx.skills}
             parseRawHtml={false}
             lineBreaks
+            onImageExpand={ctx.onImageExpand}
           />
         </div>
       )}

@@ -29,13 +29,7 @@ function getWindowControlsOverlay(): WindowControlsOverlayLike | null {
   return (navigator as NavigatorWithWindowControlsOverlay).windowControlsOverlay ?? null;
 }
 
-/** Height of the native caption strip drawn over the page, or 0 when the window has none. */
-export function windowControlsOverlayHeight(): number {
-  const overlay = getWindowControlsOverlay();
-  return overlay?.visible ? overlay.getTitlebarAreaRect().height : 0;
-}
-
-export function onWindowControlsOverlayGeometryChange(listener: () => void): () => void {
+function onWindowControlsOverlayGeometryChange(listener: () => void): () => void {
   const overlay = getWindowControlsOverlay();
   if (!overlay) {
     return () => {};

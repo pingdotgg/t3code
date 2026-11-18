@@ -27,6 +27,7 @@ import {
 const MAX_WIRE_CHECKPOINT_FILES = 200;
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
+const MAX_GENERATED_IMAGE_PATH_LENGTH = 4_096;
 const MAX_ON_DEMAND_BYTES = 256 * 1024;
 const TRUNCATION_MARKER = "\n… output truncated for transport";
 const TRUNCATION_MARKER_BYTES = Buffer.byteLength(TRUNCATION_MARKER, "utf8");
@@ -194,7 +195,24 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
       };
     case "dynamic_tool": {
       const { output: rawOutput, ...projected } = item;
-      const output = compactDynamicToolOutput(rawOutput);
+      const compactOutput = compactDynamicToolOutput(rawOutput);
+      const output =
+        item.toolName === "image_gen.imagegen" &&
+        item.status === "completed" &&
+        compactOutput?.isError !== true &&
+        typeof rawOutput === "object" &&
+        rawOutput !== null &&
+        !Array.isArray(rawOutput) &&
+        "status" in rawOutput &&
+        rawOutput.status === "completed" &&
+        "savedPath" in rawOutput &&
+        typeof rawOutput.savedPath === "string" &&
+        rawOutput.savedPath.length <= MAX_GENERATED_IMAGE_PATH_LENGTH &&
+        rawOutput.savedPath.trim() !== "" &&
+        !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(rawOutput.savedPath) &&
+        !/^\s*data:/i.test(rawOutput.savedPath)
+          ? { ...compactOutput, status: "completed", savedPath: rawOutput.savedPath }
+          : compactOutput;
       return {
         ...projected,
         input: summarizeDynamicValue(item.input),

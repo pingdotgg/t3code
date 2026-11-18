@@ -23,6 +23,7 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import { classifyToolActivity } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 
 import {
   summarizeT3ToolCalls,
@@ -452,6 +453,38 @@ export function workEntriesViewedImagePaths(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): string[] {
   return [...new Set(entries.flatMap((entry) => workEntryViewedImagePath(entry) ?? []))];
+}
+
+/**
+ * Codex reports its native image generation and its `image_gen` function tool under this one
+ * name. The item's status is the only progress the protocol carries: no percentage or partials.
+ */
+const IMAGE_GENERATION_TOOL_NAME = "image_gen.imagegen";
+
+export function workEntryIsGeneratingImage(
+  entry: Pick<WorkLogPresentationEntry, "structuredPayload" | "toolLifecycleStatus">,
+): boolean {
+  const item = entry.structuredPayload;
+  return (
+    entry.toolLifecycleStatus === "inProgress" &&
+    item?.type === "dynamic_tool" &&
+    item.toolName === IMAGE_GENERATION_TOOL_NAME
+  );
+}
+
+export function workEntryGeneratedImagePath(
+  entry: Pick<WorkLogPresentationEntry, "structuredPayload">,
+): string | null {
+  const item = entry.structuredPayload;
+  if (item?.type !== "dynamic_tool" || item.toolName !== IMAGE_GENERATION_TOOL_NAME) return null;
+  const output = item.output;
+  return item.status === "completed" &&
+    output !== null &&
+    typeof output === "object" &&
+    "savedPath" in output &&
+    typeof output.savedPath === "string"
+    ? normalizeProjectPathForComparison(output.savedPath)
+    : null;
 }
 
 export interface ViewedImageAsset {

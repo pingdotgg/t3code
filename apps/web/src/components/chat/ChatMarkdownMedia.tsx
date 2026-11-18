@@ -1,4 +1,5 @@
 import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/media-reference";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import type { AssetResource, EnvironmentId, SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
 import { msg, useGT, useMessages } from "gt-react";
 import { TriangleAlertIcon } from "lucide-react";
@@ -6,6 +7,8 @@ import {
   createContext,
   memo,
   use,
+  useEffect,
+  useRef,
   useState,
   type ComponentProps,
   type CSSProperties,
@@ -21,6 +24,7 @@ import { MediaActions, type MediaActionSource } from "../media/MediaActions";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { markdownImageGallery, markdownImageItems } from "./markdownImageGallery";
+import { GeneratedImageSettledContext } from "./imageGenerationReadiness";
 
 const CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME = "max-w-[min(100%,30rem)]";
 const CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME = cn(
@@ -145,7 +149,16 @@ export function ChatMarkdownImageFallback(props: {
   readonly kind?: "image" | "video" | "audio";
   readonly actionsSource?: MediaActionSource | undefined;
   readonly detail?: string | undefined;
+  readonly originalPath?: string | undefined;
 }) {
+  const readiness = use(GeneratedImageSettledContext);
+  const path =
+    props.originalPath === undefined ? null : normalizeProjectPathForComparison(props.originalPath);
+  const onSettled = path !== null && readiness?.paths.has(path) ? readiness.onSettled : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- settle the generation after its unavailable-image fallback commits
+  useEffect(() => {
+    if (path !== null) onSettled?.(path);
+  }, [path, onSettled]);
   const content = (
     <span
       data-markdown-copy={props.copyMarkdown}
@@ -193,13 +206,46 @@ export function ChatMarkdownImage(props: {
 }) {
   const gt = useGT();
   const m = useMessages();
+  const generationReadiness = use(GeneratedImageSettledContext);
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const src = props.src ?? loadedSrc;
   const failed = props.sourceFailed === true || (src !== null && failedSrc === src);
   const settled = src !== null && !failed && (!props.standalone || loadedSrc !== null);
+  const reference = props.actionsSource.reference;
+  const imagePath =
+    reference?.kind === "file" ? normalizeProjectPathForComparison(reference.path) : null;
+  const onGeneratedImageSettled =
+    imagePath !== null && generationReadiness?.paths.has(imagePath)
+      ? generationReadiness.onSettled
+      : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hand off a live generation only after the visible image decodes or its failure commits
+  useEffect(() => {
+    if (!onGeneratedImageSettled || imagePath === null) return;
+    if (failed) {
+      onGeneratedImageSettled(imagePath);
+      return;
+    }
+    if (!settled || loadedSrc === null || imageRef.current === null) return;
+    let cancelled = false;
+    void imageRef.current.decode().then(
+      () => {
+        if (!cancelled) onGeneratedImageSettled(imagePath);
+      },
+      () => {
+        if (cancelled) return;
+        setFailedSrc(src);
+        setLoadedSrc(null);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [onGeneratedImageSettled, imagePath, failed, settled, loadedSrc, src]);
   // Cached images are complete before `onLoad` can fire.
   const markLoadedIfComplete = (image: HTMLImageElement | null) => {
+    imageRef.current = image;
     if (!image) return;
     if (image.complete && image.naturalWidth > 0) setLoadedSrc(image.currentSrc || image.src);
     markdownImageItems.set(image, {

@@ -264,6 +264,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
           <ChatMarkdown
             text={item.text}
             cwd={props.cwd}
+            onImageExpand={props.onImageExpand}
             threadRef={{
               environmentId: props.environmentId,
               threadId: props.projectedItem.sourceThreadId,

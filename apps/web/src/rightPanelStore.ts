@@ -3,7 +3,13 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, RunId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  RunId,
+  ThreadId,
+  type AssetResource,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -11,6 +17,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { useClosedViewStore } from "./closedViewStore";
 import { m } from "./i18n/messages";
 import { resolveStorage } from "./lib/storage";
+import { randomUUID } from "./lib/utils";
+import { persistentRightPanelSurface } from "./rightPanelSurfacePersistence";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
 import type { ChatFileAttachment } from "./types";
 
@@ -37,6 +45,14 @@ export interface DeviceTabTarget {
   name: string;
 }
 
+export interface RightPanelImageSource {
+  readonly name: string;
+  readonly src: string | null;
+  readonly mimeType?: string;
+  readonly file?: Blob;
+  readonly asset?: { readonly environmentId: EnvironmentId; readonly resource: AssetResource };
+}
+
 export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
@@ -57,12 +73,13 @@ export type RightPanelSurface =
       folderTrail?: string;
     }
   | {
-      id: `file:${string}` | `attachment:${string}`;
+      id: `file:${string}` | `attachment:${string}` | `image:${string}`;
       kind: "file";
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
       attachment?: ChatFileAttachment;
+      image?: RightPanelImageSource;
       /** Deepest workspace path retained for navigating back down after moving up. */
       folderTrail?: string;
     }
@@ -170,6 +187,7 @@ interface RightPanelStoreState {
     keepSource?: boolean,
   ) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
+  openImage: (ref: ScopedThreadRef, source: RightPanelImageSource) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
     target: {
@@ -371,6 +389,21 @@ const withoutReveal = (surface: RightPanelSurface): RightPanelSurface => {
   const { revealUrl: _pending, ...rest } = surface;
   return rest;
 };
+
+function persistentThreadState(state: ThreadRightPanelState): ThreadRightPanelState {
+  const surfaces = state.surfaces.flatMap((surface) => {
+    const persisted = persistentRightPanelSurface(surface);
+    return persisted ? [persisted] : [];
+  });
+  return {
+    ...state,
+    surfaces,
+    isOpen: state.isOpen && surfaces.length > 0,
+    activeSurfaceId: surfaces.some((surface) => surface.id === state.activeSurfaceId)
+      ? state.activeSurfaceId
+      : (surfaces.at(-1)?.id ?? null),
+  };
+}
 
 const upsertSurface = (
   current: ThreadRightPanelState,
@@ -986,6 +1019,80 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             );
           }),
         ),
+      openImage: (ref, source) => {
+        const localCopy =
+          !source.asset && !source.file && source.src?.startsWith("blob:")
+            ? fetch(source.src).then((response) => {
+                if (!response.ok) throw new Error(m(msg("Local image unavailable")));
+                return response.blob();
+              })
+            : null;
+        const threadKey = scopedThreadKey(rightPanelHostRef(ref));
+        let openedId: string | null = null;
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const assetKey = source.asset ? JSON.stringify(source.asset) : null;
+            const existing = current.surfaces.find(
+              (surface): surface is Extract<RightPanelSurface, { kind: "file" }> =>
+                surface.kind === "file" &&
+                surface.image !== undefined &&
+                (assetKey !== null
+                  ? JSON.stringify(surface.image.asset) === assetKey
+                  : source.file
+                    ? surface.image.file === source.file
+                    : surface.image.src === source.src),
+            );
+            const image: RightPanelImageSource = {
+              name: source.name,
+              src: source.src,
+              ...(source.mimeType ? { mimeType: source.mimeType } : {}),
+              ...(source.file
+                ? { file: source.file }
+                : existing?.kind === "file" && existing.image?.file
+                  ? { file: existing.image.file }
+                  : {}),
+              ...(source.asset ? { asset: source.asset } : {}),
+            };
+            const surface: RightPanelSurface = {
+              id: existing?.id ?? `image:${randomUUID()}`,
+              kind: "file",
+              relativePath: image.name,
+              revealLine: null,
+              revealRequestId: 0,
+              image,
+            };
+            openedId = surface.id;
+            const surfaces = current.surfaces.filter((entry) => entry.kind !== "files");
+            return {
+              ...current,
+              isOpen: true,
+              activeSurfaceId: surface.id,
+              surfaces: existing
+                ? surfaces.map((entry) => (entry.id === existing.id ? surface : entry))
+                : [...surfaces, surface],
+            };
+          }),
+        );
+        // A sent message releases its optimistic blob URL when the server echoes it.
+        void localCopy?.then(
+          (file) =>
+            set((state) =>
+              automaticUpdate(state, threadKey, (current) => ({
+                ...current,
+                surfaces: current.surfaces.map((surface) =>
+                  surface.id === openedId &&
+                  surface.kind === "file" &&
+                  surface.image &&
+                  surface.image.src === source.src &&
+                  !surface.image.file
+                    ? { ...surface, image: { ...surface.image, file } }
+                    : surface,
+                ),
+              })),
+            ),
+          () => {},
+        );
+      },
       openTerminal: (ref, terminalId) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) =>
@@ -1181,7 +1288,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const surfaces = current.surfaces.filter(
               (surface) =>
                 surface.kind !== "files" &&
-                (surface.kind !== "file" || surface.attachment !== undefined),
+                (surface.kind !== "file" ||
+                  surface.attachment !== undefined ||
+                  surface.image !== undefined),
             );
             if (surfaces.length === current.surfaces.length) return current;
             const activeStillExists = surfaces.some(
@@ -1299,12 +1408,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           Object.entries(state.byThreadKey).flatMap(([threadKey, threadState]) =>
             isPullRequestsPanelKey(threadKey)
               ? []
-              : [
-                  [
-                    threadKey,
-                    { ...threadState, surfaces: threadState.surfaces.map(withoutReveal) },
-                  ],
-                ],
+              : [[threadKey, persistentThreadState(threadState)]],
           ),
         ),
         threadPanelVisibilityByThreadKey: Object.fromEntries(

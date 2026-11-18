@@ -990,6 +990,100 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("keeps image previews without a workspace and persists only reauthorizable sources", async () => {
+    const store = useRightPanelStore.getState();
+    const asset = {
+      environmentId: "other-environment" as EnvironmentId,
+      resource: {
+        _tag: "media-file" as const,
+        threadId: refB.threadId,
+        path: "/generated/output.png",
+      },
+    };
+    const unhost = hostRightPanel(refB, refA);
+    try {
+      store.openImage(refB, { name: "output.png", src: "https://host/image?token=old", asset });
+      const first = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)!;
+      store.openImage(refB, { name: "output.png", src: "https://host/image?token=new", asset });
+      expect(
+        selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)?.id,
+      ).toBe(first.id);
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+      ).toEqual([]);
+
+      const file = new Blob(["image bytes"], { type: "image/png" });
+      store.openImage(refB, { name: "local.png", src: "blob:composer-preview", file });
+      const local = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)!;
+      store.closeSurface(refA, local.id);
+      const closed = useClosedViewStore.getState().entries[0]!;
+      await expect(
+        reopenClosedView(closed, {
+          openPreview: async () => {
+            throw new Error("Image previews do not open browser tabs");
+          },
+          workspaceAvailable: false,
+        }),
+      ).resolves.toBe(true);
+      expect(
+        selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+      ).toMatchObject({
+        image: { file },
+      });
+      store.openImage(refB, {
+        name: "inline.png",
+        src: "data:image/png;base64,large-inline-bytes",
+      });
+      store.reconcileFileSurfaces(refA, false);
+      expect(
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+      ).toHaveLength(3);
+
+      const { storage, name } = useRightPanelStore.persist.getOptions();
+      const persisted = await storage!.getItem(name!);
+      expect(JSON.stringify(persisted)).not.toMatch(/token=|composer-preview|large-inline-bytes/);
+      await reloadRightPanelStore();
+      const restored = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+      expect(restored.surfaces).toEqual([
+        expect.objectContaining({ id: first.id, image: { name: "output.png", src: null, asset } }),
+      ]);
+      expect(restored.activeSurfaceId).toBe(first.id);
+      expect(restored.isOpen).toBe(true);
+    } finally {
+      unhost();
+    }
+  });
+
+  it("retains an optimistic image before its timeline URL is revoked", async () => {
+    const file = new Blob(["optimistic image bytes"], { type: "image/png" });
+    const src = URL.createObjectURL(file);
+    let copied!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      copied = resolve;
+    });
+    const unsubscribe = useRightPanelStore.subscribe((state) => {
+      const active = selectActiveRightPanelSurface(state.byThreadKey, refA);
+      if (active?.kind === "file" && active.image?.file) copied();
+    });
+    using _subscription = { [Symbol.dispose]: unsubscribe };
+    const store = useRightPanelStore.getState();
+    store.openImage(refA, { name: "optimistic.png", src });
+    URL.revokeObjectURL(src);
+    await ready;
+    const preview = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    expect(preview?.kind === "file" && (await preview.image?.file?.text())).toBe(
+      "optimistic image bytes",
+    );
+    store.openImage(refA, { name: "optimistic.png", src });
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toHaveLength(1);
+    const reopened = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    expect(reopened?.kind === "file" && reopened.image?.file).toBe(
+      preview?.kind === "file" && preview.image?.file,
+    );
+  });
+
   it("tracks one surface per pull request", () => {
     const first = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
     const second = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4910 };

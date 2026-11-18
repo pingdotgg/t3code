@@ -11,7 +11,8 @@ import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 import { randomUUID } from "./lib/utils";
-import { type RightPanelSurface } from "./rightPanelStore";
+import type { RightPanelSurface } from "./rightPanelStore";
+import { persistentRightPanelSurface } from "./rightPanelSurfacePersistence";
 
 export type ClosedView =
   | {
@@ -46,7 +47,15 @@ const sameTarget = (entry: ClosedViewEntry, view: ClosedView): boolean => {
 };
 
 const isPersistentView = (entry: ClosedViewEntry) =>
-  entry.kind !== "browser" || entry.snapshot.profileId !== INCOGNITO_BROWSER_PROFILE_ID;
+  entry.kind === "browser"
+    ? entry.snapshot.profileId !== INCOGNITO_BROWSER_PROFILE_ID
+    : persistentRightPanelSurface(entry.surface) !== null;
+
+const persistentView = (entry: ClosedViewEntry): ClosedViewEntry => {
+  if (entry.kind !== "panel-tab") return entry;
+  const surface = persistentRightPanelSurface(entry.surface);
+  return surface && surface.kind !== "terminal" ? { ...entry, surface } : entry;
+};
 
 const isThreadRef = Schema.is(ScopedThreadRef);
 const isSnapshot = Schema.is(PreviewSessionSnapshot);
@@ -145,11 +154,13 @@ export const useClosedViewStore = create<ClosedViewStoreState>()(
           ?.entries;
         return {
           entries: Array.isArray(entries)
-            ? entries.filter(isClosedViewEntry).filter(isPersistentView)
+            ? entries.filter(isClosedViewEntry).filter(isPersistentView).map(persistentView)
             : [],
         };
       },
-      partialize: ({ entries }) => ({ entries: entries.filter(isPersistentView) }),
+      partialize: ({ entries }) => ({
+        entries: entries.filter(isPersistentView).map(persistentView),
+      }),
     },
   ),
 );

@@ -10,6 +10,7 @@ import {
   extractInlineCodeSpans,
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
+  markdownDestinationHostPath,
 } from "@t3tools/shared/markdownLinks";
 import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskList";
 import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
@@ -1706,7 +1707,14 @@ const CHAT_MARKDOWN_COMPONENTS = {
         />
       );
     }
-    return <ChatMarkdownImageFallback alt={altText} copyMarkdown={copyMarkdown} kind={kind} />;
+    return (
+      <ChatMarkdownImageFallback
+        alt={altText}
+        copyMarkdown={copyMarkdown}
+        kind={kind}
+        originalPath={markdownDestinationHostPath(classifiedSrc) ?? undefined}
+      />
+    );
   },
   table: function MarkdownTableRenderer({ node: _node, ...props }) {
     return <MarkdownTable {...props} />;

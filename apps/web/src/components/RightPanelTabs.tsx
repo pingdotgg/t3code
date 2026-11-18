@@ -1262,7 +1262,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const items: ContextMenuItem<TabContextMenuAction>[] = [];
     if (surface.kind === "device" && props.onRenameDevice)
       items.push({ id: "rename", label: gt("Rename") });
-    if (surface.kind === "file" && surface.attachment === undefined) {
+    if (
+      surface.kind === "file" &&
+      surface.attachment === undefined &&
+      surface.image === undefined
+    ) {
       items.push({ id: "copy-path", label: gt("Copy path") });
     }
     const menuPreviewTabId = previewTabIdOf(surface, props.previewSessions);
@@ -1305,7 +1309,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         setRenamingDevice(surface.id);
         break;
       case "copy-path":
-        if (surface.kind === "file" && surface.attachment === undefined) {
+        if (
+          surface.kind === "file" &&
+          surface.attachment === undefined &&
+          surface.image === undefined
+        ) {
           props.onCopyFilePath(surface.relativePath);
         }
         break;

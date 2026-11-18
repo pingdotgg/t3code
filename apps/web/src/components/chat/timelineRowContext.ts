@@ -30,6 +30,7 @@ import { type MessagesTimelineRow, type WorkGroupScrollAnchor } from "./Messages
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import type { TurnItemDetailSource } from "../../state/queries";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
+import type { GeneratedImageReadiness } from "./imageGenerationReadiness";
 
 /**
  * Where an expanded row reads an item's detail and a command's output. The owner's rows read them
@@ -70,6 +71,7 @@ export interface TimelineRowSharedState {
   onRunShellCommand: ((command: string) => void) | undefined;
   findActive: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
+  generatedImageReadiness?: GeneratedImageReadiness | undefined;
   displayThreadKey?: string;
   onOpenToolDiff: ((target: ToolCallDiffTarget) => void) | undefined;
   /** Unset where there is no diff to open, so the timeline shows no "Open diff" button. */

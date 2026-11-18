@@ -36,6 +36,7 @@ import type {
   RuntimeMode,
   RuntimeRequestId,
   ScopedThreadRef,
+  SnapShotSource,
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
@@ -285,13 +286,23 @@ import { useComposerStash } from "./useComposerStash";
 import { useComposerContextImport } from "./useComposerContextImport";
 import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
 import {
+  addPreparingComposerImages,
   countPreparingComposerImages,
+  removePreparingComposerImages,
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
+import type { ImageEditorResult } from "../image-editor/ImageEditor";
+import {
+  buildImageAnimationPrompt,
+  imageEditorFileMetadata,
+} from "../image-editor/imageEditorHandoff";
+import { imageEditorDocumentForAttachment } from "../image-editor/imageEditorSession";
+import { prepareImageEditorAttachments } from "../image-editor/imageEditorAttachments";
+import { resizeSnapShotSource } from "~/lib/snapShotSource";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -303,6 +314,14 @@ export interface ChatComposerHandle {
   focusAtEnd: () => void;
   focusAt: (cursor: number) => void;
   addDroppedFiles: (files: File[]) => void;
+  stageImageEdit: (
+    result: Pick<ImageEditorResult, "files" | "prompt" | "mode"> &
+      Partial<ImageEditorResult> & {
+        source?: SnapShotSource;
+        animation?: { original: File; context: string };
+      },
+    originalImageId?: string,
+  ) => Promise<void>;
   addDroppedFolders: (folders: File[]) => void;
   hasPendingAttachments: () => boolean;
   insertTextAtEnd: (
@@ -1570,13 +1589,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       const getPersistedAttachmentsForThread = () =>
         getComposerDraft(attachmentDraftTarget)?.persistedAttachments ?? [];
+      const isCurrentImageSnapshot = () => {
+        const current = getComposerDraft(attachmentDraftTarget)?.images;
+        return (
+          current?.length === composerImages.length &&
+          current.every(
+            (image, index) =>
+              image.file === composerImages[index]?.file && image.id === composerImages[index]?.id,
+          )
+        );
+      };
       try {
         const currentPersistedAttachments = getPersistedAttachmentsForThread();
         const serialized = await serializeComposerImages(
           composerImages,
           currentPersistedAttachments,
         );
-        if (cancelled) return;
+        if (cancelled || !isCurrentImageSnapshot()) return;
         syncComposerDraftPersistedAttachments(attachmentDraftTarget, serialized);
       } catch {
         const currentImageIds = new Set(composerImages.map((image) => image.id));
@@ -1591,7 +1620,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const fallbackAttachments = fallbackPersistedAttachments.filter((attachment) =>
           fallbackPersistedIdSet.has(attachment.id),
         );
-        if (cancelled) return;
+        if (cancelled || !isCurrentImageSnapshot()) return;
         syncComposerDraftPersistedAttachments(attachmentDraftTarget, fallbackAttachments);
       }
     })();
@@ -2824,6 +2853,218 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
 
+  const assertImageEditAvailable = useStableCallback(() => {
+    if (
+      !activeThreadId ||
+      !canOperateThread ||
+      pendingUserInputs.length > 0 ||
+      isRevertingCheckpointRef.current ||
+      projectSelectionRequired
+    ) {
+      throw new Error(gt("Open an available thread composer before adding image edits."));
+    }
+  });
+  const stageImageEdit: ChatComposerHandle["stageImageEdit"] = async (result, originalImageId) => {
+    assertImageEditAvailable();
+    const store = useComposerDraftStore.getState();
+    const draft = store.getComposerDraft(attachmentDraftTarget);
+    const original = originalImageId
+      ? draft?.images.find((image) => image.id === originalImageId)
+      : undefined;
+    const stagedRequest = original?.imageEditRequest ?? original?.imageEditor?.stagedRequest;
+    if (stagedRequest?.editor && !original?.imageEditor)
+      throw new Error(
+        gt("The clean original was removed. Open the original image again to edit it."),
+      );
+    if (stagedRequest?.animation) {
+      const animation = stagedRequest.animation;
+      const gif = draft?.images.find((image) => image.id === animation.originalId)?.file;
+      if (!gif)
+        throw new Error(
+          gt("The original GIF was removed. Open the animation again to edit its frames."),
+        );
+      result = {
+        ...result,
+        mode: "edit",
+        files: [gif, ...result.files],
+        prompt: buildImageAnimationPrompt(animation.context, result),
+        animation: { original: gif, context: animation.context },
+      };
+    }
+    const claimedElsewhere = new Set(
+      (draft?.images ?? [])
+        .filter((image) => image.id !== original?.id && !stagedRequest?.imageIds.includes(image.id))
+        .flatMap(
+          (image) => (image.imageEditRequest ?? image.imageEditor?.stagedRequest)?.imageIds ?? [],
+        ),
+    );
+    const replacing =
+      original !== undefined && (stagedRequest !== undefined || !claimedElsewhere.has(original.id));
+    const replacingIds = new Set(
+      replacing
+        ? [
+            original.id,
+            ...(stagedRequest?.imageIds ?? []).filter((id) => !claimedElsewhere.has(id)),
+          ]
+        : [],
+    );
+    const replacedImages = draft?.images.filter((image) => replacingIds.has(image.id)) ?? [];
+    const replacementId = replacing
+      ? ([stagedRequest?.animation?.originalId, stagedRequest?.imageIds[0]].find(
+          (id) => id !== undefined && replacedImages.some((image) => image.id === id),
+        ) ?? original.id)
+      : undefined;
+    const count =
+      (draft?.images.length ?? 0) +
+      (draft?.files.length ?? 0) +
+      countPreparingComposerImages(attachmentTargetKey);
+    if (
+      result.files.length === 0 ||
+      count + result.files.length - replacedImages.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+    ) {
+      throw new Error(
+        gt(
+          "A message can contain up to {value0} attachments. Remove some before adding these edits.",
+          { value0: PROVIDER_SEND_TURN_MAX_ATTACHMENTS },
+        ),
+      );
+    }
+    const reservations = result.files.slice(replacing ? 1 : 0).map((file) => ({
+      id: randomUUID(),
+      name: file.name,
+      file,
+      hidden: true,
+    }));
+    addPreparingComposerImages(attachmentTargetKey, reservations);
+    pendingDraftWork.begin(attachmentTargetKey);
+    await prepareImageEditorAttachments(result)
+      .then((prepared) => {
+        if (!composerMountedRef.current || attachmentTargetKeyRef.current !== attachmentTargetKey)
+          throw new Error(
+            gt("The thread changed while preparing the image. Reopen it and try again."),
+          );
+        assertImageEditAvailable();
+        const current = store.getComposerDraft(attachmentDraftTarget);
+        if (
+          original &&
+          replacedImages.some(
+            (image) => current?.images.find((entry) => entry.id === image.id)?.file !== image.file,
+          )
+        )
+          throw new Error(
+            gt(
+              "The original attachment changed while preparing the image. Reopen it and try again.",
+            ),
+          );
+        const currentCount =
+          (current?.images.length ?? 0) +
+          (current?.files.length ?? 0) +
+          countPreparingComposerImages(attachmentTargetKey) -
+          reservations.length;
+        if (
+          currentCount + prepared.files.length - replacedImages.length >
+          PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+        )
+          throw new Error(
+            gt(
+              "A message can contain up to {value0} attachments. Remove some before adding these edits.",
+              { value0: PROVIDER_SEND_TURN_MAX_ATTACHMENTS },
+            ),
+          );
+        const priorBlock = stagedRequest?.prompt ? `\n${stagedRequest.prompt}\n` : "";
+        const priorIndex = priorBlock ? promptRef.current.indexOf(priorBlock) : -1;
+        const canReplacePrompt =
+          priorIndex >= 0 && promptRef.current.lastIndexOf(priorBlock) === priorIndex;
+        const nextBlock = result.prompt ? `\n${result.prompt}\n` : "";
+        const promptApplied = canReplacePrompt
+          ? applyPromptReplacementStable(priorIndex, priorIndex + priorBlock.length, nextBlock, {
+              expectedText: priorBlock,
+            })
+          : !result.prompt ||
+            insertComposerTextAtEndStable(nextBlock, { ensureLeadingBoundary: true });
+        if (!promptApplied) {
+          throw new Error(gt("The composer cannot accept image instructions right now."));
+        }
+        const originalSource =
+          original?.imageEditor?.originalSource ?? original?.source ?? result.source;
+        const preparedResult = {
+          ...result,
+          files: prepared.files,
+          ...(prepared.sessionFile ? { sessionFile: prepared.sessionFile } : {}),
+        };
+        let images: ComposerImageAttachment[] = prepared.files.map((file, index) => {
+          const metadata = imageEditorFileMetadata(preparedResult, file, originalSource);
+          return {
+            type: "image",
+            id: replacementId && index === 0 ? replacementId : randomUUID(),
+            name: file.name,
+            mimeType: file.type || "image/png",
+            sizeBytes: file.size,
+            previewUrl: URL.createObjectURL(file),
+            file,
+            ...metadata,
+            ...(metadata.source
+              ? { source: resizeSnapShotSource(metadata.source, prepared.imageSizes.get(file)) }
+              : {}),
+          };
+        });
+        if (result.mode === "edit") {
+          const animationImage = result.animation ? images[0] : undefined;
+          const cleanOriginal = images[result.animation ? 1 : 0];
+          const cleanSize = cleanOriginal && prepared.imageSizes.get(cleanOriginal.file);
+          const stagedRequest = {
+            imageIds: images.map((entry) => entry.id),
+            prompt: result.prompt,
+            ...(result.options ? { options: result.options } : {}),
+            ...(cleanOriginal &&
+            cleanOriginal.file !== prepared.sessionFile &&
+            cleanSize &&
+            result.document &&
+            result.originalFile
+              ? {
+                  editor: {
+                    originalId: cleanOriginal.id,
+                    originalName: result.originalFile.name,
+                    document: imageEditorDocumentForAttachment(result.document, cleanSize),
+                  },
+                }
+              : {}),
+            ...(result.animation && animationImage
+              ? {
+                  animation: {
+                    originalId: animationImage.id,
+                    context: result.animation.context,
+                  },
+                }
+              : {}),
+          };
+          images = images.map((image) =>
+            image.imageEditor ? { ...image, imageEditRequest: stagedRequest } : image,
+          );
+        }
+        for (const image of replacedImages) {
+          releaseAttachmentUpload(image.id);
+          if (image.id !== replacementId) store.removeImage(attachmentDraftTarget, image.id);
+        }
+        if (replacementId) {
+          const edited = images.shift();
+          if (edited) {
+            store.replaceImage(attachmentDraftTarget, replacementId, edited);
+          }
+        }
+        store.addImages(attachmentDraftTarget, images, { allowDuplicates: true });
+        scheduleComposerFocus();
+      })
+      .finally(() => {
+        removePreparingComposerImages(
+          attachmentTargetKey,
+          new Set(reservations.map((image) => image.id)),
+        );
+        pendingDraftWork.end(attachmentTargetKey);
+      });
+  };
+  const stageImageEditStable = useStableCallback(stageImageEdit);
+
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const { files, folders } = splitTransferredFiles(event.clipboardData);
     const plainText = event.clipboardData.getData("text/plain");
@@ -3110,6 +3351,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       },
       addDroppedFolders: addComposerFoldersStable,
+      stageImageEdit: stageImageEditStable,
       hasPendingAttachments: () =>
         countPreparingComposerImages(attachmentTargetKey) > 0 ||
         pendingDraftWork.has(attachmentTargetKey),

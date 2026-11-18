@@ -660,6 +660,68 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   margin-inline-start: var(--live-activity-focus-width);
 }
 
+/* Image generation placeholder. The frame's wash is static; the only motion is one sheen band
+   crossing it, transform-only and stepped like the live rows above, resting between passes and
+   paused unless the frame is on screen. The frame fades in once when it is inserted. */
+@keyframes image-generation-sheen {
+  0% {
+    transform: translateX(-130%) skewX(-14deg);
+    animation-timing-function: steps(36);
+  }
+  70%,
+  100% {
+    transform: translateX(280%) skewX(-14deg);
+  }
+}
+
+@utility image-generation-frame {
+  background-image:
+    radial-gradient(
+      120% 90% at 12% 8%,
+      color-mix(in srgb, var(--foreground) 9%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      100% 80% at 92% 100%,
+      color-mix(in srgb, var(--foreground) 6%, transparent),
+      transparent 55%
+    );
+
+  @media (prefers-reduced-motion: no-preference) {
+    transition: opacity 240ms ease-out;
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
+}
+
+@utility image-generation-sheen {
+  width: 40%;
+  background-image: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--foreground) 11%, transparent) 50%,
+    transparent
+  );
+  animation: image-generation-sheen 3.2s infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+
+  @media (prefers-reduced-motion: reduce), (forced-colors: active) {
+    animation: none;
+    opacity: 0;
+    will-change: auto;
+  }
+}
+
+@utility image-generation-pulse {
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    animation: var(--animate-status-pulse);
+    animation-play-state: var(--visible-animation-state, paused);
+  }
+}
+
 @property --assistant-citation-highlight-opacity {
   syntax: "<number>";
   inherits: true;

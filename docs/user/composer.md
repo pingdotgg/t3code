@@ -410,6 +410,36 @@ File links refer to the environment's machine, including when you connect remote
 Previews use the original file, even outside the workspace. Moving or deleting it
 can break the preview, so save a copy if you need to keep it.
 
+On web and desktop, right-click an image and choose **Edit image**, or open its
+preview and choose **Edit image**, to draw, add text or
+location comments, select areas to remove, or crop. The editor opens beside chat
+when there is room and no other side panel is open. Annotations remain editable,
+with undo, redo, and the original available for comparison. Clicking with **Comment pin**
+or **Text** opens a focused text box beside that spot. Press Enter or choose **Done**
+to finish, Shift+Enter for another line, or Escape to close the box and keep your text.
+**Apply annotations**
+updates an unsent attachment or adds a PNG to your message. You can reopen the
+staged image to adjust its layers. After a reload, it may reopen with a resized
+source or as a flattened image; save the original separately if you need it at
+full resolution.
+
+Choose **Open in file preview** from the image's right-click menu to keep it in
+a file tab beside the conversation, including generated images outside a project.
+
+For generated changes, add instructions, background removal, or an aspect ratio,
+then choose **Add edit request**. Review the source, guidance, and any removal mask
+in the composer before sending. The selected agent needs an image editing tool;
+removal selections guide the model and may not produce pixel-exact changes.
+Existing text and objects in a flattened image are not automatically extracted
+into editable layers.
+
+Choose **Images** in the thread header to browse the conversation's images,
+select several for shared feedback, or download their originals together as a
+ZIP. Supported browsers can share the ZIP. GIFs can open as numbered frame
+sheets for frame-specific comments in Chromium browsers and the desktop app;
+editing a GIF directly as a still requires confirmation. Frame sheets and the
+original animation accompany the edit request.
+
 ## Files outside the workspace
 
 Follow an agent's file link to read a report or other file outside the workspace.

@@ -23,14 +23,22 @@ const state = vi.hoisted(() => ({
   png: vi.fn(),
   showMenu: vi.fn(),
   openFile: vi.fn(),
+  editImage: vi.fn(),
   clipboard: vi.fn(),
   copyText: vi.fn(),
   menuFinished: null as (() => void) | null,
+  context: null as {
+    edit: () => void;
+    openFile: () => void;
+    assertCurrent: () => void;
+  } | null,
+  threadCurrent: true,
 }));
 
 vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
   useCallback: <A,>(callback: A) => callback,
+  use: () => state.context,
   useRef: <A,>(current: A) => ({ current }),
   useState: <A,>(initial: A) => [initial, () => {}],
 }));
@@ -106,7 +114,9 @@ function openMenu(source: MediaActionSource) {
       return undefined;
     return node.props.onContextMenu ?? find(node.props.children);
   };
-  const handler = find(MediaActions({ source, children: createElement("img") }));
+  const handler = find(
+    MediaActions({ source, children: createElement("img"), onEditImage: state.editImage }),
+  );
   if (!handler) throw new Error("Media menu handler missing");
   handler({
     defaultPrevented: false,
@@ -128,8 +138,11 @@ beforeEach(() => {
   state.png.mockReset().mockResolvedValue(new Blob(["png"], { type: "image/png" }));
   state.showMenu.mockReset().mockResolvedValue(null);
   state.openFile.mockReset();
+  state.editImage.mockReset();
   state.copyText.mockReset().mockResolvedValue(true);
   state.menuFinished = null;
+  state.context = null;
+  state.threadCurrent = true;
   class TestClipboardItem {
     constructor(readonly items: Record<string, Promise<Blob>>) {}
   }
@@ -152,6 +165,7 @@ it.each(["workspace-file", "media-file"] as const)(
         expect.objectContaining({ id: "save", disabled: true }),
         expect.objectContaining({ id: "copy-image", disabled: true }),
         expect.objectContaining({ id: "open-file", disabled: true }),
+        expect.objectContaining({ id: "edit-image", disabled: true }),
       ]),
       { x: 1, y: 1 },
     );
@@ -163,18 +177,32 @@ it.each(["workspace-file", "media-file"] as const)(
   },
 );
 
-it.each(["save", "copy-image", "open-file"])(
-  "rechecks access when %s is selected from an already open native menu",
-  async (action) => {
+it.each(
+  ["save", "copy-image", "open-file", "edit-image"].flatMap((action) => [
+    { action, changed: "access" },
+    ...(action === "open-file" || action === "edit-image" ? [{ action, changed: "thread" }] : []),
+  ]),
+)(
+  "rechecks $changed when $action is selected from an already open native menu",
+  async ({ action, changed }) => {
     state.sessions.set(environmentId, granted);
     const choice = deferred<string>();
     const completed = deferred<void>();
     state.showMenu.mockReturnValue(choice.promise);
     state.menuFinished = () => completed.resolve();
     state.openFile.mockImplementation(() => completed.resolve());
+    state.editImage.mockImplementation(() => completed.resolve());
+    state.context = {
+      edit: state.editImage,
+      openFile: state.openFile,
+      assertCurrent: () => {
+        if (!state.threadCurrent) throw new Error("Thread changed");
+      },
+    };
     openMenu(hostSource());
 
-    state.sessions.set(environmentId, denied);
+    if (changed === "access") state.sessions.set(environmentId, denied);
+    else state.threadCurrent = false;
     choice.resolve(action);
     await completed.promise;
 
@@ -182,5 +210,6 @@ it.each(["save", "copy-image", "open-file"])(
     expect(state.download).not.toHaveBeenCalled();
     expect(state.clipboard).not.toHaveBeenCalled();
     expect(state.openFile).not.toHaveBeenCalled();
+    expect(state.editImage).not.toHaveBeenCalled();
   },
 );

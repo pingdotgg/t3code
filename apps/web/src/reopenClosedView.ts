@@ -121,7 +121,7 @@ export async function reopenClosedView(
   const surface = view.surface;
   if (
     !options.workspaceAvailable &&
-    (surface.kind === "files" || (surface.kind === "file" && !surface.attachment))
+    (surface.kind === "files" || (surface.kind === "file" && !surface.attachment && !surface.image))
   )
     return false;
   switch (surface.kind) {
@@ -130,7 +130,8 @@ export async function reopenClosedView(
       panels.openBrowser(ref, null);
       break;
     case "file":
-      if (surface.attachment) panels.openAttachment(ref, surface.attachment);
+      if (surface.image) panels.openImage(ref, surface.image);
+      else if (surface.attachment) panels.openAttachment(ref, surface.attachment);
       else {
         panels.openFile(ref, surface.relativePath, surface.revealLine ?? undefined);
         if (typeof surface.folderTrail === "string") {

@@ -1,8 +1,4 @@
-import {
-  scopedThreadKey,
-  scopeProjectRef,
-  scopeThreadRef,
-} from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import { createBrowserHistory, createHashHistory } from "@tanstack/react-router";
@@ -65,7 +61,11 @@ import { startI18n, subscribeI18n } from "./i18n/runtime";
 import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommands";
 import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
 import { environmentThreadShells, threadEnvironment } from "./state/threads";
-import { resolveActiveThreadRouteRef, resolveThreadRouteTarget } from "./threadRoutes";
+import {
+  resolveActiveThreadRouteRef,
+  resolveThreadOverlayKey,
+  resolveThreadRouteTarget,
+} from "./threadRoutes";
 
 /** Writes appearance settings onto the document, touching only the groups that changed. */
 function startClientAppearance(): void {
@@ -235,18 +235,13 @@ function startBrowserChromeThemeSync(router: AppRouter): void {
 /** Chat overlays belong to the thread they were opened in, so leaving its route drops them. */
 function startThreadOverlayRetention(router: AppRouter): void {
   router.subscribe("onResolved", () => {
-    const target = resolveThreadRouteTarget(router.state.matches.at(-1)?.params ?? {});
-    const draftSession =
-      target?.kind === "draft"
-        ? useComposerDraftStore.getState().getDraftSession(target.draftId)
-        : null;
-    const threadRef =
-      target?.kind === "server"
-        ? target.threadRef
-        : draftSession
-          ? scopeThreadRef(draftSession.environmentId, draftSession.threadId)
-          : null;
-    retainThreadOverlaysForThread(threadRef ? scopedThreadKey(threadRef) : null);
+    const store = useComposerDraftStore.getState();
+    retainThreadOverlaysForThread(
+      resolveThreadOverlayKey(
+        router.state.matches.at(-1)?.params ?? {},
+        (draftId) => store.getDraftSession(draftId) ?? store.getPromotedDraftRedirect(draftId),
+      ),
+    );
   });
 }
 

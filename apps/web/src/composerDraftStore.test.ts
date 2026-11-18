@@ -98,6 +98,10 @@ import {
   DraftId,
 } from "./composerDraftStore";
 import { waitForDraftHeroTransition } from "./components/chat/draftHeroTransition";
+import {
+  addImageEditorObject,
+  createImageEditorDocument,
+} from "./components/image-editor/imageEditorDocument";
 import { insertInlineContextReference } from "./lib/composerContextReferences";
 import {
   buildMessageContext,
@@ -285,6 +289,280 @@ describe("composerDraftStore addImages", () => {
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
     expect(draft?.images.map((image) => image.id)).toEqual(["img-a", "img-c"]);
     expect(revokeSpy).toHaveBeenCalledWith("blob:b");
+  });
+});
+
+describe("composerDraftStore image edits", () => {
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("editable-image"));
+  beforeEach(resetComposerDraftStore);
+
+  it("drops optional sessions before image bytes at quota and preserves already saved attachments when a new image still cannot fit", async () => {
+    const memory = createMemoryStorage();
+    let budget = Infinity;
+    const quotaStorage = {
+      ...memory,
+      setItem: (key: string, value: string) => {
+        if (value.length > budget) throw new DOMException("Storage is full", "QuotaExceededError");
+        memory.setItem(key, value);
+      },
+    };
+    vi.stubGlobal("localStorage", quotaStorage);
+    vi.stubGlobal("window", Object.assign(new EventTarget(), { localStorage: quotaStorage }));
+    vi.useFakeTimers();
+    vi.resetModules();
+    try {
+      const fresh = await import("./composerDraftStore");
+      const store = fresh.useComposerDraftStore.getState();
+      const previous = makeImage({ id: "previous", previewUrl: "blob:previous" });
+      const persistedPrevious = {
+        id: previous.id,
+        name: previous.name,
+        mimeType: previous.mimeType,
+        sizeBytes: previous.sizeBytes,
+        dataUrl: "data:image/png;base64,AQ==",
+      };
+      store.addImage(threadRef, previous);
+      await store.syncPersistedAttachments(threadRef, [persistedPrevious]);
+      const otherThread = scopeThreadRef(
+        TEST_ENVIRONMENT_ID,
+        ThreadId.make("untouched-edited-draft"),
+      );
+      const otherImage = {
+        ...makeImage({ id: "other-edited", previewUrl: "blob:other-edited" }),
+        imageEditor: { originalFile: previous.file, document: createImageEditorDocument(400, 300) },
+      };
+      const savedSession = {
+        originalName: "other.png",
+        originalDataUrl: "data:image/png;base64,AQ==",
+        document: otherImage.imageEditor.document,
+      };
+      store.addImage(otherThread, otherImage);
+      await store.syncPersistedAttachments(otherThread, [
+        { ...persistedPrevious, id: otherImage.id, imageEditor: savedSession },
+      ]);
+      const first = (await memory.getItem(COMPOSER_DRAFT_STORAGE_KEY))!;
+      budget = first.length + 700;
+      const edited = {
+        ...makeImage({ id: "edited", name: "edited.png", previewUrl: "blob:edited" }),
+        imageEditor: { originalFile: previous.file, document: createImageEditorDocument(400, 300) },
+      };
+      const persistedEdited = {
+        ...persistedPrevious,
+        id: edited.id,
+        name: edited.name,
+        dataUrl: "data:image/png;base64,Ag==",
+        imageEditRequest: { imageIds: ["previous", "edited"], prompt: "Keep this edit request" },
+        imageEditor: {
+          originalName: "large.png",
+          originalDataUrl: `data:image/png;base64,${"A".repeat(4000)}`,
+          document: edited.imageEditor.document,
+        },
+      };
+      store.addImage(threadRef, edited);
+      await store.syncPersistedAttachments(threadRef, [persistedPrevious, persistedEdited]);
+      let saved = JSON.parse((await memory.getItem(COMPOSER_DRAFT_STORAGE_KEY))!);
+      expect(
+        saved.state.draftsByThreadKey[scopedThreadKey(otherThread)].attachments[0].imageEditor,
+      ).toEqual(savedSession);
+      expect(
+        saved.state.draftsByThreadKey[scopedThreadKey(threadRef)].attachments.map(
+          (image: { id: string }) => image.id,
+        ),
+      ).toEqual(["previous", "edited"]);
+      expect(
+        saved.state.draftsByThreadKey[scopedThreadKey(threadRef)].attachments[1].imageEditor,
+      ).toBeUndefined();
+      expect(
+        fresh.hydrateImagesFromPersisted(
+          saved.state.draftsByThreadKey[scopedThreadKey(threadRef)].attachments,
+        )[1],
+      ).toHaveProperty("imageEditRequest", persistedEdited.imageEditRequest);
+      expect(store.getComposerDraft(threadRef)?.nonPersistedImageIds).toEqual([]);
+      expect(store.getComposerDraft(threadRef)?.images[1]?.imageEditor).toBe(edited.imageEditor);
+
+      const tooLarge = makeImage({
+        id: "too-large",
+        name: "too-large.png",
+        previewUrl: "blob:too-large",
+      });
+      store.addImage(threadRef, tooLarge);
+      await store.syncPersistedAttachments(threadRef, [
+        persistedPrevious,
+        persistedEdited,
+        {
+          ...persistedPrevious,
+          id: tooLarge.id,
+          dataUrl: `data:image/png;base64,${"A".repeat(4000)}`,
+        },
+      ]);
+      await vi.advanceTimersByTimeAsync(300);
+      saved = JSON.parse((await memory.getItem(COMPOSER_DRAFT_STORAGE_KEY))!);
+      expect(
+        saved.state.draftsByThreadKey[scopedThreadKey(otherThread)].attachments[0].imageEditor,
+      ).toEqual(savedSession);
+      expect(
+        saved.state.draftsByThreadKey[scopedThreadKey(threadRef)].attachments.map(
+          (image: { id: string }) => image.id,
+        ),
+      ).toEqual(["previous", "edited"]);
+      expect(store.getComposerDraft(threadRef)?.nonPersistedImageIds).toEqual(["too-large"]);
+      expect(store.getComposerDraft(threadRef)?.images.map((image) => image.id)).toEqual([
+        "previous",
+        "edited",
+        "too-large",
+      ]);
+      const hydrated = fresh.useComposerDraftStore.persist.getOptions().merge!(
+        saved.state,
+        fresh.useComposerDraftStore.getInitialState(),
+      );
+      expect(
+        hydrated.draftsByThreadKey[scopedThreadKey(threadRef)]?.images.map((image) => image.id),
+      ).toEqual(["previous", "edited"]);
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+
+  it("replaces image bytes without changing the inline reference and invalidates cached PNG data", () => {
+    using revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const store = useComposerDraftStore.getState();
+    const previous = makeImage({ id: "image", previewUrl: "blob:previous" });
+    store.addImage(threadRef, previous);
+    store.setPrompt(threadRef, "Edit [image.png](t3-context://v1/image/image_image)");
+    const draft = store.getComposerDraft(threadRef)!;
+    useComposerDraftStore.setState({
+      draftsByThreadKey: {
+        [scopedThreadKey(threadRef)]: {
+          ...draft,
+          persistedAttachments: [
+            {
+              id: previous.id,
+              name: previous.name,
+              mimeType: previous.mimeType,
+              sizeBytes: previous.sizeBytes,
+              dataUrl: "data:image/png;base64,AQ==",
+            },
+          ],
+        },
+      },
+    });
+    const replacement = {
+      ...makeImage({ id: "new-id", previewUrl: "blob:edited" }),
+      imageEditor: { originalFile: previous.file, document: createImageEditorDocument(400, 300) },
+    };
+    expect(store.replaceImage(threadRef, previous.id, replacement)).toBe(true);
+    const updated = store.getComposerDraft(threadRef)!;
+    expect(updated.prompt).toBe("Edit [image.png](t3-context://v1/image/image_image)");
+    expect(updated.images[0]).toMatchObject({
+      id: "image",
+      previewUrl: "blob:edited",
+      imageEditor: replacement.imageEditor,
+    });
+    expect(updated.images[0]?.file).toBe(replacement.file);
+    expect(updated.persistedAttachments).toEqual([]);
+    expect(revoke).toHaveBeenCalledExactlyOnceWith("blob:previous");
+  });
+
+  it("hydrates editable sessions through JSON while corrupt optional metadata does not discard the edited PNG", async () => {
+    const session = {
+      originalDataUrl: "data:image/png;base64,b3JpZ2luYWw=",
+      originalName: "original.png",
+      document: addImageEditorObject(createImageEditorDocument(400, 300), {
+        id: "rectangle",
+        kind: "rectangle",
+        x: 20,
+        y: 30,
+        width: 100,
+        height: 50,
+        rotation: 12,
+        color: "#ef4444",
+        strokeWidth: 8,
+      }),
+    };
+    const attachment = {
+      id: "image",
+      name: "edited.png",
+      mimeType: "image/png",
+      sizeBytes: 6,
+      dataUrl: "data:image/png;base64,ZWRpdGVk",
+      imageEditor: session,
+    };
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const hydrate = (imageEditor: unknown) =>
+      merge(
+        JSON.parse(
+          JSON.stringify({
+            draftsByThreadKey: {
+              [scopedThreadKey(threadRef)]: {
+                prompt: "",
+                attachments: [{ ...attachment, imageEditor }],
+              },
+            },
+          }),
+        ),
+        useComposerDraftStore.getInitialState(),
+      );
+    const restored = hydrate(session).draftsByThreadKey[scopedThreadKey(threadRef)]?.images[0];
+    expect(restored?.imageEditor?.document).toEqual(session.document);
+    expect(await restored?.imageEditor?.originalFile.text()).toBe("original");
+    expect(await restored?.file.text()).toBe("edited");
+    const corrupted = hydrate({ ...session, document: { ...session.document, width: -1 } })
+      .draftsByThreadKey[scopedThreadKey(threadRef)]?.images[0];
+    expect(corrupted?.imageEditor).toBeUndefined();
+    expect(await corrupted?.file.text()).toBe("edited");
+    const [direct] = hydrateImagesFromPersisted([
+      { ...attachment, imageEditor: { ...session, originalDataUrl: "data:image/png;base64,%%%" } },
+    ]);
+    expect(direct?.imageEditor).toBeUndefined();
+    expect(await direct?.file.text()).toBe("edited");
+  });
+
+  it("does not let an older storage verification overwrite a replacement serialized in the same turn", async () => {
+    const storage = useComposerDraftStore.persist.getOptions().storage!;
+    const previousWindow = globalThis.window;
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => {
+          const value = storage.getItem(key);
+          if (value instanceof Promise) throw new Error("Expected synchronous storage");
+          return value ? JSON.stringify(value) : null;
+        },
+      },
+    });
+    using _window = { [Symbol.dispose]: () => vi.stubGlobal("window", previousWindow) };
+    const store = useComposerDraftStore.getState();
+    const previous = makeImage({ id: "image", previewUrl: "data:image/png;base64,AQ==" });
+    store.addImage(threadRef, previous);
+    const oldData = [
+      {
+        id: previous.id,
+        name: previous.name,
+        mimeType: previous.mimeType,
+        sizeBytes: previous.sizeBytes,
+        dataUrl: "data:image/png;base64,AQ==",
+      },
+    ];
+    const oldSync = store.syncPersistedAttachments(threadRef, oldData);
+    store.replaceImage(
+      threadRef,
+      previous.id,
+      makeImage({ id: "new", previewUrl: "data:image/png;base64,Ag==", sizeBytes: 5 }),
+    );
+    const newData = [{ ...oldData[0]!, sizeBytes: 5, dataUrl: "data:image/png;base64,Ag==" }];
+    const newSync = store.syncPersistedAttachments(threadRef, newData);
+    const persistedVersions: string[] = [];
+    const unsubscribe = useComposerDraftStore.subscribe((state) => {
+      const dataUrl =
+        state.draftsByThreadKey[scopedThreadKey(threadRef)]?.persistedAttachments[0]?.dataUrl;
+      if (dataUrl) persistedVersions.push(dataUrl);
+    });
+    using _subscription = { [Symbol.dispose]: unsubscribe };
+    await Promise.all([oldSync, newSync]);
+    expect(persistedVersions).not.toContain(oldData[0]!.dataUrl);
+    expect(store.getComposerDraft(threadRef)?.persistedAttachments).toEqual(newData);
   });
 });
 

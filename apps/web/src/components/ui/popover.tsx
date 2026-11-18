@@ -44,6 +44,7 @@ function PopoverPopup({
   keepMounted = false,
   anchor,
   touchBackdrop = false,
+  hideWhenAnchorHidden = false,
   ...props
 }: PopoverPrimitive.Popup.Props & {
   padding?: keyof typeof popoverViewportPaddingClassName;
@@ -58,6 +59,7 @@ function PopoverPopup({
   anchor?: PopoverPrimitive.Positioner.Props["anchor"];
   width?: keyof typeof popoverPopupWidthClassName;
   touchBackdrop?: boolean;
+  hideWhenAnchorHidden?: boolean;
 }) {
   // Viewport rekeys on close; persistent single-trigger forms need stable containers for drafts and submit
   // guards.
@@ -79,6 +81,9 @@ function PopoverPopup({
         collisionPadding={variant === "panel" ? 0 : undefined}
         className={cn(
           "h-(--positioner-height) max-h-(--available-height) w-(--positioner-width) max-w-(--available-width)",
+          // Visibility/display hiding drops input focus, letting Escape dismiss a containing editor.
+          hideWhenAnchorHidden &&
+            "data-anchor-hidden:pointer-events-none data-anchor-hidden:opacity-0",
           // Kept-mounted positioners first paint at the window origin, so a transform transition slides them in from there.
           !keepMounted && "transition-transform data-instant:transition-none",
           variant === "panel"
