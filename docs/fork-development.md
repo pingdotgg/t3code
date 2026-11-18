@@ -1,6 +1,6 @@
 # T3 Dulli development
 
-T3 Dulli is the `YJJosh/t3dulli` community fork of **T3 Code v0.1.10** (`7d32075e37`). It uses T3's native provider, subagent, schedule, usage, and MCP infrastructure. The retired Dulli provider, Pi extensions, Pi sessions, and Pi judge are not part of this fork. Upstream's own Pi provider remains available.
+T3 Dulli is the `YJJosh/t3dulli` community fork of **T3 Code v0.1.10** (`7d32075e37`). It uses T3's native provider, subagent, schedule, usage, and MCP infrastructure. Pi is no longer used in this fork: the retired Dulli provider, Pi extensions, Pi sessions, and Pi judge are not part of it, and T3 itself is the harness. Upstream's Pi provider only remains as the migration target for old Dulli threads (see below), not as a supported workflow.
 
 ## Identity and coexistence
 
@@ -71,7 +71,7 @@ If Portler is installed and `portler.yml` is present, use the repository's Portl
 
 ## Fork database migrations
 
-Fork migrations belong in `apps/server/src/persistence/Migrations/dulli/` and the fork's separate migration ledger. Never allocate an ID in upstream's numbered sequence for a fork feature. Keep the upstream sequence intact so later upstream upgrades remain unambiguous. The upgrade moves retired Dulli-provider threads to the Pi provider and archives Dulli-only data in `dulli_archived_*` tables; there is no Dulli provider compatibility bridge. Back up state read-only before testing upgrades, and run only against a sandbox copy.
+Fork migrations belong in `apps/server/src/persistence/Migrations/dulli/` and the fork's separate migration ledger. Never allocate an ID in upstream's numbered sequence for a fork feature. Keep the upstream sequence intact so later upstream upgrades remain unambiguous. The upgrade moves retired Dulli-provider threads to the Pi provider only so no thread is lost, and archives Dulli-only data in `dulli_archived_*` tables; there is no Dulli provider compatibility bridge and no Pi workflow to support. Back up state read-only before testing upgrades, and run only against a sandbox copy.
 
 ## Fork features
 

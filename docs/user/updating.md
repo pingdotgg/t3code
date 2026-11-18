@@ -88,10 +88,10 @@ before continuing an important older thread.
 
 ## Upgrading an older T3 Dulli installation
 
-The stable-based T3 Dulli release keeps your existing `~/.t3-dulli` home and every thread. The old
-Dulli provider ran your own Pi, so its threads move to the Pi provider under the same name and pick
-up the same Pi sessions when you send the next message. To continue one with another provider,
-pick that provider in the composer; T3 Code hands the conversation over.
+The stable-based T3 Dulli release keeps your existing `~/.t3-dulli` home and every thread. T3 Dulli
+no longer uses Pi. Threads from the old Dulli provider, which ran your own Pi, move to the Pi
+provider under the same name only so nothing is lost. To keep working in one, pick Claude, Muse
+Code, or Codex in the composer; T3 Code hands the conversation over.
 
 Old subagent run history cannot be shown by this release. It is kept in `dulli_archived_*` tables
 in the same database, not deleted.

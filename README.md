@@ -2,7 +2,18 @@
 
 T3 Dulli is the community fork of [T3 Code](https://github.com/pingdotgg/t3code), rebuilt on **stable v0.1.10**. It is an open-source desktop, web, and mobile control surface for coding agents, using your existing provider subscriptions.
 
-The fork keeps upstream's native providers, subagents, schedules, and usage features. Claude, Muse, Codex, and upstream Pi are supported by T3's own integrations. The retired Dulli provider and its Pi-extension bridges are not included.
+The fork keeps upstream's native providers, subagents, schedules, and usage features. It is built around Claude, Muse, and Codex through T3's own integrations. Pi is no longer used: the old Dulli provider and its Pi-extension bridges are retired and are not coming back. T3 itself is the harness.
+
+## What this fork adds
+
+- **Its own identity.** T3 Dulli installs beside upstream T3 Code, with its own app ID, icons, update feed, `~/.t3-dulli` home, `@yjosh/t3` npm package, and separately signed Android APK.
+- **Workler workspaces.** New threads get an isolated [Workler](docs/user/source-control.md#workler-workspaces) clone instead of a plain git worktree by default, with safe cleanup and recovery.
+- **Multi-repo projects.** Several repositories as [one project](docs/user/source-control.md#multi-repository-projects) on web and mobile, including setting the group up on another connected machine. New workspaces clone every member onto the same branch.
+- **Profiles.** Reusable [prompt parts, skills, MCP servers, and per-provider settings](docs/user/profiles.md) kept in a plain folder, picked beside the composer, and synced to every connected environment. Threads an agent starts keep their parent thread's profile.
+- **Terminals shared with agents.** Agents can [open and use terminals in their thread](docs/user/terminal.md#sharing-terminals-with-agents); you and the agent take turns controlling them, and busy or finished terminals group above the composer.
+- **1Password agent vaults.** Agents can [run commands with secrets from shared vaults](docs/user/secrets.md#share-a-vault-with-agents), with one read-only service account per vault. Access is per vault, either allowed or not, with no approval prompts, and secret values are masked in output.
+- **Android background notifications.** The Dulli Android app can [stay connected in the background](docs/user/mobile-notifications.md#t3-dulli-on-android) and alert for approvals, questions, and finished turns, without Google Play services, Firebase, or T3 Connect.
+- **Fork-safe upgrades.** Fork database changes live in their own migration ledger, and [upgrading an older T3 Dulli](docs/user/updating.md#upgrading-an-older-t3-dulli-installation) keeps every thread and takes a backup first.
 
 ## Install
 
@@ -34,7 +45,7 @@ vp run dev
 
 Dev state lives in the worktree's `.t3`. Never run a development server against `~/.t3/userdata` or `~/.t3-dulli/userdata`; use read-only copies into the sandbox instead.
 
-Fork feature work covers Workler workspaces and multi-repo projects, agent-controlled thread terminals, per-vault 1Password access, and profiles from a git-synced prompts/skills folder. T3 itself is the harness; no Pi session or judge replacement is planned.
+Fork database migrations go in `apps/server/src/persistence/Migrations/dulli/` and its separate ledger, never in upstream's numbered sequence.
 
 ## Upstream and license
 
