@@ -367,6 +367,7 @@ it.effect("scrubs the caller's private values and sends only the event contract"
         sent: false,
       });
       expect(yield* Ref.get(events)).toEqual([]);
+      expect((yield* Queue.take(cards)).feedbackStatus).toBe("cancelled");
 
       yield* Ref.set(telemetry, true);
       const sent = yield* feedback.submit({ ...input, subject: "t3 thread show" }, fromThread);

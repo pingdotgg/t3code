@@ -323,7 +323,7 @@ const make = Effect.fn("FeedbackService.make")(function* (
       userRequested: true,
       card: { runId: card.runId, turnItemId: card.turnItemId },
     }).pipe(
-      Effect.tap(() => record("sent").pipe(Effect.ignore)),
+      Effect.tap((report) => record(report.sent ? "sent" : "cancelled").pipe(Effect.ignore)),
       Effect.tapError(() => record("cancelled").pipe(Effect.ignore)),
       Effect.catchTags({
         FeedbackTurnEndedError: () =>
