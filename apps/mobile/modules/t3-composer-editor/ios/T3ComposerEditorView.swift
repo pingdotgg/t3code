@@ -471,6 +471,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private let textView = ComposerTextView(usingTextLayoutManager: false)
   private let placeholderLabel = UILabel()
   private var placeholder = ""
+  private var placeholderText = NSAttributedString()
+  private var placeholderSizeCache: (width: CGFloat, size: CGSize)?
   private var growsWithPlaceholder = false
   private var value = ""
   private var tokensJson = "[]"
@@ -676,22 +678,24 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
         }
       }
     }
-    // Fills the lines the editor has room for and truncates the last; the draft's line height
-    // keeps the text still when it's filled in.
+    // A growing placeholder fills the lines the editor has room for and truncates the last;
+    // others keep one line. The draft's line height keeps the text still when it's filled in.
     let placeholderY = textView.textContainerInset.top
     let width = placeholderWidth()
-    let room = bounds.height - placeholderY - textView.textContainerInset.bottom
-    let lines = lineHeight > 0 ? max(1, Int(((room + 0.5) / lineHeight).rounded(.down))) : 1
+    var lines = 1
+    if growsWithPlaceholder, value.isEmpty, lineHeight > 0 {
+      let room = bounds.height - placeholderY - textView.textContainerInset.bottom
+      lines = max(1, Int(((room + 0.5) / lineHeight).rounded(.down)))
+    }
+    let lineFrameHeight = max(lineHeight, placeholderLabel.font.lineHeight)
     placeholderLabel.numberOfLines = lines
     placeholderLabel.frame = CGRect(
       x: textView.textContainerInset.left + textView.textContainer.lineFragmentPadding,
       y: placeholderY,
       width: width,
-      height: max(
-        lineHeight,
-        placeholderLabel.font.lineHeight,
-        min(ceil(placeholderSize(width: width).height), CGFloat(lines) * lineHeight)
-      )
+      height: lines == 1
+        ? lineFrameHeight
+        : max(lineFrameHeight, min(ceil(placeholderSize(width: width).height), CGFloat(lines) * lineHeight))
     )
     emitContentSizeIfNeeded()
   }
@@ -705,21 +709,24 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func placeholderSize(width: CGFloat) -> CGSize {
-    placeholderAttributedText().boundingRect(
+    if let cached = placeholderSizeCache, cached.width == width {
+      return cached.size
+    }
+    let size = placeholderText.boundingRect(
       with: CGSize(width: width, height: .greatestFiniteMagnitude),
       options: [.usesLineFragmentOrigin, .usesFontLeading],
       context: nil
     ).size
-  }
-
-  private func placeholderAttributedText() -> NSAttributedString {
-    var attributes = baseAttributes()
-    attributes[.foregroundColor] = UIColor(composerHex: theme.placeholder) ?? .placeholderText
-    return NSAttributedString(string: placeholder, attributes: attributes)
+    placeholderSizeCache = (width: width, size: size)
+    return size
   }
 
   private func applyPlaceholder() {
-    placeholderLabel.attributedText = placeholderAttributedText()
+    var attributes = baseAttributes()
+    attributes[.foregroundColor] = UIColor(composerHex: theme.placeholder) ?? .placeholderText
+    placeholderText = NSAttributedString(string: placeholder, attributes: attributes)
+    placeholderSizeCache = nil
+    placeholderLabel.attributedText = placeholderText
     // Set after the text, whose paragraph style would otherwise override it.
     placeholderLabel.lineBreakMode = .byTruncatingTail
     setNeedsLayout()
@@ -1349,18 +1356,23 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   private func updatePlaceholderVisibility() {
+    guard placeholderLabel.isHidden != !value.isEmpty else {
+      return
+    }
     placeholderLabel.isHidden = !value.isEmpty
+    // Layout measures the placeholder only while it shows.
+    setNeedsLayout()
   }
 
   private func emitContentSizeIfNeeded() {
     guard bounds.width > 0 else { return }
     // An empty editor that grows with its placeholder reports the placeholder's size instead.
     if growsWithPlaceholder, value.isEmpty, !placeholder.isEmpty {
+      // A placeholder that fits one line measures its natural width.
       let wrapped = placeholderSize(width: placeholderWidth())
-      let natural = placeholderSize(width: .greatestFiniteMagnitude)
       let oneLine = wrapped.height <= lineHeight + 0.5
       emitContentSize(CGSize(
-        width: oneLine ? ceil(natural.width) : 0,
+        width: oneLine ? ceil(wrapped.width) : 0,
         height: ceil(min(lineHeight * 4, wrapped.height))
       ))
       return
