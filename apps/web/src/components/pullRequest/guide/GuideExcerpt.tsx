@@ -7,6 +7,7 @@ import type {
 import { FileDiff } from "@pierre/diffs/react";
 import type { PullRequestReviewGuideExcerpt, PullRequestReviewPosition } from "@t3tools/contracts";
 import { ArrowUpRightIcon } from "lucide-react";
+import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
 import { useDiffThemeNames } from "~/hooks/useSettings";
@@ -15,6 +16,7 @@ import { getRenderablePatch, resolveFileDiffPreviousPath } from "~/lib/diffRende
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import {
   buildDiffReviewComment,
+  diffReviewSelectionId,
   resolveDiffReviewAnchor,
   type ReviewCommentContext,
 } from "~/reviewCommentContext";
@@ -136,16 +138,22 @@ export function GuideExcerpt({
         />
       ) : loading ? (
         <p className="rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">
-          Loading {excerpt.path}...
+          <T>
+            Loading <Var>{excerpt.path}</Var>...
+          </T>
         </p>
       ) : (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">
           <span className="min-w-0 truncate">
-            <span className="font-mono text-foreground">{excerpt.path}</span> lines {excerpt.start}-
-            {excerpt.end} are not in the loaded diff.
+            <T>
+              <span className="font-mono text-foreground">
+                <Var>{excerpt.path}</Var>
+              </span>{" "}
+              lines <Var>{excerpt.start}</Var>-<Var>{excerpt.end}</Var> are not in the loaded diff.
+            </T>
           </span>
           <Button size="xs" variant="outline" onClick={() => onOpenFile(excerpt.path)}>
-            Open in Code
+            <T>Open in Code</T>
           </Button>
         </div>
       )}
@@ -230,13 +238,15 @@ function ExcerptDiff({
     if (anchor === null) return;
     setDraft({ range, ...anchor });
   };
+  const gt = useGT();
   const interactive = commenting !== null && draft === null;
   const onAskAgent = commenting?.onAskAgent ?? null;
   const askAgent = (request: string) => {
     if (draft === null || onAskAgent === null) return;
     const comment = buildDiffReviewComment({
-      id: `pull-request-guide:${excerpt.path}:${draft.range.start}:${draft.range.end}`,
+      id: `pull-request-guide:${diffReviewSelectionId(excerpt.path, draft.range)}`,
       sectionId: `pull-request-guide:${excerpt.path}`,
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
       sectionTitle: "Review guide",
       filePath: excerpt.path,
       fileDiff: file,
@@ -297,13 +307,15 @@ function ExcerptDiff({
                 text=""
                 completionScope={commenting.canComment ? commenting.completionScope : null}
                 placeholder={
-                  commenting.canComment ? "Add a comment…" : "Ask the agent about these lines…"
+                  commenting.canComment
+                    ? gt("Add a comment…")
+                    : gt("Ask the agent about these lines…")
                 }
-                submitLabel={commenting.canComment ? "Add to review" : "Ask agent"}
+                submitLabel={commenting.canComment ? gt("Add to review") : gt("Ask agent")}
                 {...(commenting.canComment && onAskAgent !== null
                   ? {
                       secondaryAction: {
-                        label: "Ask agent",
+                        label: gt("Ask agent"),
                         onAction: (text: string) => askAgent(text),
                       },
                     }
@@ -330,13 +342,26 @@ function ExcerptDiff({
         renderHeaderMetadata={() => (
           <span className="flex items-center gap-2 text-xs text-muted-foreground">
             <span className="tabular-nums">
-              {excerpt.side === "old" ? "removed code, " : ""}showing {slice.shown} of {slice.total}{" "}
-              diff lines
+              {excerpt.side === "old"
+                ? gt(
+                    "{total, plural, one {removed code, showing {shown} of {total} diff lines} other {removed code, showing {shown} of {total} diff lines}}",
+                    {
+                      shown: slice.shown,
+                      total: slice.total,
+                    },
+                  )
+                : gt(
+                    "{total, plural, one {showing {shown} of {total} diff lines} other {showing {shown} of {total} diff lines}}",
+                    {
+                      shown: slice.shown,
+                      total: slice.total,
+                    },
+                  )}
             </span>
             <Button
               size="icon-xs"
               variant="ghost-muted"
-              aria-label={`Open ${excerpt.path} in Code`}
+              aria-label={gt("Open {path} in Code", { path: excerpt.path })}
               onClick={() => onOpenFile(excerpt.path)}
             >
               <ArrowUpRightIcon aria-hidden />

@@ -56,13 +56,19 @@ export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): strin
     const azure = /^([^/?#]+)\/([^/?#]+)\/_git\/([^/?#]+)$/.exec(parsed.path);
     return azure ? `git@ssh.dev.azure.com:v3/${azure[1]}/${azure[2]}/${azure[3]}` : null;
   }
+  // Bitbucket Cloud serves SSH only from `ssh.bitbucket.org` and HTTPS only from `bitbucket.org`.
+  const host = /^(?:(?:alt)?ssh\.)?bitbucket\.org$/i.test(parsed.host)
+    ? protocol === "ssh"
+      ? "ssh.bitbucket.org"
+      : "bitbucket.org"
+    : parsed.host;
   // SCP paths are literal; URI paths use percent escapes.
   try {
-    if (protocol === "ssh") return `git@${parsed.host}:${decodeURIComponent(parsed.path)}`;
+    if (protocol === "ssh") return `git@${host}:${decodeURIComponent(parsed.path)}`;
     const path = parsed.scp
       ? parsed.path.split("/").map(encodeURIComponent).join("/")
       : parsed.path;
-    return `https://${parsed.host}/${path}`;
+    return `https://${host}/${path}`;
   } catch {
     return null;
   }

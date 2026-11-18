@@ -521,6 +521,9 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
   localOrigin = false,
   onAnswer: Parameters<typeof createPullRequestEnvironmentAtoms>[1] = {},
   queryStore: typeof EnvironmentQueryStore.Service = null,
+  diffLoader: PullRequestDiffLoader.PullRequestDiffLoader["Service"] = {
+    load: () => Effect.die("unused"),
+  },
 ) {
   const originTarget = localOrigin
     ? new PrimaryConnectionTarget({
@@ -588,10 +591,7 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
   const runtime = Atom.runtime(
     Layer.mergeAll(
       Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
-      Layer.succeed(
-        PullRequestDiffLoader.PullRequestDiffLoader,
-        PullRequestDiffLoader.PullRequestDiffLoader.of({ load: () => Effect.die("unused") }),
-      ),
+      Layer.succeed(PullRequestDiffLoader.PullRequestDiffLoader, diffLoader),
       Layer.succeed(EnvironmentQueryStore, queryStore),
     ),
   );
@@ -2979,4 +2979,45 @@ it.effect("paints a saved stack answer at once while the host read is out", () =
       expect(waiting.registry.get(waitingStacks.answered(target))).toBe(false);
     }),
   ),
+);
+
+it.effect("loads the diff again for a new guide head without sending the head", () =>
+  Effect.gen(function* () {
+    const inputs: unknown[] = [];
+    const { atoms, registry, supervisor } = yield* makeTestRuntime(
+      {} as WsRpcProtocolClient,
+      undefined,
+      false,
+      {},
+      null,
+      {
+        load: (_prepared, input) =>
+          Effect.sync(() => {
+            inputs.push(input);
+            return { patch: "", truncated: false, nextCursor: null };
+          }),
+      },
+    );
+    yield* SubscriptionRef.set(
+      supervisor.prepared,
+      Option.some({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        httpBaseUrl: "https://example.test",
+        socketUrl: "wss://example.test",
+        httpAuthorization: null,
+        target: TARGET,
+      }),
+    );
+    const reference = { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 };
+    for (const cacheHeadSha of ["old-head", "new-head"]) {
+      const query = atoms.diff({
+        environmentId: TARGET.environmentId,
+        input: { ...reference, cacheHeadSha },
+      });
+      registry.mount(query);
+      yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });
+    }
+    expect(inputs).toEqual([reference, reference]);
+  }),
 );
