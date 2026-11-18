@@ -506,9 +506,11 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
       ? [gt("Render math")]
       : []),
-    ...(settings.copyOnSelect !== DEFAULT_UNIFIED_SETTINGS.copyOnSelect ? ["Copy on select"] : []),
+    ...(settings.copyOnSelect !== DEFAULT_UNIFIED_SETTINGS.copyOnSelect
+      ? [gt("Copy on select")]
+      : []),
     ...(settings.copyOnSelectToast !== DEFAULT_UNIFIED_SETTINGS.copyOnSelectToast
-      ? ["Copy on select toast"]
+      ? [gt("Copy on select toast")]
       : []),
     ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
       ? [gt("Panel animations")]
