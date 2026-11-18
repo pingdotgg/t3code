@@ -3026,10 +3026,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "no computador que abriu esta página"
-      ]
+      "c": [" ", "no computador que abriu esta página"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3041,10 +3038,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quem executar recebe este acesso"
-      ]
+      "c": [" ", "· quem executar recebe este acesso"]
     }
   ],
   "c54cc9c75db9dc58": "Aprove apenas um login que você acabou de iniciar.",
@@ -9692,7 +9686,7 @@
   "04fb467bba7698e2": "Alterações de espaço em branco no diff",
   "71d047b3f6ea9497": "Abrir os painéis de pull requests e alterações proativamente",
   "4b46043fd3700c17": "Mostrar skills no menu de barra",
-  "ccfefff2dafd9f9a": "Hide settled threads from @ mentions",
+  "ccfefff2dafd9f9a": "Ocultar conversas concluídas nas menções com @",
   "2407d5d61e7f7206": "Editor de texto formatado",
   "64b8fd2c284c3137": "Atalho de envio",
   "6163f91bddf474ae": "Comportamento de mensagens de acompanhamento",
@@ -9746,8 +9740,8 @@
   "147e9953f6fc550d": "Redefinir o atalho de envio para o padrão",
   "4a1201bd18283940": "Inclui também as skills no menu de comandos /. As skills sempre aparecem quando você digita $.",
   "950712602a01125d": "Redefinir as skills no menu de barra para o padrão",
-  "891708ea35b4e37f": "Only suggest active threads when you type @ in the composer.",
-  "e6c243c96a823928": "Reset settled thread mentions to default",
+  "891708ea35b4e37f": "Sugerir apenas conversas ativas ao digitar @ no editor.",
+  "e6c243c96a823928": "Restaurar as menções de conversas para o padrão",
   "55534387a88d7a44": "Mensagens de acompanhamento",
   "b6df5cfc57208da7": "Enfileire mensagens de acompanhamento enquanto o agente trabalha ou direcione a execução atual. Pressione {modifier} + Enter em prompts de uma linha ou {modifier} + Shift + Enter em prompts de várias linhas para fazer o contrário em uma mensagem.",
   "16bac0f3fbdeb4b7": "Enfileire mensagens de acompanhamento enquanto o agente trabalha ou direcione a execução atual. Pressione {modifier} + Shift + Enter para fazer o contrário em uma mensagem.",
@@ -11465,7 +11459,7 @@
   "6a6b1c244a1a0476": "empilhado dividido lado a lado unificado inline visualização",
   "7d0ab4cf50686d31": "proativo abrir automaticamente diff pull request pr painel direito agente conclusão",
   "5256dd2ed3a24332": "menu de comandos cifrão $ barra /",
-  "2b05d852e982784e": "composer autocomplete suggestions settled threads mention @",
+  "2b05d852e982784e": "editor preenchimento automático sugestões conversas concluídas menção @",
   "ade91c8927c48175": "editor de mensagens rich text tiptap negrito itálico markdown estilizado wysiwyg",
   "34d74827c2a8b009": "enter return command ctrl várias linhas prompt nova linha editor de mensagens",
   "9d1013084c46ecce": "fila enfileirar direcionar turno em execução enviar comportamento padrão editor de mensagens",

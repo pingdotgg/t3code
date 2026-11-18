@@ -1334,7 +1334,7 @@ export function ChatSettingsPanel() {
           />
         </AdvancedSettings>
         <SettingsRow
-          {...searchableSetting("hide-settled-thread-mentions")}
+          {...setting("hide-settled-thread-mentions")}
           description={gt("Only suggest active threads when you type @ in the composer.")}
           resetAction={
             settings.hideSettledThreadMentions !==

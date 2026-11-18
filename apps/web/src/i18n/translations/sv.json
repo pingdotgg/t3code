@@ -3026,10 +3026,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "på datorn som öppnade den här sidan"
-      ]
+      "c": [" ", "på datorn som öppnade den här sidan"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3041,10 +3038,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· den som kör den får den här åtkomsten"
-      ]
+      "c": [" ", "· den som kör den får den här åtkomsten"]
     }
   ],
   "c54cc9c75db9dc58": "Godkänn bara en inloggning som du själv precis har startat.",
@@ -9701,7 +9695,7 @@
   "04fb467bba7698e2": "Blankstegsändringar i diffar",
   "71d047b3f6ea9497": "Öppna panelerna för pull requests och ändringar proaktivt",
   "4b46043fd3700c17": "Visa färdigheter i snedstrecksmenyn",
-  "ccfefff2dafd9f9a": "Hide settled threads from @ mentions",
+  "ccfefff2dafd9f9a": "Dölj avslutade trådar i @-omnämnanden",
   "2407d5d61e7f7206": "Inmatningsfält med formaterad text",
   "64b8fd2c284c3137": "Kortkommando för att skicka",
   "6163f91bddf474ae": "Beteende för uppföljningar",
@@ -9755,8 +9749,8 @@
   "147e9953f6fc550d": "Återställ kortkommando för att skicka till standard",
   "4a1201bd18283940": "Ta även med färdigheter i kommandomenyn /. Färdigheter visas alltid när du skriver $.",
   "950712602a01125d": "Återställ färdigheter i snedstrecksmenyn till standard",
-  "891708ea35b4e37f": "Only suggest active threads when you type @ in the composer.",
-  "e6c243c96a823928": "Reset settled thread mentions to default",
+  "891708ea35b4e37f": "Föreslå bara aktiva trådar när du skriver @ i meddelandefältet.",
+  "e6c243c96a823928": "Återställ trådomnämnanden till standard",
   "55534387a88d7a44": "Uppföljningar",
   "b6df5cfc57208da7": "Köa uppföljningar medan agenten körs eller styr om den pågående körningen. Tryck {modifier} + Enter för promptar på en rad eller {modifier} + Shift + Enter för promptar på flera rader för att göra tvärtom för ett meddelande.",
   "16bac0f3fbdeb4b7": "Köa uppföljningar medan agenten körs eller styr om den pågående körningen. Tryck {modifier} + Shift + Enter för att göra tvärtom för ett meddelande.",
@@ -11474,7 +11468,7 @@
   "6a6b1c244a1a0476": "staplad delad sida vid sida enhetlig inline vy",
   "7d0ab4cf50686d31": "proaktiv öppna automatiskt diff pull request pr högerpanel agent slutförd",
   "5256dd2ed3a24332": "kommandomeny dollar $ snedstreck /",
-  "2b05d852e982784e": "composer autocomplete suggestions settled threads mention @",
+  "2b05d852e982784e": "meddelandefält automatisk komplettering förslag avslutade trådar omnämnande @",
   "ade91c8927c48175": "inmatningsfält formaterad text tiptap fet kursiv markdown formaterad wysiwyg",
   "34d74827c2a8b009": "enter retur command ctrl flera rader prompt ny rad inmatningsfält",
   "9d1013084c46ecce": "kö styr om pågående omgång skicka standardbeteende inmatningsfält",

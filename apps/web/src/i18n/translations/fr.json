@@ -3026,10 +3026,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "sur l’ordinateur qui a ouvert cette page"
-      ]
+      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3041,10 +3038,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quiconque l’exécute obtient cet accès"
-      ]
+      "c": [" ", "· quiconque l’exécute obtient cet accès"]
     }
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",
@@ -9693,7 +9687,7 @@
   "04fb467bba7698e2": "Modifications d’espaces dans le diff",
   "71d047b3f6ea9497": "Ouvrir proactivement les panneaux des pull requests et des modifications",
   "4b46043fd3700c17": "Afficher les skills dans le menu slash",
-  "ccfefff2dafd9f9a": "Hide settled threads from @ mentions",
+  "ccfefff2dafd9f9a": "Masquer les fils terminés dans les mentions @",
   "2407d5d61e7f7206": "Zone de saisie en texte enrichi",
   "64b8fd2c284c3137": "Raccourci d’envoi",
   "6163f91bddf474ae": "Comportement des relances",
@@ -9747,8 +9741,8 @@
   "147e9953f6fc550d": "Réinitialiser le raccourci d’envoi à la valeur par défaut",
   "4a1201bd18283940": "Inclut aussi les skills dans le menu de commandes /. Les skills apparaissent toujours quand vous tapez $.",
   "950712602a01125d": "Réinitialiser les skills dans le menu slash à la valeur par défaut",
-  "891708ea35b4e37f": "Only suggest active threads when you type @ in the composer.",
-  "e6c243c96a823928": "Reset settled thread mentions to default",
+  "891708ea35b4e37f": "Suggérer uniquement les fils actifs lorsque vous saisissez @ dans le champ de rédaction.",
+  "e6c243c96a823928": "Rétablir les mentions de fils par défaut",
   "55534387a88d7a44": "Relances",
   "b6df5cfc57208da7": "Mettez les relances en file d’attente pendant que l’agent travaille, ou réorientez l’exécution en cours. Appuyez sur {modifier} + Enter pour les prompts sur une ligne ou sur {modifier} + Shift + Enter pour les prompts multilignes afin de faire l’inverse pour un message.",
   "16bac0f3fbdeb4b7": "Mettez les relances en file d’attente pendant que l’agent travaille, ou réorientez l’exécution en cours. Appuyez sur {modifier} + Shift + Enter pour faire l’inverse pour un message.",
@@ -11466,7 +11460,7 @@
   "6a6b1c244a1a0476": "empilé scindé côte à côte unifié vue en ligne",
   "7d0ab4cf50686d31": "proactif ouvrir automatiquement diff pull request pr panneau de droite agent fin",
   "5256dd2ed3a24332": "commande menu dollar $ slash /",
-  "2b05d852e982784e": "composer autocomplete suggestions settled threads mention @",
+  "2b05d852e982784e": "rédaction saisie automatique suggestions fils terminés mention @",
   "ade91c8927c48175": "zone de saisie texte enrichi tiptap gras italique markdown stylé wysiwyg",
   "34d74827c2a8b009": "entrée retour commande ctrl multiligne prompt nouvelle ligne zone de saisie",
   "9d1013084c46ecce": "file d’attente réorienter tour en cours envoyer comportement par défaut zone de saisie",

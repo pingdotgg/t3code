@@ -3027,10 +3027,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "auf dem Computer, der diese Seite geöffnet hat"
-      ]
+      "c": [" ", "auf dem Computer, der diese Seite geöffnet hat"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3042,10 +3039,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· wer es ausführt, erhält diesen Zugriff"
-      ]
+      "c": [" ", "· wer es ausführt, erhält diesen Zugriff"]
     }
   ],
   "c54cc9c75db9dc58": "Genehmige nur eine Anmeldung, die du gerade selbst gestartet hast.",
@@ -9694,7 +9688,7 @@
   "04fb467bba7698e2": "Leerzeichenänderungen im Diff",
   "71d047b3f6ea9497": "Pull-Request- und Änderungs-Panels proaktiv öffnen",
   "4b46043fd3700c17": "Skills im Slash-Menü anzeigen",
-  "ccfefff2dafd9f9a": "Hide settled threads from @ mentions",
+  "ccfefff2dafd9f9a": "Erledigte Threads bei @-Erwähnungen ausblenden",
   "2407d5d61e7f7206": "Rich-Text-Eingabefeld",
   "64b8fd2c284c3137": "Tastenkürzel zum Senden",
   "6163f91bddf474ae": "Verhalten bei Folgenachrichten",
@@ -9748,8 +9742,8 @@
   "147e9953f6fc550d": "Tastenkürzel zum Senden auf Standard zurücksetzen",
   "4a1201bd18283940": "Skills auch im /-Befehlsmenü anzeigen. Skills erscheinen immer, wenn du $ tippst.",
   "950712602a01125d": "Skills im Slash-Menü auf Standard zurücksetzen",
-  "891708ea35b4e37f": "Only suggest active threads when you type @ in the composer.",
-  "e6c243c96a823928": "Reset settled thread mentions to default",
+  "891708ea35b4e37f": "Beim Eingeben von @ im Eingabefeld nur aktive Threads vorschlagen.",
+  "e6c243c96a823928": "Thread-Erwähnungen auf den Standard zurücksetzen",
   "55534387a88d7a44": "Folgenachrichten",
   "b6df5cfc57208da7": "Folgenachrichten einreihen, während der Agent läuft, oder die aktuelle Runde umlenken. Drücke {modifier} + Enter bei einzeiligen Prompts oder {modifier} + Shift + Enter bei mehrzeiligen Prompts, um für eine Nachricht das Gegenteil zu tun.",
   "16bac0f3fbdeb4b7": "Folgenachrichten einreihen, während der Agent läuft, oder die aktuelle Runde umlenken. Drücke {modifier} + Shift + Enter, um für eine Nachricht das Gegenteil zu tun.",
@@ -11468,7 +11462,7 @@
   "6a6b1c244a1a0476": "untereinander nebeneinander geteilt vereinheitlicht inline ansicht",
   "7d0ab4cf50686d31": "proaktiv automatisch öffnen diff pull request pr rechter bereich agent abschluss",
   "5256dd2ed3a24332": "befehlsmenü dollar $ slash /",
-  "2b05d852e982784e": "composer autocomplete suggestions settled threads mention @",
+  "2b05d852e982784e": "Eingabefeld Autovervollständigung Vorschläge erledigte Threads Erwähnung @",
   "ade91c8927c48175": "eingabefeld rich text tiptap fett kursiv markdown formatiert wysiwyg",
   "34d74827c2a8b009": "enter return befehl strg ctrl mehrzeilig prompt neue zeile eingabefeld",
   "9d1013084c46ecce": "warteschlange einreihen umlenken laufende runde senden standardverhalten eingabefeld",
