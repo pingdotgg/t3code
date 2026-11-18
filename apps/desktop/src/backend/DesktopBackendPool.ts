@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import { msg } from "gt-i18n";
 
 import * as FileSystem from "effect/FileSystem";
 import { HttpClient } from "effect/http";
@@ -35,6 +36,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import { m } from "../i18n/messages.ts";
 
 const { logWarning: logBackendPoolWarning } =
   DesktopObservability.makeComponentLogger("desktop-backend-pool");
@@ -190,8 +192,8 @@ export const layer = Layer.effect(
             { reason },
           );
           yield* electronDialog.showErrorBox(
-            "WSL backend is still unavailable",
-            `${reason}\n\nT3 Code will use the Windows backend for this launch and retry WSL the next time the app starts.`,
+            m(msg("WSL backend is still unavailable")),
+            `${reason}\n\n${m(msg("T3 Code will use the Windows backend for this launch and retry WSL the next time the app starts."))}`,
           );
           yield* appSettings.applyWslWindowsFallbackInMemory;
           return true;
@@ -201,8 +203,8 @@ export const layer = Layer.effect(
           reason,
         });
         yield* electronDialog.showErrorBox(
-          "WSL backend couldn't start",
-          `${reason}\n\nFalling back to the Windows backend so T3 Code can open. Re-enable the WSL backend from Settings > Sharing & access once the WSL distro is fixed.`,
+          m(msg("WSL backend couldn't start")),
+          `${reason}\n\n${m(msg("Falling back to the Windows backend so T3 Code can open. Re-enable the WSL backend from Settings > Sharing & access once the WSL distro is fixed."))}`,
         );
         // Clear wslOnly too so enabling WSL cannot restore a failed mode.
         // Keep the in-memory fallback if persistence fails.
@@ -250,7 +252,7 @@ export const layer = Layer.effect(
         DesktopHomeOwner.readLiveHomeOwner().pipe(
           Effect.flatMap((owner) =>
             electronDialog.showErrorBox(
-              "This T3 home is unavailable",
+              m(msg("This T3 home is unavailable")),
               DesktopHomeOwner.homeOwnedMessage(owner),
             ),
           ),
