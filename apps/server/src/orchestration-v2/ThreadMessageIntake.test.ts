@@ -10,6 +10,7 @@ import {
   EventId,
   GuestMessageId,
   MessageId,
+  ProjectId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -34,7 +35,7 @@ import {
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { dispatchCommand } from "./ThreadMessageIntake.ts";
+import { dispatchCommand, sendToThread } from "./ThreadMessageIntake.ts";
 
 const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
@@ -248,6 +249,48 @@ it.effect("releases claimed copies when the command was already rejected", () =>
       ),
     ).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("releases claimed copies when the owner's policy blocks an agent's send", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const threadId = ThreadId.make("thread-blocked");
+    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const result = yield* sendToThread({
+      projectId: ProjectId.make("project-blocked"),
+      commandId: CommandId.make("send-blocked"),
+      threadId,
+      messageId: MessageId.make("message-blocked"),
+      senderThreadId: ThreadId.make("thread-outsider"),
+      text: "hello",
+      attachments: [
+        { type: "image", id: pendingId, name: "screen.png", mimeType: "image/png", sizeBytes: 3 },
+      ],
+      mode: "queue",
+      createdBy: "agent",
+      creationSource: "provider",
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          sendToThread: () =>
+            Effect.fail(
+              new ThreadManagementService.ThreadManagementSenderBlockedError({ threadId }),
+            ),
+        }),
+      ),
+      Effect.result,
+    );
+    expect(result._tag).toBe("Failure");
+    expect(
+      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+        entry.startsWith("thread-blocked-"),
+      ),
+    ).toEqual([]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
 

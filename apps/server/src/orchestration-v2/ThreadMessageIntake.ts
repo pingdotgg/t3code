@@ -34,6 +34,8 @@ function dispatchWasNotAccepted(
     case "OrchestratorRuntimeModeAboveCeilingError":
     case "ThreadManagementProviderInstanceDisabledError":
     case "ThreadManagementWorktreeRestoreError":
+    case "ThreadManagementSenderBlockedError":
+    case "ThreadManagementPolicyUnavailableError":
       return true;
     default:
       return false;
