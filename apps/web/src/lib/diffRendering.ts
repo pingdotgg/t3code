@@ -16,6 +16,7 @@ export type DiffThemeName = string;
 export type DiffThemeNames = Readonly<Record<"light" | "dark", DiffThemeName>>;
 
 // Highlights catalog names; each palette loads on first use.
+/* oxlint-disable t3code/no-untranslated-copy -- theme names are proper nouns. */
 export const CODE_THEME_OPTIONS = {
   dark: [
     { id: "poimandres", label: "Poimandres" },
@@ -52,6 +53,7 @@ export const CODE_THEME_OPTIONS = {
     { id: "everforest-light", label: "Everforest Light" },
   ],
 } as const satisfies Record<"light" | "dark", ReadonlyArray<{ id: string; label: string }>>;
+/* oxlint-enable t3code/no-untranslated-copy */
 
 function offeredThemeName(appearance: "light" | "dark", preference: string): DiffThemeName {
   return CODE_THEME_OPTIONS[appearance].some((option) => option.id === preference)

@@ -95,13 +95,13 @@ function CodeThemeSettingsRow() {
   const halves = [
     {
       appearance: "light",
-      label: gt("Light", { $context: "light appearance" }),
+      label: gt("Light", { $context: "appearance" }),
       ariaLabel: gt("Light code theme"),
       value: settings.codeThemeLight,
     },
     {
       appearance: "dark",
-      label: gt("Dark", { $context: "dark appearance" }),
+      label: gt("Dark", { $context: "appearance" }),
       ariaLabel: gt("Dark code theme"),
       value: settings.codeThemeDark,
     },
@@ -143,11 +143,7 @@ function CodeThemeSettingsRow() {
                   );
                 }}
               >
-                <SelectTrigger
-                  size="sm"
-                  className="w-full min-w-0 sm:w-40"
-                  aria-label={ariaLabel}
-                >
+                <SelectTrigger size="sm" className="w-full min-w-0 sm:w-40" aria-label={ariaLabel}>
                   <span className="text-muted-foreground">{label}</span>
                   <SelectValue>{selected?.label ?? gt("Default")}</SelectValue>
                 </SelectTrigger>
