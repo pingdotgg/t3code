@@ -1003,7 +1003,7 @@ const layerMakeServer = Layer.unwrap(
                     : "Tailscale Serve left off; its current routes could not be read",
                   { localPort, servePort: config.tailscaleServePort },
                 );
-                return { route, recover: false };
+                return { route, recover: true };
               }
 
               // The root-holder check permits reclaiming a dead stale root. Other handlers on the
@@ -1130,16 +1130,28 @@ const layerMakeServer = Layer.unwrap(
                     ),
                     Effect.flatMap((holder) =>
                       holder === "dead"
-                        ? ensureTailscaleServe({
-                            localPort: configured.route.localPort,
+                        ? readTailscaleServeRoutesBlocking({
                             servePort: configured.route.servePort,
-                            localHost: configured.route.urlHost,
+                            target: {
+                              host: configured.route.localHost,
+                              port: configured.route.localPort,
+                            },
                           }).pipe(
-                            Effect.andThen(
-                              Effect.logInfo("Tailscale Serve repaired", {
-                                localPort: configured.route.localPort,
-                                servePort: configured.route.servePort,
-                              }),
+                            Effect.flatMap((routes) =>
+                              routes.some((route) => route.mount !== "/")
+                                ? Effect.void
+                                : ensureTailscaleServe({
+                                    localPort: configured.route.localPort,
+                                    servePort: configured.route.servePort,
+                                    localHost: configured.route.urlHost,
+                                  }).pipe(
+                                    Effect.andThen(
+                                      Effect.logInfo("Tailscale Serve repaired", {
+                                        localPort: configured.route.localPort,
+                                        servePort: configured.route.servePort,
+                                      }),
+                                    ),
+                                  ),
                             ),
                           )
                         : Effect.void,
