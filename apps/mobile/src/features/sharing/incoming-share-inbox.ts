@@ -1,4 +1,7 @@
 import type { SharePayload } from "expo-sharing";
+import { msg } from "gt-react-native";
+
+import { m } from "../../i18n/messages";
 
 import { SerializedAsyncQueue } from "../../lib/serialized-async-queue";
 import {
@@ -103,7 +106,7 @@ export class IncomingShareInbox {
         await this.cleanup(built.cleanup);
         this.clearNativePayloads();
         throw new Error(
-          draft.warnings[0] ?? "The shared content is not supported by the composer.",
+          draft.warnings[0] ?? m(msg("The shared content is not supported by the composer.")),
         );
       }
 
@@ -138,14 +141,16 @@ export class IncomingShareInbox {
       const persisted = await this.dependencies.loadDrafts();
       const target = persisted.find((draft) => draft.id === shareId);
       if (!target) {
-        throw new Error("The shared content is no longer available.");
+        throw new Error(m(msg("The shared content is no longer available.")));
       }
       if (target.destination) {
         if (
           target.destination.environmentId !== destination.environmentId ||
           target.destination.projectId !== destination.projectId
         ) {
-          throw new Error("The shared content is already reserved for another project draft.");
+          throw new Error(
+            m(msg("The shared content is already reserved for another project draft.")),
+          );
         }
         return sortAndDedupeIncomingShares(persisted);
       }
@@ -175,7 +180,9 @@ export class IncomingShareInbox {
         target.destination.environmentId !== expectedDestination.environmentId ||
         target.destination.projectId !== expectedDestination.projectId
       ) {
-        throw new Error("The shared content reservation changed before it could be released.");
+        throw new Error(
+          m(msg("The shared content reservation changed before it could be released.")),
+        );
       }
 
       const { destination: _destination, ...unreserved } = target;

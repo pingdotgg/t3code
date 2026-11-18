@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type {
@@ -6,8 +7,10 @@ import type {
   ProjectId,
   ScopedProjectRef,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { create } from "zustand";
 
+import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
 import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
@@ -44,7 +47,7 @@ export interface AddProjectToMachineInput {
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]): string {
   const error = squashAtomCommandFailure(result);
-  return error instanceof Error ? error.message : "An error occurred.";
+  return thrownErrorMessage(error, m) ?? m(msg("An error occurred."));
 }
 
 /**
@@ -74,7 +77,12 @@ function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
 
 export type ProjectFileCopy =
   | { readonly phase: "copying" }
-  | { readonly phase: "failed"; readonly title: string; readonly failures: ReadonlyArray<string> };
+  | {
+      readonly phase: "failed";
+      /** A `msg()`, resolved where it is shown so it follows the UI language. */
+      readonly title: string;
+      readonly failures: ReadonlyArray<string>;
+    };
 
 /** Ignored-file copies still owed to a cloned project, keyed by its scoped project key. */
 const useFileCopies = create<{ copies: Readonly<Record<string, ProjectFileCopy>> }>(() => ({
@@ -162,7 +170,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
           ?.environment.capabilities.privateFileWrites !== true
       ) {
         failed.push(
-          `${read.relativePath}: The destination cannot safely copy files with POSIX permissions.`,
+          `${read.relativePath}: ${m(msg("The destination cannot safely copy files with POSIX permissions."))}`,
         );
         continue;
       }
@@ -191,7 +199,9 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
           (written.value.mode & ~read.mode) !== 0 ||
           (read.mode & ~written.value.mode & 0o100) !== 0)
       )
-        failed.push(`${read.relativePath}: The destination could not preserve file permissions.`);
+        failed.push(
+          `${read.relativePath}: ${m(msg("The destination could not preserve file permissions."))}`,
+        );
     }
     setFileCopy(
       copyKey,
@@ -199,7 +209,10 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         ? null
         : {
             phase: "failed",
-            title: `Could not copy ${failed.length} ${failed.length === 1 ? "file" : "files"} to ${input.target.label}`,
+            title: msg(
+              "Could not copy {count, plural, one {{count} file} other {{count} files}} to {target}",
+              { count: failed.length, target: input.target.label },
+            ),
             failures: failed,
           },
     );

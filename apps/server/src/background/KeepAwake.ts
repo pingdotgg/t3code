@@ -1,5 +1,6 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -17,14 +18,38 @@ import * as Settings from "../serverSettings.ts";
 // Bridges gaps between back-to-back runs, so a long-idle machine does not sleep mid-queue.
 const RELEASE_GRACE = Duration.seconds(60);
 
+// ES_CONTINUOUS | ES_SYSTEM_REQUIRED, held by the calling thread until the script ends.
+const WINDOWS_HOLD_SCRIPT = `$t = Add-Type -Name Power -Namespace T3 -PassThru -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; [void]$t::SetThreadExecutionState([uint32]2147483649)`;
+
 /** Each command holds its inhibitor until it exits, and exits on its own if the server dies. */
 function inhibitorCommand(
   platform: NodeJS.Platform,
   serverPid: number,
-): { readonly command: string; readonly args: ReadonlyArray<string> } | undefined {
+  isWsl: boolean,
+):
+  | {
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+      readonly stdin: "ignore" | "pipe";
+    }
+  | undefined {
+  // logind inside the WSL VM cannot block Windows sleep. Windows cannot wait on a Linux pid, so
+  // the hold ends when its stdin pipe closes, which also happens if the server dies.
+  if (isWsl) {
+    return {
+      command: "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `${WINDOWS_HOLD_SCRIPT}; [void][Console]::In.ReadToEnd()`,
+      ],
+      stdin: "pipe",
+    };
+  }
   switch (platform) {
     case "darwin":
-      return { command: "caffeinate", args: ["-i", "-w", String(serverPid)] };
+      return { command: "caffeinate", args: ["-i", "-w", String(serverPid)], stdin: "ignore" };
     case "linux":
       return {
         command: "systemd-inhibit",
@@ -38,6 +63,7 @@ function inhibitorCommand(
           "-f",
           "/dev/null",
         ],
+        stdin: "ignore",
       };
     case "win32":
       return {
@@ -46,9 +72,9 @@ function inhibitorCommand(
           "-NoProfile",
           "-NonInteractive",
           "-Command",
-          // ES_CONTINUOUS | ES_SYSTEM_REQUIRED, held by this thread until Wait-Process returns.
-          `$t = Add-Type -Name Power -Namespace T3 -PassThru -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; [void]$t::SetThreadExecutionState([uint32]2147483649); Wait-Process -Id ${serverPid}`,
+          `${WINDOWS_HOLD_SCRIPT}; Wait-Process -Id ${serverPid}`,
         ],
+        stdin: "ignore",
       };
     default:
       return undefined;
@@ -96,7 +122,16 @@ class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExit
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const command = inhibitorCommand(yield* HostProcess.Platform, process.pid);
+    const platform = yield* HostProcess.Platform;
+    const fileSystem = yield* FileSystem.FileSystem;
+    // Services started by systemd lack WSL_DISTRO_NAME and WSL_INTEROP; the kernel release does not.
+    const isWsl =
+      platform === "linux" &&
+      (yield* fileSystem.readFileString("/proc/sys/kernel/osrelease").pipe(
+        Effect.map((release) => release.toLowerCase().includes("microsoft")),
+        Effect.orElseSucceed(() => false),
+      ));
+    const command = inhibitorCommand(platform, process.pid, isWsl);
     if (command === undefined) return;
     const settings = yield* Settings.ServerSettingsService;
     const events = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -158,7 +193,7 @@ export const layer = Layer.effectDiscard(
         ChildProcess.make(command.command, command.args, {
           detached: false,
           shell: false,
-          stdin: "ignore",
+          stdin: command.stdin,
           stdout: "ignore",
           stderr: "ignore",
         }),

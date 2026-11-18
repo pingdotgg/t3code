@@ -106,7 +106,7 @@ function resolveSpawnExecutableWithNode(
   }
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
-    const normalizedPathEntry = stripWrappingQuotes(trimPathEntry(pathEntry, platform));
+    const normalizedPathEntry = normalizePathEntry(pathEntry, platform);
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
@@ -278,6 +278,20 @@ export function buildEnvironmentCaptureCommand(
     : command;
 }
 
+// Process first so profile prepends win; User and Machine add dirs missing from the launch snapshot.
+export function windowsEnvironmentValueCommand(name: string): string {
+  if (name === "PATH") {
+    return (
+      "$value = (@(" +
+      "[Environment]::GetEnvironmentVariable('PATH','Process')," +
+      "[Environment]::GetEnvironmentVariable('PATH','Machine')," +
+      "[Environment]::GetEnvironmentVariable('PATH','User')" +
+      ") | Where-Object { $_ }) -join ';'"
+    );
+  }
+  return `$value = [Environment]::GetEnvironmentVariable('${name}')`;
+}
+
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
   return [
     "$ErrorActionPreference = 'Stop'",
@@ -288,7 +302,7 @@ function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): st
 
       return [
         `Write-Output '${envCaptureStart(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        windowsEnvironmentValueCommand(name),
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${envCaptureEnd(name)}'`,
       ];
@@ -439,12 +453,13 @@ export const readEnvironmentFromWindowsShell = Effect.fn("shell.readEnvironmentF
   },
 );
 
-function stripWrappingQuotes(value: string): string {
-  return value.replace(/^"+|"+$/g, "");
-}
-
 function trimPathEntry(entry: string, platform: NodeJS.Platform): string {
   return platform === "win32" ? entry.trim() : entry;
+}
+
+// POSIX PATH entries are literal: whitespace and quotes are part of the directory name.
+function normalizePathEntry(entry: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? entry.trim().replace(/^"+|"+$/g, "") : entry;
 }
 
 function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
@@ -452,7 +467,7 @@ function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
 }
 
 function normalizePathEntryForComparison(entry: string, platform: NodeJS.Platform): string {
-  const normalized = stripWrappingQuotes(trimPathEntry(entry, platform));
+  const normalized = normalizePathEntry(entry, platform);
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
@@ -661,7 +676,7 @@ const findOnPath = Effect.fnUntraced(function* (
   const pathEntries: string[] = [];
   const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
-    const pathEntry = stripWrappingQuotes(trimPathEntry(entry, platform));
+    const pathEntry = normalizePathEntry(entry, platform);
     if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
 
     seenPathEntries.add(pathEntry);

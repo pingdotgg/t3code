@@ -4,6 +4,7 @@ import type {
 } from "../orchestration-v2/ProjectionStore.ts";
 import {
   CommandId,
+  type EnvironmentId,
   OrchestratorMcpFailure,
   type ProjectId,
   type ProviderInstanceId,
@@ -12,6 +13,12 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import {
+  hasThreadLinks,
+  parseThreadLinkHref,
+  threadLinkCandidates,
+  threadLinkRefs,
+} from "@t3tools/shared/threadLinks";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
@@ -21,11 +28,36 @@ import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes
 import { fencingLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
+const delegatedTaskPrefix = "thread:delegated-task:";
+
+const suggestedThreadId = (threadId: ThreadId) => {
+  if (!threadId.startsWith(delegatedTaskPrefix)) return ThreadId.make(`mcp:${threadId}`);
+  const rest = threadId.slice(delegatedTaskPrefix.length);
+  // encodeURIComponent throws on lone surrogates, which a JSON string can carry.
+  if (!rest.isWellFormed()) return null;
+  const encoded = encodeURIComponent(rest);
+  return encoded === rest ? null : ThreadId.make(`${delegatedTaskPrefix}${encoded}`);
+};
+
+// A pasted link (bare, Markdown, or hosted) names its thread; only this environment's can be read here.
+const candidateThreadIds = (threadId: ThreadId, environmentId: EnvironmentId) => {
+  if (!hasThreadLinks(threadId)) {
+    const suggested = suggestedThreadId(threadId);
+    return suggested === null ? [] : [suggested];
+  }
+  const link = parseThreadLinkHref(threadId);
+  const refs =
+    link === null
+      ? threadLinkRefs(threadId, environmentId)
+      : threadLinkCandidates(link, environmentId);
+  return refs.filter((ref) => ref.environmentId === environmentId).map((ref) => ref.threadId);
+};
+
 /**
- * Threads an agent starts over MCP are `mcp:<uuid>`, and agents often paste the
- * bare uuid. The id is never rewritten, so permission checks keyed on it still
- * hold; the miss only names a live thread the caller could read by its full id.
- * Ids from another machine miss here too. The link hint is static: listing links probes peers.
+ * Agents paste bare uuids for `mcp:<uuid>` threads, unencoded delegated-task ids, and thread links.
+ * The id is never rewritten, so permission checks keyed on it still hold; the miss
+ * only names a live thread the caller could read by its full id. Ids from another
+ * machine miss here too. The link hint is static: listing links probes peers.
  */
 export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")(function* (
   threads: Pick<ThreadManagement.ThreadManagementService["Service"], "getThreadShell">,
@@ -33,10 +65,21 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
   threadId: ThreadId,
   message: string,
 ) {
-  const prefixed = ThreadId.make(`mcp:${threadId}`);
-  const shell = yield* threads.getThreadShell(prefixed).pipe(Effect.orElseSucceed(() => null));
-  const mcpHint =
-    shell === null || shell.deletedAt !== null ? "" : ` Did you mean \`${prefixed}\`?`;
+  let suggested: ThreadId | null = null;
+  for (const candidate of candidateThreadIds(threadId, scope.environmentId)) {
+    const shell = yield* threads.getThreadShell(candidate).pipe(Effect.orElseSucceed(() => null));
+    if (shell !== null && shell.deletedAt === null) {
+      suggested = candidate;
+      break;
+    }
+  }
+  if (suggested !== null && hasThreadLinks(threadId)) {
+    return yield* new OrchestratorMcpFailure({
+      code: "thread_not_found",
+      message: `\`${threadId}\` is a thread link, not a thread id. Pass \`${suggested}\` instead.`,
+    });
+  }
+  const mcpHint = suggested === null ? "" : ` Did you mean \`${suggested}\`?`;
   const caller =
     scope.thread === undefined
       ? null
@@ -130,11 +173,18 @@ export const loadCaller = Effect.fn("mcp.loadCaller")(function* () {
 
 export const assertTargetWithinLimits = (
   limits: CallerLimits,
-  target: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },
+  target: Pick<OrchestrationV2ThreadShell, "id" | "runtimeMode" | "interactionMode">,
 ) =>
   resolveRuntimeMode(limits.runtimeMode, target.runtimeMode).pipe(
     Effect.andThen(resolveInteractionMode(limits.interactionMode, target.interactionMode)),
     Effect.asVoid,
+    Effect.mapError(
+      (error) =>
+        new OrchestratorMcpFailure({
+          code: error.code,
+          message: `Thread "${target.id}" runs in ${target.runtimeMode}/${target.interactionMode}, above this caller's ${limits.runtimeMode}/${limits.interactionMode} limit. For linked calls, this limit is also capped by the link's approved access. This call does not create an approval request. Have the user act directly in the target thread through an authorized client.`,
+        }),
+    ),
   );
 
 /** Background subagents retain credentials until provider exit; archived threads and other instances cannot act. */

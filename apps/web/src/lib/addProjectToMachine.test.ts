@@ -1,5 +1,6 @@
 import type { StateCreator } from "zustand/vanilla";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
@@ -195,7 +196,10 @@ it.each([
       failed
         ? {
             phase: "failed",
-            title: "Could not copy 1 file to Other machine",
+            title: msg(
+              "Could not copy {count, plural, one {{count} file} other {{count} files}} to {target}",
+              { count: 1, target: target.label },
+            ),
             failures: [
               blocked
                 ? ".env: The destination cannot safely copy files with POSIX permissions."
