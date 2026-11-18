@@ -1,4 +1,7 @@
 import { parse, type ParseError } from "jsonc-parser";
+import { msg } from "gt-react";
+
+import { m } from "./i18n/messages";
 
 import {
   createVividThemeColors,
@@ -7,6 +10,7 @@ import {
   isReservedThemeId,
   parseThemeFile,
   readableThemeColorOn,
+  renameTheme,
   themeColorToHex,
   themeIdFromName,
   THEME_FILE_VERSION,
@@ -138,7 +142,7 @@ export function isVsCodeThemeFile(value: unknown): boolean {
 export function parseThemeImport(source: string): ThemeDefinition {
   const errors: ParseError[] = [];
   const value: unknown = parse(source, errors, { allowTrailingComma: true });
-  if (errors.length > 0) throw new Error("That theme file is not valid JSON.");
+  if (errors.length > 0) throw new Error(m(msg("That theme file is not valid JSON.")));
   return isVsCodeThemeFile(value)
     ? parseVsCodeThemeFile(value)
     : parseThemeFile(JSON.parse(source));
@@ -167,11 +171,11 @@ function resolveName(value: Record<string, unknown>): string {
     const humanized = humanizeThemeName(candidate);
     if (humanized.length > 0) return humanized.slice(0, 48);
   }
-  return "VS Code theme";
+  return m(msg("VS Code theme"));
 }
 
 export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
-  if (!isRecord(value)) throw new Error("Theme files must contain a JSON object.");
+  if (!isRecord(value)) throw new Error(m(msg("Theme files must contain a JSON object.")));
   const colors = isRecord(value.colors) ? value.colors : {};
 
   const pick = (...keys: ReadonlyArray<string>): VsCodeRgba | null => {
@@ -189,7 +193,11 @@ export function parseVsCodeThemeFile(value: unknown): ThemeDefinition {
   const canvasColor = pick("editor.background", "editorPane.background");
   if (!canvasColor) {
     throw new Error(
-      'That VS Code theme has no "editor.background" color, so there is nothing to build a palette from.',
+      m(
+        msg(
+          'That VS Code theme has no "editor.background" color, so there is nothing to build a palette from.',
+        ),
+      ),
     );
   }
   const canvas = { r: canvasColor.r, g: canvasColor.g, b: canvasColor.b };
@@ -412,17 +420,27 @@ export function pairVsCodeThemes(
 
   const paired: Array<{ theme: ThemeDefinition; order: number }> = [];
   for (const [key, group] of groups) {
-    if (group.light.length === 1 && group.dark.length === 1) {
+    const [light] = group.light;
+    const [dark] = group.dark;
+    // A theme carries one stylesheet for both modes, so conflicting CSS stays as two themes.
+    if (
+      light &&
+      dark &&
+      group.light.length === 1 &&
+      group.dark.length === 1 &&
+      (!light.css || !dark.css || light.css === dark.css)
+    ) {
       try {
         paired.push({
           order: group.order,
           theme: parseThemeFile({
             version: THEME_FILE_VERSION,
-            ...(options?.pairedId ? { id: options.pairedId(group.light[0]!, group.dark[0]!) } : {}),
+            ...(options?.pairedId ? { id: options.pairedId(light, dark) } : {}),
             name: key,
             appearance: "light",
-            colors: group.light[0]!.colors,
-            variants: { dark: group.dark[0]!.colors },
+            colors: light.colors,
+            variants: { dark: dark.colors },
+            css: light.css ?? dark.css,
           }),
         });
         continue;
@@ -441,14 +459,7 @@ export function resolveThemeLabelCollisions(
 ): ReadonlyArray<ThemeDefinition> {
   const rename = (theme: ThemeDefinition, name: string): ThemeDefinition | null => {
     try {
-      return parseThemeFile({
-        version: THEME_FILE_VERSION,
-        name: name.slice(0, 48),
-        appearance: theme.appearance,
-        colors: theme.colors,
-        ...(theme.variants ? { variants: theme.variants } : {}),
-        ...(theme.managed ? { managed: true } : {}),
-      });
+      return renameTheme(theme, name.slice(0, 48));
     } catch {
       return null;
     }

@@ -50,9 +50,13 @@ export function ThreadContextDivider(props: {
   );
 }
 
-export interface ThreadLifecycleEvent {
-  readonly state: "snoozed" | "settled" | "woke";
+export interface ThreadStatusLineModel {
+  readonly key: string;
+  readonly icon: AppSymbolName;
   readonly label: string;
+  readonly accessibilityLabel?: string;
+  /** Tapping the label opens the state's detail. */
+  readonly onOpen?: () => void;
   readonly action: {
     readonly label: string;
     readonly accessibilityLabel: string;
@@ -61,23 +65,42 @@ export interface ThreadLifecycleEvent {
   };
 }
 
-/** Closes the feed while the thread is snoozed, settled, or just woke. Left-aligned, as on web. */
-export function ThreadLifecycleLine(props: {
-  readonly event: ThreadLifecycleEvent;
+/** A thread state that closes the feed with its one action, left-aligned as on web. */
+export function ThreadStatusLine(props: {
+  readonly line: ThreadStatusLineModel;
   readonly iconColor: ColorValue;
 }) {
-  const { action } = props.event;
+  const { line } = props;
+  const { action } = line;
+  const body = (
+    <>
+      <SymbolView name={line.icon} size={13} tintColor={props.iconColor} type="monochrome" />
+      <Text className="shrink font-t3-medium text-xs text-foreground-muted" numberOfLines={1}>
+        {line.label}
+      </Text>
+    </>
+  );
   return (
     <View className="mb-3 flex-row items-center gap-1.5 px-1 py-1">
-      <SymbolView
-        name={props.event.state === "settled" ? "checkmark.circle" : "alarm"}
-        size={13}
-        tintColor={props.iconColor}
-        type="monochrome"
-      />
-      <Text className="shrink font-t3-medium text-xs text-foreground-muted" numberOfLines={1}>
-        {props.event.label}
-      </Text>
+      {line.onOpen ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={line.accessibilityLabel ?? line.label}
+          onPress={line.onOpen}
+          hitSlop={8}
+          className="shrink flex-row items-center gap-1.5 active:opacity-70"
+        >
+          {body}
+        </Pressable>
+      ) : (
+        <View
+          accessible
+          accessibilityLabel={line.accessibilityLabel ?? line.label}
+          className="shrink flex-row items-center gap-1.5"
+        >
+          {body}
+        </View>
+      )}
       <Text className="text-xs text-foreground-muted">·</Text>
       <Pressable
         accessibilityRole="button"

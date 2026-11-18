@@ -169,9 +169,36 @@ it.each(["cancelled", "expired"] as const)(
     );
     const answer = `Purple, like ${formatInlineContextReference(threadContextReference(reference))}`;
     store.setPrompt({ environmentId, threadId }, "Earlier draft");
-    store.setThreadContexts(questionAttachmentDraftId(environmentId, threadId, request, "first"), [
-      reference,
+    const questionDraft = questionAttachmentDraftId(environmentId, threadId, request, "first");
+    store.setThreadContexts(questionDraft, [reference]);
+    store.addFiles(questionDraft, [
+      {
+        type: "file",
+        id: "notes",
+        name: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 5,
+        file: new File(["notes"], "notes.txt", { type: "text/plain" }),
+      },
     ]);
+    const photo = {
+      type: "image" as const,
+      id: "photo",
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 5,
+      previewUrl: "blob:photo",
+      file: new File(["photo"], "photo.png", { type: "image/png" }),
+    };
+    store.addImages(questionDraft, [photo]);
+    const savedPhoto = {
+      id: "photo",
+      name: "photo.png",
+      mimeType: "image/png",
+      sizeBytes: 5,
+      dataUrl: "data:image/png;base64,cGhvdG8=",
+    };
+    void store.syncPersistedAttachments(questionDraft, [savedPhoto]);
     usePendingUserInputAnswers.setState({
       [userInputDraftKey(environmentId, threadId, request)]: {
         first: { customAnswer: answer },
@@ -185,6 +212,9 @@ it.each(["cancelled", "expired"] as const)(
     expect(store.getComposerDraft({ environmentId, threadId })).toMatchObject({
       prompt: `Earlier draft\n\n${answer}\n\nAlso this`,
       threadContexts: [reference],
+      files: [expect.objectContaining({ name: "notes.txt" })],
+      images: [expect.objectContaining({ id: "photo" })],
+      persistedAttachments: [savedPhoto],
     });
     expect(usePendingUserInputAnswers.getState()).toEqual({});
   },

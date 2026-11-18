@@ -1014,6 +1014,8 @@ export interface GitLabMergeRequestPatch {
   readonly patch: string;
   readonly truncated: boolean;
   readonly rawCount: number;
+  /** Files GitLab sent without their diff because they are too large or collapsed. */
+  readonly withheldPaths: ReadonlyArray<string>;
 }
 
 export function decodeMergeRequestDiffsJson(
@@ -1044,6 +1046,7 @@ export function decodeMergeRequestChangesJson(
 
 function mergeRequestPatch(entries: ReadonlyArray<unknown>): GitLabMergeRequestPatch {
   const sections: string[] = [];
+  const withheldPaths: string[] = [];
   let truncated = false;
   for (const entry of entries) {
     const file = decodeDiffEntry(entry);
@@ -1053,8 +1056,9 @@ function mergeRequestPatch(entries: ReadonlyArray<unknown>): GitLabMergeRequestP
     }
     const value = file.value;
     const hunks = value.diff ?? "";
-    if (hunks.length === 0) {
-      truncated = truncated || value.too_large === true || value.collapsed === true;
+    if (hunks.length === 0 && (value.too_large === true || value.collapsed === true)) {
+      truncated = true;
+      withheldPaths.push(value.new_path);
     }
     const { from, to } = diffHeaderPaths(value);
     const header = [
@@ -1078,6 +1082,7 @@ function mergeRequestPatch(entries: ReadonlyArray<unknown>): GitLabMergeRequestP
     patch: sections.join("\n"),
     truncated,
     rawCount: entries.length,
+    withheldPaths,
   };
 }
 
@@ -1298,6 +1303,27 @@ const RawAwardSchema = Schema.Struct({
 });
 
 const decodeAward = Schema.decodeUnknownExit(RawAwardSchema);
+
+type GitLabAward = typeof RawAwardSchema.Type;
+
+/** A page of REST `award_emoji`; a row that cannot be read is skipped. */
+export function decodeAwardListJson(
+  raw: string,
+): Result.Result<ReadonlyArray<GitLabAward>, DecodeFailure> {
+  return Result.map(decodeUnknownList(raw), (rows) =>
+    rows.flatMap((entry) => {
+      const award = decodeAward(entry);
+      return Exit.isSuccess(award) ? [award.value] : [];
+    }),
+  );
+}
+
+export function awardReactions(
+  awards: ReadonlyArray<GitLabAward>,
+  viewer: string | null,
+): ReadonlyArray<PullRequestReaction> {
+  return toReactions({ nodes: awards }, viewer);
+}
 
 export function decodeOwnAwardIdJson(
   raw: string,

@@ -332,10 +332,16 @@ describe("composerStripAttachments", () => {
 
   it("keeps media beside a document rather than dropping the whole strip", async () => {
     const { composerStripAttachments } = await import("./composerImages");
-    expect(composerStripAttachments([doc, image, video] as never).map((a) => a.id)).toEqual([
-      "img-1",
-      "vid-1",
-    ]);
+    expect(
+      composerStripAttachments([doc, image, video] as never, () => false).map((a) => a.id),
+    ).toEqual(["img-1", "vid-1"]);
+  });
+
+  it("shows a document whose upload failed, so it can be retried", async () => {
+    const { composerStripAttachments } = await import("./composerImages");
+    expect(
+      composerStripAttachments([doc, image] as never, (a) => a.id === "doc-1").map((a) => a.id),
+    ).toEqual(["doc-1", "img-1"]);
   });
 
   it("keeps oversized document-picked images visible while sending them as files", async () => {
@@ -350,7 +356,7 @@ describe("composerStripAttachments", () => {
       sizeBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1,
     };
 
-    expect(composerStripAttachments([oversizedImage])).toEqual([oversizedImage]);
+    expect(composerStripAttachments([oversizedImage], () => false)).toEqual([oversizedImage]);
     expect(isComposerImageAttachment(oversizedImage)).toBe(false);
   });
 });

@@ -7,9 +7,13 @@ import { assetEnvironment } from "./state/assets";
 import { themeEnvironmentIdAtom } from "./state/primaryEnvironment";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
 import { environmentSession } from "./state/session";
+import { getCustomThemes } from "./themePalette";
 
 const THEME_BACKGROUND_VARIABLE = "--theme-background-image";
+const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000];
 
+// The editor's draft preview replaces the root's theme id, so retries track this instead.
+let appliedThemeId: string | undefined;
 let shownKey: string | null = null;
 let loading: AbortController | null = null;
 let objectUrl: string | null = null;
@@ -53,9 +57,11 @@ async function loadBackground(
  */
 export function applyThemeBackground(themeId: string | undefined): void {
   if (typeof document === "undefined") return;
+  appliedThemeId = themeId;
   const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
+  // A saved theme wins its id over a published one, so the published image is not its.
   const revision =
-    themeId === undefined
+    themeId === undefined || getCustomThemes().some((theme) => theme.id === themeId)
       ? undefined
       : appAtomRegistry.get(themeServerEnvironmentThemesAtom)?.find((theme) => theme.id === themeId)
           ?.background;
@@ -72,25 +78,50 @@ export function applyThemeBackground(themeId: string | undefined): void {
   if (environmentId === null || themeId === undefined || key === null) return;
   const controller = new AbortController();
   loading = controller;
+  let retries = 0;
   const failed = () => {
     if (controller.signal.aborted) return;
-    // Lets the next repaint try again.
-    shownKey = null;
-  };
-  loadBackground(environmentId, themeId, controller.signal).then((url) => {
-    if (controller.signal.aborted) {
-      if (url !== null) URL.revokeObjectURL(url);
+    const delay = RETRY_DELAYS_MS[retries++];
+    if (delay !== undefined) {
+      // Transient HTTP failures may never produce a browser online event.
+      const timer = setTimeout(load, delay);
+      controller.signal.addEventListener("abort", () => clearTimeout(timer), { once: true });
       return;
     }
     loading = null;
-    if (url === null) failed();
-    else show(url);
-  }, failed);
+    // Lets the next repaint or `online` event try again.
+    shownKey = null;
+  };
+  const load = () => {
+    loadBackground(environmentId, themeId, controller.signal).then((url) => {
+      if (controller.signal.aborted) {
+        if (url !== null) URL.revokeObjectURL(url);
+        return;
+      }
+      if (url === null) failed();
+      else {
+        loading = null;
+        show(url);
+      }
+    }, failed);
+  };
+  load();
 }
 
-/** A new image revision does not change the palette, so it does not repaint the theme. */
+/**
+ * A new image revision does not change the palette, so it does not repaint the theme.
+ * Coming back online retries a download that failed; a shown image is left alone.
+ */
 export function startThemeBackground(): () => void {
-  return subscribeAtomChanges(themeServerEnvironmentThemesAtom, () =>
-    applyThemeBackground(document.documentElement.dataset.themeId),
-  );
+  const reapply = () => applyThemeBackground(appliedThemeId);
+  const unsubscribe = subscribeAtomChanges(themeServerEnvironmentThemesAtom, reapply);
+  window.addEventListener("online", reapply);
+  return () => {
+    unsubscribe();
+    window.removeEventListener("online", reapply);
+    loading?.abort();
+    loading = null;
+    shownKey = null;
+    show(null);
+  };
 }

@@ -549,6 +549,23 @@ describe("Android SDK availability", () => {
     }),
   );
 
+  // regression: #38268 an ANDROID_HOME that is not an SDK must not stop detection
+  it.effect("falls back past an ANDROID_HOME that is not an SDK", () =>
+    Effect.gen(function* () {
+      const complete = [
+        "/parent/sdk/platform-tools/adb",
+        "/parent/sdk/emulator/emulator",
+        "/parent/sdk/cmdline-tools/latest/bin/avdmanager",
+      ];
+      for (const environment of [
+        { ANDROID_HOME: "/parent", ANDROID_SDK_ROOT: "/parent/sdk" },
+        { ANDROID_HOME: "/parent", PATH: "/parent/sdk/platform-tools" },
+      ]) {
+        expect(yield* diagnose(complete, environment)).toBeNull();
+      }
+    }),
+  );
+
   it.effect("discovers the standard macOS SDK without ANDROID_HOME", () =>
     Effect.gen(function* () {
       const root = "/test/home/Library/Android/sdk";
