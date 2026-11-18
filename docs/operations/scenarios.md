@@ -46,8 +46,10 @@ adds one fixture for what e2e cannot know about T3 Code:
 - `t3.open(path)` opens the app, already signed in, at a path. `t3.open(thread)` opens it on a
   thread.
 
-State is created through the app's own CLI, so it is real events and works on a base commit
-whose schema differs. New threads default to the replay agent's `showcase` recording: type a
+State is created through the server's own CLI and HTTP API, so it is real events and works on a
+base commit whose database schema differs. Projects go through the API (`/api/projects/mutate`),
+since each CLI call starts a process that takes about 0.7 s; a base older than that endpoint
+cannot run a scenario. New threads default to the replay agent's `showcase` recording: type a
 message and send it. To play something else, add a recording to the
 [replay agent](development.md#replay-provider).
 
@@ -178,8 +180,9 @@ test(
 );
 ```
 
-`t3.project` and `t3.thread` are the same. `t3.open()` installs the dev client for the checkout's
-native fingerprint, loads it from Metro, and pairs it with the scenario's server. `device` is
+`t3.project` and `t3.thread` are the same. The run fetches or builds the dev client for the
+checkout's native fingerprint before it leases a device; `t3.open()` installs it, loads it from
+Metro, and pairs it with the scenario's server. `device` is
 e2e's [device fixture](https://e2e.com/docs/mobile#the-device-fixture) for system actions.
 
 The run leases an iPhone 18 Pro from the Simlock pool, so it needs `SIMLOCK_AGENT_DEVICE_URL`

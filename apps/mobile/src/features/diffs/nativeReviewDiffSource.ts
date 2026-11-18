@@ -19,6 +19,7 @@ function permanentSourceFailureReason(error: unknown): string | undefined {
     if (name === "GitHubDiffFileContentsUnavailableError") return "github-source-unavailable";
     for (const permanent of [
       "provider-unsupported",
+      "repository-without-project",
       "unsupported",
       "oversized",
       "binary",
