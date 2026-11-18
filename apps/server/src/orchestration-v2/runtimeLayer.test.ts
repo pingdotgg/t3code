@@ -3750,6 +3750,80 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         DateTime.toEpochMillis(untaggedShell.updatedAt),
       );
 
+      const noteEventTypes: Array<string> = [];
+      for (const [step, note, expected] of [
+        ["set", "Remember the flaky login test", "Remember the flaky login test"],
+        ["clear", "  \n ", undefined],
+      ] as const) {
+        const result = yield* orchestrator.dispatch({
+          type: "thread.note.set",
+          commandId: CommandId.make(`runtime-layer-lifecycle-note-${step}`),
+          threadId,
+          note,
+        });
+        noteEventTypes.push(...result.storedEvents.map((stored) => stored.event.type));
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.note,
+          expected,
+          step,
+        );
+        const shell = shellOf(yield* orchestrator.getShellSnapshot());
+        // The note travels only with the full thread, and is not activity.
+        assert.notProperty(shell, "note", step);
+        assert.equal(
+          DateTime.toEpochMillis(shell.updatedAt),
+          DateTime.toEpochMillis(untaggedShell.updatedAt),
+          step,
+        );
+      }
+      assert.deepEqual(noteEventTypes, ["thread.note-updated", "thread.note-updated"]);
+
+      const staleNoteThread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+      yield* orchestrator.dispatch({
+        type: "thread.active.reorder",
+        commandId: CommandId.make("runtime-layer-lifecycle-newer-order"),
+        threadId,
+        orderKey: "a1",
+      });
+      const sink = yield* EventSink.EventSinkV2;
+      const [storedNote] = yield* sink.write({
+        events: [
+          {
+            id: EventId.make("runtime-layer-lifecycle-stale-note"),
+            type: "thread.note-updated",
+            threadId,
+            occurredAt: yield* DateTime.now,
+            payload: { ...staleNoteThread, note: "Keep the newer thread state" },
+          },
+        ],
+      });
+      assert.equal((yield* orchestrator.getThreadProjection(threadId)).thread.activeOrderKey, "a1");
+      assert.equal(storedNote?.event.type, "thread.note-updated");
+      if (storedNote?.event.type === "thread.note-updated") {
+        assert.equal(storedNote.event.payload.activeOrderKey, "a1");
+        assert.equal(storedNote.event.payload.note, "Keep the newer thread state");
+      }
+
+      const [storedMetadata] = yield* sink.write({
+        events: [
+          {
+            id: EventId.make("runtime-layer-lifecycle-stale-metadata"),
+            type: "thread.metadata-updated",
+            threadId,
+            occurredAt: yield* DateTime.now,
+            payload: staleNoteThread,
+          },
+        ],
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.note,
+        "Keep the newer thread state",
+      );
+      assert.equal(storedMetadata?.event.type, "thread.metadata-updated");
+      if (storedMetadata?.event.type === "thread.metadata-updated") {
+        assert.equal(storedMetadata.event.payload.note, "Keep the newer thread state");
+      }
+
       const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
       const staleAutoSettle = yield* orchestrator
         .dispatch({

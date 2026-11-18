@@ -225,7 +225,19 @@ it.effect("streams the owner's thread events after the share and a snapshot", ()
   Effect.gen(function* () {
     const { orchestrator, guestShares, credential } = yield* shareThread;
     const { token: session } = yield* guestShares.redeem({ credential, name: "Sam" });
+    yield* orchestrator.dispatch({
+      type: "thread.note.set",
+      commandId: CommandId.make("private-note-before-stream"),
+      threadId,
+      note: "private-note-opening",
+    });
     const events = yield* guestShares.stream(session);
+    yield* orchestrator.dispatch({
+      type: "thread.note.set",
+      commandId: CommandId.make("private-note-during-stream"),
+      threadId,
+      note: "private-note-live",
+    });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make("owner-message"),
@@ -243,6 +255,8 @@ it.effect("streams the owner's thread events after the share and a snapshot", ()
       threadId,
     });
     const received = Array.from(yield* Stream.runCollect(events));
+    assert.notInclude(JSON.stringify(received), "private-note-opening");
+    assert.notInclude(JSON.stringify(received), "private-note-live");
     assert.equal(received.at(-1)?.type, "ended");
     const turnItems = received.flatMap((event) =>
       event.type === "thread" &&

@@ -218,6 +218,21 @@ const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread |
   }
 };
 
+function withoutThreadNote(thread: OrchestrationV2AppThread): OrchestrationV2AppThread {
+  const { note: _note, ...rest } = thread;
+  return rest;
+}
+
+function guestEvent(event: OrchestrationV2DomainEvent): OrchestrationV2DomainEvent {
+  if (!("note" in event.payload)) return event;
+  const redacted = { ...event };
+  if ("note" in redacted.payload) {
+    const { note: _note, ...payload } = redacted.payload;
+    redacted.payload = payload;
+  }
+  return redacted;
+}
+
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const commandOutputs = yield* CommandOutputHub.CommandOutputHub;
@@ -559,6 +574,7 @@ const make = Effect.gen(function* () {
       .streamStoredEventsFrom({ threadId: thread.id, afterSequence: snapshot.snapshotSequence })
       .pipe(
         Stream.map(threadStreamEventItem),
+        Stream.map((item) => ({ ...item, event: guestEvent(item.event) })),
         // Ending the source here flushes what the coalescer holds, so `ended` is not held back.
         Stream.takeUntil((item) => endsShare(item.event)),
         coalesceThreadLiveStream,
@@ -585,7 +601,10 @@ const make = Effect.gen(function* () {
     );
     const openingSnapshot = buildBoundedThreadStreamSnapshot({
       snapshotSequence: snapshot.snapshotSequence,
-      projection: snapshot.projection,
+      projection: {
+        ...snapshot.projection,
+        thread: withoutThreadNote(snapshot.projection.thread),
+      },
     });
     const opening: ReadonlyArray<GuestStreamEvent> = [
       { type: "view", view: initialView },

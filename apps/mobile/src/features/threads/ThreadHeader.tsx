@@ -23,6 +23,7 @@ export function ThreadHeader(props: {
   readonly hasThreadCwd: boolean;
   readonly inspectorMode: ThreadInspectorMode | null;
   readonly onOpenFilesInspector: () => void;
+  readonly note?: { readonly hasNote: boolean; readonly onOpen: () => void };
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -32,7 +33,18 @@ export function ThreadHeader(props: {
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls, m);
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
-  const actions: AppBarAction[] = props.hasThreadCwd
+  const noteAction: AppBarAction[] = props.note
+    ? [
+        {
+          accessibilityLabel: props.note.hasNote ? gt("Thread note (has note)") : gt("Thread note"),
+          icon: "note.text",
+          selected: props.note.hasNote,
+          separateBackground: false,
+          onPress: props.note.onOpen,
+        },
+      ]
+    : [];
+  const fileActions: AppBarAction[] = props.hasThreadCwd
     ? [
         {
           accessibilityLabel: filesVisible ? gt("Close files") : gt("Open files"),
@@ -44,6 +56,7 @@ export function ThreadHeader(props: {
         },
       ]
     : [];
+  const actions = [...noteAction, ...fileActions];
   const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
 
   return (
