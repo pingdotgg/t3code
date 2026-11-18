@@ -1598,6 +1598,7 @@ function SentMessageDisplayRow(props: {
   label: string;
   description: string;
 }) {
+  const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const messages = useMessages();
@@ -1610,7 +1611,7 @@ function SentMessageDisplayRow(props: {
       resetAction={
         value !== DEFAULT_UNIFIED_SETTINGS[props.settingKey] ? (
           <SettingResetButton
-            label={props.label}
+            ariaLabel={gt("Reset {title} to default", { title: props.label })}
             onClick={() =>
               updateSettings({ [props.settingKey]: DEFAULT_UNIFIED_SETTINGS[props.settingKey] })
             }
