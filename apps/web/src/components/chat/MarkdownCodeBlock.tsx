@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { PlayIcon, WrapTextIcon, CheckIcon, CopyIcon } from "lucide-react";
 import { toHtml } from "hast-util-to-html";
 import React, { use, useEffect, useState, type ReactNode } from "react";
@@ -99,6 +100,7 @@ function MarkdownCodeBlockTitleContent({
   language: string;
   theme: "light" | "dark";
 }) {
+  const gt = useGT();
   if (fenceTitle) {
     return (
       <>
@@ -116,7 +118,10 @@ function MarkdownCodeBlockTitleContent({
     <SharedTooltipTrigger
       label={language}
       render={
-        <span className="inline-flex shrink-0 rounded-sm" aria-label={`Language: ${language}`} />
+        <span
+          className="inline-flex shrink-0 rounded-sm"
+          aria-label={gt("Language: {language}", { language })}
+        />
       }
     >
       <PierreEntryIcon pathValue={fileName} kind="file" theme={theme} className="size-3.5" />
@@ -147,6 +152,7 @@ export function MarkdownCodeBlock({
   diagram?: boolean;
   children: ReactNode;
 }) {
+  const gt = useGT();
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard({
     timeout: 1200,
     onError: (cause) =>
@@ -162,8 +168,8 @@ export function MarkdownCodeBlock({
   const defaultWrapped = useClientSettings((settings) => settings.wordWrap);
   const [wrapOverride, setWrapOverride] = useState<boolean | null>(null);
   const wrapped = wrapOverride ?? defaultWrapped;
-  const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
-  const copyLabel = copied ? "Copied" : "Copy code";
+  const wrapLabel = wrapped ? gt("Disable line wrap") : gt("Wrap lines");
+  const copyLabel = copied ? gt("Copied") : gt("Copy code");
   const command = code.trim();
   const canRun =
     onRunShellCommand !== undefined &&
@@ -215,7 +221,11 @@ export function MarkdownCodeBlock({
       wrapped={wrapped}
       headerProps={THREAD_FIND_IGNORE_PROPS}
       actions={
-        <span className="flex items-center gap-0.5" role="toolbar" aria-label="Code block actions">
+        <span
+          className="flex items-center gap-0.5"
+          role="toolbar"
+          aria-label={gt("Code block actions")}
+        >
           {canWrap ? (
             <SharedTooltipTrigger
               label={wrapLabel}
@@ -235,14 +245,14 @@ export function MarkdownCodeBlock({
           ) : null}
           {canRun ? (
             <SharedTooltipTrigger
-              label="Run in terminal"
+              label={gt("Run in terminal")}
               render={
                 <Button
                   type="button"
                   variant="ghost-muted"
                   size="icon-xs"
                   onClick={() => onRunShellCommand(command)}
-                  aria-label="Run in terminal"
+                  aria-label={gt("Run in terminal")}
                 />
               }
             >

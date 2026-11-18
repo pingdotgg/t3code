@@ -86,6 +86,8 @@ export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
+  /** A DPoP session from a pairing link renews at /oauth/token; pair with a bearer where absent. */
+  accessTokenRenewal: Schema.optionalKey(Schema.Boolean),
   attachmentUploads: Schema.optionalKey(Schema.Boolean),
   questionAttachments: Schema.optionalKey(Schema.Boolean),
   fileAttachments: Schema.optionalKey(
@@ -95,6 +97,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   ),
   pullRequests: Schema.optionalKey(Schema.Boolean),
   pullRequestChecks: Schema.optionalKey(Schema.Boolean),
+  issues: Schema.optionalKey(Schema.Boolean),
   /** Side chats: hidden `lineage.sideChat` forks. Older servers ignore the fork flag. */
   sideChats: Schema.optionalKey(Schema.Boolean),
   vcsBranchStatus: Schema.optionalKey(Schema.Boolean),
@@ -185,6 +188,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   linkFence: Schema.optionalKey(Schema.Boolean),
   /** Mints pairing codes that approve one agent sign-in at a set level (`AUTO-…`). */
   mcpApprovalCodes: Schema.optionalKey(Schema.Boolean),
+  peerLinkPairingCodes: Schema.optionalKey(Schema.Boolean),
   /** Agent sign-ins on its T3 Connect address are approved on the hosted app, without a code. */
   mcpHostedApproval: Schema.optionalKey(Schema.Boolean),
   /** Server answers server.prepareTriage. */

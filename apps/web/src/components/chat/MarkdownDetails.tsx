@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { ChevronRightIcon } from "lucide-react";
 import { flushSync } from "react-dom";
 import {
@@ -22,6 +23,7 @@ export function MarkdownDetails({
   open = false,
   dir,
 }: Pick<ComponentProps<"details">, "children" | "open" | "dir">) {
+  const gt = useGT();
   const [isOpen, setIsOpen] = useState(open);
   const [armed, setArmed] = useState<"hover" | "focus" | null>(null);
   const searching = use(MarkdownFindContext);
@@ -38,7 +40,7 @@ export function MarkdownDetails({
   const summary =
     isValidElement<{ children?: ReactNode }>(summaryNode) && summaryNode.props.children
       ? summaryNode.props.children
-      : "Details";
+      : gt("Details", { $context: "fallback title of a collapsible section" });
   const content = childNodes.filter((_, index) => index !== summaryIndex);
 
   // Most details stay closed: mount Base UI on hover or focus, before the first click.
