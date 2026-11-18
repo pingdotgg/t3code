@@ -726,7 +726,7 @@ export function PullRequestSummaryTab({
     const result = await replyToThread({ environmentId, input: { ...reference, threadId, body } });
     setThreadReplyPending(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Reply could not be posted" });
+      toastManager.add({ type: "error", title: m(msg("Reply could not be posted")) });
       return false;
     }
     onRefresh();
@@ -874,7 +874,9 @@ export function PullRequestSummaryTab({
             >
               <span className="inline-flex items-baseline gap-1">
                 <ReplyIcon className="size-3 self-center" />
-                <span>Quote reply</span>
+                <span>
+                  <T>Quote reply</T>
+                </span>
               </span>
             </Button>
           ) : null}
