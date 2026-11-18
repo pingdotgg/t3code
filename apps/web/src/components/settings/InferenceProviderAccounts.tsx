@@ -30,11 +30,15 @@ export function InferenceProviderAccounts({
   driver,
   readOnly,
   hostLabel,
+  enableLocalHosting,
+  onAccountsChanged,
 }: {
   readonly environmentId: EnvironmentId;
   readonly driver?: InferenceDriver;
   readonly readOnly?: boolean;
   readonly hostLabel?: string | undefined;
+  readonly enableLocalHosting?: boolean;
+  readonly onAccountsChanged?: () => void;
 }) {
   const permitted = useAtomValue(inferenceProxy.manageInference.permissionAtom(environmentId));
   const canManage = permitted && !readOnly;
@@ -71,6 +75,8 @@ export function InferenceProviderAccounts({
       setCallback("");
       setNotice("Sign-in failed or expired. Start a new sign-in.");
     }
+    if (result.value.status === "ok" || (input.operation === "configure" && input.enabled))
+      onAccountsChanged?.();
   }
   const hostName = hostLabel || "the inference host";
   const harness = driver ? INFERENCE_HARNESSES[driver] : undefined;
@@ -92,15 +98,38 @@ export function InferenceProviderAccounts({
     return (
       <SettingsRow
         title={`Inference hosting is off on ${hostName}`}
-        description="Turn hosting on there to add and share accounts."
+        description={
+          enableLocalHosting
+            ? "Install and start CLIProxyAPI on this environment to use its accounts."
+            : "Turn hosting on there to add and share accounts."
+        }
+        status={notice || undefined}
         control={
-          <Button
-            size="sm"
-            variant="outline"
-            render={<Link to="/settings/inference" search={{ machine: environmentId }} />}
-          >
-            Inference accounts
-          </Button>
+          enableLocalHosting ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() =>
+                void run({
+                  operation: "configure",
+                  enabled: true,
+                  sharing: false,
+                  expectedEnabled: false,
+                })
+              }
+            >
+              Start hosting here
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              render={<Link to="/settings/inference" search={{ machine: environmentId }} />}
+            >
+              Inference accounts
+            </Button>
+          )
         }
       />
     );

@@ -1,27 +1,32 @@
-import {
-  inferenceRouteIssue,
-  type InferenceRouting,
-  type InferenceProxyActionResult,
-} from "@t3tools/contracts";
+import { type InferenceRouting, type InferenceProxyActionResult } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   inferenceAccountRetryAfter,
   inferenceAccountStatus,
+  inferenceHostCandidates,
+  inferenceHostRoutingIssue,
 } from "@t3tools/client-runtime/state/inference-proxy";
 import {
   INFERENCE_DRIVERS,
   INFERENCE_HARNESSES,
   INFERENCE_UPSTREAMS,
+  defaultInstanceIdForDriver,
   inferenceHarness,
+  isCustomInferenceBackend,
+  isInferenceProviderConfig,
+  isManagedSettingPath,
+  type InferenceProxyStatus,
+  type ServerProvider,
   type InferenceDriver,
   type InferenceProxyAction,
   type InferenceUpstream,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Linking, TextInput, View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
+import { ControlPill } from "../../components/ui/ControlPill";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
@@ -39,7 +44,6 @@ function Route({ host, consumer }: { host: EnvironmentPresentation; consumer: Se
   const status = useEnvironmentQuery(
     inferenceProxy.inferenceStatus({ environmentId: host.environmentId, input: {} }),
   );
-  const issue = inferenceRouteIssue(status.data, host.environmentId === consumer.environmentId);
   const route = useAtomCommand(inferenceProxy.routeInference, { reportFailure: false });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -49,26 +53,139 @@ function Route({ host, consumer }: { host: EnvironmentPresentation; consumer: Se
     setBusy(false);
     setNotice(
       result._tag === "Success"
-        ? `Select ${INFERENCE_HARNESSES[driver].label}${host.environmentId === consumer.environmentId ? "" : ` via ${host.label}`} in the model picker.`
+        ? `${INFERENCE_HARNESSES[driver].label} now uses accounts on ${host.label}.`
         : String(squashAtomCommandFailure(result)),
     );
   }
   return (
     <View>
-      {INFERENCE_DRIVERS.map((driver) => (
-        <ListActionRow
-          key={driver}
-          label={`Route ${INFERENCE_HARNESSES[driver].label} through ${host.label}`}
-          description={issue ?? undefined}
-          disabled={busy || !grant || !connect || !!issue}
-          onPress={() => void add(driver)}
-        />
-      ))}
+      {INFERENCE_DRIVERS.map((driver) => {
+        const issue = inferenceHostRoutingIssue(status.data, { host, consumer, driver });
+        return (
+          <ListActionRow
+            key={driver}
+            label={`Route ${INFERENCE_HARNESSES[driver].label} through ${host.label}`}
+            description={issue ?? undefined}
+            disabled={busy || !grant || !connect || !!issue}
+            onPress={() => void add(driver)}
+          />
+        );
+      })}
       {notice ? (
         <AppText accessibilityLiveRegion="polite" className="px-4 text-foreground">
           {notice}
         </AppText>
       ) : null}
+    </View>
+  );
+}
+
+function ProviderRoutingSwitch({
+  environment,
+  provider,
+  driver,
+  onSetup,
+  onRouteChange,
+}: {
+  environment: SettingsTarget;
+  provider: ServerProvider;
+  driver: InferenceDriver;
+  onSetup: () => void;
+  onRouteChange: () => void;
+}) {
+  const { environmentId } = environment;
+  const { environments } = useEnvironments();
+  const canConnect = useAtomValue(inferenceProxy.canConnect(environmentId));
+  const canManage = useAtomValue(inferenceProxy.manageInference.permissionAtom(environmentId));
+  const enable = useAtomCommand(inferenceProxy.enableInferenceRouting, { reportFailure: false });
+  const manage = useAtomCommand(inferenceProxy.manageInference, { reportFailure: false });
+  const inFlight = useRef(false);
+  const [pending, setPending] = useState(false);
+  const [failure, setFailure] = useState<{ target: boolean; message: string } | null>(null);
+  const { instanceId } = provider;
+  const config = environment.serverConfig.settings.providerInstances[instanceId]?.config;
+  const route = isInferenceProviderConfig(config) ? config : null;
+  const enabled = route?.inferenceEnabled === true;
+  const error = failure && failure.target !== enabled ? failure.message : "";
+  const locked = isManagedSettingPath(
+    environment.serverConfig.managedPolicy,
+    `providerInstances.${instanceId}`,
+  );
+  async function change(value: boolean) {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setPending(true);
+    setFailure(null);
+    const result = value
+      ? await enable({
+          consumer: { environmentId, label: environment.label },
+          environments,
+          driver,
+          ...(route ? { preferredHostId: route.inferenceHostId } : {}),
+        })
+      : await manage({ environmentId, input: { operation: "removeRoute", instanceId } });
+    inFlight.current = false;
+    setPending(false);
+    if (result._tag === "Success") {
+      onRouteChange();
+    } else {
+      const cause = squashAtomCommandFailure(result);
+      setFailure({
+        target: value,
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    }
+  }
+  return (
+    <>
+      <SettingsSwitchRow
+        label={`${INFERENCE_HARNESSES[driver].label} inference routing`}
+        subtitle={
+          error ||
+          (enabled
+            ? `Using accounts on ${route.inferenceHostLabel || environment.label}.`
+            : "Use accounts on this environment or a paired inference host.")
+        }
+        value={enabled}
+        disabled={pending || locked || (enabled ? !canManage : !canConnect)}
+        onValueChange={(value) => void change(value)}
+      />
+      {error && !enabled && canManage ? (
+        <ListActionRow label="Set up accounts here" onPress={onSetup} />
+      ) : null}
+    </>
+  );
+}
+
+function HostedAccountRow({
+  account,
+  disabled,
+  onRemove,
+}: {
+  account: InferenceProxyStatus["accounts"][number];
+  disabled: boolean;
+  onRemove: () => void;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  const retryAfter = inferenceAccountRetryAfter(account);
+  return (
+    <View className="flex-row items-center pr-4">
+      <View className="min-w-0 flex-1">
+        <ListActionRow
+          label={revealed ? account.name : `${account.provider} account · ••••••`}
+          description={`${inferenceAccountStatus(account)}${retryAfter ? ` · Retry after ${new Date(retryAfter).toLocaleString()}` : ""} · Tap to ${revealed ? "hide" : "reveal"}`}
+          onPress={() => setRevealed(!revealed)}
+        />
+      </View>
+      {revealed && (
+        <ControlPill
+          variant="pill"
+          label="Remove"
+          accessibilityLabel={`Remove ${account.name}`}
+          disabled={disabled}
+          onPress={onRemove}
+        />
+      )}
     </View>
   );
 }
@@ -104,11 +221,22 @@ function InferenceRoutingControls({
   );
 }
 
-function InferenceControls({ environment }: { environment: SettingsTarget }) {
+function InferenceControls({
+  environment,
+  setupDriver,
+  onConnected,
+}: {
+  environment: SettingsTarget;
+  setupDriver: InferenceDriver | null;
+  onConnected: () => void;
+}) {
   const { environmentId } = environment;
   const { environments } = useEnvironments();
   const query = useEnvironmentQuery(inferenceProxy.inferenceStatus({ environmentId, input: {} }));
   const command = useAtomCommand(inferenceProxy.manageInference, { reportFailure: false });
+  const enableRouting = useAtomCommand(inferenceProxy.enableInferenceRouting, {
+    reportFailure: false,
+  });
   const permitted = useAtomValue(inferenceProxy.manageInference.permissionAtom(environmentId));
   const [pending, setPending] = useState(false);
   const [login, setLogin] = useState<{ url: string; state: string } | null>(null);
@@ -118,8 +246,8 @@ function InferenceControls({ environment }: { environment: SettingsTarget }) {
     setPending(true);
     setNotice("");
     const result = await command({ environmentId, input });
-    setPending(false);
     if (result._tag === "Failure") {
+      setPending(false);
       setNotice(String(squashAtomCommandFailure(result)));
       return;
     }
@@ -140,6 +268,24 @@ function InferenceControls({ environment }: { environment: SettingsTarget }) {
       setNotice("Sign-in failed or expired. Start a new sign-in.");
     if (result.value.status === "wait")
       setNotice("Waiting for the host to finish sign-in. Check status after a moment.");
+    if (
+      setupDriver &&
+      (result.value.status === "ok" ||
+        (input.operation === "configure" && input.enabled && input.expectedEnabled === false))
+    ) {
+      const connected = await enableRouting({
+        consumer: { environmentId, label: environment.label },
+        environments,
+        driver: setupDriver,
+        preferredHostId: environmentId,
+      });
+      if (connected._tag === "Success") onConnected();
+      else {
+        const failure = squashAtomCommandFailure(connected);
+        setNotice(failure instanceof Error ? failure.message : String(failure));
+      }
+    }
+    setPending(false);
     return result.value;
   }
   const host = query.data;
@@ -165,7 +311,12 @@ function InferenceControls({ environment }: { environment: SettingsTarget }) {
             disabled={disabled}
             value={host.enabled}
             onValueChange={(enabled) =>
-              void run({ operation: "configure", enabled, sharing: false })
+              void run({
+                operation: "configure",
+                enabled,
+                sharing: false,
+                expectedEnabled: host.enabled,
+              })
             }
           />
           {host.enabled && (
@@ -191,7 +342,12 @@ function InferenceControls({ environment }: { environment: SettingsTarget }) {
                 disabled={disabled}
                 value={host.sharing}
                 onValueChange={(sharing) =>
-                  void run({ operation: "configure", enabled: true, sharing })
+                  void run({
+                    operation: "configure",
+                    enabled: true,
+                    sharing,
+                    expectedEnabled: true,
+                  })
                 }
               />
               {host.routing && (
@@ -205,18 +361,14 @@ function InferenceControls({ environment }: { environment: SettingsTarget }) {
                   onPress={() => void run({ operation: "revoke", environmentId: c.environmentId })}
                 />
               ))}
-              {host.accounts.map((account) => {
-                const retryAfter = inferenceAccountRetryAfter(account);
-                return (
-                  <ListActionRow
-                    key={account.name}
-                    label={`Remove ${account.name}`}
-                    description={`${account.provider} · ${inferenceAccountStatus(account)}${retryAfter ? ` · Retry after ${new Date(retryAfter).toLocaleString()}` : ""}`}
-                    disabled={disabled}
-                    onPress={() => void run({ operation: "removeAccount", name: account.name })}
-                  />
-                );
-              })}
+              {host.accounts.map((account) => (
+                <HostedAccountRow
+                  key={account.name}
+                  account={account}
+                  disabled={disabled}
+                  onRemove={() => void run({ operation: "removeAccount", name: account.name })}
+                />
+              ))}
               {login ? (
                 <>
                   <ListActionRow
@@ -258,14 +410,16 @@ function InferenceControls({ environment }: { environment: SettingsTarget }) {
                   />
                 </>
               ) : (
-                upstreams.map((upstream) => (
-                  <ListActionRow
-                    key={upstream}
-                    label={`Add ${INFERENCE_UPSTREAMS[upstream]} account`}
-                    disabled={disabled}
-                    onPress={() => void run({ operation: "signIn", upstream })}
-                  />
-                ))
+                (setupDriver ? INFERENCE_HARNESSES[setupDriver].upstreams : upstreams).map(
+                  (upstream) => (
+                    <ListActionRow
+                      key={upstream}
+                      label={`Add ${INFERENCE_UPSTREAMS[upstream]} account`}
+                      disabled={disabled}
+                      onPress={() => void run({ operation: "signIn", upstream })}
+                    />
+                  ),
+                )
               )}
             </>
           )}
@@ -293,31 +447,60 @@ function InferenceControls({ environment }: { environment: SettingsTarget }) {
           onPress={() => void run({ operation: "removeRoute", instanceId: route.instanceId })}
         />
       ))}
-      {environments
-        .filter(
-          (e) =>
-            e.connection.phase === "connected" &&
-            e.serverConfig?.environment.capabilities.inferenceProxy,
-        )
-        .map((host) => (
-          <Route key={host.environmentId} host={host} consumer={environment} />
-        ))}
+      {inferenceHostCandidates(environments, environmentId).map((host) => (
+        <Route key={host.environmentId} host={host} consumer={environment} />
+      ))}
     </View>
   );
 }
 
-export function InferenceAccounts({ environment }: { environment: SettingsTarget }) {
-  const [open, setOpen] = useState(false);
+export function InferenceAccounts({
+  environment,
+  providers,
+}: {
+  environment: SettingsTarget;
+  providers: ReadonlyArray<ServerProvider>;
+}) {
+  const [panel, setPanel] = useState<"all" | InferenceDriver | null>(null);
   return (
     <>
+      {providers.map((provider) => {
+        const driver = INFERENCE_DRIVERS.find((candidate) => candidate === provider.driver);
+        const instance = environment.serverConfig.settings.providerInstances[provider.instanceId];
+        if (
+          !driver ||
+          provider.instanceId !== defaultInstanceIdForDriver(provider.driver) ||
+          (instance && isCustomInferenceBackend(instance))
+        )
+          return null;
+        return (
+          <ProviderRoutingSwitch
+            key={provider.instanceId}
+            environment={environment}
+            provider={provider}
+            driver={driver}
+            onSetup={() => setPanel(driver)}
+            onRouteChange={() => setPanel((current) => (current === driver ? null : current))}
+          />
+        );
+      })}
       <ListActionRow
         label="Inference accounts"
         description={
-          open ? "Hide hosts and routes" : "Host accounts or route requests through an environment"
+          panel
+            ? "Hide hosting and account settings"
+            : "Add accounts, share a host, or choose a specific route."
         }
-        onPress={() => setOpen((value) => !value)}
+        onPress={() => setPanel(panel ? null : "all")}
       />
-      {open && <InferenceControls environment={environment} />}
+      {panel && (
+        <InferenceControls
+          key={panel}
+          environment={environment}
+          setupDriver={panel === "all" ? null : panel}
+          onConnected={() => setPanel(null)}
+        />
+      )}
     </>
   );
 }

@@ -41,19 +41,28 @@ To let another machine use those accounts, turn on **Share inference with paired
 T3 reuses the selected host's existing connection, including SSH, LAN, Tailscale, or T3 Connect.
 You do not need an agent link or a separate proxy installation on the consuming machine.
 Connect your client to both T3 environments with provider management access.
-Select the environment where you want to run agents in Settings. Under **Route
-requests through an environment**, choose Codex, Claude, [OpenCode](./providers-opencode.md#shared-inference-accounts),
-or [Pi](./providers-pi.md#shared-inference-accounts) beside the host name.
+Select the environment where you want to run agents in **Settings > Providers**.
+Turn on **Inference routing** for the provider. T3 tries its previous host first, then
+accounts on the current environment, then paired hosts with sharing enabled.
+The provider settings show which host it connects to. You can also choose
+**Use inference accounts** when adding a Codex or Claude account on web or desktop.
+If no host is ready, choose **Set up accounts here** to start hosting and add an account
+from the same screen.
+
+To pick a host yourself, open **Inference accounts** and choose Codex, Claude,
+[OpenCode](./providers-opencode.md#shared-inference-accounts), or
+[Pi](./providers-pi.md#shared-inference-accounts) beside the host name.
 The environment running agents needs the corresponding CLI and must be able to reach the host
 through the selected connection. You can also choose the current host for local use.
 
 Use LAN HTTP only on a trusted network. Prompts, responses, and revocable route keys travel unencrypted on that connection.
 
-Select **Codex via …** or **Claude via …** in a thread on web, desktop, or mobile.
+Select a Codex or Claude model in the thread’s model picker on web, desktop, or mobile.
+Remote routes appear as **Codex via [host]** or **Claude via [host]**.
 The host receives the model request, including its prompt and tool results.
 The agent runs tools and stores files and thread history on its executing environment.
 Choosing another host in Settings changes the same provider. Local inference is labeled **Claude** or **Codex**.
-Choose the route again in Settings to refresh its model list after changing accounts.
+Open the model picker or refresh provider status in Settings to update the model list.
 While a client is connected to the executing environment and other shared inference hosts,
 T3 discovers hosts that serve the same provider and saves them as fallback routes. If the
 selected host is unreachable, rejects authentication, or reaches a temporary limit, a new
@@ -73,11 +82,11 @@ requests across eligible accounts, or leave it off to use the first available ac
 Session affinity keeps a conversation on its credential while available. The model
 picker always shows normal Claude and Codex models. Traex remains a separate backend.
 
-Routing is optional. Turn off **Use CLI proxy** to return to this provider's normal
+Routing is optional. Turn off **Inference routing** to return to this provider's normal
 T3 Code configuration. Standalone CLI configuration is unchanged.
 After an upgrade, threads, scheduled tasks, and saved model choices that named an older
 route or account pool use the normal Claude or Codex provider. They run through the proxy
-only when **Use CLI proxy** is on for that provider.
+only when **Inference routing** is on for that provider.
 
 Remove a provider login on its host, revoke one consuming environment, or turn
 off sharing to revoke all remote grants. Remove the route in **Inference accounts** on the executing machine. Stopping hosting keeps the host's accounts

@@ -1,4 +1,6 @@
 import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
+import { Atom, AsyncResult } from "effect/reactivity";
+import * as Cause from "effect/Cause";
 import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -8,6 +10,8 @@ const actions = vi.hoisted(() => ({
   toast: vi.fn(),
   onOpenChange: vi.fn(),
   canManageProviders: true,
+  supportsInference: false,
+  enableInference: vi.fn(),
 }));
 const settingsHooks = vi.hoisted(() => ({
   read: vi.fn(() => ({ providerInstances: {} })),
@@ -44,6 +48,39 @@ vi.mock(import("../../state/session"), async (original) => {
     ...(await original()),
     useEnvironmentScope: hasScope as never,
     readEnvironmentScope: hasScope as never,
+  };
+});
+vi.mock(import("../../state/entities"), async (original) => ({
+  ...(await original()),
+  useServerConfigs: (() =>
+    new Map([
+      [
+        remoteEnvironmentId,
+        { environment: { capabilities: { inferenceProxy: actions.supportsInference } } },
+      ],
+    ])) as never,
+}));
+vi.mock(import("../../state/server"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      inferenceProxy: {
+        ...actual.serverEnvironment.inferenceProxy,
+        canConnect: () => Atom.make(actions.canManageProviders),
+      },
+    },
+  };
+});
+vi.mock(import("../../state/use-atom-command"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useAtomCommand: ((command: Parameters<typeof actual.useAtomCommand>[0], options?: string) => {
+      const invoke = actual.useAtomCommand(command, options);
+      return command.label === "inference:enable-routing" ? actions.enableInference : invoke;
+    }) as never,
   };
 });
 vi.mock(import("../ui/toast"), async (original) => {
@@ -162,6 +199,8 @@ async function prepareCodexInstance() {
 
 function setup() {
   actions.canManageProviders = true;
+  actions.supportsInference = false;
+  actions.enableInference.mockReset();
   actions.toast.mockReset();
   actions.onOpenChange.mockReset();
   settingsHooks.read.mockReset().mockReturnValue({ providerInstances: {} });
@@ -170,6 +209,40 @@ function setup() {
 }
 
 describe("AddProviderInstanceDialog environment routing", () => {
+  it("routes the default provider and opens the selected host's accounts before settings update", async () => {
+    setup();
+    actions.supportsInference = true;
+    actions.enableInference
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("No Codex accounts."))))
+      .mockResolvedValueOnce(
+        AsyncResult.success({ environmentId: EnvironmentId.make("studio"), label: "Studio" }),
+      );
+    await using _screen = await render(dialog());
+    await choose("Codex");
+    await click("Next");
+    await choose("Use inference accounts");
+    await click("Continue");
+    expect(actions.enableInference).toHaveBeenCalledExactlyOnceWith({
+      consumer: { environmentId: remoteEnvironmentId, label: "Remote device" },
+      driver: "codex",
+      environments: expect.any(Array),
+    });
+    expect(queryButton("Set up accounts here")).toBeDefined();
+    await click("Back");
+    await choose("Claude");
+    await click("Next");
+    await choose("Use inference accounts");
+    expect(queryButton("Set up accounts here")).toBeUndefined();
+    await click("Continue");
+    expect(actions.enableInference).toHaveBeenLastCalledWith({
+      consumer: { environmentId: remoteEnvironmentId, label: "Remote device" },
+      driver: "claudeAgent",
+      environments: expect.any(Array),
+    });
+    expect(document.body.textContent).toContain("Using Studio for inference.");
+    expect(settingsHooks.mutate).not.toHaveBeenCalled();
+  });
+
   it.each([
     { driver: "codex", label: "Codex" },
     { driver: "opencode", label: "OpenCode" },

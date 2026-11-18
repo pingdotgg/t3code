@@ -5,9 +5,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   PeerLinkError,
   EnvironmentId,
+  ProjectId,
   ProviderInstanceId,
   ProviderDriverKind,
   isInferenceProviderConfig,
+  resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
@@ -33,6 +35,8 @@ import * as ProviderInstanceRegistryMutator from "../provider/ProviderInstanceRe
 import { DirectEndpoints } from "../environment/DirectEndpoints.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as InferenceProxy from "./InferenceProxy.ts";
 import { proxyVersion } from "./install.ts";
 
@@ -83,6 +87,8 @@ it.effect(
         let linkedUrl = "http://127.0.0.1:23456";
         let connectionOverride: string | undefined;
         let staleLinkedCatalog = false;
+        let remoteCatalogUnavailable = false;
+        let fallbackCatalog: typeof catalog | undefined;
         const link = {
           environmentId: hostId,
           label: "Host",
@@ -176,6 +182,7 @@ it.effect(
         const importedCodexFiles: string[] = [];
         const importedClaudeFiles: string[] = [];
         let activeCodexConfig: unknown;
+        let activeCodexEnabled: boolean | undefined;
         const remoteCatalogKeys: (string | undefined)[] = [];
         const http = HttpClient.make((request) => {
           if (request.url.endsWith("/v0/management/api-call")) {
@@ -288,6 +295,24 @@ it.effect(
             }
             if (!request.url.endsWith("/health"))
               remoteCatalogKeys.push(request.headers.authorization);
+            if (request.url.endsWith("/v1/models") && remoteCatalogUnavailable)
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response(null, { status: 502 })),
+              );
+            if (
+              request.url.startsWith("https://fallback.example.ts.net/api/inference/") &&
+              fallbackCatalog
+            )
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  Response.json(
+                    request.url.endsWith("/health")
+                      ? { availableDrivers: ["codex"], models: fallbackCatalog.map(({ id }) => id) }
+                      : { data: fallbackCatalog },
+                  ),
+                ),
+              );
             if (staleLinkedCatalog && request.url.startsWith("http://127.0.0.1:34567/"))
               return Effect.succeed(
                 HttpClientResponse.fromWeb(request, new Response(null, { status: 502 })),
@@ -388,7 +413,9 @@ it.effect(
             Layer.succeed(ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator, {
               reconcile: (instances) =>
                 Effect.sync(() => {
-                  activeCodexConfig = instances[ProviderInstanceId.make("codex")]?.config;
+                  const activeCodex = instances[ProviderInstanceId.make("codex")];
+                  activeCodexConfig = activeCodex?.config;
+                  activeCodexEnabled = activeCodex?.enabled;
                 }),
               reloadSecrets: () => Effect.void,
               rebuild: () => Effect.void,
@@ -966,6 +993,13 @@ it.effect(
             });
             expect((yield* readConfig)["oauth"]).not.toHaveProperty("model-alias");
             const issued = yield* proxy.grant(peer);
+            yield* proxy.manage({
+              operation: "configure",
+              enabled: true,
+              sharing: false,
+              expectedEnabled: false,
+            });
+            expect((yield* proxy.status).sharing).toBe(true);
             expect(issued.baseUrl).toBe("https://pool.example.ts.net/api/inference");
             expect((yield* proxy.grant(peer)).key).toBe(issued.key);
             expect((yield* proxy.authorize(issued.key))?.key).not.toBe(issued.key);
@@ -1112,6 +1146,46 @@ it.effect(
             expect(yield* proxy.routeHealth(configured.config, local.key, "codex")).toMatchObject({
               availableDrivers: expect.arrayContaining(["codex"]),
             });
+            const initialCatalog = catalog;
+            catalog = [...catalog, { id: "gpt-local-new", owned_by: "openai" }];
+            yield* proxy.refreshModelCatalog();
+            expect(
+              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
+                ?.config,
+            ).toMatchObject({ inferenceModels: expect.arrayContaining(["gpt-local-new"]) });
+            expect(activeCodexConfig).toMatchObject({
+              customModels: expect.arrayContaining(["gpt-local-new"]),
+            });
+            const piId = ProviderInstanceId.make("pi");
+            yield* proxy.connect({
+              ...connect,
+              driver: "pi",
+              grant: {
+                ...issued,
+                hostId: EnvironmentId.make("other-host"),
+                consumerId: hostId,
+                baseUrl: "https://fallback.example.ts.net/api/inference",
+                alternates: [],
+              },
+            });
+            const previousPiConfig = (yield* settings.getSettings).providerInstances[piId]?.config;
+            if (!isInferenceProviderConfig(previousPiConfig))
+              throw new Error("Expected an independent Pi route");
+            const unrelatedRequests = remoteCatalogKeys.length;
+            catalog = [...catalog, { id: "gpt-local-scoped", owned_by: "openai" }];
+            yield* proxy.refreshModelCatalog(true, ProviderInstanceId.make("codex"));
+            expect(activeCodexConfig).toMatchObject({
+              customModels: expect.arrayContaining(["gpt-local-scoped"]),
+            });
+            const piConfig = (yield* settings.getSettings).providerInstances[piId]?.config;
+            expect(isInferenceProviderConfig(piConfig) ? piConfig.inferenceModels : null).toEqual(
+              previousPiConfig.inferenceModels,
+            );
+            expect(remoteCatalogKeys.length).toBe(unrelatedRequests);
+            yield* proxy.manage({ operation: "removeRoute", instanceId: piId });
+            remoteCatalogKeys.length = 0;
+            catalog = initialCatalog;
+            yield* proxy.manage({ operation: "check", state: "sign-in" });
             yield* proxy.bindRoutes(45678);
             configured = (yield* settings.getSettings).providerInstances[
               ProviderInstanceId.make("codex")
@@ -1183,6 +1257,28 @@ it.effect(
             expect(yield* proxy.routeHealth(directConfig, issued.key, "codex")).toMatchObject({
               availableDrivers: expect.arrayContaining(["codex"]),
             });
+            const directCatalog = catalog;
+            catalog = [...catalog, { id: "gpt-remote-new", owned_by: "openai" }];
+            yield* TestClock.adjust("15 seconds");
+            yield* proxy.refreshModelCatalog();
+            expect(
+              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
+                ?.config,
+            ).toMatchObject({
+              inferenceModels: expect.arrayContaining(["gpt-remote-new"]),
+              inferenceKey: issued.key,
+            });
+            const requestsAfterRefresh = remoteCatalogKeys.length;
+            yield* proxy.refreshModelCatalog();
+            expect(remoteCatalogKeys).toHaveLength(requestsAfterRefresh);
+            remoteCatalogUnavailable = true;
+            yield* proxy.refreshModelCatalog(true);
+            expect(
+              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
+                ?.config,
+            ).toMatchObject({ inferenceModels: expect.arrayContaining(["gpt-remote-new"]) });
+            remoteCatalogUnavailable = false;
+            catalog = directCatalog;
             tailnetCatalogDown = false;
             connectionDown = true;
             tailnetCatalogDown = true;
@@ -1305,6 +1401,24 @@ it.effect(
               },
             });
             catalog = primaryCatalog;
+            fallbackCatalog = [
+              { id: "codex-auto-review", owned_by: "openai" },
+              { id: "fallback-only", owned_by: "openai" },
+              { id: "gpt-fallback-new", owned_by: "openai" },
+            ];
+            yield* proxy.refreshModelCatalog(true);
+            expect(
+              (yield* settings.getSettings).providerInstances[ProviderInstanceId.make("codex")]
+                ?.config,
+            ).toMatchObject({
+              inferenceHostId: hostId,
+              inferenceModels: expect.arrayContaining(["office-model", "gpt-fallback-new"]),
+            });
+            expect(
+              (yield* proxy.routeCandidates(issued.key, hostId, "codex", "gpt-fallback-new"))?.map(
+                ({ hostId }) => hostId,
+              ),
+            ).toEqual([peerId]);
             expect(
               (yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"))?.map(
                 (candidate) => candidate.hostId,
@@ -1323,6 +1437,60 @@ it.effect(
               yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"),
             ).toHaveLength(2);
             peerId = hostId;
+            yield* proxy.connect({ ...connect, grant: issued });
+            expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(true);
+            expect(yield* fs.readFileString(config.settingsPath)).not.toContain(issued.key);
+            const setCodexConfigEnabled = (enabled: boolean) =>
+              settings.reviseProviderInstance(ProviderInstanceId.make("codex"), (instance) => {
+                if (!instance || !isInferenceProviderConfig(instance.config))
+                  return Effect.die("Expected the connected Codex route");
+                return Effect.succeed({
+                  instance: {
+                    ...instance,
+                    ...(enabled ? { enabled: true } : {}),
+                    config: { ...instance.config, enabled },
+                  },
+                  result: undefined,
+                });
+              });
+            yield* setCodexConfigEnabled(false);
+            expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(false);
+            expect(yield* proxy.routeCandidates(issued.key, hostId, "codex")).toBeNull();
+            expect(yield* proxy.authorize(issued.key, hostId, "codex")).toBeNull();
+            const inferenceProject = ProjectId.make("inference-project");
+            const codexId = ProviderInstanceId.make("codex");
+            yield* settings.updateSettings({
+              projectSettingsOverrides: {
+                [inferenceProject]: { providerInstances: { [codexId]: { enabled: true } } },
+              },
+            });
+            expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(true);
+            expect(yield* proxy.routeCandidates(issued.key, hostId, "codex")).toHaveLength(1);
+            expect(yield* proxy.authorize(issued.key, hostId, "codex")).not.toBeNull();
+            const oldCatalog = catalog;
+            catalog = [...catalog, { id: "gpt-project-catalog-refresh", owned_by: "openai" }];
+            yield* proxy.refreshModelCatalog(true);
+            const projectOnlyCodex = (yield* settings.getSettings).providerInstances[codexId]!;
+            expect(resolveProviderInstanceEnabled(projectOnlyCodex)).toBe(false);
+            expect(projectOnlyCodex.config).toMatchObject({
+              inferenceModels: expect.arrayContaining(["gpt-project-catalog-refresh"]),
+            });
+            expect(activeCodexEnabled).toBe(true);
+            expect(activeCodexConfig).toMatchObject({
+              setupMode: "inference",
+              customModels: expect.arrayContaining(["gpt-project-catalog-refresh"]),
+            });
+            catalog = oldCatalog;
+            yield* proxy.manage({
+              operation: "removeRoute",
+              instanceId: ProviderInstanceId.make("codex"),
+            });
+            expect(yield* proxy.routeCandidates(issued.key, hostId, "codex")).toBeNull();
+            expect(yield* proxy.authorize(issued.key, hostId, "codex")).toBeNull();
+            yield* settings.updateSettings({
+              projectSettingsOverrides: { [inferenceProject]: null },
+            });
+            yield* setCodexConfigEnabled(true);
             yield* proxy.connect({ ...connect, grant: issued });
             expect(yield* proxy.hasFallback(issued.key, hostId, "codex")).toBe(true);
             expect(
@@ -1436,6 +1604,10 @@ it.effect(
             expect(
               yield* proxy.routeCandidates(issued.key, hostId, "codex", "codex-auto-review"),
             ).toHaveLength(2);
+            const reissued = { ...issued, key: "reissued-primary-key" };
+            yield* proxy.connect({ ...connect, grant: reissued });
+            expect(yield* proxy.hasFallback(reissued.key, hostId, "codex")).toBe(false);
+            expect(yield* proxy.authorize(issued.key, hostId, "codex")).toBeNull();
             peerId = EnvironmentId.make("other-host");
             yield* proxy.connect({
               ...connect,
@@ -1526,7 +1698,9 @@ it.effect(
         expect(stops).toBe(5);
       }).pipe(
         Effect.provide(
-          Layer.merge(ServerSettings.layerTest(), ServerSecretStore.layer).pipe(
+          ServerSettings.layer.pipe(
+            Layer.provideMerge(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
+            Layer.provideMerge(SqlitePersistence.layerMemory),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), { prefix: "t3-inference-test-" }),
             ),

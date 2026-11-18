@@ -15,7 +15,7 @@ import {
   HttpServerResponse,
 } from "effect/http";
 import { InferenceProxy } from "./InferenceProxy.ts";
-import { inferenceTarget } from "./routes.ts";
+import { inferenceTarget, isRetryableInferenceStatus } from "./routes.ts";
 
 const MAX_REPLAY_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_CATALOG_BODY_BYTES = 1024 * 1024;
@@ -259,7 +259,7 @@ const handler = Effect.gen(function* () {
     if (affinityKey && target.hostId) {
       if (result.status < 400)
         rememberSessionRoute(affinityKey, target.hostId, yield* Clock.currentTimeMillis);
-      else if ([401, 403, 429, 502, 503].includes(result.status)) sessionRoutes.delete(affinityKey);
+      else if (isRetryableInferenceStatus(result.status)) sessionRoutes.delete(affinityKey);
     }
     if (target.hostId && targetPath.driver && model)
       yield* host.recordRouteOutcome({
@@ -303,7 +303,7 @@ const handler = Effect.gen(function* () {
       if (result.status >= 200 && result.status < 300)
         return HttpServerResponse.empty({ status: 502 });
     }
-    if (index < targets.length - 1 && [401, 403, 429, 502, 503].includes(result.status)) continue;
+    if (index < targets.length - 1 && isRetryableInferenceStatus(result.status)) continue;
     break;
   }
   if (!result) return HttpServerResponse.empty({ status: 502 });

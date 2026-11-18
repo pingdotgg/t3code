@@ -37,7 +37,7 @@ update it through that manager instead. For example, a Nix profile installation 
 
 Pi 1.4.0 or newer can use accounts on an [inference host](./providers-claude.md#host-and-share-inference-accounts)
 alongside its own logins. In **Settings > Inference accounts**, choose **Pi** beside the host,
-or turn on **Use CLI proxy** in Pi's provider settings. Pi can use every model the host serves,
+or turn on **Inference routing** in Pi's provider settings. Pi can use every model the host serves,
 including models from accounts other than Claude and Codex.
 
 Choose a `t3proxy/<model-id>` model to send its requests through the host. Pi's native models,
@@ -45,7 +45,7 @@ logins, extensions, and configuration remain available. Tools, files, and thread
 the environment running Pi; the host manages the accounts used for the model requests.
 
 Choose the route again in Settings to refresh the model list after changing the host's accounts.
-Turn off **Use CLI proxy** to stop adding the host's models to Pi.
+Turn off **Inference routing** to stop adding the host's models to Pi.
 
 In a terminal opened for the routed Pi provider in T3 Code, load the host's models with:
 

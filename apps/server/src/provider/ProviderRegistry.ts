@@ -1351,6 +1351,7 @@ export const layer = Layer.effect(
     const invalidateModelCaches = Effect.fn("ProviderRegistry.invalidateModelCaches")(function* (
       input: Parameters<ProviderRegistry["Service"]["invalidateModelCaches"]>[0],
     ) {
+      yield* inferenceHealth.refreshModelCatalog(true, input.instanceId);
       yield* manifestService.forceRefresh;
       const instances = yield* instanceRegistry.listInstances;
       yield* Effect.forEach(
@@ -1377,6 +1378,7 @@ export const layer = Layer.effect(
     });
 
     const refreshModelCatalog = Effect.fn("ProviderRegistry.refreshModelCatalog")(function* () {
+      yield* inferenceHealth.refreshModelCatalog();
       yield* refreshInferenceProviders();
       const { updatedAt } = yield* manifestService.refreshOnDemand;
       // The first pass can be one that started before the fetch, so allow one more.

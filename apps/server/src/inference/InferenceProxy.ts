@@ -29,7 +29,9 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { NetService } from "@t3tools/shared/Net";
+import { isProviderInstanceEnabledInAnyScope } from "@t3tools/shared/serverSettings";
 import { readTailscaleServeRoutesTo } from "@t3tools/tailscale";
+import * as Arr from "effect/Array";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Cache from "effect/Cache";
 import * as Digest from "effect/crypto/Digest";
@@ -41,6 +43,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import type * as HttpMethod from "effect/http/HttpMethod";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -60,6 +63,7 @@ import * as ServerConfig from "../config.ts";
 import { DirectEndpoints } from "../environment/DirectEndpoints.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { SECRET_REDACTED } from "../settingsSecrets.ts";
 import * as ManagedProviders from "../policy/managedProviders.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ProviderInstanceRegistryMutator from "../provider/ProviderInstanceRegistryMutator.ts";
@@ -68,6 +72,7 @@ import { claudeKeychainEntry } from "./claudeKeychain.ts";
 import { install, proxyVersion, resolveRelease, Release } from "./install.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import {
+  isRetryableInferenceStatus,
   modelsForDriver,
   needsAccountModelLookup,
   openCodeRouteProblem,
@@ -373,6 +378,15 @@ const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const store = yield* ServerSecretStore.ServerSecretStore;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const matchesRouteKey = Effect.fn("InferenceProxy.matchesRouteKey")(function* (
+    instanceId: ProviderInstanceId,
+    storedKey: InferenceProviderConfig["inferenceKey"],
+    expected: string,
+  ) {
+    if (storedKey !== SECRET_REDACTED) return storedKey === expected;
+    const current = (yield* settings.getSettings).providerInstances[instanceId]?.config;
+    return isInferenceProviderConfig(current) && current.inferenceKey === expected;
+  });
   const registry = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const links = yield* PeerLinks.PeerLinks;
@@ -390,6 +404,7 @@ const make = Effect.gen(function* () {
   );
   const mutex = yield* Semaphore.make(1);
   const updateMutex = yield* Semaphore.make(1);
+  const catalogMutex = yield* Semaphore.make(1);
   const children = yield* Queue.sliding<ChildProcessSpawner.ChildProcessHandle>(1);
   const directory = path.join(config.stateDir, "inference-proxy");
   const localCodexHome = path.resolve(
@@ -1163,6 +1178,8 @@ const make = Effect.gen(function* () {
   const manageHost = Effect.fn("InferenceProxy.manageHost")(function* (input: HostAction) {
     const state = yield* read;
     if (input.operation === "configure") {
+      // Another client may have started sharing while this client was still on the setup screen.
+      if (input.expectedEnabled !== undefined && state.enabled !== input.expectedEnabled) return {};
       if (input.enabled && input.sharing && sharingDenial) return yield* failure(sharingDenial);
       if (!input.enabled) {
         yield* save({ ...state, enabled: false, sharing: false, grants: [] }).pipe(
@@ -1225,13 +1242,6 @@ const make = Effect.gen(function* () {
       yield* registry.reconcile(
         deriveProviderInstanceConfigMap(revised.settings, providerEnvironment),
       );
-      yield* save({
-        ...state,
-        routePools: (state.routePools ?? []).filter(
-          (entry) =>
-            defaultInstanceIdForDriver(ProviderDriverKind.make(entry.driver)) !== input.instanceId,
-        ),
-      });
       return {};
     }
     if (input.operation === "revoke") {
@@ -1327,8 +1337,11 @@ const make = Effect.gen(function* () {
       switch (input.operation) {
         case "checkUpdate":
           return yield* updateRuntime("checkUpdate");
-        case "update":
-          return yield* updateMutex.withPermit(updateRuntime("update"));
+        case "update": {
+          const result = yield* updateMutex.withPermit(updateRuntime("update"));
+          yield* refreshLocalProviders();
+          return result;
+        }
         default: {
           const result = yield* manageHost(input);
           if (input.operation === "removeAccount" || ("status" in result && result.status === "ok"))
@@ -1428,20 +1441,24 @@ const make = Effect.gen(function* () {
       for (const binding of bindings) {
         const url = `http://127.0.0.1:${port}/api/inference/linked/${binding.driver}/${encodeURIComponent(binding.hostId)}`;
         if (binding.baseUrl === url) continue;
-        yield* settings.reviseProviderInstance(ProviderInstanceId.make(binding.id), (current) => {
-          if (
-            !current ||
-            current.driver !== ProviderDriverKind.make(binding.driver) ||
-            !isInferenceProviderConfig(current.config) ||
-            current.config.inferenceHostId !== binding.hostId ||
-            current.config.inferenceKey !== binding.key
-          )
-            return failure("The inference route changed.");
-          return Effect.succeed({
-            instance: { ...current, config: { ...current.config, inferenceBaseUrl: url } },
-            result: undefined,
-          });
-        });
+        const instanceId = ProviderInstanceId.make(binding.id);
+        yield* settings.reviseProviderInstance(
+          instanceId,
+          Effect.fnUntraced(function* (current) {
+            if (
+              !current ||
+              current.driver !== ProviderDriverKind.make(binding.driver) ||
+              !isInferenceProviderConfig(current.config) ||
+              current.config.inferenceHostId !== binding.hostId ||
+              !(yield* matchesRouteKey(instanceId, current.config.inferenceKey, binding.key))
+            )
+              return yield* failure("The inference route changed.");
+            return {
+              instance: { ...current, config: { ...current.config, inferenceBaseUrl: url } },
+              result: undefined,
+            };
+          }),
+        );
       }
       yield* registry.reconcile(
         deriveProviderInstanceConfigMap(yield* settings.getSettings, providerEnvironment),
@@ -1472,7 +1489,7 @@ const make = Effect.gen(function* () {
   });
 
   const candidateAddress = Effect.fn("InferenceProxy.candidateAddress")(function* (
-    candidate: SavedRouteCandidate,
+    candidate: Omit<SavedRouteCandidate, "models">,
     ownId: EnvironmentId,
   ) {
     if (candidate.hostId === ownId)
@@ -1515,9 +1532,11 @@ const make = Effect.gen(function* () {
     function* (key: string, hostId: EnvironmentId | undefined, driver: string | undefined) {
       if (!hostId || !driver) return false;
       const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make(driver));
-      const instance = (yield* settings.getSettings).providerInstances[instanceId];
+      const current = yield* settings.getSettings;
+      const instance = current.providerInstances[instanceId];
       if (
         !instance ||
+        !isProviderInstanceEnabledInAnyScope(current, instanceId) ||
         !isInferenceProviderConfig(instance.config) ||
         !instance.config.inferenceEnabled ||
         instance.config.inferenceHostId !== hostId ||
@@ -1549,23 +1568,22 @@ const make = Effect.gen(function* () {
         const target = yield* authorize(key);
         return target ? [{ ...target, models: [] }] : null;
       }
-      const { providerInstances } = yield* settings.getSettings;
-      const active = INFERENCE_DRIVERS.map((candidateDriver) => ({
-        driver: candidateDriver,
-        instance:
-          providerInstances[defaultInstanceIdForDriver(ProviderDriverKind.make(candidateDriver))],
-      })).find(
-        ({ driver: candidateDriver, instance }) =>
-          (driver === undefined || candidateDriver === driver) &&
-          instance?.enabled !== false &&
-          isInferenceProviderConfig(instance?.config) &&
-          instance.config.inferenceEnabled &&
-          instance.config.inferenceHostId === hostId &&
-          instance.config.inferenceKey === key,
-      );
-      if (!active || !isInferenceProviderConfig(active.instance?.config)) return null;
-      const route = active.instance.config;
-      const pool = (yield* read).routePools?.find((entry) => entry.driver === active.driver);
+      const current = yield* settings.getSettings;
+      const active = Arr.findFirst(INFERENCE_DRIVERS, (candidateDriver) => {
+        if (driver !== undefined && candidateDriver !== driver) return Option.none();
+        const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make(candidateDriver));
+        const route = current.providerInstances[instanceId]?.config;
+        return isInferenceProviderConfig(route) &&
+          route.inferenceEnabled &&
+          route.inferenceHostId === hostId &&
+          route.inferenceKey === key &&
+          isProviderInstanceEnabledInAnyScope(current, instanceId)
+          ? Option.some({ driver: candidateDriver, route })
+          : Option.none();
+      });
+      if (Option.isNone(active)) return null;
+      const { driver: activeDriver, route } = active.value;
+      const pool = (yield* read).routePools?.find((entry) => entry.driver === activeDriver);
       if (!pool || pool.primary.hostId !== hostId || pool.primary.key !== key) {
         const target = yield* authorize(key, hostId, driver);
         return target ? [{ ...target, models: route.inferenceModels }] : null;
@@ -1575,17 +1593,18 @@ const make = Effect.gen(function* () {
         : includeAll
           ? [pool.primary, ...pool.alternates]
           : [pool.primary];
+      if (matching.length === 0) return [];
       const candidates = yield* Effect.forEach(
-        matching.length ? matching : [pool.primary],
-        (candidate) => Cache.get(routeProbes, { candidate, driver: active.driver }),
+        matching,
+        (candidate) => Cache.get(routeProbes, { candidate, driver: activeDriver }),
         { concurrency: "unbounded" },
       );
       const now = yield* Clock.currentTimeMillis;
       const available = candidates.flatMap((candidate, index) => {
         if (!candidate) return [];
-        const host = (matching.length ? matching : [pool.primary])[index]!;
+        const host = matching[index]!;
         const models = candidate.models.filter(
-          (slug) => (routeFailures.get(`${active.driver}\0${host.hostId}\0${slug}`) ?? 0) <= now,
+          (slug) => (routeFailures.get(`${activeDriver}\0${host.hostId}\0${slug}`) ?? 0) <= now,
         );
         return models.length && (model === undefined || models.includes(model))
           ? [{ ...candidate, hostId: host.hostId, models }]
@@ -1609,7 +1628,7 @@ const make = Effect.gen(function* () {
       routeFailures.delete(key);
       return;
     }
-    if (![401, 403, 429, 502, 503].includes(input.status)) return;
+    if (!isRetryableInferenceStatus(input.status)) return;
     const now = yield* Clock.currentTimeMillis;
     const numericDelay = (value: string | undefined, scale: number) => {
       if (!value?.trim()) return undefined;
@@ -1631,7 +1650,7 @@ const make = Effect.gen(function* () {
     const duration =
       input.status === 429 && retryDelay !== undefined
         ? Math.max(5_000, Math.min(retryDelay, Number.MAX_SAFE_INTEGER - now))
-        : input.status === 502 || input.status === 503
+        : input.status === 502 || input.status === 503 || input.status === 529
           ? 5_000
           : 30_000;
     routeFailures.set(key, now + duration);
@@ -1640,12 +1659,13 @@ const make = Effect.gen(function* () {
   const authorize = Effect.fn("InferenceProxy.authorize")(
     function* (key: string, hostId?: EnvironmentId, driver?: string) {
       if (hostId !== undefined) {
-        const { providerInstances } = yield* settings.getSettings;
+        const current = yield* settings.getSettings;
         const allowed = INFERENCE_DRIVERS.map((candidateDriver) => {
-          const instance =
-            providerInstances[defaultInstanceIdForDriver(ProviderDriverKind.make(candidateDriver))];
+          const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make(candidateDriver));
+          const instance = current.providerInstances[instanceId];
           return (driver === undefined || candidateDriver === driver) &&
-            instance?.enabled &&
+            instance !== undefined &&
+            isProviderInstanceEnabledInAnyScope(current, instanceId) &&
             isInferenceProviderConfig(instance.config) &&
             instance.config.inferenceEnabled &&
             instance.config.inferenceHostId === hostId &&
@@ -1894,10 +1914,11 @@ const make = Effect.gen(function* () {
       if (fallback) {
         const revised = yield* mutex.withPermit(
           Effect.gen(function* () {
-            const configured = (yield* settings.getSettings).providerInstances[instanceId];
+            const currentSettings = yield* settings.getSettings;
+            const configured = currentSettings.providerInstances[instanceId];
             if (
               !configured ||
-              configured.enabled === false ||
+              !isProviderInstanceEnabledInAnyScope(currentSettings, instanceId) ||
               !isInferenceProviderConfig(configured.config) ||
               !configured.config.inferenceEnabled
             )
@@ -1908,20 +1929,21 @@ const make = Effect.gen(function* () {
               return yield* failure("The primary inference credential is unavailable.");
             const primaryKey = primaryRoute.inferenceKey;
             const state = yield* read;
-            const existing = state.routePools?.find((entry) => entry.driver === driver);
-            const primary: SavedRouteCandidate =
-              existing?.primary.hostId === primaryRoute.inferenceHostId &&
-              existing.primary.key === primaryKey
-                ? existing.primary
-                : {
-                    hostId: primaryRoute.inferenceHostId,
-                    baseUrl: primaryRoute.inferenceBaseUrl,
-                    key: primaryKey,
-                    models: [...primaryRoute.inferenceModels],
-                    ...(primaryRoute.inferenceConnection
-                      ? { connection: primaryRoute.inferenceConnection }
-                      : {}),
-                  };
+            const existing = state.routePools?.find(
+              (entry) =>
+                entry.driver === driver &&
+                entry.primary.hostId === primaryRoute.inferenceHostId &&
+                entry.primary.key === primaryKey,
+            );
+            const primary: SavedRouteCandidate = existing?.primary ?? {
+              hostId: primaryRoute.inferenceHostId,
+              baseUrl: primaryRoute.inferenceBaseUrl,
+              key: primaryKey,
+              models: [...primaryRoute.inferenceModels],
+              ...(primaryRoute.inferenceConnection
+                ? { connection: primaryRoute.inferenceConnection }
+                : {}),
+            };
             const alternates = [
               ...(existing?.alternates ?? []).filter((entry) => entry.hostId !== grant.hostId),
               candidate,
@@ -1934,30 +1956,33 @@ const make = Effect.gen(function* () {
               ],
             });
             return yield* settings
-              .reviseProviderInstance(instanceId, (current) => {
-                if (
-                  !current ||
-                  current.enabled === false ||
-                  !isInferenceProviderConfig(current.config) ||
-                  !current.config.inferenceEnabled ||
-                  current.config.inferenceHostId !== primaryRoute.inferenceHostId ||
-                  current.config.inferenceKey !== primaryKey
-                )
-                  return failure("The inference route changed.");
-                return Effect.succeed({
-                  instance: {
-                    ...current,
-                    config: {
-                      ...current.config,
-                      inferenceBaseUrl: loopbackUrl(primary.hostId),
-                      inferenceModels: [
-                        ...new Set([primary, ...alternates].flatMap((entry) => entry.models)),
-                      ],
+              .reviseProviderInstance(
+                instanceId,
+                Effect.fnUntraced(function* (current, currentSettings) {
+                  if (
+                    !current ||
+                    !isProviderInstanceEnabledInAnyScope(currentSettings, instanceId) ||
+                    !isInferenceProviderConfig(current.config) ||
+                    !current.config.inferenceEnabled ||
+                    current.config.inferenceHostId !== primaryRoute.inferenceHostId ||
+                    !(yield* matchesRouteKey(instanceId, current.config.inferenceKey, primaryKey))
+                  )
+                    return yield* failure("The inference route changed.");
+                  return {
+                    instance: {
+                      ...current,
+                      config: {
+                        ...current.config,
+                        inferenceBaseUrl: loopbackUrl(primary.hostId),
+                        inferenceModels: [
+                          ...new Set([primary, ...alternates].flatMap((entry) => entry.models)),
+                        ],
+                      },
                     },
-                  },
-                  result: undefined,
-                });
-              })
+                    result: undefined,
+                  };
+                }),
+              )
               .pipe(Effect.onError(() => save(state).pipe(Effect.orDie)));
           }),
         );
@@ -1973,50 +1998,52 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const state = yield* read;
           const existing = state.routePools?.find((entry) => entry.driver === driver);
-          const updated = yield* settings.reviseProviderInstance(instanceId, (current) => {
-            const problem =
-              driver === "opencode"
-                ? openCodeRouteProblem(
-                    current?.environment,
-                    providerEnvironment.OPENCODE_CONFIG_CONTENT,
-                  )
-                : null;
-            if (problem) return failure(problem);
-            const native = current ?? { driver: ProviderDriverKind.make(driver), config: {} };
-            const { inferenceConnection: _previousConnection, ...nativeConfig } = providerConfig(
-              native.config,
-            )
-              ? native.config
-              : {};
-            const preserve =
-              existing?.primary.hostId === grant.hostId &&
-              current?.enabled !== false &&
-              isInferenceProviderConfig(current?.config) &&
-              current.config.inferenceEnabled &&
-              current.config.inferenceHostId === grant.hostId &&
-              current.config.inferenceKey === existing.primary.key;
-            const alternates = preserve ? existing.alternates : [];
-            return Effect.succeed({
-              instance: {
-                ...native,
-                enabled: true,
-                config: {
-                  ...nativeConfig,
-                  inferenceEnabled: true,
-                  inferenceHostId: grant.hostId,
-                  inferenceHostLabel: local ? "" : hostLabel,
-                  inferenceBaseUrl: loopbackUrl(grant.hostId),
-                  inferenceKey: grant.key,
-                  inferenceModels: [
-                    ...new Set([...models, ...alternates.flatMap((entry) => entry.models)]),
-                  ],
-                  inferenceHomePath: home,
-                  ...(linked && connection ? { inferenceConnection: connection } : {}),
+          const updated = yield* settings.reviseProviderInstance(
+            instanceId,
+            Effect.fnUntraced(function* (current) {
+              const problem =
+                driver === "opencode"
+                  ? openCodeRouteProblem(
+                      current?.environment,
+                      providerEnvironment.OPENCODE_CONFIG_CONTENT,
+                    )
+                  : null;
+              if (problem) return yield* failure(problem);
+              const native = current ?? { driver: ProviderDriverKind.make(driver), config: {} };
+              const { inferenceConnection: _previousConnection, ...nativeConfig } = providerConfig(
+                native.config,
+              )
+                ? native.config
+                : {};
+              const preserve =
+                existing?.primary.hostId === grant.hostId &&
+                existing.primary.key === grant.key &&
+                isInferenceProviderConfig(current?.config) &&
+                current.config.inferenceHostId === grant.hostId &&
+                (yield* matchesRouteKey(instanceId, current.config.inferenceKey, grant.key));
+              const alternates = preserve ? existing.alternates : [];
+              return {
+                instance: {
+                  ...native,
+                  enabled: true,
+                  config: {
+                    ...nativeConfig,
+                    inferenceEnabled: true,
+                    inferenceHostId: grant.hostId,
+                    inferenceHostLabel: local ? "" : hostLabel,
+                    inferenceBaseUrl: loopbackUrl(grant.hostId),
+                    inferenceKey: grant.key,
+                    inferenceModels: [
+                      ...new Set([...models, ...alternates.flatMap((entry) => entry.models)]),
+                    ],
+                    inferenceHomePath: home,
+                    ...(linked && connection ? { inferenceConnection: connection } : {}),
+                  },
                 },
-              },
-              result: preserve,
-            });
-          });
+                result: alternates,
+              };
+            }),
+          );
           yield* save({
             ...state,
             routePools: [
@@ -2024,7 +2051,7 @@ const make = Effect.gen(function* () {
               {
                 driver,
                 primary: candidate,
-                alternates: updated.result ? (existing?.alternates ?? []) : [],
+                alternates: updated.result,
               },
             ],
           });
@@ -2040,63 +2067,126 @@ const make = Effect.gen(function* () {
   const registerFallback = Effect.fn("InferenceProxy.registerFallback")(
     (input: InferenceRouteInput) => connect(input, true),
   );
-  const refreshLocalProviders = Effect.fn("InferenceProxy.refreshLocalProviders")(function* () {
-    const state = yield* read;
-    if (!state.enabled) return;
+  const refreshRouteCatalogs = Effect.fn("InferenceProxy.refreshRouteCatalogs")(function* (
+    localOnly: boolean,
+    targetInstanceId?: ProviderInstanceId,
+  ) {
     const hostId = yield* environment.getEnvironmentId;
-    const local = yield* grant({ environmentId: hostId, label: "Local" });
-    const { data } = yield* jsonRequest(local.baseUrl + "/v1/models", local.key, Models);
-    const { providerInstances } = yield* settings.getSettings;
-    for (const driver of INFERENCE_DRIVERS) {
-      const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make(driver));
-      const existing = providerInstances[instanceId];
+    const { enabled, routePools = [] } = yield* read;
+    const currentSettings = yield* settings.getSettings;
+    const catalogs = yield* Cache.make({
+      capacity: 64,
+      lookup: Effect.fn("InferenceProxy.fetchRouteCatalog")(
+        function* (candidate: Omit<SavedRouteCandidate, "models">) {
+          const baseUrl = yield* candidateAddress(candidate, hostId);
+          const { data } = yield* jsonRequest(baseUrl + "/v1/models", candidate.key, Models);
+          return data;
+        },
+        Effect.timeout("5 seconds"),
+        Effect.orElseSucceed(() => undefined),
+      ),
+    });
+    const refreshCandidate = Effect.fn("InferenceProxy.refreshRouteCandidate")(function* (
+      candidate: SavedRouteCandidate,
+      driver: InferenceDriver,
+    ) {
+      if (candidate.hostId === hostId ? !enabled : localOnly) return candidate;
+      const { models: _previous, ...connection } = candidate;
+      const catalog = yield* Cache.get(catalogs, connection);
+      if (catalog === undefined) return candidate;
+      const models = modelsForDriver(catalog, driver);
+      return Equal.equals(models, candidate.models) ? candidate : { ...candidate, models };
+    });
+    let changed = false;
+    for (const pool of routePools) {
+      const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make(pool.driver));
+      if (targetInstanceId !== undefined && instanceId !== targetInstanceId) continue;
+      const active = currentSettings.providerInstances[instanceId];
       if (
-        !existing ||
-        !isInferenceProviderConfig(existing.config) ||
-        !existing.config.inferenceEnabled ||
-        existing.config.inferenceHostId !== hostId
+        !active ||
+        !isProviderInstanceEnabledInAnyScope(currentSettings, instanceId) ||
+        !isInferenceProviderConfig(active.config) ||
+        !active.config.inferenceEnabled ||
+        active.config.inferenceHostId !== pool.primary.hostId ||
+        active.config.inferenceKey !== pool.primary.key
       )
         continue;
-      const localModels = modelsForDriver(data, driver);
-      const pool = (yield* read).routePools?.find(
-        (entry) => entry.driver === driver && entry.primary.hostId === hostId,
+      const [primary, ...alternates] = yield* Effect.forEach(
+        [pool.primary, ...pool.alternates] as const,
+        (candidate) => refreshCandidate(candidate, pool.driver),
+        { concurrency: 4 },
       );
-      const models = pool
-        ? [...new Set([...localModels, ...pool.alternates.flatMap((entry) => entry.models)])]
-        : localModels;
-      if (pool && pool.primary.models.join("\0") !== localModels.join("\0"))
-        yield* mutex.withPermit(
-          read.pipe(
-            Effect.flatMap((state) =>
-              save({
-                ...state,
-                routePools: (state.routePools ?? []).map((entry) =>
-                  entry.driver === driver
-                    ? { ...entry, primary: { ...entry.primary, models: localModels } }
-                    : entry,
-                ),
+      const poolChanged = primary !== pool.primary || !Equal.equals(alternates, pool.alternates);
+      const inferenceModels = [
+        ...new Set([primary, ...alternates].flatMap((candidate) => candidate.models)),
+      ];
+      if (!poolChanged && Equal.equals(inferenceModels, active.config.inferenceModels)) continue;
+      const applied = yield* mutex.withPermit(
+        Effect.gen(function* () {
+          const before = yield* read;
+          if (
+            !before.routePools ||
+            !Equal.equals(
+              before.routePools.find((entry) => entry.driver === pool.driver),
+              pool,
+            )
+          )
+            return false;
+          if (poolChanged)
+            yield* save({
+              ...before,
+              routePools: before.routePools.map((entry) =>
+                entry.driver === pool.driver ? { ...pool, primary, alternates } : entry,
+              ),
+            });
+          const revised = yield* settings
+            .reviseProviderInstance(
+              instanceId,
+              Effect.fnUntraced(function* (current, currentSettings) {
+                if (
+                  !current ||
+                  !isProviderInstanceEnabledInAnyScope(currentSettings, instanceId) ||
+                  current.driver !== pool.driver ||
+                  !isInferenceProviderConfig(current.config) ||
+                  !current.config.inferenceEnabled ||
+                  current.config.inferenceHostId !== pool.primary.hostId ||
+                  !(yield* matchesRouteKey(
+                    instanceId,
+                    current.config.inferenceKey,
+                    pool.primary.key,
+                  ))
+                )
+                  return yield* failure("The inference route changed during catalog refresh.");
+                return {
+                  instance: { ...current, config: { ...current.config, inferenceModels } },
+                  result: undefined,
+                };
               }),
-            ),
-          ),
-        );
-      const revised = yield* settings.reviseProviderInstance(instanceId, (current) => {
-        if (!current) return failure("The local inference provider was removed.");
-        return Effect.succeed({
-          instance:
-            current.driver === driver &&
-            isInferenceProviderConfig(current.config) &&
-            current.config.inferenceEnabled &&
-            current.config.inferenceHostId === hostId
-              ? { ...current, config: { ...current.config, inferenceModels: models } }
-              : current,
-          result: undefined,
-        });
-      });
-      yield* registry.reconcile(
-        deriveProviderInstanceConfigMap(revised.settings, providerEnvironment),
+            )
+            .pipe(
+              Effect.onError(() => (poolChanged ? save(before).pipe(Effect.orDie) : Effect.void)),
+              Effect.result,
+            );
+          return Result.isSuccess(revised);
+        }).pipe(Effect.uninterruptible),
       );
+      changed ||= applied;
     }
-  });
+    if (changed)
+      yield* registry.reconcile(
+        deriveProviderInstanceConfigMap(yield* settings.getSettings, providerEnvironment),
+      );
+  }, catalogMutex.withPermit);
+  const refreshLocalProviders = () => refreshRouteCatalogs(true);
+  const [refreshCatalog, invalidateCatalog] = yield* Effect.cachedInvalidateWithTTL(
+    refreshRouteCatalogs(false).pipe(Effect.ignoreCause),
+    "15 seconds",
+  );
+  const refreshModelCatalog = (fresh?: boolean, instanceId?: ProviderInstanceId) => {
+    if (instanceId !== undefined)
+      return refreshRouteCatalogs(false, instanceId).pipe(Effect.ignoreCause);
+    return fresh ? invalidateCatalog.pipe(Effect.andThen(refreshCatalog)) : refreshCatalog;
+  };
   yield* watchLocalCodexAuth.pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
   yield* watchLocalClaudeAuth.pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
   yield* read.pipe(
@@ -2122,6 +2212,7 @@ const make = Effect.gen(function* () {
     connect,
     registerFallback,
     bindRoutes,
+    refreshModelCatalog,
   };
 });
 
@@ -2150,6 +2241,10 @@ export class InferenceProxy extends Context.Service<
       input: InferenceRouteInput,
     ) => Effect.Effect<void, InferenceProxyError>;
     readonly bindRoutes: (port: number) => Effect.Effect<void, InferenceProxyError>;
+    readonly refreshModelCatalog: (
+      fresh?: boolean,
+      instanceId?: ProviderInstanceId,
+    ) => Effect.Effect<void>;
     readonly authorize: (
       key: string,
       hostId?: EnvironmentId,

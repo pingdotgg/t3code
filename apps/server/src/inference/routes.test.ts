@@ -76,7 +76,11 @@ describe("inference routes", () => {
       homePath: "/state/home",
       current: (name: string) => current[name],
     });
-    const codex = routeProvider("codex", "Office", route(["gpt-fixture"]));
+    const codex = routeProvider(
+      "codex",
+      "Office",
+      route(["gpt-fixture", "gpt-image-2.6", "gpt-fixture"]),
+    );
     const claude = routeProvider("claudeAgent", "Office", route(["claude-fixture"]));
     const pi = routeProvider("pi", "Office", route(["grok-fixture"]));
     const openCode = routeProvider(
@@ -91,6 +95,7 @@ describe("inference routes", () => {
       }),
     );
     expect(codex.config.launchArgs).toContain(baseUrl + "/v1");
+    expect(codex.config.customModels).toEqual(["gpt-fixture"]);
     expect(codex.config.launchArgs).not.toContain("private");
     expect(codex.environment).toContainEqual({
       name: "T3_INFERENCE_KEY",
@@ -149,13 +154,18 @@ describe("inference routes", () => {
     }
   });
 
-  it("gives each harness its supported advertised models regardless of prefix", () => {
-    const models = [
+  it("gives each harness its supported advertised chat models only once", () => {
+    const chatModels = [
       { id: "gpt-fixture", owned_by: "openai" },
       { id: "claude-fixture", owned_by: "anthropic" },
       { id: "grok-fixture", owned_by: "xai" },
       { id: "codex-pool-1", owned_by: "openai" },
       { id: "claude-pool-1", owned_by: "anthropic" },
+    ];
+    const models = [
+      ...chatModels,
+      { id: "gpt-fixture", owned_by: "openai" },
+      { id: "gpt-image-2.6", owned_by: "openai" },
     ];
     expect(modelsForDriver(models, "codex")).toEqual(["gpt-fixture", "codex-pool-1"]);
     expect(modelsForDriver(models, "claudeAgent")).toEqual(["claude-fixture", "claude-pool-1"]);
@@ -166,7 +176,7 @@ describe("inference routes", () => {
       "codex-pool-1",
       "claude-pool-1",
     ]);
-    expect(modelsForDriver(models, "pi")).toEqual(models.map((model) => model.id));
+    expect(modelsForDriver(models, "pi")).toEqual(chatModels.map((model) => model.id));
   });
 
   it("excludes an exhausted Claude account's models when only Codex remains available", () => {

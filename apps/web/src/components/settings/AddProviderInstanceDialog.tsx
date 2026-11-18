@@ -22,8 +22,12 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
   type EnvironmentId,
+  type InferenceConsumer,
+  type InferenceDriver,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
+  isCustomInferenceBackend,
+  isInferenceProviderConfig,
   isManagedDriverAllowed,
   inferenceHarness,
 } from "@t3tools/contracts";
@@ -71,6 +75,7 @@ import { AddManagedCodexAccountDialog } from "./CodexSetupSection";
 import { ProviderEnvironmentSection } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
 import { InferenceProviderAccounts } from "./InferenceProviderAccounts";
+import { useEnableInferenceRouting } from "./useEnableInferenceRouting";
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 const TRAEX_BRIDGE_PRESET = "traexBridge";
@@ -194,6 +199,9 @@ export function AddProviderInstanceDialog({
   const secretSources = useSecretSources(environmentId);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const inference = useEnableInferenceRouting(environmentId, environmentLabel);
+  const [routedHost, setRoutedHost] = useState<InferenceConsumer | null>(null);
+  const [localSetup, setLocalSetup] = useState(false);
 
   const [wizardStep, setWizardStep] = useState(0);
   const managedPolicy = useManagedPolicy(environmentId);
@@ -241,13 +249,24 @@ export function AddProviderInstanceDialog({
 
   const driverOption = providerClients.get(driver) ?? DEFAULT_DRIVER_OPTION;
   const isAcpRegistry = driver === ACP_REGISTRY_DRIVER_KIND;
-  const hasConnectionChoice = selection === "codex" || selection === "claudeAgent";
+  const inferenceDriver = selection === "codex" || selection === "claudeAgent" ? selection : null;
+  const hasConnectionChoice = inferenceDriver !== null;
   const supportsInference =
     useServerConfigs().get(environmentId)?.environment.capabilities.inferenceProxy === true;
+  const defaultRoutingProvider = inferenceDriver
+    ? settings.providerInstances[ProviderInstanceId.make(inferenceDriver)]
+    : undefined;
+  const canUseInference =
+    supportsInference &&
+    (!defaultRoutingProvider || !isCustomInferenceBackend(defaultRoutingProvider));
   const accountHostId = inferenceHarness(selection)?.replacesAccounts
     ? inferenceAccountHostId(settings.providerInstances, selection, environmentId)
     : null;
-  const connectionChoice = connectionChoices[selection] ?? "existing";
+  const storedConnectionChoice = connectionChoices[selection];
+  const connectionChoice =
+    storedConnectionChoice === "inference" && !canUseInference
+      ? "existing"
+      : (storedConnectionChoice ?? "existing");
   const connectionOptions =
     selection === "claudeAgent" ? CONNECTION_OPTIONS.claudeAgent : CONNECTION_OPTIONS.codex;
   const showRegistrySearch =
@@ -336,6 +355,8 @@ export function AddProviderInstanceDialog({
     }));
   };
   const selectProvider = (value: string) => {
+    setLocalSetup(false);
+    inference.clearError();
     setSelection(value);
     setIsManualAcpConfiguration(false);
     setHasAttemptedSubmit(false);
@@ -500,26 +521,43 @@ export function AddProviderInstanceDialog({
     onOpenChange(false);
   };
 
-  if (
-    providerView === "accounts" &&
-    accountHostId &&
-    (driver === "codex" || driver === "claudeAgent")
-  ) {
+  async function routeProvider(driver: InferenceDriver, preferredHostId?: EnvironmentId) {
+    const host = await inference.run(driver, preferredHostId);
+    if (!host) return;
+    setLocalSetup(false);
+    setRoutedHost(host);
+    setProviderView("accounts");
+  }
+
+  const managedAccountHostId = routedHost?.environmentId ?? accountHostId;
+  if (providerView === "accounts" && managedAccountHostId && inferenceDriver) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <WizardPopup>
           <WizardHeader
             title={`Add ${driverOption.label} account`}
-            description="CLIProxyAPI manages accounts on the inference host."
+            description={
+              routedHost
+                ? `Using ${routedHost.label} for inference.`
+                : "CLIProxyAPI manages accounts on the inference host."
+            }
           />
           <WizardPanel>
             <InferenceProviderAccounts
-              environmentId={accountHostId}
-              driver={driver === "codex" ? "codex" : "claudeAgent"}
+              environmentId={managedAccountHostId}
+              driver={inferenceDriver}
+              hostLabel={routedHost?.label}
             />
           </WizardPanel>
           <WizardFooter>
-            <Button size="sm" variant="outline" onClick={() => setProviderView("catalog")}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setRoutedHost(null);
+                setProviderView("catalog");
+              }}
+            >
               Back
             </Button>
             <Button size="sm" onClick={() => onOpenChange(false)}>
@@ -621,6 +659,7 @@ export function AddProviderInstanceDialog({
                     Connection method
                   </div>
                   <RadioGroup
+                    disabled={inference.pending}
                     aria-labelledby="add-provider-connection-label"
                     value={connectionChoice}
                     onValueChange={(value) => {
@@ -630,7 +669,7 @@ export function AddProviderInstanceDialog({
                     }}
                   >
                     {connectionOptions
-                      .filter((option) => supportsInference || option.value !== "inference")
+                      .filter((option) => canUseInference || option.value !== "inference")
                       .map((option) => {
                         const Icon = option.icon;
                         return (
@@ -661,6 +700,43 @@ export function AddProviderInstanceDialog({
                       })}
                   </RadioGroup>
                 </div>
+              ) : null}
+              {providerView === "connection" &&
+              connectionChoice === "inference" &&
+              inferenceDriver ? (
+                <>
+                  {inference.error && (
+                    <div className="space-y-2">
+                      <p role="status" className="text-sm text-destructive">
+                        {inference.error}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {!localSetup && (
+                          <Button size="sm" variant="outline" onClick={() => setLocalSetup(true)}>
+                            Set up accounts here
+                          </Button>
+                        )}
+                        <Link
+                          className="text-sm underline"
+                          to="/settings/inference"
+                          search={{ machine: environmentId }}
+                          onClick={() => onOpenChange(false)}
+                        >
+                          Choose another host
+                        </Link>
+                      </div>
+                    </div>
+                  )}
+                  {localSetup && (
+                    <InferenceProviderAccounts
+                      environmentId={environmentId}
+                      driver={inferenceDriver}
+                      hostLabel={environmentLabel}
+                      enableLocalHosting
+                      onAccountsChanged={() => void routeProvider(inferenceDriver, environmentId)}
+                    />
+                  )}
+                </>
               ) : null}
 
               {wizardStep === 0 &&
@@ -895,7 +971,7 @@ export function AddProviderInstanceDialog({
               <Button
                 variant={wizardStep === 0 && providerView === "catalog" ? "ghost-muted" : "outline"}
                 size="sm"
-                disabled={isSaving || isPreparingRegistryAgent}
+                disabled={isSaving || isPreparingRegistryAgent || inference.pending}
                 onClick={() => {
                   if (wizardStep === 0) {
                     if (providerView === "connection") {
@@ -912,13 +988,20 @@ export function AddProviderInstanceDialog({
               </Button>
               {wizardStep === 0 &&
               providerView === "connection" &&
-              connectionChoice === "inference" ? (
+              connectionChoice === "inference" &&
+              inferenceDriver ? (
                 <Button
                   size="sm"
-                  render={<Link to="/settings/inference" search={{ machine: environmentId }} />}
-                  onClick={() => onOpenChange(false)}
+                  disabled={inference.pending || !inference.canConnect}
+                  onClick={() => {
+                    const config = defaultRoutingProvider?.config;
+                    void routeProvider(
+                      inferenceDriver,
+                      isInferenceProviderConfig(config) ? config.inferenceHostId : undefined,
+                    );
+                  }}
                 >
-                  Open inference accounts
+                  {inference.pending ? "Connecting…" : "Continue"}
                 </Button>
               ) : wizardStep === 0 ? (
                 <Button

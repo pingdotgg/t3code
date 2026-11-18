@@ -219,6 +219,35 @@ describe("scoped default model selections", () => {
 });
 
 describe("instance-scoped model selection", () => {
+  it.each([
+    { driver: "codex", replacesAccounts: true },
+    { driver: "claudeAgent", replacesAccounts: true },
+    { driver: "opencode", replacesAccounts: false },
+    { driver: "pi", replacesAccounts: false },
+  ])(
+    "only keeps native custom models on additive $driver routes",
+    ({ driver, replacesAccounts }) => {
+      const instanceId = ProviderInstanceId.make(driver);
+      const driverKind = ProviderDriverKind.make(driver);
+      const settings: UnifiedSettings = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: {
+          [instanceId]: {
+            driver: driverKind,
+            config: { inferenceEnabled: true, customModels: ["native-model"] },
+          },
+        },
+      };
+      const [entry] = deriveProviderInstanceEntries([
+        provider({ instanceId, provider: driverKind, models: ["hosted-model"] }),
+      ]);
+
+      expect(getAppModelOptionsForInstance(settings, entry!).map((option) => option.slug)).toEqual(
+        replacesAccounts ? ["hosted-model"] : ["hosted-model", "native-model"],
+      );
+    },
+  );
+
   it("keeps custom models on the provider instance that declared them", () => {
     const providers = [
       provider({

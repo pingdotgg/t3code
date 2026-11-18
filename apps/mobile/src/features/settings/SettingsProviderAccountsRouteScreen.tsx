@@ -97,7 +97,7 @@ function EnvironmentProviders({
   return (
     <>
       {environment.serverConfig.environment.capabilities.inferenceProxy && (
-        <InferenceAccounts environment={environment} />
+        <InferenceAccounts environment={environment} providers={providers} />
       )}
       {accounts.map((provider, index) => (
         <ProviderAccount

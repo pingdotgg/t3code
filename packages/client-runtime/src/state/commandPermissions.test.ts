@@ -18,7 +18,11 @@ import {
   AuthSourceControlWriteScope,
   ThreadId,
   EnvironmentId,
+  InferenceProxyError,
+  isInferenceProviderConfig,
   ORCHESTRATION_V2_WS_METHODS,
+  ProjectId,
+  ProviderInstanceId,
   ScheduledTaskId,
   WS_METHODS,
   type AuthSessionState,
@@ -118,14 +122,16 @@ describe("command permissions", () => {
     }),
   );
   it.effect.each([
-    { via: "the connected SSH host", ssh: true, fallback: false },
+    { via: "the connected SSH host", ssh: true, mode: "explicit" },
     {
       via: "the grant when this client reaches the host over loopback",
       ssh: false,
-      fallback: false,
+      mode: "explicit",
     },
-    { via: "a connected SSH fallback", ssh: true, fallback: true },
-  ])("routes through $via without forwarding the client's bearer credential", ({ ssh, fallback }) =>
+    { via: "a connected SSH fallback", ssh: true, mode: "fallback" },
+    { via: "a paired host discovered at first enable", ssh: true, mode: "discovery" },
+    { via: "a revoked host discovered at first enable", ssh: true, mode: "revoked" },
+  ])("handles $via without forwarding the client's bearer credential", ({ ssh, mode }) =>
     Effect.gen(function* () {
       const registry = yield* setup;
       registry.mount(sessions(other));
@@ -158,6 +164,20 @@ describe("command permissions", () => {
       let selected: InferenceRouteInput | undefined;
       let automaticGrant: boolean | undefined;
       let selectedMethod: string | undefined;
+      const discovery = mode === "discovery" || mode === "revoked";
+      const fallback = mode === "fallback";
+      const checkedHosts: EnvironmentId[] = [];
+      const hostStatus = {
+        running: true,
+        enabled: true,
+        sharing: true,
+        version: "8.0.76",
+        problem: null,
+        accounts: [],
+        availableDrivers: ["codex"],
+        consumers: [],
+        routes: [],
+      } as const;
       const host = {
         target,
         prepared: yield* SubscriptionRef.make(
@@ -173,9 +193,15 @@ describe("command permissions", () => {
         session: yield* SubscriptionRef.make(
           Option.some({
             client: {
+              [WS_METHODS.inferenceStatus]: () => {
+                checkedHosts.push(env);
+                return Effect.succeed(hostStatus);
+              },
               [WS_METHODS.inferenceGrant]: (input: { automatic?: boolean }) => {
                 automaticGrant = input.automatic;
-                return Effect.succeed(issued);
+                return mode === "revoked" && input.automatic
+                  ? Effect.fail(new InferenceProxyError({ message: "Sharing was revoked." }))
+                  : Effect.succeed(issued);
               },
             },
           } as unknown as RpcSession),
@@ -190,6 +216,14 @@ describe("command permissions", () => {
         session: yield* SubscriptionRef.make(
           Option.some({
             client: {
+              [WS_METHODS.inferenceStatus]: () => {
+                checkedHosts.push(other);
+                return Effect.succeed({
+                  ...hostStatus,
+                  sharing: false,
+                  availableDrivers: ["claudeAgent"],
+                });
+              },
               [WS_METHODS.inferenceConnect]: (input: InferenceRouteInput) =>
                 Effect.sync(() => {
                   selected = input;
@@ -223,17 +257,45 @@ describe("command permissions", () => {
             Effect.provideService(effect, EnvironmentSupervisor, id === env ? host : consumer),
         }),
       );
-      const { routeInference } = createInferenceProxyAtoms(routeRuntime);
-      const result = yield* Effect.promise(() =>
-        routeInference.run(registry, {
-          host: { environmentId: env, label: "Host" },
-          consumer: { environmentId: other, label: "Consumer" },
-          driver: "codex",
-          fallback,
-        }),
-      );
+      const { routeInference, enableInferenceRouting } = createInferenceProxyAtoms(routeRuntime);
+      const hostIdentity = { environmentId: env, label: "Host" };
+      const consumerIdentity = { environmentId: other, label: "Consumer" };
+      const serverConfig = {
+        environment: { capabilities: { inferenceProxy: true } },
+      } as InferenceFleetEnvironment["serverConfig"];
+      const result = discovery
+        ? yield* Effect.promise(() =>
+            enableInferenceRouting.run(registry, {
+              consumer: consumerIdentity,
+              driver: "codex",
+              environments: [
+                { ...hostIdentity, connection: { phase: "offline" }, serverConfig },
+                { ...hostIdentity, connection: { phase: "connected" }, serverConfig },
+                { ...consumerIdentity, connection: { phase: "connected" }, serverConfig },
+              ],
+            }),
+          )
+        : yield* Effect.promise(() =>
+            routeInference.run(registry, {
+              host: hostIdentity,
+              consumer: consumerIdentity,
+              driver: "codex",
+              fallback,
+            }),
+          );
+      expect(automaticGrant).toBe(fallback || discovery || undefined);
+      expect(checkedHosts).toEqual(discovery ? [other, env] : []);
+      if (mode === "revoked") {
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure")
+          expect(Cause.squash(result.cause)).toMatchObject({
+            message: expect.stringContaining("Sharing was revoked."),
+          });
+        expect(selected).toBeUndefined();
+        return;
+      }
       expect(result._tag).toBe("Success");
-      expect(automaticGrant).toBe(fallback || undefined);
+      if (discovery && result._tag === "Success") expect(result.value).toEqual(hostIdentity);
       expect(selectedMethod).toBe(
         fallback ? WS_METHODS.inferenceRegisterFallback : WS_METHODS.inferenceConnect,
       );
@@ -295,6 +357,34 @@ describe("command permissions", () => {
       },
     ]);
     expect(planInferenceFallbacks(host, { ...status, sharing: false }, [consumer])).toEqual([]);
+    const config = consumer.serverConfig!;
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const instance = config.settings.providerInstances[instanceId]!;
+    if (!isInferenceProviderConfig(instance.config)) throw new Error("Expected a configured route");
+    const disabledSettings = {
+      ...config.settings,
+      projectSettingsOverrides: {},
+      providerInstances: {
+        [instanceId]: { ...instance, config: { ...instance.config, enabled: false } },
+      },
+    };
+    const disabled = { ...consumer, serverConfig: { ...config, settings: disabledSettings } };
+    expect(planInferenceFallbacks(host, status, [disabled])).toEqual([]);
+    const enabledInProject = {
+      ...disabled,
+      serverConfig: {
+        ...config,
+        settings: {
+          ...disabledSettings,
+          projectSettingsOverrides: {
+            [ProjectId.make("inference-project")]: {
+              providerInstances: { [instanceId]: { enabled: true } },
+            },
+          },
+        },
+      },
+    };
+    expect(planInferenceFallbacks(host, status, [enabledInProject])).toHaveLength(1);
     expect(
       planInferenceFallbacks({ ...host, connection: { phase: "offline" } }, status, [consumer]),
     ).toEqual([]);

@@ -38,6 +38,8 @@ const state = vi.hoisted(() => ({
   updateModelPreferences: vi.fn(),
   toggleFavorite: vi.fn(),
   mutateProviderInstance: vi.fn(),
+  enableInference: vi.fn(),
+  manageInference: vi.fn(),
   confirm: vi.fn<() => Promise<boolean>>(),
 }));
 
@@ -71,6 +73,10 @@ vi.mock(import("../../state/server"), async (original) => {
       configValueAtom: (() => config) as never,
       providerAuthState: (() => providerAuth) as never,
       providersValueAtom: (() => providers) as never,
+      inferenceProxy: {
+        ...actual.serverEnvironment.inferenceProxy,
+        canConnect: () => Atom.make(state.canManageProviders),
+      },
     } as never,
   };
 });
@@ -82,6 +88,8 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
       update: state.updateProvider,
       uninstall: state.uninstall,
       "accept-url-auth": state.acceptUrlAuth,
+      "inference:enable-routing": state.enableInference,
+      "inference:manage": state.manageInference,
     })[command.label ?? ""] ?? vi.fn()) as never,
 }));
 vi.mock(import("~/localApi"), async (original) => {
@@ -244,6 +252,10 @@ async function setup() {
   state.updateModelPreferences.mockReset();
   state.toggleFavorite.mockReset();
   state.mutateProviderInstance.mockReset().mockResolvedValue(AsyncResult.success({}));
+  state.enableInference
+    .mockReset()
+    .mockResolvedValue(AsyncResult.success({ environmentId, label: "Remote device" }));
+  state.manageInference.mockReset().mockResolvedValue(AsyncResult.success({}));
   state.confirm.mockReset().mockResolvedValue(false);
   state.refresh.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.updateProvider.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -286,6 +298,58 @@ describe("EnvironmentProviderSettings routing", () => {
       },
       {},
     );
+  });
+
+  it("enables inference routing directly and keeps the switch off when no host is available", async () => {
+    await setup();
+    await act(async () =>
+      appAtomRegistry.set(state.config, {
+        environment: { capabilities: { inferenceProxy: true } },
+      }),
+    );
+    await setProviders([provider()]);
+    let reply: (result: AsyncResult.AsyncResult<never, Error>) => void = () => {};
+    state.enableInference.mockImplementationOnce(() => new Promise((resolve) => (reply = resolve)));
+
+    await using screen = await render(panel({ targetInstanceId: codexId }));
+    const proxySwitch = screen.getByRole("switch", { name: "Inference routing" });
+    await userEvent.click(proxySwitch);
+    await expect.element(proxySwitch).toBeDisabled();
+    await expect.element(proxySwitch).not.toBeChecked();
+    expect(state.enableInference).toHaveBeenCalledExactlyOnceWith({
+      consumer: { environmentId, label: "Remote device" },
+      driver: "codex",
+      environments: expect.any(Array),
+    });
+    await act(async () =>
+      reply(AsyncResult.failure(Cause.fail(new Error("No connected inference host.")))),
+    );
+    await expect
+      .element(screen.getByRole("status"))
+      .toHaveTextContent("No connected inference host.");
+    await userEvent.click(screen.getByRole("button", { name: "Set up accounts here" }));
+    const localSetup = screen.getByText("Connect to Remote device to manage its accounts");
+    await expect.element(localSetup).toBeVisible();
+    await expect.element(proxySwitch).toBeEnabled();
+    await expect.element(proxySwitch).not.toBeChecked();
+
+    await userEvent.click(proxySwitch);
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: {
+          driver: ProviderDriverKind.make("codex"),
+          config: { inferenceEnabled: true, inferenceHostId: environmentId },
+        },
+      },
+    };
+    await screen.rerender(panel({ targetInstanceId: codexId }));
+    await expect.element(proxySwitch).toBeChecked();
+    await userEvent.click(proxySwitch);
+    state.settings = DEFAULT_UNIFIED_SETTINGS;
+    await screen.rerender(panel({ targetInstanceId: codexId }));
+    await expect.element(proxySwitch).not.toBeChecked();
+    await expect.element(localSetup).not.toBeInTheDocument();
   });
 
   it.each(["codex", "opencode", "pi"] as const)(
@@ -338,15 +402,13 @@ describe("EnvironmentProviderSettings routing", () => {
       ]);
       await using screen = await render(panel({ targetInstanceId: providerId }));
       await expect.element(screen.getByText("Personal", { exact: true })).toBeVisible();
-      await userEvent.click(screen.getByRole("switch", { name: "Use CLI proxy" }));
-      expect(state.mutateProviderInstance).toHaveBeenLastCalledWith(
-        {
-          operation: "upsert",
-          instanceId: providerId,
-          instance: { ...native, config: { ...native.config, inferenceEnabled: true } },
-        },
-        {},
-      );
+      await userEvent.click(screen.getByRole("switch", { name: "Inference routing" }));
+      expect(state.enableInference).toHaveBeenCalledExactlyOnceWith({
+        consumer: { environmentId, label: "Remote device" },
+        driver,
+        environments: expect.any(Array),
+        preferredHostId: environmentId,
+      });
       state.settings = {
         ...state.settings,
         providerInstances: {
@@ -355,6 +417,9 @@ describe("EnvironmentProviderSettings routing", () => {
         },
       };
       await screen.rerender(panel({ targetInstanceId: providerId }));
+      await expect
+        .element(screen.getByText(/Using Remote device for inference via the CLI proxy/))
+        .toBeVisible();
       if (driver === "codex") {
         await expect.element(screen.getByText("Personal", { exact: true })).not.toBeInTheDocument();
         await expect
@@ -370,11 +435,12 @@ describe("EnvironmentProviderSettings routing", () => {
           .toBeVisible();
       }
       await expect.element(screen.getByText("Traex", { exact: true })).toBeVisible();
-      await userEvent.click(screen.getByRole("switch", { name: "Use CLI proxy" }));
-      expect(state.mutateProviderInstance).toHaveBeenLastCalledWith(
-        { operation: "upsert", instanceId: providerId, instance: native },
-        {},
-      );
+      await userEvent.click(screen.getByRole("switch", { name: "Inference routing" }));
+      expect(state.manageInference).toHaveBeenCalledExactlyOnceWith({
+        environmentId,
+        input: { operation: "removeRoute", instanceId: providerId },
+      });
+      expect(state.mutateProviderInstance).not.toHaveBeenCalled();
     },
   );
 

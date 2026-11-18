@@ -6,6 +6,10 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  inferenceHostCandidates,
+  inferenceHostRoutingIssue,
+} from "@t3tools/client-runtime/state/inference-proxy";
+import {
   INFERENCE_DRIVERS,
   INFERENCE_HARNESSES,
   type EnvironmentId,
@@ -37,8 +41,6 @@ function InferenceRoute({
     inferenceProxy.inferenceStatus({ environmentId: host.environmentId, input: {} }),
   );
   const issue = inferenceRouteIssue(status.data, host.environmentId === consumer.environmentId);
-  const hasAccount = (driver: InferenceDriver) =>
-    status.data?.availableDrivers.includes(driver) ?? false;
   const route = useAtomCommand(inferenceProxy.routeInference, { reportFailure: false });
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
@@ -70,7 +72,12 @@ function InferenceRoute({
               key={driver}
               size="sm"
               variant="outline"
-              disabled={!canGrant || !canConnect || busy || !!issue || !hasAccount(driver)}
+              disabled={
+                !canGrant ||
+                !canConnect ||
+                busy ||
+                inferenceHostRoutingIssue(status.data, { host, consumer, driver }) !== null
+              }
               onClick={() => void add(driver)}
             >
               {INFERENCE_HARNESSES[driver].label}
@@ -173,7 +180,12 @@ export function InferenceSettings({ environmentId }: { environmentId: Environmen
                   checked={host.enabled}
                   disabled={busy}
                   onCheckedChange={(enabled) =>
-                    void run({ operation: "configure", enabled, sharing: false })
+                    void run({
+                      operation: "configure",
+                      enabled,
+                      sharing: false,
+                      expectedEnabled: host.enabled,
+                    })
                   }
                 />
               }
@@ -210,7 +222,12 @@ export function InferenceSettings({ environmentId }: { environmentId: Environmen
                       checked={host.sharing}
                       disabled={busy}
                       onCheckedChange={(sharing) =>
-                        void run({ operation: "configure", enabled: true, sharing })
+                        void run({
+                          operation: "configure",
+                          enabled: true,
+                          sharing,
+                          expectedEnabled: true,
+                        })
                       }
                     />
                   }
@@ -279,15 +296,9 @@ export function InferenceSettings({ environmentId }: { environmentId: Environmen
               }
             />
           ))}
-          {environments
-            .filter(
-              (e) =>
-                e.connection.phase === "connected" &&
-                e.serverConfig?.environment.capabilities.inferenceProxy,
-            )
-            .map((e) => (
-              <InferenceRoute key={e.environmentId} host={e} consumer={current} />
-            ))}
+          {inferenceHostCandidates(environments, environmentId).map((e) => (
+            <InferenceRoute key={e.environmentId} host={e} consumer={current} />
+          ))}
         </SettingsSection>
       )}
     </SettingsPageContainer>

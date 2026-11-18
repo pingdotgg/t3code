@@ -45,6 +45,20 @@ const decodeServerObservabilitySettingsJson = Schema.decodeUnknownOption(
   ServerObservabilitySettingsJson,
 );
 
+export function isProviderInstanceEnabledInAnyScope(
+  settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
+  instanceId: ProviderInstanceId,
+): boolean {
+  const instance = settings.providerInstances[instanceId];
+  return (
+    instance !== undefined &&
+    (resolveProviderInstanceEnabled(instance) ||
+      Object.values(settings.projectSettingsOverrides).some(
+        (project) => project?.providerInstances?.[instanceId]?.enabled === true,
+      ))
+  );
+}
+
 export function isModelSelectionProviderEnabled(
   settings: ServerSettings,
   selection: ModelSelection,
