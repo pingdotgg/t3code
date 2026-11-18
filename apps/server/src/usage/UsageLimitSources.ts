@@ -52,6 +52,41 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   }
 }
 
+/**
+ * A refused read of one account keeps its last good reading, as provider probes keep their bars
+ * (see ServerProviderUsageLimits); a reading with none to keep stays listed as unreadable.
+ */
+function keepLastGoodReadings(
+  previous: ReadonlyArray<UsageLimitSourceSnapshot>,
+  next: ReadonlyArray<UsageLimitSourceSnapshot>,
+): ReadonlyArray<UsageLimitSourceSnapshot> {
+  return next.map((source) => {
+    // Auth file names can be reused, so only the same hub and login may lend a reading.
+    const before = previous.find(
+      (candidate) => candidate.id === source.id && candidate.endpoint === source.endpoint,
+    );
+    if (!before) return source;
+    return {
+      ...source,
+      accounts: source.accounts.map((account) => {
+        if (account.usageLimits.unavailable?.reason !== "probeFailed") return account;
+        // Without a listed login, a reused auth file name cannot be told apart from the old one.
+        if (account.email === undefined && account.workspaceId === undefined) return account;
+        const last = before.accounts.find(
+          (candidate) =>
+            candidate.id === account.id &&
+            candidate.driver === account.driver &&
+            // Fingerprinted Antigravity readings omit the listed identity, so they are never lent.
+            candidate.usageLimits.credentialFingerprint === undefined &&
+            candidate.email === account.email &&
+            candidate.workspaceId === account.workspaceId,
+        );
+        return last && !last.usageLimits.unavailable ? last : account;
+      }),
+    };
+  });
+}
+
 function missingManagementKey(config: UsageLimitSourceConfig): string {
   return typeof config.managementKey === "string"
     ? "No management key configured."
@@ -131,7 +166,7 @@ export const make = Effect.gen(function* () {
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
       { concurrency: 4 },
     );
-    yield* publish(snapshots);
+    yield* publish(keepLastGoodReadings(yield* Ref.get(stateRef), snapshots));
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
@@ -156,6 +191,7 @@ export const make = Effect.gen(function* () {
       input.accountId,
       input.creditId,
     );
+    // A redemption changes the reading, so a refused re-read must not bring back the one before it.
     const snapshot = yield* readSource(input.sourceId, config);
     const previous = yield* Ref.get(stateRef);
     yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
