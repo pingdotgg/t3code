@@ -251,8 +251,11 @@ function FileDocument(props: {
             ref={revision === next ? nextFrame : shownFrame}
             src={revision.src}
             title={props.title}
-            className="absolute inset-0 size-full border-0"
-            style={{ backgroundColor: "Canvas" }}
+            className={cn(
+              "absolute inset-0 size-full border-0",
+              revision !== next && "bg-background",
+            )}
+            style={revision === next ? { backgroundColor: "Canvas" } : undefined}
             sandbox="allow-scripts allow-forms allow-popups allow-downloads"
             inert={revision === next}
             aria-hidden={revision === next ? true : undefined}
