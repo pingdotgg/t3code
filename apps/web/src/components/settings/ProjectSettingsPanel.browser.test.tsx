@@ -78,7 +78,7 @@ vi.mock(import("~/state/environments"), async (original) => ({
 vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
   useProjects: (() => state.projects) as never,
-  useThreadShells: () => [],
+  readThreadShells: () => [],
   useServerConfigs: (() =>
     new Map(
       environments.map((environment) => [environment.environmentId, environment.serverConfig]),

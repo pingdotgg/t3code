@@ -13,7 +13,7 @@ import type {
   SidebarProjectGroupMember,
   SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
-import { useThreadShells, waitForProjectRemoval } from "../../state/entities";
+import { readThreadShells, waitForProjectRemoval } from "../../state/entities";
 import { readUnloadedThreadCount } from "../../state/olderSettledShelf";
 import { projectEnvironment } from "../../state/projects";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -35,12 +35,12 @@ export function useRemoveProjectMembers({
 }) {
   const gt = useGT();
   const navigate = useNavigate({ from: "/settings" });
-  const threads = useThreadShells();
   const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
     reportFailure: false,
   });
 
   return async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
+    const threads = readThreadShells();
     if (checkProjectAccess(members, gt("Failed to remove project"))) return;
     const api = readLocalApi();
     if (!api) return;
