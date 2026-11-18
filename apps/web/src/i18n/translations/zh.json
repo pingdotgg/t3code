@@ -3030,10 +3030,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "位于打开此页面的计算机上"
-      ]
+      "c": [" ", "位于打开此页面的计算机上"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3045,10 +3042,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· 运行它的任何人都会获得此访问权限"
-      ]
+      "c": [" ", "· 运行它的任何人都会获得此访问权限"]
     }
   ],
   "c54cc9c75db9dc58": "请只批准你刚刚发起的登录。",
@@ -9448,8 +9442,8 @@
   "6e820a7742353257": "请输入至少一分钟的间隔。",
   "9e596c405f5cea09": "此环境不支持单次运行",
   "e450f26e1af0a074": "此环境运行的是旧版 T3 Code。请更新后再创建单次定时任务，或选择其他定时规则。",
-  "14f522da60702611": "Cron is not available here",
-  "00ea5df0d5cc65e6": "This environment runs an older T3 Code. Update it to schedule a cron task, or pick another schedule.",
+  "14f522da60702611": "此环境不支持 Cron",
+  "00ea5df0d5cc65e6": "此环境运行的 T3 Code 版本较旧。请更新 T3 Code 以安排 cron 任务，或选择其他计划。",
   "71d8554090924454": "请填写工作副本路径",
   "a34b72de0ff1cbd0": "请输入任务运行所在的工作副本路径。",
   "99a8c45121157edd": "无法保存定时任务",
@@ -9484,16 +9478,15 @@
   "196658ca8d7106b1": "创建任务",
   "5baf27d764acc26d": "仅在所有筛选条件都满足时运行。其他请求会记为已过滤。“属于以下值之一”的多个值用英文逗号分隔，值本身不能包含逗号。",
   "1abe7fdace9bed26": "添加筛选条件",
-  "316f12ddbabba34e": "Expression",
-  "8999d6b440d32f4d": "Minute, hour, day of month, month, weekday, in the environment's time zone.",
+  "316f12ddbabba34e": "表达式",
+  "8999d6b440d32f4d": "分钟、小时、日期、月份、星期，使用环境的时区。",
   "3d083dde966e59e9": [
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " ",
-    "runs every 30 minutes from 9:00 to 16:30 on weekdays."
+    " 会在周一至周五的 9:00 至 16:30 之间每 30 分钟运行一次。"
   ],
   "ce5c81a41b72193a": "新建任务",
   "58d9625d53534eab": "没有可用的环境",
@@ -11353,7 +11346,7 @@
   "e1222cad4667e338": "{days} 的 {time}",
   "74b25bf2e8d10313": "{days} 的 {time} {zone}",
   "4ee38ebaddb9d978": "运行时间无效",
-  "eda6a4ccc66dea8a": "Invalid cron expression",
+  "eda6a4ccc66dea8a": "无效的 cron 表达式",
   "2b5678bf6b6792d4": "请选择日期和时间。",
   "f062630735a207ea": "你所在的时区不存在这个时间。",
   "75265b7ef76cfedd": "请选择时间。",

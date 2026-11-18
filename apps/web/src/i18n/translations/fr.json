@@ -3026,10 +3026,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "sur l’ordinateur qui a ouvert cette page"
-      ]
+      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3041,10 +3038,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quiconque l’exécute obtient cet accès"
-      ]
+      "c": [" ", "· quiconque l’exécute obtient cet accès"]
     }
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",
@@ -9432,8 +9426,8 @@
   "6e820a7742353257": "Saisissez un intervalle d’au moins une minute.",
   "9e596c405f5cea09": "Une fois n’est pas disponible ici",
   "e450f26e1af0a074": "Cet environnement exécute une ancienne version de T3 Code. Mettez-le à jour pour planifier une tâche ponctuelle, ou choisissez une autre planification.",
-  "14f522da60702611": "Cron is not available here",
-  "00ea5df0d5cc65e6": "This environment runs an older T3 Code. Update it to schedule a cron task, or pick another schedule.",
+  "14f522da60702611": "Cron n'est pas disponible ici",
+  "00ea5df0d5cc65e6": "Cet environnement utilise une ancienne version de T3 Code. Mettez-la à jour pour planifier une tâche cron, ou choisissez une autre planification.",
   "71d8554090924454": "Le chemin du checkout est requis",
   "a34b72de0ff1cbd0": "Saisissez le chemin du checkout où exécuter la tâche.",
   "99a8c45121157edd": "Impossible d’enregistrer la tâche planifiée",
@@ -9469,15 +9463,14 @@
   "5baf27d764acc26d": "N’exécute que si tous les filtres correspondent. Les autres requêtes sont journalisées comme filtrées. Séparez les valeurs « fait partie de » par des virgules ; une valeur ne peut pas contenir de virgule.",
   "1abe7fdace9bed26": "Ajouter un filtre",
   "316f12ddbabba34e": "Expression",
-  "8999d6b440d32f4d": "Minute, hour, day of month, month, weekday, in the environment's time zone.",
+  "8999d6b440d32f4d": "Minute, heure, jour du mois, mois, jour de la semaine, dans le fuseau horaire de l'environnement.",
   "3d083dde966e59e9": [
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " ",
-    "runs every 30 minutes from 9:00 to 16:30 on weekdays."
+    " s'exécute toutes les 30 minutes de 9:00 à 16:30, du lundi au vendredi."
   ],
   "ce5c81a41b72193a": "Nouvelle tâche",
   "58d9625d53534eab": "Aucun environnement disponible",
@@ -11329,7 +11322,7 @@
   "e1222cad4667e338": "{days} à {time}",
   "74b25bf2e8d10313": "{days} à {time} {zone}",
   "4ee38ebaddb9d978": "Heure d’exécution non valide",
-  "eda6a4ccc66dea8a": "Invalid cron expression",
+  "eda6a4ccc66dea8a": "Expression cron invalide",
   "2b5678bf6b6792d4": "Choisissez une date et une heure.",
   "f062630735a207ea": "Cette heure n’existe pas dans votre fuseau horaire.",
   "75265b7ef76cfedd": "Choisissez une heure.",

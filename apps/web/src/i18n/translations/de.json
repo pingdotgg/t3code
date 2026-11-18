@@ -3027,10 +3027,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "auf dem Computer, der diese Seite geöffnet hat"
-      ]
+      "c": [" ", "auf dem Computer, der diese Seite geöffnet hat"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3042,10 +3039,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· wer es ausführt, erhält diesen Zugriff"
-      ]
+      "c": [" ", "· wer es ausführt, erhält diesen Zugriff"]
     }
   ],
   "c54cc9c75db9dc58": "Genehmige nur eine Anmeldung, die du gerade selbst gestartet hast.",
@@ -9434,8 +9428,8 @@
   "6e820a7742353257": "Gib ein Intervall von mindestens einer Minute ein.",
   "9e596c405f5cea09": "„Einmal“ ist hier nicht verfügbar",
   "e450f26e1af0a074": "Diese Umgebung verwendet eine ältere Version von T3 Code. Aktualisiere sie, um eine einmalige Aufgabe zu planen, oder wähle einen anderen Zeitplan.",
-  "14f522da60702611": "Cron is not available here",
-  "00ea5df0d5cc65e6": "This environment runs an older T3 Code. Update it to schedule a cron task, or pick another schedule.",
+  "14f522da60702611": "Cron ist hier nicht verfügbar",
+  "00ea5df0d5cc65e6": "In dieser Umgebung läuft eine ältere Version von T3 Code. Aktualisiere sie, um eine Cron-Aufgabe zu planen, oder wähle einen anderen Zeitplan.",
   "71d8554090924454": "Checkout-Pfad ist erforderlich",
   "a34b72de0ff1cbd0": "Gib den Pfad des Checkouts ein, in dem die Aufgabe laufen soll.",
   "99a8c45121157edd": "Geplante Aufgabe konnte nicht gespeichert werden",
@@ -9470,16 +9464,15 @@
   "196658ca8d7106b1": "Aufgabe erstellen",
   "5baf27d764acc26d": "Nur ausführen, wenn alle Filter zutreffen. Andere Anfragen werden als gefiltert protokolliert. Trenne „ist eines von“-Werte mit Kommas; ein Wert darf kein Komma enthalten.",
   "1abe7fdace9bed26": "Filter hinzufügen",
-  "316f12ddbabba34e": "Expression",
-  "8999d6b440d32f4d": "Minute, hour, day of month, month, weekday, in the environment's time zone.",
+  "316f12ddbabba34e": "Ausdruck",
+  "8999d6b440d32f4d": "Minute, Stunde, Tag des Monats, Monat, Wochentag, in der Zeitzone der Umgebung.",
   "3d083dde966e59e9": [
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " ",
-    "runs every 30 minutes from 9:00 to 16:30 on weekdays."
+    " wird montags bis freitags von 9:00 bis 16:30 alle 30 Minuten ausgeführt."
   ],
   "ce5c81a41b72193a": "Neue Aufgabe",
   "58d9625d53534eab": "Keine Umgebungen verfügbar",
@@ -11331,7 +11324,7 @@
   "e1222cad4667e338": "{days} um {time}",
   "74b25bf2e8d10313": "{days} um {time} {zone}",
   "4ee38ebaddb9d978": "Ungültige Ausführungszeit",
-  "eda6a4ccc66dea8a": "Invalid cron expression",
+  "eda6a4ccc66dea8a": "Ungültiger Cron-Ausdruck",
   "2b5678bf6b6792d4": "Wähle ein Datum und eine Uhrzeit.",
   "f062630735a207ea": "Diese Uhrzeit existiert in deiner Zeitzone nicht.",
   "75265b7ef76cfedd": "Wähle eine Uhrzeit.",

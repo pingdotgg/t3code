@@ -3026,10 +3026,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "på datorn som öppnade den här sidan"
-      ]
+      "c": [" ", "på datorn som öppnade den här sidan"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3041,10 +3038,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· den som kör den får den här åtkomsten"
-      ]
+      "c": [" ", "· den som kör den får den här åtkomsten"]
     }
   ],
   "c54cc9c75db9dc58": "Godkänn bara en inloggning som du själv precis har startat.",
@@ -9440,8 +9434,8 @@
   "6e820a7742353257": "Ange ett intervall på minst en minut.",
   "9e596c405f5cea09": "En gång är inte tillgängligt här",
   "e450f26e1af0a074": "Den här miljön kör en äldre version av T3 Code. Uppdatera den för att schemalägga en engångsuppgift, eller välj ett annat schema.",
-  "14f522da60702611": "Cron is not available here",
-  "00ea5df0d5cc65e6": "This environment runs an older T3 Code. Update it to schedule a cron task, or pick another schedule.",
+  "14f522da60702611": "Cron är inte tillgängligt här",
+  "00ea5df0d5cc65e6": "Den här miljön kör en äldre version av T3 Code. Uppdatera den för att schemalägga en cron-uppgift, eller välj ett annat schema.",
   "71d8554090924454": "Sökväg till utcheckningen krävs",
   "a34b72de0ff1cbd0": "Ange sökvägen till utcheckningen som ska köras i.",
   "99a8c45121157edd": "Kunde inte spara den schemalagda uppgiften",
@@ -9476,16 +9470,15 @@
   "196658ca8d7106b1": "Skapa uppgift",
   "5baf27d764acc26d": "Kör bara när alla filter matchar. Andra begäranden loggas som filtrerade. Separera värden för ”är en av” med kommatecken; ett värde får inte innehålla kommatecken.",
   "1abe7fdace9bed26": "Lägg till filter",
-  "316f12ddbabba34e": "Expression",
-  "8999d6b440d32f4d": "Minute, hour, day of month, month, weekday, in the environment's time zone.",
+  "316f12ddbabba34e": "Uttryck",
+  "8999d6b440d32f4d": "Minut, timme, dag i månaden, månad, veckodag, i miljöns tidszon.",
   "3d083dde966e59e9": [
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " ",
-    "runs every 30 minutes from 9:00 to 16:30 on weekdays."
+    " körs var 30:e minut från 9:00 till 16:30, måndag till fredag."
   ],
   "ce5c81a41b72193a": "Ny uppgift",
   "58d9625d53534eab": "Inga miljöer tillgängliga",
@@ -11337,7 +11330,7 @@
   "e1222cad4667e338": "{days} kl. {time}",
   "74b25bf2e8d10313": "{days} kl. {time} {zone}",
   "4ee38ebaddb9d978": "Ogiltig körtid",
-  "eda6a4ccc66dea8a": "Invalid cron expression",
+  "eda6a4ccc66dea8a": "Ogiltigt cron-uttryck",
   "2b5678bf6b6792d4": "Välj ett datum och en tid.",
   "f062630735a207ea": "Den tiden finns inte i din tidszon.",
   "75265b7ef76cfedd": "Välj en tid.",

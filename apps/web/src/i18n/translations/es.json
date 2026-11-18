@@ -3026,10 +3026,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "en el ordenador que abrió esta página"
-      ]
+      "c": [" ", "en el ordenador que abrió esta página"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3041,10 +3038,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quien lo ejecute obtiene este acceso"
-      ]
+      "c": [" ", "· quien lo ejecute obtiene este acceso"]
     }
   ],
   "c54cc9c75db9dc58": "Aprueba solo un inicio de sesión que acabes de iniciar.",
@@ -9430,8 +9424,8 @@
   "6e820a7742353257": "Introduce un intervalo de al menos un minuto.",
   "9e596c405f5cea09": "Una vez no está disponible aquí",
   "e450f26e1af0a074": "Este entorno ejecuta una versión antigua de T3 Code. Actualízalo para programar una tarea única o elige otra programación.",
-  "14f522da60702611": "Cron is not available here",
-  "00ea5df0d5cc65e6": "This environment runs an older T3 Code. Update it to schedule a cron task, or pick another schedule.",
+  "14f522da60702611": "Cron no está disponible aquí",
+  "00ea5df0d5cc65e6": "Este entorno ejecuta una versión anterior de T3 Code. Actualízala para programar una tarea cron o elige otra programación.",
   "71d8554090924454": "Se requiere la ruta del checkout",
   "a34b72de0ff1cbd0": "Introduce la ruta del checkout donde ejecutar.",
   "99a8c45121157edd": "No se pudo guardar la tarea programada",
@@ -9466,16 +9460,15 @@
   "196658ca8d7106b1": "Crear tarea",
   "5baf27d764acc26d": "Se ejecuta solo cuando coinciden todos los filtros. Las demás solicitudes se registran como filtradas. Separa los valores de «es uno de» con comas; un valor no puede contener una coma.",
   "1abe7fdace9bed26": "Añadir filtro",
-  "316f12ddbabba34e": "Expression",
-  "8999d6b440d32f4d": "Minute, hour, day of month, month, weekday, in the environment's time zone.",
+  "316f12ddbabba34e": "Expresión",
+  "8999d6b440d32f4d": "Minuto, hora, día del mes, mes y día de la semana, en la zona horaria del entorno.",
   "3d083dde966e59e9": [
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " ",
-    "runs every 30 minutes from 9:00 to 16:30 on weekdays."
+    " se ejecuta cada 30 minutos de 9:00 a 16:30, de lunes a viernes."
   ],
   "ce5c81a41b72193a": "Nueva tarea",
   "58d9625d53534eab": "No hay entornos disponibles",
@@ -11324,7 +11317,7 @@
   "e1222cad4667e338": "{days} a las {time}",
   "74b25bf2e8d10313": "{days} a las {time} {zone}",
   "4ee38ebaddb9d978": "Hora de ejecución no válida",
-  "eda6a4ccc66dea8a": "Invalid cron expression",
+  "eda6a4ccc66dea8a": "Expresión cron no válida",
   "2b5678bf6b6792d4": "Elige una fecha y una hora.",
   "f062630735a207ea": "Esa hora no existe en tu zona horaria.",
   "75265b7ef76cfedd": "Elige una hora.",
