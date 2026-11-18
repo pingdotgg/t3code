@@ -15,6 +15,12 @@ tray-icon = { version = "0.26.1", default-features = false, features = ["ksni"] 
 tao = "0.37.2"
 tray-icon = "0.26.1"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+  "std",
+  "CFRunLoop",
+] }
+
 [profile.release]
 codegen-units = 1
 lto = "thin"

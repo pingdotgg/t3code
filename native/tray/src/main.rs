@@ -159,7 +159,14 @@ fn run(launcher: PathBuf) -> Result<()> {
         *flow = ControlFlow::Wait;
         match event {
             TaoEvent::NewEvents(StartCause::Init) => match Tray::new(launcher.clone()) {
-                Ok(app) => tray = Some(app),
+                Ok(app) => {
+                    tray = Some(app);
+                    // The status item is drawn on the next run-loop pass, which `Wait` would defer until input.
+                    #[cfg(target_os = "macos")]
+                    if let Some(run_loop) = objc2_core_foundation::CFRunLoop::main() {
+                        run_loop.wake_up();
+                    }
+                }
                 Err(error) => {
                     eprintln!("Could not create T3 Code tray: {error}");
                     *flow = ControlFlow::ExitWithCode(1);
