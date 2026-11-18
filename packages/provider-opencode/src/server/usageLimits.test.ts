@@ -324,7 +324,7 @@ describe("mergeUsageLimits", () => {
     const unidentifiedConsole = mergeUsageLimits(
       {
         checkedAt: console.checkedAt,
-        windows: [{ id: "go_weekly", kind: "weekly", usedPercent: 20 }],
+        windows: [{ id: "go_weekly", kind: "weekly", label: "Go · Weekly", usedPercent: 20 }],
       },
       {
         checkedAt: console.checkedAt,
