@@ -681,6 +681,7 @@ describe("decodeMergeRequestDiffsJson", () => {
 
     expect(result.truncated).toBe(true);
     expect(result.patch).toContain("diff --git a/big.bin b/big.bin");
+    expect(result.withheldPaths).toEqual(["big.bin"]);
   });
 
   it("reports how many files GitLab returned, so the caller can page", () => {
