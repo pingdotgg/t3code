@@ -31,7 +31,8 @@ export const de: Messages = {
     downloadForAndroid: "Für Android herunterladen",
     sourceLink: "Klau unseren Code (legal)",
     alsoOnPhone: "Auch auf deinem Handy:",
-    screenshotAlt: "T3 Code führt Subagents von Claude, Codex, Muse und Gemini in einem Thread aus",
+    screenshotAlt:
+      "T3 Code mit einem fertigen Claude-Thread und Threads von Claude und Codex in der Seitenleiste",
     endorsementsTitle: "Toleriert von über {users} Devs",
     endorsementsSub: "Manche haben sogar darüber getwittert.",
     endorsementsLabel: "Stimmen von Entwicklern",

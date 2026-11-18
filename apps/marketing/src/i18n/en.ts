@@ -31,7 +31,8 @@ export const en = {
     downloadForAndroid: "Download for Android",
     sourceLink: "Steal our code (legally)",
     alsoOnPhone: "Also on your phone:",
-    screenshotAlt: "T3 Code running Claude, Codex, Muse, and Gemini subagents in one thread",
+    screenshotAlt:
+      "T3 Code with a finished Claude thread and Claude and Codex threads in the sidebar",
     endorsementsTitle: "Tolerated by over {users} devs",
     endorsementsSub: "Some of them even tweeted about it.",
     endorsementsLabel: "Developer endorsements",

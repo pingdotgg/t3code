@@ -33,7 +33,7 @@ export const ja: Messages = {
     sourceLink: "コードを盗もう（合法的に）",
     alsoOnPhone: "スマホでも使えます：",
     screenshotAlt:
-      "ひとつのスレッドで Claude、Codex、Muse、Gemini のサブエージェントを動かす T3 Code",
+      "完了した Claude のスレッドと、サイドバーに並ぶ Claude と Codex のスレッドを表示した T3 Code",
     endorsementsTitle: "{users} 人以上の開発者が我慢して使っています",
     endorsementsSub: "ツイートまでしてくれた人もいます。",
     endorsementsLabel: "開発者の声",

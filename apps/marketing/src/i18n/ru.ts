@@ -31,7 +31,7 @@ export const ru: Messages = {
     downloadForAndroid: "Скачать для Android",
     sourceLink: "Украдите наш код (легально)",
     alsoOnPhone: "Есть и для телефона:",
-    screenshotAlt: "T3 Code запускает субагентов Claude, Codex, Muse и Gemini в одном треде",
+    screenshotAlt: "T3 Code с завершённым тредом Claude и тредами Claude и Codex на боковой панели",
     endorsementsTitle: "Нас терпят более {users} разработчиков",
     endorsementsSub: "Некоторые даже написали об этом в X.",
     endorsementsLabel: "Отзывы разработчиков",

@@ -32,7 +32,7 @@ export const fr: Messages = {
     sourceLink: "Volez notre code (légalement)",
     alsoOnPhone: "Aussi sur votre téléphone :",
     screenshotAlt:
-      "T3 Code exécutant des sous-agents Claude, Codex, Muse et Gemini dans un même fil",
+      "T3 Code avec un fil Claude terminé et des fils Claude et Codex dans la barre latérale",
     endorsementsTitle: "Toléré par plus de {users} devs",
     endorsementsSub: "Certains en ont même parlé sur X.",
     endorsementsLabel: "Avis de développeurs",

@@ -31,7 +31,7 @@ export const zh: Messages = {
     downloadForAndroid: "下载 Android 版",
     sourceLink: "来偷我们的代码（合法的）",
     alsoOnPhone: "手机上也能用：",
-    screenshotAlt: "T3 Code 在同一个线程中运行 Claude、Codex、Muse 和 Gemini 子智能体",
+    screenshotAlt: "T3 Code 显示一个已完成的 Claude 线程，侧边栏中有 Claude 和 Codex 的线程",
     endorsementsTitle: "超过 {users} 名开发者表示还能忍",
     endorsementsSub: "有些人甚至发推夸了它。",
     endorsementsLabel: "开发者评价",

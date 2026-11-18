@@ -32,7 +32,7 @@ export const ptBR: Messages = {
     sourceLink: "Roube nosso código (legalmente)",
     alsoOnPhone: "Também no seu celular:",
     screenshotAlt:
-      "T3 Code executando subagentes do Claude, Codex, Muse e Gemini em uma mesma thread",
+      "T3 Code com uma thread do Claude concluída e threads do Claude e do Codex na barra lateral",
     endorsementsTitle: "Tolerado por mais de {users} devs",
     endorsementsSub: "Alguns até tuitaram sobre isso.",
     endorsementsLabel: "Depoimentos de desenvolvedores",
