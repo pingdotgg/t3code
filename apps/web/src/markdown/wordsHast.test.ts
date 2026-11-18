@@ -88,7 +88,7 @@ const KNOWN_SPEC_DIFFERENCES = new Set([
   156, 157, 158, 180,
   // GFM's tagfilter.
   170, 171, 172, 173, 176, 178,
-  // Raw HTML attributes keep `\`, a backtick, or a line break, which Words encodes.
+  // Raw HTML attributes keep `\`, a backtick, or a line break, which wordsHast percent-encodes.
   344, 631, 642, 643,
   // `<foo\+@bar.example.com>`: remark's GFM email autolink reads past the `<`.
   606,
