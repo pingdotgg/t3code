@@ -779,25 +779,40 @@ const checkpointCleanupFixture = Effect.fn("test.checkpointCleanupFixture")(func
 });
 
 describe("checkpoint ref cleanup", () => {
-  it.live("prunes refs owned by deleted threads after their worktree is removed", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const { service, repo, worktree, command, addThread, listRefs } =
-          yield* checkpointCleanupFixture();
-        yield* addThread("deleted", { deleted: true });
-        yield* addThread("imported-deleted", { deleted: true, legacyOnly: true });
-        const retained = [
-          ...(yield* addThread("active")),
-          ...(yield* addThread("archived", { archived: true })),
-          legacyCheckpointRef("unknown-owner", 0),
-        ];
-        yield* command(repo, ["update-ref", retained.at(-1)!, "HEAD"]);
-        yield* command(repo, ["pack-refs", "--all"]);
-        yield* command(repo, ["worktree", "remove", worktree]);
-        yield* service.runNow;
-        expect(yield* listRefs()).toEqual(retained.sort());
-      }).pipe(Effect.provide(Sqlite.layerMemory)),
-    ),
+  it.live.each([false, true])(
+    "prunes refs only when owned by this home, dev home=%s",
+    (worktreeHome) =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const config = yield* ServerConfig.ServerConfig;
+          const checkout = yield* fs.makeTempDirectoryScoped({
+            prefix: "checkpoint-dev-checkout-",
+          });
+          yield* fs.writeFileString(`${checkout}/.git`, "gitdir: /repo/.git/worktrees/dev\n");
+          const baseDir = worktreeHome ? `${checkout}/.t3` : config.baseDir;
+          const { service, repo, worktree, command, addThread, listRefs } =
+            yield* checkpointCleanupFixture().pipe(
+              Effect.provideService(ServerConfig.ServerConfig, { ...config, baseDir }),
+            );
+          // A seeded dev home copies the real home's thread/scope IDs and repository paths.
+          // Deleting its copy must not delete the original thread's shared Git checkpoint refs.
+          const deleted = [
+            ...(yield* addThread("deleted", { deleted: true })),
+            ...(yield* addThread("imported-deleted", { deleted: true, legacyOnly: true })),
+          ];
+          const retained = [
+            ...(yield* addThread("active")),
+            ...(yield* addThread("archived", { archived: true })),
+            legacyCheckpointRef("unknown-owner", 0),
+          ];
+          yield* command(repo, ["update-ref", retained.at(-1)!, "HEAD"]);
+          yield* command(repo, ["pack-refs", "--all"]);
+          yield* command(repo, ["worktree", "remove", worktree]);
+          yield* service.runNow;
+          expect(yield* listRefs()).toEqual([...retained, ...(worktreeHome ? deleted : [])].sort());
+        }).pipe(Effect.provide(Sqlite.layerMemory)),
+      ),
   );
 
   it.live("keeps deleted fork ancestry while a live or archived descendant needs it", () =>

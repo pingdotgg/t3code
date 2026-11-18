@@ -1211,13 +1211,16 @@ const make = Effect.gen(function* () {
       };
       // Re-enabling summaries may clear the ledger while this pass runs. The reset wins, so only
       // this pass's own failures survive it.
+      let retryRound = retry ?? 0;
       const keepReset = Effect.fnUntraced(function* () {
-        if (prior?.chunkFailures === undefined) return;
+        if (prior?.chunkFailures === undefined && prior?.retries === undefined) return;
         const cleared = yield* sql<{ readonly cleared: number }>`
-          SELECT json_extract(payload_json, '$.chunkFailures') IS NULL AS cleared
+          SELECT (json_extract(payload_json, '$.chunkFailures') IS NULL
+            AND json_extract(payload_json, '$.retries') IS NULL) AS cleared
           FROM conversation_summary_passes WHERE thread_id = ${threadId}
         `;
         if (cleared[0]?.cleared !== 1) return;
+        retryRound = 0;
         chunkFailures.clear();
         for (const failure of charges) charge(failure);
       });
@@ -1240,7 +1243,7 @@ const make = Effect.gen(function* () {
               ...open.filter((failure) => failure.failures > 0),
               ...failures.filter((failure) => failure.skipped === true).slice(-MAX_SKIPPED_CHUNKS),
             ].slice(-MAX_CHUNK_FAILURES);
-            const retries = result !== "failed" ? 0 : (retry ?? 0);
+            const retries = result !== "failed" ? 0 : retryRound;
             return recordPass(projectId, threadId, {
               runId,
               result,
@@ -1915,7 +1918,6 @@ const make = Effect.gen(function* () {
         INNER JOIN orchestration_v2_projection_threads AS thread
           ON thread.thread_id = passes.thread_id
         WHERE json_extract(passes.payload_json, '$.result') = 'failed'
-          AND json_extract(passes.payload_json, '$.waitingMessages') > 0
           AND ${eligibleProjects}
           AND EXISTS (
             SELECT 1 FROM projection_projects AS project

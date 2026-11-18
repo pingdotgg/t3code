@@ -775,23 +775,38 @@ it.effect("reports a summary pass as pending until it settles", () =>
   }).pipe(Effect.provide(makeLayer(citing().generate, optedIn))),
 );
 
-it.effect(
-  "recovers failed and legacy summary passes with bounded model-specific retry rounds",
-  () => {
+it.effect.each([
+  { work: "leaf", waitingMessages: 10 },
+  { work: "rollup", waitingMessages: 0 },
+])(
+  "recovers failed and legacy $work passes with bounded model-specific retry rounds",
+  ({ work, waitingMessages }) => {
+    let gate: { entered: Deferred.Deferred<void>; release: Deferred.Deferred<void> } | undefined;
     const model = scripted(() =>
-      Effect.fail(
-        new TextGenerationError({ operation: "generateConversationSummary", detail: "No model" }),
-      ),
+      Effect.gen(function* () {
+        if (gate !== undefined) {
+          yield* Deferred.succeed(gate.entered, undefined);
+          yield* Deferred.await(gate.release);
+        }
+        return yield* new TextGenerationError({
+          operation: "generateConversationSummary",
+          detail: "No model",
+        });
+      }),
     );
     return Effect.gen(function* () {
-      yield* seed;
+      yield* seedThread(work === "rollup" ? 14 : MESSAGE_COUNT);
+      if (work === "rollup") {
+        for (let index = 0; index < 4; index++)
+          yield* persistSummary(index, [index * 2, index * 2 + 1]);
+      }
       assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
       const result = yield* list;
-      assert.deepEqual(result.summaries, []);
+      assert.lengthOf(result.summaries, work === "rollup" ? 4 : 0);
       assert.deepInclude(result.lastPass, {
         result: "failed",
         reason: "No model",
-        waitingMessages: 10,
+        waitingMessages,
       });
       const service = yield* ConversationSummaries.ConversationSummaries;
       const sql = yield* SqlClient.SqlClient;
@@ -826,11 +841,24 @@ it.effect(
     `;
       yield* TestClock.adjust("2 days");
       assert.deepEqual(yield* stalled(), []);
+      yield* sql`
+      UPDATE conversation_summary_passes
+      SET payload_json = json_set(payload_json, '$.retries', 5) WHERE thread_id = ${threadId}
+    `;
+      const finalRetry = (yield* stalled())[0]!;
+      assert.deepInclude(finalRetry, { threadId, runId, retry: 6 });
+      gate = { entered: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+      const pass = yield* service.summarizeThread(finalRetry).pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(gate.entered);
       const settings = yield* ServerSettings.ServerSettingsService;
       yield* settings.updateSettings({
         projectSettingsOverrides: { [projectId]: { enableConversationSummaries: false } },
       });
       yield* settings.updateSettings(optedIn);
+      yield* Deferred.succeed(gate.release, undefined);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(pass)));
+      gate = undefined;
+      yield* TestClock.adjust("15 minutes");
       assert.deepInclude((yield* stalled())[0], { threadId, runId, retry: 1 });
       yield* sql`
       UPDATE conversation_summary_passes

@@ -1,5 +1,3 @@
-import { CommandId } from "@t3tools/contracts";
-import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -10,10 +8,10 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as WorktreeBranches from "./WorktreeBranches.ts";
 
 const makeReconcile = Effect.gen(function* () {
-  const threads = yield* ThreadManagement.ThreadManagementService;
+  const worktrees = yield* WorktreeBranches.WorktreeBranches;
   const git = yield* GitWorkflowService.GitWorkflowService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const fs = yield* FileSystem.FileSystem;
@@ -31,40 +29,10 @@ const makeReconcile = Effect.gen(function* () {
           : yield* fs.realPath(worktreePath).pipe(Effect.orElseSucceed(() => null));
       if (realPath === input.cwd) matchingPaths.add(worktreePath);
     }
-    const matchingThreads = new Map(
-      paths
-        .filter((thread) => matchingPaths.has(thread.worktreePath))
-        .map((thread) => [thread.threadId, thread.worktreePath]),
-    );
-    if (matchingThreads.size === 0) return;
-    const snapshot = yield* threads.getShellSnapshot({ threadIds: [...matchingThreads.keys()] });
-    const sharing = [...snapshot.threads, ...snapshot.archivedThreads].filter(
-      (thread) =>
-        thread.worktreePath === matchingThreads.get(thread.id) && thread.branch !== input.refName,
-    );
-    if (sharing.length === 0) return;
+    if (matchingPaths.size === 0) return;
     // Status events may queue behind a generated rename or another checkout.
     if ((yield* git.currentBranch(input.cwd)) !== input.refName) return;
-    for (const thread of sharing) {
-      yield* threads
-        .dispatch({
-          type: "thread.metadata.update",
-          commandId: CommandId.make(yield* randomUuidV4),
-          threadId: thread.id,
-          branch: input.refName,
-          expectedBranch: thread.branch,
-          expectedWorktreePath: thread.worktreePath,
-        })
-        .pipe(
-          Effect.catchTags({
-            OrchestratorDispatchError: (cause) =>
-              Effect.logWarning("Worktree branch update was rejected", {
-                threadId: thread.id,
-                cause,
-              }),
-          }),
-        );
-    }
+    yield* worktrees.sync({ worktreePath: input.cwd, threadPaths: [...matchingPaths] });
   });
 });
 

@@ -50,7 +50,10 @@ url = os.environ.get('MORPH_BASE_URL', 'https://api.morphllm.com/v1')
 if not key:
     home = pathlib.Path(os.environ.get('XDG_CONFIG_HOME') or pathlib.Path.home() / '.config')
     # OpenCode writes literal control characters inside strings, which strict parsing rejects.
-    settings = json.loads((home / 'opencode' / 'opencode.json').read_text(), strict=False)['providers']['morph']['settings']
+    config = json.loads((home / 'opencode' / 'opencode.json').read_text(), strict=False)
+    settings = config.get('providers', {}).get('morph', {}).get('settings')
+    if settings is None:
+        settings = config.get('provider', {}).get('morph', {}).get('options', {})
     key, url = settings.get('apiKey'), settings.get('baseURL', url)
 if not key:
     raise SystemExit('no morph key')
