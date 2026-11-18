@@ -22,6 +22,7 @@ import {
   collectUpdateEverythingResult,
   describeUpdateEverything,
   runUpdateEverything,
+  selectProviderUpdates,
   type UpdateRunMachine,
 } from "./updateEverything.logic";
 import {
@@ -83,13 +84,11 @@ export function useUpdateEverything(
   const restarts = collectRestartingMachines(machines, moving, localUpdateVersion !== null);
   const providerUpdates = useProviderUpdates();
   const hasAppUpdates = localUpdateVersion !== null || servers.length > 0;
-  const canChooseProviderUpdates =
-    !channelSwitch && hasAppUpdates && providerUpdates.machines.length > 0;
-  // Provider-only updates remain available regardless of the choice for app updates.
-  const providers =
-    channelSwitch || (hasAppUpdates && !includeProviderUpdates)
-      ? { machines: [], updateAll: async () => [] }
-      : providerUpdates;
+  const providers = selectProviderUpdates(providerUpdates, {
+    hasAppUpdates,
+    channelSwitch: channelSwitch !== undefined,
+    includeProviderUpdates,
+  });
   const updateServer = useServerUpdate();
   const stageServerUpdate = useAtomCommand(serverEnvironment.stageServerUpdate, {
     reportFailure: false,
@@ -115,7 +114,7 @@ export function useUpdateEverything(
   return {
     hasUpdates: servers.length > 0 || (!channelSwitch && providerUpdates.machines.length > 0),
     hasAppUpdates,
-    canChooseProviderUpdates,
+    canChooseProviderUpdates: providers.canChooseProviderUpdates,
     ...view,
     restarts,
     run: async ({
