@@ -55,6 +55,7 @@ github:maria-rcks
 github:maschwenk
 github:MatthewFeroz
 github:maxwellyoung
+github:mvanhorn
 github:mweinbach
 github:mwolson
 github:myacoub91
