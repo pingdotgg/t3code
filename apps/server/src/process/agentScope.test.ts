@@ -184,8 +184,12 @@ const exitedAgent = (
 
 const stopsOf = (calls: ReadonlyArray<ReadonlyArray<string>>) =>
   calls.filter(([, verb]) => verb === "stop");
-const launchCodex = (scope: Effect.Success<typeof make>, threadId: string) =>
-  makeCodexAppServerSpawnCommand({ command: "agent", args: ["app-server"], threadId }).pipe(
+const launchCodex = (
+  scope: Effect.Success<typeof make>,
+  threadId: string,
+  env?: NodeJS.ProcessEnv,
+) =>
+  makeCodexAppServerSpawnCommand({ command: "agent", args: ["app-server"], threadId, env }).pipe(
     Effect.provideService(AgentScope, scope),
     Effect.provideService(HostProcess.Platform, "linux"),
     Effect.map((command) => {
@@ -225,7 +229,11 @@ describe("AgentScope service", () => {
           units.set(unitOf(agent), { activeState: "failed", result: "oom-kill" });
           expect(yield* scope.oomKilled("a")).toBe(true);
 
-          const codex = yield* launchCodex(scope, "a");
+          const executable = String(agent.args.at(-1));
+          const codex = yield* launchCodex(scope, "a", {
+            PATH: NodePath.relative(process.cwd(), NodePath.dirname(executable)),
+          });
+          expect(codex.args.at(-2)).toBe(executable);
           expect(codex.args).toContain("--property=OOMPolicy=continue");
           expect(codex.args).not.toContain("--property=OOMPolicy=stop");
           expect(codex.args).toContain("--property=TimeoutStopSec=10s");

@@ -452,7 +452,11 @@ export const make = Effect.gen(function* () {
           ...(owned ? [] : ["--collect"]),
         ],
       };
-      return { ...agentScopeCommand({ command: resolved, args, scope: systemdScope }), unit };
+      // systemd-run does not search the caller's cwd for an empty PATH component.
+      return {
+        ...agentScopeCommand({ command: path.resolve(resolved), args, scope: systemdScope }),
+        unit,
+      };
     }),
     oomKilled,
     stop,
