@@ -503,9 +503,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "sidebar-search-in-title-bar",
-    title: "Search in title bar",
+    title: msg("Search in title bar"),
     to: "/settings/labs",
-    searchTerms: ["beta sidebar header search title bar toolbar compact back forward arrows"],
+    searchTerms: [msg("beta sidebar header search title bar toolbar compact back forward arrows")],
   },
 
   {

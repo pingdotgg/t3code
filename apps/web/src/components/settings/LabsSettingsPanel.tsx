@@ -34,19 +34,23 @@ export function LabsSettingsPanel() {
 }
 
 function SidebarSearchInTitleBarRow() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
     <SettingsRow
       {...searchableSetting("sidebar-search-in-title-bar")}
-      description="Move thread search and the sidebar buttons into the title bar, in place of the T3 Code label and back and forward arrows. A narrow sidebar shows only the search icon."
+      description={gt(
+        "Move thread search and the sidebar buttons into the title bar, in place of the T3 Code label and back and forward arrows. A narrow sidebar shows only the search icon.",
+      )}
       control={
         <Switch
           checked={settings.sidebarSearchInTitleBar}
           onCheckedChange={(checked) =>
             updateSettings({ sidebarSearchInTitleBar: Boolean(checked) })
           }
-          aria-label="Search in title bar"
+          aria-label={gt("Search in title bar")}
         />
       }
     />
