@@ -2383,8 +2383,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               : null;
           const deferredUpdatedAt =
             rewrittenThreadId === null ? undefined : batch?.threadTouches.get(rewrittenThreadId);
-          if (rewrittenThreadId !== null && deferredUpdatedAt !== undefined) {
-            batch!.threadTouches.delete(rewrittenThreadId);
+          if (
+            batch !== undefined &&
+            rewrittenThreadId !== null &&
+            deferredUpdatedAt !== undefined
+          ) {
+            batch.threadTouches.delete(rewrittenThreadId);
             yield* writeThreadTouches(sql, new Map([[rewrittenThreadId, deferredUpdatedAt]]));
           }
           switch (event.type) {

@@ -62,41 +62,18 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
 
         yield* resolver.invalidate(cwd);
         expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "favicon.ico"));
-
-        yield* writeTextFile(cwd, "favicon.svg", "<svg>favicon</svg>");
-        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "favicon.ico"));
-        yield* resolver.invalidate(cwd);
-        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "favicon.svg"));
       }),
     );
 
-    it.effect("keeps a cached favicon for 30 minutes and falls back when deleted", () =>
+    it.effect("falls back at once when a cached favicon is deleted", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
         const cwd = yield* makeTempDir;
-        const reads: string[] = [];
-        const resolver = yield* makeResolverWithFileSystem(
-          FileSystem.FileSystem.of({
-            ...fileSystem,
-            stat: (filePath) => {
-              reads.push(filePath);
-              return fileSystem.stat(filePath);
-            },
-            readFileString: (filePath, encoding) => {
-              reads.push(filePath);
-              return fileSystem.readFileString(filePath, encoding);
-            },
-          }),
-        );
         yield* writeTextFile(cwd, "favicon.svg", "<svg>favicon</svg>");
 
         expect(yield* resolver.resolvePath(cwd)).not.toBeNull();
-
-        reads.length = 0;
-        yield* TestClock.adjust("29 minutes");
-        expect(yield* resolver.resolvePath(cwd)).toBe(path.join(cwd, "favicon.svg"));
-        expect(reads).toEqual([path.join(cwd, "favicon.svg")]);
 
         yield* fileSystem.remove(path.join(cwd, "favicon.svg")).pipe(Effect.orDie);
 

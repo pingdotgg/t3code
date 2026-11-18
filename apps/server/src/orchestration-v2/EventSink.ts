@@ -416,24 +416,24 @@ const layerBase: Layer.Layer<
     const recordProjectedSequence = Effect.fnUntraced(function* (sequence: number) {
       const now = DateTime.formatIso(yield* DateTime.now);
       yield* sql`
-            INSERT INTO orchestration_v2_projection_metadata (
-              projection_name,
-              schema_version,
-              last_sequence,
-              updated_at
-            )
-            VALUES (
-              'thread-projections',
-              ${ProjectionStore.ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION},
-              ${sequence},
-              ${now}
-            )
-            ON CONFLICT(projection_name)
-            DO UPDATE SET
-              schema_version = excluded.schema_version,
-              last_sequence = excluded.last_sequence,
-              updated_at = excluded.updated_at
-          `;
+        INSERT INTO orchestration_v2_projection_metadata (
+          projection_name,
+          schema_version,
+          last_sequence,
+          updated_at
+        )
+        VALUES (
+          'thread-projections',
+          ${ProjectionStore.ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION},
+          ${sequence},
+          ${now}
+        )
+        ON CONFLICT(projection_name)
+        DO UPDATE SET
+          schema_version = excluded.schema_version,
+          last_sequence = excluded.last_sequence,
+          updated_at = excluded.updated_at
+      `;
     });
 
     const applyStoredEvents =
