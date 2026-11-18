@@ -1713,6 +1713,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return false;
   });
 
+  // Only wake candidates' inputs decide usage-limit recovery, and a dispatcher thread keeps
+  // thousands of notifications, so they are read for those runs alone.
+  const withWakeInputs = <
+    R extends {
+      readonly runs: ReadonlyArray<OrchestrationV2Run>;
+      readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+    },
+  >(
+    threadId: ThreadId,
+    records: R,
+  ) => {
+    const runIds = usageLimitWakeCandidates(records.runs, records.turnItems).map((run) => run.id);
+    if (runIds.length === 0) return Effect.succeed(records);
+    const loaded = new Set(records.turnItems.map((item) => item.id));
+    return projectionStore
+      .getThreadRecords(threadId, ["turnItems"], {
+        turnItemTypes: ["user_message", "notification"],
+        turnItemRunIds: runIds,
+      })
+      .pipe(
+        Effect.map(({ turnItems }): R => ({
+          ...records,
+          turnItems: [...records.turnItems, ...turnItems.filter((item) => !loaded.has(item.id))],
+        })),
+        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+      );
+  };
+
   // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
   const readCommandProjection = (
     threadId: ThreadId,
@@ -1736,7 +1764,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "contextTransfers",
         ],
         {
-          turnItemTypes: ["user_message", "error", "notification"],
+          turnItemTypes: ["user_message", "error"],
           messageRoles: ["user"],
           omitSettledLeafNodes: true,
           // Commands here read only undelivered or active tasks; a dispatcher thread keeps
@@ -1750,6 +1778,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       )
       .pipe(
+        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+        Effect.flatMap((records) => withWakeInputs(threadId, records)),
         Effect.map((records): OrchestrationV2ThreadProjection => ({
           ...records,
           checkpoints: [],
@@ -1758,7 +1788,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           visibleTurnItems: [],
           updatedAt: records.thread.updatedAt,
         })),
-        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
 
   // Command reads omit settled tasks, but a completion notice counts its whole cohort.
@@ -4533,8 +4562,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* loadProjectionForCommand(
         command,
         ["runs", "runtimeRequests", "turnItems"],
-        { turnItemTypes: ["user_message", "error", "notification"] },
-      );
+        { turnItemTypes: ["error"] },
+      ).pipe(Effect.flatMap((records) => withWakeInputs(command.threadId, records)));
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
       const resetMs = Date.parse(command.limitRecovery.resetAt);
@@ -15303,8 +15332,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const projection = yield* loadProjectionForCommand(
           command,
           ["runs", "turnItems", "providerSessions", "messages"],
-          { turnItemTypes: ["user_message", "error", "notification"], messageRoles: ["user"] },
-        );
+          { turnItemTypes: ["error"], messageRoles: ["user"] },
+        ).pipe(Effect.flatMap((records) => withWakeInputs(command.threadId, records)));
         if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,

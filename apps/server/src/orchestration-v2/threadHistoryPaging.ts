@@ -840,7 +840,11 @@ export function buildBoundedThreadProjection(input: {
     ...controlProjection,
     plans,
     contextHandoffs,
-    messages: messagesForBoundedProjection(controlProjection, turnItems),
+    // Recovery stubs only classify runs; their full messages would bypass the budget.
+    messages: messagesForBoundedProjection(
+      controlProjection,
+      turnItems.filter((item) => limitItems.get(String(item.id)) !== item),
+    ),
     turnItems,
     visibleTurnItems,
   };

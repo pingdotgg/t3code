@@ -801,6 +801,7 @@ describe("threadHistoryPaging", () => {
       runId: wakes[5]!.run.id,
       nodeId: wakes[5]!.run.rootNodeId,
       ordinal: 0,
+      messageId: "message-user-start",
       text: "a real request",
       attachments: [],
     } as unknown as OrchestrationV2TurnItem;
@@ -813,11 +814,14 @@ describe("threadHistoryPaging", () => {
       projection: {
         ...makeProjection(userRows),
         runs: [limited, wakes[5]!.run],
+        messages: [{ id: "message-user-start", runId: null, text: "p".repeat(50_000) }],
       } as unknown as ReturnType<typeof makeProjection>,
       snapshotSequence: 1,
       policy: { maxItems: 2, maxEncodedBytes: 10_000_000 },
     }).projection;
     expect(usageLimitBlockedRun(userRun.runs, userRun.turnItems, null)).toBeNull();
+    // The stub classifies the run; it must not pull the full prompt past the budget.
+    expect(userRun.messages).toEqual([]);
   });
 
   it("charges local row.item duplication when measuring bounded timeline bytes", () => {
