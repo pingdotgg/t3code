@@ -460,11 +460,21 @@ describe("mobile model options", () => {
     };
     expect(isModelSelectionUnavailable(cooling, usable, null)).toBe(true);
     expect(resolveSelectableModelSelection(cooling, usable, null)).toBe(usable);
-    expect(buildModelOptions(cooling, usable, undefined, null)[0]).toMatchObject({
+    expect(resolveDefaultableModelSelection(cooling, usable, null)).toBeNull();
+    const options = buildModelOptions(cooling, usable, undefined, null);
+    expect(options[0]).toMatchObject({
       selection: usable,
       label: "GPT-5.6-Sol",
       isUnavailable: true,
     });
+    expect(groupByProvider(options)).toEqual([]);
+    const healthy = {
+      ...options[0]!,
+      key: "codex:gpt-other",
+      isUnavailable: false,
+      selection: { ...usable, model: "gpt-other" },
+    };
+    expect(groupByProvider([...options, healthy])).toMatchObject([{ models: [healthy] }]);
   });
 
   describe("Antigravity selections", () => {

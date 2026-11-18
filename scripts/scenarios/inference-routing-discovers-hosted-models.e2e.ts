@@ -117,7 +117,7 @@ async function prepare(home: string) {
 }
 
 test(
-  "Hosted Codex models get display names and stay visible during a cooldown",
+  "Hosted Codex models get display names and leave the picker during a cooldown",
   WEB,
   async ({ t3, app, browser, screen }) => {
     await t3.project("demo");
@@ -182,7 +182,7 @@ test(
       };
       await updateCatalog(astra);
       await app.screenshot("astra-during-cooldown");
-      await expect(astraOption).toBeDisabled();
+      await expect(astraOption).toBeHidden();
       await expect(picker).toHaveAttribute("aria-label", /GPT-6\.2-Astra.*Unavailable/);
       await expect(screen.getByRole("option", /gpt-6\.2-sol/i)).toBeEnabled();
       await updateCatalog();

@@ -1315,7 +1315,7 @@ it.layer(
             poolAvailable = false;
             yield* TestClock.adjust("16 seconds");
             const coolingPool = (yield* registry.getProviders)[0]!;
-            expect(coolingPool.availability).toBeUndefined();
+            expect(coolingPool.availability).toBe(mixedCatalog ? undefined : "unavailable");
             expect(
               coolingPool.models.find((model) => model.slug === offlineSlug)?.isUnavailable,
             ).toBe(true);
