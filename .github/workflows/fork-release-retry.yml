@@ -1,0 +1,53 @@
+name: Fork release retry
+
+# TemMax/t3code only. Free macOS arm64 runners often run out: GitHub cancels a job that no runner
+# picks up within 15 minutes. Rerun such a release up to three times; any other failure stays failed.
+
+on:
+  workflow_run:
+    workflows: ["Fork release"]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  retry:
+    name: Rerun jobs that never got a runner
+    # Only the first attempt starts the loop, so a rerun's own completion never starts another one.
+    if: >-
+      github.repository == 'TemMax/t3code' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+    steps:
+      - name: Rerun up to three times
+        run: |
+          set -euo pipefail
+          run_field() { gh api "repos/$GH_REPO/actions/runs/$RUN_ID" --jq "$1"; }
+          for retry in 1 2 3; do
+            attempt="$(run_field .run_attempt)"
+            if [ "$(run_field .conclusion)" = "success" ]; then
+              echo "Attempt $attempt succeeded."
+              exit 0
+            fi
+            unacquired="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/attempts/$attempt/jobs" \
+              --jq '[.jobs[] | select(.conclusion == "cancelled" and (.runner_name // "") == "" and (.steps | length) == 0)] | length')"
+            if [ "$unacquired" -eq 0 ]; then
+              echo "Attempt $attempt failed for another reason; not retrying."
+              exit 1
+            fi
+            echo "Attempt $attempt: $unacquired job(s) never got a runner. Retry $retry of 3."
+            gh run rerun "$RUN_ID" --failed
+            until [ "$(run_field .run_attempt)" -gt "$attempt" ] && [ "$(run_field .status)" = "completed" ]; do
+              sleep 60
+            done
+          done
+          if [ "$(run_field .conclusion)" = "success" ]; then exit 0; fi
+          echo "Still failing after three retries."
+          exit 1
