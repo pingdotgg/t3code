@@ -12,6 +12,7 @@
 - [Appearance and themes](./user/appearance.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Voice input](./user/voice-input.md)
+- [Computer use](./user/computer-use.md)
 - [Text generation models](./user/text-generation.md)
 - [SnapShots](./user/snap-shot.md)
 - [Visual replies](./user/html-renders.md)
@@ -57,6 +58,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Mobile development lifecycle](./internals/mobile-development.md)
 - [Terminal runtime](./internals/terminal-runtime.md)
 - [Devices](./internals/devices.md)
+- [Computer use](./internals/computer-use.md)
 - [Voice input](./internals/voice-input.md)
 
 ### Runbooks

@@ -293,11 +293,11 @@ export const ComputerTaskView = Schema.Struct({
   endedAt: Schema.NullOr(Schema.DateTimeUtc),
   /** The tap it waits for now, if any. */
   waitingForApproval: Schema.NullOr(ComputerApprovalId),
-  /** The planner's questions it waits for now, if any. */
+  /** The planner's questions it waits for now, if any. Only the agent's tools carry the questions. */
   pendingDecision: Schema.NullOr(
     Schema.Struct({
       id: TrimmedNonEmptyString,
-      questions: ComputerQuestions,
+      questions: Schema.optionalKey(ComputerQuestions),
     }),
   ),
   /** The setting the last step was granted under, so a client can say "approvals off". */

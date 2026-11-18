@@ -60,7 +60,7 @@ function hostStatusText(
 
 /**
  * The desktop-only part of Settings → Computer use: the per-environment offer, and the macOS grants the
- * helper needs. Phase C renders this; it renders nothing outside the desktop app.
+ * helper needs. It renders nothing outside the desktop app.
  */
 export function ComputerPermissionRows({
   environmentId,

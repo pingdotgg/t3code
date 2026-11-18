@@ -71,6 +71,12 @@ describe("the computer helper process", () => {
         limits: { maxSteps: 15, timeoutMs: undefined },
       },
     ]);
+    // A start racing this one is busy before the helper has answered the first.
+    expect(
+      await process.start(
+        task({ environmentId: "environment-b", requestId: "request-0", taskId: "task-0" }),
+      ),
+    ).toEqual({ ok: false, busy: true });
     deliver(child, { id: "task-1", kind: "started", taskId: "task-1" });
 
     expect(await started).toEqual({ ok: true });

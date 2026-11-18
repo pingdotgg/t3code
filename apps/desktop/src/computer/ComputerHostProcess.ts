@@ -466,6 +466,8 @@ export function startComputerHostProcess(options: ComputerHostProcessOptions): C
         kill("The task ran past its time.");
       }, taskTimeoutMs);
       deadline.unref?.();
+      // Held from the request on, so a second start racing this one is busy, not sent to the helper.
+      task = { ...next, deadline };
       const started = await request<Extract<ChildMessage, { kind: "started" }>>(
         {
           id: next.taskId,
@@ -479,10 +481,10 @@ export function startComputerHostProcess(options: ComputerHostProcessOptions): C
         (error: unknown) => ({ ok: false as const, busy: false as const, error: messageOf(error) }),
       );
       if (!started.ok) {
-        clearTimeout(deadline);
+        if (task?.taskId === next.taskId) clearTask();
+        else clearTimeout(deadline);
         return started;
       }
-      task = { ...next, deadline };
       return { ok: true };
     },
     control: async (input) => {

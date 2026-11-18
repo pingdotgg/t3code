@@ -115,9 +115,14 @@ function AgentComputerUseSetting() {
 }
 
 function ApprovalsSetting() {
+  const { scope } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const asking = settings.computerApprovals === "ask";
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  const behavior = asking
+    ? "A step that types, sends, buys or deletes waits for your tap, bound to that exact action. Fixed controls do not ask."
+    : "Steps run as soon as the agent asks. Every consequential step is still in the activity log, and Stop still ends a task from anywhere.";
 
   return (
     <SettingsRow
@@ -126,9 +131,9 @@ function ApprovalsSetting() {
       {...searchableSetting("computer-approvals")}
       title="Ask before consequential actions"
       description={
-        asking
-          ? "A step that types, sends, buys or deletes waits for your tap, bound to that exact action. Fixed controls do not ask."
-          : "Steps run as soon as the agent asks. Every consequential step is still in the activity log, and Stop still ends a task from anywhere."
+        isProjectScope
+          ? `${behavior} Applies from the next step, in this project.`
+          : `${behavior} Projects can override it.`
       }
       status={
         asking ? null : (
@@ -208,7 +213,6 @@ function ComputersSection() {
         title="Limits"
         description={`${stepLimit} and ${workingLimit} of working time per task, one task per computer. A tap waits ${approvalLimit}; waiting for a tap or for the agent does not count as working time.`}
       />
-      {/* Desktop-only: offering this Mac and the macOS grants the helper needs (Phase D). */}
       {isElectron ? (
         <ComputerPermissionRows environmentId={environment?.environmentId ?? null} />
       ) : null}

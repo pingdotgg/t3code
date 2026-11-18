@@ -16,6 +16,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -181,6 +182,8 @@ type FakeHost = {
   readonly hostId: ComputerHostId;
   readonly fiber: Fiber.Fiber<unknown, unknown>;
   readonly stops: Ref.Ref<ReadonlyArray<string>>;
+  /** Each stop frame's task, as the computer receives it. */
+  readonly stopFrames: Queue.Queue<string>;
   readonly authorize: (input: {
     readonly taskId: ComputerTaskId;
     readonly step: number;
@@ -200,6 +203,7 @@ const startHost = (overrides: Partial<ComputerHostConnectInput> = {}) =>
     const service = yield* ComputerService.ComputerService;
     const hostId = yield* Deferred.make<ComputerHostId>();
     const stops = yield* Ref.make<ReadonlyArray<string>>([]);
+    const stopFrames = yield* Queue.unbounded<string>();
     const handle = (frame: ComputerHostFrame) =>
       Effect.gen(function* () {
         if (frame.kind === "welcome") {
@@ -208,6 +212,7 @@ const startHost = (overrides: Partial<ComputerHostConnectInput> = {}) =>
         }
         if (frame.kind === "stop") {
           yield* Ref.update(stops, (current) => [...current, frame.taskId]);
+          yield* Queue.offer(stopFrames, frame.taskId);
           return;
         }
         const id = yield* Deferred.await(hostId);
@@ -228,6 +233,7 @@ const startHost = (overrides: Partial<ComputerHostConnectInput> = {}) =>
       hostId: id,
       fiber,
       stops,
+      stopFrames,
       authorize: (input) =>
         service.hostAuthorize({
           hostId: id,
@@ -435,6 +441,25 @@ it.effect("a second task on a busy host is refused", () =>
   }).pipe(Effect.provide(layerTest())),
 );
 
+it.effect("snapshots keep the running task and only the ten latest ended ones", () =>
+  Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    yield* startHost();
+    const first = yield* service.control({
+      control: { kind: "open_app", app: "Notes" },
+      requester: "web",
+    });
+    for (let index = 0; index < 10; index += 1) {
+      yield* service.control({ control: { kind: "open_app", app: "Notes" }, requester: "web" });
+    }
+    const running = yield* startUse();
+    const tasks = (yield* service.status).tasks;
+    assert.strictEqual(tasks.length, 11);
+    assert.strictEqual(tasks[0]?.taskId, running.taskId);
+    assert.isFalse(tasks.some((task) => task.taskId === first.taskId));
+  }).pipe(Effect.provide(layerTest())),
+);
+
 it.effect("Stop cancels the pending approval and ends the task", () =>
   Effect.gen(function* () {
     const service = yield* ComputerService.ComputerService;
@@ -506,7 +531,7 @@ it.effect("an answer naming a key that was not offered is dropped", () =>
   Effect.gen(function* () {
     const service = yield* ComputerService.ComputerService;
     const host = yield* startHost();
-    const task = yield* startUse();
+    const task = yield* startUse({ threadId: ThreadId.make("thread-1") });
 
     const decided = yield* host
       .decide({
@@ -522,6 +547,18 @@ it.effect("an answer naming a key that was not offered is dropped", () =>
       })
       .pipe(Effect.forkScoped);
     const decision = yield* waitForDecision(task.taskId);
+    assert.isUndefined(decision.questions, "clients are not sent the planner's questions");
+
+    const elsewhere = yield* service
+      .answerDecision({
+        taskId: task.taskId,
+        decisionId: decision.id,
+        answers: { next: { choice: "c0", confidence: "high" } },
+        answeredBy: "agent: other",
+        threadId: ThreadId.make("thread-2"),
+      })
+      .pipe(Effect.flip);
+    assert.strictEqual(elsewhere.reason, "not_found");
 
     const answers = yield* service.answerDecision({
       taskId: task.taskId,
@@ -606,12 +643,18 @@ it.effect("switching back to asking makes the next tap wait again", () =>
 it.effect("the task records its thread, so an interrupt stops it", () =>
   Effect.gen(function* () {
     const service = yield* ComputerService.ComputerService;
-    yield* startHost();
+    const host = yield* startHost();
     const threadId = ThreadId.make("thread-1");
     const task = yield* startUse({ threadId });
     assert.strictEqual(task.threadId, threadId);
+    const decided = yield* host
+      .decide({ taskId: task.taskId, questions: { done: { type: "noul", instructions: "Done?" } } })
+      .pipe(Effect.forkScoped);
+    yield* waitForDecision(task.taskId);
     yield* service.stopForThread(threadId);
+    assert.strictEqual((yield* Effect.flip(Fiber.join(decided))).reason, "stopped");
     assert.strictEqual((yield* taskOf(task.taskId))?.status, "stopped");
+    assert.strictEqual(yield* Queue.take(host.stopFrames), task.taskId);
   }).pipe(Effect.provide(layerTest())),
 );
 

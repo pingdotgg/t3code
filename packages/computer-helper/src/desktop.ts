@@ -15,8 +15,8 @@ import {
   string,
 } from "./validate.ts";
 import { execRunner } from "./runner.ts";
-import type { CommandRunner } from "./runner.ts";
-import { CONTROL_ROLES, fitScale, NeedsPointer, SCREENSHOT_MAX_EDGE } from "./types.ts";
+import type { CommandOptions, CommandRunner } from "./runner.ts";
+import { CONTROL_ROLES, NeedsPointer } from "./types.ts";
 import type {
   ActOptions,
   ActResult,
@@ -29,8 +29,6 @@ import type {
   ScreenAction,
   ScreenBackend,
   ScreenControl,
-  Screenshot,
-  ScreenshotOptions,
 } from "./types.ts";
 
 /**
@@ -45,12 +43,29 @@ export const jxaRunner: CommandRunner = execRunner({
   slow: "The Mac (osascript)",
 });
 
+const READ_STDIN_ARGV =
+  "JSON.parse(ObjC.unwrap($.NSString.alloc.initWithDataEncoding($.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile, $.NSUTF8StringEncoding)) || '[]')";
+
 /**
- * osascript argv for a JXA script whose `run(argv)` receives `argv`. The `--` stops osascript from
- * reading a user value that starts with a dash as one of its own flags.
+ * The source osascript runs for a JXA script whose `run(argv)` receives `argv`: the script's own
+ * `run` is called with the values read from stdin, so typed text, labels and URLs never sit in a
+ * process listing the way argv does.
  */
-export function jxa(script: string, argv: string[] = []): [string, string[]] {
-  return ["osascript", ["-l", "JavaScript", "-e", script, "--", ...argv]];
+export function jxaSource(script: string): string {
+  return `var adaRun = (function () {\n${script}\nreturn run;\n})();\nfunction run() { return adaRun(${READ_STDIN_ARGV}); }`;
+}
+
+/** The osascript call for `script` with `argv` on stdin; `options` adds a stop signal or a deadline. */
+export function jxa(
+  script: string,
+  argv: string[] = [],
+  options: Omit<CommandOptions, "input"> = {},
+): [string, string[], CommandOptions] {
+  return [
+    "osascript",
+    ["-l", "JavaScript", "-e", jxaSource(script)],
+    { ...options, input: JSON.stringify(argv) },
+  ];
 }
 
 /**
@@ -350,7 +365,7 @@ function middleOfWindow() {
 }
 var TEXT_ROLES = { AXTextField: 1, AXTextArea: 1, AXComboBox: 1, AXSearchField: 1 };
 // Controls whose AXPress is the click a person makes: pressed through accessibility, the pointer and the app in front
-// stay as they are (the "virtual cursor"). Fields are focused (focusInPlace); the rest needs the person's mouse.
+// stay as they are (no pointer movement). Fields are focused (focusInPlace); the rest needs the person's mouse.
 var PRESS_ROLES = { AXButton: 1, AXLink: 1, AXCheckBox: 1, AXRadioButton: 1, AXMenuItem: 1, AXMenuButton: 1, AXPopUpButton: 1 };
 function pressable(el) {
   if (!PRESS_ROLES[plain(el, 'AXRole')]) return false;
@@ -821,8 +836,7 @@ export class DesktopBackend implements ScreenBackend {
     let output: string;
     try {
       output = await this.runner.run(
-        ...jxa(OBSERVE_SCRIPT),
-        options.signal ? { signal: options.signal } : undefined,
+        ...jxa(OBSERVE_SCRIPT, [], options.signal ? { signal: options.signal } : {}),
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -893,11 +907,6 @@ export class DesktopBackend implements ScreenBackend {
   }
 
   /**
-   * Typing: click the box, check it took the focus (else nothing is typed, so a select-all never lands on the page),
-   * select what it holds through the app's Edit menu, type plain text in chunks a stop can come between (or paste
-   * anything else), then read the box back: text that did not land is a failure, not a step done.
-   */
-  /**
    * Typing in the background: set the field's value through accessibility (AXValue), which a native field and Chrome's
    * omnibox take without the keyboard, then read it back. A field that refuses it throws NeedsPointer; with the mouse
    * allowed, the field is clicked and the text typed (focus checked), or pasted when the keyboard cannot type it.
@@ -961,62 +970,9 @@ export class DesktopBackend implements ScreenBackend {
     return displaysShape(json((await this.call(DISPLAYS_SCRIPT, [])).trim(), "displays"));
   }
 
-  /**
-   * The front window as a PNG, scaled so its longer edge is at most `maxEdge` pixels (a Retina capture is twice the
-   * window's points). Needs Screen Recording: without it macOS returns the desktop instead of the window (or opens its
-   * permission prompt), so it is checked first (CGPreflightScreenCaptureAccess, which never asks). The file is
-   * deleted at once.
-   */
-  async screenshot(options: ScreenshotOptions = {}): Promise<Screenshot> {
-    const access = await macAccess(this.runner);
-    if (!access.screenRecording)
-      throw new Error(
-        `${SCREEN_RECORDING_OFF} A screenshot needs it: allow Ada in System Settings › Privacy & Security › Screen Recording, then try again.`,
-      );
-    const front = frontWindowShape(
-      json((await this.call(FRONT_WINDOW_SCRIPT, [], options.signal)).trim(), "front window"),
-    );
-    if (!front.window) throw new Error("The app in front has no open window.");
-    const window = front.window;
-    const file = this.tmp();
-    try {
-      await this.runner.run(
-        "screencapture",
-        ["-x", "-o", "-t", "png", `-l${window.id}`, file],
-        options.signal ? { signal: options.signal } : undefined,
-      );
-      let size = pixelSize(
-        await this.runner.run("sips", ["-g", "pixelWidth", "-g", "pixelHeight", file]),
-      );
-      const fit = fitScale(size.w, size.h, options.maxEdge ?? SCREENSHOT_MAX_EDGE);
-      if (fit < 1) {
-        await this.runner.run("sips", [
-          "--resampleWidth",
-          String(Math.max(1, Math.round(size.w * fit))),
-          file,
-        ]);
-        size = pixelSize(
-          await this.runner.run("sips", ["-g", "pixelWidth", "-g", "pixelHeight", file]),
-        );
-      }
-      const png = new Uint8Array(await NodeFSP.readFile(file));
-      return {
-        png,
-        width: size.w,
-        height: size.h,
-        region: { x: window.x, y: window.y, w: window.w, h: window.h },
-        scale: window.w > 0 ? size.w / window.w : 1,
-        app: front.app,
-        title: window.title,
-      };
-    } finally {
-      await NodeFSP.rm(file, { force: true });
-    }
-  }
-
   private async call(script: string, argv: string[], signal?: AbortSignal): Promise<string> {
     try {
-      return await this.runner.run(...jxa(script, argv), signal ? { signal } : undefined);
+      return await this.runner.run(...jxa(script, argv, signal ? { signal } : {}));
     } catch (error) {
       if (signal?.aborted) throw stopped(signal);
       throw explain(error instanceof Error ? error.message : String(error)) ?? error;
@@ -1043,14 +999,6 @@ function resultOf(output: string): ActResult {
   if (pointer) result.pointer = pointer;
   if (typeof value.how === "string" && value.how) result.how = value.how;
   return result;
-}
-
-/** `sips -g pixelWidth -g pixelHeight` output → the image's size. */
-export function pixelSize(output: string): { w: number; h: number } {
-  const w = Number(/pixelWidth:\s*(\d+)/.exec(output)?.[1]);
-  const h = Number(/pixelHeight:\s*(\d+)/.exec(output)?.[1]);
-  if (!(w > 0 && h > 0)) throw new Error("The screenshot could not be measured.");
-  return { w, h };
 }
 
 /** Every script this backend runs, by name: the tests parse each one, as osascript would. */

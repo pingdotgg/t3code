@@ -1,10 +1,8 @@
 // Ported from LocalRouter (github.com/jayleaton/localrouter @fe24726, apps/desktop-helper/src/computer/macControls.ts), modified for Ada.
 // LocalRouter ported it from Sidebud (github.com/jayleaton/sidebud @70da540); both notices ship in LICENSE.localrouter.
-import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeUtil from "node:util";
 import { jxa } from "./desktop.ts";
 import type { AutomationCheck } from "./types.ts";
 import { array, integerIn, isObject, json, oneOf, string } from "./validate.ts";
@@ -15,7 +13,7 @@ export type InstalledApp = { id: string; name: string; aliases?: string[] };
 export const PLAYERS = ["Spotify", "Music"] as const;
 export type Player = (typeof PLAYERS)[number];
 
-/** The closed set of controls the box may ask for, in the protocol's order. */
+/** The closed set of controls the server may ask for, in the protocol's order. */
 export const CONTROL_KINDS = [
   "open_app",
   "quit_app",
@@ -25,7 +23,7 @@ export const CONTROL_KINDS = [
   "lock_screen",
 ] as const;
 
-/** The closed set of computer actions the box may request; nothing here reaches a shell. */
+/** The closed set of computer actions the server may request; nothing here reaches a shell. */
 export type ComputerControl =
   | { kind: "open_app"; app: string }
   | { kind: "quit_app"; app: string }
@@ -39,7 +37,7 @@ export type ComputerControl =
   | { kind: "dark_mode"; action: "on" | "off" | "toggle" }
   | { kind: "lock_screen" };
 
-/** A control that could not run, with a code the box can sort on and a message for the user. */
+/** A control that could not run, with a code the server can sort on and a message for the user. */
 export class ControlError extends Error {
   readonly code: "unavailable" | "not_found" | "forbidden" | "invalid" | "ambiguous";
 
@@ -56,7 +54,7 @@ const appName = (value: unknown, what: string) => {
   return name;
 };
 
-/** Checks a `control` from the box against the closed set; throws a ControlError on anything else. */
+/** Checks a `control` from the server against the closed set; throws a ControlError on anything else. */
 export function parseControl(value: unknown): ComputerControl {
   try {
     return readControl(value);
@@ -109,7 +107,7 @@ function readControl(value: unknown): ComputerControl {
   }
 }
 
-import type { CommandRunner } from "./runner.ts";
+import { type CommandRunner, execRunner } from "./runner.ts";
 export type { CommandRunner } from "./runner.ts";
 
 export type MacControlsOptions = {
@@ -128,13 +126,7 @@ export type MacControlsOptions = {
   automation?: AutomationCheck;
 };
 
-const execFileAsync = NodeUtil.promisify(NodeChildProcess.execFile);
-const execRunner: CommandRunner = {
-  async run(file, args) {
-    const { stdout } = await execFileAsync(file, args, { timeout: 10_000 });
-    return stdout;
-  },
-};
+const defaultRunner = execRunner({ timeoutMs: 10_000 });
 
 const APP_CACHE_MS = 5 * 60_000;
 const VOLUME_STEP = 20;
@@ -178,6 +170,17 @@ function run(argv) {
   return bundle && !bundle.isNil() ? ObjC.unwrap(bundle.bundleIdentifier) || '' : '';
 }`;
 
+/** Quits an app by name. argv: the name. */
+export const QUIT_SCRIPT = `function run(argv) {
+  Application(argv[0]).quit();
+  return 'ok';
+}`;
+
+/** Whether an app by name is running, without launching it or sending it an Apple Event. argv: the name. */
+export const IS_RUNNING_SCRIPT = `function run(argv) {
+  return String(Application(argv[0]).running());
+}`;
+
 // Player scripts name the app literally because `next track` and `sound volume` only compile
 // against a known dictionary; the literal comes from the closed Player union, never from input.
 const MEDIA_VERBS = {
@@ -194,7 +197,7 @@ const MEDIA_DONE = {
 };
 
 /**
- * A Notification Center banner, title and text through argv. Shown by osascript, so macOS lists it
+ * A Notification Center banner, title and text as its argv. Shown by osascript, so macOS lists it
  * under Script Editor in System Settings › Notifications.
  */
 export const NOTIFY_SCRIPT = `function run(argv) {
@@ -204,7 +207,7 @@ export const NOTIFY_SCRIPT = `function run(argv) {
   return 'ok';
 }`;
 
-/** Scripts take dynamic values only through argv so names are never parsed as AppleScript. */
+/** AppleScript controls take only numbers as argv; names go to JXA scripts on stdin, never into a listing. */
 function script(lines: string[], args: string[] = []): string[] {
   return [...["on run argv", ...lines, "end run"].flatMap((line) => ["-e", line]), ...args];
 }
@@ -221,7 +224,7 @@ function slugify(name: string): string {
 const clamp = (level: number) => Math.min(100, Math.max(0, Math.round(level)));
 
 /**
- * Deterministic macOS controls the helper runs directly when the box sends a `control`.
+ * Deterministic macOS controls the helper runs directly when the server sends a `control`.
  * Every app name is resolved against the installed-app scan before any command runs.
  */
 export class MacControls {
@@ -235,7 +238,7 @@ export class MacControls {
   private cache: { at: number; apps: InstalledApp[] } | null = null;
 
   constructor(options: MacControlsOptions = {}) {
-    this.runner = options.runner ?? execRunner;
+    this.runner = options.runner ?? defaultRunner;
     // oxlint-disable-next-line t3code/no-global-process-runtime -- The helper is plain Node outside any Effect runtime.
     this.platform = options.platform ?? process.platform;
     this.appDirectories = options.appDirectories ?? [
@@ -334,14 +337,7 @@ export class MacControls {
   /** A Notification Center banner on this Mac (the task-start notice); failures are ignored. */
   async notify(title: string, text: string): Promise<void> {
     if (!this.available) return;
-    await this.runner
-      .run(
-        ...jxa(
-          NOTIFY_SCRIPT,
-          [title, text].map((value) => value.replace(/^-+\s*/, "")),
-        ),
-      )
-      .catch(() => undefined);
+    await this.runner.run(...jxa(NOTIFY_SCRIPT, [title, text])).catch(() => undefined);
   }
 
   describe(control: ComputerControl): string {
@@ -365,7 +361,7 @@ export class MacControls {
     }
   }
 
-  /** Runs one control and returns a short sentence suitable for speaking back. */
+  /** Runs one control and returns a short sentence saying what was done. */
   async run(control: ComputerControl): Promise<{ done: string }> {
     if (!this.available)
       throw new ControlError("unavailable", "Computer controls work on macOS only");
@@ -385,7 +381,7 @@ export class MacControls {
           this.automation ? (await this.runner.run(...jxa(BUNDLE_SCRIPT, [app]))).trim() : "",
           `macOS has not given Ada its OK to control ${app}, and Ada never asks for it during a task: quit ${app} yourself this time.`,
         );
-        await this.osascript(["tell application (item 1 of argv) to quit"], [app]);
+        await this.runner.run(...jxa(QUIT_SCRIPT, [app]));
         return { done: `Quit ${app}.` };
       }
       case "volume":
@@ -507,10 +503,7 @@ export class MacControls {
 
   // `is running` checks without launching, unlike a `tell` block, and sends the app no Apple Event.
   private async isRunning(app: string): Promise<boolean> {
-    return (
-      (await this.osascript(["return application (item 1 of argv) is running"], [app])).trim() ===
-      "true"
-    );
+    return (await this.runner.run(...jxa(IS_RUNNING_SCRIPT, [app]))).trim() === "true";
   }
 
   private osascript(lines: string[], args: string[] = []): Promise<string> {
@@ -582,7 +575,7 @@ const words = (s: string) =>
     .filter(Boolean);
 
 /**
- * The installed app a spoken or typed name means: its exact name (or bundle/display name), a common alias, the same
+ * The installed app a name means: its exact name (or bundle/display name), a common alias, the same
  * letters without spaces or punctuation ("googlechrome", "zoom us"), then a case-insensitive word-prefix match
  * ("photoshop" is "Adobe Photoshop 2026"). Several equally good matches are a question, never a guess. `aliases`: the
  * platform's alias table (APP_ALIASES is the Mac's).
@@ -633,3 +626,12 @@ export function resolveInstalled(
   }
   throw new ControlError("not_found", `${requested} isn't installed on this computer`);
 }
+
+/** Every JXA script the controls run, by name: the tests compile each one, as osascript would. */
+export const SCRIPTS = {
+  running: RUNNING_SCRIPT,
+  bundle: BUNDLE_SCRIPT,
+  notify: NOTIFY_SCRIPT,
+  quit: QUIT_SCRIPT,
+  isRunning: IS_RUNNING_SCRIPT,
+};

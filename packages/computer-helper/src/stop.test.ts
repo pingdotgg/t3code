@@ -124,7 +124,7 @@ describe("LocalStop", () => {
     expect(aborted).toEqual([TAKEN_OVER]);
   });
 
-  it("ignores the helper’s own movement and the wait for the box, but the corner still stops it", async () => {
+  it("ignores the helper’s own movement and the wait for the server, but the corner still stops it", async () => {
     const { watch, aborted, move } = watched();
     watch.left({ x: 100, y: 100 });
     watch.moving();
@@ -141,9 +141,9 @@ describe("LocalStop", () => {
     expect(aborted).toEqual([STOPPED_IN_CORNER]);
   });
 
-  it("Windows run 2026-10-27: after a background step (or the wait for the box) the person’s mouse is theirs; only the corner stops it", async () => {
+  it("Windows run 2026-10-27: after a background step (or the wait for the server) the person’s mouse is theirs; only the corner stops it", async () => {
     const { watch, aborted, move } = watched();
-    // The box answers (moving … released), then the background click (moving … released): no pointer was used.
+    // The server answers (moving … released), then the background click (moving … released): no pointer was used.
     watch.moving();
     watch.released?.();
     watch.moving();

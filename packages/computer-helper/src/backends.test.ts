@@ -5,15 +5,30 @@ import { ChromeTabs, chooseInstance, SCRIPTS as CHROME_SCRIPTS } from "./chromeT
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { chunks, DesktopBackend, jxaRunner, landed, macAccess, SCRIPTS } from "./desktop.ts";
+import {
+  chunks,
+  DesktopBackend,
+  jxa,
+  jxaRunner,
+  jxaSource,
+  landed,
+  macAccess,
+  SCRIPTS,
+} from "./desktop.ts";
 import { DockApps, SCRIPTS as DOCK_SCRIPTS } from "./dock.ts";
-import type { CommandRunner } from "./macControls.ts";
+import { type CommandRunner, SCRIPTS as MAC_CONTROL_SCRIPTS } from "./macControls.ts";
 import type { BrowserTab } from "./types.ts";
 
-type Call = { file: string; script: string; argv: string[] };
+/** `args` is the process's own argv, which a listing shows; `argv` is what the script's `run(argv)` receives. */
+type Call = { file: string; script: string; args: string[]; argv: string[] };
 
-/** Every script the backends run: the desktop, Chrome's tabs and the Dock. */
-const JXA_SCRIPTS = { desktop: SCRIPTS, chromeTabs: CHROME_SCRIPTS, dock: DOCK_SCRIPTS };
+/** Every JXA script the helper runs: the desktop, Chrome's tabs, the Dock and the fixed controls. */
+const JXA_SCRIPTS = {
+  desktop: SCRIPTS,
+  chromeTabs: CHROME_SCRIPTS,
+  dock: DOCK_SCRIPTS,
+  macControls: MAC_CONTROL_SCRIPTS,
+};
 
 // oxlint-disable-next-line t3code/no-global-process-runtime -- The helper is plain Node outside any Effect runtime.
 const isMac = process.platform === "darwin";
@@ -22,11 +37,12 @@ const isMac = process.platform === "darwin";
 function fakeRunner(respond: (call: Call) => string | Error) {
   const calls: Call[] = [];
   const runner: CommandRunner = {
-    async run(file, args) {
+    async run(file, args, options) {
       const call = {
         file,
         script: args[args.indexOf("-e") + 1] ?? "",
-        argv: args.slice(args.indexOf("--") + 1),
+        args,
+        argv: options?.input === undefined ? [] : (JSON.parse(options.input) as string[]),
       };
       calls.push(call);
       const result = respond(call);
@@ -101,6 +117,7 @@ describe("ChromeTabs", () => {
     const { runner, calls } = chromeRunner(() => '{"x":10,"y":20}');
     await new ChromeTabs(runner).activate(TAB);
     expect(calls[1]?.argv).toEqual(["502", TAB.title, "2", "click"]);
+    for (const call of calls) expect(call.args.join("\n")).not.toContain(TAB.title);
     expect(calls[1]?.script).not.toContain("Inbox");
   });
 
@@ -256,6 +273,8 @@ describe("DesktopBackend", () => {
     ]);
     // The value and text travel as argv on stdin, never spliced into the script source.
     expect(calls[0]?.script).not.toContain("Finder");
+    // Nor in osascript's own argv, which any process listing shows.
+    for (const call of calls) expect(call.args.join("\n")).not.toContain("Finder");
   });
 
   it("types in the background by setting the field value, and types with keys only when the pointer is allowed", async () => {
@@ -619,60 +638,7 @@ return run;`;
     ).toEqual({ backend: "desktop", ...seen });
   });
 
-  it("scales a Retina window capture to the longest edge asked for, and says how image pixels map to points", async () => {
-    const files: string[] = [];
-    let resized = false;
-    const { runner, calls } = fakeRunner((call) => {
-      if (call.script.includes("CGPreflightScreenCaptureAccess"))
-        return '{"accessibility":true,"screenRecording":true,"host":""}';
-      if (call.script.includes("CGWindowListCopyWindowInfo"))
-        return JSON.stringify({
-          app: "Safari",
-          window: { id: 7, x: 100, y: 50, w: 1440, h: 900, title: "Docs" },
-        });
-      if (call.file === "screencapture") return "";
-      if (call.file === "sips" && call.argv.includes("--resampleWidth")) {
-        resized = true;
-        return "";
-      }
-      if (call.file === "sips")
-        return resized
-          ? "pixelWidth: 1568\n  pixelHeight: 980\n"
-          : "pixelWidth: 2880\n  pixelHeight: 1800\n";
-      return "";
-    });
-    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ada-shot-"));
-    const file = NodePath.join(dir, "shot.png");
-    NodeFS.writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-    files.push(file);
-    const shot = await new DesktopBackend(runner, { tmp: () => file }).screenshot({
-      maxEdge: 1568,
-    });
-    expect(shot).toMatchObject({
-      width: 1568,
-      height: 980,
-      region: { x: 100, y: 50, w: 1440, h: 900 },
-      app: "Safari",
-      title: "Docs",
-    });
-    expect(shot.scale).toBeCloseTo(1568 / 1440);
-    expect(Array.from(shot.png.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
-    expect(calls.find((call) => call.argv.includes("--resampleWidth"))?.argv).toEqual([
-      "--resampleWidth",
-      "1568",
-      file,
-    ]);
-    // The capture is deleted at once.
-    expect(NodeFS.existsSync(file)).toBe(false);
-    NodeFS.rmSync(dir, { recursive: true, force: true });
-  });
-
-  it("refuses a screenshot without Screen Recording access instead of returning the desktop", async () => {
-    const { runner } = fakeRunner(() => '{"accessibility":true,"screenRecording":false,"host":""}');
-    await expect(new DesktopBackend(runner).screenshot()).rejects.toThrow(/Screen Recording/);
-  });
-
-  it("reports the mode and where it acted, for the audit and the visible cursor", async () => {
+  it("reports the mode and where it acted, for the audit", async () => {
     const bg = fakeRunner(() => JSON.stringify({ mode: "background", at: { x: 640, y: 212 } }));
     expect(await new DesktopBackend(bg.runner).act({ kind: "click", ref: "0.1" })).toEqual({
       mode: "background",
@@ -797,9 +763,6 @@ return run;`;
     await expect(new DesktopBackend(runner).observe()).rejects.toThrow(
       /^Google Chrome is refusing to show its window.*Screen Recording is off for Ada, so no screenshot was taken/,
     );
-    await expect(new DesktopBackend(runner).screenshot()).rejects.toThrow(
-      /^Screen Recording is off for Ada/,
-    );
     expect(calls.some((call) => call.file === "screencapture")).toBe(false);
   });
 
@@ -826,19 +789,23 @@ describe("macAccess", () => {
 
 describe("DockApps", () => {
   it("lists the Dock's apps, clicks an app's icon to bring it forward, and opens one that is not in the Dock", async () => {
-    const calls: Array<{ file: string; args: string[] }> = [];
+    const calls: Array<{ file: string; args: string[]; input?: string }> = [];
     const replies = ['["Finder","Google Chrome","T3 Agents"]', "clicked", "missing", ""];
     const dock = new DockApps({
-      run: async (file, args) => {
-        calls.push({ file, args });
+      run: async (file, args, options) => {
+        calls.push({
+          file,
+          args,
+          ...(options?.input === undefined ? {} : { input: options.input }),
+        });
         return replies.shift() ?? "";
       },
     });
     expect(await dock.list()).toEqual(["Finder", "Google Chrome", "T3 Agents"]);
     expect(await dock.activate("Google Chrome")).toBe("clicked");
-    // The app name reaches the script as an argument, never inside its source.
-    expect(calls[1]!.args.slice(-2)).toEqual(["Google Chrome", "act"]);
-    expect(calls[1]!.args[3]).not.toContain("Google Chrome");
+    // The app name reaches the script on stdin, never inside its source or osascript's argv.
+    expect(JSON.parse(calls[1]!.input ?? "[]")).toEqual(["Google Chrome", "act"]);
+    expect(calls[1]!.args.join("\n")).not.toContain("Google Chrome");
     expect(await dock.activate("Zed")).toBe("opened");
     expect(calls.at(-1)).toEqual({ file: "open", args: ["-a", "Zed"] });
     // No Apple Event: the Dock is read through accessibility and clicked with CGEvent, `open -a` is LaunchServices.
@@ -870,7 +837,8 @@ describe.runIf(isMac)("on macOS", () => {
       for (const [group, scripts] of Object.entries(JXA_SCRIPTS)) {
         for (const [name, script] of Object.entries(scripts)) {
           const file = NodePath.join(dir, `${group}-${name}.js`);
-          NodeFS.writeFileSync(file, script);
+          // As osascript runs it: wrapped to read its argv from stdin.
+          NodeFS.writeFileSync(file, jxaSource(script));
           await expect(
             jxaRunner.run("osacompile", [
               "-l",
@@ -886,6 +854,14 @@ describe.runIf(isMac)("on macOS", () => {
     } finally {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("hands a script its argv on stdin", async () => {
+    const text = 'on my way -- 10\' late, "ok"';
+    const echoed = await jxaRunner.run(
+      ...jxa("function run(argv) { return argv.join('|'); }", [text, "x"]),
+    );
+    expect(echoed.trim()).toBe(`${text}|x`);
   });
 
   it("reads the displays, the pointer and the grants for real", async () => {

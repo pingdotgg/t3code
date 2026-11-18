@@ -46,7 +46,7 @@ const control = (
 ): ScreenControl => ({ ref, role, label, ...extra });
 const ALLOW: Grant = { ok: true, grant: "allow" };
 
-/** A box that grants everything at once, recording what it was asked. */
+/** A server that grants everything at once, recording what it was asked. */
 function allowAll() {
   const requests: AuthorizeRequest[] = [];
   const authorize = vi.fn(async (request: AuthorizeRequest): Promise<Grant> => {
@@ -196,7 +196,7 @@ const SKOOL_REPLIES = (): Answers[] => [
 ];
 
 describe("ComputerUse", () => {
-  it("opens the Skool tab, finds Mark in Messages, types the note, and sends it, each action granted by the box first", async () => {
+  it("opens the Skool tab, finds Mark in Messages, types the note, and sends it, each action granted by the server first", async () => {
     const parts = skool();
     const box = allowAll();
     const steps: string[] = [];
@@ -239,9 +239,19 @@ describe("ComputerUse", () => {
     });
     expect(steps[1]).toBe("clicked the button “Messages”");
     expect(steps).toHaveLength(5);
+    // The text to type reaches the server only as the type action's own binding, even when the page echoes it back.
+    const typeRequest = box.requests.findIndex((request) => request.action.kind === "type");
+    const elsewhere = [
+      asked,
+      outcome,
+      steps,
+      box.requests.filter((_, index) => index !== typeRequest),
+    ];
+    expect(JSON.stringify(elsewhere)).not.toContain(TASK.text!);
+    expect(JSON.stringify(asked.at(-1)!.state)).toContain("[typed text]");
   });
 
-  it("stops before sending when the box denies the Enter that sends, and says why", async () => {
+  it("stops before sending when the server denies the Enter that sends, and says why", async () => {
     const parts = skool();
     const requests: AuthorizeRequest[] = [];
     const authorize = vi.fn(async (request: AuthorizeRequest): Promise<Grant> => {
@@ -285,7 +295,7 @@ describe("ComputerUse", () => {
   });
 
   describe("authority: nothing happens without a grant", () => {
-    it("acts only after the box grants that exact action", async () => {
+    it("acts only after the server grants that exact action", async () => {
       const parts = skool();
       const seen: AuthorizeRequest[] = [];
       const pending: Array<(grant: Grant) => void> = [];
@@ -319,7 +329,7 @@ describe("ComputerUse", () => {
       expect(parts.actions).toEqual([{ kind: "click", ref: "s2" }]);
     });
 
-    it("ends stuck without acting when the box refuses the request itself (past its limits)", async () => {
+    it("ends stuck without acting when the server refuses the request itself (past its limits)", async () => {
       const parts = skool();
       const authorize = vi.fn(async (request: AuthorizeRequest): Promise<Grant> => {
         if (request.action.kind === "surface") return ALLOW;
@@ -337,7 +347,7 @@ describe("ComputerUse", () => {
       expect(parts.actions).toEqual([]);
     });
 
-    it("does not bring a tab forward when the box denies the switch", async () => {
+    it("does not bring a tab forward when the server denies the switch", async () => {
       const parts = skool();
       const authorize = vi.fn(async (): Promise<Grant> => ({ ok: false, denied: "Not now." }));
       const { computer } = computerWith(
@@ -1010,7 +1020,7 @@ describe("ComputerUse", () => {
       );
       expect(await outcome).toMatchObject({ status: "done" });
       expect(setup.activated).toEqual([tabs[1]]);
-      // The name matched a tab, so the box was not asked to choose one.
+      // The name matched a tab, so the server was not asked to choose one.
       expect(asked[0]!.questions).not.toHaveProperty("tab");
       expect(requests.map((request) => request.action)).toEqual([
         { kind: "surface", what: "tab", name: "Widget library review — Sidebud" },
@@ -1210,7 +1220,7 @@ describe('going to a tab by what the user called it (2026-09-26 07:36: "the scho
     expect(resolveTab(["school"], tabs)).toMatchObject({ tab: tabs[1], via: "sound" });
     expect(resolveTab(["skool"], tabs)).toMatchObject({ tab: tabs[1], via: "site" });
     expect(resolveTab(["early ai-dopters"], tabs)).toMatchObject({ tab: tabs[1], via: "title" });
-    // Two tabs mention Sidebud: not clear, so the box chooses instead.
+    // Two tabs mention Sidebud: not clear, so the server chooses instead.
     expect(resolveTab(["sidebud"], tabs)).toBeNull();
     // A tab group's name picks its active tab, else its first.
     expect(
@@ -1254,7 +1264,7 @@ describe('going to a tab by what the user called it (2026-09-26 07:36: "the scho
     expect(outcome).toMatchObject({ status: "done", surface: "Google Chrome: Early AI-dopters" });
     expect(activated).toEqual([tabs[1]]);
     expect(outcome.steps[0]).toContain("(www.skool.com)");
-    // The screen is read once, before the switch, for the box's grant; "school" is not looked for afterwards.
+    // The screen is read once, before the switch, for the server's grant; "school" is not looked for afterwards.
     expect(observe).toHaveBeenCalledTimes(1);
     expect(box.requests).toEqual([
       {
@@ -1266,7 +1276,7 @@ describe('going to a tab by what the user called it (2026-09-26 07:36: "the scho
     expect(actions).toEqual([]);
   });
 
-  it("counts a tab the box chose by meaning as the switch the user asked for, even when the screen cannot be read", async () => {
+  it("counts a tab the server chose by meaning as the switch the user asked for, even when the screen cannot be read", async () => {
     const activated: BrowserTab[] = [];
     const box = allowAll();
     const computer = new ComputerUse({
@@ -1392,7 +1402,7 @@ describe('a Chrome that refuses other apps (2026-09-26 10:17: "could not find �
     ]);
     expect(chrome.actions).toEqual([{ kind: "press", key: "space" }]);
     expect(chrome.requests.at(-1)?.action).toEqual({ kind: "press", key: "space" });
-    // The box is told the screen came from a screenshot, so a missing play button is expected.
+    // The server is told the screen came from a screenshot, so a missing play button is expected.
     const state = chrome.asked[1]!.state as { screen: { readFrom: string } };
     expect(state.screen.readFrom).toContain("screenshot");
   });

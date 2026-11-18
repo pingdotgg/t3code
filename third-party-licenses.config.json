@@ -237,7 +237,7 @@
           "licenseId": "Apache-2.0",
           "copyrights": ["Copyright 2026 Jay Leaton"],
           "preamble": [
-            "The computer use helper in packages/computer-helper is ported from LocalRouter (https://github.com/jayleaton/localrouter @fe24726), Copyright 2026 Jay Leaton, and modified for Ada. LocalRouter ported those files in turn from Sidebud (https://github.com/jayleaton/sidebud @70da540), contributed by its owner under LocalRouter's license. The ported files remain under the Apache License 2.0; Ada's MIT license does not replace it."
+            "The computer use helper in packages/computer-helper, and the computer-use policy, approvals, audit, decider and service in apps/server/src/computer (with its policy_golden.json), are ported from LocalRouter (https://github.com/jayleaton/localrouter @fe24726), Copyright 2026 Jay Leaton, and modified for Ada. LocalRouter ported part of the helper in turn from Sidebud (https://github.com/jayleaton/sidebud @70da540), contributed by its owner under LocalRouter's license. The ported files remain under the Apache License 2.0; Ada's MIT license does not replace it."
           ]
         }
       ]
