@@ -1,3 +1,5 @@
+import { contextMenuSourceOf } from "../../contextMenuSource";
+import type { ContextMenuSource } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DndContext,
@@ -130,17 +132,18 @@ const BoardCard = memo(function BoardCard(
 ) {
   const { thread, onStartRename } = props;
   const pill = resolveThreadStatusPill({ thread });
-  const openMenu = (position: { x: number; y: number }) =>
-    showThreadContextMenu(scopeThreadRef(thread.environmentId, thread.id), position, {
+  const openMenu = (position: { x: number; y: number }, source: ContextMenuSource) =>
+    showThreadContextMenu(scopeThreadRef(thread.environmentId, thread.id), position, source, {
       onStartRename: () => onStartRename(cardKey(thread)),
     });
   const handleContextMenu = (event: ReactMouseEvent) => {
-    if (openMenu({ x: event.clientX, y: event.clientY })) event.preventDefault();
+    if (openMenu({ x: event.clientX, y: event.clientY }, contextMenuSourceOf(event)))
+      event.preventDefault();
   };
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    if (openMenu({ x: rect.left, y: rect.bottom })) event.preventDefault();
+    if (openMenu({ x: rect.left, y: rect.bottom }, "keyboard")) event.preventDefault();
   };
   if (props.renaming) {
     return (

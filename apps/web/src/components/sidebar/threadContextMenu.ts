@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ContextMenuSource } from "@t3tools/contracts";
 import { useEffect } from "react";
 
 export interface ThreadContextMenuOptions {
@@ -9,6 +10,7 @@ export interface ThreadContextMenuOptions {
 type ThreadContextMenuHandler = (
   threadRef: ScopedThreadRef,
   position: { x: number; y: number },
+  source: ContextMenuSource,
   options?: ThreadContextMenuOptions,
 ) => void;
 
@@ -29,9 +31,10 @@ export function useProvideThreadContextMenu(provided: ThreadContextMenuHandler) 
 export function showThreadContextMenu(
   threadRef: ScopedThreadRef,
   position: { x: number; y: number },
+  source: ContextMenuSource,
   options?: ThreadContextMenuOptions,
 ): boolean {
   if (handler === null) return false;
-  handler(threadRef, position, options);
+  handler(threadRef, position, source, options);
   return true;
 }
