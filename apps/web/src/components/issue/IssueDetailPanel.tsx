@@ -11,7 +11,7 @@ import {
   noIssuePicks,
 } from "@t3tools/client-runtime/issue-selection";
 import { isSelected, toggleSelection } from "@t3tools/client-runtime/pull-request-selection";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   IssueAssigneeCandidate,
@@ -577,7 +577,11 @@ export function IssueDetailPanel({
               variant="ghost"
               aria-label={gt("Refresh issue")}
               disabled={detailQuery.isPending}
-              onClick={() => void pager.refresh(registry, detailQuery.refresh)}
+              onClick={() =>
+                void pager.refresh(registry, () =>
+                  executeAtomQuery(registry, detailAtom, { refresh: true, reportFailure: false }),
+                )
+              }
             >
               <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
             </Button>
