@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type AssetUrlState as RuntimeAssetUrlState,
@@ -31,7 +32,10 @@ export function useAssetUrlState(
   resource: AssetResource | null,
   revision?: string | null,
 ): AssetUrlState {
-  const blocked = blockedAssetUrlState(resource, useFilesystemReadAccess(environmentId));
+  const blocked = blockedAssetUrlState(
+    resource,
+    useFilesystemReadAccess(environmentId, useMessages()),
+  );
   const preparedConnection = usePreparedConnection(environmentId);
   const result = useAtomValue(
     blocked !== null || environmentId === null || resource === null
@@ -106,6 +110,7 @@ function isFileResource(resource: AssetResource): boolean {
   return (
     resource._tag === "workspace-file" ||
     resource._tag === "media-file" ||
-    resource._tag === "draft-workspace-file"
+    resource._tag === "draft-workspace-file" ||
+    (resource._tag === "native-app-icon" && resource.app._tag === "app-path")
   );
 }

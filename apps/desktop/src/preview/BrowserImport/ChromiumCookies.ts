@@ -181,6 +181,10 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
   function* (snapshotPath: string, keys: ChromiumKeyMaterial, platform: NodeJS.Platform) {
     const result = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      // Chromium razes a damaged jar to a file with no tables and rebuilds it on its next write.
+      const tables =
+        yield* sql`select 1 from sqlite_master where type = 'table' and name = 'cookies'`;
+      if (tables.length === 0) return { rows: [], schemaVersion: 0 };
       const schemaVersion = yield* sql`select value from meta where key = 'version' limit 1`.pipe(
         Effect.flatMap(decodeSchemaVersion),
         Effect.map(([row]) => row.value),
