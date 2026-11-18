@@ -130,6 +130,9 @@ describe("renderCliShim", () => {
     expect(result.stdout).toContain("T3CODE_WSL_WORKSPACE_ROOT/w");
     expect(run(shim, ["app", `--base-dir=${project}`, "--", project], env).status).toBe(0);
     expect(run(shim, ["app", "--base-dir=~/data"], env).stdout.split("\n")[2]).toBe(`${root}/data`);
+    const homeProject = run(shim, ["app", "~/project with spaces"], env);
+    expect(homeProject.status).toBe(0);
+    expect(homeProject.stdout.split("\n")[1]).toBe(project);
     expect(run(shim, ["app", "--help"], env).status).toBe(0);
     expect(run(shim, ["app", project, project], env).status).toBe(2);
     expect(run(shim, ["app", "--base-dir"], env).status).toBe(2);

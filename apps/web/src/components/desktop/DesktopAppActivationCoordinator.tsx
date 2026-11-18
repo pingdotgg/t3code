@@ -3,6 +3,9 @@ import { PRIMARY_LOCAL_ENVIRONMENT_ID, type DesktopAppActivationRequest } from "
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
+
+import { m } from "../../i18n/messages";
 
 import {
   resolveDesktopActivationTarget,
@@ -105,7 +108,9 @@ export function DesktopAppActivationCoordinator() {
         });
         if (result._tag === "Failure") {
           const error = squashAtomCommandFailure(result);
-          throw error instanceof Error ? error : new Error("T3 Code could not add the project.");
+          throw error instanceof Error
+            ? error
+            : new Error(m(msg("T3 Code could not add the project.")));
         }
         return projectId;
       },
@@ -123,7 +128,7 @@ export function DesktopAppActivationCoordinator() {
           void updateProject({
             environmentId: projectRef.environmentId,
             input: { projectId: projectRef.projectId, archived: false },
-          }).then((result) => reportProjectFailure("Failed to unarchive project", result));
+          }).then((result) => reportProjectFailure(m(msg("Failed to unarchive project")), result));
         }
         const opened = await openThread(projectRef);
         if (opened !== null) return opened;

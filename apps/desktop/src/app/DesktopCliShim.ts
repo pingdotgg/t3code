@@ -57,6 +57,7 @@ export const renderWslCliShim = (windowsCliPath: string) =>
     "unset T3CODE_HOME T3CODE_WSL_WORKSPACE_ROOT T3CODE_WSL_BASE_DIR",
     'export T3CODE_WSL_DISTRO="${WSL_DISTRO_NAME:?Run this command inside WSL}"',
     'if [ -z "$help" ]; then',
+    '  case "$project" in "~"|"~/"*) project=$HOME${project#"~"} ;; esac',
     '  workspace_root=$(CDPATH= cd -- "${project:-.}" && pwd) || { echo "Project directory not found: ${project:-.}" >&2; exit 1; }',
     '  export T3CODE_WSL_WORKSPACE_ROOT="$workspace_root"',
     '  if [ -n "$base_dir" ]; then',
