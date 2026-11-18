@@ -47,6 +47,7 @@ import {
   deviceMicrophoneOrder,
   localVoiceTranscriberAtom,
 } from "../voice-input/VoiceInputProvider";
+import { appName } from "@t3tools/shared/appName";
 
 type MicrophonePermission = "checking" | "granted" | "ask" | "denied";
 
@@ -360,7 +361,7 @@ export function SettingsVoiceRouteScreen() {
               {permission === "ask"
                 ? gt("Allow microphone access to record and to see your microphones.")
                 : gt("Turn on microphone access for {product} in Settings to use voice input.", {
-                    product: "T3 Code",
+                    product: appName(),
                   })}
             </Text>
           </>

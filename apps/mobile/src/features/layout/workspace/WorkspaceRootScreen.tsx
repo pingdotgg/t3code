@@ -48,6 +48,7 @@ import {
   useSystemWorkspaceTabBar,
 } from "./useSystemWorkspaceTabBar";
 import { openSettings } from "../../settings/settings-navigation";
+import { appName } from "@t3tools/shared/appName";
 
 const TAB_TITLES = WORKSPACE_TAB_LABELS;
 
@@ -73,7 +74,7 @@ function WorkspaceRootTitle(props: {
             <SharedSlotTitle tab={state.selectedTab} />
           ) : (
             <CompactBrandTitle
-              accessibilityLabel={gt("{product}, {title}", { product: "T3 Code", title: tabTitle })}
+              accessibilityLabel={gt("{product}, {title}", { product: appName(), title: tabTitle })}
               fit
             />
           )

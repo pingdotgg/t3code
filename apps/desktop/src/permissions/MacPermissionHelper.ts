@@ -63,8 +63,8 @@ button:focus-visible { outline: 2px solid #007aff; outline-offset: -2px; }
 img { width: 32px; height: 32px; pointer-events: none; }
 </style></head><body><main id="panel">
 <button id="close" aria-label="${escapeHtml(m(msg("Close permission helper")))}">×</button>
-<header>${escapeHtml(m(msg("↑ Drag T3 Code into the list above")))}</header>
-<button id="app" draggable="true" aria-label="${escapeHtml(m(msg("Drag T3 Code to System Settings, or click to reveal in Finder")))}"><img src="${escapeHtml(icon)}" alt="" draggable="false">T3 Code</button>
+<header>${escapeHtml(m(msg("↑ Drag {appName} into the list above", { appName: appBrand.name })))}</header>
+<button id="app" draggable="true" aria-label="${escapeHtml(m(msg("Drag {appName} to System Settings, or click to reveal in Finder", { appName: appBrand.name })))}"><img src="${escapeHtml(icon)}" alt="" draggable="false">${appBrand.name}</button>
 </main></body></html>`;
 }
 

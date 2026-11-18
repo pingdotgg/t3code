@@ -10,6 +10,8 @@ import { featureFlags } from "react-native-screens";
 
 // Before any GT module initializes: GT validates locales with Intl APIs that Hermes lacks.
 import "./src/i18n/intl-polyfills";
+// Conn: before App, so module-level messages read the brand name.
+import "./src/lib/installAppName";
 import App from "./src/App";
 
 // Enables iOS FormSheet sizing for nested native stacks in non-fitToContents sheets.

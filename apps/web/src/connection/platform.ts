@@ -64,6 +64,7 @@ import {
 import * as ConnectionStorage from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
 import { m } from "../i18n/messages";
+import { appName } from "@t3tools/shared/appName";
 
 let nextObservedRpcRequestId = 0;
 
@@ -275,8 +276,9 @@ export const provisionDesktopSshEnvironment = Effect.fn(
         reason: "configuration",
         detail: m(
           msg(
-            "{label} runs T3 Code {serverVersion}, but this desktop is {appVersion}, and that server could not accept its pairing. Restart the T3 server on {label} so it runs {appVersion}, then retry.",
+            "{label} runs {appName} {serverVersion}, but this desktop is {appVersion}, and that server could not accept its pairing. Restart the T3 server on {label} so it runs {appVersion}, then retry.",
             {
+              appName: appName(),
               label: descriptor.label,
               serverVersion: descriptor.serverVersion,
               appVersion: APP_VERSION,

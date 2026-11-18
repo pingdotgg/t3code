@@ -22,6 +22,7 @@ import {
   releaseCheckError,
   releaseCheckValue,
 } from "./environmentUpdateCheck";
+import { appName } from "@t3tools/shared/appName";
 
 export function OutdatedServerUpdateSection({
   environmentId,
@@ -60,7 +61,7 @@ export function OutdatedServerUpdateSection({
       gt("Update {environment}?", { environment: label }),
       gt(
         "Install {product} {version}. {product} restarts on that machine and reconnects. Running threads may be interrupted.",
-        { product: "T3 Code", version: targetVersion },
+        { product: appName(), version: targetVersion },
       ),
       [
         { text: gt("Cancel"), style: "cancel" },
@@ -80,7 +81,7 @@ export function OutdatedServerUpdateSection({
   }
 
   return (
-    <SettingsSection title="T3 Code">
+    <SettingsSection title={appName()}>
       <View className="gap-1 p-4">
         <Text className="text-base text-foreground">
           {release
@@ -99,7 +100,7 @@ export function OutdatedServerUpdateSection({
                 ? gt("Version {version} is available.", { version: release.targetVersion })
                 : gt("No newer version is available yet.")
               : gt("This app needs a newer version of {product} on this machine.", {
-                  product: "T3 Code",
+                  product: appName(),
                 })}
         </Text>
         {error || state.status === "failed" ? (

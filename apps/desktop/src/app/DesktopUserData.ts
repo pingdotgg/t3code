@@ -64,8 +64,10 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
             legacy: appBrandDisplayName(appBrand, input.isDevelopment ? "Dev" : "Beta"),
           }
         : input.isDevelopment
-          ? { current: "t3code-dev", legacy: "T3 Code (Dev)" }
-          : { current: "t3code-v2", legacy: "T3 Code (Alpha)" };
+          ? // oxlint-disable-next-line t3code/no-hardcoded-app-name -- legacy upstream userData directory name, matched on disk
+            { current: "t3code-dev", legacy: "T3 Code (Dev)" }
+          : // oxlint-disable-next-line t3code/no-hardcoded-app-name -- legacy upstream userData directory name, matched on disk
+            { current: "t3code-v2", legacy: "T3 Code (Alpha)" };
     const destinationPath = path.join(input.appDataDirectory, names.current);
     const legacyPath = path.join(input.appDataDirectory, names.legacy);
     const inspect = (resourcePath: string) =>

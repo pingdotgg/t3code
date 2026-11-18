@@ -31,6 +31,7 @@ import { msg } from "gt-react";
 import { m } from "../../i18n/messages";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
+import { appName } from "@t3tools/shared/appName";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 
@@ -674,7 +675,11 @@ async function persistScopedSettingsPlan(
       return [
         {
           ...environment,
-          message: m(msg("This environment does not support this setting. Update T3 Code on it.")),
+          message: m(
+            msg("This environment does not support this setting. Update {appName} on it.", {
+              appName: appName(),
+            }),
+          ),
         },
       ];
     }

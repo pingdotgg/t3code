@@ -4,6 +4,7 @@ import { msg } from "gt-react-native";
 import { m, type MessageResolver } from "../i18n/messages";
 
 import type { AgentActivityProps, AgentActivityText } from "./AgentActivity";
+import { appName } from "@t3tools/shared/appName";
 
 // The widget only refreshes while the app is open, so after this long it stops
 // claiming an agent is still working. Matches the Live Activity's stale date.
@@ -73,7 +74,7 @@ export function agentActivityWidgetTimeline(
   if (source.kind !== "snapshot" || !source.aggregate) {
     const props: AgentActivityProps = {
       text: agentActivityText(0, resolve),
-      title: "T3 Code",
+      title: appName(),
       subtitle:
         source.kind === "signed-out"
           ? resolve(msg("Sign in to {product} to see agents", { product: "T3 Connect" }))

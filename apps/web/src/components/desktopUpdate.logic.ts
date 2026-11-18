@@ -2,6 +2,7 @@ import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/con
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../i18n/messages";
+import { appName } from "@t3tools/shared/appName";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
@@ -86,20 +87,23 @@ export function getArm64IntelBuildWarningDescription(
   if (action === "download") {
     return resolve(
       msg(
-        "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.",
+        "This Mac has Apple Silicon, but {appName} is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.",
+        { appName: appName() },
       ),
     );
   }
   if (action === "install") {
     return resolve(
       msg(
-        "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.",
+        "This Mac has Apple Silicon, but {appName} is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.",
+        { appName: appName() },
       ),
     );
   }
   return resolve(
     msg(
-      "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.",
+      "This Mac has Apple Silicon, but {appName} is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.",
+      { appName: appName() },
     ),
   );
 }
@@ -170,13 +174,14 @@ export function getDesktopUpdateInstallConfirmationMessage(
   return version
     ? resolve(
         msg(
-          "Install update {version} and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
-          { version },
+          "Install update {version} and restart {appName}?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
+          { appName: appName(), version },
         ),
       )
     : resolve(
         msg(
-          "Install update and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
+          "Install update and restart {appName}?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
+          { appName: appName() },
         ),
       );
 }

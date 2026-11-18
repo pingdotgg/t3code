@@ -39,6 +39,7 @@ import {
   type WizardTargetSelection,
   type WizardStep,
 } from "./browserImportWizard.logic";
+import { appName } from "@t3tools/shared/appName";
 
 export type { WizardTarget } from "./browserImportWizard.logic";
 
@@ -282,14 +283,14 @@ function FullDiskAccessStep({
       <DialogHeader>
         <DialogTitle>
           <T>
-            Let T3 Code read <Var>{source.name}</Var>&rsquo;s cookies
+            Let <Var>{appName()}</Var> read <Var>{source.name}</Var>&rsquo;s cookies
           </T>
         </DialogTitle>
         <DialogDescription>
           <T>
-            To import cookies from <Var>{source.name}</Var>, T3 Code needs Full Disk Access. Turn it
-            on in System Settings, then come back to finish the import. You can revoke it again once
-            the import is done.
+            To import cookies from <Var>{source.name}</Var>, <Var>{appName()}</Var> needs Full Disk
+            Access. Turn it on in System Settings, then come back to finish the import. You can
+            revoke it again once the import is done.
           </T>
         </DialogDescription>
       </DialogHeader>
@@ -323,10 +324,12 @@ function FullDiskAccessStep({
           <p className="mt-3 text-xs text-muted-foreground">
             {stillRequired
               ? gt(
-                  "Access is still required. Quit and reopen T3 Code if you just allowed it, then retry the import.",
+                  "Access is still required. Quit and reopen {appName} if you just allowed it, then retry the import.",
+                  { appName: appName() },
                 )
               : gt(
-                  "If access doesn't update after you allow it, quit and reopen T3 Code, then retry the import.",
+                  "If access doesn't update after you allow it, quit and reopen {appName}, then retry the import.",
+                  { appName: appName() },
                 )}
           </p>
         ) : null}

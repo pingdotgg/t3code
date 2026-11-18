@@ -12,6 +12,7 @@ import {
   workspaceListFilterIcon,
   type WorkspaceListHeaderProps,
 } from "./WorkspaceListHeader.types";
+import { appName } from "@t3tools/shared/appName";
 
 export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
   const gt = useGT();
@@ -60,7 +61,7 @@ export function WorkspaceListHeader(props: WorkspaceListHeaderProps) {
 
   return (
     <AppBar
-      title="T3 Code"
+      title={appName()}
       titleContent={
         <WorkspaceBrandTitle
           accessibilityLabel={props.accessibilityLabel}

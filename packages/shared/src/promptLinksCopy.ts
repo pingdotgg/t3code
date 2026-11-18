@@ -10,27 +10,34 @@ import {
   type PromptLinkError,
   type PromptLinkResult,
 } from "./promptLinks.ts";
+import { appName } from "./appName.ts";
 
 function promptLinkErrorMessage(error: PromptLinkError, resolve: MFunctionType): string {
   switch (error) {
     case "prompt-too-long":
       return resolve(
-        msg("This prompt is longer than {maxLength} characters, so T3 Code did not open it.", {
+        msg("This prompt is longer than {maxLength} characters, so {appName} did not open it.", {
+          appName: appName(),
           maxLength: PROMPT_LINK_MAX_PROMPT_LENGTH.toLocaleString("en-US"),
         }),
       );
     case "prompt-only-hidden":
       return resolve(
         msg(
-          "This prompt had only hidden characters, so it may be malicious. T3 Code did not open it.",
+          "This prompt had only hidden characters, so it may be malicious. {appName} did not open it.",
+          { appName: appName() },
         ),
       );
     case "unreadable-pull-request":
-      return resolve(msg("This link names a pull request T3 Code cannot read."));
+      return resolve(
+        msg("This link names a pull request {appName} cannot read.", { appName: appName() }),
+      );
     case "missing-prompt":
       return resolve(msg("This link has no prompt."));
     case "unreadable-repository":
-      return resolve(msg("This link names a repository T3 Code cannot read."));
+      return resolve(
+        msg("This link names a repository {appName} cannot read.", { appName: appName() }),
+      );
   }
 }
 

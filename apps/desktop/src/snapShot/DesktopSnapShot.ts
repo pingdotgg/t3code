@@ -947,7 +947,7 @@ export const make = Effect.gen(function* () {
       const capturedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
       if (snapshot.linuxActivationFailure) {
         yield* Effect.logWarning(
-          "The compositor could not activate T3 Code after the snapshot",
+          `The compositor could not activate ${appBrand.name} after the snapshot`,
           snapshot.linuxActivationFailure.cause,
         );
       }
@@ -1065,7 +1065,7 @@ export const make = Effect.gen(function* () {
     if (mode === "portal" && niriSocketPath()) {
       return {
         available: false,
-        message: "Configure the capture shortcut in your Niri config, not in T3 Code.",
+        message: `Configure the capture shortcut in your Niri config, not in ${appBrand.name}.`,
       };
     }
     if (mode === "portal" && isHyprlandCaptureSession()) {
@@ -1219,7 +1219,9 @@ export const make = Effect.gen(function* () {
           const { startNiriCaptureShortcut } = await import("./NiriCaptureShortcut.ts");
           return startNiriCaptureShortcut(linuxAppId, onCurrentShortcut, () => {
             void runPromise(
-              setShortcutFailure("The Niri capture endpoint disconnected. Restart T3 Code."),
+              setShortcutFailure(
+                `The Niri capture endpoint disconnected. Restart ${appBrand.name}.`,
+              ),
             ).catch(() => undefined);
           });
         },
@@ -1243,7 +1245,7 @@ export const make = Effect.gen(function* () {
         shortcutActionRegistered: registered,
         shortcutMessage: registered
           ? "Set up the shortcut to add it to your Niri config."
-          : "Could not start the Niri capture endpoint. Another T3 Code instance may be using it.",
+          : `Could not start the Niri capture endpoint. Another ${appBrand.name} instance may be using it.`,
         message: null,
       });
       return;

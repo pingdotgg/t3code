@@ -6,7 +6,7 @@ import {
 import { parseNewThreadLink, parseThreadLinkPrompt } from "@t3tools/shared/promptLinksCopy";
 import { useLocation } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
-import { msg, T, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import type { MessageResolver } from "../../i18n/messages";
@@ -20,6 +20,7 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
+import { appName } from "@t3tools/shared/appName";
 
 const OPENER_STORAGE_KEY = "t3code:prompt-link-opener";
 const Opener = Schema.NullOr(Schema.Literals(["app", "browser"]));
@@ -50,7 +51,9 @@ function summarize(
           ? {
               title: resolve(msg("Open this thread")),
               description: resolve(
-                msg("It opens in T3 Code if you're connected to the machine it runs on."),
+                msg("It opens in {appName} if you're connected to the machine it runs on.", {
+                  appName: appName(),
+                }),
               ),
               prompt: null,
               details: [],
@@ -172,8 +175,8 @@ function HostedPromptLinkLanding({
           </AlertTitle>
           <AlertDescription>
             {gt(
-              "{count, plural, one {T3 Code removed {count} hidden character. Read the prompt before you send it.} other {T3 Code removed {count} hidden characters. Read the prompt before you send it.}}",
-              { count: prompt.hiddenCharacters },
+              "{count, plural, one {{appName} removed {count} hidden character. Read the prompt before you send it.} other {{appName} removed {count} hidden characters. Read the prompt before you send it.}}",
+              { appName: appName(), count: prompt.hiddenCharacters },
             )}
           </AlertDescription>
         </Alert>
@@ -196,7 +199,9 @@ function HostedPromptLinkLanding({
           </Button>
         ) : null}
         <Button variant="ghost" render={<a href={DESKTOP_DOWNLOAD_URL} />}>
-          <T>Get T3 Code</T>
+          <T>
+            Get <Var>{appName()}</Var>
+          </T>
         </Button>
       </div>
       <label className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">

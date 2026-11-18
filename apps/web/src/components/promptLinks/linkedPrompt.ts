@@ -5,6 +5,7 @@ import { type ComposerThreadTarget, useComposerDraftStore } from "~/composerDraf
 import { m } from "~/i18n/messages";
 
 import { toastManager } from "../ui/toast";
+import { appName } from "@t3tools/shared/appName";
 
 export function warnAboutHiddenCharacters(prompt: LinkedPrompt): void {
   if (prompt.hiddenCharacters === 0) return;
@@ -13,8 +14,8 @@ export function warnAboutHiddenCharacters(prompt: LinkedPrompt): void {
     title: m(msg("This prompt had hidden characters, it may be malicious")),
     description: m(
       msg(
-        "{count, plural, one {T3 Code removed {count} hidden character. Read the prompt before you send it.} other {T3 Code removed {count} hidden characters. Read the prompt before you send it.}}",
-        { count: prompt.hiddenCharacters },
+        "{count, plural, one {{appName} removed {count} hidden character. Read the prompt before you send it.} other {{appName} removed {count} hidden characters. Read the prompt before you send it.}}",
+        { appName: appName(), count: prompt.hiddenCharacters },
       ),
     ),
     timeout: 0,

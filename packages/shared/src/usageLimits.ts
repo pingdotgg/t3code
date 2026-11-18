@@ -121,6 +121,7 @@ export const CHATGPT_WORKSPACE_USAGE_LIMIT_CODE =
   "subscription_sharing_workplace_individual_usage_limit_exceeded";
 /** OpenAI's partner guidelines fix this wording; the user sends it to their admin themselves. */
 export const CHATGPT_WORKSPACE_ADMIN_REQUEST =
+  // oxlint-disable-next-line t3code/no-hardcoded-app-name -- wording fixed by OpenAI's partner guidelines
   "I've reached the limit for using my ChatGPT plan in T3 Code. Could you increase our workspace's usage limits so I can continue?\n\nGo to admin.openai.com → Workspace → Usage limits. Thank you!";
 
 export function usesChatGptSharing(provider: ServerProvider | null | undefined): boolean {

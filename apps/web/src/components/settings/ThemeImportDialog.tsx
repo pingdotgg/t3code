@@ -25,6 +25,7 @@ import { Dialog, DialogHeader, DialogPanel, DialogPopup, DialogTitle } from "../
 import { ThemeSearchSection } from "./ThemeSearchSection";
 import { msg, T, useGT } from "gt-react";
 import { m } from "../../i18n/messages";
+import { appName } from "@t3tools/shared/appName";
 
 /**
  * The guard runs on the size before the bytes are ever read: a large file
@@ -537,7 +538,7 @@ function ThemeImportBody({
                   <T>Theme file</T>
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {fileName ?? gt("Drop T3 Code or VS Code .json files")}
+                  {fileName ?? gt("Drop {appName} or VS Code .json files", { appName: appName() })}
                 </p>
               </div>
               {chooseButton()}

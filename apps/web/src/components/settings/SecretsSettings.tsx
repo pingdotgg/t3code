@@ -28,6 +28,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { useSearchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import { appName } from "@t3tools/shared/appName";
 
 const SECRET_PROVIDER_KINDS: Readonly<
   Record<string, { readonly name: string; readonly icon: Icon }>
@@ -47,7 +48,8 @@ export function SecretsSettingsPanel() {
         <SettingsSection {...setting("secret-providers")}>
           <p className="px-4 py-3 text-sm text-muted-foreground">
             <T>
-              Update T3 Code on <Var>{environment.label}</Var> to manage its secret providers.
+              Update <Var>{appName()}</Var> on <Var>{environment.label}</Var> to manage its secret
+              providers.
             </T>
           </p>
         </SettingsSection>

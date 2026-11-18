@@ -60,6 +60,7 @@ export interface AppBrand {
 }
 
 export const UPSTREAM_APP_BRAND: AppBrand = {
+  // oxlint-disable-next-line t3code/no-hardcoded-app-name -- upstream's default brand name; Conn's build sets its own
   name: "T3 Code",
   appId: "com.t3tools.t3code",
   devAppId: "com.t3tools.t3code.dev",

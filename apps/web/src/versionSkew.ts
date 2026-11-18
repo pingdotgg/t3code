@@ -12,6 +12,7 @@ import { msg } from "gt-react";
 import { APP_VERSION } from "./branding";
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 import { m, type MessageResolver } from "./i18n/messages";
+import { appName } from "@t3tools/shared/appName";
 
 export interface VersionMismatch {
   readonly clientVersion: string;
@@ -85,7 +86,9 @@ export function resolveVersionMismatch(
     clientVersion: normalizedClientVersion,
     serverVersion: normalizedServerVersion,
     hint: resolve(
-      msg("Version mismatch. Try syncing the client and server to the same T3 Code version."),
+      msg("Version mismatch. Try syncing the client and server to the same {appName} version.", {
+        appName: appName(),
+      }),
     ),
   };
 }

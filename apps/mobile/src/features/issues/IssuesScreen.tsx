@@ -54,6 +54,7 @@ import { issueListFiltersAtom } from "./issueListFilters";
 import { issueViewMatches } from "./issueSavedViews";
 import { SavedViewsMenu } from "../layout/workspace/SavedViewsMenu";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { appName } from "@t3tools/shared/appName";
 
 const DEFAULT_ISSUE_LIST_INPUT = { state: "open", involvement: "all", limit: 50 } as const;
 const STATES = {
@@ -511,7 +512,9 @@ export function IssuesScreen(
                     : capable.length > 0
                       ? gt("Reconnect to load issues.")
                       : environments.length > 0
-                        ? gt("Update the environment's T3 Code server to browse issues.")
+                        ? gt("Update the environment's {appName} server to browse issues.", {
+                            appName: appName(),
+                          })
                         : gt("Add an environment in Settings to browse its issues."))
                 }
                 variant="plain"

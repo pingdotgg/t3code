@@ -131,6 +131,7 @@ import { downloadLocalUpdate } from "../sidebar/SidebarUpdatePill";
 import { useUpdateEverythingRun } from "../sidebar/updateEverythingRun";
 import { awaitsTrackSwitch, channelSwitchLabel } from "../sidebar/updateEverything.logic";
 import { isHostedByThisApp } from "../sidebar/useUpdateEverything";
+import { appName } from "@t3tools/shared/appName";
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: msg("Wait for the full response"),
@@ -1129,7 +1130,7 @@ export function GeneralSettingsPanel() {
               settings.historySwipeNavigation !==
               DEFAULT_UNIFIED_SETTINGS.historySwipeNavigation ? (
                 <SettingResetButton
-                  label="swipe navigation"
+                  ariaLabel={gt("Reset swipe navigation to default")}
                   onClick={() =>
                     updateSettings({
                       historySwipeNavigation: DEFAULT_UNIFIED_SETTINGS.historySwipeNavigation,
@@ -2547,7 +2548,10 @@ export function AboutSettingsPanel() {
           {...setting("privacy-policy")}
           description={
             telemetryOff === undefined
-              ? gt("How we handle your data, including the anonymous usage data T3 Code collects.")
+              ? gt(
+                  "How we handle your data, including the anonymous usage data {appName} collects.",
+                  { appName: appName() },
+                )
               : gt("How we handle your data. {telemetryOff}", { telemetryOff })
           }
           control={
@@ -2562,7 +2566,10 @@ export function AboutSettingsPanel() {
         />
         <SettingsRow
           {...setting("open-source-licenses")}
-          description={gt("Notices for dependencies, assets, and optional tools used by T3 Code.")}
+          description={gt(
+            "Notices for dependencies, assets, and optional tools used by {appName}.",
+            { appName: appName() },
+          )}
           control={
             <Button
               render={<Link to="/settings/open-source-licenses" />}

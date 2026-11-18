@@ -26,6 +26,7 @@ import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../../state/s
 import { environmentShell } from "../../state/shell";
 import { environmentThreadShells } from "../../state/threads";
 import { Button } from "../ui/button";
+import { appName } from "@t3tools/shared/appName";
 
 /** Pending blocks all rendering, including EventRouter welcome navigation. */
 
@@ -199,7 +200,7 @@ function FirstRunRecovery({
         <p className="mt-2 text-sm text-muted-foreground">
           {settingsReadFailed
             ? gt("Your saved settings could not be loaded.")
-            : gt("T3 Code could not confirm this workspace.")}
+            : gt("{appName} could not confirm this workspace.", { appName: appName() })}
         </p>
         <Button
           className="mt-5"

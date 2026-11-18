@@ -17,6 +17,7 @@ import type { PreparedConnection } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import { appName } from "@t3tools/shared/appName";
 
 const DEFAULT_PULL_REQUEST_DIFF_TIMEOUT_MS = 60_000;
 
@@ -36,7 +37,8 @@ export class PullRequestDiffCredentialRejectedError extends Schema.TaggedError<P
   get i18nMessage(): MarkedText {
     return [
       msg(
-        "This environment session is no longer valid (invalid_credential). Refresh the page or quit and reopen T3 Code.",
+        "This environment session is no longer valid (invalid_credential). Refresh the page or quit and reopen {appName}.",
+        { appName: appName() },
       ),
     ];
   }

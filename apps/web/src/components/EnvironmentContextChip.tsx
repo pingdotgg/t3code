@@ -6,6 +6,7 @@ import { useEnvironment } from "~/state/environments";
 import { ContextChip, ContextChipLabel } from "./ContextChip";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { appName } from "@t3tools/shared/appName";
 
 /**
  * Inline chip for a mentioned machine, in the composer and in sent messages. Prefers the
@@ -36,7 +37,9 @@ export function EnvironmentContextChip(props: {
         }
       />
       <TooltipPopup side="top">
-        {environment ? gt("T3 Code environment") : gt("Machine not in this app")}
+        {environment
+          ? gt("{appName} environment", { appName: appName() })
+          : gt("Machine not in this app")}
       </TooltipPopup>
     </Tooltip>
   );

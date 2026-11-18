@@ -13,8 +13,8 @@
   "7953122755efa56e": "Resolvendo deltas",
   "d9a8c7734f54ea3f": "Fazendo checkout dos arquivos",
   "215fbed6f97db37d": "Travado",
-  "b5899546709c27ef": "{organization} gerencia as atualizações do T3 Code.",
-  "4160b5f3b4d6ccb0": "{organization} gerencia as atualizações do T3 Code. Só é possível instalar versões estáveis.",
+  "362ffd26377ea9c5": "{organization} gerencia as atualizações do {appName}.",
+  "e4b780730878aeb6": "{organization} gerencia as atualizações do {appName}. Só é possível instalar versões estáveis.",
   "6365146db77a8dac": "{organization} limita as threads a Supervisionado.",
   "2aa1c01bf8014725": "{organization} limita as threads a Aceitar edições automaticamente.",
   "89563a8fff8bb751": "{organization} limita as threads a Auto.",
@@ -30,7 +30,7 @@
   "a78eb961f5618e7f": "Não instalado nesta máquina.",
   "4c34e647dc74b279": "Precisa de acesso ao Keychain para ler os cookies.",
   "a613ba1b6f32fc2c": "Não há chave de criptografia no seu Keychain. Entre nesse navegador uma vez e tente novamente.",
-  "322d9662c37ead48": "Dê ao T3 Code Acesso Total ao Disco em Ajustes do Sistema → Privacidade e Segurança e tente novamente.",
+  "cddf7ac093dd519d": "Dê ao {appName} Acesso Total ao Disco em Ajustes do Sistema → Privacidade e Segurança e tente novamente.",
   "24fdd54c2321912a": "Feche o navegador primeiro para que o banco de dados de cookies possa ser lido.",
   "1e3857bfd41528f6": "Não é possível importar deste navegador nesta plataforma.",
   "2bfa3f72b8bb8657": "Não foi possível acessar o keyring do sistema. Verifique se o keyring da área de trabalho está em execução e desbloqueado e tente novamente.",
@@ -261,6 +261,10 @@
   "f6db6c7f14e0e68a": "{count, plural, one {Tentou usar o navegador {count} vez} other {Tentou usar o navegador {count} vezes}}",
   "af1b652f5e54202b": "{count, plural, one {Usou os controles do dispositivo {count} vez} other {Usou os controles do dispositivo {count} vezes}}",
   "0141195cbbe0e4ca": "{count, plural, one {Tentou usar os controles do dispositivo {count} vez} other {Tentou usar os controles do dispositivo {count} vezes}}",
+  "5003f70eea83f024": "{count, plural, one {Used saved logins {count} time} other {Used saved logins {count} times}}",
+  "71b430797cc39428": "{count, plural, one {Tried to use saved logins {count} time} other {Tried to use saved logins {count} times}}",
+  "09a1b347a3fecb31": "{count, plural, one {Worked on annotations {count} time} other {Worked on annotations {count} times}}",
+  "b45c51a28e32d4f0": "{count, plural, one {Tried to work on annotations {count} time} other {Tried to work on annotations {count} times}}",
   "4d411db1abd4feff": "{count, plural, one {Verificou os recursos de orquestração {count} vez} other {Verificou os recursos de orquestração {count} vezes}}",
   "44ea53e1df760a86": "{count, plural, one {Tentou verificar os recursos de orquestração {count} vez} other {Tentou verificar os recursos de orquestração {count} vezes}}",
   "b5ab4f13edefadf7": "{count, plural, one {Leu {count} thread} other {Leu {count} threads}}",
@@ -325,19 +329,19 @@
   "960aa0b106793f99": "Não foi possível carregar a chave de autorização do ambiente.",
   "facb167869d93774": "Tempo esgotado ao renovar a credencial do ambiente.",
   "5f68899450a25421": "Este cliente não é compatível com este servidor. Atualize o app ou use uma versão compatível para se conectar a {host}.",
-  "64d380898f3dc4ee": "Este cliente exige um servidor mais recente. Atualize o T3 Code em {host} para se conectar.",
+  "933f63587e7275a5": "Este cliente exige um servidor mais recente. Atualize o {appName} em {host} para se conectar.",
   "b7554d48eece78bf": "Este dispositivo está offline",
   "ad2b3faedb0bd846": "Este dispositivo ainda está carregando o login do T3 Connect",
   "150d1298d7e12a18": "{host} está aguardando alguém aprovar este dispositivo",
-  "64e8bf8f894e8d4b": "{host} usa uma versão antiga do T3 Code",
+  "52204a0e4246e07f": "{host} usa uma versão antiga do {appName}",
   "7978b128f836c1ca": "O relógio deste dispositivo está errado",
   "26f98026953e6835": "{host} não está vinculado à sua conta do T3 Connect",
   "df82277b5fdf21ad": "O T3 Connect retornou um erro",
   "d2c536acf6fef486": "O túnel de {host} ainda está sendo configurado",
   "4e554b7a57549e72": "O T3 Connect não está ativado em {host}",
   "919dcd4227cf751a": "O túnel de {host} está offline",
-  "34e205f55d30b081": "O túnel funciona, mas o T3 Code em {host} não respondeu",
-  "ff444db47a6c5d7b": "O T3 Code em {host} enviou uma resposta inesperada",
+  "feddd55ae4bd6c10": "O túnel funciona, mas o {appName} em {host} não respondeu",
+  "0ea89c0e4e83e5c3": "O {appName} em {host} enviou uma resposta inesperada",
   "382dbe658dff5a11": "O endereço do túnel de {host} não foi resolvido",
   "7b15ef746f8fe359": "A conexão segura com o túnel de {host} falhou",
   "6545cbf2f3aca443": "O túnel de {host} recusou a conexão",
@@ -347,27 +351,27 @@
   "fbd2d87881e54615": "Este dispositivo não consegue acessar o T3 Connect",
   "7ac7d2bd5d3c3b74": "Este dispositivo não consegue acessar o túnel de {host}",
   "9cf0001d0c442fe2": "O T3 Connect não conseguiu acessar o túnel de {host}",
-  "e7d37a933a7e89f5": "O T3 Code em {host} não aceitou este dispositivo",
-  "b7e1fa98dd44a903": "O T3 Code em {host} não respondeu",
+  "b9dc2e96b434ba12": "O {appName} em {host} não aceitou este dispositivo",
+  "b46a6170d9d6a876": "O {appName} em {host} não respondeu",
   "5d11910833c27d35": "Em {host}, verifique Configurações > Compartilhamento e acesso ou execute `t3 connect status`.",
-  "b73e30d8d9cf80ae": "Conecte este dispositivo à internet. O T3 Code se reconecta sozinho.",
-  "c8a0daf6db0928f3": "Aguarde um momento. O T3 Code tenta novamente sozinho.",
-  "25bb53e6f08b6ce6": "Se continuar aguardando, recarregue ou reinicie o T3 Code neste dispositivo.",
+  "e8f083ea006aafd1": "Conecte este dispositivo à internet. O {appName} se reconecta sozinho.",
+  "b7fca72b0f196c94": "Aguarde um momento. O {appName} tenta novamente sozinho.",
+  "47b0dc6ec9282ec8": "Se continuar aguardando, recarregue ou reinicie o {appName} neste dispositivo.",
   "570aaeb32dc600a7": "Em um dispositivo já conectado a {host}, abra Configurações > Compartilhamento e acesso e aprove o dispositivo que mostra {code}.",
   "08a2d57d02f30799": "Em um dispositivo já conectado a {host}, abra Configurações > Compartilhamento e acesso e aprove este dispositivo.",
   "9cc57bb41f513f35": "Ou execute `t3 auth connect-device approve {code}` em {host}.",
-  "6c043146ff104471": "Atualize o T3 Code em {host}.",
+  "05b473ce574047d6": "Atualize o {appName} em {host}.",
   "3c35e0980e06bfa6": "Ative data e hora automáticas neste dispositivo e em {host} e tente novamente.",
   "0f441d0e53f2e965": "Verifique se este dispositivo está conectado à mesma conta do T3 Connect que o host.",
   "1e02d6062710ffb3": "Em {host}, abra Configurações > Compartilhamento e acesso e ative o T3 Connect.",
-  "3ca9e905a0e76944": "Aguarde um minuto. O T3 Code tenta novamente sozinho.",
-  "62d01449990d28a4": "Aguarde alguns minutos. O T3 Code tenta novamente sozinho.",
+  "d027c3171f197cf6": "Aguarde um minuto. O {appName} tenta novamente sozinho.",
+  "82d73ee78b8d6a74": "Aguarde alguns minutos. O {appName} tenta novamente sozinho.",
   "6c9d04c73fe1eb63": "Se continuar falhando, copie o diagnóstico e relate o problema.",
-  "6671e2adfb0e35b3": "Verifique se {host} está ativo e com o T3 Code em execução.",
+  "662f6c55ef241dad": "Verifique se {host} está ativo e com o {appName} em execução.",
   "3c988e8ceac72484": "Uma VPN ou um exit node do Tailscale em {host} pode bloquear o túnel (porta 7844). Desative-o ou libere o túnel.",
-  "b5aacc0b9163c0e3": "Abra ou reinicie o T3 Code em {host}.",
+  "b4128b0ac0ffd383": "Abra ou reinicie o {appName} em {host}.",
   "a80f88e893129bd9": "Verifique se {host} está ativo e online.",
-  "a11d4c010567faac": "Reinicie o T3 Code neste dispositivo.",
+  "1d41e1fd36df56d4": "Reinicie o {appName} neste dispositivo.",
   "6a1d53c7bee371aa": "Se continuar falhando, remova {host} deste dispositivo e adicione-o novamente.",
   "41dd22a83e2fa219": "Saia do T3 Connect e entre novamente.",
   "a569ba31753e80a3": "Verifique a conexão com a internet deste dispositivo.",
@@ -375,11 +379,11 @@
   "13d74302502bdb92": "Uma VPN, um firewall ou um filtro de DNS neste dispositivo pode bloquear o túnel.",
   "6538d9af1dc853bc": "Tente outra rede ou adicione uma rota direta, como um endereço do Tailscale.",
   "e950948b20d099cf": "O login deste dispositivo em {host} expirou ou foi revogado. Pareie-o novamente com um novo link de pareamento de {host}.",
-  "964a38e20cc7ecda": "Verifique se o T3 Code está em execução em {host}.",
+  "94d969815cc93e29": "Verifique se o {appName} está em execução em {host}.",
   "00fcb4f22434502b": "Tente novamente. Se continuar falhando, copie o diagnóstico.",
   "589f3050d8371c67": "Este dispositivo",
   "f8561e25d9a3d132": "Túnel de {host}",
-  "11e2222747466460": "T3 Code em {host}",
+  "8310d81c725fdac5": "{appName} em {host}",
   "3d1e8943c6f1623f": "Causa",
   "68c94644988bb4d7": "Status HTTP",
   "c86eb684e1531ef8": "Tentativas",
@@ -402,15 +406,15 @@
   "94c2caab0a9d17a6": "O ambiente não conseguiu autorizar a conexão.",
   "d084f7f88e5bf041": "{host} travou por {seconds}s",
   "ca97b6934f016952": "A CPU está sobrecarregada (carga {load} em {cpuCount} núcleos).",
-  "93e37fedae7eaa5b": "O T3 Code em {host} estava ocupado demais para responder.",
+  "d59a295ee6688a9d": "O {appName} em {host} estava ocupado demais para responder.",
   "5c5941732d5dfac6": "Os detalhes de pareamento são inválidos.",
   "b8ca23ad7dda376e": "Esse endereço leva a {host}, outra máquina. Adicione-a como um ambiente próprio.",
   "693cb5c4fb40f109": "Só é possível editar ambientes bearer salvos.",
   "5f5844b910cb1544": "A credencial bearer salva não está disponível.",
   "51b0133f1ed3cf5c": "O rótulo do ambiente não pode ficar vazio.",
   "0c0150a90b582a7a": "A URL do ambiente é inválida.",
-  "3aa15bfbe1920376": "Atualize o T3 Code em {host} manualmente; ele não consegue se atualizar sozinho.",
-  "71907f57b7ec64d5": "{host} não voltou em uma versão compatível do T3 Code.",
+  "f82d215f41af6401": "Atualize o {appName} em {host} manualmente; ele não consegue se atualizar sozinho.",
+  "6fd310d23099f107": "{host} não voltou em uma versão compatível do {appName}.",
   "e77ac580a4ddcd3b": "Disponível",
   "a980c44b06fc7b26": "Offline",
   "fef710ef9d9e365d": "Conectando...",
@@ -509,7 +513,7 @@
   "d4258d4b87cf0ab1": "O relay encontrou um erro interno ({reason}).",
   "796de796c15cf68f": "O relay atingiu o tempo limite antes de concluir a solicitação (HTTP 504). Tente novamente em alguns minutos. Se continuar falhando, copie o ID de rastreamento ao relatar o problema.",
   "34e963f61ae55b28": "O relay retornou um HTTP {status} inesperado.",
-  "e17ef8aff174e6fe": "Ficou offline por um tempo, então o túnel do T3 Connect foi removido. Inicie o T3 Code naquele computador e atualize-o para a versão mais recente para reconectar.",
+  "99135a2cfc8f373e": "Ficou offline por um tempo, então o túnel do T3 Connect foi removido. Inicie o {appName} naquele computador e atualize-o para a versão mais recente para reconectar.",
   "e07aeb67f54ee2c4": "Não foi possível carregar a chave de prova DPoP do relay.",
   "0d7264480ef70038": "A troca do token de acesso DPoP do relay atingiu o tempo limite.",
   "b396dce04e615665": "A listagem de ambientes do relay atingiu o tempo limite.",
@@ -661,12 +665,12 @@
   "aabe73e973995bf4": "Caminho: {path}",
   "261682788ab9a3ac": "Ambiente: {environment}",
   "bac5ef48aafb20b1": "Isto remove {count} entradas de projeto agrupadas.",
-  "3e46fbf3eadf0745": "Essas threads e as threads arquivadas são excluídas do T3 Code. As sessões do provedor são mantidas.",
-  "1a50cbc984f8fe1c": "As threads arquivadas são excluídas do T3 Code. As sessões do provedor são mantidas.",
+  "0b4711b10829a3f9": "Essas threads e as threads arquivadas são excluídas do {appName}. As sessões do provedor são mantidas.",
+  "8532fa698eb706d0": "As threads arquivadas são excluídas do {appName}. As sessões do provedor são mantidas.",
   "4f076ebbf1c8846e": "Isto remove apenas as entradas do projeto, não os arquivos no disco.",
   "19b8f3ad79efb9e1": "As outras entradas deste projeto agrupado não são afetadas.",
   "2207c69b042b2e37": "Esta ação não pode ser desfeita.",
-  "0b3de745be8aee67": "Esta sessão do ambiente não é mais válida (invalid_credential). Atualize a página ou feche e reabra o T3 Code.",
+  "51e6ce11b91a71f6": "Esta sessão do ambiente não é mais válida (invalid_credential). Atualize a página ou feche e reabra o {appName}.",
   "a414f5045fa2e8da": "O ambiente não respondeu à solicitação do PR.",
   "e1b5268aa311f464": "O ambiente foi removido.",
   "00d50f88c665cc51": "A conexão HTTP do ambiente não está pronta.",
@@ -753,7 +757,7 @@
   "0bed322f6071f4da": "Ocorreu um erro.",
   "e94aa66471dae6aa": "Por que estou recebendo esta pergunta?",
   "228a325b5708e675": "O acesso total ignora as aprovações, mas uma regra de pergunta nas configurações do próprio agente corresponde a esta ação, então ele ainda pergunta. Remova ou restrinja essa regra para parar esses pedidos.",
-  "3f9101f696c738a8": "O acesso total ignora as aprovações, mas o agente ainda para em algumas verificações de segurança próprias que nenhuma configuração ignora, como uma exclusão cujo caminho ele não consegue verificar. O T3 Code não consegue desativá-las, então confira a solicitação e aprove se for o que você espera.",
+  "5c7263eafbe7014d": "O acesso total ignora as aprovações, mas o agente ainda para em algumas verificações de segurança próprias que nenhuma configuração ignora, como uma exclusão cujo caminho ele não consegue verificar. O {appName} não consegue desativá-las, então confira a solicitação e aprove se for o que você espera.",
   "508591c3b632b254": "{count, plural, one {Em {count} dia} other {Em {count} dias}}",
   "b6e3cd6c7a081b8c": "{count, plural, one {Em {count} hora} other {Em {count} horas}}",
   "3b8e428bf67b3a2d": "{count, plural, one {Em {count} minuto} other {Em {count} minutos}}",
@@ -1023,11 +1027,11 @@
   "84574fdbc300e71f": "{name} (setup, ao concluir)",
   "8113ce8cc5b8714a": "{name} (setup)",
   "305480cd87405b73": "{name} (ao concluir)",
-  "0553a5ffe0a59780": "Este prompt tem mais de {maxLength} caracteres, então o T3 Code não o abriu.",
-  "5d559770ea1ee096": "Este prompt tinha apenas caracteres ocultos e pode ser malicioso. O T3 Code não o abriu.",
-  "4410caad205bcac7": "Este link aponta para um pull request que o T3 Code não consegue ler.",
+  "9ec54b30a007f7a8": "Este prompt tem mais de {maxLength} caracteres, então o {appName} não o abriu.",
+  "caa0fd951564ec8a": "Este prompt tinha apenas caracteres ocultos e pode ser malicioso. O {appName} não o abriu.",
+  "c419c7eb4188eca1": "Este link aponta para um pull request que o {appName} não consegue ler.",
   "df1915cc1c939ef9": "Este link não tem prompt.",
-  "6024bfa21d5b2f40": "Este link aponta para um repositório que o T3 Code não consegue ler.",
+  "4a4e83475bae5e56": "Este link aponta para um repositório que o {appName} não consegue ler.",
   "207267a58d3542ba": "Depois que você parar, {environment} envia a gravação para o OpenRouter. O OpenRouter escolhe quem executa seu modelo. O T3 solicita retenção zero de dados; sua conta do OpenRouter pode permitir retenção por segurança.",
   "81b64c298285297c": "Depois que você parar, {environment} envia sua gravação e as dicas de vocabulário, incluindo nomes de projetos, para {provider}.",
   "615ce9f2edf7208f": "Vincular um pull request",
@@ -1383,7 +1387,7 @@
   "64e17b9414ed5dd4": "Expira em {duration}",
   "85632ff85a7d923d": "O arquivo não está disponível neste computador.",
   "3d2036743bbda4c9": "Não foi possível arrastar o arquivo",
-  "111a308f2cba6e4b": "Versões incompatíveis. Tente sincronizar o cliente e o servidor na mesma versão do T3 Code.",
+  "7f2f340a0957bd35": "Versões incompatíveis. Tente sincronizar o cliente e o servidor na mesma versão do {appName}.",
   "4eb599c7f36c99ba": "Esse arquivo de tema não é um JSON válido.",
   "29a5ff50ce55c4f9": "Tema do VS Code",
   "10348092dfed8b11": "Esse tema do VS Code não tem a cor \"editor.background\", então não há base para criar uma paleta.",
@@ -1447,7 +1451,7 @@
   "87338da304e4dd3e": "Não foi possível carregar a chave de prova DPoP.",
   "b2ee6fa8c91540d0": "Não foi possível assinar a prova DPoP.",
   "73234ec7fb238593": "Não foi possível verificar a disponibilidade do cliente do relay.",
-  "5913ebf4c3738995": "O T3 Code não consegue instalar o cliente do relay automaticamente em {platform}-{arch}.",
+  "31bb901a98db0e64": "O {appName} não consegue instalar o cliente do relay automaticamente em {platform}-{arch}.",
   "7de7f474bc1851fc": "Não foi possível confirmar a instalação do cliente do relay.",
   "93db3eb61750d7eb": "A instalação do cliente do relay foi cancelada.",
   "02ae701ff75eaad7": "Não foi possível instalar o cliente do relay.",
@@ -1644,7 +1648,7 @@
   "94d640e2a0d2e849": "Chats paralelos não podem iniciar chats paralelos.",
   "3208297e5c0ed324": "Threads de subagentes não podem iniciar chats paralelos.",
   "cbf94e4eba3e039f": "Os chats paralelos ainda não estão prontos. Tente novamente em instantes.",
-  "2dc0997e37a2287f": "Atualize o servidor do T3 Code deste ambiente para usar chats paralelos.",
+  "6a00d165ba5f9f0f": "Atualize o servidor do {appName} deste ambiente para usar chats paralelos.",
   "98f445984c075971": "Os chats paralelos começam após a primeira mensagem.",
   "e9cf5c708ad52a85": "Disponível quando o worktree da thread estiver configurado.",
   "6b1c0d7732da6648": "Falha ao compactar o contexto.",
@@ -1700,7 +1704,7 @@
   "4b4b64cc95acb8da": "Nova thread em...",
   "3f581e98c86df72a": "Nova thread sem projeto",
   "e510d9a7b684fbfe": "Fazer a triagem de um problema",
-  "cce3d80a2ddf1125": "Um agente investiga um problema do T3 Code e ajuda a abrir uma issue",
+  "fccdd26103f3d545": "Um agente investiga um problema do {appName} e ajuda a abrir uma issue",
   "44e13c9deb30e03c": "Localizar na thread atual",
   "2a5cc71a171eca12": "Localizar na página do navegador",
   "f496ce44f0581269": "Copiar link do prompt",
@@ -1718,7 +1722,7 @@
   "594bcbef04093f72": "Abrir pasta do WSL",
   "04fd71efaa2c3b92": "Abrir pull requests",
   "57e875b79b98ab82": "Abrir issues",
-  "f1db0a234c777a1d": "Usar o T3 Code em outro app (MCP)",
+  "3cb89b2c6f54c6db": "Usar o {appName} em outro app (MCP)",
   "a0cc19e60dd99851": "Abrir uso",
   "46694969044eee98": "Focar a próxima área do workspace",
   "0a1011328ba42eef": "Focar a área anterior do workspace",
@@ -1948,7 +1952,7 @@
   "2c7dd1701c1e4878": "O provedor gravou o conteúdo do arquivo sem um diff.",
   "7af7238975f15a8f": "Carregando código...",
   "c53cf4b26ec0586d": "Máquina, {label}",
-  "0c01f791ecef34ad": "Ambiente do T3 Code",
+  "cbf5ce5b71110d76": "Ambiente do {appName}",
   "6ba599e5a409f99d": "Máquina fora deste app",
   "5535e67982c7367c": "VM na nuvem",
   "f48912705512b192": "Linux/WSL",
@@ -2067,9 +2071,9 @@
   "809d74fd98dd8b0f": "Fazer checkout do branch de feature e continuar",
   "88b4d905ceab8dd2": "Dando estrela…",
   "a3b65ac8567c151f": "Obrigado pela estrela!",
-  "eaaab38a83bf32cf": "Isso ajuda muito o T3 Code a crescer.",
+  "edd4712154ae3b27": "Isso ajuda muito o {appName} a crescer.",
   "627b9319f42ac2d5": "Abrir o GitHub",
-  "a76da92cec318964": "Está gostando do T3 Code?",
+  "49516f214a89601c": "Está gostando do {appName}?",
   "7ffe3705e7b0ed0b": "Dê uma estrela no GitHub para nos contar!",
   "4c58cf06d9a4496c": "Dar estrela no GitHub",
   "5bbf199afe39d5e1": "Dispensar",
@@ -2077,7 +2081,15 @@
   "ae659281075cedc6": "Nenhum computador conectado",
   "3ad17519c118edf8": "Ligue-o novamente ou conecte outro computador.",
   "1fa714c0c7855545": "Seus agentes rodam no seu computador.",
-  "5ba39b13f1bfe4f5": "Seus agentes rodam no seu computador. Inicie o T3 Code nele primeiro.",
+  "3163b4d1243aa409": [
+    "Seus agentes rodam no seu computador. Inicie o ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " nele primeiro."
+  ],
   "0e2f68b7c6915c72": "Abrir Ambientes",
   "6b4bbecf3df324fa": "Tentar entrar novamente",
   "83be7aade7ff6360": "Conectado",
@@ -2252,13 +2264,16 @@
   "404941d325a2755b": "Pressione {shortcut} de novo para sair",
   "48ef9d3971c97e7d": "Não foi possível reabrir a visualização",
   "158a785cabe10dda": "Painel do workspace",
-  "9371d8cc390a8a1b": "As pré-visualizações no navegador só estão disponíveis no app para desktop do T3 Code.",
+  "e632c7f2ef4dd7bd": "As pré-visualizações no navegador só estão disponíveis no app para desktop do {appName}.",
   "05037ca1666fd421": "Os terminais só estão disponíveis a partir de uma thread de projeto.",
   "a3aa1e49af278d41": "Os arquivos só estão disponíveis com um projeto aberto.",
   "87ea6995ea1e7aa4": "O diff só está disponível para threads do servidor em repositórios Git.",
   "4a87cae01ccde544": "O branch desta thread ainda não tem pull request.",
   "0051e6585d7ea014": "Nenhum pull request vinculado disponível para esta thread.",
   "07080dead70f4cc5": "Os dispositivos só estão disponíveis a partir de uma thread.",
+  "2e2e24d0872dfa12": "API requests are only available in the {appName} desktop app, from a project thread.",
+  "de0408ff354ad8a6": "The Database panel is only available in the {appName} desktop app, from a project thread.",
+  "07b5c7ff94be9faf": "The MCP panel is only available in the {appName} desktop app, from a project thread.",
   "a4bf49b31758ff7e": "Disponível só no app para desktop.",
   "e917841cb66f9af1": "Disponível com um projeto aberto.",
   "14c15fad0c2ee0c8": "Disponível para repositórios Git.",
@@ -2278,6 +2293,10 @@
   "4bcfa3b976a421cf": "Chat paralelo",
   "fdcd9643e2e63b15": "Faça uma pergunta paralela enquanto esta thread continua trabalhando.",
   "13087312bc6a0b45": "Pull requests",
+  "6cdc3f32f802d98b": "API",
+  "3e90738d0ff19a29": "Banco de dados",
+  "36a410dfbf4dda56": "MCP",
+  "fae3639874428042": "Tasks",
   "314cfeebf191ba0d": "precisa de aprovação",
   "4e5b7363441a3831": "precisa de resposta",
   "97af4e74a5f95e5e": "em execução",
@@ -2329,14 +2348,14 @@
   "d8e50e9835a12e8d": "Falha ao copiar o comando de atualização para a área de transferência.",
   "9b947c837e3756c0": "A API da área de transferência não está disponível ao copiar o comando de reinicialização.",
   "4321f91645a6516a": "Falha ao copiar o comando de reinicialização para a área de transferência.",
-  "c5422ea828b540ed": "Atualizar os apps para desktop do T3 Code em {servers}? Eles serão fechados e reabertos nessas máquinas.",
+  "e5d0383ca6e9155b": "Atualizar os apps para desktop do {appName} em {servers}? Eles serão fechados e reabertos nessas máquinas.",
   "b25472ef70df9b5d": "Atualizar tudo",
   "febf4ec3cdcdf372": "Comando de atualização copiado",
   "bee440d0da53841c": "Comando de reinício copiado",
   "9e17a8beb64d6130": "Execute `{command}` em {serverLabel} e reinicie o t3 com as opções de sempre.",
   "218253b96de09d5d": "Pare o t3 em {serverLabel} e reinicie com `{command}` usando o mesmo subcomando e as mesmas opções. Isso não atualiza um comando t3 instalado.",
   "3cb4fcae1546e2eb": "Não foi possível copiar o comando de atualização",
-  "c10262062b7f9a5e": "Atualizar o app para desktop do T3 Code que executa {serverLabel}? Ele será fechado e reaberto nessa máquina.",
+  "a297db42a40ecfc6": "Atualizar o app para desktop do {appName} que executa {serverLabel}? Ele será fechado e reaberto nessa máquina.",
   "a1581c125ff5ba06": "Copiar comando de atualização",
   "b3ba2b8e2eb87795": "Copiar comando de reinício",
   "deeb29ec7a4749c1": "Atualizar",
@@ -2550,9 +2569,9 @@
   "c5d4a1b01d27c81d": "Imagem anexada, {name}, {size}",
   "baa023ab89b1e31f": "Contexto indisponível, {label}",
   "52a44f36200620d5": "Esta instalação usa a arquitetura correta.",
-  "007ab0ba4a0318eb": "Este Mac tem Apple Silicon, mas o T3 Code ainda está rodando a versão Intel pelo Rosetta. Baixe a atualização disponível para mudar para a versão nativa para Apple Silicon.",
-  "0fe3e0e043327f70": "Este Mac tem Apple Silicon, mas o T3 Code ainda está rodando a versão Intel pelo Rosetta. Reinicie para instalar a versão para Apple Silicon baixada.",
-  "054fe66b7627aa05": "Este Mac tem Apple Silicon, mas o T3 Code ainda está rodando a versão Intel pelo Rosetta. A próxima atualização do app vai substituí-la pela versão nativa para Apple Silicon.",
+  "7077ed581b253015": "Este Mac tem Apple Silicon, mas o {appName} ainda está rodando a versão Intel pelo Rosetta. Baixe a atualização disponível para mudar para a versão nativa para Apple Silicon.",
+  "fae8df1a167cd1d1": "Este Mac tem Apple Silicon, mas o {appName} ainda está rodando a versão Intel pelo Rosetta. Reinicie para instalar a versão para Apple Silicon baixada.",
+  "b08b1891a132e9a3": "Este Mac tem Apple Silicon, mas o {appName} ainda está rodando a versão Intel pelo Rosetta. A próxima atualização do app vai substituí-la pela versão nativa para Apple Silicon.",
   "52f309fc7a21cc9d": "A atualização {version} não foi aplicada. Clique para tentar novamente.",
   "8d78d07244f8b4a1": "Falha ao baixar {version}. Clique para tentar novamente.",
   "2dafe72242295047": "Atualização disponível para baixar",
@@ -2564,8 +2583,8 @@
   "52e1d4a487c0cf4b": "Falha ao instalar {version}. Clique para tentar novamente.",
   "78a04e0e625c0990": "Falha na atualização",
   "b02ae45a6109c93b": "Atualizado",
-  "edcda9e8ee4ccad8": "Instalar a atualização {version} e reiniciar o T3 Code?\n\nAs tarefas em execução serão interrompidas. Verifique se está tudo pronto antes de continuar.",
-  "02eba0f7cc90f759": "Instalar a atualização e reiniciar o T3 Code?\n\nAs tarefas em execução serão interrompidas. Verifique se está tudo pronto antes de continuar.",
+  "c0d222b693c54bbc": "Instalar a atualização {version} e reiniciar o {appName}?\n\nAs tarefas em execução serão interrompidas. Verifique se está tudo pronto antes de continuar.",
+  "12d24c93b7bd515e": "Instalar a atualização e reiniciar o {appName}?\n\nAs tarefas em execução serão interrompidas. Verifique se está tudo pronto antes de continuar.",
   "9ed4d8a1531b9631": "Atualizações automáticas não estão disponíveis nesta versão.",
   "c8c23435e780a60c": "Atualizações indisponíveis",
   "1af5f9767371ffd7": "Verificar atualizações",
@@ -2665,7 +2684,7 @@
   "e171ad5dd254389e": "Não foi possível preparar o ambiente SSH: {message}",
   "e0465384c9425d24": "O ambiente SSH não emitiu uma credencial de pareamento.",
   "69c97cece949d88c": "Esse host leva a {label}, outra máquina. Adicione-a como um ambiente próprio.",
-  "2e79897eb713ed26": "{label} roda o T3 Code {serverVersion}, mas este desktop está na versão {appVersion}, e aquele servidor não conseguiu aceitar o pareamento. Reinicie o servidor T3 em {label} para que ele rode a {appVersion} e tente novamente.",
+  "d721355353a0a7be": "{label} roda o {appName} {serverVersion}, mas este desktop está na versão {appVersion}, e aquele servidor não conseguiu aceitar o pareamento. Reinicie o servidor T3 em {label} para que ele rode a {appVersion} e tente novamente.",
   "e6d4dfcbbe956abf": "Entre no T3 Connect para conectar este ambiente.",
   "e28e8b992d54132a": "A sessão do T3 Connect não está disponível.",
   "4701a911bb621b61": "Não foi possível carregar a credencial principal do desktop: {cause}",
@@ -2733,7 +2752,7 @@
   "4d914be9dfe6b924": "{name} criado sem um primeiro commit",
   "01c37ddc7489a372": "{error} O projeto está em {path}.",
   "22beed0f82b431e3": "{error} Ele vai aparecer na barra lateral quando este cliente se atualizar.",
-  "ee8d5e90fd58f838": "O T3 Code não conseguiu adicionar o projeto.",
+  "2672ff35cefd9df3": "O {appName} não conseguiu adicionar o projeto.",
   "138dd2315e3b4853": "Conecte o ambiente selecionado e tente novamente.",
   "dc8fdfd5ac8c8080": "Conecte {environment} e tente novamente.",
   "6c2742bb85832341": "{title} no ambiente atual",
@@ -2762,7 +2781,7 @@
   "8a7ee5752bb91550": "Não foi possível copiar. Digite {command}.",
   "7dfdfa116c6a9d86": "Não foi possível iniciar a triagem",
   "25fe0f5f3ef3bb02": "{description} Execute {command} em um terminal naquela máquina.",
-  "d51dbcd93da79694": "O T3 Code não conseguiu abrir uma nova thread.",
+  "b390c8aad7ebbf01": "O {appName} não conseguiu abrir uma nova thread.",
   "eb9ecb0cb72121a0": "Esta máquina não pode iniciar threads sem projeto.",
   "32e2dbf6abe8c748": "Iniciando a triagem…",
   "ce5c66ae967fd7c8": "Ações de thread indisponíveis",
@@ -2890,7 +2909,7 @@
     " para alterar as configurações."
   ],
   "247e01cc01583645": "A pré-visualização é exclusiva do desktop",
-  "075aa3cad9e5bf40": "Abra o T3 Code no app para desktop para usar a pré-visualização no app.",
+  "772bf7639f1503df": "Abra o {appName} no app para desktop para usar a pré-visualização no app.",
   "25b9aae7f44e4030": "{mode, select, system {Aparência: sistema} light {Aparência: clara} other {Aparência: escura}}",
   "17f073df6022e405": "Microfone {number}",
   "3868d914611023ac": "A transcrição de voz não está preparada.",
@@ -3043,12 +3062,17 @@
   ],
   "c54cc9c75db9dc58": "Aprove apenas um login que você acabou de iniciar.",
   "e9f4b93c4ec30453": "Código de login",
-  "33194f3e1b80f838": [
-    "Obtenha um em Usar o T3 Code em outro app (MCP), Configurações → Compartilhamento ou com",
-    " ",
+  "de680c7875580f35": [
+    "Obtenha um em Usar o ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " em outro app (MCP), Configurações → Compartilhamento ou com ",
     {
       "t": "code",
-      "i": 1,
+      "i": 2,
       "c": "t3 auth pairing create"
     },
     " nesta máquina."
@@ -3510,15 +3534,15 @@
     " que outra máquina consiga acessar. Informe o endereço https ou do Tailscale."
   ],
   "7ebb23e6bf9b19e8": "Código de pareamento",
-  "e8235ebb43ad7228": "Crie um link em uma máquina: Configurações → Compartilhamento e acesso → Clientes autorizados → Criar link e cole o código aqui.",
-  "a974e6c3c613e452": [
-    "Crie um link em ",
+  "c1244cdfaf295b5d": "Create a link on a machine: Settings → Connections → Create link, then paste its code here.",
+  "5fd75732c718cdf1": [
+    "Create a link on ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ": Configurações → Compartilhamento → Clientes autorizados → Criar link e cole o código aqui."
+    ": Settings → Connections → Create link, then paste its code here."
   ],
   "c205277bd4ab61d2": [
     "Este ambiente já está vinculado a ",
@@ -3837,13 +3861,20 @@
   "0a390286be34ef82": "Salvando",
   "aa48b4d278b7fae5": "Editando no editor de mensagens",
   "49414ffb9aed57ab": "Remover da fila",
-  "de5c52c3f47ff209": "Enviado pelo T3 Code",
+  "38f2601f7424e07e": [
+    "Enviado pelo ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "ded43a280aed9f20": "Abrir thread",
   "7635dd64bbbe10ec": "Abrir automação",
   "6327e4ffa0f2366d": "Pull requests indisponíveis",
-  "90062342f04966ff": "Atualize o servidor do T3 Code deste ambiente para navegar pelos pull requests.",
+  "4e566103beadd678": "Atualize o servidor do {appName} deste ambiente para navegar pelos pull requests.",
   "5e7157db126f1641": "Issues indisponíveis",
-  "42ade0e14ff6af94": "Atualize o servidor do T3 Code deste ambiente para navegar pelas issues.",
+  "cb8fca9ae0aff892": "Atualize o servidor do {appName} deste ambiente para navegar pelas issues.",
   "993dcd04611f9571": "Salvar com segurança",
   "55390eede35b4c5b": "Disponível quando a thread principal estiver ociosa.",
   "adb7e02a95cde08e": "Disponível após uma resposta concluída.",
@@ -4328,7 +4359,15 @@
   "79c3a186139f8c86": "Modo Fast ativado",
   "a772b49a38a3db40": "O que deu errado?",
   "b29e1856c4aab31f": "Esta máquina",
-  "0cb5a221e9e13a4e": "O agente lê os logs e o código-fonte do T3 Code aqui e pergunta antes de aplicar uma correção ou publicar qualquer coisa.",
+  "c722bc4d833dc79c": [
+    "O agente lê os logs e o código-fonte do ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " aqui e pergunta antes de aplicar uma correção ou publicar qualquer coisa."
+  ],
   "e7588632064e0364": "Copiado",
   "996f7752fa033da6": [
     "ou execute",
@@ -4754,7 +4793,15 @@
   "3647d568e852c86d": "Clientes móveis",
   "943d150a9045394c": "Dispositivos móveis que recebem notificações dos seus ambientes.",
   "fe4e834cd36123fe": "Nenhum cliente móvel",
-  "3260726e13a6882b": "Instale o T3 Code no seu celular e entre no T3 Connect para receber notificações push e Live Activities.",
+  "096cd971e11827dc": [
+    "Instale o ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " no seu celular e entre no T3 Connect para receber notificações push e Live Activities."
+  ],
   "de111af2fe5653a6": "Não foi possível carregar os clientes móveis",
   "5d138bbbce733537": "Configurações do T3 Connect",
   "ff2d5256c7b57d7f": "Ele não está mais na sua conta do T3 Connect.",
@@ -4938,18 +4985,31 @@
   "6741a8be3d68b361": "Validando o executável",
   "40ca5af73e5b7aab": "Ativando a instalação",
   "08d8d36fcb9a8e89": "Instalar o cliente do relay?",
-  "fe2ff84504c41600": "O T3 Code está preparando este ambiente para acesso seguro pelo T3 Connect.",
-  "afdd35f49f2ab0a7": "O T3 Code precisa do cliente do relay para disponibilizar este ambiente pelo T3 Connect.",
+  "77dc8e3abcce47b1": "O {appName} está preparando este ambiente para acesso seguro pelo T3 Connect.",
+  "c4f9003a1f60099b": "O {appName} precisa do cliente do relay para disponibilizar este ambiente pelo T3 Connect.",
   "2767fee9bffb00ac": "{step} de {total}",
   "752bb0ea8b33e33e": "Progresso da instalação do cliente do relay",
-  "2eadb8e0944eeee6": "Mantenha o T3 Code aberto enquanto o cliente do relay é instalado.",
-  "0932e0330e2f409d": "Cliente do relay gerenciado",
-  "3683040758069062": [
-    "O T3 Code vai baixar e instalar a versão",
-    " ",
+  "735d71759e25f797": [
+    "Mantenha o ",
     {
       "i": 1,
       "k": "_gt_value_1",
+      "v": "v"
+    },
+    " aberto enquanto o cliente do relay é instalado."
+  ],
+  "0932e0330e2f409d": "Cliente do relay gerenciado",
+  "41ace79912ff09a3": [
+    "O ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " vai baixar e instalar a versão ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
       "v": "v"
     },
     " localmente."
@@ -4986,9 +5046,8 @@
   "ff734d1382e017f3": "Falha no pedido de verificação SSH.",
   "d2e686fdfa6ea0d5": "Este pedido de verificação SSH expirou. Tente conectar novamente.",
   "f76ea65218a25f9f": "Verificação SSH necessária",
-  "d783af11f0615e84": [
-    "Informe a senha ou o código de verificação exigido por",
-    " ",
+  "633b8b107de280c7": [
+    "Informe a senha ou o código de verificação exigido por ",
     {
       "t": "code",
       "i": 1,
@@ -4998,7 +5057,19 @@
         "v": "v"
       }
     },
-    ". O T3 Code repassa sua resposta ao processo SSH local e a mantém na memória para reutilizar com este host. O T3 Code não a grava no disco."
+    ". O ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " repassa sua resposta ao processo SSH local e a mantém na memória para reutilizar com este host. O ",
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    },
+    " não a grava no disco."
   ],
   "1c26f62937f27d39": "Chaves SSH podem substituir uma senha, mas seu servidor ainda pode exigir um código de verificação.",
   "7ac4455553fe632a": "Continuar",
@@ -5762,7 +5833,7 @@
   "2e54b83eebac5a5b": "Apps como Poke e Claude rodam na nuvem. Eles precisam de um endereço público para acessar {environment}.",
   "421bf913a992fba0": "O T3 Connect dá esse endereço a {environment}. Cada app ainda precisa da sua aprovação.",
   "987158d85ee17ae8": "Conecte-se a {environment} primeiro.",
-  "6bf09d4b7e4ba53b": "Atualize o T3 Code em {environment}",
+  "6e85e59117b85a48": "Atualize o {appName} em {environment}",
   "1f5ca8f60e873093": "Este dispositivo precisa da permissão Ver relay em {environment}.",
   "2fa31ba5b0186755": "Correção: {fix}",
   "b3afa6e51eba1738": "Ativar o T3 Connect em {environment}",
@@ -5793,11 +5864,17 @@
   "9ec433045537acfc": "Verificar novamente",
   "88f60e3d23ebcdd8": "Verificando o T3 Connect…",
   "5492129175e04f8d": "Sua conta do T3 Connect está sem túneis.",
-  "1505e983a4f9b08d": [
-    "Reinicie o T3 Code em ",
+  "5a302c2d18f5e917": [
+    "Reinicie o ",
     {
       "i": 1,
       "k": "_gt_value_1",
+      "v": "v"
+    },
+    " em ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
       "v": "v"
     },
     "."
@@ -5892,7 +5969,7 @@
   "26dca8ee72dc5d74": "Não foi possível ler as configurações",
   "52e7a660ce883609": "Ainda conectando",
   "9a50b20569f2c9e7": "Não foi possível carregar suas configurações salvas.",
-  "0d22cd9e3b9d94f0": "O T3 Code não conseguiu confirmar este workspace.",
+  "76f6d177f0175318": "O {appName} não conseguiu confirmar este workspace.",
   "573a9e6b17f4e9e3": "Recarregar",
   "d6c31ff9bb97570e": "Limite de varredura atingido. Alguns projetos ou conversas podem estar faltando.",
   "da6f86321113fb7b": "Esta conexão não pode importar projetos nem histórico de threads.",
@@ -5929,7 +6006,7 @@
   "bd2304f25f6f999e": "{selected, plural, one {{selected} de {total} selecionado} other {{selected} de {total} selecionados}}",
   "228cd9fd55a55070": "Não foi possível verificar os projetos novamente. {error}",
   "1cc599c5f5874014": "Celular",
-  "0f7c08d8284fee68": "App do T3 Code para iPhone e Android",
+  "7d9b423d3abf8180": "App do {appName} para iPhone e Android",
   "431bee88ecc944e4": "Verificar o T3 Connect",
   "c747696796f64468": "O T3 Connect está ativado, mas o app não consegue acessar este computador.",
   "96557a906f6167b9": "Conectado. Compartilhe este computador para que o app consiga acessá-lo.",
@@ -5944,7 +6021,14 @@
   "a0fd24f965eb070b": "Não foi possível importar o histórico de threads.",
   "a506c135c2183ac3": "{count, plural, one {{count} pasta} other {{count} pastas}}",
   "efc48b9736a534bc": "agora",
-  "edf393ff951b533a": "Boas-vindas ao T3 Code",
+  "ee8d164144fc4b9d": [
+    "Boas-vindas ao ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "3cc77f9daa7eeafd": [
     "Configurando",
     " ",
@@ -5961,12 +6045,17 @@
   ],
   "216ab7514aea1d61": "Começar sem agente",
   "501ce2d99da8bfd1": "Configure um agente para começar.",
-  "71f3822326109c8e": [
-    "O T3 Code coleta dados de uso anônimos para melhorar o app. Para recusar, consulte a",
-    " ",
+  "7da791b649c8a9e2": [
+    "O ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " coleta dados de uso anônimos para melhorar o app. Para recusar, consulte a ",
     {
       "t": "a",
-      "i": 1,
+      "i": 2,
       "c": "política de privacidade"
     },
     "."
@@ -6013,7 +6102,15 @@
   ],
   "5c6a6009aedbf1d0": "Selecionar tudo",
   "24c98c5086b8e76e": "Selecionar nenhum",
-  "0070a15f6b693068": "Use o T3 Code no seu celular",
+  "fd3885544ce693bb": [
+    "Use o ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " no seu celular"
+  ],
   "37c66042ce1906da": "Escaneie com o celular para baixar o app.",
   "1b4364ef89b07f35": "Não foi possível verificar o T3 Connect.",
   "7b10d40dd15938e5": "Seu celular consegue acessar este computador. Entre no app com a mesma conta.",
@@ -6079,10 +6176,6 @@
   "153553848233ee15": "Avançar",
   "240853568cd99a49": "Parar",
   "c345982ed3610277": "Pesquise ou digite uma URL",
-  "509733274928da85": "Cancelar anotação",
-  "0b5bf74d94f7f690": "Anotar a pré-visualização",
-  "c8243141ce88918f": "Cancelar anotação (Esc)",
-  "f4ad38f77fe12791": "Anotar elementos, regiões e desenhos",
   "985f51e696efc795": "Parar gravação",
   "80a82d63716f4e95": "Fazer captura de tela",
   "88d8d3af3df63fe5": "Captura de tela · Shift-clique para gravar",
@@ -6122,7 +6215,7 @@
   ],
   "ea8745cfdf25286d": "Limpar cookies",
   "2f7b5572591cd41e": "Limpar cache",
-  "fbaa47ab5f038cfc": "A pré-visualização só está disponível no app para desktop do T3 Code.",
+  "5d831ada0b7092d3": "A pré-visualização só está disponível no app para desktop do {appName}.",
   "2f12af145a5b64f4": "Pareie este cliente novamente com acesso à pré-visualização para controlar as pré-visualizações no navegador.",
   "ab063600168940a1": "Remover {url} do histórico",
   "189cb97125af21c1": "Ocultar detalhes",
@@ -6194,7 +6287,15 @@
   "b18dda39d9585f3e": "Não foi possível capturar o elemento escolhido",
   "cd312dae87fc794f": "A anotação foi mantida sem a captura de tela.",
   "4616fb6552fd8875": "A página não carregou. Escolher elementos fica indisponível até a página renderizar",
-  "770d6036de8dbcb7": "Esta aba está aberta no app para desktop do T3 Code.",
+  "345dd7a051e55098": [
+    "Esta aba está aberta no app para desktop do ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "b252602c8f71d6af": "Não foi possível destacar a pré-visualização",
   "0fc0a2ff438851b5": "Pré-visualização flutuante do navegador",
   "74892fefe58df8e3": "Fechar a pré-visualização destacada",
@@ -6224,22 +6325,29 @@
   "9e641d0f4dbd3b6f": "Abrir este prompt",
   "b9b8dae971d448f0": "Ele abre como rascunho. Nada roda até você pressionar Enviar.",
   "261d264df9bd2938": "Abrir esta thread",
-  "c13814bf1983bede": "Ela abre no T3 Code se você estiver conectado à máquina em que ela roda.",
+  "0551b0f568de8221": "Ela abre no {appName} se você estiver conectado à máquina em que ela roda.",
   "4ff182cb5d492675": "Abre uma das suas threads.",
   "a42cfd0085b4e0af": "Pull request {pullRequest}",
   "9574097752bf9d26": "Repositório {repository}",
   "7a9583bfc01157d7": "Modelo {model}",
-  "fcbeef090e9a49cf": "{count, plural, one {O T3 Code removeu {count} caractere oculto. Leia o prompt antes de enviá-lo.} other {O T3 Code removeu {count} caracteres ocultos. Leia o prompt antes de enviá-lo.}}",
+  "5462f8f29e3743f9": "{count, plural, one {O {appName} removeu {count} caractere oculto. Leia o prompt antes de enviá-lo.} other {O {appName} removeu {count} caracteres ocultos. Leia o prompt antes de enviá-lo.}}",
   "e81938ba97414f25": "Abrir no app",
   "fb8165cf69e8b46e": "Abrir no app para desktop",
   "74da45ffb53c3ab1": "Este prompt tinha caracteres ocultos e pode ser malicioso",
   "2053d7c11214c657": "Continuar aqui",
-  "5765f408ae142259": "Obter o T3 Code",
+  "631867ac7aa347c6": [
+    "Obter o ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "d2e48075c05360e5": "Lembrar minha escolha",
   "32fc7d210cbbc615": "O link pediu {provider}, que não está configurado aqui, então seu modelo padrão será usado.",
   "9b92881caca4c843": "O link pediu {model}, que o {provider} não oferece aqui, então o modelo padrão dele será usado.",
   "b66409815aa2dce2": "Nenhuma das suas máquinas pode iniciar uma thread sem projeto agora.",
-  "9dc5ed64675c0a3d": "Esta máquina não pode clonar a partir de um link. Atualize o T3 Code nela ou clone o repositório pela paleta de comandos.",
+  "c3c0ca5d156f27a9": "Esta máquina não pode clonar a partir de um link. Atualize o {appName} nela ou clone o repositório pela paleta de comandos.",
   "0fb02ded4e3a6879": "O clone começou, mas o projeto não apareceu.",
   "2f9a4c7f7a26d7bd": "Clonando {repository}",
   "db7a9fbe79934739": "Abra este link de novo quando o clone terminar.",
@@ -6954,7 +7062,7 @@
   "cde5898c2d720e4d": "Pesquise pull requests ou label:bug",
   "0e7bc29c7ba8e55d": "Selecione um pull request primeiro",
   "e853db3f751bf5e4": "Carregando os pull requests…",
-  "ebf96a2bb1345a4b": "Atualize seus servidores do T3 Code para navegar pelos pull requests.",
+  "1eafc4237b145733": "Atualize seus servidores do {appName} para navegar pelos pull requests.",
   "97a0009c0d4302b2": "{error} Mostrando os últimos pull requests carregados.",
   "2b6aa56786a0a574": "Atualizando os pull requests",
   "133c6244ed1277f2": "Carregando mais",
@@ -7466,8 +7574,8 @@
   "e26c3e8a2b76eb7c": "Não foi possível abrir as Configurações do Sistema. Tente Permitir novamente.",
   "6691de9875a03f07": "Acesso Total ao Disco",
   "c8c61106697ccef6": "Ler os cookies do {browser} para esta importação.",
-  "9d7376f252f4b80f": "O acesso ainda é necessário. Se você acabou de permitir, feche e reabra o T3 Code e tente importar novamente.",
-  "a134bbc40d0bb293": "Se o acesso não for atualizado depois que você permitir, feche e reabra o T3 Code e tente importar novamente.",
+  "58753f64994df305": "O acesso ainda é necessário. Se você acabou de permitir, feche e reabra o {appName} e tente importar novamente.",
+  "f9d7f8dcb426861a": "Se o acesso não for atualizado depois que você permitir, feche e reabra o {appName} e tente importar novamente.",
   "7f0e44a32856487e": "Você atingiu o limite de perfis. Escolha um perfil existente para importar.",
   "38419e3442b3a9b1": "De",
   "0b6c47fddd767fe6": "Para",
@@ -7503,22 +7611,34 @@
     " está aberto, então os cookies dele ainda não podem ser lidos. Feche-o e continue."
   ],
   "33e46d95a6e43975": "Já fechei",
-  "4244ad5e8e097a55": [
-    "Permita que o T3 Code leia os cookies do ",
+  "c99e38ae75b3f5d3": [
+    "Permita que o ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
+    },
+    " leia os cookies do ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
     }
   ],
-  "8f8f31363cbae72f": [
+  "8dcf4cae5c1238f2": [
     "Para importar cookies do ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ", o T3 Code precisa de Acesso Total ao Disco. Ative-o nas Configurações do Sistema e volte para concluir a importação. Você pode revogá-lo depois que a importação terminar."
+    ", o ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " precisa de Acesso Total ao Disco. Ative-o nas Configurações do Sistema e volte para concluir a importação. Você pode revogá-lo depois que a importação terminar."
   ],
   "6418483c2e2b1e27": [
     "Importar do ",
@@ -7573,7 +7693,7 @@
   "744cb5258d91191c": "Preparando as alterações…",
   "e880959d9520231a": "Revisar alterações",
   "5b026d8f9d28659a": "Conectando ao seu desktop…",
-  "3e19ea9973d25861": "Reinicie o T3 Code para concluir a conexão do seu atalho.",
+  "a6aa1c4ff24439ca": "Reinicie o {appName} para concluir a conexão do seu atalho.",
   "170c3990734c67c5": "Use o arquivo de configuração de atalhos do seu desktop. Um --config personalizado ou NIRI_CONFIG pode mudar o local dele.",
   "419eb8d659fedf57": "Use o arquivo de configuração de atalhos do seu desktop. No Omarchy, use seu próprio arquivo de bindings, não os padrões dele.",
   "351ba3e0af6a05c3": "Backup: {path}",
@@ -7583,10 +7703,26 @@
   "256a718904049152": "Atalho",
   "8e69f303e7e62311": "Pressione seu atalho. Esc cancela.",
   "8ab8ef3dc5c9ccbe": "Só estas alterações serão salvas. Vamos manter um backup.",
-  "95e47bf4ef6fd9ca": "Permita que o T3 Code leia as configurações do seu desktop. Você revisa qualquer alteração aqui antes de salvar.",
+  "5a00ecfbf6d79823": [
+    "Permita que o ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " leia as configurações do seu desktop. Você revisa qualquer alteração aqui antes de salvar."
+  ],
   "0f3ce8b38a3b806f": "Solução de problemas",
   "b472a7b2482b54bf": "Arquivo de configuração",
-  "09015c1f17899798": "O T3 Code também lê os arquivos incluídos por este arquivo.",
+  "4bdcc6c44ad4ea20": [
+    "O ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " também lê os arquivos incluídos por este arquivo."
+  ],
   "3790c926a39864b6": [
     "Vinculado a ",
     {
@@ -7600,15 +7736,20 @@
   "e1fcc4b74faaae02": "Remover atalho…",
   "efa55bbb1d3aa45e": "Revisar alterações",
   "3e02b74615e20d82": "Configuração manual",
-  "302d4a8ec8a13479": [
-    "Desative a captura no T3 Code para pará-la. Remova o atalho de ",
+  "957213d003612ea8": [
+    "Desative a captura no ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " ",
-    "para liberar as teclas."
+    " para pará-la. Remova o atalho de ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " para liberar as teclas."
   ],
   "4bf700ad94c0c486": "Já adicionei o atalho",
   "bcdea6ebe1a65e63": "Conta do ChatGPT a conectar",
@@ -7618,7 +7759,15 @@
   "647aa17e2ff223b1": "Remover conexão",
   "37c67881813d8bd2": "Continuar com o ChatGPT",
   "6b9b6ebc5d641bc1": "Seu plano do ChatGPT está conectado",
-  "8eadb8b01f860f30": "O uso elegível no T3 Code usa seu plano do ChatGPT. Gerencie o uso compartilhado e as configurações de créditos no ChatGPT.",
+  "7658fdd43abdbd60": [
+    "O uso elegível no ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " usa seu plano do ChatGPT. Gerencie o uso compartilhado e as configurações de créditos no ChatGPT."
+  ],
   "a07fd9e52e88a7b1": [
     {
       "i": 1,
@@ -7635,8 +7784,8 @@
   "d0e747ae0c4f68a5": "Não foi possível instalar o t3",
   "ba3ac338f36cba74": "Não foi possível remover o t3",
   "9c942b53b58119b8": "Não foi possível adicionar o t3 ao PATH",
-  "dbd9a279df913da0": "Outro t3 em {path} roda primeiro em um novo terminal. Remova-o para usar o do T3 Code.",
-  "20a48e388fd71c1d": "Execute o CLI do T3 Code como `t3` em qualquer terminal.",
+  "752a0c0ce48db5b7": "Outro t3 em {path} roda primeiro em um novo terminal. Remova-o para usar o do {appName}.",
+  "61b63b1b71b8aa69": "Execute o CLI do {appName} como `t3` em qualquer terminal.",
   "4f6e93011ef2da6f": "Instalado em {path}. Abra um novo terminal para usá-lo.",
   "371ca438cf467125": "Instalado em {path} e adicionado ao PATH em {file}. Abra um novo terminal para usá-lo.",
   "fd3eece9d1a7ea38": "Instalado em {path}, que ainda não está no seu PATH.",
@@ -7740,10 +7889,10 @@
   "fe373cd6662fa8bc": "Instalando o Codex.",
   "16d39e395a6842ee": "Verificando o Codex.",
   "57946f2e4d6a8bc2": "Usando o Codex instalado · v{version}.",
-  "9dac6b3f0fb48521": "Gerenciado pelo T3 Code · v{version}.",
+  "d6c37e4411915116": "Gerenciado pelo {appName} · v{version}.",
   "7b5c436d5524b6bd": "Usando o Codex instalado.",
-  "bef658b9305f1c7b": "Gerenciado pelo T3 Code.",
-  "21812e407893acb8": "O T3 Code baixa e gerencia o Codex para você.",
+  "a0ffef8803fb4c2f": "Gerenciado pelo {appName}.",
+  "3de934e54679a5e3": "O {appName} baixa e gerencia o Codex para você.",
   "86326fa94616c5dd": "Concluindo o login...",
   "4b45a10b734ce998": "Continue como {email} na OpenAI.",
   "2219beb32ce31dfc": "Conclua o login no seu navegador.",
@@ -7763,7 +7912,7 @@
   "ee95b7f361df57dd": "Configuração do Codex",
   "3bbc7a9e90591aeb": "Não foi possível ler o status da configuração do Codex. Reconecte e tente novamente.",
   "aafd7696040124b4": "Caminho do binário",
-  "f2313e33cf0bfd4e": "Selecionado pelo T3 Code.",
+  "332d3c0ef63e247a": "Selecionado pelo {appName}.",
   "29684e6bf1c6fde6": "Caminho do binário do Codex",
   "1b74ad96abe073dd": "Não foi possível ler o caminho do runtime",
   "af0e13ee7adf5b2e": "Caminho do CODEX_HOME",
@@ -7790,7 +7939,15 @@
   "adb02e7b08c65a4a": "Continuar com o ChatGPT",
   "ad6392ce4488c5dc": "Usar o CLI existente",
   "f91296e641fed934": "Abrir a página de login",
-  "631ca7968ee42f73": "Se o login não voltar ao T3 Code, cole a URL da página final do localhost.",
+  "a4bf940e2844d4d4": [
+    "Se o login não voltar ao ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", cole a URL da página final do localhost."
+  ],
   "90f46dbf8782cfde": "Conectar",
   "2c2103f711ffceb5": "Tente entrar pelo navegador",
   "f2400365e53495c3": "Outras formas de conectar",
@@ -7907,7 +8064,7 @@
   "5ba55a65d8600504": "Backend do WSL",
   "37d59ef5d0560c42": "(padrão)",
   "6d0078b22dd48e5e": "Só WSL",
-  "e3729d401c68961e": "Executa só o backend do WSL. O T3 Code reinicia quando isto muda.",
+  "35b6e498b04604fd": "Executa só o backend do WSL. O {appName} reinicia quando isto muda.",
   "2436c98b544eff80": "Executar só o WSL",
   "f060774ce36f44fb": "Usa o Tailscale Serve para expor este backend por uma URL HTTPS do MagicDNS.",
   "ec43c3fd73a863f3": "Ativar o Tailscale HTTPS",
@@ -7928,8 +8085,8 @@
   "a0e93cca71d0417e": "Clientes autorizados",
   "03b9501ae07b5cf3": "Ativar o acesso à rede?",
   "a09aff32ef3d89c7": "Desativar o acesso à rede?",
-  "161e8b5715b55fdc": "Permita que seus outros dispositivos se conectem ao T3 Code pela rede. Pareie os dispositivos para dar acesso a eles. O T3 Code será reiniciado.",
-  "a3fe8c741fd5c391": "Os dispositivos conectados pela sua rede local serão desconectados. Os túneis existentes, como T3 Connect ou Tailscale HTTPS, continuam funcionando. O T3 Code será reiniciado.",
+  "cfe3d6e808716f79": "Permita que seus outros dispositivos se conectem ao {appName} pela rede. Pareie os dispositivos para dar acesso a eles. O {appName} será reiniciado.",
+  "471c62ce78a99f6a": "Os dispositivos conectados pela sua rede local serão desconectados. Os túneis existentes, como T3 Connect ou Tailscale HTTPS, continuam funcionando. O {appName} será reiniciado.",
   "3e02da0c3a5d5b6c": "Reiniciar e ativar",
   "b806f0521f52c70a": "Reiniciar e desativar",
   "4d47ff0966e2b0eb": "Desativar o WSL e voltar para o Windows?",
@@ -7938,12 +8095,12 @@
   "a79a025bcb52c878": "Iniciar o backend do WSL",
   "c3e9ab586c5eb33f": "Executar só o backend do WSL?",
   "b855028ed4fd179c": "Reativar o backend do Windows?",
-  "7da9fdb497073305": "O T3 Code será reiniciado no backend do Windows. As threads e os projetos abertos no WSL ficam seguros dentro da distro e voltam a ficar disponíveis quando você reativar o WSL.",
-  "f3f37d95189003c1": "O backend do WSL vai parar. As threads e os projetos abertos no WSL ficam seguros dentro da distro, mas ficam indisponíveis no T3 Code até você reativar o WSL.",
-  "f11a22fba7730a97": "O T3 Code vai reiniciar o backend do WSL na nova distro. As sessões ainda em execução na distro atual serão interrompidas.",
+  "d47f55071a5b6506": "O {appName} será reiniciado no backend do Windows. As threads e os projetos abertos no WSL ficam seguros dentro da distro e voltam a ficar disponíveis quando você reativar o WSL.",
+  "9c6ac49a626903a7": "O backend do WSL vai parar. As threads e os projetos abertos no WSL ficam seguros dentro da distro, mas ficam indisponíveis no {appName} até você reativar o WSL.",
+  "2445ec5473807893": "O {appName} vai reiniciar o backend do WSL na nova distro. As sessões ainda em execução na distro atual serão interrompidas.",
   "caf1378747ed925f": "Executar o backend do WSL junto com o do Windows ou parar o backend do Windows e usar só o WSL? Você pode mudar isso depois nas Configurações.",
-  "a4492b563c0e0eb1": "O T3 Code será reiniciado e vai iniciar só o backend do WSL. Seus projetos do lado do Windows ficarão inacessíveis até você desativar isso.",
-  "4e7cf721d1c75cb8": "O T3 Code será reiniciado e vai reativar o backend do Windows junto com o WSL.",
+  "e85aa012b9ae1026": "O {appName} será reiniciado e vai iniciar só o backend do WSL. Seus projetos do lado do Windows ficarão inacessíveis até você desativar isso.",
+  "853e5ebeb04a2566": "O {appName} será reiniciado e vai reativar o backend do Windows junto com o WSL.",
   "d7651a567fdfb121": "Usar só o WSL",
   "fd5f7ffe40bb865a": "Executar os dois backends",
   "62edcaccd5694d78": "Mudar para o Windows",
@@ -7970,10 +8127,26 @@
   "5efa21c55ba2ac54": "Esta conexão pode criar links de acesso, mas não pode ver os clientes autorizados.",
   "40335d08877bc746": "Aplicando…",
   "84fc63fcbcce915e": "Desativar o Tailscale HTTPS?",
-  "ffc4349140138783": "O T3 Code vai reiniciar o backend local sem o Tailscale Serve.",
+  "fb36d16d84bd4bf1": [
+    "O ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " vai reiniciar o backend local sem o Tailscale Serve."
+  ],
   "336b538d6e55ed78": "Reiniciando…",
   "cd7ad8d91a063d09": "Configurar o Tailscale HTTPS?",
-  "fba4061567111460": "O T3 Code vai reiniciar o backend local com o Tailscale Serve ativado e pedir ao Tailscale para encaminhar o tráfego HTTPS para este backend.",
+  "eb599d6440c3565d": [
+    "O ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " vai reiniciar o backend local com o Tailscale Serve ativado e pedir ao Tailscale para encaminhar o tráfego HTTPS para este backend."
+  ],
   "2a0148ea9068a814": "Porta HTTPS",
   "7f4f2ba57d3d1c76": "Informe uma porta de 1 a 65535.",
   "82af9c66caf2f40c": "Endpoint HTTPS",
@@ -7999,15 +8172,14 @@
   "b1137657751dd7f0": "Copiar de…",
   "5bcce79726ce6ad8": "Nenhuma opção personalizada. O editor de mensagens usa as opções padrão do provedor.",
   "b584f8e39d1179c7": "Opção personalizada",
-  "3e90738d0ff19a29": "Banco de dados",
   "9e28cb72cb075933": "Recuperar espaço liberado do banco de dados",
   "881b21a84162fe36": "Estes bancos de dados ainda retêm o espaço liberado pela limpeza do histórico.",
   "4c75e75471826566": "Estes bancos de dados ainda retêm o espaço liberado pela limpeza do histórico. Execute o comando em cada máquina para recuperá-lo. Isso reinicia o serviço em segundo plano. Feche o app desktop antes se ele hospedar o ambiente.",
   "5b5c8fcf447e3aa7": "{amount} em {environment}",
   "449c116994815baf": "Recuperando {amount} em {environment}",
-  "9a0d99b375ecd0b0": "O T3 Code nessa máquina reinicia e volta em cerca de {minutes} min.",
+  "f71732877678fec3": "O {appName} nessa máquina reinicia e volta em cerca de {minutes} min.",
   "2f0da3b306994f11": "Não foi possível recuperar espaço em {environment}",
-  "98d92702c1426703": "Reinicia o T3 Code nessa máquina. Ele ficará offline por cerca de {minutes} min.",
+  "02b86c9b93b12279": "Reinicia o {appName} nessa máquina. Ele ficará offline por cerca de {minutes} min.",
   "184b96013883725b": "A última tentativa falhou: {reason}",
   "974953ec2f4fd3e4": "Recuperar",
   "32441d85d8403ba4": "Copiar comando",
@@ -8026,17 +8198,23 @@
     },
     "?"
   ],
-  "f264722f7ad117ad": [
-    "O T3 Code em ",
+  "55c43a67d4dbc4ee": [
+    "O ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " para, recria o banco de dados e inicia novamente. Ele ficará offline por cerca de ",
+    " em ",
     {
       "i": 2,
       "k": "_gt_value_2",
+      "v": "v"
+    },
+    " para, recria o banco de dados e inicia novamente. Ele ficará offline por cerca de ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
       "v": "v"
     },
     " min. Os agentes em execução param quando ele reiniciar."
@@ -8299,9 +8477,9 @@
   "1c56df57177fe187": "URL de pesquisa personalizada",
   "3de0a3b88d2561f2": "Use %s onde entram os termos de pesquisa.",
   "5f33e5807e2c4463": "Informe uma URL http ou https que contenha %s. Até lá, as pesquisas usam o DuckDuckGo.",
-  "84b0f6ddab031f84": "Clicar em um link de pull request o abre no T3 Code. Desative para abrir links de pull request como qualquer outro link, no seu host git.",
-  "b9335f8e528f91d6": "Redefinir \"Abrir pull requests no T3 Code\" para o padrão",
-  "d5a0a7ab5da467aa": "Abrir pull requests no T3 Code",
+  "48a492fd778cddc2": "Clicar em um link de pull request o abre no {appName}. Desative para abrir links de pull request como qualquer outro link, no seu host git.",
+  "a0bb1d917ce0e073": "Redefinir \"Abrir pull requests no {appName}\" para o padrão",
+  "abbae87b2ce2bfa3": "Abrir pull requests no {appName}",
   "55087c889e8a065d": "Configurações de dispositivo não salvas em todos os ambientes",
   "73e76ba75c8d3096": "Não foi possível atualizar {environments}.",
   "b16605b8957226ea": "Atualizar",
@@ -8314,6 +8492,8 @@
   "b395b88284e3bca2": "Mostra a pré-visualização flutuante quando um agente abre um navegador ou dispositivo, a menos que o agente diga o contrário.",
   "6aadfd59cf60b4b5": "Redefinir \"Mostrar pré-visualização flutuante automaticamente\" para o padrão",
   "e4a7ec61190bc1f9": "Mostrar pré-visualização flutuante automaticamente",
+  "458a826619d5144e": "Reset annotation dictation URL to default",
+  "072414b442b3601b": "Reset annotation dictation stop URL to default",
   "3705c53cb3e76a28": "Não foi possível limpar os dados de {name}",
   "d93902b4fae4b437": "Você ainda não está conectado a um servidor.",
   "16fcf9dc21645f8f": "Cookies e cache de {name} limpos",
@@ -8511,7 +8691,15 @@
   "1b298f8bdfbdac33": "Abrir keybindings.json",
   "38aae3d3373b7e6e": "Conecte um ambiente para alterar os atalhos de teclado.",
   "523dd4a75f84834c": "Esta conexão pode ver os atalhos de teclado, mas não alterá-los.",
-  "64b7e0256ef5677d": "O T3 Code ainda não reconhece esta condição. Ela pode ser salva, mas talvez não corresponda a menos que o runtime a forneça.",
+  "6e9aec982adb14d3": [
+    "O ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ainda não reconhece esta condição. Ela pode ser salva, mas talvez não corresponda a menos que o runtime a forneça."
+  ],
   "be1f3ea0fa490562": "O atalho correspondente mais recente vence quando as duas condições se aplicam.",
   "bc73d7a0c9ccc021": "Corrija a expressão acima para continuar editando visualmente.",
   "7189314b73d9fe61": "Não atribuído",
@@ -8552,24 +8740,26 @@
     },
     ". Enquanto desativado, nada novo começa por um vínculo; as tarefas em execução terminam."
   ],
-  "ce6a3933a976ac7e": [
-    "Permite que o painel Dispositivo reserve simuladores e emuladores do seu próprio pool",
-    " ",
+  "aea6614a5a6684ee": [
+    "Permite que o painel Dispositivo reserve simuladores e emuladores do seu próprio pool ",
     {
       "t": "a",
       "i": 1,
       "c": "Simlock"
     },
-    ",",
-    " ",
-    "adicionado em",
-    " ",
+    ", adicionado em ",
     {
       "t": "Link",
       "i": 2,
       "c": "Dispositivos"
     },
-    ". Recurso alfa que pode mudar ou quebrar. O T3 Code nunca instala o Simlock."
+    ". Recurso alfa que pode mudar ou quebrar. O ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " nunca instala o Simlock."
   ],
   "3836976622328d61": "O que os agentes daqui podem fazer lá",
   "b20c269e7ad96f42": "Um agente nunca recebe lá mais acesso do que o próprio modo dele aqui. Abaixo do acesso total, ele só pode alterar threads iniciadas por este vínculo, não as threads, projetos ou configurações daquela máquina.",
@@ -8582,8 +8772,8 @@
   "4cea6be0fe6be16f": "Não foi possível carregar os ambientes vinculados",
   "58cb9c075da185fb": "Carregando ambientes vinculados…",
   "25b74062dc03079e": "Nenhum ambiente vinculado",
-  "6698127fcc912f23": "Vincule outra máquina que rode o T3 Code, como uma VPS, para que os agentes daqui possam iniciar e conduzir threads lá.",
-  "ad5ed0ce61b966eb": "Esquecer {label}? Os agentes daqui deixam de funcionar lá. Revogue \"T3 Code · …\" em Compartilhamento e acesso de {label} para encerrar a sessão lá também.",
+  "8e0df75f6865d05b": "Vincule outra máquina que rode o {appName}, como uma VPS, para que os agentes daqui possam iniciar e conduzir threads lá.",
+  "924b297fd8bbb913": "Esquecer {label}? Os agentes daqui deixam de funcionar lá. Revogue \"{appName} · …\" em Compartilhamento e acesso de {label} para encerrar a sessão lá também.",
   "81c9796bf61b306a": "Não foi possível esquecer o vínculo",
   "33386c89f3b07fea": "Expirado. Vincule novamente com um novo código de pareamento.",
   "13d91e967cd9065c": "Sem resposta no momento.",
@@ -8610,13 +8800,13 @@
   "ebfef435bd266c26": "Preferência de carga de {environment}",
   "a49a651079f9664d": "Novas threads em projetos compartilhados começam na máquina com mais CPU e memória livres, ponderado pela preferência de cada máquina.",
   "da16b9e4be45ae09": "Não foi possível alterar esta configuração.",
-  "d1781a918f8a11cf": "Executa agentes neste computador. Desative para usar o T3 Code só com ambientes remotos.",
+  "f272b671da893f4a": "Executa agentes neste computador. Desative para usar o {appName} só com ambientes remotos.",
   "e1391d08740f38f0": "Desativado. Os agentes só rodam em ambientes remotos.",
   "1bb6eb8f0604ec00": "Ambiente local",
   "06873604593555f2": "Desativar o ambiente local?",
   "4ced358c0a88e181": "Ativar o ambiente local?",
-  "2bb64ad2007e3c6a": "O T3 Code vai reiniciar sem executar um servidor neste computador. Agentes e terminais em execução aqui vão parar, e outros dispositivos não poderão mais se conectar a este computador. Seus projetos, histórico e ambientes remotos não são afetados.",
-  "06ed78c51947fdb7": "O T3 Code vai reiniciar e voltar a executar um servidor neste computador.",
+  "0455dfd8c1caeb7f": "O {appName} vai reiniciar sem executar um servidor neste computador. Agentes e terminais em execução aqui vão parar, e outros dispositivos não poderão mais se conectar a este computador. Seus projetos, histórico e ambientes remotos não são afetados.",
+  "3b7b6336684c938a": "O {appName} vai reiniciar e voltar a executar um servidor neste computador.",
   "5741e027bc5d5e4c": "Reiniciar e desativar",
   "e09686bd65886c10": "Reiniciar e ativar",
   "b8c82ba62b34f0e4": "Microfones, preferido primeiro",
@@ -8647,22 +8837,27 @@
   "d797c9687a256a50": "Conecte-se ao seu servidor pelo celular ou tablet.",
   "c21858dee1b62639": "Link da {store}",
   "cdcdc54a444a3636": "Escaneie com a câmera do celular.",
-  "73da41e93823fd71": [
+  "243e8d40c3cf428d": [
     "Não recomendamos gerenciar várias contas ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " no T3 Code.",
-    " ",
+    " no ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    ". ",
     {
       "t": "a",
-      "i": 2,
+      "i": 3,
       "c": "Mais informações"
     }
   ],
-  "78196d04f05923d0": "Alertas do sistema quando uma thread termina, falha ou precisa de uma resposta ou aprovação. Vale para este dispositivo enquanto o T3 Code está aberto.",
+  "bd87779b86bb96bd": "Alertas do sistema quando uma thread termina, falha ou precisa de uma resposta ou aprovação. Vale para este dispositivo enquanto o {appName} está aberto.",
   "24a0ac9e7e55975c": "As notificações exigem um navegador compatível via HTTPS ou o app desktop. A opção só som continua disponível.",
   "6b0b1dd4d399d3c6": "As notificações não estão disponíveis neste navegador. A opção só som continua disponível.",
   "42983a4d32f489cc": "Permita notificações nas configurações do navegador ou do sistema e escolha esta opção novamente. A opção só som continua disponível.",
@@ -9027,7 +9222,7 @@
   "f8c1b66eb8b5dbd8": "Caminho do binário da CLI do Kiro.",
   "1fc0ad6e3624dbd8": "Caminho do binário do Muse Code neste ambiente. Entre com muse login nesse host.",
   "ab221de3bd424896": "Caminho do binário do OpenCode.",
-  "b7e33c69bf8a50d0": "Deixe em branco para o T3 Code iniciar o servidor quando necessário.",
+  "b59afb9bc820ed63": "Deixe em branco para o {appName} iniciar o servidor quando necessário.",
   "ed42d531a626ffe4": "Armazenado separadamente no host.",
   "41bf44b0cfbc4394": "Caminho do binário do agente de código Pi.",
   "af059d908bee1496": "Argumentos de CLI adicionais passados ao pi --mode rpc no início da sessão.",
@@ -9325,7 +9520,7 @@
   "8fddf21c28c34154": "O T3 Connect está ativado. A acessibilidade ainda não foi verificada.",
   "b2cf3dccd52f02ec": "O T3 Connect está dessincronizado. Este ambiente está vinculado só para publicar a atividade dos agentes, então outros dispositivos não podem se conectar. Ative o T3 Connect para corrigir.",
   "bf1a82ceb6a864f5": "Este ambiente foi removido do T3 Connect. Execute `t3 connect link` no host para vinculá-lo novamente.",
-  "818e1ff39ebdf4a6": "Execute `t3 connect link` no host e depois reinicie o T3 Code lá.",
+  "bef24aeb5eb0e50e": "Execute `t3 connect link` no host e depois reinicie o {appName} lá.",
   "0a3123a6ce981075": "Entre para enviar a atividade às notificações móveis e às Live Activities.",
   "c42a0de969f4133f": "Envia a atividade às notificações móveis e às Live Activities sem o T3 Connect.",
   "5f8ca828eca1ce1a": "Publicar a atividade dos agentes nos clientes móveis",
@@ -9424,7 +9619,7 @@
   "32a7e5361908f68b": "Intervalo inválido",
   "6e820a7742353257": "Informe um intervalo de pelo menos um minuto.",
   "9e596c405f5cea09": "\"Uma vez\" não está disponível aqui",
-  "e450f26e1af0a074": "Este ambiente roda uma versão antiga do T3 Code. Atualize-o para agendar uma tarefa única ou escolha outro agendamento.",
+  "74ae3d5b43248a2b": "Este ambiente roda uma versão antiga do {appName}. Atualize-o para agendar uma tarefa única ou escolha outro agendamento.",
   "71d8554090924454": "O caminho do checkout é obrigatório",
   "a34b72de0ff1cbd0": "Informe o caminho do checkout em que executar.",
   "99a8c45121157edd": "Não foi possível salvar a tarefa agendada",
@@ -9545,11 +9740,17 @@
   "1c9374501ee389d3": "Adicione uma conta do 1Password e escolha-a como origem de uma variável de provedor.",
   "382541febe15f472": "Alternar visibilidade da conta",
   "40426afd511710f8": "Provedor sem suporte ({kind})",
-  "69dc1b9968c66243": [
-    "Atualize o T3 Code em ",
+  "fa551327f599487c": [
+    "Atualize o ",
     {
       "i": 1,
       "k": "_gt_value_1",
+      "v": "v"
+    },
+    " em ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
       "v": "v"
     },
     " para gerenciar os provedores de segredos dele."
@@ -9726,6 +9927,7 @@
   "b210068e1f078ffa": "Confirmar o fechamento de terminais",
   "d3d5e97af7697bee": "Redefinir o comportamento do atalho de saída para o padrão",
   "0c853c878aab1908": "Comportamento do atalho de saída",
+  "88403fa251ee5dab": "Reset swipe navigation to default",
   "22e745b7db60e52f": "Exibição",
   "9f294af5bddaafa9": "Redefinir o idioma para o padrão",
   "093effae2951a4e7": "Redefinir o formato de horário para o padrão",
@@ -9808,9 +10010,9 @@
   "c424bee294b9f778": "Este ambiente é gerenciado por {organization}. Algumas configurações e recursos seguem a política dela.",
   "82d9538af590f58c": "Veja seus agentes, importe projetos e configure seu celular.",
   "6a48fd0a37e725a1": "Jurídico",
-  "d6d3ea46ac979e1c": "Como tratamos seus dados, incluindo os dados de uso anônimos que o T3 Code coleta.",
+  "5b6fb8eabf9923eb": "Como tratamos seus dados, incluindo os dados de uso anônimos que o {appName} coleta.",
   "e741b1ab9396053a": "Como tratamos seus dados. {telemetryOff}",
-  "0bffbbf4d7f780c0": "Avisos de dependências, recursos e ferramentas opcionais usados pelo T3 Code.",
+  "697c4f5be1f2fdb8": "Avisos de dependências, recursos e ferramentas opcionais usados pelo {appName}.",
   "e39a57514be028e9": "Revisar",
   "7c0512387c3a42ea": "Estável",
   "3476687eaa175b32": "Nightly",
@@ -10124,7 +10326,7 @@
   "7d2672fd823e0276": "Não foi possível permitir a captura de texto do app",
   "64f8b9395c4bacc4": "Não foi possível verificar este atalho.",
   "cfdc826f49e69ac9": "Pressione seu atalho. Esc cancela.",
-  "0bea89b44e5a2d70": "O T3 Code já usa este atalho para \"{command}\".",
+  "08075f9916582315": "O {appName} já usa este atalho para \"{command}\".",
   "6e9fca2ef0196a5a": "Verificando atalho…",
   "cfa11e4c853c063f": "Pronto para salvar.",
   "89c86e42bbf58250": "Tente um atalho como Ctrl+Shift+2.",
@@ -10163,7 +10365,7 @@
   "418560fa0ea3544c": "Acesso",
   "a134b87ef97e5448": "Atalho",
   "a3f747337cd6b976": "Instalar a extensão",
-  "54576be78e68ef2e": "A extensão T3 Code para GNOME permite capturar outras janelas e trazê-las para o seu rascunho. Saia da sessão uma vez após instalar.",
+  "ea17017b25f5a3ca": "A extensão {appName} para GNOME permite capturar outras janelas e trazê-las para o seu rascunho. Saia da sessão uma vez após instalar.",
   "a64fb25a0dca8b9e": "Extensão instalada",
   "d7dd0312e81f531b": "Salve seu trabalho e depois saia e entre novamente na sessão. Sua configuração estará esperando aqui.",
   "6224c735e72641ce": "Atualizar a extensão",
@@ -10171,13 +10373,13 @@
   "68dc148ee629e72c": "Permitir extensões do GNOME",
   "e8ce3a0ea5970cbd": "Abra o GNOME Extensions, ative as extensões e verifique novamente.",
   "8e2a1daf5ae4e253": "Ativar a extensão",
-  "badde72b8abcf6f1": "Ative o T3 Code SnapShots para começar a capturar janelas.",
+  "1c190f90d20606e1": "Ative o {appName} SnapShots para começar a capturar janelas.",
   "c650f0ca645ce2fd": "A captura está pronta",
   "180764914db1f449": "Agora, escolha seu atalho.",
   "1deaba200c76a0f5": "A captura automática não está disponível",
   "8545cc747cd78679": "Use Tirar snapshot na paleta de comandos para escolher uma janela.",
   "c7151ea6cfcea431": "Não foi possível configurar a extensão",
-  "ccf65aac5ca40975": "Verifique o T3 Code SnapShots no GNOME Extensions e tente novamente.",
+  "e4892870a56c2120": "Verifique o {appName} SnapShots no GNOME Extensions e tente novamente.",
   "c8cce66adf416be2": "Vamos tentar de novo",
   "5ac7cec1cc3c4589": "Não foi possível verificar os snapshots. Tente novamente para continuar.",
   "3317366cc6a44aab": "Verificar acesso à captura",
@@ -10186,7 +10388,7 @@
   "3286b03339b096fd": "Tente reinstalar o assistente de captura e verifique novamente.",
   "99f4c9b7ff5452c5": "Atualizar o assistente de captura",
   "fad42c95421b9215": "Permitir snapshots",
-  "b3fde588367c4157": "O assistente de captura do T3 Code permite capturar outros apps e voltar ao seu rascunho. Ele vem incluído no T3 Code.",
+  "c24eefe08529a4ef": "O assistente de captura do {appName} permite capturar outros apps e voltar ao seu rascunho. Ele vem incluído no {appName}.",
   "5c6afb84c90d6b73": "Escolher uma janela a cada vez",
   "7d1dbeff82d6b135": "Seu desktop não suporta captura automática. Em vez disso, você escolherá a janela a capturar.",
   "e817b0aa6b6898e7": "Seu desktop pode pedir permissão na primeira captura.",
@@ -10217,7 +10419,15 @@
   "065d4e8c98bf7fd1": "Reinstalar assistente",
   "96f626130ea0ccc5": "A captura precisa de atenção. Volte para verificar o acesso.",
   "435b1ca4e061c17d": "Não foi possível concluir esta etapa. Tente novamente ou veja Avançado para obter ajuda.",
-  "cb2d986e3d65b30a": "Incluído no T3 Code. Não é preciso baixar nada.",
+  "0596114a5b979419": [
+    "Incluído no ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Não é preciso baixar nada."
+  ],
   "e67452f247cc5272": "Desativar extensão",
   "199401965e68b97b": "Remover assistente de captura",
   "988358208ad49792": "{count, plural, one {minuto} other {minutos}}",
@@ -10471,14 +10681,15 @@
     " ",
     "no host do servidor para ativar os recursos de solicitações de alteração."
   ],
-  "25f92ebf1aefb563": [
-    "Não foi possível verificar ",
+  "5d1b37511b9e6b18": [
+    "Could not verify ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ". ",
+    ".",
+    " ",
     {
       "i": 2,
       "k": "_gt_value_2",
@@ -10935,7 +11146,7 @@
   "db0ab251a8700984": "Esse arquivo de tema é inválido.",
   "a6efeb99b479990a": "Escolher arquivos",
   "78b0857ec20b0d8a": "Lendo…",
-  "09b4af0d2181cbbb": "Solte arquivos .json do T3 Code ou do VS Code",
+  "87ca02672e129738": "Solte arquivos .json do {appName} ou do VS Code",
   "d9b33fc9ec6e71e5": "Adicionar um tema",
   "bd980445dcea2bc1": "ou importe um arquivo",
   "00980f2deaad3a4c": "JSON do tema",
@@ -11080,7 +11291,7 @@
   "e352bf3e07df7627": "Este app baixou {downloaded}, não {version} ou mais recente.",
   "323a2afc72792c03": "Mudar para {label}?",
   "1c266579b2e53889": "As atualizações deste app estão desativadas aqui, então reinstale-o você mesmo para mudar.",
-  "6e697e075e4a6719": "Se o T3 Code não abrir novamente depois de reiniciar, abra-o de novo.",
+  "4fe3018f11a54ae9": "Se o {appName} não abrir novamente depois de reiniciar, abra-o de novo.",
   "13ac42dfcb138399": "Mudar para {label}",
   "8260b80501b07b13": [
     "Mudar para ",
@@ -11278,7 +11489,7 @@
   "28a4cd11ce51865e": "Endpoint de API personalizado",
   "49c009661b1e91d6": "Verificando o status do provedor",
   "9c52dc73cc75980f": "Aguardando o servidor informar os detalhes de instalação e autenticação.",
-  "7b4990ffdca7c727": "Este provedor está instalado, mas desativado para novas sessões no T3 Code.",
+  "f304cbc01c14384f": "Este provedor está instalado, mas desativado para novas sessões no {appName}.",
   "a887d07963e1f028": "Não encontrado",
   "d49898dcd40e6332": "CLI não detectado no PATH.",
   "b2768aa900b19198": "Não autenticado · {method}",
@@ -11331,7 +11542,7 @@
   "63426ea5d50585a6": "Conecte um ambiente para salvar esta configuração.",
   "5aedadfc9fef7d3b": "Conecte os checkouts selecionados ou atualize os ambientes deles para redefinir esta substituição.",
   "7d0ff8d36a670261": "Conecte os ambientes para redefinir estas substituições.",
-  "4832594df0aad785": "Este ambiente não suporta esta configuração. Atualize o T3 Code nele.",
+  "0c0b4f6732fa1d1c": "Este ambiente não suporta esta configuração. Atualize o {appName} nele.",
   "b39ae97dcb01d891": "Detalhes da política de segundo plano",
   "7e3ed96c91b96428": "Redefinir {title} para o padrão",
   "27cc3baf3f6c04b1": "Redefinir a substituição para o padrão",
@@ -11357,6 +11568,7 @@
   "afda415d2d75a5d3": "Chat",
   "4beeab8d1814b251": "Diffs e pull requests",
   "3b958faa12d54484": "Atalhos de teclado",
+  "7830ffa7f8538cdd": "Passwords",
   "2ab325baee3ec9a3": "Tarefas agendadas",
   "0a59e086514a62a9": "Controle de versão e issues",
   "1de0df2b8a4fb96e": "Compartilhamento e acesso",
@@ -11398,10 +11610,10 @@
   "d561f74efa5f3920": "esforço de raciocínio pensamento barras gráfico palavra rótulo nível editor de mensagens",
   "6113c17109ee0d57": "latex tex katex equações fórmulas markdown",
   "8c8364d44fa28d22": "dev nightly latest canal arte pílula rótulo ocultar nenhum",
-  "2d90635156dfcb5a": "tipografia família tamanho sistema sans",
-  "d32e93777e4819c8": "tipografia família tamanho editor de mensagens entrada",
-  "120d2e7e8c848ee9": "tipografia família tamanho monoespaçada blocos de código diffs pré-visualizações de arquivos",
-  "0b9c40baa3536bff": "tipografia família tamanho monoespaçada saída",
+  "77e57924a36cb960": "typography family size line height spacing leading system sans",
+  "c134206982c8c257": "typography family size line height spacing leading composer input",
+  "5202a45b22077c00": "typography family size line height spacing leading monospace code blocks diffs file previews",
+  "a11a5e644e1e752d": "typography family size line height spacing leading monospace output",
   "f7a87dd572619b1c": "tipografia avançado prompt código terminal fonte família tamanho individualmente",
   "2e4033be5b956b57": "tipografia texto tons de cinza antialiasing macos fino",
   "7c5f0666ccc3196e": "linhas longas blocos de código diffs pré-visualizações de arquivos",
@@ -11588,9 +11800,6 @@
   "8d7631ea8e21d4f8": "Pressione o atalho…",
   "d39dd343104c5458": "Alterar atalho",
   "9c73aa0c2e2b4e7d": "Escolher atalho",
-  "300a948f90c4d75c": "Voltar",
-  "2a50e229df85d553": "Avançar",
-  "8aa6404c8018ea67": "Início do T3 Code",
   "8e9626aa27cb188a": "Issues",
   "9d2fc1003e82feb1": "Uso",
   "20283eb1dd6119f9": "{count, plural, one {{count} anexo} other {{count} anexos}}",
@@ -11601,7 +11810,7 @@
   "effe26aaf2941c69": "O servidor deste computador ainda não está conectado",
   "27e0c22322e66145": "Tente novamente quando ele se conectar.",
   "a46244a71021244a": "Não foi possível adicionar \"{name}\"",
-  "cc07974b25287234": "O T3 Code não conseguiu ler o caminho da pasta.",
+  "d231e0695997e1a1": "O {appName} não conseguiu ler o caminho da pasta.",
   "27727bda79d97ffa": "Só pastas podem ser adicionadas como projetos",
   "eb9f51eb8bd8a43c": "Solte arquivos em uma thread para anexá-los.",
   "671a8b8ab44e83e2": "Solte pastas para adicionar projetos",
@@ -11751,7 +11960,7 @@
   "82583b5a529f0ee4": "{machine}: {failure}",
   "19a7891b5f5274ae": "Não voltou após {minutes} minutos",
   "ffaa75d2db1e7cc1": "A atualização não foi aplicada",
-  "626bcbe04dc55f93": "O T3 Code ainda está na {current}. Instale a {version} novamente pelo botão de atualização.",
+  "330978713f164987": "O {appName} ainda está na {current}. Instale a {version} novamente pelo botão de atualização.",
   "49214c047fbb1606": "Atualização do provedor interrompida",
   "52adbc863aeb5e59": "Falha ao copiar",
   "0944728904d886d2": "Saturação e brilho de {label}",

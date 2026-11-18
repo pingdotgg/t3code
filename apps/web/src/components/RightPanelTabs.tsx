@@ -115,6 +115,7 @@ import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
+import { appName } from "@t3tools/shared/appName";
 
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -196,18 +197,25 @@ function shouldOpenDefaultBrowserProfileFromMenuClick(pointerType: string | unde
 }
 
 const SURFACE_DISABLED_REASONS = {
-  browser: msg("Browser previews are only available in the T3 Code desktop app."),
+  browser: msg("Browser previews are only available in the {appName} desktop app.", {
+    appName: appName(),
+  }),
   terminal: msg("Terminal surfaces are only available from a project thread."),
   files: msg("Files are only available when a project is open."),
   diff: msg("Diff is only available for server threads in Git repositories."),
   pullRequest: msg("This thread's branch has no pull request yet."),
   pullRequests: msg("No linked pull requests are available for this thread."),
   device: msg("Devices are only available from a thread."),
-  api: msg("API requests are only available in the T3 Code desktop app, from a project thread."),
+  api: msg("API requests are only available in the {appName} desktop app, from a project thread.", {
+    appName: appName(),
+  }),
   database: msg(
-    "The Database panel is only available in the T3 Code desktop app, from a project thread.",
+    "The Database panel is only available in the {appName} desktop app, from a project thread.",
+    { appName: appName() },
   ),
-  mcp: msg("The MCP panel is only available in the T3 Code desktop app, from a project thread."),
+  mcp: msg("The MCP panel is only available in the {appName} desktop app, from a project thread.", {
+    appName: appName(),
+  }),
   sideChat: msg("Side chats start after the first message."),
 } as const;
 

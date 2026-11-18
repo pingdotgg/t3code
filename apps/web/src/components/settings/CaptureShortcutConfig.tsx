@@ -20,6 +20,7 @@ import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import { shortcutToKeybindingInput } from "./KeybindingsSettings.logic";
 import { useSnapShotShortcutRecorder } from "./useSnapShotShortcutRecorder";
+import { appName } from "@t3tools/shared/appName";
 
 const DEFAULT_SHORTCUT = parseKeybindingShortcut("Ctrl+Shift+2")!;
 
@@ -225,8 +226,8 @@ export function CaptureShortcutConfig({
         <>
           <p className="text-muted-foreground">
             <T>
-              Allow T3 Code to read your desktop settings. You'll review any changes here before
-              saving.
+              Allow <Var>{appName()}</Var> to read your desktop settings. You'll review any changes
+              here before saving.
             </T>
           </p>
           <Button
@@ -247,7 +248,7 @@ export function CaptureShortcutConfig({
         <p role="status" className="text-muted-foreground">
           {state.shortcutPending
             ? gt("Connecting to your desktop…")
-            : gt("Restart T3 Code to finish connecting your shortcut.")}
+            : gt("Restart {appName} to finish connecting your shortcut.", { appName: appName() })}
         </p>
       ) : null}
       <details className="text-xs text-muted-foreground">
@@ -274,7 +275,9 @@ export function CaptureShortcutConfig({
             </p>
             {niri ? (
               <p>
-                <T>T3 Code also reads any files included by this file.</T>
+                <T>
+                  <Var>{appName()}</Var> also reads any files included by this file.
+                </T>
               </p>
             ) : null}
             {preview && preview.resolvedPath !== preview.path ? (
@@ -353,8 +356,8 @@ export function CaptureShortcutConfig({
           </Button>
           <p>
             <T>
-              Turn capture off in T3 Code to stop it. Remove the shortcut from <Var>{desktop}</Var>{" "}
-              to free up the keys.
+              Turn capture off in <Var>{appName()}</Var> to stop it. Remove the shortcut from{" "}
+              <Var>{desktop}</Var> to free up the keys.
             </T>
           </p>
           {state.shortcutActionRegistered === false ? (

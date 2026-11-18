@@ -8,6 +8,7 @@ import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
 import { type MarkedText, resolveMarkedText } from "../errors/translatable.ts";
+import { appName } from "@t3tools/shared/appName";
 
 export const DPOP_CLOCK_HINT = msg(
   "Hint: Check that automatic date and time is enabled on both devices, then try again.",
@@ -175,7 +176,8 @@ export function relayOfflineReasonMessage(
     case "tunnel_released":
       return resolve(
         msg(
-          "Offline for a while, so its T3 Connect tunnel was removed. Start T3 Code on that computer and update it to the latest version to reconnect.",
+          "Offline for a while, so its T3 Connect tunnel was removed. Start {appName} on that computer and update it to the latest version to reconnect.",
+          { appName: appName() },
         ),
       );
     case undefined:

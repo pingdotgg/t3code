@@ -20,6 +20,7 @@ import {
   setEnvironmentProvider,
   useOrbitGateway,
 } from "./orbitGatewayStore";
+import { appName } from "@t3tools/shared/appName";
 
 const PROVIDER_OPTIONS: ReadonlyArray<{
   readonly provider: EnvironmentProvider;
@@ -209,7 +210,7 @@ export function OrbitEnvironmentSections() {
         <SettingsSection title={`${profile.name}'s workspaces`}>
           {gateway.workspaces.length === 0 ? (
             <Text className="p-4 text-sm text-foreground-muted">
-              No workspaces yet. Create them in T3 Code on the desktop.
+              No workspaces yet. Create them in {appName()} on the desktop.
             </Text>
           ) : (
             gateway.workspaces.map((workspace, index) => (

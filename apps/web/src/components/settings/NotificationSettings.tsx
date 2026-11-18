@@ -12,6 +12,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { appName } from "@t3tools/shared/appName";
 
 export function NotificationSettings() {
   const searchableSetting = useSearchableSetting();
@@ -28,7 +29,8 @@ export function NotificationSettings() {
       description={
         permissionMessage ??
         gt(
-          "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open.",
+          "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while {appName} is open.",
+          { appName: appName() },
         )
       }
       control={

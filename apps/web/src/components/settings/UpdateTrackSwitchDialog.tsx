@@ -38,6 +38,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { appName } from "@t3tools/shared/appName";
 
 /** Moves this app and every connected machine to `channel`. */
 export function UpdateTrackSwitchDialog({
@@ -214,7 +215,11 @@ function SwitchPlan({
           ? [gt("This app's updates are off here, so reinstall it yourself to switch.")]
           : []),
         ...(switchesLocal && isMacPlatform(navigator.platform)
-          ? [gt("If T3 Code does not reopen after it restarts, open it again.")]
+          ? [
+              gt("If {appName} does not reopen after it restarts, open it again.", {
+                appName: appName(),
+              }),
+            ]
           : []),
       ]}
       restarts={everything.restarts}

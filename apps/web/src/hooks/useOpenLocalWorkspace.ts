@@ -19,6 +19,7 @@ import { useWorkspaceStore } from "../workspaceStore";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { reportProjectFailure } from "./useProjectGroupUpdate";
 import { useNewThreadHandler } from "./useHandleNewThread";
+import { appName } from "@t3tools/shared/appName";
 
 /**
  * Opens a folder on this computer as a project in the primary environment: an
@@ -77,7 +78,7 @@ export function useOpenLocalWorkspace() {
           const error = squashAtomCommandFailure(result);
           throw error instanceof Error
             ? error
-            : new Error(m(msg("T3 Code could not add the project.")));
+            : new Error(m(msg("{appName} could not add the project.", { appName: appName() })));
         }
         return projectId;
       },

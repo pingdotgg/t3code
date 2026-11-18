@@ -19,6 +19,7 @@ import type { BackendStartupFailure } from "../backend/DesktopBackendManager.ts"
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
 import * as DesktopState from "./DesktopState.ts";
+import { appBrand } from "../branding/appBrand.ts";
 
 const RELEASES_URL = "https://github.com/pingdotgg/t3code/releases";
 const LAST_STARTED_VERSION_FILE = "desktop-last-started-version";
@@ -99,14 +100,19 @@ function describeOffer(offer: StartupRecoveryOffer): { text: string; action: str
       return {
         text:
           offer.percent === null
-            ? m(msg("Downloading {version}. T3 Code restarts when the download is done."), {
+            ? m(msg("Downloading {version}. {appName} restarts when the download is done."), {
+                appName: appBrand.name,
                 version: offer.version,
               })
             : m(
                 msg(
-                  "Downloading {version} ({percent}%). T3 Code restarts when the download is done.",
+                  "Downloading {version} ({percent}%). {appName} restarts when the download is done.",
                 ),
-                { version: offer.version, percent: String(Math.floor(offer.percent / 10) * 10) },
+                {
+                  appName: appBrand.name,
+                  version: offer.version,
+                  percent: String(Math.floor(offer.percent / 10) * 10),
+                },
               ),
         action: "",
       };
@@ -133,7 +139,8 @@ function describeOffer(offer: StartupRecoveryOffer): { text: string; action: str
       return {
         text: m(
           msg(
-            "Your organization's managed policy stopped T3 Code from starting. Send the details below to your IT administrator.",
+            "Your organization's managed policy stopped {appName} from starting. Send the details below to your IT administrator.",
+            { appName: appBrand.name },
           ),
         ),
         action: "",
@@ -149,7 +156,7 @@ function buildStartupRecoveryHtml(input: {
 }): string {
   const offer = describeOffer(input.offer);
   const output = input.failure.output.trim();
-  const title = escapeHtml(m(msg("T3 Code could not start")));
+  const title = escapeHtml(m(msg("{appName} could not start", { appName: appBrand.name })));
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>${title}</title><style>
 :root{color-scheme:light dark;--bg:#fff;--fg:#111;--muted:#666;--line:#ddd;--code:#f4f4f4}
 @media (prefers-color-scheme:dark){:root{--bg:#000;--fg:#fff;--muted:#999;--line:#333;--code:#111}}
@@ -166,7 +173,7 @@ pre{flex:1;min-height:60px;margin:0;overflow:auto;background:var(--code);border:
 <p>${escapeHtml(offer.text)}</p>
 <div class="actions">${offer.action}${actionLink("copy", m(msg("Copy details")))}${actionLink("quit", m(msg("Quit", { $context: "button, quits the app" })))}</div>
 <pre>${escapeHtml(output.length > 0 ? output : m(msg("The server wrote no output.")))}</pre>
-<p class="muted">${escapeHtml(m(msg("Version {version}. T3 Code tries again in the background. Logs: {logDir}"), { version: input.appVersion, logDir: input.logDir }))}</p>
+<p class="muted">${escapeHtml(m(msg("Version {version}. {appName} tries again in the background. Logs: {logDir}"), { appName: appBrand.name, version: input.appVersion, logDir: input.logDir }))}</p>
 </body></html>`;
 }
 
@@ -267,7 +274,7 @@ export const listen: Effect.Effect<
         const failure = yield* Ref.get(failureRef);
         if (Option.isNone(failure)) return;
         yield* electronShell.copyText(
-          `T3 Code ${environment.appVersion} (${environment.platform} ${environment.processArch}) could not start.\n${failure.value.reason}\n\n${failure.value.output}`,
+          `${appBrand.name} ${environment.appVersion} (${environment.platform} ${environment.processArch}) could not start.\n${failure.value.reason}\n\n${failure.value.output}`,
         );
         return;
       }
@@ -302,7 +309,7 @@ export const listen: Effect.Effect<
           minWidth: 420,
           minHeight: 320,
           show: false,
-          title: m(msg("T3 Code could not start")),
+          title: m(msg("{appName} could not start", { appName: appBrand.name })),
           autoHideMenuBar: true,
           backgroundColor: shouldUseDarkColors ? "#000000" : "#ffffff",
           webPreferences: {

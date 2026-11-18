@@ -418,6 +418,7 @@ import { useAnnotationWatchBanner } from "../annotations/useAnnotationWatchBanne
 import { useOrbitEnvironmentInUse } from "../orbit/orbitInstanceSleep";
 import { orbitThreadStartBlockedReason } from "../orbit/orbitThreadStarts";
 import { useOrbitReady, withOrbitFirstMessage } from "../orbit/useOrbitReady";
+import { appName } from "@t3tools/shared/appName";
 
 const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
@@ -2980,7 +2981,9 @@ export default function ChatView(props: ChatViewProps) {
         : serverConfig === null
           ? gt("Side chats are not ready yet. Try again in a moment.")
           : serverConfig.environment.capabilities.sideChats !== true
-            ? gt("Update this environment's T3 Code server to use side chats.")
+            ? gt("Update this environment's {appName} server to use side chats.", {
+                appName: appName(),
+              })
             : sideChatsOffered && !isServerThread
               ? gt("Side chats start after the first message.")
               : sideChat.available &&

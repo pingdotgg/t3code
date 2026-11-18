@@ -1,5 +1,6 @@
 // Conn: UI copy names the product as `{appName}` filled from `appName()`, never as a literal
 // (lint rule t3code/no-hardcoded-app-name). See FORK.md, "i18n and the app name".
+// oxlint-disable-next-line t3code/no-hardcoded-app-name -- the default app name itself
 const DEFAULT_APP_NAME = "T3 Code";
 
 let current: string | null = null;

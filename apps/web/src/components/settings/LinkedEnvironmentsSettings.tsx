@@ -48,6 +48,7 @@ import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { m as resolveMessage } from "../../i18n/messages";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useSearchableSetting } from "./settingsSearch";
+import { appName } from "@t3tools/shared/appName";
 
 // Console log labels for the atom commands.
 const UNLINK_COMMAND_LABEL = "unlink environment";
@@ -100,7 +101,8 @@ export function LinkedEnvironmentsSettings({
         <SettingsRow
           title={gt("No linked environments")}
           description={gt(
-            "Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there.",
+            "Link another machine running {appName}, such as a VPS, so agents here can launch and drive threads there.",
+            { appName: appName() },
           )}
         />
       ) : (
@@ -133,8 +135,8 @@ function LinkedEnvironmentRow({
   const forget = async () => {
     const confirmed = await (requestConfirmDialog(
       gt(
-        "Forget {label}? Agents here stop working there. Revoke \"T3 Code · …\" in {label}''s Sharing & access to end the session there too.",
-        { label: link.label },
+        "Forget {label}? Agents here stop working there. Revoke \"{appName} · …\" in {label}''s Sharing & access to end the session there too.",
+        { appName: appName(), label: link.label },
       ),
       { variant: "destructive" },
     ) ?? Promise.resolve(false));

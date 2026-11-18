@@ -33,6 +33,7 @@ const summary = (payload: Extract<ToolbarHeaderPayload, { kind: "summary" }>) =>
 // Hosted mode (laravel-toolbar 0.3.7+): the page's toolbar keeps reporting requests but
 // draws no bar of its own. The preload runs before page scripts and shares their window.
 // Older versions still draw it; the host hides it with CSS (see apps/web laravelToolbar/bridge.ts).
+// oxlint-disable-next-line t3code/no-hardcoded-app-name -- host id the laravel-toolbar package checks
 (window as { __LARAVEL_TOOLBAR_HOST__?: string }).__LARAVEL_TOOLBAR_HOST__ = "T3 Code";
 
 // Header payloads of fetches made before DOMContentLoaded wait until the document's source

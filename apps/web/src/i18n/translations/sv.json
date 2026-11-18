@@ -13,8 +13,8 @@
   "7953122755efa56e": "Löser deltan",
   "d9a8c7734f54ea3f": "Checkar ut filer",
   "215fbed6f97db37d": "Har stannat",
-  "b5899546709c27ef": "{organization} hanterar uppdateringar av T3 Code.",
-  "4160b5f3b4d6ccb0": "{organization} hanterar uppdateringar av T3 Code. Bara stabila versioner kan installeras.",
+  "362ffd26377ea9c5": "{organization} hanterar uppdateringar av {appName}.",
+  "e4b780730878aeb6": "{organization} hanterar uppdateringar av {appName}. Bara stabila versioner kan installeras.",
   "6365146db77a8dac": "{organization} begränsar trådar till Övervakat.",
   "2aa1c01bf8014725": "{organization} begränsar trådar till Godkänn ändringar automatiskt.",
   "89563a8fff8bb751": "{organization} begränsar trådar till Auto.",
@@ -30,7 +30,7 @@
   "a78eb961f5618e7f": "Inte installerad på den här datorn.",
   "4c34e647dc74b279": "Behöver åtkomst till nyckelringen för att läsa sina cookies.",
   "a613ba1b6f32fc2c": "Ingen krypteringsnyckel i nyckelringen. Logga in i webbläsaren en gång och försök sedan igen.",
-  "322d9662c37ead48": "Ge T3 Code Full skivåtkomst i Systeminställningar → Integritet och säkerhet och försök sedan igen.",
+  "cddf7ac093dd519d": "Ge {appName} Full skivåtkomst i Systeminställningar → Integritet och säkerhet och försök sedan igen.",
   "24fdd54c2321912a": "Avsluta webbläsaren först så att dess cookie-databas kan läsas.",
   "1e3857bfd41528f6": "Import från den här webbläsaren går inte på den här plattformen.",
   "2bfa3f72b8bb8657": "Systemets nyckelring kunde inte nås. Kontrollera att skrivbordets nyckelring körs och är upplåst och försök sedan igen.",
@@ -261,6 +261,10 @@
   "f6db6c7f14e0e68a": "{count, plural, one {Försökte använda webbläsaren {count} gång} other {Försökte använda webbläsaren {count} gånger}}",
   "af1b652f5e54202b": "{count, plural, one {Använde enhetskontroller {count} gång} other {Använde enhetskontroller {count} gånger}}",
   "0141195cbbe0e4ca": "{count, plural, one {Försökte använda enhetsstyrning {count} gång} other {Försökte använda enhetsstyrning {count} gånger}}",
+  "5003f70eea83f024": "{count, plural, one {Used saved logins {count} time} other {Used saved logins {count} times}}",
+  "71b430797cc39428": "{count, plural, one {Tried to use saved logins {count} time} other {Tried to use saved logins {count} times}}",
+  "09a1b347a3fecb31": "{count, plural, one {Worked on annotations {count} time} other {Worked on annotations {count} times}}",
+  "b45c51a28e32d4f0": "{count, plural, one {Tried to work on annotations {count} time} other {Tried to work on annotations {count} times}}",
   "4d411db1abd4feff": "{count, plural, one {Kontrollerade orkestreringsfunktioner {count} gång} other {Kontrollerade orkestreringsfunktioner {count} gånger}}",
   "44ea53e1df760a86": "{count, plural, one {Försökte kontrollera orkestreringsfunktioner {count} gång} other {Försökte kontrollera orkestreringsfunktioner {count} gånger}}",
   "b5ab4f13edefadf7": "{count, plural, one {Läste {count} tråd} other {Läste {count} trådar}}",
@@ -325,19 +329,19 @@
   "960aa0b106793f99": "Kunde inte läsa in miljöns auktoriseringsnyckel.",
   "facb167869d93774": "Tidsgränsen nåddes när miljöns autentiseringsuppgift skulle förnyas.",
   "5f68899450a25421": "Den här klienten stöds inte av servern. Uppdatera appen eller använd en kompatibel version för att ansluta till {host}.",
-  "64d380898f3dc4ee": "Den här klienten kräver en nyare server. Uppdatera T3 Code på {host} för att ansluta.",
+  "933f63587e7275a5": "Den här klienten kräver en nyare server. Uppdatera {appName} på {host} för att ansluta.",
   "b7554d48eece78bf": "Den här enheten är offline",
   "ad2b3faedb0bd846": "Den här enheten läser fortfarande in sin T3 Connect-inloggning",
   "150d1298d7e12a18": "{host} väntar på att någon ska godkänna den här enheten",
-  "64e8bf8f894e8d4b": "{host} kör en äldre T3 Code",
+  "52204a0e4246e07f": "{host} kör en äldre {appName}",
   "7978b128f836c1ca": "Den här enhetens klocka går fel",
   "26f98026953e6835": "{host} är inte länkad till ditt T3 Connect-konto",
   "df82277b5fdf21ad": "T3 Connect returnerade ett fel",
   "d2c536acf6fef486": "Tunneln för {host} håller fortfarande på att konfigureras",
   "4e554b7a57549e72": "T3 Connect är inte aktiverat för {host}",
   "919dcd4227cf751a": "Tunneln för {host} är offline",
-  "34e205f55d30b081": "Tunneln fungerar, men T3 Code på {host} svarade inte",
-  "ff444db47a6c5d7b": "T3 Code på {host} skickade ett oväntat svar",
+  "feddd55ae4bd6c10": "Tunneln fungerar, men {appName} på {host} svarade inte",
+  "0ea89c0e4e83e5c3": "{appName} på {host} skickade ett oväntat svar",
   "382dbe658dff5a11": "Tunneladressen för {host} kunde inte slås upp",
   "7b15ef746f8fe359": "Den säkra anslutningen till tunneln för {host} misslyckades",
   "6545cbf2f3aca443": "Tunneln för {host} nekade anslutningen",
@@ -347,27 +351,27 @@
   "fbd2d87881e54615": "Den här enheten når inte T3 Connect",
   "7ac7d2bd5d3c3b74": "Den här enheten når inte tunneln för {host}",
   "9cf0001d0c442fe2": "T3 Connect kunde inte nå tunneln för {host}",
-  "e7d37a933a7e89f5": "T3 Code på {host} godtog inte den här enheten",
-  "b7e1fa98dd44a903": "T3 Code på {host} svarade inte",
+  "b9dc2e96b434ba12": "{appName} på {host} godtog inte den här enheten",
+  "b46a6170d9d6a876": "{appName} på {host} svarade inte",
   "5d11910833c27d35": "Öppna Inställningar > Delning och åtkomst på {host} eller kör `t3 connect status`.",
-  "b73e30d8d9cf80ae": "Anslut den här enheten till internet. T3 Code återansluter av sig själv.",
-  "c8a0daf6db0928f3": "Vänta en stund. T3 Code försöker igen av sig själv.",
-  "25bb53e6f08b6ce6": "Om den fortsätter att vänta, läs in igen eller starta om T3 Code på den här enheten.",
+  "e8f083ea006aafd1": "Anslut den här enheten till internet. {appName} återansluter av sig själv.",
+  "b7fca72b0f196c94": "Vänta en stund. {appName} försöker igen av sig själv.",
+  "47b0dc6ec9282ec8": "Om den fortsätter att vänta, läs in igen eller starta om {appName} på den här enheten.",
   "570aaeb32dc600a7": "Öppna Inställningar > Delning och åtkomst på en enhet som redan är ansluten till {host} och godkänn enheten som visar {code}.",
   "08a2d57d02f30799": "Öppna Inställningar > Delning och åtkomst på en enhet som redan är ansluten till {host} och godkänn den här enheten.",
   "9cc57bb41f513f35": "Eller kör `t3 auth connect-device approve {code}` på {host}.",
-  "6c043146ff104471": "Uppdatera T3 Code på {host}.",
+  "05b473ce574047d6": "Uppdatera {appName} på {host}.",
   "3c35e0980e06bfa6": "Aktivera automatiskt datum och tid på den här enheten och på {host} och försök sedan igen.",
   "0f441d0e53f2e965": "Kontrollera att den här enheten är inloggad på samma T3 Connect-konto som värden.",
   "1e02d6062710ffb3": "Öppna Inställningar > Delning och åtkomst på {host} och aktivera T3 Connect.",
-  "3ca9e905a0e76944": "Vänta en minut. T3 Code försöker igen av sig själv.",
-  "62d01449990d28a4": "Vänta några minuter. T3 Code försöker igen av sig själv.",
+  "d027c3171f197cf6": "Vänta en minut. {appName} försöker igen av sig själv.",
+  "82d73ee78b8d6a74": "Vänta några minuter. {appName} försöker igen av sig själv.",
   "6c9d04c73fe1eb63": "Om det fortsätter att misslyckas, kopiera diagnostiken och rapportera det.",
-  "6671e2adfb0e35b3": "Se till att {host} är vaken och att T3 Code körs på den.",
+  "662f6c55ef241dad": "Se till att {host} är vaken och att {appName} körs på den.",
   "3c988e8ceac72484": "Ett VPN eller en Tailscale-exitnod på {host} kan blockera tunneln (port 7844). Stäng av det eller tillåt tunneln.",
-  "b5aacc0b9163c0e3": "Öppna eller starta om T3 Code på {host}.",
+  "b4128b0ac0ffd383": "Öppna eller starta om {appName} på {host}.",
   "a80f88e893129bd9": "Se till att {host} är vaken och online.",
-  "a11d4c010567faac": "Starta om T3 Code på den här enheten.",
+  "1d41e1fd36df56d4": "Starta om {appName} på den här enheten.",
   "6a1d53c7bee371aa": "Om det fortsätter att misslyckas, ta bort {host} från den här enheten och lägg till den igen.",
   "41dd22a83e2fa219": "Logga ut från T3 Connect och logga in igen.",
   "a569ba31753e80a3": "Kontrollera den här enhetens internetanslutning.",
@@ -375,11 +379,11 @@
   "13d74302502bdb92": "Ett VPN, en brandvägg eller ett DNS-filter på den här enheten kan blockera tunneln.",
   "6538d9af1dc853bc": "Prova ett annat nätverk eller lägg till en direkt rutt, till exempel en Tailscale-adress.",
   "e950948b20d099cf": "Den här enhetens inloggning till {host} har gått ut eller återkallats. Parkoppla den igen med en ny parkopplingslänk från {host}.",
-  "964a38e20cc7ecda": "Se till att T3 Code körs på {host}.",
+  "94d969815cc93e29": "Se till att {appName} körs på {host}.",
   "00fcb4f22434502b": "Försök igen. Om det fortsätter att misslyckas, kopiera diagnostiken.",
   "589f3050d8371c67": "Den här enheten",
   "f8561e25d9a3d132": "Tunnel för {host}",
-  "11e2222747466460": "T3 Code på {host}",
+  "8310d81c725fdac5": "{appName} på {host}",
   "3d1e8943c6f1623f": "Orsak",
   "68c94644988bb4d7": "HTTP-status",
   "c86eb684e1531ef8": "Försök",
@@ -402,15 +406,15 @@
   "94c2caab0a9d17a6": "Miljön kunde inte auktorisera anslutningen.",
   "d084f7f88e5bf041": "{host} frös i {seconds} s",
   "ca97b6934f016952": "Processorn är överbelastad (belastning {load} på {cpuCount} kärnor).",
-  "93e37fedae7eaa5b": "T3 Code på {host} var för upptagen för att svara.",
+  "d59a295ee6688a9d": "{appName} på {host} var för upptagen för att svara.",
   "5c5941732d5dfac6": "Uppgifterna för parkopplingen är ogiltiga.",
   "b8ca23ad7dda376e": "Den adressen leder till {host}, en annan dator. Lägg till den som en egen miljö i stället.",
   "693cb5c4fb40f109": "Bara sparade bearer-miljöer kan redigeras.",
   "5f5844b910cb1544": "Den sparade bearer-uppgiften är inte tillgänglig.",
   "51b0133f1ed3cf5c": "Miljöns etikett får inte vara tom.",
   "0c0150a90b582a7a": "Miljöns URL är ogiltig.",
-  "3aa15bfbe1920376": "Uppdatera T3 Code på {host} manuellt; det kan inte uppdatera sig självt.",
-  "71907f57b7ec64d5": "{host} kom inte tillbaka med en kompatibel version av T3 Code.",
+  "f82d215f41af6401": "Uppdatera {appName} på {host} manuellt; det kan inte uppdatera sig självt.",
+  "6fd310d23099f107": "{host} kom inte tillbaka med en kompatibel version av {appName}.",
   "e77ac580a4ddcd3b": "Tillgänglig",
   "a980c44b06fc7b26": "Offline",
   "fef710ef9d9e365d": "Ansluter...",
@@ -509,7 +513,7 @@
   "d4258d4b87cf0ab1": "Reläet råkade ut för ett internt fel ({reason}).",
   "796de796c15cf68f": "Reläet fick timeout innan begäran var klar (HTTP 504). Försök igen om några minuter. Om det fortsätter att misslyckas, kopiera spårnings-ID:t när du rapporterar det.",
   "34e963f61ae55b28": "Reläet returnerade en oväntad HTTP {status}.",
-  "e17ef8aff174e6fe": "Har varit offline ett tag, så dess T3 Connect-tunnel togs bort. Starta T3 Code på den datorn och uppdatera till den senaste versionen för att återansluta.",
+  "99135a2cfc8f373e": "Har varit offline ett tag, så dess T3 Connect-tunnel togs bort. Starta {appName} på den datorn och uppdatera till den senaste versionen för att återansluta.",
   "e07aeb67f54ee2c4": "Kunde inte läsa in reläets DPoP-bevisnyckel.",
   "0d7264480ef70038": "Tidsgränsen nåddes vid utbyte av reläets DPoP-åtkomsttoken.",
   "b396dce04e615665": "Tidsgränsen nåddes vid listning av reläets miljöer.",
@@ -661,12 +665,12 @@
   "aabe73e973995bf4": "Sökväg: {path}",
   "261682788ab9a3ac": "Miljö: {environment}",
   "bac5ef48aafb20b1": "Det här tar bort {count} grupperade projektposter.",
-  "3e46fbf3eadf0745": "De trådarna och eventuella arkiverade trådar tas bort från T3 Code. Leverantörssessioner behålls.",
-  "1a50cbc984f8fe1c": "Eventuella arkiverade trådar tas bort från T3 Code. Leverantörssessioner behålls.",
+  "0b4711b10829a3f9": "De trådarna och eventuella arkiverade trådar tas bort från {appName}. Leverantörssessioner behålls.",
+  "8532fa698eb706d0": "Eventuella arkiverade trådar tas bort från {appName}. Leverantörssessioner behålls.",
   "4f076ebbf1c8846e": "Det här tar bara bort projektposterna, inte filerna på disken.",
   "19b8f3ad79efb9e1": "Andra poster i det här grupperade projektet påverkas inte.",
   "2207c69b042b2e37": "Den här åtgärden kan inte ångras.",
-  "0b3de745be8aee67": "Den här miljösessionen är inte längre giltig (invalid_credential). Uppdatera sidan eller avsluta och öppna T3 Code igen.",
+  "51e6ce11b91a71f6": "Den här miljösessionen är inte längre giltig (invalid_credential). Uppdatera sidan eller avsluta och öppna {appName} igen.",
   "a414f5045fa2e8da": "Miljön svarade inte på PR-begäran.",
   "e1b5268aa311f464": "Miljön togs bort.",
   "00d50f88c665cc51": "Miljöns HTTP-anslutning är inte klar.",
@@ -753,7 +757,7 @@
   "0bed322f6071f4da": "Ett fel uppstod.",
   "e94aa66471dae6aa": "Varför får jag den här frågan?",
   "228a325b5708e675": "Full åtkomst hoppar över godkännanden, men en fråga-regel i agentens egna inställningar matchar den här åtgärden, så den frågar ändå. Ta bort eller begränsa regeln för att slippa de här frågorna.",
-  "3f9101f696c738a8": "Full åtkomst hoppar över godkännanden, men agenten stannar ändå för några egna säkerhetskontroller som ingen inställning kan hoppa över, till exempel en radering vars sökväg den inte kan verifiera. T3 Code kan inte stänga av dem, så kontrollera begäran och godkänn den om den är vad du väntar dig.",
+  "5c7263eafbe7014d": "Full åtkomst hoppar över godkännanden, men agenten stannar ändå för några egna säkerhetskontroller som ingen inställning kan hoppa över, till exempel en radering vars sökväg den inte kan verifiera. {appName} kan inte stänga av dem, så kontrollera begäran och godkänn den om den är vad du väntar dig.",
   "508591c3b632b254": "{count, plural, one {Om {count} dag} other {Om {count} dagar}}",
   "b6e3cd6c7a081b8c": "{count, plural, one {Om {count} timme} other {Om {count} timmar}}",
   "3b8e428bf67b3a2d": "{count, plural, one {Om {count} minut} other {Om {count} minuter}}",
@@ -1023,11 +1027,11 @@
   "84574fdbc300e71f": "{name} (installation, när klar)",
   "8113ce8cc5b8714a": "{name} (installation)",
   "305480cd87405b73": "{name} (när klar)",
-  "0553a5ffe0a59780": "Den här prompten är längre än {maxLength} tecken, så T3 Code öppnade den inte.",
-  "5d559770ea1ee096": "Den här prompten innehöll bara dolda tecken, så den kan vara skadlig. T3 Code öppnade den inte.",
-  "4410caad205bcac7": "Den här länken pekar på en pull request som T3 Code inte kan läsa.",
+  "9ec54b30a007f7a8": "Den här prompten är längre än {maxLength} tecken, så {appName} öppnade den inte.",
+  "caa0fd951564ec8a": "Den här prompten innehöll bara dolda tecken, så den kan vara skadlig. {appName} öppnade den inte.",
+  "c419c7eb4188eca1": "Den här länken pekar på en pull request som {appName} inte kan läsa.",
   "df1915cc1c939ef9": "Den här länken har ingen prompt.",
-  "6024bfa21d5b2f40": "Den här länken pekar på ett repo som T3 Code inte kan läsa.",
+  "4a4e83475bae5e56": "Den här länken pekar på ett repo som {appName} inte kan läsa.",
   "207267a58d3542ba": "När du stoppar skickar {environment} inspelningen till OpenRouter. OpenRouter väljer vem som kör din modell. T3 begär att ingen data sparas; ditt OpenRouter-konto kan tillåta lagring av säkerhetsskäl.",
   "81b64c298285297c": "När du stoppar skickar {environment} din inspelning och dina ordförrådstips, inklusive projektnamn, till {provider}.",
   "615ce9f2edf7208f": "Länka en pull request",
@@ -1383,7 +1387,7 @@
   "64e17b9414ed5dd4": "Går ut om {duration}",
   "85632ff85a7d923d": "Filen är inte tillgänglig på den här datorn.",
   "3d2036743bbda4c9": "Det gick inte att dra filen",
-  "111a308f2cba6e4b": "Versionerna matchar inte. Försök synka klienten och servern till samma T3 Code-version.",
+  "7f2f340a0957bd35": "Versionerna matchar inte. Försök synka klienten och servern till samma {appName}-version.",
   "4eb599c7f36c99ba": "Temafilen är inte giltig JSON.",
   "29a5ff50ce55c4f9": "VS Code-tema",
   "10348092dfed8b11": "VS Code-temat har ingen ”editor.background”-färg, så det finns inget att bygga en palett från.",
@@ -1447,7 +1451,7 @@
   "87338da304e4dd3e": "Kunde inte läsa in DPoP-bevisnyckeln.",
   "b2ee6fa8c91540d0": "Kunde inte signera DPoP-beviset.",
   "73234ec7fb238593": "Kunde inte kontrollera om reläklienten är tillgänglig.",
-  "5913ebf4c3738995": "T3 Code kan inte installera reläklienten automatiskt på {platform}-{arch}.",
+  "31bb901a98db0e64": "{appName} kan inte installera reläklienten automatiskt på {platform}-{arch}.",
   "7de7f474bc1851fc": "Kunde inte bekräfta installationen av reläklienten.",
   "93db3eb61750d7eb": "Installationen av reläklienten avbröts.",
   "02ae701ff75eaad7": "Kunde inte installera reläklienten.",
@@ -1644,7 +1648,7 @@
   "94d640e2a0d2e849": "Sidochattar kan inte starta sidochattar.",
   "3208297e5c0ed324": "Subagenttrådar kan inte starta sidochattar.",
   "cbf94e4eba3e039f": "Sidochattar är inte redo än. Försök igen om en stund.",
-  "2dc0997e37a2287f": "Uppdatera den här miljöns T3 Code-server för att använda sidochattar.",
+  "6a00d165ba5f9f0f": "Uppdatera den här miljöns {appName}-server för att använda sidochattar.",
   "98f445984c075971": "Sidochattar startar efter det första meddelandet.",
   "e9cf5c708ad52a85": "Tillgängligt när trådens worktree har konfigurerats.",
   "6b1c0d7732da6648": "Det gick inte att komprimera kontexten.",
@@ -1700,7 +1704,7 @@
   "4b4b64cc95acb8da": "Ny tråd i...",
   "3f581e98c86df72a": "Ny tråd utan projekt",
   "e510d9a7b684fbfe": "Triagera ett ärende",
-  "cce3d80a2ddf1125": "En agent undersöker ett problem i T3 Code och hjälper till att skapa ett ärende",
+  "fccdd26103f3d545": "En agent undersöker ett problem i {appName} och hjälper till att skapa ett ärende",
   "44e13c9deb30e03c": "Sök i aktuell tråd",
   "2a5cc71a171eca12": "Sök på sidan i webbläsaren",
   "f496ce44f0581269": "Kopiera promptlänk",
@@ -1718,7 +1722,7 @@
   "594bcbef04093f72": "Öppna WSL-mapp",
   "04fd71efaa2c3b92": "Öppna pull requests",
   "57e875b79b98ab82": "Öppna ärenden",
-  "f1db0a234c777a1d": "Använd T3 Code i en annan app (MCP)",
+  "3cb89b2c6f54c6db": "Använd {appName} i en annan app (MCP)",
   "a0cc19e60dd99851": "Öppna användning",
   "46694969044eee98": "Fokusera nästa område i arbetsytan",
   "0a1011328ba42eef": "Fokusera föregående område i arbetsytan",
@@ -1948,7 +1952,7 @@
   "2c7dd1701c1e4878": "Leverantören sparade filinnehåll utan diff.",
   "7af7238975f15a8f": "Läser in kod...",
   "c53cf4b26ec0586d": "Dator, {label}",
-  "0c01f791ecef34ad": "T3 Code-miljö",
+  "cbf5ce5b71110d76": "{appName}-miljö",
   "6ba599e5a409f99d": "Datorn finns inte i den här appen",
   "5535e67982c7367c": "Moln-VM",
   "f48912705512b192": "Linux/WSL",
@@ -2067,9 +2071,9 @@
   "809d74fd98dd8b0f": "Checka ut funktionsgren och fortsätt",
   "88b4d905ceab8dd2": "Stjärnmärker…",
   "a3b65ac8567c151f": "Tack för stjärnan!",
-  "eaaab38a83bf32cf": "Det hjälper verkligen T3 Code att växa.",
+  "edd4712154ae3b27": "Det hjälper verkligen {appName} att växa.",
   "627b9319f42ac2d5": "Öppna GitHub",
-  "a76da92cec318964": "Gillar du T3 Code?",
+  "49516f214a89601c": "Gillar du {appName}?",
   "7ffe3705e7b0ed0b": "Ge oss en stjärna på GitHub och berätta det!",
   "4c58cf06d9a4496c": "Stjärnmärk på GitHub",
   "5bbf199afe39d5e1": "Stäng",
@@ -2077,7 +2081,15 @@
   "ae659281075cedc6": "Ingen dator ansluten",
   "3ad17519c118edf8": "Slå på den igen eller anslut en annan dator.",
   "1fa714c0c7855545": "Dina agenter körs på din dator.",
-  "5ba39b13f1bfe4f5": "Dina agenter körs på din dator. Starta T3 Code där först.",
+  "3163b4d1243aa409": [
+    "Dina agenter körs på din dator. Starta ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " där först."
+  ],
   "0e2f68b7c6915c72": "Öppna Miljöer",
   "6b4bbecf3df324fa": "Försök logga in igen",
   "83be7aade7ff6360": "Inloggad",
@@ -2252,13 +2264,16 @@
   "404941d325a2755b": "Tryck på {shortcut} igen för att avsluta",
   "48ef9d3971c97e7d": "Kunde inte öppna vyn igen",
   "158a785cabe10dda": "Arbetsytepanel",
-  "9371d8cc390a8a1b": "Webbläsarförhandsvisningar finns bara i skrivbordsappen T3 Code.",
+  "e632c7f2ef4dd7bd": "Webbläsarförhandsvisningar finns bara i skrivbordsappen {appName}.",
   "05037ca1666fd421": "Terminalytor finns bara i en projekttråd.",
   "a3aa1e49af278d41": "Filer är bara tillgängliga när ett projekt är öppet.",
   "87ea6995ea1e7aa4": "Diff är bara tillgänglig för servertrådar i Git-repon.",
   "4a87cae01ccde544": "Den här trådens gren har ingen pull request än.",
   "0051e6585d7ea014": "Inga länkade pull requests är tillgängliga för den här tråden.",
   "07080dead70f4cc5": "Enheter är bara tillgängliga från en tråd.",
+  "2e2e24d0872dfa12": "API requests are only available in the {appName} desktop app, from a project thread.",
+  "de0408ff354ad8a6": "The Database panel is only available in the {appName} desktop app, from a project thread.",
+  "07b5c7ff94be9faf": "The MCP panel is only available in the {appName} desktop app, from a project thread.",
   "a4bf49b31758ff7e": "Finns bara i skrivbordsappen.",
   "e917841cb66f9af1": "Tillgängligt när ett projekt är öppet.",
   "14c15fad0c2ee0c8": "Tillgängligt för Git-repon.",
@@ -2278,6 +2293,10 @@
   "4bcfa3b976a421cf": "Sidochatt",
   "fdcd9643e2e63b15": "Ställ en sidofråga medan tråden fortsätter arbeta.",
   "13087312bc6a0b45": "Pull requests",
+  "6cdc3f32f802d98b": "API",
+  "3e90738d0ff19a29": "Databas",
+  "36a410dfbf4dda56": "MCP",
+  "fae3639874428042": "Tasks",
   "314cfeebf191ba0d": "behöver godkännande",
   "4e5b7363441a3831": "behöver input",
   "97af4e74a5f95e5e": "körs",
@@ -2329,14 +2348,14 @@
   "d8e50e9835a12e8d": "Kunde inte kopiera uppdateringskommandot till urklipp.",
   "9b947c837e3756c0": "Urklipps-API:t är inte tillgängligt vid kopiering av omstartskommandot.",
   "4321f91645a6516a": "Kunde inte kopiera omstartskommandot till urklipp.",
-  "c5422ea828b540ed": "Uppdatera T3 Code-skrivbordsapparna på {servers}? De stängs och startas om på de datorerna.",
+  "e5d0383ca6e9155b": "Uppdatera {appName}-skrivbordsapparna på {servers}? De stängs och startas om på de datorerna.",
   "b25472ef70df9b5d": "Uppdatera alla",
   "febf4ec3cdcdf372": "Uppdateringskommandot kopierades",
   "bee440d0da53841c": "Omstartskommandot kopierades",
   "9e17a8beb64d6130": "Kör `{command}` på {serverLabel} och starta sedan om t3 med dina vanliga alternativ.",
   "218253b96de09d5d": "Stoppa t3 på {serverLabel} och starta sedan om med `{command}` med samma underkommando och alternativ. Det här uppdaterar inte ett installerat t3-kommando.",
   "3cb4fcae1546e2eb": "Kunde inte kopiera uppdateringskommandot",
-  "c10262062b7f9a5e": "Uppdatera T3 Code-skrivbordsappen som kör {serverLabel}? Den stängs och startas om på den datorn.",
+  "a297db42a40ecfc6": "Uppdatera {appName}-skrivbordsappen som kör {serverLabel}? Den stängs och startas om på den datorn.",
   "a1581c125ff5ba06": "Kopiera uppdateringskommando",
   "b3ba2b8e2eb87795": "Kopiera omstartskommando",
   "deeb29ec7a4749c1": "Uppdatera",
@@ -2550,9 +2569,9 @@
   "c5d4a1b01d27c81d": "Bildbilaga, {name}, {size}",
   "baa023ab89b1e31f": "Otillgänglig kontext, {label}",
   "52a44f36200620d5": "Den här installationen använder rätt arkitektur.",
-  "007ab0ba4a0318eb": "Den här Macen har Apple Silicon, men T3 Code kör fortfarande Intel-versionen under Rosetta. Ladda ned den tillgängliga uppdateringen för att byta till den inbyggda Apple Silicon-versionen.",
-  "0fe3e0e043327f70": "Den här Macen har Apple Silicon, men T3 Code kör fortfarande Intel-versionen under Rosetta. Starta om för att installera den nedladdade Apple Silicon-versionen.",
-  "054fe66b7627aa05": "Den här Macen har Apple Silicon, men T3 Code kör fortfarande Intel-versionen under Rosetta. Nästa appuppdatering ersätter den med den inbyggda Apple Silicon-versionen.",
+  "7077ed581b253015": "Den här Macen har Apple Silicon, men {appName} kör fortfarande Intel-versionen under Rosetta. Ladda ned den tillgängliga uppdateringen för att byta till den inbyggda Apple Silicon-versionen.",
+  "fae8df1a167cd1d1": "Den här Macen har Apple Silicon, men {appName} kör fortfarande Intel-versionen under Rosetta. Starta om för att installera den nedladdade Apple Silicon-versionen.",
+  "b08b1891a132e9a3": "Den här Macen har Apple Silicon, men {appName} kör fortfarande Intel-versionen under Rosetta. Nästa appuppdatering ersätter den med den inbyggda Apple Silicon-versionen.",
   "52f309fc7a21cc9d": "Uppdateringen {version} tillämpades inte. Klicka för att försöka igen.",
   "8d78d07244f8b4a1": "Nedladdningen av {version} misslyckades. Klicka för att försöka igen.",
   "2dafe72242295047": "En uppdatering är redo att laddas ned",
@@ -2564,8 +2583,8 @@
   "52e1d4a487c0cf4b": "Installationen av {version} misslyckades. Klicka för att försöka igen.",
   "78a04e0e625c0990": "Uppdateringen misslyckades",
   "b02ae45a6109c93b": "Uppdaterad",
-  "edcda9e8ee4ccad8": "Installera uppdateringen {version} och starta om T3 Code?\n\nPågående uppgifter avbryts. Se till att du är redo innan du fortsätter.",
-  "02eba0f7cc90f759": "Installera uppdateringen och starta om T3 Code?\n\nPågående uppgifter avbryts. Se till att du är redo innan du fortsätter.",
+  "c0d222b693c54bbc": "Installera uppdateringen {version} och starta om {appName}?\n\nPågående uppgifter avbryts. Se till att du är redo innan du fortsätter.",
+  "12d24c93b7bd515e": "Installera uppdateringen och starta om {appName}?\n\nPågående uppgifter avbryts. Se till att du är redo innan du fortsätter.",
   "9ed4d8a1531b9631": "Automatiska uppdateringar är inte tillgängliga i den här versionen.",
   "c8c23435e780a60c": "Uppdateringar är inte tillgängliga",
   "1af5f9767371ffd7": "Sök efter uppdateringar",
@@ -2665,7 +2684,7 @@
   "e171ad5dd254389e": "Kunde inte förbereda SSH-miljön: {message}",
   "e0465384c9425d24": "SSH-miljön utfärdade ingen parkopplingsuppgift.",
   "69c97cece949d88c": "Den värden når {label}, en annan dator. Lägg till den som en egen miljö i stället.",
-  "2e79897eb713ed26": "{label} kör T3 Code {serverVersion}, men den här skrivbordsappen är {appVersion}, och servern kunde inte ta emot parkopplingen. Starta om T3-servern på {label} så att den kör {appVersion} och försök sedan igen.",
+  "d721355353a0a7be": "{label} kör {appName} {serverVersion}, men den här skrivbordsappen är {appVersion}, och servern kunde inte ta emot parkopplingen. Starta om T3-servern på {label} så att den kör {appVersion} och försök sedan igen.",
   "e6d4dfcbbe956abf": "Logga in på T3 Connect för att ansluta den här miljön.",
   "e28e8b992d54132a": "T3 Connect-sessionen är inte tillgänglig.",
   "4701a911bb621b61": "Kunde inte läsa in skrivbordsappens primära autentiseringsuppgift: {cause}",
@@ -2733,7 +2752,7 @@
   "4d914be9dfe6b924": "Skapade {name} utan en första commit",
   "01c37ddc7489a372": "{error} Projektet finns i {path}.",
   "22beed0f82b431e3": "{error} Det visas i sidofältet när den här klienten har kommit ikapp.",
-  "ee8d5e90fd58f838": "T3 Code kunde inte lägga till projektet.",
+  "2672ff35cefd9df3": "{appName} kunde inte lägga till projektet.",
   "138dd2315e3b4853": "Anslut den valda miljön och försök igen.",
   "dc8fdfd5ac8c8080": "Anslut {environment} och försök igen.",
   "6c2742bb85832341": "{title} i den aktuella miljön",
@@ -2762,7 +2781,7 @@
   "8a7ee5752bb91550": "Kunde inte kopiera. Skriv {command} i stället.",
   "7dfdfa116c6a9d86": "Kunde inte starta felsökningen",
   "25fe0f5f3ef3bb02": "{description} Kör {command} i en terminal på den datorn i stället.",
-  "d51dbcd93da79694": "T3 Code kunde inte öppna en ny tråd.",
+  "b390c8aad7ebbf01": "{appName} kunde inte öppna en ny tråd.",
   "eb9ecb0cb72121a0": "Den här datorn kan inte starta trådar utan ett projekt.",
   "32e2dbf6abe8c748": "Startar felsökning…",
   "ce5c66ae967fd7c8": "Trådåtgärder är inte tillgängliga",
@@ -2890,7 +2909,7 @@
     " för att ändra dess inställningar."
   ],
   "247e01cc01583645": "Förhandsvisning finns bara i skrivbordsappen",
-  "075aa3cad9e5bf40": "Öppna T3 Code i skrivbordsappen för att använda förhandsvisningen i appen.",
+  "772bf7639f1503df": "Öppna {appName} i skrivbordsappen för att använda förhandsvisningen i appen.",
   "25b9aae7f44e4030": "{mode, select, system {Utseende: system} light {Utseende: ljust} other {Utseende: mörkt}}",
   "17f073df6022e405": "Mikrofon {number}",
   "3868d914611023ac": "Rösttranskribering är inte förberedd.",
@@ -3043,12 +3062,17 @@
   ],
   "c54cc9c75db9dc58": "Godkänn bara en inloggning som du själv precis har startat.",
   "e9f4b93c4ec30453": "Inloggningskod",
-  "33194f3e1b80f838": [
-    "Hämta en från Använd T3 Code i en annan app (MCP), Inställningar → Delning och åtkomst eller",
-    " ",
+  "de680c7875580f35": [
+    "Hämta en från Använd ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " i en annan app (MCP), Inställningar → Delning och åtkomst eller ",
     {
       "t": "code",
-      "i": 1,
+      "i": 2,
       "c": "t3 auth pairing create"
     },
     " på den här datorn."
@@ -3510,15 +3534,15 @@
     " som en annan dator kan nå. Ange dess https- eller Tailscale-adress."
   ],
   "7ebb23e6bf9b19e8": "Parkopplingskod",
-  "e8235ebb43ad7228": "Skapa en länk på en dator: Inställningar → Delning och åtkomst → Auktoriserade klienter → Skapa länk, och klistra sedan in koden här.",
-  "a974e6c3c613e452": [
-    "Skapa en länk på ",
+  "c1244cdfaf295b5d": "Create a link on a machine: Settings → Connections → Create link, then paste its code here.",
+  "5fd75732c718cdf1": [
+    "Create a link on ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ": Inställningar → Delning och åtkomst → Auktoriserade klienter → Skapa länk och klistra sedan in dess kod här."
+    ": Settings → Connections → Create link, then paste its code here."
   ],
   "c205277bd4ab61d2": [
     "Den här miljön är redan länkad till ",
@@ -3837,13 +3861,20 @@
   "0a390286be34ef82": "Sparar",
   "aa48b4d278b7fae5": "Redigeras i inmatningsfältet",
   "49414ffb9aed57ab": "Ta bort från kön",
-  "de5c52c3f47ff209": "Skickat av T3 Code",
+  "38f2601f7424e07e": [
+    "Skickat av ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "ded43a280aed9f20": "Öppna tråd",
   "7635dd64bbbe10ec": "Öppna automatisering",
   "6327e4ffa0f2366d": "Pull requests är inte tillgängliga",
-  "90062342f04966ff": "Uppdatera den här miljöns T3 Code-server för att bläddra bland pull requests.",
+  "4e566103beadd678": "Uppdatera den här miljöns {appName}-server för att bläddra bland pull requests.",
   "5e7157db126f1641": "Ärenden är inte tillgängliga",
-  "42ade0e14ff6af94": "Uppdatera T3 Code-servern i den här miljön för att bläddra bland ärenden.",
+  "cb8fca9ae0aff892": "Uppdatera {appName}-servern i den här miljön för att bläddra bland ärenden.",
   "993dcd04611f9571": "Spara säkert",
   "55390eede35b4c5b": "Tillgängligt när huvudtråden är inaktiv.",
   "adb7e02a95cde08e": "Tillgängligt efter ett färdigt svar.",
@@ -4329,7 +4360,15 @@
   "79c3a186139f8c86": "Snabbläge på",
   "a772b49a38a3db40": "Vad gick fel?",
   "b29e1856c4aab31f": "Den här datorn",
-  "0cb5a221e9e13a4e": "Agenten läser T3 Codes loggar och källkod här och frågar innan den tillämpar en åtgärd eller publicerar något.",
+  "c722bc4d833dc79c": [
+    "Agenten läser ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "s loggar och källkod här och frågar innan den tillämpar en åtgärd eller publicerar något."
+  ],
   "e7588632064e0364": "Kopierat",
   "996f7752fa033da6": [
     "eller kör",
@@ -4755,7 +4794,15 @@
   "3647d568e852c86d": "Mobilklienter",
   "943d150a9045394c": "Mobila enheter som får aviseringar från dina miljöer.",
   "fe4e834cd36123fe": "Inga mobilklienter",
-  "3260726e13a6882b": "Installera T3 Code på telefonen och logga in på T3 Connect för att få push-aviseringar och liveaktiviteter.",
+  "096cd971e11827dc": [
+    "Installera ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " på telefonen och logga in på T3 Connect för att få push-aviseringar och liveaktiviteter."
+  ],
   "de111af2fe5653a6": "Kunde inte läsa in mobilklienter",
   "5d138bbbce733537": "T3 Connect-inställningar",
   "ff2d5256c7b57d7f": "Den finns inte längre på ditt T3 Connect-konto.",
@@ -4939,18 +4986,30 @@
   "6741a8be3d68b361": "Validerar den körbara filen",
   "40ca5af73e5b7aab": "Aktiverar installationen",
   "08d8d36fcb9a8e89": "Installera reläklienten?",
-  "fe2ff84504c41600": "T3 Code förbereder den här miljön för säker åtkomst via T3 Connect.",
-  "afdd35f49f2ab0a7": "T3 Code behöver reläklienten för att göra den här miljön tillgänglig via T3 Connect.",
+  "77dc8e3abcce47b1": "{appName} förbereder den här miljön för säker åtkomst via T3 Connect.",
+  "c4f9003a1f60099b": "{appName} behöver reläklienten för att göra den här miljön tillgänglig via T3 Connect.",
   "2767fee9bffb00ac": "{step} av {total}",
   "752bb0ea8b33e33e": "Förlopp för installationen av reläklienten",
-  "2eadb8e0944eeee6": "Håll T3 Code öppet medan reläklienten installeras.",
-  "0932e0330e2f409d": "Hanterad reläklient",
-  "3683040758069062": [
-    "T3 Code laddar ned och installerar version",
-    " ",
+  "735d71759e25f797": [
+    "Håll ",
     {
       "i": 1,
       "k": "_gt_value_1",
+      "v": "v"
+    },
+    " öppet medan reläklienten installeras."
+  ],
+  "0932e0330e2f409d": "Hanterad reläklient",
+  "41ace79912ff09a3": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " laddar ned och installerar version ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
       "v": "v"
     },
     " lokalt."
@@ -4987,9 +5046,8 @@
   "ff734d1382e017f3": "SSH-verifieringsfrågan misslyckades.",
   "d2e686fdfa6ea0d5": "Den här SSH-verifieringsfrågan har gått ut. Försök ansluta igen.",
   "f76ea65218a25f9f": "SSH-verifiering krävs",
-  "d783af11f0615e84": [
-    "Ange lösenordet eller verifieringskoden som krävs av",
-    " ",
+  "633b8b107de280c7": [
+    "Ange lösenordet eller verifieringskoden som krävs av ",
     {
       "t": "code",
       "i": 1,
@@ -4999,7 +5057,19 @@
         "v": "v"
       }
     },
-    ". T3 Code skickar ditt svar till den lokala SSH-processen och behåller det i minnet för att återanvända det för den här värden. T3 Code skriver det inte till disk."
+    ". ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " skickar ditt svar till den lokala SSH-processen och behåller det i minnet för att återanvända det för den här värden. ",
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    },
+    " skriver det inte till disk."
   ],
   "1c26f62937f27d39": "SSH-nycklar kan ersätta ett lösenord, men servern kan fortfarande kräva en verifieringskod.",
   "7ac4455553fe632a": "Fortsätt",
@@ -5763,7 +5833,7 @@
   "2e54b83eebac5a5b": "Appar som Poke och Claude körs i molnet. De behöver en publik adress för att nå {environment}.",
   "421bf913a992fba0": "T3 Connect ger {environment} den adressen. Varje app behöver fortfarande ditt godkännande.",
   "987158d85ee17ae8": "Anslut till {environment} först.",
-  "6bf09d4b7e4ba53b": "Uppdatera T3 Code på {environment}",
+  "6e85e59117b85a48": "Uppdatera {appName} på {environment}",
   "1f5ca8f60e873093": "Den här enheten behöver behörigheten Visa relä på {environment}.",
   "2fa31ba5b0186755": "Åtgärd: {fix}",
   "b3afa6e51eba1738": "Aktivera T3 Connect för {environment}",
@@ -5794,11 +5864,17 @@
   "9ec433045537acfc": "Kontrollera igen",
   "88f60e3d23ebcdd8": "Kontrollerar T3 Connect…",
   "5492129175e04f8d": "Ditt T3 Connect-konto har slut på tunnlar.",
-  "1505e983a4f9b08d": [
-    "Starta om T3 Code på ",
+  "5a302c2d18f5e917": [
+    "Starta om ",
     {
       "i": 1,
       "k": "_gt_value_1",
+      "v": "v"
+    },
+    " på ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
       "v": "v"
     },
     "."
@@ -5893,7 +5969,7 @@
   "26dca8ee72dc5d74": "Kunde inte läsa inställningarna",
   "52e7a660ce883609": "Ansluter fortfarande",
   "9a50b20569f2c9e7": "Dina sparade inställningar kunde inte läsas in.",
-  "0d22cd9e3b9d94f0": "T3 Code kunde inte bekräfta den här arbetsytan.",
+  "76f6d177f0175318": "{appName} kunde inte bekräfta den här arbetsytan.",
   "573a9e6b17f4e9e3": "Läs in igen",
   "d6c31ff9bb97570e": "Sökgränsen nåddes. Vissa projekt eller konversationer kan saknas.",
   "da6f86321113fb7b": "Den här anslutningen kan inte importera projekt eller trådhistorik.",
@@ -5930,7 +6006,7 @@
   "bd2304f25f6f999e": "{selected, plural, one {{selected} av {total} markerad} other {{selected} av {total} markerade}}",
   "228cd9fd55a55070": "Kunde inte kontrollera projekten igen. {error}",
   "1cc599c5f5874014": "Telefon",
-  "0f7c08d8284fee68": "T3 Code-appen för iPhone och Android",
+  "7d9b423d3abf8180": "{appName}-appen för iPhone och Android",
   "431bee88ecc944e4": "Kontrollera T3 Connect",
   "c747696796f64468": "T3 Connect är på, men appen kan inte nå den här datorn.",
   "96557a906f6167b9": "Inloggad. Dela den här datorn så att appen kan nå den.",
@@ -5945,7 +6021,14 @@
   "a0fd24f965eb070b": "Kunde inte importera trådhistorik.",
   "a506c135c2183ac3": "{count, plural, one {{count} mapp} other {{count} mappar}}",
   "efc48b9736a534bc": "nu",
-  "edf393ff951b533a": "Välkommen till T3 Code",
+  "ee8d164144fc4b9d": [
+    "Välkommen till ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "3cc77f9daa7eeafd": [
     "Konfigurerar",
     " ",
@@ -5962,12 +6045,16 @@
   ],
   "216ab7514aea1d61": "Starta utan agent",
   "501ce2d99da8bfd1": "Konfigurera en agent för att starta.",
-  "71f3822326109c8e": [
-    "T3 Code samlar in anonym användningsdata för att förbättra appen. Se",
-    " ",
+  "7da791b649c8a9e2": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " samlar in anonym användningsdata för att förbättra appen. Se ",
     {
       "t": "a",
-      "i": 1,
+      "i": 2,
       "c": "integritetspolicyn"
     },
     " för att välja bort det."
@@ -6015,7 +6102,15 @@
   ],
   "5c6a6009aedbf1d0": "Markera allt",
   "24c98c5086b8e76e": "Välj ingen",
-  "0070a15f6b693068": "Använd T3 Code på telefonen",
+  "fd3885544ce693bb": [
+    "Använd ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " på telefonen"
+  ],
   "37c66042ce1906da": "Skanna med telefonen för att skaffa appen.",
   "1b4364ef89b07f35": "Kunde inte kontrollera T3 Connect.",
   "7b10d40dd15938e5": "Din telefon kan nå den här datorn. Logga in i appen med samma konto.",
@@ -6081,10 +6176,6 @@
   "153553848233ee15": "Framåt",
   "240853568cd99a49": "Stoppa",
   "c345982ed3610277": "Sök eller ange URL",
-  "509733274928da85": "Avbryt anteckning",
-  "0b5bf74d94f7f690": "Kommentera förhandsvisning",
-  "c8243141ce88918f": "Avbryt anteckning (Esc)",
-  "f4ad38f77fe12791": "Kommentera element, områden och ritningar",
   "985f51e696efc795": "Stoppa inspelning",
   "80a82d63716f4e95": "Ta skärmbild",
   "88d8d3af3df63fe5": "Skärmbild · Shift-klicka för att spela in",
@@ -6124,7 +6215,7 @@
   ],
   "ea8745cfdf25286d": "Rensa cookies",
   "2f7b5572591cd41e": "Rensa cache",
-  "fbaa47ab5f038cfc": "Förhandsvisning finns bara i skrivbordsappen T3 Code.",
+  "5d831ada0b7092d3": "Förhandsvisning finns bara i skrivbordsappen {appName}.",
   "2f12af145a5b64f4": "Parkoppla den här klienten igen med förhandsvisningsåtkomst för att styra webbläsarförhandsvisningar.",
   "ab063600168940a1": "Ta bort {url} från historiken",
   "189cb97125af21c1": "Dölj detaljer",
@@ -6196,7 +6287,15 @@
   "b18dda39d9585f3e": "Kunde inte fånga det valda elementet",
   "cd312dae87fc794f": "Anteckningen behölls utan skärmbilden.",
   "4616fb6552fd8875": "Sidan lästes inte in. Välj är inte tillgängligt förrän sidan har renderats",
-  "770d6036de8dbcb7": "Den här fliken är öppen i skrivbordsappen T3 Code.",
+  "345dd7a051e55098": [
+    "Den här fliken är öppen i skrivbordsappen ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "b252602c8f71d6af": "Det gick inte att bryta ut förhandsvisningen",
   "0fc0a2ff438851b5": "Svävande webbläsarförhandsvisning",
   "74892fefe58df8e3": "Stäng utbruten förhandsvisning",
@@ -6226,22 +6325,29 @@
   "9e641d0f4dbd3b6f": "Öppna den här prompten",
   "b9b8dae971d448f0": "Den öppnas som ett utkast. Ingenting körs förrän du trycker på Skicka.",
   "261d264df9bd2938": "Öppna den här tråden",
-  "c13814bf1983bede": "Den öppnas i T3 Code om du är ansluten till datorn den körs på.",
+  "0551b0f568de8221": "Den öppnas i {appName} om du är ansluten till datorn den körs på.",
   "4ff182cb5d492675": "Öppnar en av dina trådar.",
   "a42cfd0085b4e0af": "Pull request {pullRequest}",
   "9574097752bf9d26": "Repo {repository}",
   "7a9583bfc01157d7": "Modell {model}",
-  "fcbeef090e9a49cf": "{count, plural, one {T3 Code tog bort {count} dolt tecken. Läs prompten innan du skickar den.} other {T3 Code tog bort {count} dolda tecken. Läs prompten innan du skickar den.}}",
+  "5462f8f29e3743f9": "{count, plural, one {{appName} tog bort {count} dolt tecken. Läs prompten innan du skickar den.} other {{appName} tog bort {count} dolda tecken. Läs prompten innan du skickar den.}}",
   "e81938ba97414f25": "Öppna i appen",
   "fb8165cf69e8b46e": "Öppna i skrivbordsappen",
   "74da45ffb53c3ab1": "Den här prompten hade dolda tecken och kan vara skadlig",
   "2053d7c11214c657": "Fortsätt här",
-  "5765f408ae142259": "Skaffa T3 Code",
+  "631867ac7aa347c6": [
+    "Skaffa ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "d2e48075c05360e5": "Kom ihåg mitt val",
   "32fc7d210cbbc615": "Länken bad om {provider}, som inte är konfigurerad här, så din standardmodell används.",
   "9b92881caca4c843": "Länken bad om {model}, som {provider} inte erbjuder här, så dess standardmodell används.",
   "b66409815aa2dce2": "Ingen av dina datorer kan starta en tråd utan projekt just nu.",
-  "9dc5ed64675c0a3d": "Den här datorn kan inte klona från en länk. Uppdatera T3 Code på den eller klona repot från kommandopaletten.",
+  "c3c0ca5d156f27a9": "Den här datorn kan inte klona från en länk. Uppdatera {appName} på den eller klona repot från kommandopaletten.",
   "0fb02ded4e3a6879": "Kloningen startade, men projektet dök inte upp.",
   "2f9a4c7f7a26d7bd": "Klonar {repository}",
   "db7a9fbe79934739": "Öppna länken igen när kloningen är klar.",
@@ -6960,7 +7066,7 @@
   "cde5898c2d720e4d": "Sök pull requests eller label:bug",
   "0e7bc29c7ba8e55d": "Välj en pull request först",
   "e853db3f751bf5e4": "Läser in pull requests…",
-  "ebf96a2bb1345a4b": "Uppdatera dina T3 Code-servrar för att bläddra bland pull requests.",
+  "1eafc4237b145733": "Uppdatera dina {appName}-servrar för att bläddra bland pull requests.",
   "97a0009c0d4302b2": "{error} Visar de senast inlästa pull requests.",
   "2b6aa56786a0a574": "Uppdaterar pull requests",
   "133c6244ed1277f2": "Läser in fler",
@@ -7472,8 +7578,8 @@
   "e26c3e8a2b76eb7c": "Kunde inte öppna Systeminställningar. Försök med Tillåt igen.",
   "6691de9875a03f07": "Full skivåtkomst",
   "c8c61106697ccef6": "Läs cookies från {browser} för den här importen.",
-  "9d7376f252f4b80f": "Åtkomst krävs fortfarande. Avsluta och öppna T3 Code igen om du precis tillät det, och försök sedan importera igen.",
-  "a134bbc40d0bb293": "Om åtkomsten inte uppdateras efter att du har tillåtit den, avsluta och öppna T3 Code igen och försök sedan importera igen.",
+  "58753f64994df305": "Åtkomst krävs fortfarande. Avsluta och öppna {appName} igen om du precis tillät det, och försök sedan importera igen.",
+  "f9d7f8dcb426861a": "Om åtkomsten inte uppdateras efter att du har tillåtit den, avsluta och öppna {appName} igen och försök sedan importera igen.",
   "7f0e44a32856487e": "Du har nått gränsen för profiler. Välj en befintlig profil att importera till.",
   "38419e3442b3a9b1": "Från",
   "0b6c47fddd767fe6": "Till",
@@ -7509,22 +7615,34 @@
     " är öppen, så dess cookies kan inte läsas än. Avsluta den och fortsätt sedan."
   ],
   "33e46d95a6e43975": "Jag har avslutat den",
-  "4244ad5e8e097a55": [
-    "Låt T3 Code läsa cookies från ",
+  "c99e38ae75b3f5d3": [
+    "Låt ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
+    },
+    " läsa cookies från ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
     }
   ],
-  "8f8f31363cbae72f": [
+  "8dcf4cae5c1238f2": [
     "För att importera cookies från ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " behöver T3 Code Full skivåtkomst. Aktivera det i Systeminställningar och kom sedan tillbaka för att slutföra importen. Du kan återkalla det igen när importen är klar."
+    " behöver ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " Full skivåtkomst. Aktivera det i Systeminställningar och kom sedan tillbaka för att slutföra importen. Du kan återkalla det igen när importen är klar."
   ],
   "6418483c2e2b1e27": [
     "Importera från ",
@@ -7579,7 +7697,7 @@
   "744cb5258d91191c": "Förbereder ändringar…",
   "e880959d9520231a": "Granska ändringar",
   "5b026d8f9d28659a": "Ansluter till ditt skrivbord…",
-  "3e19ea9973d25861": "Starta om T3 Code för att slutföra anslutningen av ditt kortkommando.",
+  "a6aa1c4ff24439ca": "Starta om {appName} för att slutföra anslutningen av ditt kortkommando.",
   "170c3990734c67c5": "Använd skrivbordsmiljöns inställningsfil för kortkommandon. En anpassad --config eller NIRI_CONFIG kan ändra dess plats.",
   "419eb8d659fedf57": "Använd skrivbordsmiljöns inställningsfil för kortkommandon. På Omarchy använder du din egen bindningsfil, inte dess standardfil.",
   "351ba3e0af6a05c3": "Säkerhetskopia: {path}",
@@ -7589,10 +7707,25 @@
   "256a718904049152": "Kortkommando",
   "8e69f303e7e62311": "Tryck på ditt kortkommando. Esc avbryter.",
   "8ab8ef3dc5c9ccbe": "Bara de här ändringarna sparas. Vi behåller en säkerhetskopia.",
-  "95e47bf4ef6fd9ca": "Låt T3 Code läsa dina skrivbordsinställningar. Du granskar eventuella ändringar här innan de sparas.",
+  "5a00ecfbf6d79823": [
+    "Låt ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " läsa dina skrivbordsinställningar. Du granskar eventuella ändringar här innan de sparas."
+  ],
   "0f3ce8b38a3b806f": "Felsökning",
   "b472a7b2482b54bf": "Inställningsfil",
-  "09015c1f17899798": "T3 Code läser också alla filer som den här filen inkluderar.",
+  "4bdcc6c44ad4ea20": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " läser också alla filer som den här filen inkluderar."
+  ],
   "3790c926a39864b6": [
     "Länkad till ",
     {
@@ -7606,15 +7739,20 @@
   "e1fcc4b74faaae02": "Ta bort kortkommando…",
   "efa55bbb1d3aa45e": "Granska ändringar",
   "3e02b74615e20d82": "Manuell konfiguration",
-  "302d4a8ec8a13479": [
-    "Stäng av inspelning i T3 Code för att stoppa den. Ta bort kortkommandot från ",
+  "957213d003612ea8": [
+    "Stäng av inspelning i ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " ",
-    "för att frigöra tangenterna."
+    " för att stoppa den. Ta bort kortkommandot från ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " för att frigöra tangenterna."
   ],
   "4bf700ad94c0c486": "Jag har lagt till kortkommandot",
   "bcdea6ebe1a65e63": "ChatGPT-konto att ansluta",
@@ -7624,7 +7762,15 @@
   "647aa17e2ff223b1": "Ta bort anslutning",
   "37c67881813d8bd2": "Fortsätt med ChatGPT",
   "6b9b6ebc5d641bc1": "Ditt ChatGPT-abonnemang är anslutet",
-  "8eadb8b01f860f30": "Kvalificerad användning i T3 Code använder ditt ChatGPT-abonnemang. Hantera din delade användning och eventuella kreditinställningar i ChatGPT.",
+  "7658fdd43abdbd60": [
+    "Kvalificerad användning i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " använder ditt ChatGPT-abonnemang. Hantera din delade användning och eventuella kreditinställningar i ChatGPT."
+  ],
   "a07fd9e52e88a7b1": [
     {
       "i": 1,
@@ -7641,8 +7787,8 @@
   "d0e747ae0c4f68a5": "Kunde inte installera t3",
   "ba3ac338f36cba74": "Kunde inte ta bort t3",
   "9c942b53b58119b8": "Kunde inte lägga till t3 i PATH",
-  "dbd9a279df913da0": "En annan t3 i {path} körs först i en ny terminal. Ta bort den för att använda T3 Codes.",
-  "20a48e388fd71c1d": "Kör T3 Codes CLI som `t3` från valfri terminal.",
+  "752a0c0ce48db5b7": "En annan t3 i {path} körs först i en ny terminal. Ta bort den för att använda {appName}s.",
+  "61b63b1b71b8aa69": "Kör {appName}s CLI som `t3` från valfri terminal.",
   "4f6e93011ef2da6f": "Installerad i {path}. Öppna en ny terminal för att använda den.",
   "371ca438cf467125": "Installerad i {path} och tillagd i PATH i {file}. Öppna en ny terminal för att använda den.",
   "fd3eece9d1a7ea38": "Installerad i {path}, som inte finns i din PATH än.",
@@ -7746,10 +7892,10 @@
   "fe373cd6662fa8bc": "Installerar Codex.",
   "16d39e395a6842ee": "Kontrollerar Codex.",
   "57946f2e4d6a8bc2": "Använder ditt installerade Codex · v{version}.",
-  "9dac6b3f0fb48521": "Hanteras av T3 Code · v{version}.",
+  "d6c37e4411915116": "Hanteras av {appName} · v{version}.",
   "7b5c436d5524b6bd": "Använder ditt installerade Codex.",
-  "bef658b9305f1c7b": "Hanteras av T3 Code.",
-  "21812e407893acb8": "T3 Code laddar ned och hanterar Codex åt dig.",
+  "a0ffef8803fb4c2f": "Hanteras av {appName}.",
+  "3de934e54679a5e3": "{appName} laddar ned och hanterar Codex åt dig.",
   "86326fa94616c5dd": "Slutför inloggningen...",
   "4b45a10b734ce998": "Fortsätt som {email} hos OpenAI.",
   "2219beb32ce31dfc": "Slutför inloggningen i webbläsaren.",
@@ -7769,7 +7915,7 @@
   "ee95b7f361df57dd": "Codex-konfiguration",
   "3bbc7a9e90591aeb": "Kunde inte läsa konfigurationsstatusen för Codex. Återanslut och försök igen.",
   "aafd7696040124b4": "Sökväg till binärfil",
-  "f2313e33cf0bfd4e": "Vald av T3 Code.",
+  "332d3c0ef63e247a": "Vald av {appName}.",
   "29684e6bf1c6fde6": "Sökväg till Codex-binärfilen",
   "1b74ad96abe073dd": "Kunde inte läsa sökvägen till körmiljön",
   "af0e13ee7adf5b2e": "CODEX_HOME-sökväg",
@@ -7796,7 +7942,15 @@
   "adb02e7b08c65a4a": "Fortsätt med ChatGPT",
   "ad6392ce4488c5dc": "Använd befintligt CLI",
   "f91296e641fed934": "Öppna inloggningssidan",
-  "631ca7968ee42f73": "Om inloggningen inte återvänder till T3 Code, klistra in URL:en från den sista localhost-sidan.",
+  "a4bf940e2844d4d4": [
+    "Om inloggningen inte återvänder till ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", klistra in URL:en från den sista localhost-sidan."
+  ],
   "90f46dbf8782cfde": "Anslut",
   "2c2103f711ffceb5": "Prova att logga in i webbläsaren",
   "f2400365e53495c3": "Andra sätt att ansluta",
@@ -7913,7 +8067,7 @@
   "5ba55a65d8600504": "WSL-backend",
   "37d59ef5d0560c42": "(standard)",
   "6d0078b22dd48e5e": "Endast WSL",
-  "e3729d401c68961e": "Kör bara WSL-backenden. T3 Code startar om när detta ändras.",
+  "35b6e498b04604fd": "Kör bara WSL-backenden. {appName} startar om när detta ändras.",
   "2436c98b544eff80": "Kör endast WSL",
   "f060774ce36f44fb": "Använd Tailscale Serve för att exponera den här backenden via en HTTPS-URL i MagicDNS.",
   "ec43c3fd73a863f3": "Aktivera Tailscale HTTPS",
@@ -7934,8 +8088,8 @@
   "a0e93cca71d0417e": "Auktoriserade klienter",
   "03b9501ae07b5cf3": "Aktivera nätverksåtkomst?",
   "a09aff32ef3d89c7": "Inaktivera nätverksåtkomst?",
-  "161e8b5715b55fdc": "Låt dina andra enheter ansluta till T3 Code via nätverket. Parkoppla enheter för att ge dem åtkomst. T3 Code startas om.",
-  "a3fe8c741fd5c391": "Enheter som är anslutna via ditt lokala nätverk kopplas från. Befintliga tunnlar, som T3 Connect eller Tailscale HTTPS, fortsätter att fungera. T3 Code startas om.",
+  "cfe3d6e808716f79": "Låt dina andra enheter ansluta till {appName} via nätverket. Parkoppla enheter för att ge dem åtkomst. {appName} startas om.",
+  "471c62ce78a99f6a": "Enheter som är anslutna via ditt lokala nätverk kopplas från. Befintliga tunnlar, som T3 Connect eller Tailscale HTTPS, fortsätter att fungera. {appName} startas om.",
   "3e02da0c3a5d5b6c": "Starta om och aktivera",
   "b806f0521f52c70a": "Starta om och inaktivera",
   "4d47ff0966e2b0eb": "Stänga av WSL och byta tillbaka till Windows?",
@@ -7944,12 +8098,12 @@
   "a79a025bcb52c878": "Starta WSL-backenden",
   "c3e9ab586c5eb33f": "Köra bara WSL-backenden?",
   "b855028ed4fd179c": "Aktivera Windows-backenden igen?",
-  "7da9fdb497073305": "T3 Code startar om med Windows-backenden. Trådar och projekt som öppnats mot WSL finns kvar säkert i distributionen och blir tillgängliga igen när du aktiverar WSL igen.",
-  "f3f37d95189003c1": "WSL-backenden stoppas. Trådar och projekt som öppnats mot WSL finns kvar säkert i distributionen, men de är inte tillgängliga i T3 Code förrän du aktiverar WSL igen.",
-  "f11a22fba7730a97": "T3 Code startar om WSL-backenden på den nya distributionen. Sessioner som fortfarande körs på den nuvarande distributionen avbryts.",
+  "d47f55071a5b6506": "{appName} startar om med Windows-backenden. Trådar och projekt som öppnats mot WSL finns kvar säkert i distributionen och blir tillgängliga igen när du aktiverar WSL igen.",
+  "9c6ac49a626903a7": "WSL-backenden stoppas. Trådar och projekt som öppnats mot WSL finns kvar säkert i distributionen, men de är inte tillgängliga i {appName} förrän du aktiverar WSL igen.",
+  "2445ec5473807893": "{appName} startar om WSL-backenden på den nya distributionen. Sessioner som fortfarande körs på den nuvarande distributionen avbryts.",
   "caf1378747ed925f": "Köra WSL-backenden parallellt med Windows-backenden, eller stoppa Windows-backenden och bara använda WSL? Du kan ändra det senare i Inställningar.",
-  "a4492b563c0e0eb1": "T3 Code startar om och startar bara WSL-backenden. Dina projekt på Windows-sidan är inte åtkomliga förrän du stänger av det här igen.",
-  "4e7cf721d1c75cb8": "T3 Code startar om och startar Windows-backenden igen parallellt med WSL.",
+  "e85aa012b9ae1026": "{appName} startar om och startar bara WSL-backenden. Dina projekt på Windows-sidan är inte åtkomliga förrän du stänger av det här igen.",
+  "853e5ebeb04a2566": "{appName} startar om och startar Windows-backenden igen parallellt med WSL.",
   "d7651a567fdfb121": "Använd endast WSL",
   "fd5f7ffe40bb865a": "Kör båda backendarna",
   "62edcaccd5694d78": "Byt till Windows",
@@ -7976,10 +8130,24 @@
   "5efa21c55ba2ac54": "Den här anslutningen kan skapa åtkomstlänkar men kan inte visa auktoriserade klienter.",
   "40335d08877bc746": "Tillämpar…",
   "84fc63fcbcce915e": "Inaktivera Tailscale HTTPS?",
-  "ffc4349140138783": "T3 Code startar om den lokala backenden utan Tailscale Serve.",
+  "fb36d16d84bd4bf1": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " startar om den lokala backenden utan Tailscale Serve."
+  ],
   "336b538d6e55ed78": "Startar om…",
   "cd7ad8d91a063d09": "Konfigurera Tailscale HTTPS?",
-  "fba4061567111460": "T3 Code startar om den lokala backenden med Tailscale Serve aktiverat och ber Tailscale att vidarebefordra HTTPS-trafik till den här backenden.",
+  "eb599d6440c3565d": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " startar om den lokala backenden med Tailscale Serve aktiverat och ber Tailscale att vidarebefordra HTTPS-trafik till den här backenden."
+  ],
   "2a0148ea9068a814": "HTTPS-port",
   "7f4f2ba57d3d1c76": "Ange en port mellan 1 och 65535.",
   "82af9c66caf2f40c": "HTTPS-slutpunkt",
@@ -8005,15 +8173,14 @@
   "b1137657751dd7f0": "Kopiera från…",
   "5bcce79726ce6ad8": "Inga anpassade alternativ. Inmatningsfältet använder leverantörens standardalternativ.",
   "b584f8e39d1179c7": "Anpassat alternativ",
-  "3e90738d0ff19a29": "Databas",
   "9e28cb72cb075933": "Återta frigjort databasutrymme",
   "881b21a84162fe36": "Databaserna håller fortfarande utrymme som frigjorts av historikrensning.",
   "4c75e75471826566": "Databaserna håller fortfarande utrymme som frigjorts av historikrensning. Kör kommandot på varje dator för att återta det. Det startar om bakgrundstjänsten. Avsluta skrivbordsappen först om den är värd för miljön.",
   "5b5c8fcf447e3aa7": "{amount} på {environment}",
   "449c116994815baf": "Återtar {amount} på {environment}",
-  "9a0d99b375ecd0b0": "T3 Code där startar om och är tillbaka om cirka {minutes} min.",
+  "f71732877678fec3": "{appName} där startar om och är tillbaka om cirka {minutes} min.",
   "2f0da3b306994f11": "Kunde inte återta utrymme på {environment}",
-  "98d92702c1426703": "Startar om T3 Code där. Det är offline i cirka {minutes} min.",
+  "02b86c9b93b12279": "Startar om {appName} där. Det är offline i cirka {minutes} min.",
   "184b96013883725b": "Senaste försöket misslyckades: {reason}",
   "974953ec2f4fd3e4": "Återta",
   "32441d85d8403ba4": "Kopiera kommando",
@@ -8032,17 +8199,22 @@
     },
     "?"
   ],
-  "f264722f7ad117ad": [
-    "T3 Code på ",
+  "55c43a67d4dbc4ee": [
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " stoppar, bygger om sin databas och startar igen. Det är offline i cirka ",
+    " på ",
     {
       "i": 2,
       "k": "_gt_value_2",
+      "v": "v"
+    },
+    " stoppar, bygger om sin databas och startar igen. Det är offline i cirka ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
       "v": "v"
     },
     " min. Agenter som körs stoppas vid omstarten."
@@ -8307,9 +8479,9 @@
   "1c56df57177fe187": "Anpassad sök-URL",
   "3de0a3b88d2561f2": "Använd %s där söktermerna ska stå.",
   "5f33e5807e2c4463": "Ange en http- eller https-URL som innehåller %s. Sökningar använder DuckDuckGo tills dess.",
-  "84b0f6ddab031f84": "När du klickar på en länk till en pull request öppnas den i T3 Code. Stäng av för att öppna länkar till pull requests som vanliga länkar, hos din Git-värd.",
-  "b9335f8e528f91d6": "Återställ Öppna pull requests i T3 Code till standard",
-  "d5a0a7ab5da467aa": "Öppna pull requests i T3 Code",
+  "48a492fd778cddc2": "När du klickar på en länk till en pull request öppnas den i {appName}. Stäng av för att öppna länkar till pull requests som vanliga länkar, hos din Git-värd.",
+  "a0bb1d917ce0e073": "Återställ Öppna pull requests i {appName} till standard",
+  "abbae87b2ce2bfa3": "Öppna pull requests i {appName}",
   "55087c889e8a065d": "Enhetsinställningarna sparades inte i alla miljöer",
   "73e76ba75c8d3096": "Kunde inte uppdatera {environments}.",
   "b16605b8957226ea": "Uppdatera",
@@ -8322,6 +8494,8 @@
   "b395b88284e3bca2": "Visa den flytande förhandsvisningen när en agent öppnar en webbläsare eller enhet, om inte agenten säger något annat.",
   "6aadfd59cf60b4b5": "Återställ automatisk visning av flytande förhandsvisning till standard",
   "e4a7ec61190bc1f9": "Visa flytande förhandsvisning automatiskt",
+  "458a826619d5144e": "Reset annotation dictation URL to default",
+  "072414b442b3601b": "Reset annotation dictation stop URL to default",
   "3705c53cb3e76a28": "Kunde inte rensa data för {name}",
   "d93902b4fae4b437": "Du är inte ansluten till någon server än.",
   "16fcf9dc21645f8f": "Rensade cookies och cache för {name}",
@@ -8519,7 +8693,14 @@
   "1b298f8bdfbdac33": "Öppna keybindings.json",
   "38aae3d3373b7e6e": "Anslut en miljö för att ändra kortkommandon.",
   "523dd4a75f84834c": "Den här anslutningen kan visa kortkommandon men inte ändra dem.",
-  "64b7e0256ef5677d": "T3 Code känner inte igen det här villkoret än. Det kan ändå sparas, men det kanske inte matchar om inte körmiljön tillhandahåller det.",
+  "6e9aec982adb14d3": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " känner inte igen det här villkoret än. Det kan ändå sparas, men det kanske inte matchar om inte körmiljön tillhandahåller det."
+  ],
   "be1f3ea0fa490562": "Den senaste matchande bindningen vinner när båda villkoren kan gälla.",
   "bc73d7a0c9ccc021": "Rätta uttrycket ovan för att fortsätta redigera visuellt.",
   "7189314b73d9fe61": "Ej tilldelat",
@@ -8560,23 +8741,26 @@
     },
     ". När det är av startar inget nytt via en länk; pågående uppgifter slutförs."
   ],
-  "ce6a3933a976ac7e": [
-    "Låt enhetspanelen hyra simulatorer och emulatorer från din egen",
-    " ",
+  "aea6614a5a6684ee": [
+    "Låt enhetspanelen hyra simulatorer och emulatorer från din egen ",
     {
       "t": "a",
       "i": 1,
       "c": "Simlock"
     },
-    "-",
-    "pool, tillagd under",
-    " ",
+    "-pool, tillagd under ",
     {
       "t": "Link",
       "i": 2,
       "c": "Enheter"
     },
-    ". En alfaversion som kan ändras eller sluta fungera. T3 Code installerar aldrig Simlock."
+    ". En alfaversion som kan ändras eller sluta fungera. ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " installerar aldrig Simlock."
   ],
   "3836976622328d61": "Vad agenter här får göra där",
   "b20c269e7ad96f42": "En agent får aldrig mer åtkomst där än sitt eget läge här. Utan full åtkomst kan den bara ändra trådar som den här länken startade, inte den datorns egna trådar, projekt eller inställningar.",
@@ -8589,8 +8773,8 @@
   "4cea6be0fe6be16f": "Kunde inte läsa in länkade miljöer",
   "58cb9c075da185fb": "Läser in länkade miljöer…",
   "25b74062dc03079e": "Inga länkade miljöer",
-  "6698127fcc912f23": "Länka en annan dator som kör T3 Code, till exempel en VPS, så att agenter här kan starta och styra trådar där.",
-  "ad5ed0ce61b966eb": "Glöm {label}? Agenter här slutar arbeta där. Återkalla ”T3 Code · …” under Delning och åtkomst på {label} för att avsluta sessionen där också.",
+  "8e0df75f6865d05b": "Länka en annan dator som kör {appName}, till exempel en VPS, så att agenter här kan starta och styra trådar där.",
+  "924b297fd8bbb913": "Glöm {label}? Agenter här slutar arbeta där. Återkalla ”{appName} · …” under Delning och åtkomst på {label} för att avsluta sessionen där också.",
   "81c9796bf61b306a": "Kunde inte glömma länken",
   "33386c89f3b07fea": "Har gått ut. Länka den igen med en ny parkopplingskod.",
   "13d91e967cd9065c": "Svarar inte just nu.",
@@ -8617,13 +8801,13 @@
   "ebfef435bd266c26": "Belastningsinställning för {environment}",
   "a49a651079f9664d": "Nya trådar i delade projekt startar på den dator som har mest ledig CPU och minne, viktat efter varje dators inställning.",
   "da16b9e4be45ae09": "Det gick inte att ändra inställningen.",
-  "d1781a918f8a11cf": "Kör agenter på den här datorn. Stäng av för att bara använda T3 Code med fjärrmiljöer.",
+  "f272b671da893f4a": "Kör agenter på den här datorn. Stäng av för att bara använda {appName} med fjärrmiljöer.",
   "e1391d08740f38f0": "Avstängd. Agenter körs bara i fjärrmiljöer.",
   "1bb6eb8f0604ec00": "Lokal miljö",
   "06873604593555f2": "Stänga av den lokala miljön?",
   "4ced358c0a88e181": "Aktivera den lokala miljön?",
-  "2bb64ad2007e3c6a": "T3 Code startar om utan att köra en server på den här datorn. Agenter och terminaler som körs här stoppas, och andra enheter kan inte längre ansluta till den här datorn. Dina projekt, din historik och dina fjärrmiljöer påverkas inte.",
-  "06ed78c51947fdb7": "T3 Code startar om och börjar köra en server på den här datorn igen.",
+  "0455dfd8c1caeb7f": "{appName} startar om utan att köra en server på den här datorn. Agenter och terminaler som körs här stoppas, och andra enheter kan inte längre ansluta till den här datorn. Dina projekt, din historik och dina fjärrmiljöer påverkas inte.",
+  "3b7b6336684c938a": "{appName} startar om och börjar köra en server på den här datorn igen.",
   "5741e027bc5d5e4c": "Starta om och stäng av",
   "e09686bd65886c10": "Starta om och aktivera",
   "b8c82ba62b34f0e4": "Mikrofoner, föredragen först",
@@ -8654,22 +8838,27 @@
   "d797c9687a256a50": "Anslut till din server från din telefon eller surfplatta.",
   "c21858dee1b62639": "Länk till {store}",
   "cdcdc54a444a3636": "Skanna med telefonens kamera.",
-  "73da41e93823fd71": [
+  "243e8d40c3cf428d": [
     "Vi rekommenderar inte att du hanterar flera ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    "-konton i T3 Code.",
-    " ",
+    "-konton i ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    ". ",
     {
       "t": "a",
-      "i": 2,
+      "i": 3,
       "c": "Mer info"
     }
   ],
-  "78196d04f05923d0": "Systemaviseringar när en tråd blir klar, misslyckas eller behöver indata eller godkännande. Gäller den här enheten medan T3 Code är öppen.",
+  "bd87779b86bb96bd": "Systemaviseringar när en tråd blir klar, misslyckas eller behöver indata eller godkännande. Gäller den här enheten medan {appName} är öppen.",
   "24a0ac9e7e55975c": "Aviseringar kräver en webbläsare som stöds via HTTPS, eller skrivbordsappen. Endast ljud är fortfarande tillgängligt.",
   "6b0b1dd4d399d3c6": "Aviseringar är inte tillgängliga i den här webbläsaren. Endast ljud är fortfarande tillgängligt.",
   "42983a4d32f489cc": "Tillåt aviseringar i webbläsarens eller systemets inställningar och välj sedan det här alternativet igen. Endast ljud är fortfarande tillgängligt.",
@@ -9034,7 +9223,7 @@
   "f8c1b66eb8b5dbd8": "Sökväg till Kiro CLI-binären.",
   "1fc0ad6e3624dbd8": "Sökväg till Muse Code-binären i den här miljön. Logga in med muse login på den värden.",
   "ab221de3bd424896": "Sökväg till OpenCode-binären.",
-  "b7e33c69bf8a50d0": "Lämna tomt för att låta T3 Code starta servern vid behov.",
+  "b59afb9bc820ed63": "Lämna tomt för att låta {appName} starta servern vid behov.",
   "ed42d531a626ffe4": "Lagras separat på värden.",
   "41bf44b0cfbc4394": "Sökväg till binären för kodagenten Pi.",
   "af059d908bee1496": "Extra CLI-argument som skickas till pi --mode rpc när sessionen startar.",
@@ -9334,7 +9523,7 @@
   "8fddf21c28c34154": "T3 Connect är på. Nåbarheten har inte kontrollerats än.",
   "b2cf3dccd52f02ec": "T3 Connect är inte synkroniserat. Miljön är bara länkad för att publicera agentaktivitet, så andra enheter kan inte ansluta. Slå på T3 Connect för att reparera det.",
   "bf1a82ceb6a864f5": "Miljön togs bort från T3 Connect. Kör `t3 connect link` på värden för att länka den igen.",
-  "818e1ff39ebdf4a6": "Kör `t3 connect link` på värden och starta sedan om T3 Code där.",
+  "bef24aeb5eb0e50e": "Kör `t3 connect link` på värden och starta sedan om {appName} där.",
   "0a3123a6ce981075": "Logga in för att skicka aktivitet till mobilaviseringar och liveaktiviteter.",
   "c42a0de969f4133f": "Skicka aktivitet till mobilaviseringar och liveaktiviteter utan T3 Connect.",
   "5f8ca828eca1ce1a": "Publicera agentaktivitet till mobilklienter",
@@ -9433,7 +9622,7 @@
   "32a7e5361908f68b": "Ogiltigt intervall",
   "6e820a7742353257": "Ange ett intervall på minst en minut.",
   "9e596c405f5cea09": "En gång är inte tillgängligt här",
-  "e450f26e1af0a074": "Den här miljön kör en äldre version av T3 Code. Uppdatera den för att schemalägga en engångsuppgift, eller välj ett annat schema.",
+  "74ae3d5b43248a2b": "Den här miljön kör en äldre version av {appName}. Uppdatera den för att schemalägga en engångsuppgift, eller välj ett annat schema.",
   "71d8554090924454": "Sökväg till utcheckningen krävs",
   "a34b72de0ff1cbd0": "Ange sökvägen till utcheckningen som ska köras i.",
   "99a8c45121157edd": "Kunde inte spara den schemalagda uppgiften",
@@ -9554,11 +9743,17 @@
   "1c9374501ee389d3": "Lägg till ett 1Password-konto och välj det sedan som källa för en leverantörsvariabel.",
   "382541febe15f472": "Växla kontots synlighet",
   "40426afd511710f8": "Leverantör som inte stöds ({kind})",
-  "69dc1b9968c66243": [
-    "Uppdatera T3 Code på ",
+  "fa551327f599487c": [
+    "Uppdatera ",
     {
       "i": 1,
       "k": "_gt_value_1",
+      "v": "v"
+    },
+    " på ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
       "v": "v"
     },
     " för att hantera dess hemlighetsleverantörer."
@@ -9735,6 +9930,7 @@
   "b210068e1f078ffa": "Bekräfta stängning av terminaler",
   "d3d5e97af7697bee": "Återställ beteende för kortkommandot Avsluta till standard",
   "0c853c878aab1908": "Beteende för kortkommandot för att avsluta",
+  "88403fa251ee5dab": "Reset swipe navigation to default",
   "22e745b7db60e52f": "Visning",
   "9f294af5bddaafa9": "Återställ språk till standard",
   "093effae2951a4e7": "Återställ tidsformat till standard",
@@ -9817,9 +10013,9 @@
   "c424bee294b9f778": "Miljön hanteras av {organization}. Vissa inställningar och funktioner följer dess policy.",
   "82d9538af590f58c": "Se dina agenter, importera projekt och konfigurera din telefon.",
   "6a48fd0a37e725a1": "Juridiskt",
-  "d6d3ea46ac979e1c": "Hur vi hanterar dina data, inklusive de anonyma användningsdata som T3 Code samlar in.",
+  "5b6fb8eabf9923eb": "Hur vi hanterar dina data, inklusive de anonyma användningsdata som {appName} samlar in.",
   "e741b1ab9396053a": "Hur vi hanterar dina data. {telemetryOff}",
-  "0bffbbf4d7f780c0": "Meddelanden för beroenden, resurser och valfria verktyg som T3 Code använder.",
+  "697c4f5be1f2fdb8": "Meddelanden för beroenden, resurser och valfria verktyg som {appName} använder.",
   "e39a57514be028e9": "Granska",
   "7c0512387c3a42ea": "Stable",
   "3476687eaa175b32": "Nightly",
@@ -10133,7 +10329,7 @@
   "7d2672fd823e0276": "Kunde inte tillåta fångst av apptext",
   "64f8b9395c4bacc4": "Kunde inte kontrollera kortkommandot.",
   "cfdc826f49e69ac9": "Tryck på ditt kortkommando. Esc avbryter.",
-  "0bea89b44e5a2d70": "T3 Code använder redan detta för ”{command}”.",
+  "08075f9916582315": "{appName} använder redan detta för ”{command}”.",
   "6e9fca2ef0196a5a": "Kontrollerar kortkommandot…",
   "cfa11e4c853c063f": "Redo att spara.",
   "89c86e42bbf58250": "Prova ett kortkommando som Ctrl+Shift+2.",
@@ -10172,7 +10368,7 @@
   "418560fa0ea3544c": "Åtkomst",
   "a134b87ef97e5448": "Kortkommando",
   "a3f747337cd6b976": "Installera tillägget",
-  "54576be78e68ef2e": "Med GNOME-tillägget för T3 Code kan du fånga andra fönster och ta in dem i ditt utkast. Logga ut en gång efter installationen.",
+  "ea17017b25f5a3ca": "Med GNOME-tillägget för {appName} kan du fånga andra fönster och ta in dem i ditt utkast. Logga ut en gång efter installationen.",
   "a64fb25a0dca8b9e": "Tillägget är installerat",
   "d7dd0312e81f531b": "Spara ditt arbete och logga sedan ut och in igen. Din konfiguration väntar här.",
   "6224c735e72641ce": "Uppdatera tillägget",
@@ -10180,13 +10376,13 @@
   "68dc148ee629e72c": "Tillåt GNOME-tillägg",
   "e8ce3a0ea5970cbd": "Öppna GNOME Extensions och slå på tillägg, och kontrollera sedan igen.",
   "8e2a1daf5ae4e253": "Aktivera tillägget",
-  "badde72b8abcf6f1": "Aktivera T3 Code SnapShots för att börja fånga fönster.",
+  "1c190f90d20606e1": "Aktivera {appName} SnapShots för att börja fånga fönster.",
   "c650f0ca645ce2fd": "Skärmfångsten är redo",
   "180764914db1f449": "Välj sedan ditt kortkommando.",
   "1deaba200c76a0f5": "Automatisk fångst är inte tillgänglig",
   "8545cc747cd78679": "Använd Ta ögonblicksbild i kommandopaletten för att välja ett fönster.",
   "c7151ea6cfcea431": "Kunde inte konfigurera tillägget",
-  "ccf65aac5ca40975": "Kontrollera T3 Code SnapShots i GNOME Extensions och försök sedan igen.",
+  "e4892870a56c2120": "Kontrollera {appName} SnapShots i GNOME Extensions och försök sedan igen.",
   "c8cce66adf416be2": "Vi försöker igen",
   "5ac7cec1cc3c4589": "Kunde inte kontrollera ögonblicksbilder. Försök igen för att fortsätta.",
   "3317366cc6a44aab": "Kontrollera åtkomst för skärmfångst",
@@ -10195,7 +10391,7 @@
   "3286b03339b096fd": "Försök installera om fångsthjälpen och kontrollera sedan igen.",
   "99f4c9b7ff5452c5": "Uppdatera fångsthjälpen",
   "fad42c95421b9215": "Tillåt ögonblicksbilder",
-  "b3fde588367c4157": "Med T3 Codes fångsthjälp kan du fånga andra appar och återgå till ditt utkast. Den ingår i T3 Code.",
+  "c24eefe08529a4ef": "Med {appName}s fångsthjälp kan du fånga andra appar och återgå till ditt utkast. Den ingår i {appName}.",
   "5c6afb84c90d6b73": "Välj ett fönster varje gång",
   "7d1dbeff82d6b135": "Ditt skrivbord stöder inte automatisk fångst. Du väljer i stället vilket fönster som ska fångas.",
   "e817b0aa6b6898e7": "Ditt skrivbord kan be om behörighet första gången du fångar.",
@@ -10226,7 +10422,15 @@
   "065d4e8c98bf7fd1": "Installera om hjälpen",
   "96f626130ea0ccc5": "Skärmfångsten behöver åtgärdas. Gå tillbaka för att kontrollera åtkomsten.",
   "435b1ca4e061c17d": "Kunde inte slutföra det här steget. Försök igen eller se Avancerat för hjälp.",
-  "cb2d986e3d65b30a": "Ingår i T3 Code. Ingen nedladdning behövs.",
+  "0596114a5b979419": [
+    "Ingår i ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ". Ingen nedladdning behövs."
+  ],
   "e67452f247cc5272": "Inaktivera tillägget",
   "199401965e68b97b": "Ta bort fångsthjälpen",
   "988358208ad49792": "{count, plural, one {minut} other {minuter}}",
@@ -10480,14 +10684,15 @@
     " ",
     "på servervärden för att aktivera funktioner för ändringsförfrågningar."
   ],
-  "25f92ebf1aefb563": [
-    "Kunde inte verifiera ",
+  "5d1b37511b9e6b18": [
+    "Could not verify ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ". ",
+    ".",
+    " ",
     {
       "i": 2,
       "k": "_gt_value_2",
@@ -10944,7 +11149,7 @@
   "db0ab251a8700984": "Temafilen är ogiltig.",
   "a6efeb99b479990a": "Välj filer",
   "78b0857ec20b0d8a": "Läser…",
-  "09b4af0d2181cbbb": "Släpp .json-filer från T3 Code eller VS Code",
+  "87ca02672e129738": "Släpp .json-filer från {appName} eller VS Code",
   "d9b33fc9ec6e71e5": "Lägg till ett tema",
   "bd980445dcea2bc1": "eller importera en fil",
   "00980f2deaad3a4c": "Tema-JSON",
@@ -11089,7 +11294,7 @@
   "e352bf3e07df7627": "Appen laddade ned {downloaded}, inte {version} eller nyare.",
   "323a2afc72792c03": "Byta till {label}?",
   "1c266579b2e53889": "Appens uppdateringar är avstängda här, så installera om den själv för att byta.",
-  "6e697e075e4a6719": "Om T3 Code inte öppnas igen efter omstarten öppnar du det igen.",
+  "4fe3018f11a54ae9": "Om {appName} inte öppnas igen efter omstarten öppnar du det igen.",
   "13ac42dfcb138399": "Byt till {label}",
   "8260b80501b07b13": [
     "Byt till ",
@@ -11287,7 +11492,7 @@
   "28a4cd11ce51865e": "Anpassad API-slutpunkt",
   "49c009661b1e91d6": "Kontrollerar leverantörsstatus",
   "9c52dc73cc75980f": "Väntar på att servern rapporterar detaljer om installation och autentisering.",
-  "7b4990ffdca7c727": "Leverantören är installerad men inaktiverad för nya sessioner i T3 Code.",
+  "f304cbc01c14384f": "Leverantören är installerad men inaktiverad för nya sessioner i {appName}.",
   "a887d07963e1f028": "Hittades inte",
   "d49898dcd40e6332": "CLI:t hittades inte i PATH.",
   "b2768aa900b19198": "Inte autentiserad · {method}",
@@ -11340,7 +11545,7 @@
   "63426ea5d50585a6": "Anslut en miljö för att spara inställningen.",
   "5aedadfc9fef7d3b": "Anslut de valda utcheckningarna, eller uppdatera deras miljöer, för att återställa åsidosättningen.",
   "7d0ff8d36a670261": "Anslut miljöerna för att återställa åsidosättningarna.",
-  "4832594df0aad785": "Miljön stöder inte den här inställningen. Uppdatera T3 Code där.",
+  "0c0b4f6732fa1d1c": "Miljön stöder inte den här inställningen. Uppdatera {appName} där.",
   "b39ae97dcb01d891": "Detaljer om bakgrundspolicy",
   "7e3ed96c91b96428": "Återställ {title} till standard",
   "27cc3baf3f6c04b1": "Återställ åsidosättning till standard",
@@ -11366,6 +11571,7 @@
   "afda415d2d75a5d3": "Chatt",
   "4beeab8d1814b251": "Diffar och pull requests",
   "3b958faa12d54484": "Kortkommandon",
+  "7830ffa7f8538cdd": "Passwords",
   "2ab325baee3ec9a3": "Schemalagda uppgifter",
   "0a59e086514a62a9": "Versionshantering och ärenden",
   "1de0df2b8a4fb96e": "Delning och åtkomst",
@@ -11407,10 +11613,10 @@
   "d561f74efa5f3920": "resonemang ansträngning tänkande staplar diagram ord etikett nivå inmatningsfält",
   "6113c17109ee0d57": "latex tex katex ekvationer formler markdown",
   "8c8364d44fa28d22": "dev nightly latest kanal grafik pill etikett dölj ingen",
-  "2d90635156dfcb5a": "typografi typsnitt familj storlek system sans",
-  "d32e93777e4819c8": "typografi typsnitt familj storlek inmatningsfält inmatning",
-  "120d2e7e8c848ee9": "typografi typsnitt familj storlek fast bredd monospace kodblock diffar filförhandsvisningar",
-  "0b9c40baa3536bff": "typografi typsnitt familj storlek fast bredd monospace utdata",
+  "77e57924a36cb960": "typography family size line height spacing leading system sans",
+  "c134206982c8c257": "typography family size line height spacing leading composer input",
+  "5202a45b22077c00": "typography family size line height spacing leading monospace code blocks diffs file previews",
+  "a11a5e644e1e752d": "typography family size line height spacing leading monospace output",
   "f7a87dd572619b1c": "typografi avancerat prompt kod terminal typsnitt familj storlek individuellt",
   "2e4033be5b956b57": "typografi text gråskala kantutjämning macos tunn",
   "7c5f0666ccc3196e": "långa rader kodblock diffar filförhandsvisningar radbrytning",
@@ -11597,9 +11803,6 @@
   "8d7631ea8e21d4f8": "Tryck på kortkommando…",
   "d39dd343104c5458": "Ändra kortkommando",
   "9c73aa0c2e2b4e7d": "Välj kortkommando",
-  "300a948f90c4d75c": "Gå tillbaka",
-  "2a50e229df85d553": "Gå framåt",
-  "8aa6404c8018ea67": "T3 Code start",
   "8e9626aa27cb188a": "Ärenden",
   "9d2fc1003e82feb1": "Användning",
   "20283eb1dd6119f9": "{count, plural, one {{count} bilaga} other {{count} bilagor}}",
@@ -11610,7 +11813,7 @@
   "effe26aaf2941c69": "Datorns server är inte ansluten än",
   "27e0c22322e66145": "Försök igen när den har anslutit.",
   "a46244a71021244a": "Kunde inte lägga till ”{name}”",
-  "cc07974b25287234": "T3 Code kunde inte läsa mappens sökväg.",
+  "d231e0695997e1a1": "{appName} kunde inte läsa mappens sökväg.",
   "27727bda79d97ffa": "Endast mappar kan läggas till som projekt",
   "eb9f51eb8bd8a43c": "Släpp filer på en tråd för att bifoga dem.",
   "671a8b8ab44e83e2": "Släpp mappar för att lägga till projekt",
@@ -11760,7 +11963,7 @@
   "82583b5a529f0ee4": "{machine}: {failure}",
   "19a7891b5f5274ae": "Inte tillbaka efter {minutes} minuter",
   "ffaa75d2db1e7cc1": "Uppdateringen tillämpades inte",
-  "626bcbe04dc55f93": "T3 Code har fortfarande {current}. Installera {version} igen med uppdateringsknappen.",
+  "330978713f164987": "{appName} har fortfarande {current}. Installera {version} igen med uppdateringsknappen.",
   "49214c047fbb1606": "Leverantörsuppdateringen avbröts",
   "52adbc863aeb5e59": "Kunde inte kopiera",
   "0944728904d886d2": "Mättnad och ljusstyrka för {label}",

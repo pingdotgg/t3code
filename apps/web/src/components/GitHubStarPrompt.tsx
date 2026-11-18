@@ -10,6 +10,7 @@ import { readLocalApi } from "../localApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { toastManager } from "./ui/toast";
+import { appName } from "@t3tools/shared/appName";
 
 // Separate keys so a count written by another tab can never undo a dismissal.
 const SENT_KEY = "t3code:github-star-prompt:sent";
@@ -45,7 +46,7 @@ function showStarPrompt(environmentId: EnvironmentId) {
       toastManager.update(id, {
         type: "success",
         title: m(msg("Thanks for the star!")),
-        description: m(msg("It really helps T3 Code grow.")),
+        description: m(msg("It really helps {appName} grow.", { appName: appName() })),
         timeout: 5_000,
         actionProps: undefined,
         data: {},
@@ -61,7 +62,7 @@ function showStarPrompt(environmentId: EnvironmentId) {
     });
   };
   const id = toastManager.add({
-    title: m(msg("Enjoying T3 Code?")),
+    title: m(msg("Enjoying {appName}?", { appName: appName() })),
     description: m(msg("Give us a star on GitHub to let us know!")),
     timeout: 0,
     onClose: dismiss,

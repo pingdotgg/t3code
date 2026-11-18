@@ -1,5 +1,5 @@
 import type { RelayClientDeviceRecord } from "@t3tools/contracts/relay";
-import { T, useGT, useMessages } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { SmartphoneIcon } from "lucide-react";
 
 import { useManagedRelayDevices } from "../../cloud/managedRelayState";
@@ -17,6 +17,7 @@ import {
   ClerkUserProfileRefreshButton,
   ClerkUserProfileRow,
 } from "./ClerkUserProfilePage";
+import { appName } from "@t3tools/shared/appName";
 
 const MOBILE_CLIENT_SKELETON_ROWS = ["primary", "secondary"] as const;
 
@@ -107,8 +108,8 @@ function EmptyMobileClients() {
         </EmptyTitle>
         <EmptyDescription>
           <T>
-            Install T3 Code on your phone and sign in to T3 Connect to get push notifications and
-            Live Activities.
+            Install <Var>{appName()}</Var> on your phone and sign in to T3 Connect to get push
+            notifications and Live Activities.
           </T>
         </EmptyDescription>
       </EmptyHeader>

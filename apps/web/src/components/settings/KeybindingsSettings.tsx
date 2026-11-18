@@ -23,7 +23,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { T, useGT, useMessages } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -82,6 +82,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { keybindingSearchAnchorId, useSearchableSetting } from "./settingsSearch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { appName } from "@t3tools/shared/appName";
 
 function KeybindingPill({ value }: { value: string }) {
   // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
@@ -264,8 +265,8 @@ function UnknownWhenVariableWarning({
   return (
     <WarningTooltipIcon label={label} focusable={focusable} className="size-4.5">
       <T>
-        T3 Code does not recognize this condition yet. It can still be saved, but it may not match
-        unless the runtime provides it.
+        <Var>{appName()}</Var> does not recognize this condition yet. It can still be saved, but it
+        may not match unless the runtime provides it.
       </T>
     </WarningTooltipIcon>
   );

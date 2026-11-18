@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as NetService from "@t3tools/shared/Net";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import { migrateRenamedApp } from "../branding/AppRenameStartup.ts";
+import { appBrand } from "../branding/appBrand.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
@@ -150,7 +151,7 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
   const wasQuitting = yield* Ref.getAndSet(state.quitting, true);
   if (!wasQuitting) {
     yield* electronDialog.showErrorBox(
-      m(msg("T3 Code failed to start")),
+      m(msg("{appName} failed to start", { appName: appBrand.name })),
       `Stage: ${stage}\n${message}${detail}`,
     );
   }

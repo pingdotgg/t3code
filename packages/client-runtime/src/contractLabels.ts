@@ -17,6 +17,7 @@ import {
 import type { IdleCompactionMode } from "@t3tools/contracts/settings";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
+import { appName } from "@t3tools/shared/appName";
 
 // Contracts decides each stage's English label; this table only makes that text translatable.
 const WORKTREE_SETUP_STAGE_LABELS: Readonly<Record<string, string>> = {
@@ -70,7 +71,9 @@ export function managedUpdatesMessage(
   organization: string,
   resolve: MFunctionType = mFallback,
 ): string {
-  return resolve(msg("{organization} manages T3 Code updates.", { organization }));
+  return resolve(
+    msg("{organization} manages {appName} updates.", { appName: appName(), organization }),
+  );
 }
 
 /** @public */
@@ -79,7 +82,8 @@ export function managedNightlyDeniedMessage(
   resolve: MFunctionType = mFallback,
 ): string {
   return resolve(
-    msg("{organization} manages T3 Code updates. Only stable releases can be installed.", {
+    msg("{organization} manages {appName} updates. Only stable releases can be installed.", {
+      appName: appName(),
       organization,
     }),
   );
@@ -192,7 +196,8 @@ const BROWSER_IMPORT_FAILURE_MESSAGES: Record<BrowserImportFailureReason, string
     "No encryption key in your Keychain. Sign in to that browser once, then retry.",
   ),
   needsFullDiskAccess: msg(
-    "Give T3 Code Full Disk Access in System Settings → Privacy & Security, then retry.",
+    "Give {appName} Full Disk Access in System Settings → Privacy & Security, then retry.",
+    { appName: appName() },
   ),
   browserRunning: msg("Quit the browser first so its cookie database can be read."),
   unsupportedPlatform: msg("Importing from this browser isn't possible on this platform."),

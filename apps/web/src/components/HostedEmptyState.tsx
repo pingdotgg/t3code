@@ -1,7 +1,7 @@
 import { useAuth } from "@clerk/react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { T } from "gt-react";
+import { T, Var } from "gt-react";
 import { CheckIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -18,6 +18,7 @@ import { Button } from "./ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
+import { appName } from "@t3tools/shared/appName";
 
 /** Home screen for the hosted app before any computer is added. */
 export function HostedEmptyState() {
@@ -46,7 +47,9 @@ export function HostedEmptyState() {
               ) : cloudEnabled ? (
                 <T>Your agents run on your computer.</T>
               ) : (
-                <T>Your agents run on your computer. Start T3 Code there first.</T>
+                <T>
+                  Your agents run on your computer. Start <Var>{appName()}</Var> there first.
+                </T>
               )}
             </EmptyDescription>
           </EmptyHeader>

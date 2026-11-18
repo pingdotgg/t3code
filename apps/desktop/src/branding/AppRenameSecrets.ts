@@ -40,6 +40,7 @@ export function decryptChromiumV10(ciphertext: Uint8Array, password: string): st
 export function legacyKeychainServices(isDevelopment: boolean): readonly string[] {
   const packaged = "t3code Safe Storage";
   const electronDefault = "Electron Safe Storage";
+  // oxlint-disable-next-line t3code/no-hardcoded-app-name -- legacy upstream Safe Storage keychain names, matched as they were written
   const stageNamed = isDevelopment ? "T3 Code (Dev) Safe Storage" : "T3 Code (Alpha) Safe Storage";
   return isDevelopment
     ? [electronDefault, packaged, stageNamed]

@@ -29,6 +29,7 @@ import {
   type UpdateEverythingRun,
   type UpdateRunMachine,
 } from "./updateEverything.logic";
+import { appName } from "@t3tools/shared/appName";
 
 const updateEverythingRunAtom = Atom.make<UpdateEverythingRun | null>(null).pipe(
   Atom.keepAlive,
@@ -387,10 +388,10 @@ export function startDesktopUpdateLaunchNotice(): () => void {
           type: "error",
           title: m(msg("Update did not apply")),
           description: m(
-            msg("T3 Code is still on {current}. Install {version} again from the update button.", {
-              current: APP_VERSION,
-              version: notAppliedVersion,
-            }),
+            msg(
+              "{appName} is still on {current}. Install {version} again from the update button.",
+              { appName: appName(), current: APP_VERSION, version: notAppliedVersion },
+            ),
           ),
         }),
       );

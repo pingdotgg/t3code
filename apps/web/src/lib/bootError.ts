@@ -350,6 +350,7 @@ export function showBootError(error: unknown) {
 
   const issue = new URL(ISSUE_URL);
   issue.searchParams.set("template", "bug_report.yml");
+  // oxlint-disable-next-line t3code/no-hardcoded-app-name -- issue title on the upstream tracker
   issue.searchParams.set("title", "T3 Code failed to start");
   issue.searchParams.set("area", "apps/web");
   issue.searchParams.set("version", `${environment.version} (${environment.channel})`);

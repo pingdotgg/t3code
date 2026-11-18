@@ -18,6 +18,7 @@ import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
+import { appName } from "@t3tools/shared/appName";
 
 // Toggling relaunches desktop; the switch reflects startup state.
 export function LocalEnvironmentSetting() {
@@ -52,7 +53,8 @@ export function LocalEnvironmentSetting() {
         description={
           enabled
             ? gt(
-                "Run agents on this computer. Turn off to use T3 Code only with remote environments.",
+                "Run agents on this computer. Turn off to use {appName} only with remote environments.",
+                { appName: appName() },
               )
             : gt("Turned off. Agents only run in remote environments.")
         }
@@ -81,9 +83,12 @@ export function LocalEnvironmentSetting() {
             <AlertDialogDescription>
               {enabled
                 ? gt(
-                    "T3 Code will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history, and remote environments are unaffected.",
+                    "{appName} will restart without running a server on this computer. Any agents and terminals running here will stop, and other devices will no longer be able to connect to this computer. Your projects, history, and remote environments are unaffected.",
+                    { appName: appName() },
                   )
-                : gt("T3 Code will restart and start running a server on this computer again.")}
+                : gt("{appName} will restart and start running a server on this computer again.", {
+                    appName: appName(),
+                  })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {error ? <p className="px-6 pb-4 text-sm text-destructive">{error}</p> : null}

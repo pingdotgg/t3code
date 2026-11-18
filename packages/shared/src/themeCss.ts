@@ -1,4 +1,5 @@
 import { THEME_COLOR_ROLES } from "./themePalettes.ts";
+import { appName } from "./appName.ts";
 
 const FETCHES_BY_STRING = /image-set\(|\bsrc\(/i;
 // Only CSS whitespace may come first. \s also matches U+00A0, which makes the address relative.
@@ -76,7 +77,7 @@ export const THEME_CSS_HOOKS = [
 
 /** What an agent needs to restyle the app. `t3_theme_read` returns it. */
 export const THEME_GUIDE = [
-  "Themes restyle T3 Code on web and desktop. Mobile does not use them.",
+  `Themes restyle ${appName()} on web and desktop. Mobile does not use them.`,
   "",
   "Colors: `canvas` and `accent` (hex) derive a full palette. `colors` overrides single roles, and `variants.light` or `variants.dark` does that for the other appearance. Prefer colors over CSS.",
   `Roles: ${THEME_COLOR_ROLES.join(", ")}.`,
@@ -93,5 +94,5 @@ export const THEME_GUIDE = [
   ...THEME_CSS_HOOKS.map((hook) => `- ${hook.selector}: ${hook.styles}`),
   "",
   "You cannot see the result. Make small changes, then ask the user how it looks.",
-  "To undo, set `t3-code`, the stock T3 Code theme, or another built-in theme. An empty `current` means the stock theme or no environment theme.",
+  `To undo, set \`t3-code\`, the stock ${appName()} theme, or another built-in theme. An empty \`current\` means the stock theme or no environment theme.`,
 ].join("\n");

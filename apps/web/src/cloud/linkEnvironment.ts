@@ -33,6 +33,7 @@ import {
   reportRelayClientInstallProgress,
   requestRelayClientInstallConfirmation,
 } from "./relayClientInstallDialog";
+import { appName } from "@t3tools/shared/appName";
 
 function relayUrl(): string | null {
   return resolveCloudPublicConfig().relayUrl;
@@ -69,7 +70,8 @@ const ensureRelayClientAvailable = Effect.fn("linkEnvironment.ensureRelayClientA
     if (status.status === "unsupported") {
       return yield* new CloudEnvironmentLinkError({
         message: m(
-          msg("T3 Code cannot install the relay client automatically on {platform}-{arch}.", {
+          msg("{appName} cannot install the relay client automatically on {platform}-{arch}.", {
+            appName: appName(),
             platform: status.platform,
             arch: status.arch,
           }),
@@ -110,10 +112,14 @@ const ensureRelayClientAvailable = Effect.fn("linkEnvironment.ensureRelayClientA
         message:
           installedStatus.status === "unsupported"
             ? m(
-                msg("T3 Code cannot install the relay client automatically on {platform}-{arch}.", {
-                  platform: installedStatus.platform,
-                  arch: installedStatus.arch,
-                }),
+                msg(
+                  "{appName} cannot install the relay client automatically on {platform}-{arch}.",
+                  {
+                    appName: appName(),
+                    platform: installedStatus.platform,
+                    arch: installedStatus.arch,
+                  },
+                ),
               )
             : m(msg("The relay client is still unavailable after installation.")),
       });

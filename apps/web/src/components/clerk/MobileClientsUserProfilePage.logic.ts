@@ -2,6 +2,7 @@ import type { RelayClientDeviceRecord } from "@t3tools/contracts/relay";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
+import { appName } from "@t3tools/shared/appName";
 
 const mobileClientUpdatedAtFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -24,7 +25,7 @@ export function mobileClientPlatformLabel(device: RelayClientDeviceRecord): stri
       : device.iosMajorVersion === null
         ? "iOS"
         : `iOS ${device.iosMajorVersion}`;
-  return `${platform}${device.appVersion ? ` · T3 Code ${device.appVersion}` : ""}`;
+  return `${platform}${device.appVersion ? ` · ${appName()} ${device.appVersion}` : ""}`;
 }
 
 /** Components pass `useMessages()` so the detail follows a language switch. */

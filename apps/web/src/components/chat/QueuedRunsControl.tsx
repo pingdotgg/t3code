@@ -28,7 +28,7 @@ import {
   XIcon,
 } from "lucide-react";
 import * as DateTime from "effect/DateTime";
-import { msg, T, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 
@@ -48,6 +48,7 @@ import { GuestMessageName } from "./guestMessageStyle";
 import { TimelineRowTimestamp } from "./TimelineRowParts";
 import { FoldedMessageHeader, useScheduledTaskTitle } from "./TimelineUserMessageRow";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
+import { appName } from "@t3tools/shared/appName";
 
 export interface EditQueuedRunRequest {
   readonly runId: RunId;
@@ -504,7 +505,9 @@ function QueuedMessage(props: {
     <>
       {attribution === "t3code" ? (
         <p className="me-1 text-2xs text-muted-foreground/70">
-          <T>Sent by T3 Code</T>
+          <T>
+            Sent by <Var>{appName()}</Var>
+          </T>
         </p>
       ) : null}
       {presentation?.guestName === undefined ? null : (

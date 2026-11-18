@@ -6,6 +6,7 @@ import { View } from "react-native";
 import { AppText as Text } from "./ui/AppText";
 import { T3_CODE_BRAND_MARK_SOURCE } from "./brandAssets";
 import { resolveBrandName } from "../lib/mobileBranding";
+import { appName } from "@t3tools/shared/appName";
 
 const appVariant = Constants.expoConfig?.extra?.appVariant;
 // A renamed build (the nckrtl fork ships as Conn) shows its own icon and name.
@@ -42,7 +43,7 @@ export function BrandMark(props: { readonly compact?: boolean; readonly stageLab
       <View className="gap-1">
         <View className="flex-row items-center gap-2">
           <Text className="text-lg font-t3-bold tracking-[-0.4px] text-foreground">
-            {brandName ?? "T3 Code"}
+            {brandName ?? appName()}
           </Text>
           <View className="rounded-full bg-subtle px-2 py-1">
             <Text className="text-3xs font-t3-bold tracking-[1.1px] uppercase text-foreground-muted">

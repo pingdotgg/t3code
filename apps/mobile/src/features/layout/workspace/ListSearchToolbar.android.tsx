@@ -11,6 +11,7 @@ import { SharedSlotTitle } from "./SharedSlotTitle";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { PullRequestFilterMenu } from "../../pull-requests/PullRequestListFilters";
 import { openSettings } from "../../settings/settings-navigation";
+import { appName } from "@t3tools/shared/appName";
 
 /** Pull request and issue search share the thread list's Android header. */
 export function ListSearchToolbar(props: {
@@ -59,7 +60,7 @@ export function ListSearchToolbar(props: {
   }, [searching, closeSearch, navigation, isTabActive, section]);
   return (
     <AppBar
-      title="T3 Code"
+      title={appName()}
       titleContent={
         <WorkspaceConnectionTitle
           grow

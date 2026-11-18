@@ -31,6 +31,7 @@ export type SettingsFormDefinition = Pick<ProviderClientDefinition, "settingsSch
   readonly driverKind?: ProviderClientDefinition["driverKind"];
 };
 import { SettingsRow } from "./settingsLayout";
+import { appName } from "@t3tools/shared/appName";
 
 export interface ProviderSettingsFieldModel {
   readonly key: string;
@@ -209,8 +210,9 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
   ],
   ["Path to the OpenCode binary.", msg("Path to the OpenCode binary.")],
   [
+    // oxlint-disable-next-line t3code/no-hardcoded-app-name -- lookup key: the server's English description
     "Leave blank to let T3 Code spawn the server when needed.",
-    msg("Leave blank to let T3 Code spawn the server when needed."),
+    msg("Leave blank to let {appName} spawn the server when needed.", { appName: appName() }),
   ],
   ["Stored separately on the host.", msg("Stored separately on the host.")],
   ["Path to the Pi coding agent binary.", msg("Path to the Pi coding agent binary.")],

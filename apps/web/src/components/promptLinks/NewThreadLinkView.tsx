@@ -52,6 +52,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { suggestAppAccessForRemote } from "../sourceControlAppAccessToast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { placeLinkedPrompt, warnAboutHiddenCharacters } from "./linkedPrompt";
+import { appName } from "@t3tools/shared/appName";
 
 type LinkState =
   | { readonly status: "opening" }
@@ -145,7 +146,10 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       replace: true,
     }).catch(() => null);
     if (opened === null) {
-      setState({ status: "failed", message: gt("T3 Code could not open a new thread.") });
+      setState({
+        status: "failed",
+        message: gt("{appName} could not open a new thread.", { appName: appName() }),
+      });
       return;
     }
     setState({ status: "opened" });
@@ -218,7 +222,8 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       setState({
         status: "failed",
         message: gt(
-          "This machine cannot clone from a link. Update T3 Code on it, or clone the repository from the command palette.",
+          "This machine cannot clone from a link. Update {appName} on it, or clone the repository from the command palette.",
+          { appName: appName() },
         ),
       });
       return;

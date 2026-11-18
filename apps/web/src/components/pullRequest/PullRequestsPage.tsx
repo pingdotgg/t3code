@@ -135,6 +135,7 @@ import {
 } from "./pullRequestProjectAssignment.logic";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
+import { appName } from "@t3tools/shared/appName";
 
 function getShortcutContext() {
   return {
@@ -1261,7 +1262,9 @@ export function PullRequestsPage() {
       ) : !pullRequestsSupported ? (
         <PullRequestsUnavailableState
           title={gt("Pull requests unavailable")}
-          error={gt("Update your T3 Code servers to browse pull requests.")}
+          error={gt("Update your {appName} servers to browse pull requests.", {
+            appName: appName(),
+          })}
         />
       ) : firstLoad ? (
         <PullRequestListGhost rows={7} caption={gt("Loading pull requests…")} />

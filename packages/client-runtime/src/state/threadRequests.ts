@@ -20,6 +20,7 @@ import type { AtomCommandResult } from "./runtime.ts";
 import type { ThreadStructure, ThreadStructureVisibleTurnItem } from "./models.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
+import { appName } from "@t3tools/shared/appName";
 
 export type ApprovalResponder = (
   requestId: RuntimeRequestId,
@@ -78,7 +79,8 @@ export function fullAccessOverrideExplanation(
       )
     : resolve(
         msg(
-          "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. T3 Code can't turn these off, so check the request and approve it if it's what you expect.",
+          "Full access skips approvals, but the agent still stops for a few safety checks of its own that no setting can skip, such as a delete whose path it can't verify. {appName} can't turn these off, so check the request and approve it if it's what you expect.",
+          { appName: appName() },
         ),
       );
 }

@@ -18,6 +18,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { writeTextToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { useScratchProject } from "./useScratchProject";
+import { appName } from "@t3tools/shared/appName";
 
 export const TRIAGE_CLI_COMMAND = "npx t3 triage";
 
@@ -89,7 +90,7 @@ export function useStartTriage() {
     // A null result means the user went elsewhere; only a throw is a failure.
     await handleNewThread(scopeProjectRef(project.value.environmentId, project.value.id), {
       prompt: prepared.value.prompt,
-    }).catch(() => fail(m(msg("T3 Code could not open a new thread."))));
+    }).catch(() => fail(m(msg("{appName} could not open a new thread.", { appName: appName() }))));
   };
 
   return async (environmentId: EnvironmentId) => {
