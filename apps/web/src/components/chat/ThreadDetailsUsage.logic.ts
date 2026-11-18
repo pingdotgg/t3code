@@ -11,8 +11,9 @@ import {
   collectProviderUsageLimits,
   displayLimitWindows,
   type LimitPoolWindow,
-  limitsNotice,
 } from "@t3tools/shared/usageLimits";
+
+import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 
 export type ThreadDetailsLimits =
   | { readonly kind: "instance"; readonly limits: ServerProviderUsageLimits }
@@ -47,9 +48,15 @@ export function resolveThreadDetailsLimits(
 /** The reset the card names: the soonest for one account, the soonest that refills quota for a pool. */
 export function nextPoolReset(window: LimitPoolWindow, now: number) {
   const pooled = window.members.length > 1;
-  return (
-    window.resets.find((reset) => reset.at > now && (!pooled || reset.restoresPercent > 0)) ?? null
+  const next = window.resets.find(
+    (reset) => reset.at > now && (!pooled || reset.restoresPercent > 0),
   );
+  if (!next || !pooled) return next ?? null;
+  const restoresPercent = window.resets.reduce(
+    (total, reset) => total + (reset.at === next.at ? reset.restoresPercent : 0),
+    0,
+  );
+  return { ...next, restoresPercent };
 }
 
 function driverPool(

@@ -6,13 +6,13 @@ import type {
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
-  formatDuration,
   type LimitPace,
   type LimitPoolWindow,
-  limitsNotice,
   paceOf,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
+import { msg, useGT, useLocale, useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -29,9 +29,9 @@ import { nextPoolReset, poolSources, resolveThreadDetailsLimits } from "./Thread
 const MINUTE_MS = 60_000;
 
 const PACE_LABEL: Record<LimitPace, string> = {
-  ahead: "Ahead of pace",
-  on: "On pace",
-  under: "Under pace",
+  ahead: msg("Ahead of pace"),
+  on: msg("On pace"),
+  under: msg("Under pace"),
 };
 
 export interface ThreadDetailsUsageInput {
@@ -58,6 +58,7 @@ export function ThreadDetailsUsage({
   providers,
   sources,
 }: Omit<ThreadDetailsUsageInput, "contextWindow">) {
+  const gt = useGT();
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
   const resolved = resolveThreadDetailsLimits(providerInstanceId, providers, sources, now);
@@ -66,7 +67,7 @@ export function ThreadDetailsUsage({
   return (
     <ThreadDetailsSection
       headingId="thread-details-usage-heading"
-      title="Usage limits"
+      title={gt("Usage limits")}
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
@@ -87,14 +88,16 @@ function InstanceRows({
   readonly limits: ServerProviderUsageLimits;
   readonly now: number;
 }) {
-  const notice = limitsNotice(limits);
+  const gt = useGT();
+  const m = useMessages();
+  const notice = limitsNotice(limits, m);
   if (notice) {
     return (
       <UsageRow
-        label="Limits"
+        label={gt("Limits", { $context: "usage limits row label" })}
         fill={null}
         tone={null}
-        value="Unavailable"
+        value={gt("Unavailable")}
         tooltip={<span className="text-foreground">{notice}</span>}
       />
     );
@@ -114,16 +117,19 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
     maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
       ? (threshold / maxTokens) * 100
       : null;
+  const gt = useGT();
+  const m = useMessages();
+  const locale = useLocale();
   const usedTokens = formatContextWindowTokens(usage.usedTokens);
   return (
     <ThreadDetailsSection
       headingId="thread-details-context-heading"
-      title="Context window"
+      title={gt("Context window")}
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
         <UsageRow
-          label="Context"
+          label={gt("Context", { $context: "context window row label" })}
           fill={used}
           tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
           tick={tick}
@@ -133,21 +139,29 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
               ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}`
               : usedTokens
           }
-          ariaValue={used !== null ? `${used}% used` : `${usedTokens} tokens used`}
+          ariaValue={
+            used !== null
+              ? gt("{used}% used", { used })
+              : gt("{usedTokens} tokens used", { usedTokens })
+          }
           tooltip={
             <>
               <span className="text-foreground">
-                {used !== null ? `Context: ${used}% used` : `Context: ${usedTokens} tokens used`}
+                {used !== null
+                  ? gt("Context: {used}% used", { used })
+                  : gt("Context: {usedTokens} tokens used", { usedTokens })}
               </span>
               {maxTokens !== null ? (
                 <span className="text-muted-foreground">
-                  {usage.usedTokens.toLocaleString("en-US")} of {maxTokens.toLocaleString("en-US")}{" "}
-                  tokens
+                  {gt("{used} of {max} tokens", {
+                    used: usage.usedTokens.toLocaleString(locale),
+                    max: maxTokens.toLocaleString(locale),
+                  })}
                 </span>
               ) : null}
               {threshold !== null && threshold > 0 ? (
                 <span className="text-muted-foreground">
-                  {formatContextWindowCompactionMessage(threshold)}
+                  {formatContextWindowCompactionMessage(threshold, m)}
                 </span>
               ) : null}
             </>
@@ -165,6 +179,8 @@ function LimitRow({
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const left = remainingPercent(window);
   const pace = paceOf(window, now);
@@ -175,19 +191,21 @@ function LimitRow({
       fill={left}
       tone={limitTone(left)}
       value={`${left}%`}
-      ariaValue={`${left}% left`}
+      ariaValue={gt("{left}% left", { left })}
       tooltip={
         <>
           <span className="text-foreground">
-            {window.label}: {left}% left
+            {gt("{label}: {left}% left", { label: window.label, left })}
           </span>
           {window.resetsAt && resetsAt > now ? (
             <span className="text-muted-foreground">
-              Resets in {formatDuration(resetsAt - now)} ·{" "}
-              {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
+              {gt("Resets in {duration} · {time}", {
+                duration: formatDuration(resetsAt - now, m),
+                time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
+              })}
             </span>
           ) : null}
-          {pace ? <span className="text-muted-foreground">{PACE_LABEL[pace]}</span> : null}
+          {pace ? <span className="text-muted-foreground">{m(PACE_LABEL[pace])}</span> : null}
         </>
       }
     />
@@ -195,8 +213,12 @@ function LimitRow({
 }
 
 function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly now: number }) {
+  const gt = useGT();
+  const m = useMessages();
   const left = window.remainingPercent;
-  const from = poolSources(window);
+  const from = poolSources(window).map((source) =>
+    source === "Signed-in accounts" ? gt("Signed-in accounts") : source,
+  );
   const accounts = window.members.length;
   return (
     <UsageRow
@@ -204,19 +226,26 @@ function PoolRow({ window, now }: { readonly window: LimitPoolWindow; readonly n
       fill={left}
       tone={limitTone(left)}
       value={`${left}%`}
-      ariaValue={`${left}% left`}
+      ariaValue={gt("{left}% left", { left })}
       tooltip={
         <>
           <span className="text-foreground">
-            {window.label}: {left}% left
-            {accounts > 1 ? ` across ${accounts} accounts` : ""}
+            {accounts > 1
+              ? gt("{label}: {left}% left across {accounts} accounts", {
+                  label: window.label,
+                  left,
+                  accounts,
+                })
+              : gt("{label}: {left}% left", { label: window.label, left })}
           </span>
           <PoolResetLine window={window} now={now} />
           {window.pace ? (
-            <span className="text-muted-foreground">{PACE_LABEL[window.pace]}</span>
+            <span className="text-muted-foreground">{m(PACE_LABEL[window.pace])}</span>
           ) : null}
           {from.length > 0 ? (
-            <span className="text-muted-foreground">From {from.join(", ")}</span>
+            <span className="text-muted-foreground">
+              {gt("From {sources}", { sources: from.join(", ") })}
+            </span>
           ) : null}
         </>
       }
@@ -232,17 +261,25 @@ function PoolResetLine({
   readonly now: number;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const gt = useGT();
+  const m = useMessages();
   const next = nextPoolReset(window, now);
   if (!next) return null;
   const resetsAt = next.member.window.resetsAt;
   if (!resetsAt) return null;
   const remaining = next.at - now;
-  const when = remaining < MINUTE_MS ? "momentarily" : `in ${formatDuration(remaining)}`;
+  const when =
+    remaining < MINUTE_MS
+      ? gt("momentarily")
+      : gt("in {duration}", { duration: formatDuration(remaining, m) });
   const restores = window.members.length > 1 ? next.restoresPercent : null;
-  const label = restores === null ? `Resets ${when}` : `+${restores}% ${when}`;
+  const label =
+    restores === null
+      ? gt("Resets {when}", { when })
+      : gt("+{restores}% {when}", { restores, when });
   return (
     <span className="text-muted-foreground">
-      {label} · {formatUpcomingTimestamp(resetsAt, timestampFormat, now)}
+      {label} · {formatUpcomingTimestamp(resetsAt, timestampFormat, now, undefined, m)}
     </span>
   );
 }
@@ -269,13 +306,14 @@ function UsageRow({
   readonly tooltip: ReactNode;
   readonly muted?: boolean;
 }) {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <div
             tabIndex={0}
-            aria-label={`${label}: ${ariaValue}`}
+            aria-label={gt("{label}: {value}", { label, value: ariaValue })}
             className="col-span-3 grid h-6 cursor-default grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-black/[0.035] dark:hover:bg-white/[0.08] dark:data-popup-open:bg-white/[0.08]"
           />
         }

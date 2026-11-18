@@ -226,6 +226,19 @@ describe("resolveThreadDetailsLimits", () => {
       at: Date.parse(later),
       restoresPercent: 40,
     });
+    const simultaneous = {
+      ...window!,
+      resets: window!.resets.map((reset) => ({
+        ...reset,
+        at: Date.parse(later),
+        restoresPercent: 40,
+      })),
+    };
+    expect(nextPoolReset(simultaneous, now)).toMatchObject({
+      at: Date.parse(later),
+      restoresPercent: 80,
+    });
+    expect(nextPoolReset(simultaneous, Date.parse(later))).toBeNull();
   });
 
   it("keeps the instance's notice when no hub has a readable account for its driver", () => {
