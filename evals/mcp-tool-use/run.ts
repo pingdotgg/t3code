@@ -189,18 +189,21 @@ const PriorToolCall = Schema.Struct({
 const McpToolUseCall = Schema.Struct({
   tool: Schema.String,
   args: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+const McpToolUseCallWithAlternatives = Schema.Struct({
+  ...McpToolUseCall.fields,
   argsAnyOf: Schema.optional(Schema.Array(Schema.Record(Schema.String, Schema.Unknown))),
 });
-type McpToolUseCall = typeof McpToolUseCall.Type;
+type McpToolUseCall = typeof McpToolUseCallWithAlternatives.Type;
 
 /** Grading rules. Tool names are bare: `delegate_task`, `Bash`, `Agent`. */
 const McpToolUseExpect = Schema.Struct({
   /** Each entry needs one matching call. */
-  calls: Schema.optional(Schema.Array(McpToolUseCall)),
+  calls: Schema.optional(Schema.Array(McpToolUseCallWithAlternatives)),
   /** Each entry matches a different call, and no call matches two entries; tool names are exact. */
   distinctCalls: Schema.optional(Schema.Array(McpToolUseCall)),
   /** No call may match any entry. */
-  callsMustNot: Schema.optional(Schema.Array(McpToolUseCall)),
+  callsMustNot: Schema.optional(Schema.Array(McpToolUseCallWithAlternatives)),
   notCalls: Schema.optional(Schema.Array(Schema.String)),
   /** First calls of these tools happen in this order. */
   order: Schema.optional(Schema.Array(Schema.String)),

@@ -263,6 +263,10 @@ it("accepts any tool listed as an alternative", () => {
   for (const [input, passes] of [
     [{ url: "https://github.com/acme/app/issues/42" }, true],
     [{ key: "42", projectId: "app" }, true],
+    [{ key: "42" }, true],
+    [{ key: "42", threadId: "issue-work-thread" }, true],
+    [{ key: "42", threadId: "another-thread" }, false],
+    [{ key: "42", url: "https://github.com/acme/app/issues/43" }, false],
     [{ url: "https://github.com/acme/app/issues/42", threadId: "issue-work-thread" }, true],
     [{ key: "42", projectId: "app", threadId: "issue-work-thread" }, true],
     [{ url: "https://github.com/acme/app/issues/42", threadId: "another-thread" }, false],
