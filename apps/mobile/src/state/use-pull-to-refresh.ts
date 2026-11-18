@@ -25,7 +25,7 @@ export function usePullToRefresh<A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A
     const controller = new AbortController();
     request.current = { atom, controller };
     setRefreshingAtom(atom);
-    void Promise.resolve()
+    return Promise.resolve()
       .then(() => {
         if (!controller.signal.aborted) return beforeRefresh?.(controller.signal);
       })

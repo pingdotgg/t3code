@@ -1,6 +1,6 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
-import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
+import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import {
   issueAssigneeHeld,
   issueAssigneesAfterPicks,
@@ -38,7 +38,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { m } from "~/i18n/messages";
@@ -476,9 +476,11 @@ export function IssueDetailPanel({
 }) {
   const gt = useGT();
   const messages = useMessages();
-  const detailQuery = useEnvironmentQuery(
-    issueEnvironment.detail({ environmentId, input: reference }),
-  );
+  const detailAtom = issueEnvironment.detail({ environmentId, input: reference });
+  const detailQuery = useEnvironmentQuery(detailAtom);
+  const registry = useContext(RegistryContext);
+  const [pager] = useState(() => createIssueCommentPager(detailAtom));
+  const { comments, nextCursor, loadingOlder, canLoadOlder } = useAtomValue(pager.view);
   const detail = detailQuery.data;
   const canWrite = useAtomValue(issueEnvironment.comment.permissionAtom(environmentId));
   const projects = useProjects();
@@ -486,15 +488,7 @@ export function IssueDetailPanel({
     projects.find((p) => p.environmentId === environmentId && p.id === reference.projectId)
       ?.workspaceRoot ?? "";
 
-  const [older, setOlder] = useState<{
-    readonly seed: string | null;
-    readonly comments: ReadonlyArray<IssueComment>;
-    readonly cursor: string | null;
-  } | null>(null);
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  // Counts refreshes, so a page asked for before one is not laid over the read that follows it.
-  const refreshes = useRef(0);
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
   const [editing, setEditing] = useState<"title" | "body" | null>(null);
@@ -515,11 +509,6 @@ export function IssueDetailPanel({
     return <IssueDetailGhost seed={listEntry} />;
   }
 
-  // Older pages are tied to the cursor the detail was read with; a refreshed detail starts over.
-  const olderComments = older?.seed === detail.commentsCursor ? older.comments : [];
-  const nextCursor = older?.seed === detail.commentsCursor ? older.cursor : detail.commentsCursor;
-  const olderUnavailable = loadingOlder || detailQuery.isPending;
-  const comments = prependIssueComments(detail.comments, olderComments);
   const timeline: ReadonlyArray<TimelineItem> = [
     ...comments.map((c): TimelineItem => ({ kind: "comment", at: c.createdAt, comment: c })),
     ...detail.events.map((e): TimelineItem => ({ kind: "event", at: e.createdAt, event: e })),
@@ -537,24 +526,12 @@ export function IssueDetailPanel({
   const currentState = issueStatePresentation(detail.state);
 
   const loadOlder = async () => {
-    if (nextCursor === null || olderUnavailable) return;
-    const asked = refreshes.current;
-    setLoadingOlder(true);
-    const result = await loadComments({
-      environmentId,
-      input: { ...reference, cursor: nextCursor },
-    });
-    setLoadingOlder(false);
-    if (asked !== refreshes.current) return;
-    if (result._tag === "Failure") {
+    const failure = await pager.loadOlder(registry, (cursor) =>
+      loadComments({ environmentId, input: { ...reference, cursor } }),
+    );
+    if (failure) {
       toastManager.add({ type: "error", title: m(msg("Older comments could not be read")) });
-      return;
     }
-    setOlder({
-      seed: detail.commentsCursor,
-      comments: prependIssueComments(olderComments, result.value.comments),
-      cursor: result.value.nextCursor,
-    });
   };
 
   const save = async (patch: { title?: string; body?: string }) => {
@@ -684,12 +661,7 @@ export function IssueDetailPanel({
               variant="ghost"
               aria-label={gt("Refresh issue")}
               disabled={detailQuery.isPending}
-              onClick={() => {
-                // Older pages are cached under the cursor, which a refresh can hand back unchanged.
-                refreshes.current += 1;
-                setOlder(null);
-                detailQuery.refresh();
-              }}
+              onClick={() => void pager.refresh(registry, detailQuery.refresh)}
             >
               <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
             </Button>
@@ -910,7 +882,7 @@ export function IssueDetailPanel({
                 size="sm"
                 variant="outline"
                 className="self-start"
-                disabled={olderUnavailable}
+                disabled={!canLoadOlder}
                 onClick={() => void loadOlder()}
               >
                 {loadingOlder ? <T>Loading…</T> : <T>Load older comments</T>}

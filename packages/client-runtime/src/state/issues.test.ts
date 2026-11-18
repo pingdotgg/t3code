@@ -3,17 +3,18 @@ import {
   IssueTrackerKind,
   ProjectId,
   type IssueComment,
+  type IssueCommentsPage,
   type IssueListEntry,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  createIssueCommentPager,
   createMergedIssueCandidatesAtoms,
   issueEntryKey,
   mergeIssueListPage,
-  prependIssueComments,
 } from "./issues.ts";
 
 function entry(overrides: Partial<IssueListEntry> & { key: string }): IssueListEntry {
@@ -67,19 +68,48 @@ describe("mergeIssueListPage", () => {
   });
 });
 
-describe("prependIssueComments", () => {
-  const comment = (id: string): IssueComment => ({
-    id,
-    author: null,
-    body: id,
-    createdAt: "2026-10-01T00:00:00.000Z",
-    url: null,
-  });
+const comment = (id: string): IssueComment => ({
+  id,
+  author: null,
+  body: id,
+  createdAt: "2026-10-01T00:00:00.000Z",
+  url: null,
+});
 
-  it("puts older comments first and drops ones already shown", () => {
-    const current = [comment("c3"), comment("c4")];
-    const older = [comment("c1"), comment("c2"), comment("c3")];
-    expect(prependIssueComments(current, older).map((c) => c.id)).toEqual(["c1", "c2", "c3", "c4"]);
+describe("createIssueCommentPager", () => {
+  it("starts from the refreshed cursor and never requests an older page during refresh", async () => {
+    const detail = Atom.make(
+      AsyncResult.success({ comments: [comment("newest")], commentsCursor: "first-page" }),
+    );
+    const pager = createIssueCommentPager(detail);
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(pager.view);
+    const cursors: string[] = [];
+    const read = async (cursor: string) => {
+      cursors.push(cursor);
+      return AsyncResult.success<IssueCommentsPage>({
+        comments: [comment("older"), comment("newest")],
+        nextCursor: "second-page",
+      });
+    };
+    try {
+      await pager.loadOlder(registry, read);
+      expect(registry.get(pager.view).comments.map(({ id }) => id)).toEqual(["older", "newest"]);
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const refresh = pager.refresh(registry, () => promise);
+      await pager.loadOlder(registry, read);
+      expect(registry.get(pager.view).comments.map(({ id }) => id)).toEqual(["newest"]);
+      expect(registry.get(pager.view).canLoadOlder).toBe(false);
+
+      resolve();
+      await refresh;
+      await pager.loadOlder(registry, read);
+      expect(cursors).toEqual(["first-page", "first-page"]);
+      expect(registry.get(pager.view).comments.map(({ id }) => id)).toEqual(["older", "newest"]);
+    } finally {
+      unmount();
+      registry.dispose();
+    }
   });
 });
 
