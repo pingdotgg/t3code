@@ -529,6 +529,18 @@ function slideOnPress(entry: PaneStrip, event: PointerEvent): void {
   window.addEventListener("pointercancel", settle, true);
 }
 
+function scrollStripFromGap(event: WheelEvent, strip: HTMLElement): void {
+  if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  if (strip.scrollWidth <= strip.clientWidth) return;
+  const box = strip.getBoundingClientRect();
+  if (event.clientX < box.left || event.clientX >= box.right) return;
+  if (event.clientY < box.top || event.clientY >= box.bottom) return;
+  event.preventDefault();
+  event.stopPropagation();
+  scrollLeftByWheel(strip, event, wheelDeltaPx(event.deltaY, event));
+}
+
 /** Reveal the active tab in a strip wider than its pane, keeping the joined tab's ears inside. */
 function revealPaneTab(strip: HTMLElement, tabId: string | null): void {
   const tab = findStripTab(strip, tabId);
@@ -595,7 +607,10 @@ export function LayoutPaneTabStrip({
     };
     holdPaneStrip(entry, place, motionMs);
     const row = strip.closest<HTMLElement>("[data-pane-header]");
-    const wheel = (event: WheelEvent) => scrollTabStripFromRow(event, strip);
+    const wheel = (event: WheelEvent) => {
+      scrollStripFromGap(event, strip);
+      scrollTabStripFromRow(event, strip);
+    };
     row?.addEventListener("wheel", wheel, { passive: false });
     markStripOverflow(strip);
     // The collapsed sidebar's inset moves the strip off the pane's edge
