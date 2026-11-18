@@ -729,7 +729,7 @@ export function IssuesPage() {
                   size="icon"
                   variant="outline"
                   aria-label={gt("Refresh issues")}
-                  onClick={list.refresh}
+                  onClick={list.refreshWorkflow}
                   disabled={list.isPending}
                 >
                   <RefreshIcon size="md" refreshing={list.isPending} />

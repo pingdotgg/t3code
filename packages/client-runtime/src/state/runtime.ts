@@ -94,6 +94,10 @@ interface EnvironmentQueryAtomOptions<Input, A, E, R> extends Omit<
     input: Input,
     emit: (value: A) => Effect.Effect<void>,
     previous: Option.Option<A>,
+    context: {
+      readonly environmentId: EnvironmentIdType;
+      readonly registry: AtomRegistry.AtomRegistry;
+    },
   ) => Effect.Effect<A, E, R>;
   readonly persistence?: QueryPersistence<A>;
   readonly staleTimeMs?: number;
@@ -777,6 +781,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
                           get.self<AsyncResult.AsyncResult<A, unknown>>(),
                           AsyncResult.value,
                         ),
+                        { environmentId: target.environmentId, registry: get.registry },
                       )
                       .pipe(pendingOnceSessionReplaced(session.value)),
                   )

@@ -310,7 +310,7 @@ export function IssuesScreen(
         refreshControl={
           <RefreshControl
             refreshing={list.isPending && list.answers.length > 0}
-            onRefresh={list.refresh}
+            onRefresh={list.refreshWorkflow}
             // The list already accounts for the navigation header in its content inset.
             progressViewOffset={Platform.OS === "ios" ? 60 : undefined}
           />

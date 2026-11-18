@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Layer from "effect/Layer";
@@ -221,6 +223,9 @@ describe("AzureDevOpsIssueTracker", () => {
       const hydrated: string[] = [];
       let typeReads = 0;
       let finished = "Shipped";
+      let beforeWorkflowRead:
+        | Effect.Effect<void, AzureDevOpsCli.AzureDevOpsCommandFailedError>
+        | undefined;
       const api = yield* AzureDevOpsIssueTracker.make.pipe(
         Effect.provide(
           Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
@@ -241,6 +246,19 @@ describe("AzureDevOpsIssueTracker", () => {
               }
               if (resource === "workitemtypes") {
                 typeReads += 1;
+                if (beforeWorkflowRead !== undefined) {
+                  return beforeWorkflowRead.pipe(
+                    Effect.as(
+                      TestSourceControlHost.processOutput(
+                        encode({
+                          value: [
+                            { name: "Bug", states: [{ name: finished, category: "Completed" }] },
+                          ],
+                        }),
+                      ),
+                    ),
+                  );
+                }
                 return Effect.succeed(
                   TestSourceControlHost.processOutput(
                     encode({
@@ -317,6 +335,56 @@ describe("AzureDevOpsIssueTracker", () => {
           " AND ([System.CreatedDate] < '2026-07-01T00:00:00Z' OR ([System.CreatedDate] = '2026-07-01T00:00:00Z' AND [System.Id] < 7))" +
           " ORDER BY [System.CreatedDate] DESC, [System.Id] DESC",
       );
+
+      const firstPage = {
+        cwd: "/w",
+        host: "dev.azure.com",
+        scope: "acme/Web App",
+        state: "open",
+        involvement: "all",
+        sort: "updated",
+        limit: 2,
+      } as const;
+      finished = "Done";
+      yield* api.listIssues({ ...firstPage, refresh: false, query: "composer" });
+      yield* api.listIssues({ ...firstPage, refresh: true, state: "all" });
+      expect(typeReads).toBe(2);
+      expect(bodies[3]).toContain("AND [System.State] NOT IN ('released')");
+      expect(bodies[4]).not.toContain("[System.State]");
+
+      beforeWorkflowRead = Effect.fail(
+        new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+          operation: "execute",
+          command: "az",
+          cwd: "/w",
+          argumentCount: 0,
+          cause: "workflow metadata unavailable",
+        }),
+      );
+      yield* api.listIssues({ ...firstPage, refresh: true });
+      yield* api.listIssues({ ...firstPage, refresh: false });
+      expect(typeReads).toBe(3);
+      expect(bodies.slice(5, 7).every((body) => body.includes("NOT IN ('released')"))).toBe(true);
+
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      beforeWorkflowRead = Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+      );
+      const first = yield* Effect.forkChild(api.listIssues({ ...firstPage, refresh: true }), {
+        startImmediately: true,
+      });
+      yield* Deferred.await(started);
+      const second = yield* Effect.forkChild(api.listIssues({ ...firstPage, refresh: true }), {
+        startImmediately: true,
+      });
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(first);
+      const refreshed = yield* Fiber.join(second);
+      expect(refreshed.nextCursor).not.toBeNull();
+      yield* api.listIssues({ ...firstPage, cursor: refreshed.nextCursor ?? undefined });
+      expect(typeReads).toBe(4);
+      expect(bodies.slice(7).every((body) => body.includes("NOT IN ('done')"))).toBe(true);
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 

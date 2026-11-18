@@ -46,12 +46,17 @@ const mergedIssueLists = createMergedIssueListAtoms(
 /** The same listing read across every connected environment, as the pull-request page does. */
 export function useIssueList(
   targets: ReadonlyArray<IssueListTarget>,
-): MergedIssueList & { readonly refresh: () => void; readonly retry: () => void } {
+): MergedIssueList & {
+  readonly refresh: () => void;
+  readonly retry: () => void;
+  readonly refreshWorkflow: () => void;
+} {
   const view = useAtomValue(mergedIssueLists.atom(targets));
   return {
     ...view,
     refresh: () => mergedIssueLists.refresh(appAtomRegistry, targets),
     retry: () => mergedIssueLists.retry(appAtomRegistry, targets),
+    refreshWorkflow: () => issueEnvironment.refreshWorkflow(appAtomRegistry, targets),
   };
 }
 

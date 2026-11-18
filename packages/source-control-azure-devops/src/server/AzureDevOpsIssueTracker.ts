@@ -7,6 +7,7 @@ import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -360,20 +361,23 @@ export const make: Effect.Effect<
       decode: decodeAs(decodeTypes),
     }).pipe(Effect.map((types) => types.value));
 
-  // Each `az` call costs seconds of startup, so the pages after a list's first reuse the states it
-  // read. A first page reads them again, which is how a refresh sees a workflow changed since.
-  const listClosedStates = yield* Cache.makeWith(
+  // A warm list can use the last good workflow while an explicit refresh is in flight.
+  const workflowReads = yield* Cache.makeWith(
     (key: string) => {
       const [cwd, organization, project] = JSON.parse(key) as [string, string, string];
       return workItemTypes({ cwd, organization, project, operation: "listIssues" }).pipe(
         Effect.map(closedStateNames),
+        Effect.tap((closed) => Cache.set(listClosedStates, key, closed)),
       );
     },
-    {
+    { capacity: Infinity, timeToLive: () => Duration.zero },
+  );
+  // Cache misses and explicit refreshes share the same in-flight read and publication.
+  const listClosedStates: Cache.Cache<string, ClosedStates, IssueTrackerError> =
+    yield* Cache.makeWith((key) => Cache.get(workflowReads, key), {
       capacity: 256,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? CLOSED_STATES_TTL : Duration.zero),
-    },
-  );
+    });
 
   const workItem = (input: {
     readonly cwd: string;
@@ -614,12 +618,23 @@ export const make: Effect.Effect<
       const created = input.sort === "created";
       const dateField = created ? "[System.CreatedDate]" : "[System.ChangedDate]";
       return yield* scoped("listIssues", input).pipe(
-        Effect.flatMap((scope) =>
-          (cursor === undefined ? Cache.refresh : Cache.get)(
-            listClosedStates,
-            JSON.stringify([input.cwd, scope.organization, scope.project]),
-          ).pipe(Effect.map((closed) => ({ scope, closed }))),
-        ),
+        Effect.flatMap((scope) => {
+          const key = JSON.stringify([input.cwd, scope.organization, scope.project]);
+          // The service always specifies refresh intent; direct tracker calls default to fresh.
+          const refresh = cursor === undefined && input.state !== "all" && input.refresh !== false;
+          const closed = refresh
+            ? Cache.getSuccess(listClosedStates, key).pipe(
+                Effect.flatMap((previous) =>
+                  Cache.get(workflowReads, key).pipe(
+                    Effect.catch((error) =>
+                      Option.isSome(previous) ? Effect.succeed(previous.value) : Effect.fail(error),
+                    ),
+                  ),
+                ),
+              )
+            : Cache.get(listClosedStates, key);
+          return closed.pipe(Effect.map((closed) => ({ scope, closed })));
+        }),
         Effect.flatMap(({ scope, closed }) =>
           invokeWithBody({
             cwd: input.cwd,
