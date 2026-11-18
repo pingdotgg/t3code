@@ -14095,11 +14095,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     detail: `Claude session ${nativeThreadId} has no conversation to resume.`,
                   });
                 }
-                // An imported session T3 never loaded has its history only in that transcript;
+                // An imported session T3 never ran has its history only in that transcript;
                 // without it the first turn would open an empty session under the same id.
                 if (
                   transcript === "missing" &&
-                  threadInput.providerThread.providerSessionId === null
+                  threadInput.providerThread.firstRunOrdinal === null
                 ) {
                   return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                     driver: CLAUDE_PROVIDER,

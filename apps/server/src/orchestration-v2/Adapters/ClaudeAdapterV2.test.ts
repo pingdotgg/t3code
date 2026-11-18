@@ -1872,6 +1872,7 @@ describe("ClaudeAdapterV2 resumeThread", () => {
         const missing = yield* runtime.resumeThread({
           providerThread: {
             ...providerThread,
+            firstRunOrdinal: 1,
             nativeThreadRef: {
               driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
               nativeId: "native-thread-missing",
@@ -3247,7 +3248,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
                   }),
                   driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
                   providerInstanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-                  providerSessionId: null,
+                  providerSessionId,
                   appThreadId: threadId,
                   ownerNodeId: null,
                   nativeThreadRef: {
@@ -4658,7 +4659,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             )
           : persisted;
         const resumed = yield* makeWakeHarness;
-        const providerThread = yield* resumed.runtime.resumeThread({ providerThread: inherited });
+        // The orchestrator records the fork's first run on the row before resuming it.
+        const providerThread = yield* resumed.runtime.resumeThread({
+          providerThread: { ...inherited, firstRunOrdinal: inherited.firstRunOrdinal ?? 1 },
+        });
         yield* fileSystem.writeFileString(
           path.join(resumed.attachmentsDir, attachmentRelativePath(document)!),
           "%PDF-1.7\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R >> endobj\n%%EOF",
