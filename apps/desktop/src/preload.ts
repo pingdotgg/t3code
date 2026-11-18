@@ -3,6 +3,7 @@ import type {
   DesktopPreviewAnnotationVoiceEvent,
   DesktopPreviewFindResultEvent,
   DesktopPreviewOpenLinkEvent,
+  DesktopPreviewOwnership,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
   DesktopPreviewTabState,
@@ -164,6 +165,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getClientSettings: () => ipcRenderer.invoke(IpcChannels.GET_CLIENT_SETTINGS_CHANNEL),
   setClientSettings: (settings) =>
     ipcRenderer.invoke(IpcChannels.SET_CLIENT_SETTINGS_CHANNEL, settings),
+  onClientSettingsChanged: (listener) => {
+    const wrappedListener = () => listener();
+    ipcRenderer.on(IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL, wrappedListener);
+    };
+  },
+  openAppWindow: (input) => ipcRenderer.invoke(IpcChannels.OPEN_APP_WINDOW_CHANNEL, input),
   requestSnapShotPermissions: (includeAccessibility) =>
     ipcRenderer.invoke(IpcChannels.REQUEST_SNAP_SHOT_PERMISSIONS_CHANNEL, includeAccessibility),
   getSnapShotState: () => ipcRenderer.invoke(IpcChannels.GET_SNAP_SHOT_STATE_CHANNEL),
@@ -527,5 +536,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
     },
+    getOwnership: () => ipcRenderer.invoke(IpcChannels.PREVIEW_GET_OWNERSHIP_CHANNEL),
+    onOwnershipChange: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, ownership: unknown) => {
+        if (typeof ownership !== "object" || ownership === null) return;
+        listener(ownership as DesktopPreviewOwnership);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_OWNERSHIP_CHANGE_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_OWNERSHIP_CHANGE_CHANNEL, wrappedListener);
+    },
+    claimSession: (sessionKey) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_CLAIM_SESSION_CHANNEL, sessionKey),
   },
 } satisfies DesktopBridge);

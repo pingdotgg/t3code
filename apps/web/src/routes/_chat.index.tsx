@@ -1,26 +1,34 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/project-grouping";
+import { useAtomValue } from "@effect/atom-react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { isElectron } from "../env";
 import { NoProjectsHero } from "../components/NoProjectsHero";
-import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
+import { resolveIndexLandingProject } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
 import { HostedEmptyState } from "../components/HostedEmptyState";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useClientSettings } from "../hooks/useSettings";
+import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
+import { resolveSidebarProjectScope } from "../sidebarProjectGrouping";
 import {
   readProject,
+  useAllEnvironmentProjectSnapshotsReady,
   useAllEnvironmentShellsBootstrapped,
   useProjects,
   useVisibleThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
+import { environmentProjects } from "../state/projects";
+import { useWindowProjectScopeStore } from "../windowProjectScope";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
@@ -45,12 +53,25 @@ function IndexDraftLanding() {
   const startedAttemptRef = useRef<number | null>(null);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
-  const mostRecentProject =
-    sortScopedProjectsForSidebar(
-      projects.filter((project) => project.archivedAt == null),
-      threads,
-      "updated_at",
-    )[0] ?? null;
+  const projectGroups = useSidebarProjectGroups();
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const scopeKeys = useWindowProjectScopeStore((store) => store.projectScopeKeys);
+  const projectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
+  const projectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
+  const scopeReady = projectSnapshotsReady && projectConfigsReady;
+
+  const mostRecentProject = resolveIndexLandingProject({
+    projects,
+    threads,
+    scopeKeys,
+    scopedProjectKeys: resolveSidebarProjectScope({
+      groups: projectGroups,
+      keys: scopeKeys,
+      settings: projectGroupingSettings,
+      canClearMissingScope: scopeReady,
+    }).memberProjectKeys,
+    scopeReady,
+  });
   const attempt = startState.retryRequest;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a draft thread in the most recent project and navigates to it while still on the index
@@ -87,8 +108,8 @@ function IndexDraftLanding() {
       />
     ) : null;
   }
-  // A pending environment cannot prove the workspace is empty.
-  return bootstrapped ? <NoProjectsHero /> : null;
+  // A pending environment or an unresolved scope cannot prove the workspace is empty.
+  return bootstrapped && (scopeKeys.length === 0 || scopeReady) ? <NoProjectsHero /> : null;
 }
 
 function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {

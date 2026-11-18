@@ -6,6 +6,12 @@ import { m } from "./i18n/messages";
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<string, string> }>> = {
+  "app-window": [
+    { tag: "rect", attrs: { x: "2", y: "4", width: "20", height: "16", rx: "2" } },
+    { tag: "path", attrs: { d: "M10 4v4" } },
+    { tag: "path", attrs: { d: "M2 8h20" } },
+    { tag: "path", attrs: { d: "M6 4v4" } },
+  ],
   archive: [
     { tag: "rect", attrs: { width: "20", height: "5", x: "2", y: "3", rx: "1" } },
     { tag: "path", attrs: { d: "M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" } },

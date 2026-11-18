@@ -160,6 +160,18 @@ Pinned threads stay above the folders, and Snoozed and Settled stay below them. 
 can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
 section is off. Each device keeps its own choice.
 
+### Open a project in its own window
+
+Right-click a thread and choose **Open _project_ in New Window**, or right-click a project folder
+and choose **Open in New Window**. On desktop you can also use **File → New Window** or **Window →
+New Window**, which copies the current window's project filter. On the web, the new window opens
+as a browser tab.
+
+Every window shows the same threads and settings. Only the project filter is per window, so you
+can keep one window per project or set of projects. The filter you pick in your first window is
+the one T3 Code remembers for next time; filters in extra windows are not. When you quit the
+desktop app, only the main window comes back.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

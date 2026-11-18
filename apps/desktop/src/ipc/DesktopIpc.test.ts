@@ -1,17 +1,25 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
 
+import * as DesktopLegacyLocalStorage from "../app/DesktopLegacyLocalStorage.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopIpc from "./DesktopIpc.ts";
+import { takeLegacyLocalStorage } from "./methods/legacyLocalStorage.ts";
 
-it.effect("answers only the main window's top frame", () =>
+it.effect("answers only app windows' top frames and hands sync handlers their sender", () =>
   Effect.gen(function* () {
-    const mainFrame = {};
+    const primaryFrame = {};
+    const secondaryFrame = {};
+    const appWindows = [
+      { webContents: { id: 1, mainFrame: primaryFrame } },
+      { webContents: { id: 3, mainFrame: secondaryFrame } },
+    ] as unknown as ReadonlyArray<Electron.BrowserWindow>;
     const invoke = new Map<string, DesktopIpc.DesktopIpcHandleListener>();
     const sync = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
     const ipc = yield* DesktopIpc.DesktopIpc.pipe(
@@ -24,9 +32,12 @@ it.effect("answers only the main window's top frame", () =>
         }).pipe(
           Layer.provide(
             Layer.mock(ElectronWindow.ElectronWindow, {
-              main: Effect.succeedSome({
-                webContents: { id: 1, mainFrame },
-              } as unknown as Electron.BrowserWindow),
+              appWindowFor: (sender) =>
+                Effect.succeed(
+                  Option.fromNullishOr(
+                    appWindows.find((window) => window.webContents.id === sender.id) ?? null,
+                  ),
+                ),
             }),
           ),
         ),
@@ -40,10 +51,26 @@ it.effect("answers only the main window's top frame", () =>
         handler: () => Effect.succeed("secret"),
       }),
     );
-    yield* ipc.handleSync({ channel: "token-sync", handler: () => Effect.succeed("secret") });
+    yield* ipc.handleSync({
+      channel: "token-sync",
+      handler: (event) => Effect.succeed(`secret for ${event?.sender.id}`),
+    });
+    yield* ipc.handleSync(takeLegacyLocalStorage).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ElectronWindow.ElectronWindow, {
+            primary: Effect.succeedSome(appWindows[0]!),
+          }),
+          Layer.mock(DesktopLegacyLocalStorage.DesktopLegacyLocalStorage, {
+            take: Effect.succeedSome({ theme: "dark" }),
+          }),
+        ),
+      ),
+    );
 
     const senders = {
-      app: { sender: { id: 1 }, senderFrame: mainFrame },
+      app: { sender: { id: 1 }, senderFrame: primaryFrame },
+      secondApp: { sender: { id: 3 }, senderFrame: secondaryFrame },
       appSubframe: { sender: { id: 1 }, senderFrame: {} },
       previewGuest: { sender: { id: 2 }, senderFrame: {} },
     };
@@ -51,17 +78,21 @@ it.effect("answers only the main window's top frame", () =>
     for (const [name, sender] of Object.entries(senders)) {
       const event = { ...sender, returnValue: "unset" as unknown };
       sync.get("token-sync")!(event);
+      const legacy = { ...sender, returnValue: "unset" as unknown };
+      sync.get(takeLegacyLocalStorage.channel)!(legacy);
       results[name] = [
         yield* Effect.promise(() =>
           Promise.resolve(invoke.get("token")!(sender, undefined)).catch(() => "rejected"),
         ),
         event.returnValue,
+        legacy.returnValue,
       ];
     }
     assert.deepEqual(results, {
-      app: ["secret", "secret"],
-      appSubframe: ["rejected", undefined],
-      previewGuest: ["rejected", undefined],
+      app: ["secret", "secret for 1", { theme: "dark" }],
+      secondApp: ["secret", "secret for 3", null],
+      appSubframe: ["rejected", undefined, undefined],
+      previewGuest: ["rejected", undefined, undefined],
     });
   }),
 );

@@ -281,7 +281,7 @@ export const listen: Effect.Effect<
     function* () {
       if (yield* Ref.get(quitting)) return;
       // A visible boot shell still needs recovery if the backend has never started.
-      const main = yield* electronWindow.main;
+      const main = yield* electronWindow.currentAppWindow;
       if (
         backendHasStarted &&
         Option.isSome(main) &&
@@ -295,25 +295,22 @@ export const listen: Effect.Effect<
         return;
       }
       const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
-      const window = yield* electronWindow.create(
-        {
-          width: 640,
-          height: 480,
-          minWidth: 420,
-          minHeight: 320,
-          show: false,
-          title: m(msg("T3 Code could not start")),
-          autoHideMenuBar: true,
-          backgroundColor: shouldUseDarkColors ? "#000000" : "#ffffff",
-          webPreferences: {
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true,
-            javascript: false,
-          },
+      const window = yield* electronWindow.create({
+        width: 640,
+        height: 480,
+        minWidth: 420,
+        minHeight: 320,
+        show: false,
+        title: m(msg("T3 Code could not start")),
+        autoHideMenuBar: true,
+        backgroundColor: shouldUseDarkColors ? "#000000" : "#ffffff",
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          javascript: false,
         },
-        { auxiliary: true },
-      );
+      });
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       window.webContents.on("will-navigate", (event, url) => {
         event.preventDefault();
@@ -344,7 +341,7 @@ export const listen: Effect.Effect<
 
   const closeWhenMainReady = Effect.gen(function* () {
     if ((yield* SubscriptionRef.get(primaryBackendStartup))._tag !== "Ready") return;
-    const main = yield* electronWindow.main;
+    const main = yield* electronWindow.currentAppWindow;
     if (Option.isSome(main) && !main.value.isDestroyed() && main.value.isVisible()) yield* close;
   });
 

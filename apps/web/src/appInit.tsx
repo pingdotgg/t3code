@@ -53,12 +53,18 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { startProviderAuthDelivery } from "./providerAuthDelivery";
+import {
+  initWindowProjectScope,
+  openProjectScopeWindow,
+  useWindowProjectScopeStore,
+} from "./windowProjectScope";
 import { getRouter, type AppRouter } from "./router";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { environmentProjects } from "./state/projects";
 import { primaryServerConfigAtom } from "./state/server";
 import { environmentShell } from "./state/shell";
 import { installChatRouteCommands } from "./shortcuts/chatRouteCommands";
+import { registerMenuAction } from "./shortcuts/dispatcher";
 import { startWorkspaceFocus } from "./lib/workspaceFocus";
 import { m } from "./i18n/messages";
 import { startI18n, subscribeI18n } from "./i18n/runtime";
@@ -257,6 +263,7 @@ function startThreadOverlayRetention(router: AppRouter): void {
 export function startAppServices(): AppRouter {
   // Ahead of the history: the provider auth code must leave the address before anything reads it.
   startProviderAuthDelivery();
+  initWindowProjectScope();
 
   // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
   const router = getRouter(isElectron ? createHashHistory() : createBrowserHistory());
@@ -311,7 +318,12 @@ export function startAppServices(): AppRouter {
   startPermissionUpdateNotices(router);
   startThreadNotifications(appAtomRegistry, router);
   startGuideRunNotifications(appAtomRegistry, router);
-  if (isElectron) startDesktopUpdateLaunchNotice();
+  if (isElectron) {
+    startDesktopUpdateLaunchNotice();
+    registerMenuAction("new-window", () =>
+      openProjectScopeWindow(useWindowProjectScopeStore.getState().projectScopeKeys),
+    );
+  }
 
   return router;
 }

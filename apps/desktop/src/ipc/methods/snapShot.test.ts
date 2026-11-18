@@ -1,12 +1,18 @@
+import type { DesktopSnapShotId } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import type * as Electron from "electron";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import {
+  acknowledgeSnapShot,
+  listPendingSnapShots,
   setupSnapShot,
   previewSnapShotConfig,
   applySnapShotConfig,
@@ -44,7 +50,12 @@ describe("window capture IPC", () => {
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
-            main: Effect.succeedSome({ webContents: { id: 7 } }),
+            appWindowFor: (sender) =>
+              Effect.succeed(
+                sender.id === 7
+                  ? Option.some({ webContents: { id: 7 } } as Electron.BrowserWindow)
+                  : Option.none(),
+              ),
           } as ElectronWindow.ElectronWindow["Service"]),
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             previewConfig: () =>
@@ -67,6 +78,53 @@ describe("window capture IPC", () => {
     );
   });
 
+  it.effect("lists another window's capture only once that window acknowledges it", () => {
+    const first = { webContents: { id: 1 } } as Electron.BrowserWindow;
+    const second = { webContents: { id: 2 } } as Electron.BrowserWindow;
+    const ownedByFirst = "aaaaaaaa-0000-0000-0000-000000000001" as DesktopSnapShotId;
+    const unowned = "bbbbbbbb-0000-0000-0000-000000000002" as DesktopSnapShotId;
+    const owners = new Map<string, Electron.BrowserWindow>([[ownedByFirst, first]]);
+    const pendingCapture = (id: DesktopSnapShotId) => ({
+      id,
+      name: "capture.png",
+      mimeType: "image/png" as const,
+      sizeBytes: 1,
+      source: {
+        kind: "snap-shot" as const,
+        capturedAt: "2026-01-01T00:00:00.000Z",
+        appName: "Editor",
+        windowTitle: "main.ts",
+      },
+    });
+    const pending = [pendingCapture(ownedByFirst), pendingCapture(unowned)];
+    const listedIds = (senderId: number) =>
+      Effect.map(listPendingSnapShots.handler(undefined, { sender: { id: senderId } }), (items) =>
+        (items as ReadonlyArray<{ readonly id: string }>).map((item) => item.id),
+      );
+    return Effect.gen(function* () {
+      assert.deepEqual(yield* listedIds(2), [unowned]);
+      assert.deepEqual(yield* listedIds(1), [ownedByFirst, unowned]);
+      yield* acknowledgeSnapShot.handler(ownedByFirst, { sender: { id: 1 } });
+      assert.deepEqual(yield* listedIds(2), [ownedByFirst, unowned]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(ElectronWindow.ElectronWindow, {
+            appWindowFor: (sender) => Effect.succeedSome(sender.id === 1 ? first : second),
+          }),
+          Layer.mock(DesktopWindow.DesktopWindow, {
+            snapShotOwner: (id) => Effect.succeed(Option.fromNullishOr(owners.get(id) ?? null)),
+            releaseSnapShot: (id) => Effect.sync(() => void owners.delete(id)),
+          }),
+          Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
+            listPending: Effect.succeed(pending),
+            acknowledge: () => Effect.void,
+          } as unknown as DesktopSnapShot.DesktopSnapShot["Service"]),
+        ),
+      ),
+    );
+  });
+
   it.effect("allows capture setup only from the trusted main renderer", () => {
     const actions: string[] = [];
     return Effect.gen(function* () {
@@ -81,7 +139,12 @@ describe("window capture IPC", () => {
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
-            main: Effect.succeedSome({ webContents: { id: 7 } }),
+            appWindowFor: (sender) =>
+              Effect.succeed(
+                sender.id === 7
+                  ? Option.some({ webContents: { id: 7 } } as Electron.BrowserWindow)
+                  : Option.none(),
+              ),
           } as ElectronWindow.ElectronWindow["Service"]),
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             setup: (action: string) =>

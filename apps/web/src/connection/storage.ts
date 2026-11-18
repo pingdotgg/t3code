@@ -558,15 +558,45 @@ interface CatalogStore {
   ) => Effect.Effect<void, ConnectionTransientError>;
 }
 
+const CATALOG_LOCK_NAME = "t3code:connection-catalog";
+
+// Web Locks span every same-origin tab and app window, so one catalog update runs at a time.
+function withCrossWindowCatalogLock<A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> {
+  const locks = typeof navigator === "undefined" ? undefined : navigator.locks;
+  if (locks === undefined) return effect;
+  return Effect.acquireUseRelease(
+    Effect.promise(
+      () =>
+        new Promise<(() => void) | undefined>((granted) => {
+          // A lock that cannot be taken leaves only the per-window lock, rather than hanging.
+          locks
+            .request(
+              CATALOG_LOCK_NAME,
+              () => new Promise<void>((release) => granted(() => release())),
+            )
+            .catch(() => granted(undefined));
+        }),
+    ),
+    () => effect,
+    (release) => Effect.sync(() => release?.()),
+  );
+}
+
 export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
   backend: CatalogBackend,
+  options?: {
+    readonly exclusive?: <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A, E>;
+  },
 ) {
+  const exclusive = options?.exclusive ?? withCrossWindowCatalogLock;
   const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
   const lock = yield* Semaphore.make(1);
 
-  const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
+  const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* (options?: {
+    readonly fresh?: boolean;
+  }) {
     const cached = yield* Ref.get(state);
-    if (Option.isSome(cached)) {
+    if (Option.isSome(cached) && options?.fresh !== true) {
       return cached.value;
     }
     const raw = yield* backend.read;
@@ -608,11 +638,14 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
       yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          const next = transform(yield* loadUnlocked());
-          yield* backend.write(yield* encodeCatalog(next));
-          yield* Ref.set(state, Option.some(next));
-        }),
+        exclusive(
+          Effect.gen(function* () {
+            // Another app window may have written since this one cached the catalog.
+            const next = transform(yield* loadUnlocked({ fresh: true }));
+            yield* backend.write(yield* encodeCatalog(next));
+            yield* Ref.set(state, Option.some(next));
+          }),
+        ),
       );
     },
   );

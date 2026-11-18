@@ -7,6 +7,7 @@ import {
   DesktopPreviewConfigInputSchema,
   DesktopPreviewFindInPageInputSchema,
   DesktopPreviewNavigateInputSchema,
+  DesktopPreviewOwnershipSchema,
   DesktopPreviewRecordingArtifactSchema,
   DesktopPreviewRecordingSaveInputSchema,
   DesktopPreviewRegisterWebviewInputSchema,
@@ -467,6 +468,27 @@ const copyArtifactToClipboard = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const getOwnership = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_GET_OWNERSHIP_CHANNEL,
+  payload: Schema.Void,
+  result: DesktopPreviewOwnershipSchema,
+  handler: Effect.fn("desktop.ipc.preview.getOwnership")(function* (_input, event) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.getOwnership(event?.sender.id ?? -1);
+  }),
+});
+
+const claimSession = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_CLAIM_SESSION_CHANNEL,
+  payload: Schema.String.check(Schema.isMaxLength(4_096)),
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.claimSession")(function* (sessionKey, event) {
+    if (event === undefined) return;
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.claimSession(event.sender.id, sessionKey);
+  }),
+});
+
 const saveRecording = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_RECORDING_SAVE_CHANNEL,
   payload: DesktopPreviewRecordingSaveInputSchema,
@@ -515,4 +537,6 @@ export const methods = [
   startRecording,
   stopRecording,
   saveRecording,
+  getOwnership,
+  claimSession,
 ] as const;

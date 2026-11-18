@@ -63,7 +63,7 @@ export class DesktopIpcUntrustedSenderError extends Schema.TaggedError<DesktopIp
   { channel: Schema.String },
 ) {
   override get message(): string {
-    return `Rejected ${this.channel} from a sender that is not the app window.`;
+    return `Rejected ${this.channel} from a sender that is not an app window.`;
   }
 }
 
@@ -80,7 +80,7 @@ export interface DesktopIpcMethod<E, R> {
 
 export interface DesktopSyncIpcMethod<E, R> {
   readonly channel: string;
-  readonly handler: () => Effect.Effect<unknown, E, R>;
+  readonly handler: (event?: DesktopIpcInvokeEvent) => Effect.Effect<unknown, E, R>;
 }
 
 export class DesktopIpc extends Context.Service<
@@ -158,7 +158,7 @@ export const make = (
                     yield* Effect.logWarning("Rejected sync IPC from an untrusted sender.");
                     return undefined;
                   }
-                  return yield* handler();
+                  return yield* handler(event);
                 }).pipe(
                   Effect.annotateLogs({ channel }),
                   Effect.withSpan("desktop.ipc.invokeSync"),
@@ -186,11 +186,9 @@ export const layer = (ipcMain: DesktopIpcMain) =>
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       return make(ipcMain, (event) =>
         Effect.map(
-          electronWindow.main,
-          (main) =>
-            Option.isSome(main) &&
-            main.value.webContents.id === event.sender.id &&
-            main.value.webContents.mainFrame === event.senderFrame,
+          electronWindow.appWindowFor(event.sender),
+          (window) =>
+            Option.isSome(window) && window.value.webContents.mainFrame === event.senderFrame,
         ),
       );
     }),
@@ -287,7 +285,7 @@ export interface DesktopSyncIpcMethodRegistration<
     ResultDecodingServices,
     ResultEncodingServices
   >;
-  readonly handler: () => Effect.Effect<Result, E, R>;
+  readonly handler: (event?: DesktopIpcInvokeEvent) => Effect.Effect<Result, E, R>;
 }
 
 export const makeSyncIpcMethod = <
@@ -311,9 +309,9 @@ export const makeSyncIpcMethod = <
 
   return {
     channel: method.channel,
-    handler: () =>
+    handler: (event) =>
       method
-        .handler()
+        .handler(event)
         .pipe(
           Effect.flatMap(encode),
           Effect.withSpan("desktop.ipc.method", { attributes: { channel: method.channel } }),

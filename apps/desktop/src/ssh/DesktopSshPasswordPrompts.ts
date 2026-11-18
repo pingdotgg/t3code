@@ -284,7 +284,7 @@ export const make = Effect.fn("desktop.sshPasswordPrompts.make")(function* (
   const request: DesktopSshPasswordPrompts["Service"]["request"] = Effect.fn(
     "desktop.sshPasswordPrompts.request",
   )(function* (input) {
-    const window = yield* electronWindow.main;
+    const window = yield* electronWindow.currentAppWindow;
     if (Option.isNone(window)) {
       return yield* new DesktopSshPromptWindowUnavailableError({
         destination: input.destination,

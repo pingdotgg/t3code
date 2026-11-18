@@ -271,6 +271,25 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  it.effect("ignores a detach from a guest that no longer holds the tab", () =>
+    Effect.gen(function* () {
+      const host = yield* makeDrawnHost;
+      const replaced = makeDebuggee();
+      const current = makeDebuggee();
+      host.attach(key, current.tab);
+      const reader = yield* takeEvents(host, 2).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      host.detach(key, replaced.tab.webContents);
+      host.setShown(key, true);
+
+      expect(yield* Fiber.join(reader)).toEqual([
+        { type: "attached", ...key },
+        { type: "shown", ...key, shown: true },
+      ]);
+    }),
+  );
+
   it.effect("replays an explicit hidden report before announcing another tab", () =>
     Effect.gen(function* () {
       const host = yield* makeDrawnHost;

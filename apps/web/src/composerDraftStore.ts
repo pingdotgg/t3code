@@ -96,7 +96,7 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { draftModelSelectionApplies } from "./lib/chatThreadActions";
-import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
+import { createDeferredStorage, createMemoryStorage, mergeRecordChanges } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import {
   replaceComposerContextReferences,
@@ -155,21 +155,6 @@ function readStoredComposerDraftState(): PersistedComposerDraftStoreState | null
   }
 }
 
-function mergeDraftRecord<V>(
-  stored: Readonly<Record<string, V>> | undefined,
-  local: Readonly<Record<string, V>>,
-  baseline: Readonly<Record<string, V>>,
-): Record<string, V> {
-  const merged = { ...stored };
-  for (const key of new Set([...Object.keys(local), ...Object.keys(baseline)])) {
-    if (Equal.equals(local[key], baseline[key])) continue;
-    const value = local[key];
-    if (value === undefined) delete merged[key];
-    else merged[key] = value;
-  }
-  return merged;
-}
-
 /** Writes only what this tab changed since its last write over what other tabs saved since. */
 function mergeComposerDraftStates(
   stored: PersistedComposerDraftStoreState,
@@ -181,17 +166,17 @@ function mergeComposerDraftStates(
     return value === undefined ? {} : { [key]: value };
   };
   return {
-    draftsByThreadKey: mergeDraftRecord(
+    draftsByThreadKey: mergeRecordChanges(
       stored.draftsByThreadKey,
       local.draftsByThreadKey,
       baseline.draftsByThreadKey,
     ),
-    draftThreadsByThreadKey: mergeDraftRecord(
+    draftThreadsByThreadKey: mergeRecordChanges(
       stored.draftThreadsByThreadKey,
       local.draftThreadsByThreadKey,
       baseline.draftThreadsByThreadKey,
     ),
-    logicalProjectDraftThreadKeyByLogicalProjectKey: mergeDraftRecord(
+    logicalProjectDraftThreadKeyByLogicalProjectKey: mergeRecordChanges(
       stored.logicalProjectDraftThreadKeyByLogicalProjectKey,
       local.logicalProjectDraftThreadKeyByLogicalProjectKey,
       baseline.logicalProjectDraftThreadKeyByLogicalProjectKey,

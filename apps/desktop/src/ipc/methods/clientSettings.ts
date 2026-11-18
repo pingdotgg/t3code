@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import { applyLanguage } from "../../i18n/messages.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
@@ -23,10 +24,15 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.SET_CLIENT_SETTINGS_CHANNEL,
   payload: ClientSettingsSchema,
   result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings) {
+  handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings, event) {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
     const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
     yield* clientSettings.set(settings);
+    for (const window of yield* (yield* ElectronWindow.ElectronWindow).appWindows) {
+      if (window.webContents.id !== event?.sender.id) {
+        window.webContents.send(IpcChannels.CLIENT_SETTINGS_CHANGED_CHANNEL);
+      }
+    }
     yield* snapShot.configure(settings);
     yield* applyLanguage(settings.language);
   }),

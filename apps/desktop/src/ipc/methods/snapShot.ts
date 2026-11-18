@@ -20,6 +20,7 @@ import type * as Electron from "electron";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import { m } from "../../i18n/messages.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -35,15 +36,14 @@ class SnapShotIpcUnauthorizedSenderError extends Schema.TaggedError<SnapShotIpcU
 
 const ensureTrustedSnapShotSender = Effect.fn("desktop.ipc.snapShot.ensureTrustedSender")(
   function* (event: DesktopIpc.DesktopIpcInvokeEvent | undefined) {
-    const main = yield* (yield* ElectronWindow.ElectronWindow).main;
-    if (
-      event === undefined ||
-      Option.isNone(main) ||
-      main.value.webContents.id !== event.sender.id
-    ) {
+    const window =
+      event === undefined
+        ? Option.none<Electron.BrowserWindow>()
+        : yield* (yield* ElectronWindow.ElectronWindow).appWindowFor(event.sender);
+    if (Option.isNone(window)) {
       return yield* new SnapShotIpcUnauthorizedSenderError();
     }
-    return main.value;
+    return window.value;
   },
 );
 
@@ -168,8 +168,16 @@ export const listPendingSnapShots = DesktopIpc.makeIpcMethod({
   payload: Schema.Void,
   result: Schema.Array(DesktopPendingSnapShot),
   handler: Effect.fn("desktop.ipc.snapShot.listPending")(function* (_, event) {
-    yield* ensureTrustedSnapShotSender(event);
-    return yield* (yield* DesktopSnapShot.DesktopSnapShot).listPending;
+    const window = yield* ensureTrustedSnapShotSender(event);
+    const desktopWindow = yield* DesktopWindow.DesktopWindow;
+    // Another app window owns a capture it requested; only unowned ones are anyone's to take.
+    return yield* Effect.filter(
+      yield* (yield* DesktopSnapShot.DesktopSnapShot).listPending,
+      (item) =>
+        Effect.map(desktopWindow.snapShotOwner(item.id), (owner) =>
+          Option.match(owner, { onNone: () => true, onSome: (owner) => owner === window }),
+        ),
+    );
   }),
 });
 
@@ -237,5 +245,6 @@ export const acknowledgeSnapShot = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.snapShot.acknowledge")(function* (id, event) {
     yield* ensureTrustedSnapShotSender(event);
     yield* (yield* DesktopSnapShot.DesktopSnapShot).acknowledge(id);
+    yield* (yield* DesktopWindow.DesktopWindow).releaseSnapShot(id);
   }),
 });
