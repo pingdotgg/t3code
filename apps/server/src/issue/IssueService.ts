@@ -36,6 +36,7 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import {
   IssueTrackerError,
   isStandaloneIssueTracker,
+  type IssueInvolvementFilter,
   type IssueTrackerApi,
   type StandaloneIssueTrackerApi,
   type TrackerIssueDetail,
@@ -339,8 +340,10 @@ const make = Effect.gen(function* () {
     const errors: IssueListProjectError[] = [];
     const nextCursors: Record<string, string> = {};
 
+    const involvement = input.involvement ?? "all";
+    // Only a narrowed listing compares against the signed-in account; `all` never reads it.
     const viewerRequests = new Map<string, Effect.Effect<string, IssueTrackerError>>();
-    for (const project of scopes.values()) {
+    for (const project of involvement === "all" ? [] : scopes.values()) {
       if (viewerRequests.has(project.host)) continue;
       const request = yield* Effect.cached(
         project.api
@@ -385,15 +388,20 @@ const make = Effect.gen(function* () {
           // A continuation names the scopes it wants; one not named has nothing to add.
           if (continuing !== undefined && continuing[key] === undefined) return;
           const cursor = continuing?.[key];
-          const page = yield* viewerRequests.get(project.host)!.pipe(
-            Effect.flatMap((viewer) =>
+          const filter: Effect.Effect<IssueInvolvementFilter, IssueTrackerError> =
+            involvement === "all"
+              ? Effect.succeed({ involvement })
+              : viewerRequests
+                  .get(project.host)!
+                  .pipe(Effect.map((viewer) => ({ involvement, viewer })));
+          const page = yield* filter.pipe(
+            Effect.flatMap((filter) =>
               project.api.listIssues({
+                ...filter,
                 cwd: project.project.workspaceRoot,
                 host: project.host,
                 scope: project.scope,
                 state: input.state,
-                involvement: input.involvement ?? "all",
-                viewer,
                 limit,
                 query: input.query,
                 labels: input.labels,
