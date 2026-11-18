@@ -39,6 +39,30 @@ credentials and skills remain managed by the installed agent or its wrapper. Mod
 options come from ACP, including model IDs that contain JSON. T3 Code launches the executable directly
 without expanding shell expressions.
 
+To let a long-running local command publish assistant output after a turn completes, edit the
+server's `userdata/settings.json`. Set `enablePostSettleContinuation` to `true` in that provider
+instance's `config`:
+
+```json
+{
+  "providerInstances": {
+    "my-local-agent": {
+      "driver": "acpRegistry",
+      "config": {
+        "source": "local",
+        "commandPath": "my-agent",
+        "enablePostSettleContinuation": true
+      }
+    }
+  }
+}
+```
+
+This is off by default and applies only to local commands. The agent must stream late assistant
+output as `agent_message_chunk` notifications; standalone ACP v2 `agent_message` updates do not
+trigger continuation. Supported late output appears in a new run in the same thread, which returns
+to idle when the output finishes. T3 Code does not send the agent another prompt for these updates.
+
 ## Where agents run
 
 Registry agents always run on the machine that hosts your T3 Code server. That stays true when you
