@@ -1,4 +1,5 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { exportChatHistoryWithToast } from "../lib/chatHistoryTransfer";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
 import { attachSidebarTree } from "../lib/sidebarTree";
@@ -1274,6 +1275,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             [
               { id: "new-thread", label: gt("New thread") },
               { id: "copy-path", label: gt("Copy path") },
+              { id: "export", label: gt("Export threads"), icon: "download" },
               ...(canPinProject(group)
                 ? [
                     group.pinned
@@ -1294,6 +1296,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "copy-path":
             copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });
+            return;
+          case "export":
+            void exportChatHistoryWithToast(group.environmentId, {
+              type: "project",
+              projectId: group.id,
+            });
             return;
           case "pin":
           case "unpin":
@@ -2835,6 +2843,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            return;
+          case "export":
+            void exportChatHistoryWithToast(threadRef.environmentId, {
+              type: "thread",
+              threadId: thread.id,
+            });
             return;
           case "archive": {
             if (confirmThreadArchive) {

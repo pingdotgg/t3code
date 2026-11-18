@@ -93,6 +93,13 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import {
+  ChatHistoryError,
+  ChatHistoryExportInput,
+  ChatHistoryExportResult,
+  ChatHistoryImportInput,
+  ChatHistoryImportResult,
+} from "./chatHistory.ts";
+import {
   AgentSessionImportInput,
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
@@ -456,6 +463,8 @@ export const WS_METHODS = {
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
+  chatHistoryExport: "chatHistory.export",
+  chatHistoryImport: "chatHistory.import",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -1601,6 +1610,18 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   ]),
 });
 
+const WsChatHistoryExportRpc = Rpc.make(WS_METHODS.chatHistoryExport, {
+  payload: ChatHistoryExportInput,
+  success: ChatHistoryExportResult,
+  error: Schema.Union([ChatHistoryError, EnvironmentAuthorizationError]),
+});
+
+const WsChatHistoryImportRpc = Rpc.make(WS_METHODS.chatHistoryImport, {
+  payload: ChatHistoryImportInput,
+  success: ChatHistoryImportResult,
+  error: Schema.Union([ChatHistoryError, EnvironmentAuthorizationError]),
+});
+
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -2395,6 +2416,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
+  WsChatHistoryExportRpc,
+  WsChatHistoryImportRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,
   WsAttachmentsCreateUploadUrlRpc,

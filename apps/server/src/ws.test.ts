@@ -74,6 +74,7 @@ import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
+import * as ChatHistoryArchive from "./project/ChatHistoryArchive.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
@@ -824,6 +825,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({}),
   Layer.mock(AcpRegistrySessions.AcpRegistrySessions)({}),
   Layer.mock(AgentSessionImporter.AgentSessionImporter)({}),
+  Layer.mock(ChatHistoryArchive.ChatHistoryArchiveService)({}),
   Layer.mock(AgentSessionScanner.AgentSessionScanner)({}),
   Layer.mock(AnalyticsService.AnalyticsService)({}),
   Layer.mock(AntigravityInstallation.AntigravityInstallation)({ managedDirectory: "/unused" }),

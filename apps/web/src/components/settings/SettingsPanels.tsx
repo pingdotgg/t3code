@@ -122,6 +122,7 @@ import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
+import { ChatHistorySection } from "./ChatHistorySettings";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentSessionStatesAtom } from "~/state/session";
@@ -2420,6 +2421,8 @@ export function MaintenanceSettingsPanel() {
       </SettingsSection>
 
       <StorageCleanupSections />
+
+      <ChatHistorySection />
 
       <SettingsSection id="diagnostics-section" title={gt("Diagnostics")}>
         <SettingsRow

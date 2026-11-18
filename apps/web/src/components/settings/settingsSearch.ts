@@ -253,6 +253,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "chat-history-export",
+    title: msg("Export all threads"),
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    searchTerms: [msg("chat history conversations threads backup download file move")],
+  },
+  {
+    id: "chat-history-import",
+    title: msg("Import threads"),
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    searchTerms: [msg("chat history conversations threads restore upload file move")],
+  },
+  {
     id: "storage-delete-now",
     title: msg("Delete now"),
     to: "/settings/maintenance",

@@ -594,6 +594,8 @@ export interface ProjectionStoreV2Shape {
   >;
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
+  /** Ids of threads that are not deleted, archived ones included, oldest first. */
+  readonly listThreadIds: () => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   /** Every active thread, in shell order. */
   readonly listActiveShellIndex: () => Effect.Effect<
     ReadonlyArray<ActiveShellIndexEntry>,
@@ -9031,6 +9033,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError(shellSnapshotReadError),
     );
 
+    const listThreadIds = Effect.fn("ProjectionStore.listThreadIds")(function* () {
+      const rows = yield* sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM orchestration_v2_projection_threads
+        WHERE deleted_at IS NULL
+        ORDER BY json_extract(payload_json, '$.createdAt'), thread_id
+      `;
+      return rows.map((row) => ThreadId.make(row.thread_id));
+    }, Effect.mapError(shellSnapshotReadError));
+
     const countThreads = Effect.fn("ProjectionStore.countThreads")(function* () {
       const rows = yield* sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL
@@ -9397,6 +9408,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getPullRequestSnapshot: readOnReader(getPullRequestSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
       countThreads: readOnReader(countThreads),
+      listThreadIds: readOnReader(listThreadIds),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
       listActiveThreads: readOnReader(listActiveThreads),
       readShellSnapshot: readOnReader(readShellSnapshot),
