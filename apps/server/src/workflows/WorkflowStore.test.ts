@@ -13,6 +13,7 @@ import Migration0102 from "../persistence/Migrations/102_WorkflowRunInput.ts";
 import Migration0103 from "../persistence/Migrations/103_WorkflowStore.ts";
 import Migration0104 from "../persistence/Migrations/104_WorkflowRunParent.ts";
 import Migration0105 from "../persistence/Migrations/105_WorkflowStepResult.ts";
+import Migration0106 from "../persistence/Migrations/106_WorkflowWaitWatch.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) =>
@@ -31,6 +32,7 @@ const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) 
           Migration0103,
           Migration0104,
           Migration0105,
+          Migration0106,
         ],
         {
           discard: true,
@@ -101,6 +103,7 @@ it.effect("counts what waits on a person, and finds the run's latest agent threa
         token: "t",
         schemaJson: "{}",
         requestJson: '{"title":"Merge?"}',
+        watchJson: null,
         deadline: null,
       });
       // A paused run and an open question each wait on someone; a plain wait does not.
@@ -112,6 +115,7 @@ it.effect("counts what waits on a person, and finds the run's latest agent threa
         token: "u",
         schemaJson: "{}",
         requestJson: null,
+        watchJson: null,
         deadline: null,
       });
       assert.deepStrictEqual(yield* store.counts, { needsYou: 2, active: 2, total: 3 });

@@ -233,6 +233,8 @@ export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
     readonly timeout?: Duration.Input | undefined;
     readonly key?: string | undefined;
     readonly request?: Schema.Json | undefined;
+    /** What the engine looks at to end the wait by itself. */
+    readonly watch?: Schema.Json | undefined;
   },
 ): Effect.fn.Return<Option.Option<A>, StepFailed, InRun> {
   const run = yield* claim(name);
@@ -258,6 +260,7 @@ export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
         token,
         schemaJson: WorkflowStore.jsonText(schema),
         requestJson: options.request === undefined ? null : WorkflowStore.jsonText(options.request),
+        watchJson: options.watch === undefined ? null : WorkflowStore.jsonText(options.watch),
         deadline,
       });
       yield* run.store.runStatus(run.runId, "waiting", name);
