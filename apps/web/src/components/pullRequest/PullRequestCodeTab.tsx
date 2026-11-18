@@ -1070,7 +1070,6 @@ function PullRequestCodeTab({
   };
 
   const toggleAllFiles = () => {
-    codeViewScroll.discard();
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
     setFoldChoices(new Map());
   };
