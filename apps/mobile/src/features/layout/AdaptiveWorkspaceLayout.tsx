@@ -354,6 +354,8 @@ function AdaptiveWorkspaceLayoutContent(
     setHinge(next);
     setWindowHinge(nextWindow);
   };
+  // Android split cards retain a gap at the content edge.
+  const contentEndGap = Platform.OS === "android" && baseLayout.usesSplitView ? 4 : 0;
   const layout = useMemo(() => {
     const preferredLayout =
       baseLayout.listPaneWidth !== null && primarySidebarPreferredWidth !== null
@@ -362,6 +364,7 @@ function AdaptiveWorkspaceLayoutContent(
             listPaneWidth: constrainPrimarySidebarWidth({
               preferredWidth: primarySidebarPreferredWidth,
               availableWidth: viewportWidth - navigationRailWidth,
+              contentEndGap,
               auxiliaryPaneWidth:
                 !sidebarFloats && !workspacePage && inspectorActive && fileInspectorPreferredVisible
                   ? (deriveFileInspectorPaneLayout({
@@ -398,6 +401,7 @@ function AdaptiveWorkspaceLayoutContent(
     floatingTabs.row,
     floatingTabsEnabled,
     primarySidebarPreferredWidth,
+    contentEndGap,
     sidebarFloats,
     workspacePage,
     inspectorActive,
@@ -702,8 +706,6 @@ function AdaptiveWorkspaceLayoutContent(
   const inspectorColumnTargetWidth = panes.auxiliaryPaneVisible
     ? (panes.auxiliaryPaneWidth ?? 0)
     : 0;
-  // Android's split content is a rounded card: keep it off the screen edge like the list card.
-  const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
   // Toggling Android's sidebar slides one strip without reflowing either pane during the slide.
   const stripSidebar =
     Platform.OS === "android" &&
@@ -1120,6 +1122,7 @@ function AdaptiveWorkspaceLayoutContent(
               constrainPrimarySidebarWidth({
                 preferredWidth: sidebarResizeStartWidth.current + delta,
                 availableWidth: viewportWidth - navigationRailWidth,
+                contentEndGap,
                 auxiliaryPaneWidth: panes.auxiliaryPaneVisible
                   ? (panes.auxiliaryPaneWidth ?? undefined)
                   : undefined,

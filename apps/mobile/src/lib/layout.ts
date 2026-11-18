@@ -336,6 +336,7 @@ export function constrainAuxiliaryPaneWidth(input: {
 export function constrainPrimarySidebarWidth(input: {
   readonly preferredWidth: number;
   readonly availableWidth: number;
+  readonly contentEndGap?: number;
   readonly auxiliaryPaneWidth?: number;
 }): number {
   const minimumContentWidth =
@@ -345,7 +346,10 @@ export function constrainPrimarySidebarWidth(input: {
   return clamp(
     Math.round(input.preferredWidth),
     SPLIT_SIDEBAR_MIN_WIDTH,
-    Math.max(SPLIT_SIDEBAR_MIN_WIDTH, Math.floor(input.availableWidth - minimumContentWidth)),
+    Math.max(
+      SPLIT_SIDEBAR_MIN_WIDTH,
+      Math.floor(input.availableWidth - minimumContentWidth - (input.contentEndGap ?? 0)),
+    ),
   );
 }
 

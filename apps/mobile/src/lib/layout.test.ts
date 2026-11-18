@@ -138,6 +138,7 @@ describe("sidebar resizing", () => {
     { preferredWidth: 100, availableWidth: 1200, expected: 280 },
     { preferredWidth: 1000, availableWidth: 1200, expected: 880 },
     { preferredWidth: 420, availableWidth: 648, expected: 328 },
+    { preferredWidth: 420, availableWidth: 648, contentEndGap: 4, expected: 324 },
     { preferredWidth: 800, availableWidth: 1304, auxiliaryPaneWidth: 260, expected: 484 },
     {
       preferredWidth: 2000,
@@ -148,6 +149,9 @@ describe("sidebar resizing", () => {
   ])("keeps room for both panes: %j", ({ expected, ...input }) => {
     const listPaneWidth = constrainPrimarySidebarWidth(input);
     expect(listPaneWidth).toBe(expected);
+    expect(
+      input.availableWidth - listPaneWidth - (input.contentEndGap ?? 0),
+    ).toBeGreaterThanOrEqual(320);
     if (input.auxiliaryPaneWidth !== undefined) {
       const panes = deriveWorkspacePaneLayout({
         layout: { variant: "expanded", usesSplitView: true, listPaneWidth, shellPadding: 0 },

@@ -13,10 +13,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import {
-  ANDROID_THREAD_SIDEBAR_ROW_LAYOUT,
-  THREAD_LIST_ROW_LAYOUT,
-} from "./threadListAnimations";
+import { ANDROID_THREAD_SIDEBAR_ROW_LAYOUT, THREAD_LIST_ROW_LAYOUT } from "./threadListAnimations";
 import { useAtomValue } from "@effect/atom-react";
 import { useMemo, useRef, useState } from "react";
 import { Platform, StyleSheet, View } from "react-native";
