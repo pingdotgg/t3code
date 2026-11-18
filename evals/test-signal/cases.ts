@@ -134,6 +134,23 @@ export const cases: ReadonlyArray<Case> = [
     targets: [{ path: "packages/shared/src/markdownLinks.test.ts", title: "returns a boolean" }],
   },
   {
+    id: "logic-in-browser-test",
+    kind: "bad",
+    source: "Synthetic: a browser test that never renders, for a pure function in a .logic.ts file",
+    type: "synthetic",
+    rev: base,
+    path: "apps/web/src/components/chat/OpenInPicker.browser.test.tsx",
+    after: '    expect(await spoken()).toBe("Opened in VS Code");\n  });\n});\n',
+    insert:
+      '\ndescribe("open in picker visibility", () => {\n  it("shows the picker for the primary environment or a remote that can open links", async () => {\n    const { shouldShowOpenInPicker } = await import("./OpenInPicker.logic");\n    const show = (overrides: Partial<Parameters<typeof shouldShowOpenInPicker>[0]>) =>\n      shouldShowOpenInPicker({\n        activeProjectName: "app",\n        activeThreadEnvironmentId: selected,\n        primaryEnvironmentId: primary,\n        remoteOpenMode: "local-exec",\n        ...overrides,\n      });\n    expect(show({ activeProjectName: undefined })).toBe(false);\n    expect(show({ activeThreadEnvironmentId: primary })).toBe(true);\n    expect(show({})).toBe(false);\n    expect(show({ remoteOpenMode: "remote-links" })).toBe(true);\n  });\n});\n',
+    targets: [
+      {
+        path: "apps/web/src/components/chat/OpenInPicker.browser.test.tsx",
+        title: "shows the picker for the primary environment or a remote that can open links",
+      },
+    ],
+  },
+  {
     id: "deadlock-race-fix",
     kind: "guard",
     source: "#22094 run metrics read lineage inside the transaction so a writer cannot deadlock",

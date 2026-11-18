@@ -17,6 +17,8 @@ import {
 } from "./deviceHubApi";
 import { AndroidFoldError, readAndroidFold, type AndroidFoldState } from "./deviceFold";
 
+const isAndroidFoldError = Schema.is(AndroidFoldError);
+
 const AX_POLL_INTERVAL_MS = 2_000;
 const FOLD_RETRY_MS = 3_000;
 
@@ -102,7 +104,7 @@ export const androidFoldReadAtom = Atom.family(
     Atom.make((get) =>
       Effect.tryPromise({
         try: (signal) => readAndroidFold(input.access, input.deviceId, signal),
-        catch: (cause) => ({ expired: cause instanceof AndroidFoldError && cause.status === 401 }),
+        catch: (cause) => ({ expired: isAndroidFoldError(cause) && cause.status === 401 }),
       }).pipe(
         Effect.retry({
           while: (failure) => !failure.expired,

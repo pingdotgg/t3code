@@ -94,6 +94,8 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { readImageDimensions } from "@t3tools/shared/imageDimensions";
 
+const isCaptureSetupRequiredError = Schema.is(CaptureSetupRequiredError);
+
 const MAX_CAPTURE_WIDTH = 2_560;
 const MAX_CAPTURE_HEIGHT = 1_600;
 const SHORTCUT_COOLDOWN_NS = 200_000_000n;
@@ -180,7 +182,7 @@ const shortcutFailure = (cause: unknown) => new SnapShotShortcutError({ cause })
 
 function captureFailure(cause: unknown, captureId?: string): DesktopSnapShotError {
   if (isDesktopSnapShotError(cause)) return cause;
-  const operation = cause instanceof CaptureSetupRequiredError ? "setup-required" : "capture";
+  const operation = isCaptureSetupRequiredError(cause) ? "setup-required" : "capture";
   return new DesktopSnapShotError({ operation, captureId, cause });
 }
 
@@ -506,7 +508,6 @@ async function captureSource({
       ({ source, png } = await captureRegionWindowSnapshot(
         regionSnapShotPool,
         active,
-        snapShotFlashBounds(active, platform),
         snapShotThumbnailSize(active),
       ));
     } else {
@@ -545,7 +546,7 @@ async function captureSource({
       }
     }
     const accessibleIdentity = active
-      ? { ...active, bounds: snapShotFlashBounds(active, platform) }
+      ? active
       : linuxWindow?.processId
         ? {
             title: linuxWindow.title,

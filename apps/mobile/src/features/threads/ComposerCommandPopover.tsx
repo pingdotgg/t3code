@@ -11,6 +11,7 @@ import type {
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
+import { msg, useMessages } from "gt-react-native";
 import { memo } from "react";
 import { Pressable, ScrollView, StyleSheet, View, type ViewStyle } from "react-native";
 
@@ -19,6 +20,10 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { ENVIRONMENT_MACHINE_SYMBOLS } from "../../components/EnvironmentMachineSymbol";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
+import { ProviderIcon } from "../../components/ProviderIcon";
+import type { MessageResolver } from "../../i18n/messages";
+import { cn } from "../../lib/cn";
+import type { ModelOption } from "../../lib/modelOptions";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 export type ComposerCommandItem =
   | {
@@ -71,6 +76,13 @@ export type ComposerCommandItem =
       readonly skill: ServerProviderSkill;
       readonly label: string;
       readonly description: string;
+    }
+  | {
+      readonly id: string;
+      readonly type: "model";
+      readonly option: ModelOption;
+      readonly label: string;
+      readonly description: string;
     };
 
 interface ComposerCommandPopoverProps {
@@ -118,6 +130,7 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
     case "skill":
       return SKILL_SOURCE_SYMBOL_BY_KIND[resolveProviderSkillSourceKind(item.skill)];
     case "path":
+    case "model":
       return null;
     case "thread":
       return "text.bubble";
@@ -126,36 +139,46 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
   }
 }
 
-function groupLabel(triggerKind: ComposerTriggerKind | null): string | null {
+function groupLabel(
+  triggerKind: ComposerTriggerKind | null,
+  items: ReadonlyArray<ComposerCommandItem>,
+  resolve: MessageResolver,
+): string | null {
   switch (triggerKind) {
     case "pull-request":
-      return "Pull requests";
+      return resolve(msg("Pull requests"));
     case "slash-command":
-      return "Commands";
+      return resolve(msg("Commands"));
     case "skill":
-      return "Skills";
+      return resolve(msg("Skills"));
     case "path":
-      return "Files";
+      return items.every((item) => item.type === "path")
+        ? resolve(msg("Files"))
+        : resolve(msg("Mentions"));
     default:
       return null;
   }
 }
 
-function emptyText(triggerKind: ComposerTriggerKind | null, isLoading: boolean): string {
+function emptyText(
+  triggerKind: ComposerTriggerKind | null,
+  isLoading: boolean,
+  resolve: MessageResolver,
+): string {
   if (isLoading) {
-    return triggerKind === "path" ? "Searching files…" : "Loading…";
+    return triggerKind === "path" ? resolve(msg("Searching files…")) : resolve(msg("Loading…"));
   }
   switch (triggerKind) {
     case "pull-request":
-      return "No matching pull requests.";
+      return resolve(msg("No matching pull requests."));
     case "path":
-      return "No matching files or folders.";
+      return resolve(msg("No matching mentions."));
     case "skill":
-      return "No skills found.";
+      return resolve(msg("No skills found."));
     case "slash-command":
-      return "No matching commands.";
+      return resolve(msg("No matching commands."));
     default:
-      return "No results.";
+      return resolve(msg("No results."));
   }
 }
 
@@ -176,6 +199,12 @@ const CommandRow = memo(function CommandRow(props: {
     >
       {props.item.type === "path" ? (
         <PierreEntryIcon path={props.item.path} kind={props.item.kind} size={16} />
+      ) : props.item.type === "model" ? (
+        <ProviderIcon
+          iconUrl={props.item.option.providerIconUrl}
+          provider={props.item.option.providerDriver}
+          size={16}
+        />
       ) : iconName ? (
         <SymbolView
           name={iconName}
@@ -188,7 +217,13 @@ const CommandRow = memo(function CommandRow(props: {
           type="monochrome"
         />
       ) : null}
-      <Text className="shrink-0 text-base font-t3-medium text-foreground" numberOfLines={1}>
+      <Text
+        className={cn(
+          "shrink-0 text-base font-t3-medium text-foreground",
+          props.item.type === "thread" && "max-w-[45%]",
+        )}
+        numberOfLines={1}
+      >
         {props.isSlashSkill && props.item.type === "skill" ? (
           <>
             <Text className="text-foreground-muted">skill:</Text>
@@ -210,7 +245,8 @@ const CommandRow = memo(function CommandRow(props: {
 export const ComposerCommandPopover = memo(function ComposerCommandPopover(
   props: ComposerCommandPopoverProps,
 ) {
-  const label = groupLabel(props.triggerKind);
+  const m = useMessages();
+  const label = groupLabel(props.triggerKind, props.items, m);
 
   return (
     <PopoverSurface>
@@ -240,7 +276,7 @@ export const ComposerCommandPopover = memo(function ComposerCommandPopover(
       ) : (
         <View className="px-3.5 py-2.5">
           <Text className="text-xs text-foreground-tertiary">
-            {props.error ?? emptyText(props.triggerKind, props.isLoading)}
+            {props.error ?? emptyText(props.triggerKind, props.isLoading, m)}
           </Text>
         </View>
       )}

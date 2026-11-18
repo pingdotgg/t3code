@@ -5,7 +5,9 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadGuestShare, ThreadId } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react-native";
+import * as DateTime from "effect/DateTime";
 import { useMemo, useState } from "react";
 import { Platform, ScrollView, Share, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -25,20 +27,23 @@ import { environmentThreadDetails } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useThreadGuestShare } from "./ThreadGuestShareBar";
 
-const TITLE = "Share with guest";
+const TITLE = msg("Share with guest");
 const COPY_FEEDBACK_DURATION_MS = 1200;
-const PENDING_MESSAGES_NOTICE =
-  "Send or dismiss pending guest messages in the thread before creating a new link.";
+const PENDING_MESSAGES_NOTICE = msg(
+  "Send or dismiss pending guest messages in the thread before creating a new link.",
+);
 
 type CreateState =
   | { readonly status: "idle" }
   | { readonly status: "creating" }
-  | { readonly status: "created"; readonly url: string }
+  | { readonly status: "created"; readonly url: string; readonly share: ThreadGuestShare }
   | { readonly status: "failed"; readonly message: string };
 
 type GuestShareTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 
 export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTarget>) {
+  const gt = useGT();
+  const m = useMessages();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { environmentId, threadId } = route.params;
@@ -55,10 +60,8 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
     guestShare?.messages.some((message) => message.status === "pending") ?? false;
   // From the thread list the detail loads only now; until it does, an active link is unknown and a
   // new link would end it without the warning.
-  const threadLoaded = useAtomValue(
-    environmentThreadDetails.threadAtom(threadRef),
-    (thread) => thread !== null,
-  );
+  const thread = useAtomValue(environmentThreadDetails.threadAtom(threadRef));
+  const threadLoaded = thread !== null;
   const threadDeleted = useAtomValue(
     environmentThreadDetails.statusAtom(threadRef),
     (status) => status === "deleted",
@@ -81,13 +84,13 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
 
   const create = async () => {
     if (hasPendingMessages) {
-      Dialog.alert("Guest messages are waiting", PENDING_MESSAGES_NOTICE);
+      Dialog.alert(gt("Guest messages are waiting"), m(PENDING_MESSAGES_NOTICE));
       return;
     }
     setState({ status: "creating" });
     const result = await createGuestShare({ environmentId, input: { threadId } });
     if (result._tag === "Success") {
-      setState({ status: "created", url: result.value.url });
+      setState({ status: "created", url: result.value.url, share: result.value.share });
       return;
     }
     if (isAtomCommandInterrupted(result)) {
@@ -97,13 +100,13 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
     const error = squashAtomCommandFailure(result);
     setState({
       status: "failed",
-      message: error instanceof Error ? error.message : "Could not create a guest link.",
+      message: error instanceof Error ? error.message : gt("Could not create a guest link."),
     });
   };
 
   const copy = async (url: string) => {
     if (!(await tryCopyTextWithHaptic(url, { target: "guest link" }))) {
-      Dialog.alert("Could not copy", "Try again.");
+      Dialog.alert(gt("Could not copy"), gt("Try again."));
       return;
     }
     setCopiedAtMs(Date.now());
@@ -113,9 +116,23 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
     // Android ignores `url`; iOS turns a `message` URL into plain text instead of a link preview.
     Share.share(Platform.OS === "ios" ? { url } : { message: url }).catch((cause: unknown) => {
       console.error("Failed to share guest link.", cause);
-      Dialog.alert("Could not share the link", "Copy it instead.");
+      Dialog.alert(gt("Could not share the link"), gt("Copy it instead."));
     });
   };
+
+  const createdShareExpired = useDeadlinePassed(
+    state.status === "created" ? Date.parse(state.share.expiresAt) : null,
+  );
+  const createdLink =
+    state.status === "created" &&
+    !createdShareExpired &&
+    !threadDeleted &&
+    (thread === null ||
+      DateTime.toEpochMillis(thread.projection.thread.updatedAt) <
+        Date.parse(state.share.createdAt) ||
+      (activeShare?.id === state.share.id && activeShare.guestName === null))
+      ? state
+      : null;
 
   const content = (
     <ScrollView
@@ -125,34 +142,34 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
       contentContainerClassName="gap-5 px-5 pt-4"
       contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
     >
-      {state.status === "created" ? (
+      {createdLink !== null ? (
         <>
           <View className="gap-2">
             <View className="rounded-2xl border border-input-border bg-input px-3.5 py-3">
               <Text selectable numberOfLines={3} className="text-sm text-foreground">
-                {state.url}
+                {createdLink.url}
               </Text>
             </View>
             <Text className="px-1 text-xs text-foreground-muted">
-              Send it to one person. It works once and expires in 24 hours.
+              <T>Send it to one person. It works once and expires in 24 hours.</T>
             </Text>
           </View>
           <View className="flex-row gap-3">
             <View className="flex-1">
               <Button
-                label={copied ? "Copied" : "Copy"}
+                label={copied ? gt("Copied") : gt("Copy")}
                 icon={copied ? "checkmark" : "doc.on.doc"}
                 fullWidth
-                onPress={() => void copy(state.url)}
+                onPress={() => void copy(createdLink.url)}
               />
             </View>
             <View className="flex-1">
               <Button
-                label="Share"
+                label={gt("Share")}
                 icon="square.and.arrow.up"
                 tone="primary"
                 fullWidth
-                onPress={() => share(state.url)}
+                onPress={() => share(createdLink.url)}
               />
             </View>
           </View>
@@ -168,30 +185,34 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
               />
             </View>
             <Text className="min-w-0 flex-1 text-sm leading-normal text-foreground-secondary">
-              The guest sees the thread as you do, including command output and the agent&apos;s
-              reasoning. Each message they send waits for you.
+              <T>
+                The guest sees the thread as you do, including command output and the agent's
+                reasoning. Each message they send waits for you.
+              </T>
             </Text>
           </View>
           <View className="gap-1.5">
             {!threadLoaded ? (
               <Text className="text-sm text-foreground-muted">
                 {threadDeleted
-                  ? "This thread was deleted."
-                  : (threadLoadError ?? "Checking for an active link…")}
+                  ? gt("This thread was deleted.")
+                  : (threadLoadError ?? gt("Checking for an active link…"))}
               </Text>
             ) : activeShare !== null ? (
               <Text className="text-sm text-foreground">
                 {activeShare.guestName !== null
-                  ? `${activeShare.guestName} is a guest. A new link ends their access.`
-                  : "A guest link is active. A new link ends the current one."}
+                  ? gt("{name} is a guest. A new link ends their access.", {
+                      name: activeShare.guestName,
+                    })
+                  : gt("A guest link is active. A new link ends the current one.")}
               </Text>
             ) : (
               <Text className="text-sm text-foreground">
-                The link works once and expires in 24 hours.
+                <T>The link works once and expires in 24 hours.</T>
               </Text>
             )}
             {hasPendingMessages ? (
-              <Text className="text-sm text-foreground-muted">{PENDING_MESSAGES_NOTICE}</Text>
+              <Text className="text-sm text-foreground-muted">{m(PENDING_MESSAGES_NOTICE)}</Text>
             ) : null}
             {state.status === "failed" ? (
               <Text accessibilityRole="alert" className="text-sm text-danger-foreground">
@@ -202,12 +223,12 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
           <Button
             label={
               creating
-                ? "Creating link…"
+                ? gt("Creating link…")
                 : state.status === "failed"
-                  ? "Try again"
+                  ? gt("Try again")
                   : activeShare !== null
-                    ? "Create new link"
-                    : "Create link"
+                    ? gt("Create new link")
+                    : gt("Create link")
             }
             tone="primary"
             fullWidth
@@ -225,7 +246,7 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
       <View collapsable={false} className="flex-1 bg-sheet">
         <SheetHeader
           presentation="native"
-          title={TITLE}
+          title={m(TITLE)}
           onClose={close}
           dismissDisabled={creating}
         />
@@ -237,7 +258,7 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
   return (
     <View collapsable={false} className="flex-1 bg-header">
       <NativeStackScreenOptions options={{ sheetCornerRadius: 28 }} />
-      <AppBar sheet title={TITLE} hideBottomBorder onBack={close} />
+      <AppBar sheet title={m(TITLE)} hideBottomBorder onBack={close} />
       <ScreenContent>{content}</ScreenContent>
     </View>
   );

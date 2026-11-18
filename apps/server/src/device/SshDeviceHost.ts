@@ -41,6 +41,33 @@ export class SshWindowsHostError extends Schema.TaggedError<SshWindowsHostError>
 }
 export const isSshWindowsHostError = Schema.is(SshWindowsHostError);
 
+/** ssh itself refused the connection before the host bootstrap ran. */
+export class SshConnectError extends Schema.TaggedError<SshConnectError>()("SshConnectError", {
+  reason: Schema.Literals(["host_key_unknown", "host_key_changed", "auth", "resolve", "connect"]),
+  target: Schema.String,
+  /** The ssh diagnostic line that identified the reason. */
+  detail: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    const here = "the machine running this T3 Code server";
+    const detail = this.detail.replace(/\.$/u, "");
+    switch (this.reason) {
+      case "host_key_unknown":
+        return `SSH encountered an untrusted host key while connecting to ${this.target} from ${here}. Connect once with ssh from there to identify the host and verify its key before accepting it.`;
+      case "host_key_changed":
+        return `SSH encountered a changed host key while connecting to ${this.target} from ${here}. Connect once with ssh from there to identify the affected host. If the change is expected, remove that host's old key with \`ssh-keygen -R\`, then verify and accept its new key.`;
+      case "auth":
+        return `SSH login failed while connecting to ${this.target}: ${detail}. SSH from ${here} must log in without a prompt.`;
+      case "resolve":
+        return `Could not resolve the host name ${this.target} from ${here}: ${detail}.`;
+      case "connect":
+        return `Could not reach ${this.target} from ${here}: ${detail}. Check that the host is on, its SSH server is running, and the address and port are right.`;
+    }
+  }
+}
+export const isSshConnectError = Schema.is(SshConnectError);
+
 const Probe = Schema.Struct({
   nodePath: Schema.String,
   tools: Schema.optional(DeviceToolVersions),
@@ -90,6 +117,43 @@ const bootstrap = (
     ),
   );
 
+const isSshCommandError = Schema.is(SshCommandError);
+
+// ssh exits 255 for its own failures; the remote bootstrap never does.
+const SSH_CONNECT_FAILURES: ReadonlyArray<readonly [SshConnectError["reason"], RegExp]> = [
+  ["host_key_changed", /REMOTE HOST IDENTIFICATION HAS CHANGED/u],
+  ["host_key_unknown", /^Host key verification failed\.$/u],
+  [
+    "auth",
+    /^\S+: (?:Permission denied \(|No supported authentication methods)|: Too many authentication failures$/u,
+  ],
+  ["resolve", /^ssh: Could not resolve hostname /u],
+  ["connect", /^ssh: connect to host /u],
+];
+const explainSshConnectFailure = (
+  config: SshDeviceHostConfig,
+  error: DeviceHost.DeviceHostError,
+): DeviceHost.DeviceHostError => {
+  const cause = error.cause;
+  if (!isSshCommandError(cause) || cause.exitCode !== 255) return error;
+  const lines = cause.stderr.split(/\r?\n/u).map((line) => line.trim());
+  for (const [reason, pattern] of SSH_CONNECT_FAILURES) {
+    const detail = lines.find((line) => pattern.test(line));
+    if (detail === undefined) continue;
+    return new DeviceHost.DeviceHostError({
+      hostId: config.id,
+      step: error.step,
+      cause: new SshConnectError({
+        reason,
+        target: config.target,
+        detail,
+        cause,
+      }),
+    });
+  }
+  return error;
+};
+
 // cmd expands only %OS% and PowerShell only $env:OS; POSIX shells expand neither to Windows_NT.
 const explainWindowsHost = Effect.fn("SshDeviceHost.explainWindowsHost")(function* (
   config: SshDeviceHostConfig,
@@ -98,7 +162,7 @@ const explainWindowsHost = Effect.fn("SshDeviceHost.explainWindowsHost")(functio
   const cause = error.cause;
   // Windows ssh.exe preserves full remote exit statuses such as 9009.
   if (
-    !(cause instanceof SshCommandError) ||
+    !isSshCommandError(cause) ||
     cause.exitCode === null ||
     cause.exitCode < 1 ||
     (cause.exitCode > 254 && cause.exitCode !== 9009)
@@ -152,7 +216,10 @@ export const probe = Effect.fn("SshDeviceHost.probe")(function* (
   owner?: string,
 ) {
   const result = yield* bootstrap(config, owner ?? (yield* ownerFor(config.id)), "probe").pipe(
-    Effect.catchTags({ DeviceHostError: (error) => explainWindowsHost(config, error) }),
+    Effect.catchTags({
+      DeviceHostError: (error) =>
+        explainWindowsHost(config, explainSshConnectFailure(config, error)),
+    }),
   );
   const value = yield* decodeProbe(result.stdout.trim()).pipe(
     Effect.mapError(
@@ -377,14 +444,15 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
         origin: hubOrigin,
         http,
         run,
-        // Keep probing negative reports so an SDK installed after connecting is still found.
-        androidAvailable: Effect.suspend(() =>
-          summary.platforms.some((p) => p.platform === "android" && p.available)
-            ? Effect.succeed(true)
-            : platformAvailability("android").pipe(
-                Effect.map((availability) => availability.available),
-              ),
-        ),
+        // Keep probing negative reports so tooling installed after connecting is still found.
+        platformAvailable: (platform) =>
+          Effect.suspend(() =>
+            summary.platforms.some((p) => p.platform === platform && p.available)
+              ? Effect.succeed(true)
+              : platformAvailability(platform).pipe(
+                  Effect.map((availability) => availability.available),
+                ),
+          ),
       }),
       ...(remote.daemonPort !== undefined &&
       remote.token !== undefined &&
@@ -470,13 +538,21 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     return next;
   });
 
+  const closeConnection = Effect.suspend(() => {
+    const failedScope = connectionScope;
+    connectionScope = null;
+    ready = null;
+    return failedScope ? Scope.close(failedScope, Exit.void) : Effect.void;
+  });
+
   const connect = Effect.fn("SshDeviceHost.connect")(function* () {
     for (let attempt = 0; ; attempt++) {
-      const result = yield* connectOnce().pipe(Effect.result);
+      const result = yield* connectOnce().pipe(
+        Effect.onInterrupt(() => closeConnection),
+        Effect.result,
+      );
       if (result._tag === "Success") return result.success;
-      const failedScope = connectionScope;
-      connectionScope = null;
-      if (failedScope) yield* Scope.close(failedScope, Exit.void);
+      yield* closeConnection;
       // SSH binds after the reservation is released, so a competing bind needs fresh ports.
       if (
         attempt >= 2 ||
