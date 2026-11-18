@@ -116,6 +116,8 @@ export function LocalPreviewScreen(props: {
                 // A link to another port fails with that port's address, not the one typed earlier.
                 if (failure.url) setRequested(failure.url);
                 setDebug(failure.debug);
+                // Android reports no cause, so a refused tunnel request stands in for it there.
+                if (failure.cause) setDisconnected(failure.cause === "environment");
                 setFailed(true);
               }}
             />
