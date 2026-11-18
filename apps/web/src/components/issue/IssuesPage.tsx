@@ -772,7 +772,7 @@ export function IssuesPage() {
           >
             {renderedSurface.kind === "issue" ? (
               <IssueDetailPanel
-                key={renderedSurface.id}
+                key={`${panelEnvironmentId}:${renderedSurface.id}`}
                 environmentId={panelEnvironmentId}
                 listEntry={panelListEntry}
                 reference={{

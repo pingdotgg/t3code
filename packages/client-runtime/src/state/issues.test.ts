@@ -7,6 +7,7 @@ import {
   IssueTrackerKind,
   ProjectId,
   type IssueComment,
+  type IssueCommentsPage,
   type IssueListEntry,
   type IssueListResult,
 } from "@t3tools/contracts";
@@ -15,11 +16,11 @@ import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  createIssueCommentPager,
   createMergedIssueCandidatesAtoms,
   createMergedIssueListAtoms,
   issueEntryKey,
   mergeIssueListPage,
-  prependIssueComments,
   type IssueListTarget,
 } from "./issues.ts";
 
@@ -74,19 +75,56 @@ describe("mergeIssueListPage", () => {
   });
 });
 
-describe("prependIssueComments", () => {
-  const comment = (id: string): IssueComment => ({
-    id,
-    author: null,
-    body: id,
-    createdAt: "2026-10-01T00:00:00.000Z",
-    url: null,
-  });
+const comment = (id: string): IssueComment => ({
+  id,
+  author: null,
+  body: id,
+  createdAt: "2026-10-01T00:00:00.000Z",
+  url: null,
+});
 
-  it("puts older comments first and drops ones already shown", () => {
-    const current = [comment("c3"), comment("c4")];
-    const older = [comment("c1"), comment("c2"), comment("c3")];
-    expect(prependIssueComments(current, older).map((c) => c.id)).toEqual(["c1", "c2", "c3", "c4"]);
+describe("createIssueCommentPager", () => {
+  it("drops older pages on refresh, including one still loading, and pauses paging until it ends", async () => {
+    // The refreshed detail hands back the same cursor, so only the refresh itself can tell pages apart.
+    const detail = Atom.make(
+      AsyncResult.success({ comments: [comment("newest")], commentsCursor: "first-page" }),
+    );
+    const pager = createIssueCommentPager(detail);
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(pager.view);
+    const ids = () => registry.get(pager.view).comments.map(({ id }) => id);
+    const cursors: string[] = [];
+    const page = AsyncResult.success<IssueCommentsPage>({
+      comments: [comment("older"), comment("newest")],
+      nextCursor: "second-page",
+    });
+    const read = async (cursor: string) => {
+      cursors.push(cursor);
+      return page;
+    };
+    try {
+      await pager.loadOlder(registry, read);
+      expect(ids()).toEqual(["older", "newest"]);
+
+      const pending = Promise.withResolvers<typeof page>();
+      const inFlight = pager.loadOlder(registry, () => pending.promise);
+      const refreshed = Promise.withResolvers<void>();
+      const refresh = pager.refresh(registry, () => refreshed.promise);
+      pending.resolve(page);
+      await inFlight;
+      expect(ids()).toEqual(["newest"]);
+
+      await pager.loadOlder(registry, read);
+      expect(registry.get(pager.view).canLoadOlder).toBe(false);
+      refreshed.resolve();
+      await refresh;
+      await pager.loadOlder(registry, read);
+      expect(cursors).toEqual(["first-page", "first-page"]);
+      expect(ids()).toEqual(["older", "newest"]);
+    } finally {
+      unmount();
+      registry.dispose();
+    }
   });
 });
 
