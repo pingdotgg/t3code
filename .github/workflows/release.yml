@@ -1123,6 +1123,9 @@ jobs:
           RELEASE_CHANNEL: ${{ needs.preflight.outputs.release_channel }}
         with:
           script: |
+            if (!process.env.RELEASE_WEBHOOK_URL) {
+              throw new Error('Release webhook is enabled but RELEASE_WEBHOOK_URL is missing');
+            }
             const { notifyRelease } = require('./.github/scripts/notify-release-webhook.cjs');
             const result = await notifyRelease({
               github,
