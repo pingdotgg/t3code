@@ -120,14 +120,19 @@ const make = Effect.gen(function* () {
   // The desktop's socket once it dials in; commands sent before then have no tab to reach.
   const activeTurns = new Set<string>();
   let socketWrite: ((line: string) => Effect.Effect<void, Socket.SocketError>) | null = null;
-  const write = (line: string): Effect.Effect<void, unknown> =>
-    overFds
-      ? writeAllToFileDescriptor(controlFd, Buffer.from(`${line}\n`))
-      : (socketWrite?.(line) ?? Effect.void);
-  const command = (message: DesktopBrowserCommandType) =>
+  const write =
+    (stillWanted: () => boolean) =>
+    (line: string): Effect.Effect<void, unknown> => {
+      if (!stillWanted()) return Effect.void;
+      return overFds
+        ? writeAllToFileDescriptor(controlFd, Buffer.from(`${line}\n`))
+        : (socketWrite?.(line) ?? Effect.void);
+    };
+  /** `stillWanted` is asked once the write's turn comes, since the connection can change in the wait. */
+  const command = (message: DesktopBrowserCommandType, stillWanted: () => boolean = () => true) =>
     writeLock.withPermits(1)(
       encodeCommand(message).pipe(
-        Effect.flatMap(write),
+        Effect.flatMap(write(stillWanted)),
         Effect.catchCause((cause) =>
           Effect.logWarning("desktop browser command failed", { cause }),
         ),
@@ -181,6 +186,8 @@ const make = Effect.gen(function* () {
   const serve = Effect.fn("DesktopBrowserChannel.serve")(
     function* (socket: Socket.Socket) {
       if (!overSocket) return;
+      // Before the writer is published: a socket that never opens would hold a write forever.
+      const reader = yield* socket.reader;
       const writer = yield* socket.writer;
       const send = (line: string) => writer.write(line);
       // A redial can arrive before the old socket's close is seen here.
@@ -193,11 +200,14 @@ const make = Effect.gen(function* () {
         turnsRestored = true;
         return Effect.forEach(
           [...activeTurns],
-          (threadId) => command({ type: "turn", threadId, active: true }),
+          (threadId) =>
+            command(
+              { type: "turn", threadId, active: true },
+              () => socketWrite === send && activeTurns.has(threadId),
+            ),
           { discard: true },
         );
       });
-      const reader = yield* socket.reader;
       const decoder = new TextDecoder();
       yield* reader.pull.pipe(
         Effect.flatMap((frames) =>
@@ -206,7 +216,10 @@ const make = Effect.gen(function* () {
             (frame) =>
               decodeEventLine(typeof frame === "string" ? frame : decoder.decode(frame)).pipe(
                 Effect.flatMap((event) =>
-                  socketWrite === send ? Effect.andThen(restoreTurns, receive(event)) : Effect.void,
+                  Effect.andThen(
+                    socketWrite === send ? restoreTurns : Effect.void,
+                    Effect.suspend(() => (socketWrite === send ? receive(event) : Effect.void)),
+                  ),
                 ),
                 Effect.ignore,
               ),
@@ -256,7 +269,7 @@ const make = Effect.gen(function* () {
         if (inbound.get(id) === queue) inbound.delete(id);
         yield* Queue.shutdown(queue);
         // A desktop that redialed already dropped this relay; a release now would drop its new one.
-        if (socketWrite === connection) yield* command({ type: "release", ...key });
+        yield* command({ type: "release", ...key }, () => socketWrite === connection);
       }),
     );
     // The relay serves one Playwright connection; a second would see the first's sessions.

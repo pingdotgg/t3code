@@ -138,7 +138,9 @@ it.effect(
             }),
             writer: Effect.succeed({
               write: (chunk) =>
-                typeof chunk === "string" ? Queue.offer(commands, chunk) : Effect.void,
+                typeof chunk === "string"
+                  ? Effect.asVoid(Queue.offer(commands, chunk))
+                  : Effect.void,
               writeAll: () => Effect.void,
             }),
           });
