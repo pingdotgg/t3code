@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
+  blocksTailscaleServeDeadRootRecovery,
   ensureTailscaleServe,
   parseTailscaleExitNode,
   parseTailscaleServeRoutesBlocking,
@@ -305,6 +306,14 @@ describe("tailscale", () => {
     );
     assert.deepEqual(blocking(null), []);
     assert.isUndefined(parseTailscaleServeRoutesBlocking("not json", { servePort: 443, target }));
+  });
+
+  it("blocks dead-root recovery for foreground roots and sibling routes", () => {
+    assert.isTrue(
+      blocksTailscaleServeDeadRootRecovery({ servePort: 443, mount: "/", owner: "foreground" }),
+    );
+    assert.isTrue(blocksTailscaleServeDeadRootRecovery({ servePort: 443, mount: "/docs" }));
+    assert.isFalse(blocksTailscaleServeDeadRootRecovery({ servePort: 443, mount: "/" }));
   });
 
   it("finds what holds a Serve port's root", () => {

@@ -600,7 +600,7 @@ function ConnectionsSettingsContent({
     setIsUpdatingTailscaleServe(false);
   };
 
-  const handleStartTailscaleServeDisable = (_endpoint: AdvertisedEndpoint) => {
+  const handleStartTailscaleServeDisable = () => {
     setDisableTailscaleServeDialogOpen(true);
   };
 
@@ -1125,9 +1125,9 @@ function ConnectionsSettingsContent({
           : missingTailscaleEndpointDescription(desktopServerExposureState, m)
       }
       control={
-        tailscaleHttpsEndpoint ? (
+        tailscaleHttpsEndpoint || desktopServerExposureState?.tailscaleServeEnabled ? (
           <div className="flex items-center gap-2">
-            {desktopServerExposureState?.tailscaleServeEnabled ? (
+            {desktopServerExposureState?.tailscaleServeEnabled && tailscaleHttpsEndpoint ? (
               <Button
                 size="xs"
                 variant="outline"
@@ -1142,10 +1142,11 @@ function ConnectionsSettingsContent({
               disabled={isUpdatingTailscaleServe}
               onCheckedChange={(checked) => {
                 if (checked) {
-                  handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
+                  if (tailscaleHttpsEndpoint)
+                    handleStartTailscaleServeSetup(tailscaleHttpsEndpoint);
                   return;
                 }
-                handleStartTailscaleServeDisable(tailscaleHttpsEndpoint);
+                handleStartTailscaleServeDisable();
               }}
               aria-label={gt("Enable Tailscale HTTPS")}
             />
@@ -1707,7 +1708,7 @@ function ConnectionsSettingsContent({
                 <DialogDescription>
                   {isChangingTailscaleServePort ? (
                     gt(
-                      "Changing the port removes the old Serve route. Add the new route to saved clients before continuing, or clients without another reachable route may not reconnect automatically.",
+                      "Changing the port removes the old Serve route. Make sure saved clients have another reachable route; after the restart, add the new HTTPS route to them.",
                     )
                   ) : (
                     <T>

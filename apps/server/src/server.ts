@@ -230,6 +230,7 @@ import * as ProjectHttp from "./project/http.ts";
 import * as NetService from "@t3tools/shared/Net";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
+  blocksTailscaleServeDeadRootRecovery,
   disableTailscaleServe,
   ensureTailscaleServe,
   readTailscaleServeRoutesBlocking,
@@ -999,8 +1000,8 @@ const layerMakeServer = Layer.unwrap(
               if (holder === "other" || holder === "unreadable") {
                 yield* Effect.logWarning(
                   holder === "other"
-                    ? "Tailscale Serve left off; its port already serves another server or app"
-                    : "Tailscale Serve left off; its current routes could not be read",
+                    ? "T3 skipped configuring Tailscale Serve; its port already serves another server or app"
+                    : "T3 skipped configuring Tailscale Serve; its current routes could not be read",
                   { localPort, servePort: config.tailscaleServePort },
                 );
                 return { route, recover: true };
@@ -1019,7 +1020,7 @@ const layerMakeServer = Layer.unwrap(
               );
               if ("cause" in blockingResult) {
                 yield* Effect.logWarning(
-                  "Tailscale Serve left off; its current routes could not be checked",
+                  "T3 skipped configuring Tailscale Serve; its current routes could not be checked",
                   {
                     causeTag: blockingResult.cause._tag,
                     localPort,
@@ -1030,11 +1031,11 @@ const layerMakeServer = Layer.unwrap(
               }
               const blockingRoutes =
                 holder === "dead"
-                  ? blockingResult.routes.filter((candidate) => candidate.mount !== "/")
+                  ? blockingResult.routes.filter(blocksTailscaleServeDeadRootRecovery)
                   : blockingResult.routes;
               if (blockingRoutes.length > 0) {
                 yield* Effect.logWarning(
-                  "Tailscale Serve left off; its port already serves other routes",
+                  "T3 skipped configuring Tailscale Serve; its port already serves other routes",
                   {
                     localPort,
                     routeCount: blockingRoutes.length,
@@ -1138,7 +1139,7 @@ const layerMakeServer = Layer.unwrap(
                             },
                           }).pipe(
                             Effect.flatMap((routes) =>
-                              routes.some((route) => route.mount !== "/")
+                              routes.some(blocksTailscaleServeDeadRootRecovery)
                                 ? Effect.void
                                 : ensureTailscaleServe({
                                     localPort: configured.route.localPort,

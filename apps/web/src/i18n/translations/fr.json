@@ -7952,7 +7952,7 @@
   "d9b97f4f5da2517e": "Désactiver WSL",
   "68916f6f608ece80": "Changer de distribution",
   "dcb0b4880837ff9a": "Changer le port HTTPS de Tailscale ?",
-  "3a043946ed1baf83": "Changer le port supprime l'ancienne route Serve. Ajoutez la nouvelle route aux clients enregistrés avant de continuer, sinon les clients sans autre route accessible risquent de ne pas se reconnecter automatiquement.",
+  "2c7cfee3209c4133": "Changing the port removes the old Serve route. Make sure saved clients have another reachable route; after the restart, add the new HTTPS route to them.",
   "afd31786b2fd29f0": "Point de terminaison MagicDNS en attente",
   "2c291721a16e936d": "Activer",
   "d087da5017f20fa2": "Aucun environnement sélectionné",

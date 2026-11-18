@@ -7970,7 +7970,7 @@
   "d9b97f4f5da2517e": "停用 WSL",
   "68916f6f608ece80": "切换发行版",
   "dcb0b4880837ff9a": "更改 Tailscale HTTPS 端口？",
-  "3a043946ed1baf83": "更改端口会移除旧的 Serve 路由。请先将新路由添加到已保存的客户端，再继续操作，否则没有其他可访问路由的客户端可能无法自动重新连接。",
+  "2c7cfee3209c4133": "Changing the port removes the old Serve route. Make sure saved clients have another reachable route; after the restart, add the new HTTPS route to them.",
   "afd31786b2fd29f0": "正在等待 MagicDNS 端点",
   "2c291721a16e936d": "启用",
   "d087da5017f20fa2": "未选择环境",

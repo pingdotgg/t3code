@@ -7951,7 +7951,7 @@
   "d9b97f4f5da2517e": "Desactivar WSL",
   "68916f6f608ece80": "Cambiar de distro",
   "dcb0b4880837ff9a": "¿Cambiar el puerto HTTPS de Tailscale?",
-  "3a043946ed1baf83": "Cambiar el puerto elimina la ruta anterior de Serve. Añade la nueva ruta a los clientes guardados antes de continuar; los clientes sin otra ruta accesible podrían no volver a conectarse automáticamente.",
+  "2c7cfee3209c4133": "Changing the port removes the old Serve route. Make sure saved clients have another reachable route; after the restart, add the new HTTPS route to them.",
   "afd31786b2fd29f0": "Endpoint de MagicDNS pendiente",
   "2c291721a16e936d": "Activar",
   "d087da5017f20fa2": "No hay ningún entorno seleccionado",

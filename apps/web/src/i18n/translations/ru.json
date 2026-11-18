@@ -7951,7 +7951,7 @@
   "d9b97f4f5da2517e": "Отключить WSL",
   "68916f6f608ece80": "Сменить дистрибутив",
   "dcb0b4880837ff9a": "Изменить порт HTTPS Tailscale?",
-  "3a043946ed1baf83": "Изменение порта удаляет старый маршрут Serve. Перед продолжением добавьте новый маршрут в сохранённые клиенты, иначе клиенты без другого доступного маршрута могут не подключиться автоматически.",
+  "2c7cfee3209c4133": "Changing the port removes the old Serve route. Make sure saved clients have another reachable route; after the restart, add the new HTTPS route to them.",
   "afd31786b2fd29f0": "Ожидание адреса MagicDNS",
   "2c291721a16e936d": "Включить",
   "d087da5017f20fa2": "Окружение не выбрано",

@@ -496,6 +496,10 @@ export interface TailscaleServeRoute {
   readonly owner?: string;
 }
 
+/** A route that must prevent reclaiming a dead background root. */
+export const blocksTailscaleServeDeadRootRecovery = (route: TailscaleServeRoute): boolean =>
+  route.mount !== "/" || route.owner === "foreground";
+
 /**
  * The `tailscale` arguments that turn `route` off; a foreground route has none, since it ends with
  * its command. A web route names its path: without one the CLI removes every handler on the port,

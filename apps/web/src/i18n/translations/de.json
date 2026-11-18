@@ -7952,7 +7952,7 @@
   "d9b97f4f5da2517e": "WSL deaktivieren",
   "68916f6f608ece80": "Distribution wechseln",
   "dcb0b4880837ff9a": "Tailscale-HTTPS-Port ändern?",
-  "3a043946ed1baf83": "Beim Ändern des Ports wird die alte Serve-Route entfernt. Füge die neue Route vor dem Fortfahren auf gespeicherten Clients hinzu, da Clients ohne eine andere erreichbare Route möglicherweise nicht automatisch wieder verbunden werden.",
+  "2c7cfee3209c4133": "Changing the port removes the old Serve route. Make sure saved clients have another reachable route; after the restart, add the new HTTPS route to them.",
   "afd31786b2fd29f0": "MagicDNS-Endpunkt ausstehend",
   "2c291721a16e936d": "Aktivieren",
   "d087da5017f20fa2": "Keine Umgebung ausgewählt",
