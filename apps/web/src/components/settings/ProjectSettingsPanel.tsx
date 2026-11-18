@@ -466,9 +466,9 @@ function ProjectDetail({
               projectRef: scopeProjectRef(member.environmentId, member.id),
             })
           }
-          aria-label={`Change folder of checkout ${member.workspaceRoot}`}
+          aria-label={gt("Change folder of checkout {path}", { path: member.workspaceRoot })}
         >
-          Change folder
+          <T>Change folder</T>
         </Button>
       )}
       {hasMultipleCheckouts ? (

@@ -162,6 +162,7 @@ import {
 } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
+  ensureBrowseDirectoryPath,
   findProjectByPath,
   getBrowseDirectoryPath,
   getBrowseParentPath,
@@ -1039,6 +1040,7 @@ function OpenCommandPaletteDialog(props: {
   }
 
   const startAddProjectBrowse = async (environmentId: EnvironmentId): Promise<void> => {
+    setChangeFolderProjectRef(null);
     const initialQuery = getAddProjectInitialQueryForEnvironment(environmentId);
     const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
     const browseCwd = getBrowseCwdForEnvironment(environmentId);
@@ -1289,6 +1291,7 @@ function OpenCommandPaletteDialog(props: {
   );
 
   const openAddProjectFlow = () => {
+    setChangeFolderProjectRef(null);
     switch (addProjectEntry.kind) {
       case "connect-environment":
         openConnectionSettings();
@@ -1863,7 +1866,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:change-project-folder",
       searchTerms: ["project", "folder", "path", "move", "moved", "rename", "relink", "workspace"],
-      title: "Change project folder",
+      title: gt("Change project folder"),
       description: project.workspaceRoot,
       icon: <FolderOpenIcon className={ITEM_ICON_CLASS} />,
       keepOpen: true,
@@ -2143,14 +2146,14 @@ function OpenCommandPaletteDialog(props: {
     rawCwd: string,
     platform: string,
   ) => {
-    const failureTitle = "Failed to change project folder";
+    const failureTitle = gt("Failed to change project folder");
     // The project can be removed while the browser is open; never add one in its place.
     if (project === null) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
           title: failureTitle,
-          description: "This project is no longer available.",
+          description: gt("This project is no longer available."),
         }),
       );
       setOpen(false);
@@ -2161,7 +2164,7 @@ function OpenCommandPaletteDialog(props: {
         stackedThreadToast({
           type: "error",
           title: failureTitle,
-          description: "Windows-style paths are only supported on Windows.",
+          description: gt("Windows-style paths are only supported on Windows."),
         }),
       );
       return;
@@ -2184,7 +2187,7 @@ function OpenCommandPaletteDialog(props: {
         stackedThreadToast({
           type: "error",
           title: failureTitle,
-          description: `This folder already belongs to "${owner.title}".`,
+          description: gt('This folder already belongs to "{title}".', { title: owner.title }),
         }),
       );
       return;
@@ -2198,7 +2201,11 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     toastManager.add(
-      stackedThreadToast({ type: "success", title: "Project folder changed", description: cwd }),
+      stackedThreadToast({
+        type: "success",
+        title: gt("Project folder changed"),
+        description: cwd,
+      }),
     );
     setOpen(false);
   };
@@ -2530,7 +2537,7 @@ function OpenCommandPaletteDialog(props: {
   const changeFolderBrowseGroups = changeFolderProject
     ? browseGroups.map((group) =>
         group.value === "directories"
-          ? { ...group, label: `New folder for ${changeFolderProject.title}` }
+          ? { ...group, label: gt("New folder for {title}", { title: changeFolderProject.title }) }
           : group,
       )
     : browseGroups;
@@ -3079,8 +3086,8 @@ function OpenCommandPaletteDialog(props: {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Failed to change project folder",
-              description: "Choose a folder in the environment the project belongs to.",
+              title: gt("Failed to change project folder"),
+              description: gt("Choose a folder in the environment the project belongs to."),
             }),
           );
         }
