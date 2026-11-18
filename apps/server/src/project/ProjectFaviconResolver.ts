@@ -13,6 +13,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { FORK_FAVICON_CANDIDATES } from "./forkFaviconCandidates.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
 const FAVICON_CACHE_CAPACITY = 512;
@@ -308,8 +309,9 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    const wellKnown = yield* firstInOrder(FAVICON_CANDIDATES, (candidate) =>
-      findExistingFile(projectCwd, [candidate], "workspace"),
+    const wellKnown = yield* firstInOrder(
+      [...FAVICON_CANDIDATES, ...FORK_FAVICON_CANDIDATES],
+      (candidate) => findExistingFile(projectCwd, [candidate], "workspace"),
     );
     if (wellKnown) {
       return wellKnown;
