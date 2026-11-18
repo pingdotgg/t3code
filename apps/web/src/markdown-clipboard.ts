@@ -198,6 +198,7 @@ function serializeBlockquote(quote: Element, inTableCell: boolean, marker = ""):
 
 function serializeInsight(insight: Element, inTableCell: boolean): string {
   const body = serializeQuoteBody(insight, inTableCell);
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- markdown written to the clipboard
   return `★ Insight ${"─".repeat(37)}\n${body ? `${body}\n` : ""}${"─".repeat(49)}\n\n`;
 }
 
@@ -545,6 +546,10 @@ export function chatMarkdownClipboardPayload(
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
     keepStartListNumbers(range, container);
+    // The indentation typed at a line start only shows; pasted, it would turn lines into code.
+    for (const indentation of container.querySelectorAll("[data-leading-whitespace]")) {
+      indentation.remove();
+    }
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
