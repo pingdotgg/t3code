@@ -743,9 +743,9 @@ export function PullRequestFiltersMenu({
 }
 
 const REVIEW_CLAUSES = {
-  approved: msg("The review is approved."),
+  approved: msg("Review is approved."),
   "changes-requested": msg("Changes are requested."),
-  "review-required": msg("A review is required."),
+  "review-required": msg("Review is required."),
   none: msg("There are no reviews."),
 } as const satisfies Record<NonNullable<PullRequestListFilters["review"]>, string>;
 
@@ -779,7 +779,7 @@ export function describePullRequestListFilters(
         ? resolve(msg("Any state is shown."))
         : resolve(
             msg(
-              "{state, select, closed {Only closed ones are shown.} other {Only merged ones are shown.}}",
+              "{state, select, closed {State is closed.} other {State is merged.}}",
               {
                 state,
               },
