@@ -1,3 +1,4 @@
+import type { ServerProviderSkill } from "@t3tools/contracts";
 import type * as AcpSchema from "effect-acp/compat";
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import type { AcpAdapterV2SubagentUpdate } from "@t3tools/provider-acp/server/adapter";
@@ -6,6 +7,20 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+const LEADING_SKILL_MENTION = /^\s*\$(\S+)/;
+
+// The `$` picker inserts `$name`; Devin runs a skill only as its advertised `/name` command.
+export function rewriteDevinSkillMention(
+  text: string,
+  skills: ReadonlyArray<Pick<ServerProviderSkill, "name">>,
+): string {
+  const match = LEADING_SKILL_MENTION.exec(text);
+  const name = match?.[1];
+  if (match === null || name === undefined) return text;
+  if (!skills.some((skill) => skill.name === name)) return text;
+  return `/${name}${text.slice(match[0].length)}`;
 }
 
 export function normalizeDevinSessionUpdate(

@@ -21,6 +21,7 @@ import {
   logoutAcpRegistry,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryCommands,
+  rewriteDevinSkillMention,
   probeAcpRegistryConfiguration,
 } from "@t3tools/provider-acp-registry/testing";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
@@ -336,16 +337,25 @@ describe("ACP Registry probe", () => {
     expect(commands.skills.map((skill) => skill.name)).toEqual(["late-skill"]);
   });
 
-  it("routes dollar-prefixed ACP commands to the provider skill menu", () => {
+  it("routes dollar-prefixed and Devin Skills-category commands to the skill menu", () => {
     expect(
       normalizeAcpRegistryCommands([
         { name: "$workspace-skill", description: "Run the workspace skill" },
         { name: "$WORKSPACE-SKILL", description: "duplicate" },
         { name: "$", description: "empty" },
         { name: "review", description: "Review changes" },
+        {
+          name: "research",
+          description: "Research before deciding",
+          _meta: { "cognition.ai/category": "Skills" },
+        },
+        { name: "compact", description: "Compact", _meta: { "cognition.ai/category": "Session" } },
       ]),
     ).toEqual({
-      slashCommands: [{ name: "review", description: "Review changes" }],
+      slashCommands: [
+        { name: "review", description: "Review changes" },
+        { name: "compact", description: "Compact" },
+      ],
       skills: [
         {
           name: "workspace-skill",
@@ -354,8 +364,27 @@ describe("ACP Registry probe", () => {
           scope: "agent",
           enabled: true,
         },
+        {
+          name: "research",
+          description: "Research before deciding",
+          path: "acp://skill/research",
+          scope: "agent",
+          enabled: true,
+        },
       ],
     });
+  });
+
+  it("rewrites only a leading advertised $skill mention to Devin's /skill command", () => {
+    const skills = [{ name: "research" }, { name: "acme.tools:review" }];
+    expect(rewriteDevinSkillMention("  $research t3 code", skills)).toBe("/research t3 code");
+    expect(rewriteDevinSkillMention("$acme.tools:review now", skills)).toBe(
+      "/acme.tools:review now",
+    );
+    expect(rewriteDevinSkillMention("$missing", skills)).toBe("$missing");
+    expect(rewriteDevinSkillMention("$research.md notes", skills)).toBe("$research.md notes");
+    expect(rewriteDevinSkillMention("$research.v2", skills)).toBe("$research.v2");
+    expect(rewriteDevinSkillMention("use $research later", skills)).toBe("use $research later");
   });
 
   it.effect("lists native sessions and logs out through generic ACP lifecycle methods", () => {
