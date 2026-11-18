@@ -169,6 +169,8 @@ interface RightPanelStoreState {
     folderTrail: string,
     keepSource?: boolean,
   ) => void;
+  /** Opens a folder from outside the panel; "" opens the root explorer. folderTrail keeps the return path. */
+  openFolder: (ref: ScopedThreadRef, relativePath: string, folderTrail: string) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -972,6 +974,28 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                 : [surface];
             });
             return { ...current, isOpen: true, activeSurfaceId: target.id, surfaces };
+          }),
+        ),
+      openFolder: (ref, relativePath, folderTrail) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const trail = folderTrail === relativePath ? {} : { folderTrail };
+            const target: RightPanelSurface =
+              relativePath === ""
+                ? { ...singletonSurface("files"), ...trail }
+                : { ...fileSurface(relativePath, null, 1), ...trail };
+            if (current.surfaces.some((surface) => surface.id === target.id)) {
+              return { ...current, isOpen: true, activeSurfaceId: target.id };
+            }
+            const surfaces = current.surfaces.filter(
+              (surface) => target.kind !== "file" || surface.kind !== "files",
+            );
+            return {
+              ...current,
+              isOpen: true,
+              activeSurfaceId: target.id,
+              surfaces: [...surfaces, target],
+            };
           }),
         ),
       openAttachment: (ref, attachment) =>

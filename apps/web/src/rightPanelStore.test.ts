@@ -843,6 +843,32 @@ describe("rightPanelStore", () => {
     );
   });
 
+  it("opens a folder from outside the panel with its return trail", () => {
+    const store = useRightPanelStore.getState();
+    const state = () =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    store.openFile(refA, "README.md");
+
+    store.openFolder(refA, "", "src/lib/main.ts");
+    expect(state().activeSurfaceId).toBe("files");
+    expect(state().surfaces).toEqual([
+      expect.objectContaining({ id: "file:README.md" }),
+      { id: "files", kind: "files", folderTrail: "src/lib/main.ts" },
+    ]);
+
+    store.openFolder(refA, "src/lib", "src/lib/main.ts");
+    expect(state().activeSurfaceId).toBe("file:src/lib");
+    expect(state().surfaces).toEqual([
+      expect.objectContaining({ id: "file:README.md" }),
+      expect.objectContaining({ id: "file:src/lib", folderTrail: "src/lib/main.ts" }),
+    ]);
+
+    store.openFile(refA, "README.md");
+    store.openFolder(refA, "src/lib", "src/lib/main.ts");
+    expect(state().activeSurfaceId).toBe("file:src/lib");
+    expect(state().surfaces).toHaveLength(2);
+  });
+
   it("replaces the standalone explorer with peer file surfaces", () => {
     useRightPanelStore.getState().open(refA, "files");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");

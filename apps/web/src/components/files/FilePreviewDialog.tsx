@@ -60,6 +60,10 @@ function closeFilePreviewDialog(): void {
   appAtomRegistry.set(filePreviewDialogAtom, null);
 }
 
+function closeFilePreviewDialogRequest(request: FilePreviewDialogState): void {
+  if (appAtomRegistry.get(filePreviewDialogAtom) === request) closeFilePreviewDialog();
+}
+
 registerThreadOverlay((threadKey) => {
   const current = appAtomRegistry.get(filePreviewDialogAtom);
   if (current !== null && scopedThreadKey(current.threadRef) !== threadKey) {
@@ -133,10 +137,11 @@ export function FilePreviewDialogHost(props: {
               revealRequestId={state.revealRequestId}
               onOpenFile={(path) => openFilePreviewDialog(props.threadRef, path, undefined)}
               // A folder has no preview here; browsing belongs to the Files panel.
-              onNavigateFolder={(path) => {
+              onNavigateFolder={(path, folderTrail) => {
                 closeFilePreviewDialog();
-                useRightPanelStore.getState().openFile(props.threadRef, path || ".");
+                useRightPanelStore.getState().openFolder(props.threadRef, path, folderTrail);
               }}
+              onOpenedInBrowser={() => closeFilePreviewDialogRequest(state)}
               folderTrail={undefined}
               onPendingChange={props.onPendingChange}
               selectedFilePending={props.pendingSurfaceIds.has(`file:${relativePath}`)}

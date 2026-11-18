@@ -159,6 +159,7 @@ interface FilePreviewPanelProps {
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;
   onNavigateFolder: (relativePath: string, folderTrail: string, keepSource: boolean) => void;
+  onOpenedInBrowser?: () => void;
   /** Retained descendant breadcrumb path after navigating up; see navigateFolder. */
   folderTrail: string | undefined;
   onPendingChange: (relativePath: string, pending: boolean) => void;
@@ -1179,6 +1180,7 @@ export default function FilePreviewPanel({
   revealRequestId,
   onOpenFile,
   onNavigateFolder,
+  onOpenedInBrowser,
   folderTrail,
   onPendingChange,
   selectedFilePending,
@@ -1447,9 +1449,11 @@ export default function FilePreviewPanel({
         createAssetUrl,
         openPreview,
       });
-      if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
+      if (result._tag === "Success") {
+        onOpenedInBrowser?.();
         return;
       }
+      if (isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
       toastManager.add(
         stackedThreadToast({
