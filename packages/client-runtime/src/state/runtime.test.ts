@@ -49,6 +49,8 @@ import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type * as RpcSession from "../rpc/session.ts";
 import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
+import { createCommandPermissions } from "./commandPermissions.ts";
+import { createIssueTrackerEnvironmentAtoms } from "./issueTrackers.ts";
 import { createReviewEnvironmentAtoms } from "./review.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import { createFilesystemEnvironmentAtoms } from "./filesystem.ts";
@@ -118,7 +120,9 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     rpcSession,
     isFinal,
     onAnswer,
+    clock,
   }: {
+    readonly clock?: Clock.Clock;
     readonly refreshTrigger?: Atom.Atom<unknown>;
     readonly onAnswer?: QueryAnswerHandler<undefined, A>;
     readonly isFinal?: (value: A) => boolean;
@@ -159,7 +163,10 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     stateChanges: () => SubscriptionRef.changes(supervisorState),
   } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
   const runtime = Atom.runtime(
-    Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+    Layer.mergeAll(
+      Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+      ...(clock === undefined ? [] : [Layer.succeed(Clock.Clock, clock)]),
+    ),
   );
   const family = createEnvironmentQueryAtomFamily(runtime, {
     label: "test.environment-query",
@@ -1848,3 +1855,46 @@ describe("persisted environment queries", () => {
     }),
   );
 });
+
+it.effect("releases tracker commands after a stalled binding refresh", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    let binds = 0;
+    const rpcSession = {
+      client: {
+        [WS_METHODS.issueTrackersBindProject]: () =>
+          Effect.sync(() => {
+            binds++;
+          }),
+        [WS_METHODS.issueTrackersList]: () =>
+          Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)),
+      },
+    } as unknown as RpcSession.RpcSession;
+    const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+      rpcSession,
+      clock: yield* Clock.Clock,
+    });
+    const registry = AtomRegistry.make();
+    yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+    using _permission = vi
+      .spyOn(
+        createCommandPermissions(harness.runtime, WS_METHODS.issueTrackersBindProject),
+        "authorize",
+      )
+      .mockReturnValue(Effect.void);
+    const command = createIssueTrackerEnvironmentAtoms(harness.runtime).bindProject;
+    const target = {
+      environmentId: QUERY_ENVIRONMENT.environmentId,
+      input: { projectId: ProjectId.make("project"), binding: null },
+    };
+    const first = command.run(registry, target);
+    yield* Deferred.await(started);
+    const second = command.run(registry, target);
+    expect(binds).toBe(1);
+    yield* TestClock.adjust("5 seconds");
+    yield* Effect.promise(() => first);
+    yield* TestClock.adjust("5 seconds");
+    yield* Effect.promise(() => second);
+    expect(binds).toBe(2);
+  }),
+);

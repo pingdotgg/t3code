@@ -8385,7 +8385,7 @@
   "58e0e226493150e7": "No se pudieron cargar los gestores de issues",
   "77cfcbde543df32d": "Mostrar u ocultar detalles de {tracker}",
   "0083f65885c60156": "Desconectar {tracker}",
-  "15ad0159a826b290": "Elige el {scope} de {tracker} cuyas issues lista cada proyecto junto a las de su propio repositorio.",
+  "0b11ec065c184482": "Selecciona uno o más {scope}s de {tracker} para cada proyecto. El primero será el predeterminado cuando los agentes creen incidencias.",
   "19c2d5e81ff8f89a": "{scope} de {tracker} para {project}",
   "68e061510b765772": "Sin vincular",
   "a2d95d39d3398bda": "Credencial rechazada",

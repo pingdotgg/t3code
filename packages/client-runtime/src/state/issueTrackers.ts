@@ -4,7 +4,7 @@ import {
   type IssueTrackerConnectionList,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom } from "effect/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -14,7 +14,6 @@ import {
   createEnvironmentRpcQueryAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
-import * as Persistence from "../platform/persistence.ts";
 
 /**
  * Standalone issue trackers (Linear, Jira) per environment: which are connected, as whom, which
@@ -22,7 +21,7 @@ import * as Persistence from "../platform/persistence.ts";
  * every mutation refreshes that query, so the settings page never shows a stale status.
  */
 export function createIssueTrackerEnvironmentAtoms<R, E>(
-  runtime: Atom.AtomRuntime<EnvironmentRegistry | Persistence.EnvironmentCacheStore | R, E>,
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   const commandScheduler = createAtomCommandScheduler();
   const connections = createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -60,6 +59,7 @@ export function createIssueTrackerEnvironmentAtoms<R, E>(
             yield* AtomRegistry.mount(registry, atom);
             registry.refresh(atom);
             yield* AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true }).pipe(
+              Effect.timeoutOption("5 seconds"),
               Effect.ignore,
             );
           }),

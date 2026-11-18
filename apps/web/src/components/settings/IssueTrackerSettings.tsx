@@ -255,6 +255,7 @@ function ProjectBindings({
   if (projects.length === 0 || tracker.scopes.length === 0) return null;
 
   const change = async (projectId: ProjectId, scopes: string[]) => {
+    if (pending !== null) return;
     setPending(projectId);
     await bind({
       environmentId,
@@ -297,7 +298,7 @@ function ProjectBindings({
               <Select
                 multiple
                 value={value}
-                disabled={pending === project.id}
+                disabled={pending !== null}
                 onValueChange={(next) => {
                   if (next !== null) void change(project.id, next.includes(UNBOUND) ? [] : next);
                 }}
