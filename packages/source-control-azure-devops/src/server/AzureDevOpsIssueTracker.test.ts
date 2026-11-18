@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Layer from "effect/Layer";
+import { SourceControlHost } from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -48,6 +49,8 @@ const WORK_ITEM_TYPES = {
     },
   ],
 };
+
+const azureCliPython = process.env.T3_TEST_AZURE_CLI_PYTHON;
 
 /** Every `az` command the detail read runs, told apart by its first few arguments. */
 function answer(args: ReadonlyArray<string>): string {
@@ -288,6 +291,82 @@ describe("AzureDevOpsIssueTracker", () => {
           " ORDER BY [System.CreatedDate] DESC, [System.Id] DESC",
       );
     }).pipe(Effect.provide(NodeFileSystem.layer)),
+  );
+
+  // Point T3_TEST_AZURE_CLI_PYTHON at Azure CLI's Python interpreter to run this offline.
+  it.live.runIf(azureCliPython)("keeps work item types readable under the CLI output cap", () =>
+    Effect.gen(function* () {
+      const { process } = yield* SourceControlHost;
+      let projectedMetadata = "";
+      const states = [
+        { name: "Active", category: "InProgress" },
+        { name: "Shipped", category: "Completed" },
+      ];
+      const metadata = encode({
+        value: [
+          { name: "Issue", isDisabled: true, xmlForm: "x".repeat(1_100_000) },
+          { name: "Bug", states: states.map((state) => ({ ...state, color: "000000" })) },
+        ],
+      });
+      const api = yield* AzureDevOpsIssueTracker.make.pipe(
+        Effect.provide(
+          Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
+            execute: ({ args }) => {
+              const resource = args[args.indexOf("--resource") + 1];
+              if (resource === "wiql") {
+                return Effect.succeed(TestSourceControlHost.processOutput('{"workItems":[]}'));
+              }
+              expect(resource).toBe("workitemtypes");
+              const queryIndex = args.indexOf("--query");
+              return process
+                .run({
+                  operation: "evaluateWorkItemTypeProjection",
+                  command: azureCliPython!,
+                  cwd: ".",
+                  args: [
+                    "-X",
+                    "utf8",
+                    "-IB",
+                    "-c",
+                    "import json, jmespath, sys\n" +
+                      "data = sys.stdin.read()\n" +
+                      "sys.stdout.write(json.dumps(jmespath.search(sys.argv[1], json.loads(data))) if len(sys.argv) > 1 else data)",
+                    ...(queryIndex === -1 ? [] : args.slice(queryIndex + 1, queryIndex + 2)),
+                  ],
+                  stdin: metadata,
+                })
+                .pipe(
+                  Effect.orDie,
+                  Effect.tap(({ stdout }) =>
+                    Effect.sync(() => {
+                      projectedMetadata = stdout;
+                    }),
+                  ),
+                );
+            },
+          }),
+        ),
+      );
+      const page = yield* api.listIssues({
+        cwd: "/w",
+        host: "dev.azure.com",
+        scope: "acme/Web App",
+        state: "open",
+        involvement: "all",
+        viewer: "@Me",
+        sort: "updated",
+        limit: 1,
+      });
+      expect(page).toEqual({ items: [], nextCursor: null });
+      expect(JSON.parse(projectedMetadata)).toEqual({
+        value: [
+          { name: "Issue", isDisabled: true, states: [] },
+          { name: "Bug", isDisabled: false, states },
+        ],
+      });
+    }).pipe(
+      Effect.provide(Layer.merge(NodeFileSystem.layer, TestSourceControlHost.layerWithRealGit())),
+    ),
   );
 
   it.effect("names the viewer without a request that a sign-in could refuse", () =>
