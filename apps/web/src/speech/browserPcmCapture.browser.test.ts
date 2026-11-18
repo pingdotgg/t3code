@@ -121,8 +121,9 @@ it("records through an audio context that opens no output device", async () => {
     .mockResolvedValue(source.createMediaStreamDestination().stream);
   using contexts = vi.spyOn(window, "AudioContext");
   const onLevel = vi.fn();
+  const onError = vi.fn();
   const capture = createBrowserPcmCapture(
-    { getMicrophoneId: () => "", onLevel, onDurationLimit: vi.fn(), onError: vi.fn() },
+    { getMicrophoneId: () => "", onLevel, onDurationLimit: vi.fn(), onError },
     async () => ({ locale: "en", transcribe: async () => "" }),
   );
   try {
@@ -134,6 +135,16 @@ it("records through an audio context that opens no output device", async () => {
     await vi.waitFor(() => expect(onLevel).toHaveBeenCalled());
     await capture.recorder.stop();
     expect(capture.recorder.uri).not.toBeNull();
+
+    const disconnected = source.createMediaStreamDestination().stream;
+    _microphone.mockResolvedValueOnce(disconnected);
+    const retry = new AbortController();
+    await capture.transcriber.prepare({ signal: retry.signal });
+    disconnected.getTracks().forEach((track) => track.stop());
+    await expect(capture.recorder.prepareToRecordAsync(retry.signal)).rejects.toThrow(
+      "The microphone disconnected.",
+    );
+    expect(onError).toHaveBeenCalledWith("The microphone disconnected.", "microphone-disconnected");
   } finally {
     capture.cancelRecording();
     await source.close();

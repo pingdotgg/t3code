@@ -133,6 +133,11 @@ export function createBrowserPcmCapture(
       audioContext = context;
       try {
         captureSignal.throwIfAborted();
+        if (!captured.getTracks().some((track) => track.readyState === "live")) {
+          const message = m(msg("The microphone disconnected."));
+          input.onError(message, "microphone-disconnected");
+          throw new Error(message);
+        }
         const node = new AudioWorkletNode(context, "t3-pcm-capture", { channelCount: 1 });
         worklet = node;
         node.port.onmessage = ({
