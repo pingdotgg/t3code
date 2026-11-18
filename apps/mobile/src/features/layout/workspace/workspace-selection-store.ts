@@ -56,11 +56,19 @@ export function saveWorkspaceSelections(): Promise<void> {
 function withoutRouteKeys(saved: WorkspaceSelections | undefined): WorkspaceSelections {
   const omitKey = <Selection extends { readonly key?: string }>({ key: _, ...rest }: Selection) =>
     rest;
-  const { threads, pullRequests, settingsKey: _, threadsDraft: _draft, ...rest } = saved ?? {};
+  const {
+    threads,
+    pullRequests,
+    issues,
+    settingsKey: _,
+    threadsDraft: _draft,
+    ...rest
+  } = saved ?? {};
   return {
     ...rest,
     ...(threads ? { threads: omitKey(threads) } : {}),
     ...(pullRequests ? { pullRequests: omitKey(pullRequests) } : {}),
+    ...(issues ? { issues: omitKey(issues) } : {}),
   };
 }
 
@@ -118,6 +126,7 @@ export const workspaceSelectionCheck: WorkspaceSelectionCheck = {
       .has(selection.threadId as ThreadId);
   },
   pullRequest: (selection) => !environmentRemoved(selection.environmentId),
+  issue: (selection) => !environmentRemoved(selection.environmentId),
 };
 
 /** Whether the window lays the workspace out in columns, by the rule the layout itself uses. */

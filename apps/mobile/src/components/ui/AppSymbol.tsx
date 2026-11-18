@@ -4,6 +4,7 @@ import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
 import IconGitPullRequestClosed from "@tabler/icons-react-native/IconGitPullRequestClosed";
 import IconGitPullRequestDraft from "@tabler/icons-react-native/IconGitPullRequestDraft";
 import type { SFSymbol } from "expo-symbols";
+import IconCircleDot from "@tabler/icons-react-native/IconCircleDot";
 import IconGitPullRequest from "@tabler/icons-react-native/IconGitPullRequest";
 import IconFileDiff from "@tabler/icons-react-native/IconFileDiff";
 import IconRobot from "@tabler/icons-react-native/IconRobot";
@@ -23,6 +24,7 @@ const CUSTOM_ICONS = {
   "git.pull-request.closed": IconGitPullRequestClosed,
   "git.pull-request.draft": IconGitPullRequestDraft,
   "git.commit": IconGitCommit,
+  "git.issue": IconCircleDot,
   robot: IconRobot,
 };
 
