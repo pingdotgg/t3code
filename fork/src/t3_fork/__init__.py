@@ -98,6 +98,21 @@ def install_themes() -> None:
         print(f"installed {', '.join(p.stem for p in built if p.suffix == '.json')} to {USER_THEMES}")
 
 
+def catch_up_with_origin() -> None:
+    """Take PRs merged on GitHub into the local branch, so the force push below cannot drop them."""
+    run("git", "fetch", "origin", BRANCH, "--quiet")
+    remote = f"origin/{BRANCH}"
+    if git("merge-base", BRANCH, remote) == git("rev-parse", remote):
+        return
+    if subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor", BRANCH, remote]).returncode == 0:
+        run("git", "merge", "--ff-only", "--quiet", remote)
+        return
+    raise SystemExit(
+        f"{NAME}: {BRANCH} and {remote} have diverged; nothing changed.\n"
+        f"  Merge {remote} into {BRANCH} by hand, then `{NAME} apply`."
+    )
+
+
 def sync() -> None:
     """Pull in the latest themes, rebase the fork's commits onto the redesign's head, and push."""
     if Path(git("rev-parse", "--git-path", "rebase-merge")).exists() or Path(
@@ -109,6 +124,7 @@ def sync() -> None:
     if git("status", "--porcelain", "--untracked-files=no"):
         raise SystemExit(f"{NAME}: {REPO} has uncommitted changes; commit them first")
     fetch_upstream()
+    catch_up_with_origin()
     update_themes()
     base = base_commit()
     target = git("rev-parse", UPSTREAM)
