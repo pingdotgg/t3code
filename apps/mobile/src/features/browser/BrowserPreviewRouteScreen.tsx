@@ -5,11 +5,14 @@ import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navi
 import { EnvironmentId, ThreadId, type PreviewSessionSnapshot } from "@t3tools/contracts";
 import { normalizePreviewUrl, previewPdfAssetUrl } from "@t3tools/shared/preview";
 import * as Option from "effect/Option";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Platform, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ControlPill } from "../../components/ui/ControlPill";
+import { m } from "../../i18n/messages";
+import { useContentTopInset } from "../../components/ui/useBarInset";
 import { useAppForeground } from "../../lib/appState";
 
 import { useThreadServerBrowserTabs } from "../../state/preview";
@@ -34,13 +37,35 @@ type BrowserPreviewRouteScreenProps = StaticScreenProps<{
 export function BrowserPreviewRouteScreen({ route }: BrowserPreviewRouteScreenProps) {
   const navigation = useNavigation();
   const onClose = () => navigation.goBack();
+  const { environmentId, threadId } = route.params;
+  if (!environmentId?.trim() || !threadId?.trim()) {
+    return <BrowserUnavailableScreen onClose={onClose} />;
+  }
   return (
     <BrowserPreviewScreen
-      environmentId={EnvironmentId.make(route.params.environmentId)}
-      threadId={ThreadId.make(route.params.threadId)}
+      environmentId={EnvironmentId.make(environmentId)}
+      threadId={ThreadId.make(threadId)}
       initialTabId={route.params.tabId ?? null}
       onClose={onClose}
     />
+  );
+}
+
+function BrowserUnavailableScreen({ onClose }: { readonly onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const contentTopInset = useContentTopInset();
+  const gt = useGT();
+  return (
+    <View
+      className="flex-1 bg-sheet"
+      style={{ paddingTop: contentTopInset, paddingBottom: insets.bottom }}
+    >
+      <SheetHeader
+        title={gt("Browser", { $context: "screen title" })}
+        onClose={onClose}
+        accessibilityLabel={gt("Close browser")}
+      />
+    </View>
   );
 }
 
@@ -56,7 +81,10 @@ function BrowserPreviewScreen({
   readonly onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const contentTopInset = useContentTopInset();
   const { themeVariables } = useAppearancePreferences();
+  const gt = useGT();
+  const resolveMessage = useMessages();
   const prepared = usePreparedConnection(environmentId);
   const httpBaseUrl = Option.isSome(prepared) ? prepared.value.httpBaseUrl : null;
   const focused = useIsFocused();
@@ -81,7 +109,7 @@ function BrowserPreviewScreen({
   }, [focused, loaded, tabs.length, onClose]);
   const onPictureInPicture = (state: PreviewPictureInPictureState, detail?: string) => {
     setPictureInPicture({ supported: state.supported, active: state.active });
-    if (detail) Dialog.alert("Picture in picture is unavailable", detail);
+    if (detail) Dialog.alert(m(msg("Picture in picture is unavailable")), detail);
   };
   const selectTab = (next: string) => {
     setPictureInPicture(NO_PICTURE_IN_PICTURE);
@@ -90,11 +118,16 @@ function BrowserPreviewScreen({
   const live = (focused && foreground) || pictureInPicture.active;
 
   return (
-    <View className="flex-1 bg-sheet" style={{ paddingBottom: insets.bottom }}>
+    <View
+      className="flex-1 bg-sheet"
+      style={{ paddingTop: contentTopInset, paddingBottom: insets.bottom }}
+    >
       <SheetHeader
-        title={tab ? browserTabTitle(tab) : "Browser"}
+        title={
+          tab ? browserTabTitle(tab, resolveMessage) : gt("Browser", { $context: "screen title" })
+        }
         onClose={onClose}
-        accessibilityLabel="Close browser"
+        accessibilityLabel={gt("Close browser")}
         actions={
           // Android WebView cannot play video in picture in picture.
           Platform.OS === "ios" &&
@@ -103,8 +136,8 @@ function BrowserPreviewScreen({
             ? [
                 {
                   accessibilityLabel: pictureInPicture.active
-                    ? "Exit picture in picture"
-                    : "Picture in picture",
+                    ? gt("Exit picture in picture")
+                    : gt("Picture in picture"),
                   icon: {
                     ios: pictureInPicture.active ? "pip.exit" : "pip.enter",
                     android: "visibility",
@@ -119,11 +152,11 @@ function BrowserPreviewScreen({
           tabs.length > 1
             ? [
                 {
-                  title: "Tabs",
+                  title: gt("Tabs", { $context: "browser tabs menu" }),
                   icon: "square.on.square",
                   items: tabs.map((entry) => ({
                     id: entry.tabId,
-                    title: browserTabTitle(entry),
+                    title: browserTabTitle(entry, resolveMessage),
                     subtitle: browserTabUrl(entry),
                     selected: entry.tabId === tabId,
                     onPress: () => selectTab(entry.tabId),
@@ -189,6 +222,7 @@ function BrowserAddressBar({
   readonly onPaste: () => void;
 }) {
   const url = browserTabUrl(tab);
+  const gt = useGT();
   const [draft, setDraft] = useState<string | null>(null);
   const submit = () => {
     const value = draft ?? url;
@@ -196,31 +230,31 @@ function BrowserAddressBar({
     try {
       onCommand({ type: "navigate", url: normalizePreviewUrl(value) });
     } catch {
-      Dialog.alert("Could not open this address", "Enter an http or https URL.");
+      Dialog.alert(m(msg("Could not open this address")), m(msg("Enter an http or https URL.")));
     }
   };
   return (
     <View className="flex-row items-center gap-1 px-2 pb-2">
       <ControlPill
         icon="chevron.left"
-        accessibilityLabel="Back"
+        accessibilityLabel={gt("Back", { $context: "browser history" })}
         disabled={!ready || !tab.canGoBack}
         onPress={() => onCommand({ type: "history", delta: -1 })}
       />
       <ControlPill
         icon="chevron.right"
-        accessibilityLabel="Forward"
+        accessibilityLabel={gt("Forward", { $context: "browser history" })}
         disabled={!ready || !tab.canGoForward}
         onPress={() => onCommand({ type: "history", delta: 1 })}
       />
       <TextInput
-        accessibilityLabel="Address"
+        accessibilityLabel={gt("Address", { $context: "browser address bar" })}
         editable={ready}
         value={draft ?? url}
         onChangeText={setDraft}
         onBlur={() => setDraft(null)}
         onSubmitEditing={submit}
-        placeholder="Enter a URL"
+        placeholder={gt("Enter a URL")}
         placeholderTextColorClassName="accent-placeholder"
         autoCapitalize="none"
         autoCorrect={false}
@@ -232,7 +266,7 @@ function BrowserAddressBar({
       />
       <ControlPill
         icon="arrow.clockwise"
-        accessibilityLabel="Reload page"
+        accessibilityLabel={gt("Reload page")}
         disabled={!ready}
         onPress={() => onCommand({ type: "reload" })}
       />

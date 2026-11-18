@@ -165,6 +165,8 @@ describe("layerSettingsWatcher", () => {
       const mutator = Layer.succeed(ProviderInstanceRegistryMutator, {
         reconcile: () => Queue.offer(reconciled, undefined),
         reloadSecrets: () => Effect.sync(() => void reloads++),
+        rebuild: () => Effect.void,
+        applySecret: () => Effect.succeed([]),
       });
       yield* Layer.build(
         layerSettingsWatcher(Stream.fromQueue(changes), initial).pipe(Layer.provide(mutator)),

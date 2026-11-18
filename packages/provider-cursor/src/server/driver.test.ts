@@ -45,7 +45,7 @@ const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(McpProviderSessions.layer),
-  Layer.provideMerge(CursorSdk.layer),
+  Layer.provideMerge(CursorSdk.layer.pipe(Layer.provide(NodeServices.layer))),
   Layer.provideMerge(
     Layer.mock(CursorAgentSdk.CursorAgentSdkRunner)({
       open: () => Effect.die("Maintenance resolution must not open a Cursor session"),
@@ -186,7 +186,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
         ).toBe("Failure");
         expect(openedKeys).toEqual([["instance-browser-key", 42]]);
         expect(closed).toBe(1);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("budgets handoffs for the SDK model across catalog refreshes and option changes", () =>
@@ -392,7 +392,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
           allowance: DEFAULT_HANDOFF_TOKEN_CAP,
         },
         catalogDefault: {
-          model: { id: "claude-opus-5-5" },
+          model: { id: "claude-opus-5-5", params: [{ id: "context", value: "1m" }] },
           window: 1_000_000,
           allowance: DEFAULT_HANDOFF_TOKEN_CAP,
         },
@@ -408,6 +408,6 @@ it.layer(layerTest)("CursorDriver", (it) => {
         },
         retainedDefault: catalogDefault,
       });
-    }).pipe(Effect.scoped),
+    }),
   );
 });

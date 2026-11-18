@@ -3,6 +3,8 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 
 import type {
   ModelCapabilities,
@@ -12,7 +14,6 @@ import type {
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
 import {
-  disallowedProviderMessage,
   isManagedDriverAllowed,
   isProviderDriverKind,
   resolveProjectProviderInstanceEnabled,
@@ -22,7 +23,19 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import { resolveProvidersForCwd } from "@t3tools/client-runtime/providerSkills";
 
+/** The contracts `disallowedProviderMessage` English, as translatable sentences. */
+function disallowedProviderText(organization: string | undefined, label: string): string {
+  return organization === undefined
+    ? m(msg("Your organization policy does not allow the {label} provider.", { label }))
+    : m(
+        msg("{organization}''s policy does not allow the {label} provider.", {
+          organization,
+          label,
+        }),
+      );
+}
 export type ModelOption = {
   readonly key: string;
   readonly label: string;
@@ -159,6 +172,16 @@ function normalizeSelectionOptions(
       };
 }
 
+/** The config as a project at `cwd` sees it, with that project's own provider models. */
+export function serverConfigForCwd<C extends T3ServerConfig | null | undefined>(
+  config: C,
+  cwd: string | null,
+): C {
+  if (!config) return config;
+  const providers = resolveProvidersForCwd(config.providers, cwd);
+  return providers === config.providers ? config : { ...config, providers };
+}
+
 /** Require explicit projectId or null so omissions cannot bypass project provider disablement. */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
@@ -207,18 +230,26 @@ export function describeUnavailableModelSelection(
       instanceId: selection.instanceId,
     });
     return {
-      title: "Provider not allowed",
-      detail: `${disallowedProviderMessage(config?.managedPolicy?.organization, label)} Choose another model.`,
+      title: m(msg("Provider not allowed")),
+      detail: m(
+        msg("{message} Choose another model.", {
+          message: disallowedProviderText(config?.managedPolicy?.organization, label),
+        }),
+      ),
     };
   }
   return isDisabledForProject(config, provider, selection.instanceId, projectId)
     ? {
-        title: "Model turned off for this project",
-        detail: "Turn it back on from web or desktop, or choose another model.",
+        title: m(msg("Model turned off for this project")),
+        detail: m(msg("Turn it back on from web or desktop, or choose another model.")),
       }
     : {
-        title: "Antigravity model unavailable",
-        detail: "Set up Antigravity on web or desktop, or choose another model.",
+        title: m(msg("{provider} model unavailable", { provider: "Antigravity" })),
+        detail: m(
+          msg("Set up {provider} on web or desktop, or choose another model.", {
+            provider: "Antigravity",
+          }),
+        ),
       };
 }
 
@@ -274,6 +305,22 @@ export function resolveNewTaskModelSelection(input: {
     input.modelOptions.find((option) => !option.isUnavailable)?.selection ??
     null
   );
+}
+
+// Rows built after a pick on another instance carry no options for the thread's own model.
+export function withStoredThreadModelOptions(
+  selection: ModelSelection,
+  stored: ModelSelection,
+): ModelSelection {
+  if (
+    (selection.options?.length ?? 0) > 0 ||
+    !stored.options?.length ||
+    selection.instanceId !== stored.instanceId ||
+    selection.model !== stored.model
+  ) {
+    return selection;
+  }
+  return { ...selection, options: stored.options };
 }
 
 export function buildModelOptions(
