@@ -109,7 +109,9 @@ export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
   {
     scope: AuthRelayConfigureScope,
     title: msg("Configure relay (admin)"),
-    description: msg("Set up or replace T3 Connect, including its trusted pairing credential issuer."),
+    description: msg(
+      "Set up or replace T3 Connect, including its trusted pairing credential issuer.",
+    ),
   },
 ];
 

@@ -187,12 +187,18 @@ export const updateLinkedEnvironmentLiveActivityPreference = Effect.fn(
             return result.ok;
           }
           return yield* new CloudEnvironmentLinkError({
-            message: `Environment returned HTTP ${response.status}.`,
+            message: m(msg("Environment returned HTTP {status}."), { status: response.status }),
           });
         }),
       ),
       Effect.mapError(
-        cloudEnvironmentLinkError("Could not update the environment's Live Activity preference."),
+        cloudEnvironmentLinkError(
+          m(msg("Could not update the environment's Live Activity preference.")),
+          (detail) =>
+            m(msg("Could not update the environment's Live Activity preference: {detail}"), {
+              detail,
+            }),
+        ),
       ),
     );
 });

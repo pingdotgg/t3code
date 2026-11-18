@@ -2,7 +2,11 @@ import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useGT, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
-import { AuthRelayConfigureScope, AuthRelayWriteScope, type EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthRelayConfigureScope,
+  AuthRelayWriteScope,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
@@ -353,7 +357,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         Platform.OS === "android" ? gt("Ongoing activity enabled") : gt("Live Activities enabled"),
         environmentCount > 0
           ? gt("Agent activity updates are enabled for eligible environments.")
-          : gt("Agent activity updates are enabled. Add an environment to start receiving updates."),
+          : gt(
+              "Agent activity updates are enabled. Add an environment to start receiving updates.",
+            ),
       );
     } else {
       Dialog.alert(

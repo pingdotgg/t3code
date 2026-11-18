@@ -1,10 +1,7 @@
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
-import {
-  AuthAccessWriteScope,
-  type AuthSessionState,
-} from "@t3tools/contracts";
+import { AuthAccessWriteScope, type AuthSessionState } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
