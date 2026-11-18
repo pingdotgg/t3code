@@ -10039,6 +10039,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("does not repeat assistant messages Claude re-emits after a mid-turn compaction", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-compaction-reemit"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const frames = [
+        usageSnapshotFrame("msg_kept", "00000000-0000-4000-8000-000000000690", zeroUsage),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 158_988, post_tokens: 27_197 },
+          uuid: "00000000-0000-4000-8000-000000000691",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        // A compaction that keeps messages re-emits them with their message.id under a new uuid.
+        usageSnapshotFrame("msg_kept", "00000000-0000-4000-8000-000000000692", zeroUsage),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000693", result: "Working." }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      const assistantMessageIds = new Set(
+        harness.events.flatMap((event) =>
+          event.type === "message.updated" && event.message.role === "assistant"
+            ? [event.message.id]
+            : [],
+        ),
+      );
+      assert.equal(assistantMessageIds.size, 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     { autoCompactWindow: "", model: "claude-sonnet-4-6", threshold: undefined },
     { autoCompactWindow: "150000", model: "claude-sonnet-4-6", threshold: 117_000 },
