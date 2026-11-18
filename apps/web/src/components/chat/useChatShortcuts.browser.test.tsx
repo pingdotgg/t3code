@@ -200,6 +200,18 @@ function ChatWithSideChatPane(props: { ran: string[] }) {
     keybindings: [
       ctrlAlt("b", "rightPanel.toggle"),
       ctrlAlt("k", "rightPanel.close"),
+      {
+        ...ctrlAlt("n", "rightPanel.nextTab"),
+        whenAst: { type: "identifier", name: "composerFocus" },
+      },
+      {
+        ...ctrlAlt("p", "rightPanel.previousTab"),
+        whenAst: { type: "identifier", name: "composerFocus" },
+      },
+      {
+        ...ctrlAlt("n", "rightPanel.previousTab"),
+        whenAst: { type: "not", node: { type: "identifier", name: "composerFocus" } },
+      },
       ctrlShift("x", "thread.stop"),
     ],
     scriptKeybindings: [],
@@ -218,6 +230,8 @@ function ChatWithSideChatPane(props: { ran: string[] }) {
     commands: {
       "rightPanel.toggle": () => void props.ran.push("toggle"),
       "rightPanel.close": () => void props.ran.push("close"),
+      "rightPanel.nextTab": () => void props.ran.push("next"),
+      "rightPanel.previousTab": () => void props.ran.push("previous"),
       "thread.stop": () => void props.ran.push("stop"),
     },
     fallback: () => undefined,
@@ -227,7 +241,7 @@ function ChatWithSideChatPane(props: { ran: string[] }) {
       <div role="region" aria-label="Conversation" tabIndex={0}>
         A side chat message
       </div>
-      <textarea aria-label="Message Side chat" />
+      <textarea aria-label="Message Side chat" data-testid="composer-editor" />
     </div>
   );
 }
@@ -237,11 +251,12 @@ it("runs right panel commands from inside a side chat pane, but not thread comma
   await using screen = await render(<ChatWithSideChatPane ran={ran} />, options);
 
   await userEvent.click(screen.getByLabelText("Message Side chat"));
-  await userEvent.keyboard("{Control>}{Alt>}BK{/Alt}{/Control}");
+  await userEvent.keyboard("{Control>}{Alt>}BKNP{/Alt}{/Control}");
   await userEvent.keyboard("{Control>}{Shift>}X{/Shift}{/Control}");
   await userEvent.click(screen.getByRole("region", { name: "Conversation" }));
   await userEvent.keyboard("{Control>}{Alt>}B{/Alt}{/Control}");
+  await userEvent.keyboard("{Control>}{Alt>}NP{/Alt}{/Control}");
   await userEvent.keyboard("q");
 
-  expect(ran).toEqual(["toggle", "close", "toggle"]);
+  expect(ran).toEqual(["toggle", "close", "next", "previous", "toggle", "previous"]);
 });

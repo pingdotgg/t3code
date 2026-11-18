@@ -91,19 +91,15 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return;
     }
 
-    const command =
-      resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
-        context: shortcutContext,
-      }) ??
-      (inSideChatPane
-        ? resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
-            context: {
-              ...shortcutContext,
-              composerFocus:
-                document.activeElement?.getAttribute("data-testid") === "composer-editor",
-            },
-          })
-        : undefined);
+    const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
+      context: inSideChatPane
+        ? {
+            ...shortcutContext,
+            composerFocus:
+              document.activeElement?.getAttribute("data-testid") === "composer-editor",
+          }
+        : shortcutContext,
+    });
     if (!command || (inSideChatPane && !SIDE_CHAT_PANE_COMMANDS.has(command))) return;
     const run =
       input.commands[command] ??
