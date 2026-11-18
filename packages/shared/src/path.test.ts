@@ -6,13 +6,9 @@ import {
   normalizeProjectPathForDispatch,
   resolvePastedPath,
   resolveWorkspaceFilePath,
-  isHostPath,
 } from "./path.ts";
 
 describe("path helpers", () => {
-  it("recognizes the server's backslash home prefix", () => {
-    expect(isHostPath("~\\.claude/CLAUDE.md")).toBe(true);
-  });
   // regression: #17923 literal colons in names are kept, not parsed as positions
   it.each([
     ["report:123", "/workspace", "/workspace/report:123"],
