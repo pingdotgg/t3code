@@ -1018,7 +1018,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               >
                 <Animated.View
                   key={compactEditor.isExpanded ? "expanded" : "compact"}
-                  className="min-w-0 shrink flex-row items-center"
+                  className={
+                    fitsModelToolbar
+                      ? "min-w-0 flex-1 flex-row items-center"
+                      : "min-w-0 shrink flex-row items-center"
+                  }
                   entering={compactEditor.toolbarControlsEntering}
                 >
                   {compactControl}
