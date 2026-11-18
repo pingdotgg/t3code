@@ -454,7 +454,9 @@ function ProviderAccount({
             accessibilityState={{ expanded: installationDetailsOpen }}
             onPress={() => setInstallationDetailsOpen((open) => !open)}
           >
-            <Text className="text-sm text-foreground">Installation details</Text>
+            <Text className="text-sm text-foreground">
+              <T>Installation details</T>
+            </Text>
           </Pressable>
           {installationDetailsOpen ? (
             <>
@@ -463,7 +465,9 @@ function ProviderAccount({
               </Text>
               {installation.data.operationId ? (
                 <Text selectable className="font-mono text-xs text-foreground-muted">
-                  Attempt: {installation.data.operationId}
+                  <T>
+                    Attempt: <Var>{installation.data.operationId}</Var>
+                  </T>
                 </Text>
               ) : null}
               {installation.data.diagnostics.systemError ? (
@@ -473,23 +477,27 @@ function ProviderAccount({
               ) : null}
               {installation.data.diagnostics.exitCode !== null ? (
                 <Text className="text-sm text-foreground-muted">
-                  Exit code: {installation.data.diagnostics.exitCode}
+                  <T>
+                    Exit code: <Var>{installation.data.diagnostics.exitCode}</Var>
+                  </T>
                 </Text>
               ) : null}
               {installation.data.diagnostics.signal !== null ? (
                 <Text className="text-sm text-foreground-muted">
-                  Exit signal: {installation.data.diagnostics.signal}
+                  <T>
+                    Exit signal: <Var>{installation.data.diagnostics.signal}</Var>
+                  </T>
                 </Text>
               ) : null}
               <ScrollView className="max-h-48" nestedScrollEnabled>
                 <Text selectable className="font-mono text-sm text-foreground">
                   {installation.data.diagnostics.stderr ||
-                    "No startup error output was captured for this check."}
+                    gt("No startup error output was captured for this check.")}
                 </Text>
               </ScrollView>
               {installation.data.diagnostics.truncated ? (
                 <Text className="text-sm text-foreground-muted">
-                  Some startup output was omitted or truncated.
+                  <T>Some startup output was omitted or truncated.</T>
                 </Text>
               ) : null}
             </>

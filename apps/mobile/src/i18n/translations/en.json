@@ -5207,5 +5207,32 @@
   "ad208e3e32c85029": "Hide all",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool calls in chat",
-  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show."
+  "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
+  "26e91fbabd6c471d": "No startup error output was captured for this check.",
+  "2d7af575422e95d4": "Installation details",
+  "bedf6a1ed148ba26": [
+    "Attempt: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Exit code: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Exit signal: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "bb673f99be9e5122": "Some startup output was omitted or truncated."
 }

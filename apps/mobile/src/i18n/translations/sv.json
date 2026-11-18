@@ -5206,5 +5206,32 @@
   "ad208e3e32c85029": "Dölj alla",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
-  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid."
+  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "26e91fbabd6c471d": "Inga startfelmeddelanden fångades vid den här kontrollen.",
+  "2d7af575422e95d4": "Installationsdetaljer",
+  "bedf6a1ed148ba26": [
+    "Försök: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Avslutningskod: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Avslutningssignal: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "bb673f99be9e5122": "En del av startutdata utelämnades eller förkortades."
 }

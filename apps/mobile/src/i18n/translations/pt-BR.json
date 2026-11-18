@@ -5200,5 +5200,32 @@
   "ad208e3e32c85029": "Ocultar todas",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
-  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem."
+  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
+  "26e91fbabd6c471d": "Nenhuma saída de erro na inicialização foi capturada nesta verificação.",
+  "2d7af575422e95d4": "Detalhes da instalação",
+  "bedf6a1ed148ba26": [
+    "Tentativa: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Código de saída: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Sinal de saída: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "bb673f99be9e5122": "Parte da saída de inicialização foi omitida ou truncada."
 }

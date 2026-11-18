@@ -5206,5 +5206,32 @@
   "ad208e3e32c85029": "Alle ausblenden",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
-  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt."
+  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
+  "26e91fbabd6c471d": "Bei dieser Prüfung wurden keine Startfehlermeldungen erfasst.",
+  "2d7af575422e95d4": "Installationsdetails",
+  "bedf6a1ed148ba26": [
+    "Versuch: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Exitcode: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Exit-Signal: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "bb673f99be9e5122": "Ein Teil der Startausgabe wurde ausgelassen oder gekürzt."
 }

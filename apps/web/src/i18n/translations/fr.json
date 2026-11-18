@@ -12092,5 +12092,32 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
+  "2d7af575422e95d4": "Détails de l’installation",
+  "bedf6a1ed148ba26": [
+    "Tentative : ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Code de sortie : ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Signal de sortie : ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "33139f49ca313a62": "Aucune sortie d’erreur au démarrage n’a été capturée pour cette vérification.",
+  "bb673f99be9e5122": "Une partie de la sortie de démarrage a été omise ou tronquée."
 }

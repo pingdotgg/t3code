@@ -12091,5 +12091,32 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
+  "2d7af575422e95d4": "Detalhes da instalação",
+  "bedf6a1ed148ba26": [
+    "Tentativa: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "0997ec42c0537aa5": [
+    "Código de saída: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1286d1de58e9c93b": [
+    "Sinal de saída: ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "33139f49ca313a62": "Nenhuma saída de erro na inicialização foi capturada nesta verificação.",
+  "bb673f99be9e5122": "Parte da saída de inicialização foi omitida ou truncada."
 }
