@@ -1,4 +1,5 @@
 import { AuthMcpClientAccess } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { useId } from "react";
 import { InfoIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -19,26 +20,30 @@ export function LinkAccessPicker({
   readonly disabled?: boolean;
   readonly compact?: boolean;
 }) {
+  const gt = useGT();
   const labelId = useId();
+  const m = useMessages();
   const selected = accessConfig[value];
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-1">
         <span id={labelId} className="block text-xs font-medium">
-          {compact ? "Permissions" : "What agents here may do there"}
+          {compact ? gt("Permissions") : gt("What agents here may do there")}
         </span>
         {compact ? (
           <Tooltip>
             <TooltipTrigger
               render={
-                <Button size="icon-tiny" variant="ghost-muted" aria-label="Permission limits">
+                <Button size="icon-tiny" variant="ghost-muted" aria-label={gt("Permission limits")}>
                   <InfoIcon />
                 </Button>
               }
             />
             <TooltipPopup>
-              An agent never gets more access than its own mode. Below Full access, changes are
-              limited to threads this link started. Return-link permissions are separate.
+              <T>
+                An agent never gets more access than its own mode. Below Full access, changes are
+                limited to threads this link started. Return-link permissions are separate.
+              </T>
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -54,7 +59,7 @@ export function LinkAccessPicker({
           <SelectValue>
             <span className="flex items-center gap-2">
               <selected.icon aria-hidden className="size-4" />
-              {selected.label}
+              {m(selected.label)}
             </span>
           </SelectValue>
         </SelectTrigger>
@@ -66,9 +71,9 @@ export function LinkAccessPicker({
                 <span className="grid min-w-0 gap-0.5 py-0.5">
                   <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
                     <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-                    {label}
+                    {m(label)}
                   </span>
-                  <span className="text-xs leading-4 text-muted-foreground">{description}</span>
+                  <span className="text-xs leading-4 text-muted-foreground">{m(description)}</span>
                 </span>
               </SelectItem>
             );
@@ -76,10 +81,17 @@ export function LinkAccessPicker({
         </SelectPopup>
       </Select>
       <p className="text-xs text-muted-foreground">
-        {selected.description}
-        {compact
-          ? null
-          : " An agent never gets more access there than its own mode here. Below full access, it can change only threads this link started, not that machine's own threads, projects or settings."}
+        {m(selected.description)}
+        {compact ? null : (
+          <>
+            {" "}
+            <T>
+              An agent never gets more access there than its own mode here. Below full access, it
+              can change only threads this link started, not that machine's own threads, projects or
+              settings.
+            </T>
+          </>
+        )}
       </p>
     </div>
   );

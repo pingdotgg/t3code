@@ -1,5 +1,6 @@
 import type { EnvironmentId, PeerLinkSummary } from "@t3tools/contracts";
 import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
+import { m } from "../../i18n/messages";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import type * as DateTime from "effect/DateTime";
 
@@ -45,7 +46,7 @@ export function returnLinkStatus(
     return { label: "Return expired", detail: "The return link has expired.", warning: true };
   return {
     label: "Two-way",
-    detail: `Both devices have links. Return permission: ${back.access === "read-only" ? "Read only" : runtimeModeConfig[back.access].label}.${health.kind !== "reachable" ? " The return link needs attention." : ""}`,
+    detail: `Both devices have links. Return permission: ${back.access === "read-only" ? "Read only" : m(runtimeModeConfig[back.access].label)}.${health.kind !== "reachable" ? " The return link needs attention." : ""}`,
     warning: health.kind !== "reachable",
   };
 }

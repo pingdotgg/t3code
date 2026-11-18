@@ -11,6 +11,7 @@ import {
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { PlusIcon } from "lucide-react";
+import { T, useGT, Var } from "gt-react";
 import { useId, useState } from "react";
 
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
@@ -18,6 +19,7 @@ import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { usePeerLinkMutation } from "~/state/use-peer-link-mutation";
+import { m as resolveMessage } from "../../i18n/messages";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -49,6 +51,7 @@ export function LinkEnvironmentAction({
   readonly onOpen: () => void;
   readonly targetId?: EnvironmentId;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const machines = useLinkableMachines(environmentId, open);
   // Null until the user picks; with no other machines known, only an address is left.
@@ -100,7 +103,10 @@ export function LinkEnvironmentAction({
     const minted = await mintPairingCodeOn(targetId, access);
     if (Result.isSuccess(minted)) return minted.success;
     setMintFailed((failed) => new Set(failed).add(targetId));
-    failureToast("Could not link the environment", linkRequestFailureMessage(minted.failure));
+    failureToast(
+      gt("Could not link the environment"),
+      linkRequestFailureMessage(minted.failure, resolveMessage),
+    );
     return null;
   };
   const submit = async () => {
@@ -128,10 +134,16 @@ export function LinkEnvironmentAction({
             });
       if (result === null) return;
       if (result._tag === "Success") {
-        toastManager.add({ type: "success", title: `Linked ${result.value.label}` });
+        toastManager.add({
+          type: "success",
+          title: gt("Linked {label}", { label: result.value.label }),
+        });
         handleOpenChange(false);
       } else if (!isAtomCommandInterrupted(result)) {
-        failureToast("Could not link the environment", String(squashAtomCommandFailure(result)));
+        failureToast(
+          gt("Could not link the environment"),
+          String(squashAtomCommandFailure(result)),
+        );
       }
     };
     await perform().finally(() => {
@@ -151,16 +163,20 @@ export function LinkEnvironmentAction({
         render={
           <Button size="xs" variant="default" disabled={blocked}>
             <PlusIcon className="size-3" />
-            Link
+            {gt("Link", { $context: "verb, links an environment" })}
           </Button>
         }
       />
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Link an environment</DialogTitle>
+          <DialogTitle>
+            <T>Link an environment</T>
+          </DialogTitle>
           <DialogDescription>
-            Let agents on {sourceLabel} work on a destination. Enable Linked environments in Labs on
-            both devices first. Return links are set up separately.
+            <T>
+              Let agents on <Var>{sourceLabel}</Var> work on a destination. Enable Linked
+              environments in Labs on both devices first. Return links are set up separately.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -183,17 +199,19 @@ export function LinkEnvironmentAction({
             ) : null}
             {canMint ? (
               <p className="text-xs text-muted-foreground">
-                This app can pair automatically. No code is needed.
+                <T>This app can pair automatically. No code is needed.</T>
               </p>
             ) : null}
             {machine?.linked ? (
               <p className="text-xs text-muted-foreground">
-                Already linked. Linking again renews it with the access you pick.
+                <T>Already linked. Linking again renews it with the access you pick.</T>
               </p>
             ) : null}
             {needsAddress ? (
               <label className="block space-y-1.5">
-                <span className="block text-xs font-medium text-foreground">Address</span>
+                <span className="block text-xs font-medium text-foreground">
+                  <T>Address</T>
+                </span>
                 <Input
                   value={address}
                   onChange={(event) => {
@@ -209,8 +227,10 @@ export function LinkEnvironmentAction({
                 />
                 {machine !== null ? (
                   <span className="block text-xs text-muted-foreground">
-                    This app has no address for {machine.label} that another machine can reach.
-                    Enter its https or Tailscale address.
+                    <T>
+                      This app has no address for <Var>{machine.label}</Var> that another machine
+                      can reach. Enter its https or Tailscale address.
+                    </T>
                   </span>
                 ) : null}
               </label>
@@ -218,12 +238,16 @@ export function LinkEnvironmentAction({
             {needsAddress && address.trim() ? <LinkAddressWarning address={address} /> : null}
             {selected === null || canMint ? null : (
               <label className="block space-y-1.5">
-                <span className="block text-xs font-medium text-foreground">Pairing code</span>
+                <span className="block text-xs font-medium text-foreground">
+                  <T>Pairing code</T>
+                </span>
                 <Input
                   value={pairingCode}
                   onChange={(event) => setPairingCode(event.target.value)}
                   placeholder={
-                    machine === null ? "From Sharing & access there, or t3 pair" : "Paste the code"
+                    machine === null
+                      ? gt("From Sharing & access there, or t3 pair")
+                      : gt("Paste the code")
                   }
                   disabled={blocked}
                   autoComplete="one-time-code"
@@ -232,8 +256,10 @@ export function LinkEnvironmentAction({
                 />
                 {machine !== null ? (
                   <span className="block text-xs text-muted-foreground">
-                    Create a link on {machine.label}: Settings → Sharing & access → Authorized
-                    clients → Create link, then paste its code here.
+                    <T>
+                      Create a link on <Var>{machine.label}</Var>: Settings → Sharing & access →
+                      Authorized clients → Create link, then paste its code here.
+                    </T>
                   </span>
                 ) : null}
               </label>
@@ -243,10 +269,10 @@ export function LinkEnvironmentAction({
         </DialogPanel>
         <DialogFooter variant="bare">
           <DialogClose disabled={busy} render={<Button variant="outline" type="button" />}>
-            Cancel
+            <T>Cancel</T>
           </DialogClose>
           <Button form={formId} type="submit" disabled={blocked || !ready}>
-            {busy ? "Linking…" : "Link"}
+            {busy ? gt("Linking…") : gt("Link", { $context: "verb, links an environment" })}
           </Button>
         </DialogFooter>
       </DialogPopup>

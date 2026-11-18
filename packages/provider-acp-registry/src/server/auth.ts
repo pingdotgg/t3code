@@ -231,7 +231,8 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             ? Effect.try({
                 try: () => {
                   if (response.size) process.resize(response.size.cols, response.size.rows);
-                  if (response.data) process.write(response.data);
+                  if (response.data)
+                    process.write(PtyAdapter.ptyInput(response.data, response.binary));
                 },
                 catch: () =>
                   failure("respond", "The provider sign-in terminal is no longer available."),

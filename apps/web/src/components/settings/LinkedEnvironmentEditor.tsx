@@ -14,12 +14,14 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { useState } from "react";
+import { T, useGT, Var } from "gt-react";
 
 import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { usePeerLinkAccess, usePeerLinkMutation } from "~/state/use-peer-link-mutation";
+import { m as resolveMessage } from "../../i18n/messages";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -39,6 +41,7 @@ export function LinkedEnvironmentEditor({
   readonly canForget: boolean;
   readonly disabled: boolean;
 }) {
+  const gt = useGT();
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
   const machines = useLinkableMachines(environmentId, true);
   const machine = machines.find((candidate) => candidate.environmentId === link.environmentId);
@@ -78,7 +81,7 @@ export function LinkedEnvironmentEditor({
         const minted = await mintPairingCodeOn(link.environmentId, access);
         if (Result.isFailure(minted)) {
           setMintFailed(true);
-          setError(linkRequestFailureMessage(minted.failure));
+          setError(linkRequestFailureMessage(minted.failure, resolveMessage));
           return;
         }
         code = minted.success;
@@ -127,7 +130,9 @@ export function LinkedEnvironmentEditor({
         />
         {canLink && !canMint ? (
           <label className="mt-3 block space-y-1.5">
-            <span className="text-xs font-medium">Pairing code</span>
+            <span className="text-xs font-medium">
+              <T>Pairing code</T>
+            </span>
             <Input
               value={pairingCode}
               onChange={(event) => setPairingCode(event.target.value)}
@@ -135,17 +140,22 @@ export function LinkedEnvironmentEditor({
               autoComplete="one-time-code"
               nativeInput
               spellCheck={false}
-              placeholder="Paste a code from the destination"
+              placeholder={gt("Paste a code from the destination")}
             />
             <span className="block text-xs text-muted-foreground">
-              Create a link in {link.label}’s Sharing & access, or run <code>t3 pair</code> there.
+              <T>
+                Create a link in <Var>{link.label}</Var>’s Sharing & access, or run{" "}
+                <code>t3 pair</code> there.
+              </T>
             </span>
           </label>
         ) : null}
       </div>
       <div className="min-w-0 space-y-2">
         <p className="text-xs">
-          <span className="text-muted-foreground">Expires </span>
+          <span className="text-muted-foreground">
+            <T>Expires</T>{" "}
+          </span>
           {DateTime.formatLocal(link.expiresAt, { dateStyle: "medium" })}
         </p>
         <Tooltip>
@@ -161,7 +171,7 @@ export function LinkedEnvironmentEditor({
               size="xs"
               disabled={blocked || (!canMint && !pairingCode.trim()) || urls.length === 0}
             >
-              {busy ? "Renewing…" : dirty ? "Save & renew" : "Renew"}
+              {busy ? gt("Renewing…") : dirty ? gt("Save & renew") : gt("Renew")}
             </Button>
           ) : null}
           {dirty && canLink ? (
@@ -175,12 +185,12 @@ export function LinkedEnvironmentEditor({
                 setSaved(false);
               }}
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
           ) : null}
           {canForget ? (
             <Button size="xs" variant="destructive-outline" disabled={blocked} onClick={onForget}>
-              Forget
+              <T>Forget</T>
             </Button>
           ) : null}
         </div>
@@ -191,7 +201,7 @@ export function LinkedEnvironmentEditor({
         ) : null}
         {saved ? (
           <p role="status" className="text-xs text-success">
-            Link renewed.
+            <T>Link renewed.</T>
           </p>
         ) : null}
       </div>

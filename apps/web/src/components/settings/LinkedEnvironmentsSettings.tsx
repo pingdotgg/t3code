@@ -9,6 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { ArrowLeftRightIcon, ArrowRightIcon, ChevronDownIcon } from "lucide-react";
 import { useState } from "react";
+import { T, useGT, useMessages } from "gt-react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { cn } from "~/lib/utils";
@@ -35,7 +36,7 @@ import {
   returnLinkStatus,
 } from "./LinkedEnvironmentsSettings.logic";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 export function LinkedEnvironmentsSettings({
   environments,
@@ -44,6 +45,7 @@ export function LinkedEnvironmentsSettings({
   readonly environments: ReadonlyArray<EnvironmentPresentation>;
   readonly primaryEnvironmentId: EnvironmentId | null;
 }) {
+  const gt = useGT();
   const [selectedId, setSelectedId] = useState<EnvironmentId | null>(null);
   const selected =
     selectedId === null
@@ -53,13 +55,13 @@ export function LinkedEnvironmentsSettings({
   if (selectedId === null && selected) setSelectedId(selected.environmentId);
   if (!selected)
     return selectedId === null ? null : (
-      <SettingsSection title="Agent links">
+      <SettingsSection title={gt("Agent links")}>
         <SettingsRow
-          title="Source unavailable"
-          description="Reconnect the selected source to manage its links."
+          title={gt("Source unavailable")}
+          description={gt("Reconnect the selected source to manage its links.")}
           control={
             <Button size="xs" variant="outline" onClick={() => setSelectedId(null)}>
-              Choose another source
+              <T>Choose another source</T>
             </Button>
           }
         />
@@ -84,8 +86,11 @@ function SourceLinks({
   readonly environments: ReadonlyArray<EnvironmentPresentation>;
   readonly onSelect: (id: EnvironmentId) => void;
 }) {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
+  const m = useMessages();
   const environmentId = source.environmentId;
-  const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
+  const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }), m);
   // Links made outside this client bump nothing the shared list reads, so showing the panel
   // asks again. Listing probes every linked environment, too costly for a timer nobody asked for.
   // A list still loading counts as read now, so the next return to the window asks again.
@@ -118,7 +123,7 @@ function SourceLinks({
   return (
     <SettingsSection
       {...searchableSetting("linked-environments")}
-      title="Agent links"
+      title={gt("Agent links")}
       headerAction={
         canLink ? (
           <LinkEnvironmentAction
@@ -131,7 +136,9 @@ function SourceLinks({
     >
       <div className="space-y-3 px-3 py-3 sm:px-4">
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span id="agent-link-source">From</span>
+          <span id="agent-link-source">
+            <T>From</T>
+          </span>
           {environments.length > 1 ? (
             <div className="min-w-0 flex-1">
               <Select
@@ -162,8 +169,8 @@ function SourceLinks({
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Find a destination…"
-                aria-label="Find a destination"
+                placeholder={gt("Find a destination…")}
+                aria-label={gt("Find a destination")}
                 nativeInput
               />
             </div>
@@ -173,7 +180,7 @@ function SourceLinks({
               aria-pressed={!attentionOnly}
               onClick={() => setAttentionOnly(false)}
             >
-              All
+              <T>All</T>
             </Button>
             <Button
               size="xs"
@@ -181,30 +188,32 @@ function SourceLinks({
               aria-pressed={attentionOnly}
               onClick={() => setAttentionOnly(true)}
             >
-              Needs attention
+              <T>Needs attention</T>
             </Button>
           </div>
         ) : null}
       </div>
       {links.error ? (
         <SettingsRow
-          title="Could not refresh links"
+          title={gt("Could not refresh links")}
           description={links.error}
           control={
             <Button size="xs" variant="outline" onClick={links.refresh}>
-              Retry
+              <T>Retry</T>
             </Button>
           }
         />
       ) : null}
       {!links.data ? (
         links.error ? null : (
-          <SettingsRow title="Loading links…" role="status" />
+          <SettingsRow title={gt("Loading links…")} role="status" />
         )
       ) : all.length === 0 ? (
         <SettingsRow
-          title="No destinations linked"
-          description={`Link a destination so agents on ${source.label} can work there.`}
+          title={gt("No destinations linked")}
+          description={gt("Link a destination so agents on {source} can work there.", {
+            source: source.label,
+          })}
         />
       ) : (
         <>
@@ -212,12 +221,18 @@ function SourceLinks({
             aria-hidden
             className="grid grid-cols-[minmax(0,1fr)_6.5rem_0.75rem] gap-3 px-3 py-2 text-3xs uppercase text-muted-foreground sm:grid-cols-[minmax(0,1fr)_8.5rem_6.5rem_0.75rem] sm:px-4"
           >
-            <span>Destination</span>
-            <span className="hidden sm:block">Agent permissions</span>
-            <span>Link status</span>
+            <span>
+              <T>Destination</T>
+            </span>
+            <span className="hidden sm:block">
+              <T>Agent permissions</T>
+            </span>
+            <span>
+              <T>Link status</T>
+            </span>
             <span />
           </div>
-          {visible.length === 0 ? <SettingsRow title="No matching destinations" /> : null}
+          {visible.length === 0 ? <SettingsRow title={gt("No matching destinations")} /> : null}
           {all.map((link) => (
             <div key={link.environmentId} hidden={!visibleLinks.has(link)}>
               <LinkedEnvironmentRow
@@ -238,13 +253,13 @@ function SourceLinks({
         <Collapsible open={showAvailable} onOpenChange={setShowAvailable}>
           <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-3 text-left text-xs text-muted-foreground sm:px-4">
             <ChevronDownIcon aria-hidden className={cn("size-3", !showAvailable && "-rotate-90")} />
-            Other destinations
+            <T>Other destinations</T>
           </CollapsibleTrigger>
           <CollapsiblePanel animate={false}>
             {available.length === 0 ? (
               <SettingsRow
-                title="No other known destinations"
-                description="Use Link to enter another address."
+                title={gt("No other known destinations")}
+                description={gt("Use Link to enter another address.")}
               />
             ) : (
               available.map((machine) => (
@@ -282,6 +297,8 @@ function LinkedEnvironmentRow({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const now = DateTime.makeUnsafe(useNowMinute());
   const status = linkedEnvironmentStatus(link, now);
   const target = useEnvironment(link.environmentId);
@@ -293,6 +310,7 @@ function LinkedEnvironmentRow({
     open && canCheck
       ? peerLinkEnvironment.list({ environmentId: link.environmentId, input: {} })
       : null,
+    m,
   );
   const [evidence, setEvidence] = useState<{
     links: ReadonlyArray<PeerLinkSummary>;
@@ -334,7 +352,10 @@ function LinkedEnvironmentRow({
     if (!mutation.start()) return;
     const perform = async () => {
       const confirmed = await (requestConfirmDialog(
-        `Forget ${link.label}? Agents on ${sourceLabel} stop working there. Revoke its “T3 Code · …” client in ${link.label}’s Sharing & access to end that session too.`,
+        gt(
+          "Forget {label}? Agents on {source} stop working there. Revoke its “T3 Code · …” client in {label}’s Sharing & access to end that session too.",
+          { label: link.label, source: sourceLabel },
+        ),
         { variant: "destructive" },
       ) ?? Promise.resolve(false));
       if (!confirmed) return;
@@ -344,7 +365,7 @@ function LinkedEnvironmentRow({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not forget the link",
+            title: gt("Could not forget the link"),
             description: String(squashAtomCommandFailure(result)),
           }),
         );
@@ -387,7 +408,7 @@ function LinkedEnvironmentRow({
             </Tooltip>
           </span>
           <span className="block text-xs text-muted-foreground sm:hidden">
-            {accessConfig[link.access].label}
+            {m(accessConfig[link.access].label)}
           </span>
         </span>
         <span className="hidden text-xs text-muted-foreground sm:block">
@@ -411,9 +432,9 @@ function LinkedEnvironmentRow({
             {status.detail ? <p className="mb-3 text-xs text-warning">{status.detail}</p> : null}
             {reverse.error ? (
               <p role="status" className="mb-3 text-xs text-muted-foreground">
-                Could not check the return link.{" "}
+                <T>Could not check the return link.</T>{" "}
                 <Button size="xs" variant="link" onClick={reverse.refresh}>
-                  Retry
+                  <T>Retry</T>
                 </Button>
               </p>
             ) : null}
