@@ -87,6 +87,7 @@ export const WorkspaceEntriesError = Schema.Union([
   WorkspacePaths.WorkspaceRootCreateFailedError,
   WorkspacePaths.WorkspaceRootStatFailedError,
   WorkspacePaths.WorkspaceRootNotDirectoryError,
+  WorkspacePaths.WorkspaceRootUnsupportedPathError,
   WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed,
   WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut,
   WorkspaceSearchIndex.WorkspaceSearchIndexSearchFailed,

@@ -59,6 +59,18 @@ export class WorkspaceRootNotDirectoryError extends Schema.TaggedError<Workspace
   }
 }
 
+export class WorkspaceRootUnsupportedPathError extends Schema.TaggedError<WorkspaceRootUnsupportedPathError>()(
+  "WorkspaceRootUnsupportedPathError",
+  {
+    workspaceRoot: Schema.String,
+    normalizedWorkspaceRoot: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Workspace root resolves to a path ending in whitespace. Rename the directory before adding it: ${JSON.stringify(this.normalizedWorkspaceRoot)}`;
+  }
+}
+
 export class WorkspacePathOutsideRootError extends Schema.TaggedError<WorkspacePathOutsideRootError>()(
   "WorkspacePathOutsideRootError",
   {
@@ -76,6 +88,7 @@ export const WorkspacePathsError = Schema.Union([
   WorkspaceRootCreateFailedError,
   WorkspaceRootStatFailedError,
   WorkspaceRootNotDirectoryError,
+  WorkspaceRootUnsupportedPathError,
   WorkspacePathOutsideRootError,
 ]);
 export type WorkspacePathsError = typeof WorkspacePathsError.Type;
@@ -92,6 +105,7 @@ export class WorkspacePaths extends Context.Service<
       | WorkspaceRootCreateFailedError
       | WorkspaceRootStatFailedError
       | WorkspaceRootNotDirectoryError
+      | WorkspaceRootUnsupportedPathError
     >;
     readonly resolveRelativePathWithinRoot: (input: {
       workspaceRoot: string;
@@ -170,7 +184,7 @@ const make = Effect.gen(function* () {
         normalizedWorkspaceRoot,
       });
     }
-    return yield* fileSystem.realPath(normalizedWorkspaceRoot).pipe(
+    const realRoot = yield* fileSystem.realPath(normalizedWorkspaceRoot).pipe(
       Effect.mapError(
         (cause) =>
           new WorkspaceRootStatFailedError({
@@ -181,6 +195,14 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
+    // Existing path contracts trim strings, which would persist a different directory.
+    if (realRoot !== realRoot.trimEnd()) {
+      return yield* new WorkspaceRootUnsupportedPathError({
+        workspaceRoot,
+        normalizedWorkspaceRoot: realRoot,
+      });
+    }
+    return realRoot;
   });
 
   const resolveRelativePathWithinRoot: WorkspacePaths["Service"]["resolveRelativePathWithinRoot"] =

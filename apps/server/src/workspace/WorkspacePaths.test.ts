@@ -23,22 +23,33 @@ const makeTempDir = Effect.fn("makeTempDir")(function* () {
 
 it.layer(layerTest)("WorkspacePathsLive", (it) => {
   describe("normalizeWorkspaceRoot", () => {
-    it.effect("creates missing directories when createIfMissing is enabled", () =>
-      Effect.gen(function* () {
-        const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const cwd = yield* makeTempDir();
-        const path = yield* Path.Path;
-        const missingPath = path.join(cwd, "nested", "new-project");
+    it.effect(
+      "creates missing roots and rejects aliases whose resolved paths cannot be preserved",
+      () =>
+        Effect.gen(function* () {
+          const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const cwd = yield* makeTempDir();
+          const path = yield* Path.Path;
+          const missingPath = path.join(cwd, "nested", "new-project");
 
-        const resolved = yield* workspacePaths.normalizeWorkspaceRoot(missingPath, {
-          createIfMissing: true,
-        });
-        const stat = yield* fileSystem.stat(resolved);
+          const resolved = yield* workspacePaths.normalizeWorkspaceRoot(missingPath, {
+            createIfMissing: true,
+          });
+          const stat = yield* fileSystem.stat(resolved);
 
-        expect(resolved).toBe(yield* fileSystem.realPath(missingPath));
-        expect(stat.type).toBe("Directory");
-      }),
+          expect(resolved).toBe(yield* fileSystem.realPath(missingPath));
+          expect(stat.type).toBe("Directory");
+
+          if (HostProcess.Platform.defaultValue() !== "win32") {
+            const spacedRoot = path.join(cwd, "spaced ");
+            const aliasRoot = path.join(cwd, "alias");
+            yield* fileSystem.makeDirectory(spacedRoot);
+            yield* fileSystem.symlink(spacedRoot, aliasRoot);
+            const error = yield* workspacePaths.normalizeWorkspaceRoot(aliasRoot).pipe(Effect.flip);
+            expect(error._tag).toBe("WorkspaceRootUnsupportedPathError");
+          }
+        }),
     );
   });
 

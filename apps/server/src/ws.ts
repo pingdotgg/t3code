@@ -608,6 +608,12 @@ function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesEr
         failure: "workspace_root_create_failed",
         normalizedCwd: error.normalizedWorkspaceRoot,
       };
+    case "WorkspaceRootUnsupportedPathError":
+      return {
+        failure: "workspace_root_stat_failed",
+        normalizedCwd: error.normalizedWorkspaceRoot,
+        detail: error.message,
+      };
     case "WorkspaceRootStatFailedError":
       return {
         failure: "workspace_root_stat_failed",
