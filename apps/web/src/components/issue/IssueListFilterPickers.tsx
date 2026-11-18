@@ -73,11 +73,11 @@ export function IssueFiltersMenu(props: {
       })
     : ALL_PROJECTS;
   const projectOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: ALL_PROJECTS, label: "All projects", Icon: LayersIcon },
+    { value: ALL_PROJECTS, label: gt("All projects"), Icon: LayersIcon },
     // A remembered project this client does not list stays shown, so the filter can be taken off.
     ...(projectValue !== ALL_PROJECTS &&
     !props.projects.some((project) => pullRequestProjectKey(project) === projectValue)
-      ? [{ value: projectValue, label: "Unavailable project", Icon: FolderGit2Icon }]
+      ? [{ value: projectValue, label: gt("Unavailable project"), Icon: FolderGit2Icon }]
       : []),
     ...props.projects.map((project) => ({
       value: pullRequestProjectKey(project),
@@ -116,7 +116,7 @@ export function IssueFiltersMenu(props: {
         />
         {props.projects.length > 1 || props.project ? (
           <PullRequestFilterRadioSubmenu
-            label="Project"
+            label={gt("Project")}
             value={projectValue}
             options={projectOptions}
             onChange={(next) => {

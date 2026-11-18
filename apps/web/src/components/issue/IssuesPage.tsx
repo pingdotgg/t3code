@@ -282,7 +282,7 @@ export function IssuesPage() {
       )
     : held;
   const groups = groupIssues(shown, debouncedQuery, projects, search.order ?? "updated");
-  const filterScopes = issueFilterScopes(shown, projects);
+  const filterScopes = issueFilterScopes(shown, projects, scopedProject);
 
   const hostOptions = hostOptionsFor(
     [...held.values()].flatMap((page) => page.answer.trackers),
