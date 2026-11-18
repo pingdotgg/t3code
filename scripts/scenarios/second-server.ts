@@ -16,30 +16,22 @@ import { prepareHome, start } from "./start-app.ts";
 
 export const SECOND_HOME = `${T3_HOME}-second-environment`;
 
-interface SecondServerOptions {
-  readonly home?: string;
-  readonly nodeArgs?: readonly string[];
-  readonly env?: NodeJS.ProcessEnv;
-}
-
 /** A second server on its own T3 home, running until interrupted. `--dev-url` admits the web
  * origin through CORS and registers the replay agent; `paired` gets the Add environment input. */
 const runSecondServer = Effect.fn("scenario.secondServer")(function* (
   devUrl: string,
   paired: (target: { readonly host: string; readonly token: string }) => void,
-  { home = SECOND_HOME, nodeArgs = [], env }: SecondServerOptions,
 ) {
   const path = yield* Path.Path;
   const node = yield* HostProcess.ExecutablePath;
   const hostEnvironment = yield* HostProcess.Environment;
   const port = yield* (yield* NetService.NetService).reserveLoopbackPort();
-  yield* prepareHome(home);
+  yield* prepareHome(SECOND_HOME);
   const token = yield* Deferred.make<string>();
   const server = yield* start({
     cwd: APP_DIR,
     command: node,
     args: [
-      ...nodeArgs,
       "apps/server/src/bin.ts",
       "serve",
       "--host",
@@ -47,15 +39,14 @@ const runSecondServer = Effect.fn("scenario.secondServer")(function* (
       "--port",
       String(port),
       "--base-dir",
-      home,
+      SECOND_HOME,
       "--dev-url",
       devUrl,
     ],
     env: {
-      PATH: `${path.join(home, "bin")}:${hostEnvironment.PATH ?? ""}`,
+      PATH: `${path.join(SECOND_HOME, "bin")}:${hostEnvironment.PATH ?? ""}`,
       HOME: hostEnvironment.HOME,
       T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
-      ...env,
     },
     onLine: (line) => {
       const value = /^Token:\s*(\S+)/.exec(line)?.[1];
@@ -77,10 +68,10 @@ const runSecondServer = Effect.fn("scenario.secondServer")(function* (
 });
 
 /** Starts the second server for the web app at `devUrl`. `ready` settles with its pairing input. */
-export function startSecondServer(devUrl: string, options: SecondServerOptions = {}) {
+export function startSecondServer(devUrl: string) {
   const pairing = Promise.withResolvers<{ readonly host: string; readonly token: string }>();
   const server = Effect.runFork(
-    runSecondServer(devUrl, pairing.resolve, options).pipe(
+    runSecondServer(devUrl, pairing.resolve).pipe(
       Effect.scoped,
       Effect.provide([NodeServices.layer, NetService.layer]),
     ),
