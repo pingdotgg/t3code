@@ -109,6 +109,11 @@ impl Fixture {
                 work.to_str().unwrap(),
             ],
         );
+        // The code under test runs its own git, which writes reflog entries. Without an
+        // identity git guesses one from the host name, and a host name the resolver does not
+        // know costs a 5 s lookup per entry.
+        git(&work, &["config", "user.name", "test"]);
+        git(&work, &["config", "user.email", "test@example.com"]);
         git(&work, &["checkout", "-q", "-b", "main"]);
         write(&work, "README.md", "# repo\n");
         write(&work, "src/lib.rs", "pub fn one() -> u32 {\n    1\n}\n");
