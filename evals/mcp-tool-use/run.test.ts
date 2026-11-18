@@ -276,11 +276,26 @@ it("accepts any tool listed as an alternative", () => {
     assert.equal(
       failed(issueCase.expect, {
         ...run("link_issue"),
+        finalText: "Change Setings to Settings.",
         calls: [{ step: 0, tool: "link_issue", input }],
       }).length === 0,
       passes,
     );
   }
+  assert.isNotEmpty(
+    failed(issueCase.expect, {
+      ...run("link_issue"),
+      finalText: "Change Setings to Settings.",
+      calls: [{ step: 0, tool: "link_issue", input: { key: "42" }, failed: true }],
+    }),
+  );
+  assert.isNotEmpty(
+    failed(issueCase.expect, {
+      ...run("link_issue"),
+      finalText: "Linked the issue.",
+      calls: [{ step: 0, tool: "link_issue", input: { key: "42" } }],
+    }),
+  );
   // A bound on alternatives counts their calls together.
   const both: SampleRun = {
     calls: ["preview_status", "preview_open"].map((tool) => ({ step: 0, tool, input: {} })),
