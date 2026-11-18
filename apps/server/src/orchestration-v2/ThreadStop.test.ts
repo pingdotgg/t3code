@@ -2118,6 +2118,7 @@ it.effect.each([
         }),
       );
       const layerLive = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
         Layer.provide(layerSessionsStartingFollowUpFirst),
         Layer.provideMerge(
           Layer.mergeAll(
