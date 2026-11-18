@@ -543,6 +543,16 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     );
     return true;
   });
+  const withValidationTimeout = Effect.timeoutOrElse({
+    duration: "90 seconds",
+    orElse: () =>
+      Effect.fail(
+        installationError(
+          "verify",
+          "Codex runtime verification timed out after 90 seconds. Check this environment's server logs for startup errors, then retry installation.",
+        ),
+      ),
+  });
   const validate =
     options.validate ??
     Effect.fn("CodexInstallation.validate")(
@@ -613,10 +623,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
             "The existing managed Codex release differs from the official package. Remove it and reinstall.",
           );
         yield* ensureEligible();
-        yield* validate(existing, release.version).pipe(
-          Effect.scoped,
-          Effect.timeout("90 seconds"),
-        );
+        yield* validate(existing, release.version).pipe(Effect.scoped, withValidationTimeout);
         yield* activate();
         return;
       }
@@ -710,10 +717,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       );
       const executable = yield* fromDirectory(runtime, release.version, release.target);
       yield* ensureEligible();
-      yield* validate(executable, release.version).pipe(
-        Effect.scoped,
-        Effect.timeout("90 seconds"),
-      );
+      yield* validate(executable, release.version).pipe(Effect.scoped, withValidationTimeout);
       yield* fs.writeFileString(
         path.join(runtime, ".install-complete.json"),
         yield* encodeRecord({
@@ -758,10 +762,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     function* () {
       const active = yield* readRecord(activePath, ActiveRelease);
       const executable = yield* completedRelease(active.version);
-      yield* validate(executable, executable.version).pipe(
-        Effect.scoped,
-        Effect.timeout("90 seconds"),
-      );
+      yield* validate(executable, executable.version).pipe(Effect.scoped, withValidationTimeout);
       const kept = yield* keptInstall(executable.version);
       if (kept === null) {
         yield* SubscriptionRef.update(state, (current) => ({ ...current, ...offer(kept) }));

@@ -225,6 +225,24 @@ function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
     : records;
 }
 
+// Pi retains every entry, keeping tool results as links outside the history budget.
+function makePiToolResultTranscript(sessionId: string, cwd: string, recordCount: number): string {
+  const entry = (id: number, message: { readonly role: string; readonly content: string }) =>
+    encodeTranscriptRecord({
+      type: "message",
+      id: `e${id}`,
+      parentId: id === 0 ? null : `e${id - 1}`,
+      message,
+    });
+  return [
+    encodeTranscriptRecord({ type: "session", version: 3, id: sessionId, cwd }),
+    entry(0, { role: "user", content: "Imported prompt" }),
+    ...Array.from({ length: recordCount - 2 }, (_, index) =>
+      entry(index + 1, { role: "toolResult", content: "Tool output" }),
+    ),
+  ].join("\n");
+}
+
 const makeFileIdentityFixture = Effect.fn("AgentSessionScanner.test.makeFileIdentityFixture")(
   function* (originalInode = 10_000_000_000_000_001n, replacementInode = 10_000_000_000_000_000n) {
     const path = yield* Path.Path;
@@ -684,6 +702,118 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(result.candidates.map((candidate) => candidate.path).sort()).toEqual(
           [workspace, otherWorkspace].sort(),
         );
+      }),
+    );
+
+    it.effect("finds the newest Claude sessions in a large home beside empty ones", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-large-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const recentWorkspace = yield* makeTempDir("t3code-workspace-recent-");
+        const olderWorkspace = yield* makeTempDir("t3code-workspace-older-");
+        // More project folders than the discovery budget reads, in an order unrelated to age.
+        const folderCount = 12_000;
+        const recentCount = 40;
+        const newestMs = Date.parse("2026-03-01T00:00:00.000Z");
+        yield* Effect.sync(() => {
+          for (let index = 0; index < folderCount; index++) {
+            const age = (index * 7_919) % folderCount;
+            const directory = path.join(claudeHomePath, "projects", `-slug-${index}`);
+            const filePath = path.join(directory, `session-${index}.jsonl`);
+            const seconds = (newestMs - age * 60_000) / 1000;
+            NodeFS.mkdirSync(directory, { recursive: true });
+            NodeFS.writeFileSync(
+              filePath,
+              claudeSessionLine(age < recentCount ? recentWorkspace : olderWorkspace),
+            );
+            NodeFS.utimesSync(filePath, seconds, seconds);
+            NodeFS.utimesSync(directory, seconds, seconds);
+          }
+        });
+        const emptyHomes = [];
+        for (let index = 0; index < 40; index++) {
+          emptyHomes.push([
+            ProviderInstanceId.make(`claude-empty-${index}`),
+            {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: yield* makeTempDir(`t3code-claude-empty-${index}-`) },
+            },
+          ] as const);
+        }
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          providerInstances: Object.fromEntries(emptyHomes),
+        });
+
+        expect(
+          result.candidates.find((candidate) => candidate.path === recentWorkspace)?.threadCount,
+        ).toBe(recentCount);
+      }),
+    );
+
+    it.effect("passes budget a home frees while rescanning to the homes still short", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-empty-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const mediumHomePath = yield* makeTempDir("t3code-claude-medium-home-");
+        const largeHomePath = yield* makeTempDir("t3code-claude-large-home-");
+        const olderWorkspace = yield* makeTempDir("t3code-workspace-older-");
+        const lastWorkspace = yield* makeTempDir("t3code-workspace-last-");
+        const newestMs = Date.parse("2026-03-01T00:00:00.000Z");
+        // Both homes outgrow their first share; together they fit the source's budget, but only
+        // when what the medium home leaves over on its rescan reaches the large one, which is
+        // listed first and so needs a second pass.
+        yield* Effect.sync(() => {
+          const writeSessions = (directory: string, count: number, cwd: string, ageMs: number) => {
+            NodeFS.mkdirSync(directory, { recursive: true });
+            const seconds = (newestMs - ageMs) / 1000;
+            for (let index = 0; index < count; index++) {
+              const filePath = path.join(directory, `session-${index}.jsonl`);
+              NodeFS.writeFileSync(filePath, claudeSessionLine(cwd));
+              NodeFS.utimesSync(filePath, seconds, seconds);
+            }
+          };
+          writeSessions(
+            path.join(mediumHomePath, "projects", "-medium"),
+            8_000,
+            olderWorkspace,
+            60_000,
+          );
+          writeSessions(
+            path.join(largeHomePath, "projects", "-bulk"),
+            11_000,
+            olderWorkspace,
+            60_000,
+          );
+          // Read last because its folder is oldest, yet it holds the newest session.
+          const lastDirectory = path.join(largeHomePath, "projects", "-last");
+          writeSessions(lastDirectory, 1, lastWorkspace, 0);
+          const oldSeconds = (newestMs - 3_600_000) / 1000;
+          NodeFS.utimesSync(lastDirectory, oldSeconds, oldSeconds);
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          providerInstances: {
+            [ProviderInstanceId.make("claude-large")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: largeHomePath },
+            },
+            [ProviderInstanceId.make("claude-medium")]: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              config: { homePath: mediumHomePath },
+            },
+          },
+        });
+
+        expect(
+          result.candidates.find((candidate) => candidate.path === lastWorkspace)?.threadCount,
+        ).toBe(1);
       }),
     );
 
@@ -2170,22 +2300,20 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const claudeHomePath = yield* makeTempDir("t3code-record-budget-claude-");
         const codexHomePath = yield* makeTempDir("t3code-record-budget-codex-");
         const workspace = yield* makeTempDir("t3code-record-budget-workspace-");
-        const exactLimit = makeRecordLimitTranscript(workspace, false);
-        // The newer transcript has 100,001 records; the older one has exactly 100,000.
-        for (const [sessionId, contents, mtimeMs] of [
-          ["excessive", exactLimit.replace("record-limit-session", "excessive") + "{}\n", nowMs],
-          ["older", exactLimit, nowMs - 1_000],
+        // The newer transcript retains 100,001 records; the older one exactly 100,000.
+        for (const [sessionId, recordCount, mtimeMs] of [
+          ["excessive", 100_001, nowMs],
+          ["older", 100_000, nowMs - 1_000],
         ] as const) {
           yield* writeTranscript({
             filePath: path.join(
-              codexHomePath,
+              claudeHomePath,
+              "pi-agent",
               "sessions",
-              "2026",
-              "08",
-              "24",
-              `rollout-${sessionId}.jsonl`,
+              "--workspace--",
+              `${sessionId}.jsonl`,
             ),
-            contents,
+            contents: makePiToolResultTranscript(sessionId, workspace, recordCount),
             mtimeMs,
           });
         }
@@ -2195,9 +2323,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           workspaceRoot: workspace,
         });
         expect(outcomes.map((outcome) => outcome._tag)).toEqual(["Skipped", "Importable"]);
-        expect(outcomes[1]).toMatchObject({
-          thread: { providerSessionId: "record-limit-session" },
-        });
+        expect(outcomes[1]).toMatchObject({ thread: { providerSessionId: "older" } });
       }),
     );
 
@@ -2214,26 +2340,13 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         for (const [index, recordCount] of recordCounts.entries()) {
           yield* writeTranscript({
             filePath: path.join(
-              codexHomePath,
+              claudeHomePath,
+              "pi-agent",
               "sessions",
-              "2026",
-              "08",
-              "24",
-              `rollout-${index}.jsonl`,
+              "--workspace--",
+              `${index}.jsonl`,
             ),
-            contents:
-              [
-                encodeTranscriptRecord({
-                  type: "session_meta",
-                  payload: { id: `session-${index}`, cwd: workspace },
-                }),
-                encodeTranscriptRecord({
-                  type: "event_msg",
-                  payload: { type: "user_message", message: "Imported prompt" },
-                }),
-              ].join("\n") +
-              "\n" +
-              "{}\n".repeat(recordCount - 2),
+            contents: makePiToolResultTranscript(`session-${index}`, workspace, recordCount),
             mtimeMs: nowMs - index * 1_000,
           });
         }
@@ -3632,6 +3745,27 @@ describe("parseAgentSessionTranscript", () => {
 
     expect(thread?.title).toBe("Fix the import titles");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
+  });
+
+  it("titles a Claude session after the prompt inside a wake envelope", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: JSON.stringify({
+        type: "user",
+        sessionId: "claude-session",
+        timestamp: "2026-08-25T08:00:00.000Z",
+        message: {
+          role: "user",
+          content:
+            '<wake reason="mention" current-time="2026-08-25T08:00:00Z">\nFix the flaky login test\n</wake>',
+        },
+      }),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Fix the flaky login test");
   });
 
   it.each([
