@@ -70,8 +70,9 @@ workflow(
 ```
 
 `T3` holds `workflow`, `step`, `sleep`, `wait`, `stop`, `title`, `agent`, `ask`, `store`, `signal`,
-`signalAll`, `invoke`, `start`, `cancel`, `runs`, and the triggers `every`, `daily`, `webhook`
-with their payload schemas `Tick` and `WebhookRequest`. Take what you use from it at the top of the
+`signalAll`, `invoke`, `start`, `cancel`, `runs`, `issues`, `pullRequests`, and the triggers
+`every`, `daily`, `webhook` with the payload schemas `Tick`, `WebhookRequest`, `Issue` and
+`PullRequest`. Take what you use from it at the top of the
 file, or write `T3.step(…)` in full. `Effect`, `Schema`, `Option`, `Duration` and `Schedule` are
 Effect's own. An `import` of `effect` in the file would load a second copy that the engine does
 not run. Node's own modules (`node:fs`, `node:crypto`) can be imported as usual.
@@ -290,6 +291,45 @@ writes in one `transaction` with the part that can fail. A person sees and chang
 `t3 workflow store list [prefix]`, `store set <key> '<json>'` and `store delete <key>`, which is
 how a switch a workflow reads gets flipped.
 
+## Issues and pull requests
+
+`issues` and `pullRequests` read and write the project's tracker and git host with the project's
+own credentials, the ones the Issues and Pull requests pages use. Call them inside `step`.
+`project` is a project id or its folder, as for `agent`.
+
+```ts
+workflow(
+  "triage",
+  { version: 1, payload: Issue, triggers: [issues.opened({ project: "/home/me/app" })] },
+  Effect.fn(function* (issue) {
+    yield* title("name", `${issue.displayKey} ${issue.title}`);
+    const found = yield* agent("reproduce", {
+      project: "/home/me/app",
+      brief: `Reproduce this on main. Change nothing.\n\n${issue.url}`,
+      output: Schema.Struct({ reproduced: Schema.Boolean, summary: Schema.String }),
+    });
+    yield* step("report", { returns: Schema.Void }, issues.comment(issue, found.value.summary));
+  }),
+);
+```
+
+| Call                                                        | Gives                                                                             |
+| ----------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `issues.list({ project, state?, labels?, query?, limit? })` | `Issue` rows. `state` defaults to `open`.                                         |
+| `issues.read(issue)`                                        | The body, comments and the `states` it can take.                                  |
+| `issues.comment(issue, body)`                               | Nothing.                                                                          |
+| `issues.setState(issue, name)`                              | Nothing. `name` is one of the issue's `states`.                                   |
+| `issues.create({ project, title, body?, labels? })`         | `{ key, displayKey, url }`.                                                       |
+| `pullRequests.list({ project, state?, query?, limit? })`    | `PullRequest` rows.                                                               |
+| `pullRequests.read(pullRequest)`                            | State, checks, reviews and mergeability.                                          |
+| `pullRequests.comment(pullRequest, body)`                   | Nothing.                                                                          |
+| `pullRequests.act(pullRequest, action, { mergeMethod? })`   | Nothing. `merge`, `close`, `ready`, `update-branch` and the host's other actions. |
+
+An issue or pull request is named by what a trigger or `list` gave, or by `{ project, url }`, which
+is how to name one an agent returned the address of. A comment is posted again if its step is run
+again, so keep one comment to one step. To wait for a pull request, `read` it in a step and
+`sleep` between looks.
+
 ## Triggers
 
 A workflow with `triggers` starts by itself, and its `payload` is what the trigger gives.
@@ -303,6 +343,12 @@ A workflow with `triggers` starts by itself, and its `payload` is what the trigg
   do not write the shape out again. `t3 workflow hooks` prints the URL path; it contains
   the hook's secret. `key` returns the sender's delivery id, so a retry is the same run:
   `key: (request) => request.headers["x-github-delivery"]`.
+
+- `issues.opened({ project, labels?, query? })`: payload `Issue`. One run for each issue opened in
+  the project's tracker (GitHub, GitLab, Linear and the others T3 Code reads) after the workflow
+  was first loaded. `labels` must all be on the issue. No webhook to set up: the tracker is asked
+  about once a minute.
+- `pullRequests.opened({ project, query? })`: payload `PullRequest`. The same for pull requests.
 
 A webhook workflow filters in its body. Parse `request.body`, and `stop("not a push to main")`
 for what it does not care about. To check a signature, do it in a `step`.

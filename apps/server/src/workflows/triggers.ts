@@ -3,6 +3,8 @@
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
+import type { Issue, PullRequest } from "./WorkflowForge.ts";
+
 /** The time a scheduled run was due, which is not the time it started. */
 export const Tick = Schema.Struct({ scheduledAt: Schema.String });
 export type Tick = typeof Tick.Type;
@@ -33,8 +35,17 @@ export interface WebhookTrigger {
   readonly name: string;
   readonly key: ((request: WebhookRequest) => string | undefined) | undefined;
 }
+/** New issues or pull requests of a project, which the engine looks for by itself. */
+export interface OpenedTrigger {
+  readonly kind: "issues" | "pullRequests";
+  /** Stable across restarts: where this trigger keeps how far it has looked. */
+  readonly id: string;
+  readonly project: string;
+  readonly labels?: ReadonlyArray<string> | undefined;
+  readonly query?: string | undefined;
+}
 /** `Fires` is what the trigger gives the run it starts. */
-export type Trigger<Fires> = (ScheduleTrigger | WebhookTrigger) & {
+export type Trigger<Fires> = (ScheduleTrigger | WebhookTrigger | OpenedTrigger) & {
   readonly fires?: (value: Fires) => void;
 };
 
@@ -69,3 +80,38 @@ export const webhook = (
   name: string,
   options?: { readonly key?: (request: WebhookRequest) => string | undefined },
 ): Trigger<WebhookRequest> => ({ kind: "webhook", name, key: options?.key });
+
+const openedId = (
+  kind: OpenedTrigger["kind"],
+  options: {
+    readonly project: string;
+    readonly labels?: ReadonlyArray<string>;
+    readonly query?: string;
+  },
+) =>
+  `${kind}:${options.project}:${options.labels?.toSorted().join(",") ?? ""}:${options.query ?? ""}`;
+
+/**
+ * A run for each issue opened in the project's tracker from now on, with the issue as its
+ * payload (`Issue`). Issues that were already there when the workflow was first loaded start
+ * nothing. `labels` are ones the issue must carry, all of them; `query` is free text for the
+ * tracker. The tracker is asked about once a minute.
+ */
+export const issuesOpened = (options: {
+  readonly project: string;
+  readonly labels?: ReadonlyArray<string>;
+  readonly query?: string;
+}): Trigger<Issue> => ({ kind: "issues", id: openedId("issues", options), ...options });
+
+/**
+ * A run for each pull request opened against the project's repository from now on, with the pull
+ * request as its payload (`PullRequest`). `query` is free text for the host.
+ */
+export const pullRequestsOpened = (options: {
+  readonly project: string;
+  readonly query?: string;
+}): Trigger<PullRequest> => ({
+  kind: "pullRequests",
+  id: openedId("pullRequests", options),
+  ...options,
+});

@@ -24,6 +24,7 @@ import * as ServerConfig from "../config.ts";
 import { engineTag, text, type WorkflowDefinition } from "./workflow.ts";
 import type * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowAgentThreads from "./WorkflowAgentThreads.ts";
+import * as WorkflowForge from "./WorkflowForge.ts";
 import * as Workflows from "./Workflows.ts";
 
 /** A folder of definition files, or one file, in place of the folder in the T3 home. */
@@ -505,11 +506,14 @@ export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const override = yield* definitionsOverride;
     const config = yield* ServerConfig.ServerConfig;
+    const forge = Layer.succeed(WorkflowForge.WorkflowForge, yield* WorkflowForge.WorkflowForge);
     return yield* make(
       Effect.map(
         Effect.promise((): Promise<typeof WorkflowEngine> => import("./WorkflowEngine.ts")),
         (engine) => (definitions) =>
-          engine.layer(definitions).pipe(Layer.provide(WorkflowAgentThreads.layer)),
+          engine
+            .layer(definitions)
+            .pipe(Layer.provide(WorkflowAgentThreads.layer), Layer.provide(forge)),
       ),
       Option.getOrElse(override, () => config.workflowsDir),
     );
