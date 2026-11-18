@@ -242,7 +242,10 @@ export function attachmentsToReleaseOnUploadCapabilityLoss(
 export function shouldHandleComposerAttachmentPaste(input: {
   readonly files: ReadonlyArray<File>;
   readonly plainText: string;
+  readonly bypassAutoAttachment?: boolean;
 }): boolean {
+  // Paste as Text keeps the text even when the source also put an image of it on the clipboard.
+  if (input.bypassAutoAttachment && input.plainText.length > 0) return false;
   if (
     input.files.some((file) => {
       if (isDngFile(file)) return true;
