@@ -82,6 +82,7 @@ export interface ThreadActionMenuState {
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
   readonly isRegeneratingTitle: boolean;
+  readonly isRegeneratingIcon?: boolean | undefined;
   /** Archive rejects attached providers, so disable it while running. */
   readonly isRunning: boolean;
   readonly supports: {
@@ -177,7 +178,12 @@ export function buildThreadActionMenuItems(
             icon: "refresh-cw",
             disabled: state.isRegeneratingTitle,
           },
-          { id: "regenerate-icon" as const, label: "Regenerate icon", icon: "refresh-cw" },
+          {
+            id: "regenerate-icon" as const,
+            label: state.isRegeneratingIcon ? "Regenerating icon…" : "Regenerate icon",
+            icon: "refresh-cw",
+            disabled: state.isRegeneratingIcon,
+          },
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },

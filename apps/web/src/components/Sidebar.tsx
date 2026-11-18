@@ -154,7 +154,7 @@ import {
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { environmentProjects } from "../state/projects";
+import { environmentProjects, regeneratingProjectIconKeysAtom } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
@@ -1275,9 +1275,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 : []),
               {
                 id: "regenerate-icon",
-                label: "Regenerate icon",
+                label: appAtomRegistry
+                  .get(regeneratingProjectIconKeysAtom)
+                  .has(scopeProjectKey(scopeProjectRef(group.environmentId, group.id)))
+                  ? "Regenerating icon…"
+                  : "Regenerate icon",
                 icon: "refresh-cw",
-                disabled: !readEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope),
+                disabled:
+                  appAtomRegistry
+                    .get(regeneratingProjectIconKeysAtom)
+                    .has(scopeProjectKey(scopeProjectRef(group.environmentId, group.id))) ||
+                  !readEnvironmentScope(group.environmentId, AuthOrchestrationOperateScope),
               },
               { id: "project-settings", label: "Project settings", icon: "settings" },
             ],
@@ -2663,6 +2671,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
+              isRegeneratingIcon: appAtomRegistry
+                .get(regeneratingProjectIconKeysAtom)
+                .has(scopeProjectKey(scopeProjectRef(threadRef.environmentId, thread.projectId))),
               isRunning: !threadRuntimeCanArchive(thread.runtime),
               canShareWithGuest: appAtomRegistry.get(
                 canShareWithGuestAtom(threadRef.environmentId),

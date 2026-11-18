@@ -87,12 +87,15 @@ export interface ProjectIconGenerationInput {
   packageJsonExcerpt?: string | undefined;
   modelSelection: ModelSelection;
   projectId?: ProjectId | null | undefined;
+  previousIcons?: ReadonlyArray<string> | undefined;
+  candidateIconFiles?: ReadonlyArray<string> | undefined;
 }
 
 export interface ProjectIconGenerationResult {
   /** Lowercase hyphenated lucide icon name, e.g. "folder-code". */
   name: string;
   color: string;
+  selectedFile?: string | null | undefined;
 }
 
 export interface ReviewGuideStackLayer {

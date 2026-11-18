@@ -53,3 +53,13 @@ export const defaultProjectFallbackReadyAtom = Atom.family((projectKey: string |
     );
   }).pipe(Atom.withLabel(`web-default-project-fallback-ready:${projectKey}`)),
 );
+
+export const regeneratingProjectIconKeysAtom = Atom.make<ReadonlySet<string>>(new Set()).pipe(
+  Atom.withLabel("web-regenerating-project-icon-keys"),
+);
+
+export const isProjectIconRegeneratingAtom = Atom.family((projectKey: string) =>
+  Atom.make((get) => get(regeneratingProjectIconKeysAtom).has(projectKey)).pipe(
+    Atom.withLabel(`web-is-project-icon-regenerating:${projectKey}`),
+  ),
+);

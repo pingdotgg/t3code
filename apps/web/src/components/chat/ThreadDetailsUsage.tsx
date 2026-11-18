@@ -3,6 +3,7 @@ import type {
   ServerProvider,
   ServerProviderUsageWindow,
   UsageLimitSourceSnapshots,
+  UsageLimitsReport,
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
@@ -39,6 +40,139 @@ export interface ThreadDetailsUsageInput {
 
 type UsageTone = "error" | "warning" | null;
 
+interface ThreadDetailsResolvedLimits {
+  readonly windows: readonly ServerProviderUsageWindow[];
+  readonly isLimited?: boolean;
+  readonly notice?: string | null;
+}
+
+function resolveThreadDetailsLimits(
+  report: UsageLimitsReport | null,
+  providerInstanceId: ProviderInstanceId | null,
+  providers: readonly ServerProvider[],
+): ThreadDetailsResolvedLimits | null {
+  if (providerInstanceId === null) return null;
+
+  const instanceLimits =
+    report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
+    providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
+
+  // If the instance itself has native, working limits, prefer them.
+  if (instanceLimits && !limitsNotice(instanceLimits) && instanceLimits.windows.length > 0) {
+    return { windows: instanceLimits.windows, isLimited: false, notice: null };
+  }
+
+  // Otherwise, look across accounts in the pool for this driver
+  const driver = providers.find((p) => p.instanceId === providerInstanceId)?.driver;
+  const pooledAccounts = (report?.accounts ?? []).filter((account) => {
+    if (driver && account.driver !== driver) return false;
+    return Boolean(
+      account.limits && account.limits.windows.length > 0 && !account.limits.unavailable?.reason,
+    );
+  });
+
+  // 1. Accounts with a 5-hour window
+  const accountsWith5h = pooledAccounts
+    .map((acc) => {
+      const sessionWindow = acc.limits.windows.find(
+        (w) => w.kind === "session" || (w.windowDurationMins ?? 0) <= 300,
+      );
+      if (!sessionWindow) return null;
+      const weeklyWindow = acc.limits.windows.find(
+        (w) =>
+          w.kind === "weekly" ||
+          ((w.windowDurationMins ?? 0) > 300 && (w.windowDurationMins ?? 0) <= 10080),
+      );
+      const sessionRemaining = remainingPercent(sessionWindow);
+      const weeklyRemaining = weeklyWindow ? remainingPercent(weeklyWindow) : null;
+      return {
+        sessionWindow,
+        weeklyWindow,
+        sessionRemaining,
+        weeklyRemaining,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+  const nonZero5h = accountsWith5h.filter((entry) => entry.sessionRemaining > 0);
+
+  // Берём минимальный пятичасового и у него уже берём недельный (показываем вместе)
+  if (nonZero5h.length > 0) {
+    nonZero5h.sort((a, b) => {
+      if (a.sessionRemaining !== b.sessionRemaining) {
+        return a.sessionRemaining - b.sessionRemaining;
+      }
+      if (a.weeklyRemaining !== null && b.weeklyRemaining !== null) {
+        return a.weeklyRemaining - b.weeklyRemaining;
+      }
+      return 0;
+    });
+    const chosen = nonZero5h[0];
+    if (chosen) {
+      const windows = [chosen.sessionWindow, chosen.weeklyWindow].filter(
+        (w): w is ServerProviderUsageWindow => Boolean(w),
+      );
+      return { windows, isLimited: false, notice: null };
+    }
+  }
+
+  // Если все по нулям, то у месячного берём максимальный (если ток месячный у аккаунта, то пишем Limited)
+  const accountsWithMonthly = pooledAccounts
+    .map((acc) => {
+      const monthlyWindow = acc.limits.windows.find(
+        (w) => w.kind === "monthly" || (w.windowDurationMins ?? 0) > 10080,
+      );
+      if (!monthlyWindow) return null;
+      const monthlyRemaining = remainingPercent(monthlyWindow);
+      const onlyMonthly = acc.limits.windows.every(
+        (w) => w.kind === "monthly" || w.id === monthlyWindow.id,
+      );
+      return {
+        monthlyWindow,
+        monthlyRemaining,
+        onlyMonthly,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+
+  if (accountsWithMonthly.length > 0) {
+    accountsWithMonthly.sort((a, b) => b.monthlyRemaining - a.monthlyRemaining);
+    const chosen = accountsWithMonthly[0];
+    if (chosen) {
+      return {
+        windows: [chosen.monthlyWindow],
+        isLimited: chosen.onlyMonthly,
+        notice: null,
+      };
+    }
+  }
+
+  // Если нет месячных, но есть 5-часовые (все с 0% остатка), показываем 5-часовой и недельный
+  if (accountsWith5h.length > 0) {
+    accountsWith5h.sort((a, b) => {
+      const resetA = a.sessionWindow.resetsAt
+        ? Date.parse(a.sessionWindow.resetsAt)
+        : Number.POSITIVE_INFINITY;
+      const resetB = b.sessionWindow.resetsAt
+        ? Date.parse(b.sessionWindow.resetsAt)
+        : Number.POSITIVE_INFINITY;
+      return resetA - resetB;
+    });
+    const chosen = accountsWith5h[0];
+    if (chosen) {
+      const windows = [chosen.sessionWindow, chosen.weeklyWindow].filter(
+        (w): w is ServerProviderUsageWindow => Boolean(w),
+      );
+      return { windows, isLimited: false, notice: null };
+    }
+  }
+
+  // Fallback к стандартному поведению инстанса
+  if (!instanceLimits) return null;
+  const notice = limitsNotice(instanceLimits);
+  return { windows: instanceLimits.windows, isLimited: false, notice };
+}
+
 /** The selected provider's limit windows. Each row reads as room left. */
 export function ThreadDetailsUsage({
   providerInstanceId,
@@ -51,13 +185,9 @@ export function ThreadDetailsUsage({
     providerInstanceId !== null
       ? collectProviderUsageLimits(providerInstanceId, providers, sources, now)
       : null;
-  // Only this instance's data: the report keeps one instance per login, and any other entry may be
-  // a different login or workspace, so fall back to the instance's own snapshot.
-  const limits =
-    report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
-    providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
-  if (!limits) return null;
-  const notice = limitsNotice(limits);
+
+  const resolved = resolveThreadDetailsLimits(report, providerInstanceId, providers);
+  if (!resolved) return null;
 
   return (
     <ThreadDetailsSection
@@ -66,16 +196,29 @@ export function ThreadDetailsUsage({
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        {notice ? (
+        {resolved.notice ? (
           <UsageRow
             label="Limits"
             fill={null}
             tone={null}
             value="Unavailable"
-            tooltip={<span className="text-foreground">{notice}</span>}
+            tooltip={<span className="text-foreground">{resolved.notice}</span>}
           />
         ) : (
-          limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
+          <>
+            {resolved.isLimited ? (
+              <UsageRow
+                label="Limits"
+                fill={null}
+                tone="warning"
+                value="Limited"
+                tooltip={<span className="text-foreground">Limited plan</span>}
+              />
+            ) : null}
+            {resolved.windows.map((window) => (
+              <LimitRow key={window.id} window={window} now={now} />
+            ))}
+          </>
         )}
       </div>
     </ThreadDetailsSection>

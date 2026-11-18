@@ -1,10 +1,12 @@
 import { useRegenerateProjectIcon } from "../../hooks/useRegenerateProjectIcon";
 import {
   AuthOrchestrationOperateScope,
+  scopeProjectKey,
   type EnvironmentId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { isProjectIconRegeneratingAtom } from "../../state/projects";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
@@ -218,6 +220,16 @@ export const ChatHeader = memo(function ChatHeader({
     startRename();
   };
   const regenerateProjectIcon = useRegenerateProjectIcon();
+  const isProjectIconRegenerating = useAtomValue(
+    activeProject
+      ? isProjectIconRegeneratingAtom(
+          scopeProjectKey({
+            environmentId: activeProject.environmentId,
+            projectId: activeProject.id,
+          }),
+        )
+      : isProjectIconRegeneratingAtom(""),
+  );
   const handleProjectContextMenu = (event: ReactMouseEvent) => {
     if (!activeProject) return;
     event.preventDefault();
@@ -229,12 +241,11 @@ export const ChatHeader = memo(function ChatHeader({
         [
           {
             id: "regenerate-icon",
-            label: "Regenerate icon",
+            label: isProjectIconRegenerating ? "Regenerating icon…" : "Regenerate icon",
             icon: "refresh-cw",
-            disabled: !readEnvironmentScope(
-              activeProject.environmentId,
-              AuthOrchestrationOperateScope,
-            ),
+            disabled:
+              isProjectIconRegenerating ||
+              !readEnvironmentScope(activeProject.environmentId, AuthOrchestrationOperateScope),
           },
           { id: "project-settings", label: "Project settings", icon: "settings" },
         ],

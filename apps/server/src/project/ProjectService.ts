@@ -53,6 +53,36 @@ const PROJECT_ICON_IGNORED_ENTRIES: ReadonlySet<string> = new Set([
   ".DS_Store",
 ]);
 
+const PROJECT_ICON_FILE_CANDIDATES: ReadonlyArray<string> = [
+  "favicon.svg",
+  "favicon.ico",
+  "favicon.png",
+  "icon.svg",
+  "icon.png",
+  "logo.svg",
+  "logo.png",
+  "public/favicon.svg",
+  "public/favicon.ico",
+  "public/favicon.png",
+  "public/icon.svg",
+  "public/icon.png",
+  "public/logo.svg",
+  "public/logo.png",
+  "assets/favicon.svg",
+  "assets/favicon.ico",
+  "assets/favicon.png",
+  "assets/icon.svg",
+  "assets/icon.png",
+  "assets/logo.svg",
+  "assets/logo.png",
+  "src/assets/icon.svg",
+  "src/assets/logo.svg",
+  "app/favicon.ico",
+  "app/favicon.png",
+  "app/icon.svg",
+  "app/icon.png",
+];
+
 export interface ProjectCreateInput extends ProjectCreatePayload {
   readonly commandId: CommandId;
   readonly projectId: ProjectId;
@@ -294,10 +324,64 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const iconHistoryByProject = new Map<ProjectId, Set<string>>();
+
+  const formatPreviousIcons = (
+    projectIcon: ProjectIconOverride | null | undefined,
+    faviconPath: string | null | undefined,
+  ): ReadonlyArray<string> => {
+    const formatted: string[] = [];
+    if (projectIcon != null) {
+      if (projectIcon.kind === "lucide") {
+        formatted.push(`${projectIcon.name} (${projectIcon.color})`);
+      } else if (projectIcon.kind === "emoji") {
+        formatted.push(`emoji: ${projectIcon.emoji}`);
+      } else if (projectIcon.kind === "monogram") {
+        formatted.push(`monogram: ${projectIcon.text} (${projectIcon.color})`);
+      }
+    }
+    if (faviconPath != null && faviconPath.trim().length > 0) {
+      formatted.push(`file: ${faviconPath.trim()}`);
+    }
+    return formatted;
+  };
+
+  const findProjectIconCandidates = Effect.fn("ProjectService.findProjectIconCandidates")(
+    function* (workspaceRoot: string, topLevelEntries: ReadonlyArray<string>) {
+      const candidates: string[] = [];
+      const seen = new Set<string>();
+      for (const rel of PROJECT_ICON_FILE_CANDIDATES) {
+        const fullPath = `${workspaceRoot}/${rel}`;
+        const exists = yield* fileSystem.exists(fullPath).pipe(Effect.orElseSucceed(() => false));
+        if (exists && !seen.has(rel)) {
+          seen.add(rel);
+          candidates.push(rel);
+        }
+      }
+      for (const entry of topLevelEntries) {
+        if (
+          /\.(?:svg|png|ico|webp)$/i.test(entry) &&
+          /(?:icon|logo|favicon|brand)/i.test(entry) &&
+          !seen.has(entry)
+        ) {
+          const fullPath = `${workspaceRoot}/${entry}`;
+          const exists = yield* fileSystem.exists(fullPath).pipe(Effect.orElseSucceed(() => false));
+          if (exists) {
+            seen.add(entry);
+            candidates.push(entry);
+          }
+        }
+      }
+      return candidates;
+    },
+  );
+
   const generateProjectIcon = Effect.fn("ProjectService.generateProjectIcon")(function* (input: {
     readonly projectId: ProjectId;
     readonly title: string;
     readonly workspaceRoot: string;
+    readonly existingIcon?: ProjectIconOverride | null | undefined;
+    readonly existingFaviconPath?: string | null | undefined;
   }) {
     if (Option.isNone(textGeneration)) {
       return yield* new ProjectOperationError({
@@ -317,12 +401,25 @@ export const make = Effect.gen(function* () {
       ),
     );
     const context = yield* readProjectIconContext(input.workspaceRoot);
+    const candidateIconFiles = yield* findProjectIconCandidates(
+      input.workspaceRoot,
+      context.topLevelEntries,
+    );
+
+    const historySet = iconHistoryByProject.get(input.projectId) ?? new Set<string>();
+    for (const formatted of formatPreviousIcons(input.existingIcon, input.existingFaviconPath)) {
+      historySet.add(formatted);
+    }
+    const previousIcons = Array.from(historySet);
+
     const result = yield* textGeneration.value
       .generateProjectIcon({
         cwd: input.workspaceRoot,
         projectTitle: input.title,
         threadTitles: [],
         ...context,
+        candidateIconFiles,
+        previousIcons,
         modelSelection: resolveProjectIconModelSelection(settings, undefined, input.projectId),
         projectId: input.projectId,
       })
@@ -336,11 +433,33 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-    return {
+
+    if (result.selectedFile && typeof result.selectedFile === "string") {
+      const selectedPath = result.selectedFile.trim();
+      const exists = yield* fileSystem
+        .exists(`${input.workspaceRoot}/${selectedPath}`)
+        .pipe(Effect.orElseSucceed(() => false));
+      if (exists) {
+        historySet.add(`file: ${selectedPath}`);
+        iconHistoryByProject.set(input.projectId, historySet);
+        return {
+          projectIcon: null,
+          faviconPath: selectedPath,
+        };
+      }
+    }
+
+    const iconOverride: ProjectIconOverride = {
       kind: "lucide",
       name: result.name,
       color: result.color as ProjectIconColor,
-    } satisfies ProjectIconOverride;
+    };
+    historySet.add(`${iconOverride.name} (${iconOverride.color})`);
+    iconHistoryByProject.set(input.projectId, historySet);
+    return {
+      projectIcon: iconOverride,
+      faviconPath: null,
+    };
   });
 
   const rejectWorktreeContainer = Effect.fn("ProjectService.rejectWorktreeContainer")(function* (
@@ -525,14 +644,18 @@ export const make = Effect.gen(function* () {
         yield* rejectWorktreeContainer(input.projectId, workspaceRoot);
       }
       const regenerateIcon = input.regenerateIcon === true;
-      const projectIcon = regenerateIcon
+      const generated = regenerateIcon
         ? yield* generateProjectIcon({
             projectId: input.projectId,
             title: input.title ?? existing.value.title,
             workspaceRoot,
+            existingIcon: existing.value.projectIcon,
+            existingFaviconPath: existing.value.faviconPath,
           })
-        : input.projectIcon;
-      const faviconPath = regenerateIcon ? null : input.faviconPath;
+        : undefined;
+      const projectIcon = generated !== undefined ? generated.projectIcon : input.projectIcon;
+      const faviconPath =
+        generated !== undefined ? generated.faviconPath : regenerateIcon ? null : input.faviconPath;
       yield* commit({
         type: "project.meta.update",
         commandId: input.commandId,

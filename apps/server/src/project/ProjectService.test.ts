@@ -682,6 +682,7 @@ it.effect("regenerates the project icon on request even when one already exists"
     const call = generateProjectIcon.mock.calls[0]?.[0];
     assert.equal(call?.cwd, "/work/regenerate");
     assert.equal(call?.projectTitle, "Regenerate");
+    assert.deepEqual(call?.previousIcons, ["emoji: 🦊", "file: /work/regenerate/custom.svg"]);
     assert.deepEqual(
       call?.modelSelection,
       resolveProjectIconModelSelection(yield* settings.getSettings, undefined, projectId),
@@ -692,6 +693,48 @@ it.effect("regenerates the project icon on request even when one already exists"
     `;
     assert.deepEqual(rows, [{ favicon_path: null }]);
   }).pipe(Effect.provide(layerTestFor(layerMetadata, layerTextGeneration(generateProjectIcon))));
+});
+
+it.effect("uses candidate file when selected by text generation", () => {
+  const generateProjectIcon = vi.fn<
+    TextGeneration.TextGeneration["Service"]["generateProjectIcon"]
+  >(() =>
+    Effect.succeed({
+      name: "folder-code",
+      color: "blue",
+      selectedFile: "public/favicon.svg",
+    }),
+  );
+  return Effect.gen(function* () {
+    const service = yield* ProjectService.ProjectService;
+    const fs = yield* FileSystem.FileSystem;
+    const sql = yield* SqlClient.SqlClient;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "candidate-project-" });
+    const projectId = ProjectId.make("project:regenerate-candidate");
+    yield* fs.makeDirectory(`${workspaceRoot}/public`, { recursive: true });
+    yield* fs.writeFileString(`${workspaceRoot}/public/favicon.svg`, "<svg></svg>");
+    yield* service.create({
+      commandId: CommandId.make("command:regenerate-candidate:create"),
+      projectId,
+      title: "CandidateProject",
+      workspaceRoot,
+    });
+    const updated = yield* service.update({
+      commandId: CommandId.make("command:regenerate-candidate:regenerate"),
+      projectId,
+      regenerateIcon: true,
+    });
+
+    assert.isNull(updated.projectIcon);
+    assert.equal(updated.faviconPath, "public/favicon.svg");
+    const rows = yield* sql<{ readonly favicon_path: string | null }>`
+      SELECT favicon_path FROM projection_projects WHERE project_id = ${projectId}
+    `;
+    assert.deepEqual(rows, [{ favicon_path: "public/favicon.svg" }]);
+  }).pipe(
+    Effect.provide(layerTestFor(layerMetadata, layerTextGeneration(generateProjectIcon))),
+    Effect.provide(NodeServices.layer),
+  );
 });
 
 it.effect("keeps the previous icon when regeneration fails", () => {

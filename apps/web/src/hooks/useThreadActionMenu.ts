@@ -11,9 +11,12 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  scopeProjectKey,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { regeneratingProjectIconKeysAtom } from "../state/projects";
 import { useRouter } from "@tanstack/react-router";
 
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
@@ -129,6 +132,9 @@ export function useThreadActionMenu(input: {
         titleRegeneration: configLoaded,
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
+      const isRegeneratingIcon = appAtomRegistry
+        .get(regeneratingProjectIconKeysAtom)
+        .has(scopeProjectKey(scopeProjectRef(threadRef.environmentId, thread.projectId)));
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
@@ -141,6 +147,7 @@ export function useThreadActionMenu(input: {
         isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
         isRegeneratingTitle,
+        isRegeneratingIcon,
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         supports,
         snoozePresets,

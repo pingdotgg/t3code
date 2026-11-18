@@ -13,6 +13,9 @@ import { projectIconColorClassName } from "../projectIconColors";
 import { ProjectMonogram } from "./ProjectMonogram";
 import { cn } from "~/lib/utils";
 
+import { isProjectIconRegeneratingAtom } from "../state/projects";
+import { scopeProjectKey, type ProjectId } from "@t3tools/contracts";
+
 // All lucide icons load as one chunk, only once a project uses a lucide override.
 const LucideProjectIcon = lazy(() =>
   import("../lib/lucideIconByName").then(({ lucideIconByName }) => ({
@@ -31,8 +34,39 @@ function DynamicProjectIconFallback() {
 export type ProjectFaviconProject = Pick<
   EnvironmentProject,
   "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon"
->;
+> & { readonly id?: ProjectId | undefined };
+
 export function ProjectFavicon(input: {
+  project: ProjectFaviconProject;
+  className?: string | undefined;
+  fallbackIcon?: ComponentType<{ className?: string }>;
+}) {
+  const { project } = input;
+  const isRegenerating = useAtomValue(
+    project.id
+      ? isProjectIconRegeneratingAtom(
+          scopeProjectKey({ environmentId: project.environmentId, projectId: project.id }),
+        )
+      : isProjectIconRegeneratingAtom(""),
+  );
+
+  const content = renderProjectFaviconContent(input);
+  if (!isRegenerating) return content;
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center justify-center animate-pulse opacity-70",
+        input.className,
+      )}
+      aria-busy="true"
+    >
+      {content}
+    </span>
+  );
+}
+
+function renderProjectFaviconContent(input: {
   project: ProjectFaviconProject;
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;

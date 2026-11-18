@@ -375,6 +375,10 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     return {
       name: sanitizeProjectIconName(generated.name),
       color: sanitizeProjectIconColor(generated.color),
+      selectedFile:
+        typeof generated.selectedFile === "string" && generated.selectedFile.trim().length > 0
+          ? generated.selectedFile.trim()
+          : null,
     };
   });
   return {

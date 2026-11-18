@@ -506,6 +506,8 @@ export interface ProjectIconPromptInput {
   topLevelEntries: ReadonlyArray<string>;
   readmeExcerpt?: string | undefined;
   packageJsonExcerpt?: string | undefined;
+  previousIcons?: ReadonlyArray<string> | undefined;
+  candidateIconFiles?: ReadonlyArray<string> | undefined;
 }
 
 const PROJECT_ICON_NAME_HINTS: ReadonlyArray<string> = [
@@ -537,14 +539,32 @@ const PROJECT_ICON_NAME_HINTS: ReadonlyArray<string> = [
 
 export function buildProjectIconPrompt(input: ProjectIconPromptInput) {
   const prompt = [
-    "You pick a Lucide icon and color that represent a software project.",
-    'Return a JSON object with keys: name, color. Example: {"name": "folder-code", "color": "blue"}.',
+    "You choose an icon that represents a software project.",
+    "Return a JSON object with keys: name, color, and optionally selectedFile.",
+    'Example: {"name": "folder-code", "color": "blue", "selectedFile": null}',
     "Rules:",
     "- name must be a lowercase hyphenated Lucide icon name (a-z, 0-9, hyphens only).",
     `- Prefer one of: ${PROJECT_ICON_NAME_HINTS.join(", ")}. Use another real Lucide icon only when none of these fits.`,
     `- color must be exactly one of: ${PROJECT_ICON_COLORS.join(", ")}.`,
     "- Match the project's domain (web, mobile, backend, data, game, docs, infra, media).",
     "- Never invent icon names; a wrong name renders as a generic folder.",
+    ...(input.candidateIconFiles && input.candidateIconFiles.length > 0
+      ? [
+          "",
+          "Candidate icon or logo files found in the project:",
+          ...input.candidateIconFiles.map((file) => `- ${file}`),
+          '- If one of these files is a genuine logo or icon for this project, you may select it by setting selectedFile to its exact relative path (e.g. "public/favicon.svg").',
+          "- If none of these files represent the project well or are suitable, set selectedFile to null.",
+        ]
+      : []),
+    ...(input.previousIcons && input.previousIcons.length > 0
+      ? [
+          "",
+          "Previous icons rejected or already used for this project:",
+          ...input.previousIcons.map((icon) => `- ${icon}`),
+          "- Do NOT repeat any previous icon or exact color combination listed above. Pick a distinct, fresh alternative.",
+        ]
+      : []),
     "",
     `Project: ${input.projectTitle}`,
     input.threadTitles.length > 0
@@ -566,6 +586,7 @@ export function buildProjectIconPrompt(input: ProjectIconPromptInput) {
   const outputSchema = Schema.Struct({
     name: Schema.String,
     color: Schema.String,
+    selectedFile: Schema.optional(Schema.NullOr(Schema.String)),
   });
   return { prompt, outputSchema };
 }

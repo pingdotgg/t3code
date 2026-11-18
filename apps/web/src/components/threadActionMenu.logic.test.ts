@@ -76,4 +76,14 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
+
+  it("updates regenerate-icon label and disables it while regenerating icon", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      isRegeneratingIcon: true,
+    });
+    const item = items.find((entry) => entry.id === "regenerate-icon");
+    expect(item?.label).toBe("Regenerating icon…");
+    expect(item?.disabled).toBe(true);
+  });
 });

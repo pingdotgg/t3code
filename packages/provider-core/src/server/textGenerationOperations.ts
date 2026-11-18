@@ -210,11 +210,17 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         topLevelEntries: input.topLevelEntries,
         readmeExcerpt: input.readmeExcerpt,
         packageJsonExcerpt: input.packageJsonExcerpt,
+        previousIcons: input.previousIcons,
+        candidateIconFiles: input.candidateIconFiles,
       }),
     });
     return {
       name: sanitizeProjectIconName(generated.name),
       color: sanitizeProjectIconColor(generated.color),
+      selectedFile:
+        typeof generated.selectedFile === "string" && generated.selectedFile.trim().length > 0
+          ? generated.selectedFile.trim()
+          : null,
     };
   });
 
