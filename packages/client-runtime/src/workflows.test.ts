@@ -13,7 +13,7 @@ import {
   workflowAgentSummary,
   workflowAnswer,
   workflowChip,
-  workflowPath,
+  workflowFlowFocus,
   workflowResultLines,
   workflowRunLists,
   workflowRunNow,
@@ -321,13 +321,13 @@ describe("buildWorkflowTimeline", () => {
             : row.name,
       ),
     ).toEqual(["quick", "triage", "review-a+review-b", "quick", "check", "build", "publish"]);
-    expect(workflowPath(feed).map((node) => `${node.label}:${node.status}`)).toEqual([
-      "triage:done",
-      "review-a + review-b:done",
-      "check:done",
-      "build:done",
-      "publish:failed",
-    ]);
+    // The flow opens where the run needs someone, then where it failed, then on how it ended.
+    const focus = (status: WorkflowRun["status"], questions: ReadonlyArray<string> = []) =>
+      workflowFlowFocus({ rows: feed, status, ended: status === "completed", questions });
+    expect(focus("waiting", ["approve"])).toBe("question:approve");
+    expect(focus("paused")).toBe("step:publish");
+    expect(focus("completed")).toBe("end");
+    expect(focus("running")).toBe("step:publish");
   });
 
   it("measures a step that is under way up to now", () => {
