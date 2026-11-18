@@ -260,6 +260,8 @@ export const IssueListInput = Schema.Struct({
   state: IssueListState,
   involvement: Schema.optional(IssueInvolvement),
   projectId: Schema.optional(ProjectId),
+  /** Projects left out of the listing, as the issues page hides them. */
+  excludeProjectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(200))),
   /** Narrows to one host, named as the host itself. Absent means every host the workspace has. */
   host: Schema.optional(TrimmedNonEmptyString),
   /** Rows per scope, which with a continuation is rows per slice. */

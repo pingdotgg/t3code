@@ -11,8 +11,8 @@ import { EnvironmentId, IssueInvolvement, IssueListState, ProjectId } from "@t3t
 export interface IssueListPreferences {
   readonly who: IssueInvolvement;
   readonly status: IssueListState;
-  readonly issueServer?: EnvironmentId | undefined;
-  readonly issueProject?: ProjectId | undefined;
+  /** Projects left out of the list, so a project added later shows. */
+  readonly hideProjects?: ReadonlyArray<readonly [EnvironmentId, ProjectId]> | undefined;
   readonly host?: string | undefined;
   readonly q?: string | undefined;
   /** `label`, `assignee` and `order` for the same reason: the pull-request page has `labels` and `sort`. */
@@ -32,8 +32,9 @@ const BoundedPreference = Schema.String.check(Schema.isMaxLength(200));
 export const IssueListPreferencesSchema = Schema.Struct({
   who: IssueInvolvement,
   status: IssueListState,
-  issueServer: Schema.optional(EnvironmentId),
-  issueProject: Schema.optional(ProjectId),
+  hideProjects: Schema.optional(
+    Schema.Array(Schema.Tuple([EnvironmentId, ProjectId])).check(Schema.isMaxLength(200)),
+  ),
   host: Schema.optional(BoundedPreference),
   q: Schema.optional(BoundedPreference),
   label: Schema.optional(Schema.Array(BoundedPreference).check(Schema.isMaxLength(20))),
@@ -52,8 +53,7 @@ function storage(): PreferenceStorage | undefined {
 export function issueListPreferences(search: {
   readonly who: IssueInvolvement;
   readonly status: IssueListState;
-  readonly issueServer?: EnvironmentId | undefined;
-  readonly issueProject?: ProjectId | undefined;
+  readonly hideProjects?: ReadonlyArray<readonly [EnvironmentId, ProjectId]> | undefined;
   readonly host?: string | undefined;
   readonly q?: string | undefined;
   readonly label?: ReadonlyArray<string> | undefined;
@@ -63,9 +63,7 @@ export function issueListPreferences(search: {
   return {
     who: search.who,
     status: search.status,
-    ...(search.issueServer && search.issueProject
-      ? { issueServer: search.issueServer, issueProject: search.issueProject }
-      : {}),
+    ...(search.hideProjects?.length ? { hideProjects: search.hideProjects } : {}),
     ...(search.host ? { host: search.host } : {}),
     ...(search.q ? { q: search.q } : {}),
     ...(search.label?.length ? { label: search.label } : {}),
