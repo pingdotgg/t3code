@@ -25,6 +25,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-requests",
   "issue",
   "side-chat",
+  "thread-insights",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -79,6 +80,13 @@ export type RightPanelSurface =
       /** A clicked link waiting for the panel to show where it points; cleared once shown. */
       revealUrl?: string;
       detailTab?: PullRequestDetailTab;
+    }
+  | {
+      id: `thread-insights:${string}`;
+      kind: "thread-insights";
+      environmentId: EnvironmentId;
+      threadId: ThreadId;
+      section: "tasks" | "usage";
     }
   | { id: "pull-requests"; kind: "pull-requests" }
   /**
@@ -154,7 +162,15 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue" | "side-chat">,
+    kind: Exclude<
+      RightPanelKind,
+      "file" | "terminal" | "pull-request" | "issue" | "side-chat" | "thread-insights"
+    >,
+  ) => void;
+  openThreadInsights: (
+    ref: ScopedThreadRef,
+    target: ScopedThreadRef,
+    section: "tasks" | "usage",
   ) => void;
   openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
@@ -221,7 +237,10 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "issue" | "side-chat">,
+    kind: Exclude<
+      RightPanelKind,
+      "file" | "terminal" | "pull-request" | "issue" | "side-chat" | "thread-insights"
+    >,
   ) => void;
   setThreadPanelOpen: (
     ref: ScopedThreadRef,
@@ -246,7 +265,7 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 const singletonSurface = (
   kind: Exclude<
     RightPanelKind,
-    "file" | "preview" | "terminal" | "pull-request" | "issue" | "side-chat"
+    "file" | "preview" | "terminal" | "pull-request" | "issue" | "side-chat" | "thread-insights"
   >,
 ): RightPanelSurface => {
   switch (kind) {
@@ -814,6 +833,23 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               },
               existing ?? surface,
             );
+          }),
+        ),
+      openThreadInsights: (ref, target, section) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface: RightPanelSurface = {
+              id: `thread-insights:${scopedThreadKey(target)}`,
+              kind: "thread-insights",
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+              section,
+            };
+            const next = upsertSurface(current, surface);
+            return {
+              ...next,
+              surfaces: next.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
+            };
           }),
         ),
       openSideChat: (ref, threadId) =>

@@ -158,6 +158,13 @@ export async function reopenClosedView(
     case "pull-request":
       panels.openPullRequest(ref, surface);
       break;
+    case "thread-insights":
+      panels.openThreadInsights(
+        ref,
+        { environmentId: surface.environmentId, threadId: surface.threadId },
+        surface.section,
+      );
+      break;
     case "issue":
       panels.openIssue(ref, surface);
       break;

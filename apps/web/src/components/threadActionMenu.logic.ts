@@ -5,6 +5,8 @@ import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
 
 export type ThreadActionMenuId =
+  | "view-tasks"
+  | "view-usage"
   | "find"
   | "new-thread-on-branch"
   | "filter-by-project"
@@ -96,6 +98,7 @@ export function buildDraftActionMenuItems(
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   readonly canFind?: boolean;
+  readonly canViewInsights?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -128,6 +131,8 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
   return ![
     "find",
     "new-thread-on-branch",
+    "view-tasks",
+    "view-usage",
     "project-settings",
     "mark-unread",
     "share-guest",
@@ -144,6 +149,16 @@ export function buildThreadActionMenuItems(
   resolve: MessageResolver = m,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(state.canViewInsights
+      ? [
+          { id: "view-tasks" as const, label: resolve(msg("View tasks")), icon: "list-todo" },
+          {
+            id: "view-usage" as const,
+            label: resolve(msg("View usage")),
+            icon: "chart-no-axes-combined",
+          },
+        ]
+      : []),
     ...(state.canFind
       ? [{ id: "find" as const, label: resolve(msg("Find in thread")), icon: "text-search" }]
       : []),

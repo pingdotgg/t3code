@@ -1,3 +1,4 @@
+import { ThreadInsightsPanel } from "./ThreadInsightsPanel";
 import { useGT } from "gt-react";
 import type {
   EditorId,
@@ -212,6 +213,14 @@ export function RightPanelSurfaceContent(props: {
       );
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
+    case "thread-insights":
+      return visible ? (
+        <ThreadInsightsPanel
+          key={surface.id}
+          target={{ environmentId: surface.environmentId, threadId: surface.threadId }}
+          section={surface.section}
+        />
+      ) : null;
     case "side-chat":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (

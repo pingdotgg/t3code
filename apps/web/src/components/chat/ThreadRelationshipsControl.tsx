@@ -1,3 +1,5 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { ThreadInsightsMenu } from "./ThreadInsightsMenu";
 import { useAtomValue } from "@effect/atom-react";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -92,6 +94,7 @@ import { toastManager } from "../ui/toast";
 import { Spinner } from "../ui/spinner";
 import { cn } from "~/lib/utils";
 import {
+  THREAD_LINEAGE_ROW_CLASS,
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LABEL_CLASS,
@@ -122,7 +125,7 @@ function ThreadLineageRowList(props: {
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
       <ul
         aria-label={gt("Related threads")}
-        className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
+        className="m-0 max-h-[13.5rem] list-none overflow-x-hidden overflow-y-auto p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
       </ul>
@@ -283,6 +286,7 @@ function currentSubagent<Agent extends RuntimeSubagent>(
  * the thread there, when this client is connected to that environment.
  */
 function RemoteSubagentRow(props: {
+  readonly parentRef: ScopedThreadRef;
   readonly agent: RemoteSubagent;
   readonly provider: ServerProvider | undefined;
   readonly anyInstanceBadge: boolean;
@@ -299,7 +303,12 @@ function RemoteSubagentRow(props: {
     isSubagent: true,
   });
   return (
-    <li className="group relative flex h-8 items-center rounded-lg">
+    <li className={cn(THREAD_LINEAGE_ROW_CLASS, "group flex h-8 items-center rounded-lg")}>
+      <ThreadInsightsMenu
+        placement="overlay"
+        parent={props.parentRef}
+        target={scopeThreadRef(remoteChild.environmentId, remoteChild.threadId)}
+      />
       <Tooltip>
         <TooltipTrigger
           delay={200}
@@ -335,6 +344,7 @@ function RemoteSubagentRow(props: {
             </span>
           </span>
           <span
+            data-slot="lineage-meta"
             className={`flex max-w-1/2 shrink-0 gap-1 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"}`}
           >
             <span className="truncate">
@@ -878,12 +888,14 @@ export function ThreadRelationshipsPanel(props: {
         )}
         {agent && !failed && (deriveSubagentElapsedMs(agent, 0) !== null || canStopWorkflow) ? (
           <span
-            className={`shrink-0 text-2xs font-normal tabular-nums text-muted-foreground ${canStopWorkflow ? "min-w-6 text-end" : ""} ${trailingVisibilityClass}`}
+            data-slot="lineage-meta"
+            className={`shrink-0 text-2xs font-normal tabular-nums text-muted-foreground ${canStopWorkflow ? "min-w-6 text-end" : canStop ? "text-end group-has-[[data-slot=thread-insights-menu]]/lineage:min-w-12" : ""} ${trailingVisibilityClass}`}
           >
             <AgentElapsed agent={agent} compact />
           </span>
         ) : !isMergeTarget ? (
           <span
+            data-slot="lineage-meta"
             className={
               workflowGroup
                 ? "sr-only"
@@ -916,6 +928,7 @@ export function ThreadRelationshipsPanel(props: {
     if (workflowGroup && agent) {
       return (
         <ThreadLineageWorkflowRow
+          parentRef={ref}
           key={threadId}
           group={workflowGroup}
           providerInstanceId={agent.providerInstanceId}
@@ -932,7 +945,15 @@ export function ThreadRelationshipsPanel(props: {
       );
     }
     return (
-      <li key={threadId} className="group relative flex h-8 items-center rounded-lg">
+      <li
+        key={threadId}
+        className={cn(THREAD_LINEAGE_ROW_CLASS, "group flex h-8 items-center rounded-lg")}
+      >
+        <ThreadInsightsMenu
+          placement="overlay"
+          parent={ref}
+          target={scopeThreadRef(props.environmentId, threadId)}
+        />
         {isMergeTarget ? (
           <div className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
             <Tooltip>
@@ -984,7 +1005,10 @@ export function ThreadRelationshipsPanel(props: {
                     : gt("Merge this conversation back into its source")}
               </TooltipPopup>
             </Tooltip>
-            <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
+            <span
+              data-slot="lineage-meta"
+              className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground"
+            >
               {threadRelationshipStatusLabel(rowStatus, m)}
             </span>
           </div>
@@ -992,7 +1016,7 @@ export function ThreadRelationshipsPanel(props: {
           relationshipLink
         )}
         {canStop && agent ? (
-          <div className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+          <div className="pointer-events-none absolute right-1 group-has-[[data-slot=thread-insights-menu]]/lineage:right-7 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1084,6 +1108,7 @@ export function ThreadRelationshipsPanel(props: {
                 visibleRows.map((row) =>
                   "remote" in row ? (
                     <RemoteSubagentRow
+                      parentRef={ref}
                       key={row.remote.id}
                       agent={row.remote}
                       // Its provider instance belongs to the environment it runs in.

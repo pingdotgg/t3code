@@ -618,6 +618,10 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./state/thread-insights": {
+      "types": "./src/state/threadInsights.ts",
+      "import": "./src/state/threadInsights.ts"
     }
   },
   "scripts": {

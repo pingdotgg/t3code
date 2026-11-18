@@ -3408,7 +3408,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           : isCard
                             ? "card"
                             : "slim";
-                        return (
+                        const row = (
                           <SortableThreadRow
                             key={threadKey}
                             sortableId={threadKey}
@@ -3510,6 +3510,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             onFileDropThreads={handleThreadFileDrop}
                           />
                         );
+                        return row;
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [

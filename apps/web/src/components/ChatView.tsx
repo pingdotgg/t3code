@@ -317,6 +317,11 @@ import {
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
+import {
+  formatCommandProgress,
+  truncateCommandLabel,
+  useCommandProgress,
+} from "./chat/useCommandProgress";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   resolveEffectiveEnvMode,
@@ -3166,8 +3171,21 @@ export default function ChatView(props: ChatViewProps) {
         message.inputIntent === "queued_turn" &&
         !serverProjection?.messages.some((committed) => committed.id === message.id),
     );
+  const runningCommands = (serverProjection?.turnItems ?? []).filter(
+    (item) => item.type === "command_execution" && item.status === "running",
+  );
+  const runningCommandProgress = useCommandProgress(
+    activeThreadRef,
+    isServerThread && runningCommands.length > 0,
+  ).find((progress) => runningCommands.some((item) => item.id === progress.itemId));
+  const runningCommand = runningCommands.find((item) => item.id === runningCommandProgress?.itemId);
+  const commandProgressSummary =
+    runningCommand?.type === "command_execution" && runningCommandProgress
+      ? `${truncateCommandLabel(runningCommand.input)} ${formatCommandProgress(runningCommandProgress)}`
+      : null;
   const scrollToEndSummary =
     [
+      commandProgressSummary,
       childInputNow?.waitingLabel ?? null,
       queuedRunCount === 0
         ? null
@@ -3363,6 +3381,7 @@ export default function ChatView(props: ChatViewProps) {
     <div
       ref={setWorkspaceLayoutElement}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
+      data-wallpaper-surface={embedded ? undefined : ""}
     >
       {embedded ? null : (
         <DeviceSetupDialogHost
@@ -3467,6 +3486,7 @@ export default function ChatView(props: ChatViewProps) {
             <div
               {...conversationArea}
               className="relative flex min-h-0 flex-1 flex-col bg-background"
+              data-wallpaper-surface={embedded ? undefined : ""}
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline

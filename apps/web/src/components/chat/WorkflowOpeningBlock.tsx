@@ -1,3 +1,5 @@
+import { ThreadInsightsMenu } from "./ThreadInsightsMenu";
+import { ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -37,6 +39,7 @@ function scriptMarkdown(script: string) {
 }
 
 export function WorkflowOpeningBlock(props: {
+  readonly parentRef?: ScopedThreadRef | null | undefined;
   readonly opening: WorkflowOpening;
   readonly environmentId: EnvironmentId;
   readonly onOpenThread: (threadId: string) => void;
@@ -52,6 +55,7 @@ export function WorkflowOpeningBlock(props: {
       <WorkflowMemberRow
         key={member.id}
         member={member}
+        parentRef={props.parentRef}
         environmentId={props.environmentId}
         providerInstanceId={opening.providerInstanceId}
         providers={providers}
@@ -108,6 +112,7 @@ export function WorkflowOpeningBlock(props: {
 }
 
 function WorkflowMemberRow(props: {
+  readonly parentRef?: ScopedThreadRef | null | undefined;
   readonly member: RuntimeSubagent;
   readonly environmentId: EnvironmentId;
   readonly providerInstanceId: ProviderInstanceId;
@@ -130,7 +135,13 @@ function WorkflowMemberRow(props: {
   const className =
     "group/subagent flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left";
   return (
-    <li>
+    <li className="flex min-w-0 items-center">
+      {props.parentRef && threadId !== null ? (
+        <ThreadInsightsMenu
+          parent={props.parentRef}
+          target={{ environmentId: props.environmentId, threadId: ThreadId.make(threadId) }}
+        />
+      ) : null}
       <Tooltip>
         <TooltipTrigger
           delay={200}

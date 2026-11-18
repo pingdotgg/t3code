@@ -3846,6 +3846,49 @@ export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalComma
 
 export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
 
+export const OrchestrationV2ThreadInsightsUsage = Schema.Struct({
+  status: Schema.Literals(["complete", "partial", "unavailable"]),
+  turns: NonNegativeInt,
+  measuredTurns: NonNegativeInt,
+  inputTokens: Schema.optionalKey(NonNegativeInt),
+  cachedInputTokens: Schema.optionalKey(NonNegativeInt),
+  cacheCreationTokens: Schema.optionalKey(NonNegativeInt),
+  outputTokens: Schema.optionalKey(NonNegativeInt),
+  reasoningTokens: Schema.optionalKey(NonNegativeInt),
+  costUsd: Schema.NullOr(Schema.Number),
+  unpricedTurns: NonNegativeInt,
+  hasOtherUsage: Schema.Boolean,
+});
+export type OrchestrationV2ThreadInsightsUsage = typeof OrchestrationV2ThreadInsightsUsage.Type;
+
+export const OrchestrationV2ThreadInsightsRow = Schema.Struct({
+  threadId: ThreadId,
+  parentThreadId: Schema.NullOr(ThreadId),
+  title: Schema.String,
+  status: Schema.String,
+  providerInstanceIds: Schema.Array(ProviderInstanceId),
+  steps: Schema.NullOr(Schema.Array(OrchestrationV2PlanStep)),
+  usage: OrchestrationV2ThreadInsightsUsage,
+});
+export type OrchestrationV2ThreadInsightsRow = typeof OrchestrationV2ThreadInsightsRow.Type;
+
+export const OrchestrationV2GetThreadInsightsResult = Schema.Struct({
+  rows: Schema.Array(OrchestrationV2ThreadInsightsRow),
+  remotes: Schema.Array(
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      threadId: ThreadId,
+      parentThreadId: ThreadId,
+      title: Schema.String,
+      status: Schema.String,
+    }),
+  ),
+  unavailableThreadIds: Schema.Array(ThreadId),
+  truncated: Schema.Boolean,
+});
+export type OrchestrationV2GetThreadInsightsResult =
+  typeof OrchestrationV2GetThreadInsightsResult.Type;
+
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
@@ -3862,6 +3905,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   getNativeChildWork: "orchestration.getNativeChildWork",
+  getThreadInsights: "orchestration.getThreadInsights",
   stopWorkflow: "orchestration.stopWorkflow",
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
@@ -3869,6 +3913,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
+  subscribeCommandProgress: "orchestration.subscribeCommandProgress",
   subscribePromptSuggestion: "orchestration.subscribePromptSuggestion",
 } as const;
 
@@ -3889,6 +3934,26 @@ export const OrchestrationV2CommandOutputFrame = Schema.Struct({
   running: Schema.Boolean,
 });
 export type OrchestrationV2CommandOutputFrame = typeof OrchestrationV2CommandOutputFrame.Type;
+
+export const OrchestrationV2SubscribeCommandProgressInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2SubscribeCommandProgressInput =
+  typeof OrchestrationV2SubscribeCommandProgressInput.Type;
+
+/** A count a running command last printed, such as a test runner's `24/31` or a build's `42%`. */
+export const OrchestrationV2CommandProgress = Schema.Struct({
+  itemId: TurnItemId,
+  completed: NonNegativeInt,
+  total: PositiveInt,
+});
+export type OrchestrationV2CommandProgress = typeof OrchestrationV2CommandProgress.Type;
+
+/** Unpersisted: every running command in the thread that printed a count, replaced whole on each frame. */
+export const OrchestrationV2CommandProgressFrame = Schema.Struct({
+  items: Schema.Array(OrchestrationV2CommandProgress),
+});
+export type OrchestrationV2CommandProgressFrame = typeof OrchestrationV2CommandProgressFrame.Type;
 
 export class OrchestrationV2CommandOutputError extends Schema.TaggedError<OrchestrationV2CommandOutputError>()(
   "OrchestrationV2CommandOutputError",
@@ -4569,6 +4634,10 @@ export const OrchestrationV2RpcSchemas = {
     input: OrchestrationV2GetWorkflowScriptInput,
     output: OrchestrationV2GetWorkflowScriptResult,
   },
+  getThreadInsights: {
+    input: Schema.Struct({ threadId: ThreadId }),
+    output: OrchestrationV2GetThreadInsightsResult,
+  },
   getNativeChildWork: {
     input: OrchestrationV2GetNativeChildWorkInput,
     output: OrchestrationV2GetNativeChildWorkResult,
@@ -4592,6 +4661,10 @@ export const OrchestrationV2RpcSchemas = {
   subscribeCommandOutput: {
     input: OrchestrationV2SubscribeCommandOutputInput,
     output: OrchestrationV2CommandOutputFrame,
+  },
+  subscribeCommandProgress: {
+    input: OrchestrationV2SubscribeCommandProgressInput,
+    output: OrchestrationV2CommandProgressFrame,
   },
   subscribePromptSuggestion: {
     input: OrchestrationV2SubscribePromptSuggestionInput,

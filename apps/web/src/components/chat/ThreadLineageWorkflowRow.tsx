@@ -1,3 +1,5 @@
+import { ThreadInsightsMenu } from "./ThreadInsightsMenu";
+import { ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import {
   workflowMemberModelSelection,
   type SubagentWorkflowGroup,
@@ -19,6 +21,7 @@ import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Spinner } from "../ui/spinner";
 import {
+  THREAD_LINEAGE_ROW_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
@@ -59,6 +62,7 @@ function phaseStatusLabel(phase: SubagentWorkflowGroup["phases"][number]) {
 }
 
 function WorkflowMemberRow({
+  parentRef,
   member,
   providerInstanceId,
   provider,
@@ -67,6 +71,7 @@ function WorkflowMemberRow({
   driver,
   onOpen,
 }: {
+  parentRef: ScopedThreadRef;
   member: RuntimeSubagent;
   providerInstanceId: ProviderInstanceId;
   provider: ServerProvider | undefined;
@@ -79,7 +84,14 @@ function WorkflowMemberRow({
   const threadId = member.childThreadId;
   const canOpen = threadId !== null;
   return (
-    <li>
+    <li className={cn(THREAD_LINEAGE_ROW_CLASS, "flex items-center")}>
+      {threadId !== null ? (
+        <ThreadInsightsMenu
+          placement="overlay"
+          parent={parentRef}
+          target={{ environmentId: parentRef.environmentId, threadId: ThreadId.make(threadId) }}
+        />
+      ) : null}
       <Tooltip>
         <TooltipTrigger
           delay={200}
@@ -101,7 +113,10 @@ function WorkflowMemberRow({
           <span className="min-w-0 flex-1 truncate">{member.title}</span>
           <span className="sr-only">{member.status}</span>
           {member.startedAt ? (
-            <span className="shrink-0 text-2xs font-normal tabular-nums text-muted-foreground">
+            <span
+              data-slot="lineage-meta"
+              className="shrink-0 text-2xs font-normal tabular-nums text-muted-foreground"
+            >
               <AgentElapsed agent={member} />
             </span>
           ) : null}
@@ -128,6 +143,7 @@ function WorkflowMemberRow({
 }
 
 export function ThreadLineageWorkflowRow({
+  parentRef,
   group,
   header,
   providerInstanceId,
@@ -140,6 +156,7 @@ export function ThreadLineageWorkflowRow({
   stopping,
   stopDisabled,
 }: {
+  readonly parentRef: ScopedThreadRef;
   readonly group: SubagentWorkflowGroup;
   readonly header: ReactNode;
   readonly providerInstanceId: ProviderInstanceId;
@@ -258,6 +275,7 @@ export function ThreadLineageWorkflowRow({
                   <ul className="m-0 list-none p-0">
                     {phase.members.map((member) => (
                       <WorkflowMemberRow
+                        parentRef={parentRef}
                         key={member.id}
                         member={member}
                         providerInstanceId={providerInstanceId}
@@ -275,6 +293,7 @@ export function ThreadLineageWorkflowRow({
           })}
           {group.unphasedMembers.map((member) => (
             <WorkflowMemberRow
+              parentRef={parentRef}
               key={member.id}
               member={member}
               providerInstanceId={providerInstanceId}

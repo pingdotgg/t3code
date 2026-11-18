@@ -6,10 +6,19 @@ function Collapsible({ ...props }: CollapsiblePrimitive.Root.Props) {
   return <CollapsiblePrimitive.Root data-slot="collapsible" {...props} />;
 }
 
-function CollapsibleTrigger({ className, ...props }: CollapsiblePrimitive.Trigger.Props) {
+function CollapsibleTrigger({
+  className,
+  variant,
+  ...props
+}: CollapsiblePrimitive.Trigger.Props & { variant?: "section" | "row" }) {
   return (
     <CollapsiblePrimitive.Trigger
-      className={cn("cursor-pointer", className)}
+      className={cn(
+        "cursor-pointer",
+        variant === "section" && "flex w-full items-center gap-2 py-2 font-medium",
+        variant === "row" && "flex w-full items-start gap-2 py-2 text-left",
+        className,
+      )}
       data-slot="collapsible-trigger"
       {...props}
     />

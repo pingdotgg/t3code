@@ -292,6 +292,9 @@ Select a server to open it in the browser panel. **Stop** ends the server's job
 and keeps the agent, the terminal, and T3 Code running. Stop needs terminal
 access to the environment and is not available on Windows.
 
+Thread details appear on the right of the chat. Use the details button in the chat
+header to show or hide them. On narrower windows, the button opens a popover.
+
 To choose what the thread details card shows, right-click the card or open
 **Settings → Appearance → Thread details**. Hidden rows keep their keyboard
 shortcuts, such as Open in editor and project scripts. **Reset to default** brings
@@ -339,3 +342,10 @@ A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early for an approval,
 a new question, a failed run, or a message or answer you send. You can snooze an existing
 question and answer when the thread wakes; the question stays unanswered.
+
+To hide a thread while it waits for its own scheduled task, turn on **Settings → Threads →
+Snooze until scheduled task runs**. When a turn ends and the thread has an enabled scheduled task
+coming up, the thread snoozes until that task's scheduled time, even if the task does not start. The
+task's own turn leaves its result visible, unless that turn schedules another task for the thread.
+Pausing or rescheduling the task does not move the wake
+time; choose **Wake thread** to bring the thread back sooner.

@@ -612,6 +612,8 @@ function surfaceTitle(
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
     case "device":
       return surface.title ?? surface.target?.name ?? resolve(msg("Device"));
+    case "thread-insights":
+      return resolve(msg("Tasks & usage"));
     case "side-chat":
       return resolve(msg("Side chat"));
     case "preview": {
@@ -702,6 +704,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "thread-insights":
+      return <Files className="size-3 shrink-0" />;
     case "issue":
       return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "side-chat":
@@ -965,7 +969,15 @@ function RightPanelTab(
       ? scopeThreadRef(props.environmentId, surface.threadId)
       : null,
   );
-  const title = sideChatShell?.title ?? props.title;
+  const insightsShell = useQuietThreadShell(
+    surface.kind === "thread-insights"
+      ? scopeThreadRef(surface.environmentId, surface.threadId)
+      : null,
+  );
+  const title =
+    surface.kind === "thread-insights"
+      ? `Tasks & usage: ${insightsShell?.title ?? surface.threadId}`
+      : (sideChatShell?.title ?? props.title);
   const sideChatState = sideChatTabState(sideChatShell);
   const content = (
     <>

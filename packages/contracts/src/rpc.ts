@@ -2064,6 +2064,15 @@ const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetThreadInsightsRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadInsights,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadInsights.input,
+    success: OrchestrationV2RpcSchemas.getThreadInsights.output,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetNativeChildWorkRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getNativeChildWork,
   {
@@ -2105,6 +2114,16 @@ const WsOrchestrationV2SubscribeCommandOutputRpc = Rpc.make(
     payload: OrchestrationV2RpcSchemas.subscribeCommandOutput.input,
     success: OrchestrationV2RpcSchemas.subscribeCommandOutput.output,
     error: Schema.Union([OrchestrationV2CommandOutputError, EnvironmentAuthorizationError]),
+    stream: true,
+  },
+);
+
+const WsOrchestrationV2SubscribeCommandProgressRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.subscribeCommandProgress,
+  {
+    payload: OrchestrationV2RpcSchemas.subscribeCommandProgress.input,
+    success: OrchestrationV2RpcSchemas.subscribeCommandProgress.output,
+    error: EnvironmentAuthorizationError,
     stream: true,
   },
 );
@@ -2460,6 +2479,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2GetNativeChildWorkRpc,
+  WsOrchestrationV2GetThreadInsightsRpc,
   WsOrchestrationV2StopWorkflowRpc,
   WsOrchestrationV2ForceStopThreadRpc,
   WsOrchestrationV2GetTurnItemRpc,
@@ -2479,5 +2499,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
+  WsOrchestrationV2SubscribeCommandProgressRpc,
   WsOrchestrationV2SubscribePromptSuggestionRpc,
 ).middleware(RpcScopeAuthorization);

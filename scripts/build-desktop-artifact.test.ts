@@ -537,6 +537,56 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.isNull(preview.publish);
       assert.isNull(previewChannel.publish);
+      for (const [version, channel] of [
+        ["0.1.9", "latest"],
+        ["0.1.9-fork.20261115.3", "latest"],
+        ["0.1.9-nightly.20261115.3", "nightly"],
+      ] as const) {
+        const mockRelease = yield* createBuildConfig(
+          "win",
+          "nsis",
+          version,
+          false,
+          true,
+          4567,
+          undefined,
+        ).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))));
+        assert.deepStrictEqual(mockRelease.publish, [
+          { provider: "generic", url: "http://localhost:4567", channel },
+        ]);
+      }
+
+      for (const [platform, target] of [
+        ["mac", "dmg"],
+        ["win", "nsis"],
+        ["linux", "AppImage"],
+      ] as const) {
+        const forkRelease = yield* createBuildConfig(
+          platform,
+          target,
+          "0.1.9-fork.20261115.2",
+          false,
+          false,
+          undefined,
+          undefined,
+        ).pipe(
+          Effect.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: { T3CODE_DESKTOP_UPDATE_REPOSITORY: "LaMarCab76/t3code" },
+              }),
+            ),
+          ),
+        );
+        assert.deepStrictEqual(forkRelease.publish, [
+          {
+            provider: "github",
+            owner: "LaMarCab76",
+            repo: "t3code",
+            releaseType: "release",
+          },
+        ]);
+      }
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",

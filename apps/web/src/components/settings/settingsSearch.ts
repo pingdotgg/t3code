@@ -75,6 +75,7 @@ export interface SettingsSearchItem {
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  readonly requiresScheduledTaskSnooze?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -85,6 +86,7 @@ export interface SettingsSearchAvailability {
   readonly canManageLocalBackend: boolean;
   readonly isWslSettingsRowVisible: boolean;
   readonly hasThreadAutoSettlement: boolean;
+  readonly hasScheduledTaskSnooze?: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
@@ -354,6 +356,29 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("transparent transparency solid menus dialogs composer")],
   },
   {
+    id: "wallpaper",
+    title: msg("Wallpaper"),
+    to: "/settings/appearance",
+    searchTerms: ["background image picture photo formula 1 f1 race cars"],
+  },
+  {
+    // Prefixed because the slider control already owns the `wallpaper-blur` id.
+    id: "setting-wallpaper-blur",
+    // The row shows only while a wallpaper is set; the picker is always there.
+    targetId: "wallpaper",
+    title: msg("Wallpaper blur"),
+    to: "/settings/appearance",
+    searchTerms: ["background blur difuminado soften readability"],
+  },
+  {
+    // Prefixed because the slider control already owns the `wallpaper-dim` id.
+    id: "setting-wallpaper-dim",
+    targetId: "wallpaper",
+    title: msg("Wallpaper dimming"),
+    to: "/settings/appearance",
+    searchTerms: ["background darken dim brightness readability"],
+  },
+  {
     id: "diff-color-scheme",
     title: msg("Diff colors"),
     to: "/settings/diffs",
@@ -474,6 +499,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Snooze until limits reset"),
     to: "/settings/threads",
     searchTerms: [msg("usage quota rate limit reset wake recover continue")],
+  },
+  {
+    id: "snooze-until-scheduled-task",
+    requiresScheduledTaskSnooze: true,
+    title: msg("Snooze until scheduled task runs"),
+    to: "/settings/threads",
+    searchTerms: ["scheduled task schedule automation recurring wake hide next run"],
+    environmentOnly: true,
+    scope: "environment-defaults",
   },
   {
     id: "auto-resume-limited-threads",
@@ -1527,25 +1561,35 @@ export function getSettingsSearchTargetScope(targetId: string) {
         title: item.title,
         scope: item.scope ?? SETTINGS_CATEGORY_SCOPES[item.to],
         ...(item.requiresThreadAutoSettlement ? { requiresThreadAutoSettlement: true } : {}),
+        ...(item.requiresScheduledTaskSnooze ? { requiresScheduledTaskSnooze: true } : {}),
       }
     : null;
 }
 
-interface AutoSettlementSearchEnvironment {
+interface ThreadSettingsSearchEnvironment {
   readonly environmentId: EnvironmentId;
   readonly connection: { readonly phase: EnvironmentConnectionPhase };
-  readonly serverConfig: object | null;
+  readonly serverConfig: {
+    readonly environment: { readonly capabilities: { readonly scheduledTaskSnooze?: boolean } };
+  } | null;
 }
 
-export function getThreadAutoSettlementSearchAvailability(
-  environments: readonly AutoSettlementSearchEnvironment[],
+export function getThreadSettingsSearchAvailability(
+  environments: readonly ThreadSettingsSearchEnvironment[],
   scope?: Pick<ResolvedSettingsScope, "kind" | "environmentIds">,
+  capability?: "scheduledTaskSnooze",
 ) {
   const connected = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" && environment.serverConfig !== null,
   );
-  const eligibleEnvironmentIds = connected.map((environment) => environment.environmentId);
+  const eligibleEnvironmentIds = connected
+    .filter(
+      (environment) =>
+        capability === undefined ||
+        environment.serverConfig?.environment.capabilities[capability] === true,
+    )
+    .map((environment) => environment.environmentId);
   const selected = connected.filter((environment) =>
     scope?.environmentIds.includes(environment.environmentId),
   );
@@ -1615,6 +1659,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.primaryEnvironmentOnly || availability.hasPrimaryEnvironment === true) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
+      (!item.requiresScheduledTaskSnooze || availability.hasScheduledTaskSnooze === true) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||

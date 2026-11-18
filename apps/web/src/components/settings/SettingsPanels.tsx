@@ -496,6 +496,13 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity
       ? [gt("Glass opacity")]
       : []),
+    ...(settings.wallpaper !== DEFAULT_UNIFIED_SETTINGS.wallpaper ? [gt("Wallpaper")] : []),
+    ...(settings.wallpaperBlur !== DEFAULT_UNIFIED_SETTINGS.wallpaperBlur
+      ? [gt("Wallpaper blur")]
+      : []),
+    ...(settings.wallpaperDim !== DEFAULT_UNIFIED_SETTINGS.wallpaperDim
+      ? [gt("Wallpaper dimming")]
+      : []),
     ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
       ? [gt("Diff colors")]
       : []),
@@ -550,6 +557,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(!Equal.equals(settings.snoozePresets, DEFAULT_UNIFIED_SETTINGS.snoozePresets)
       ? [gt("Snooze options")]
+      : []),
+    ...(settings.snoozeThreadsUntilScheduledTask !==
+    DEFAULT_UNIFIED_SETTINGS.snoozeThreadsUntilScheduledTask
+      ? [gt("Snooze until scheduled task runs")]
       : []),
     ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? [gt("Word wrap")] : []),
     ...(settings.persistComposerContextStrip !==
@@ -715,6 +726,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       screenReaderWindowTitle: DEFAULT_UNIFIED_SETTINGS.screenReaderWindowTitle,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
+      wallpaper: DEFAULT_UNIFIED_SETTINGS.wallpaper,
+      wallpaperBlur: DEFAULT_UNIFIED_SETTINGS.wallpaperBlur,
+      wallpaperDim: DEFAULT_UNIFIED_SETTINGS.wallpaperDim,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
@@ -725,6 +739,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
+      snoozeThreadsUntilScheduledTask: DEFAULT_UNIFIED_SETTINGS.snoozeThreadsUntilScheduledTask,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -1875,6 +1890,11 @@ export function ThreadsSettingsPanel() {
   const supportsAutoSettlementScope = connectedEnvironments.every(
     (target) => target.serverConfig?.environment.capabilities.threadAutoSettlementScope === true,
   );
+  const supportsScheduledTaskSnooze =
+    hasServerTargets &&
+    connectedEnvironments.every(
+      (target) => target.serverConfig?.environment.capabilities.scheduledTaskSnooze === true,
+    );
 
   const textGenerationTargets = useTextGenerationTargets({
     environmentId,
@@ -1983,6 +2003,26 @@ export function ThreadsSettingsPanel() {
       {!isProjectScope ? (
         <SettingsSection id="snooze" title={gt("Snooze")}>
           <SnoozePresetsRow />
+          {supportsScheduledTaskSnooze ? (
+            <SettingsRow
+              serverScoped
+              {...setting("snooze-until-scheduled-task")}
+              description={gt(
+                "When a turn ends and the thread has a scheduled task coming up, snooze the thread until the task runs.",
+              )}
+              settingKeys={["snoozeThreadsUntilScheduledTask"]}
+              control={
+                <ScopedSwitch
+                  settingKeys={["snoozeThreadsUntilScheduledTask"]}
+                  checked={settings.snoozeThreadsUntilScheduledTask}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ snoozeThreadsUntilScheduledTask: Boolean(checked) })
+                  }
+                  aria-label={gt("Snooze until scheduled task runs")}
+                />
+              }
+            />
+          ) : null}
         </SettingsSection>
       ) : null}
 

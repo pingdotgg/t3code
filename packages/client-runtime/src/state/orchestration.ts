@@ -175,6 +175,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
             Stream.filter((view) => view !== EMPTY_COMMAND_OUTPUT),
           ),
       }),
+      // Counts that the open thread's running commands print, such as `24/31` or `42%`.
+      commandProgress: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+        label: "environment-data:orchestration-v2:command-progress",
+        tag: ORCHESTRATION_V2_WS_METHODS.subscribeCommandProgress,
+        idleTtlMs: 0,
+      }),
       // The open thread's predicted next prompt, while its composer is mounted.
       promptSuggestion: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
         label: "environment-data:orchestration-v2:prompt-suggestion",
@@ -194,6 +200,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       idleTtlMs: 300_000,
     }),
     // Mounted only while a subagent inspector is open; running children change between opens.
+    threadInsights: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-insights",
+      tag: ORCHESTRATION_V2_WS_METHODS.getThreadInsights,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+    }),
     nativeChildWork: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:native-child-work",
       tag: ORCHESTRATION_V2_WS_METHODS.getNativeChildWork,

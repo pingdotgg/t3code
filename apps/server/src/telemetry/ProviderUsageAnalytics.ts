@@ -1,3 +1,4 @@
+import { sumOf, combinedStatus } from "@t3tools/shared/turnTokenUsage";
 /**
  * Provider token reporting: one `provider.turn.completed` per provider turn and one
  * `provider.request.completed` per run, built from the same turns so each counts once.
@@ -212,34 +213,6 @@ function requestKind(origin: ProviderTurnOrigin | undefined) {
   if (origin.createdBy === "user") return "user";
   if (origin.creationSource === "provider") return "provider_continuation";
   return origin.createdBy;
-}
-
-function sumOf(
-  usages: ReadonlyArray<TurnTokenUsage>,
-  field:
-    | "inputTokens"
-    | "cachedInputTokens"
-    | "cacheCreationTokens"
-    | "outputTokens"
-    | "reasoningTokens",
-  requireAll: boolean,
-): number | undefined {
-  const values = usages.map((usage) => usage[field]);
-  const known = values.filter((value) => value !== undefined);
-  if (known.length === 0 || (requireAll && known.length < values.length)) return undefined;
-  return known.reduce((sum, value) => sum + value, 0);
-}
-
-/** complete only when every turn is complete; partial when any turn has counts. */
-function combinedStatus(usages: ReadonlyArray<TurnTokenUsage | undefined>) {
-  if (usages.length > 0 && usages.every((usage) => usage?.usageStatus === "complete")) {
-    return "complete";
-  }
-  return usages.some(
-    (usage) => usage?.inputTokens !== undefined || usage?.outputTokens !== undefined,
-  )
-    ? "partial"
-    : "unavailable";
 }
 
 interface RequestTurn {

@@ -583,6 +583,10 @@
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
     },
+    "./turnTokenUsage": {
+      "types": "./src/turnTokenUsage.ts",
+      "import": "./src/turnTokenUsage.ts"
+    },
     "./pinOrderKey": {
       "types": "./src/pinOrderKey.ts",
       "import": "./src/pinOrderKey.ts"

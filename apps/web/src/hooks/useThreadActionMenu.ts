@@ -1,3 +1,6 @@
+import { buildThreadRouteParams } from "../threadRoutes";
+import { useServerConfigs } from "../state/entities";
+import { useRightPanelStore } from "../rightPanelStore";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
@@ -11,6 +14,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -70,6 +74,7 @@ export function useThreadActionMenu(input: {
   readonly canShareWithGuest: boolean;
 }) {
   const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest } = input;
+  const serverConfigs = useServerConfigs();
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -139,6 +144,9 @@ export function useThreadActionMenu(input: {
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
       const items = buildThreadActionMenuItems({
+        canViewInsights:
+          serverConfigs.get(threadRef.environmentId)?.threadInsights === true &&
+          readEnvironmentScope(threadRef.environmentId, AuthOrchestrationReadScope),
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
         branch: thread.branch ?? null,
@@ -195,6 +203,16 @@ export function useThreadActionMenu(input: {
         }
       };
       switch (action) {
+        case "view-tasks":
+        case "view-usage":
+          useRightPanelStore
+            .getState()
+            .openThreadInsights(threadRef, threadRef, action === "view-tasks" ? "tasks" : "usage");
+          void router.navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(threadRef),
+          });
+          return;
         case "find":
           onFind?.(threadRef);
           return;
