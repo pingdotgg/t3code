@@ -433,10 +433,10 @@ function latestSyncedAt(links: ReadonlyArray<ThreadPullRequestLink>): string | n
 }
 
 const SORT_LABELS: Record<LinkedPullRequestSort, string> = {
-  status: "Status",
-  updated: "Recently updated",
-  linked: "Recently linked",
-  repository: "Repository",
+  status: msg("Status"),
+  updated: msg("Recently updated"),
+  linked: msg("Recently linked"),
+  repository: msg("Repository"),
 };
 
 function LinkedPullRequestViewMenu({
@@ -446,11 +446,12 @@ function LinkedPullRequestViewMenu({
   view: LinkedPullRequestView;
   counts: ReadonlyMap<LinkedPullRequestStatus, number>;
 }) {
+  const resolve = useMessages();
   return (
     <Menu>
       <MenuTrigger render={<Button size="xs" variant="ghost" />}>
         <ListFilterIcon className="size-3.5" />
-        {SORT_LABELS[view.sort]}
+        {resolve(SORT_LABELS[view.sort])}
       </MenuTrigger>
       <MenuPopup align="end" side="top">
         <MenuRadioGroup
@@ -465,7 +466,7 @@ function LinkedPullRequestViewMenu({
           {(Object.keys(SORT_LABELS) as Array<LinkedPullRequestSort>).map((sort) => (
             <MenuRadioItem key={sort} value={sort}>
               <span className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 flex-1 truncate">{SORT_LABELS[sort]}</span>
+                <span className="min-w-0 flex-1 truncate">{resolve(SORT_LABELS[sort])}</span>
                 <MenuRadioItemIndicator />
               </span>
             </MenuRadioItem>
@@ -494,7 +495,7 @@ function LinkedPullRequestViewMenu({
                   isDraft={status === "draft"}
                 />
                 <span className="min-w-0 flex-1 truncate">
-                  {LINKED_PULL_REQUEST_STATUS_LABELS[status]}
+                  {resolve(LINKED_PULL_REQUEST_STATUS_LABELS[status])}
                 </span>
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                   {counts.get(status) ?? 0}
@@ -549,6 +550,7 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 
 function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
   const gt = useGT();
+  const resolve = useMessages();
   const thread = useThreadShell(threadRef);
   const projects = useProjects();
   const environmentProjects = projects
@@ -646,6 +648,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
     thread,
     opensInApp,
     primaryEnvironmentId,
+    resolve,
   };
 
   if (linkCount === 0) {
@@ -682,7 +685,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           renderItem={({ item: row }) =>
             row.kind === "header" ? (
               <div className="flex items-center gap-2 px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground/70">
-                <h3 className="shrink-0">{row.label}</h3>
+                <h3 className="shrink-0">{sort === "status" ? resolve(row.label) : row.label}</h3>
                 <span className="shrink-0 tabular-nums text-muted-foreground/50">{row.count}</span>
                 <Separator className="min-w-2 flex-1" />
               </div>

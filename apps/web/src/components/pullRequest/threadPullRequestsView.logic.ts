@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import type {
   LinkedPullRequestSort,
   LinkedPullRequestStatus,
@@ -16,10 +17,10 @@ export const LINKED_PULL_REQUEST_STATUS_ORDER: ReadonlyArray<LinkedPullRequestSt
 ];
 
 export const LINKED_PULL_REQUEST_STATUS_LABELS: Record<LinkedPullRequestStatus, string> = {
-  draft: "Draft",
-  open: "Open",
-  merged: "Merged",
-  closed: "Closed",
+  draft: msg("Draft"),
+  open: msg("Open"),
+  merged: msg("Merged"),
+  closed: msg("Closed"),
 };
 
 export interface LinkedPullRequestView {
