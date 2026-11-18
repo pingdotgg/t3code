@@ -361,6 +361,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       },
     });
   };
+  const unidentified: Array<readonly [string, LimitAccount]> = [];
+  const defer = (key: string) => (entry: LimitAccount) => void unidentified.push([key, entry]);
   const resolveKey = accountKeyResolver(
     [...presentations.values()].flatMap((presentation) => [
       ...(presentation.serverConfig?.providers ?? [])
@@ -373,8 +375,10 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const label = presentation.entry.target.label;
     for (const provider of providersWithLimits(presentation.serverConfig?.providers ?? [])) {
       if (!provider.usageLimits || limitsNotice(provider.usageLimits) !== null) continue;
-      merge(resolveKey(nativeReport(provider)) ?? `${environmentId}:${provider.instanceId}`, {
-        key: `${environmentId}:${provider.instanceId}`,
+      const key = `${environmentId}:${provider.instanceId}`;
+      const resolved = resolveKey(nativeReport(provider));
+      (resolved ? (entry: LimitAccount) => merge(resolved, entry) : defer(key))({
+        key,
         driver: provider.driver,
         displayName: provider.displayName?.trim() || null,
         email: provider.auth.email,
@@ -399,7 +403,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         // A resolved account already has an identity; its public key must stay distinct from others'.
         const hub = resolved ? `${environmentId}:${source.id}` : hubIdentity(environmentId, source);
         const key = `${hub}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolved ?? key, {
+        (resolved ? (entry: LimitAccount) => merge(resolved, entry) : defer(key))({
           key,
           driver: account.driver,
           displayName: account.email ? null : hubAccountName(account),
@@ -423,7 +427,29 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       }
     }
   }
+  // An email-less report joins an identified account on the same reset schedule, e.g. a dev box
+  // reporting a shared login without its email. Unidentified accounts never join each other.
+  const identified = [...accounts];
+  for (const [key, entry] of unidentified) {
+    const schedule = resetSchedule(entry);
+    const twin =
+      accounts.has(key) || entry.email || schedule === null
+        ? undefined
+        : identified.find(
+            ([, account]) => account.driver === entry.driver && resetSchedule(account) === schedule,
+          )?.[0];
+    merge(twin ?? key, entry);
+  }
   return [...accounts.values()];
+}
+
+// ponytail: reset instants stand in for identity; two subscriptions resetting in the same minute would merge.
+function resetSchedule(account: LimitAccount): string | null {
+  const instants = account.limits.windows.map((window) =>
+    window.resetsAt ? `${window.kind}:${Math.round(Date.parse(window.resetsAt) / 60_000)}` : null,
+  );
+  if (instants.length === 0 || instants.includes(null)) return null;
+  return instants.sort().join("|");
 }
 
 export function collectLimitNotices(presentations: LimitPresentations): readonly string[] {

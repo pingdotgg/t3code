@@ -291,6 +291,19 @@ describe("pools", () => {
       ],
     });
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(55);
+    const devBox = new Map([
+      ...input,
+      [
+        EnvironmentId.make("env-c"),
+        {
+          entry: { target: { label: "ai-dev-01" } },
+          serverConfig: {
+            providers: [{ ...native, auth: { status: "authenticated" as const } }],
+          },
+        },
+      ],
+    ]);
+    expect(collectLimitAccounts(devBox).map((account) => account.environments.length)).toEqual([3]);
   });
 
   it("uses the freshest reported plan even when the newest quota has no plan", () => {
