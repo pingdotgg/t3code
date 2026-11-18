@@ -26,7 +26,7 @@ it.each(cases.control.map(({ kind, verdict }) => [kind, verdict] as const))(
 );
 
 const screenRows = cases.screen.map(({ action, verdict }) => {
-  const target = action.label ?? action.key ?? action.direction ?? action.name ?? "";
+  const target = action.label ?? action.key ?? action.direction ?? action.name ?? action.url ?? "";
   return [
     `${action.kind} ${action.role ?? ""} ${JSON.stringify(target)}`,
     action,

@@ -64,7 +64,10 @@ import {
   assignedSkillIndexEntry,
 } from "../../apps/server/src/provider/AgentInstructionFiles.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
-import { ComputerToolkit } from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
+import {
+  ComputerLookToolkit,
+  ComputerToolkit,
+} from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
@@ -307,6 +310,8 @@ const McpToolUseWorld = Schema.StructWithRest(
         hostName: Schema.optional(Schema.String),
         outcome: Schema.optional(Schema.Literals(["questions", "tap", "done", "blocked"])),
         approvals: Schema.optional(Schema.Literals(["ask", "skip"])),
+        screenText: Schema.optional(Schema.String),
+        screen: Schema.optional(Contracts.ComputerLook),
       }),
     ),
     /**
@@ -512,6 +517,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewToolkit,
   DeviceToolkit,
   ComputerToolkit,
+  ComputerLookToolkit,
   HtmlToolkit,
   MessageToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));

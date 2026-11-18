@@ -145,8 +145,20 @@ function toChildRequest(frame: ComputerHostFrame): ChildRequest | null {
       return {
         id: frame.taskId,
         kind: "start",
-        task: { goal: frame.goal, text: frame.text },
+        task: {
+          goal: frame.goal,
+          text: frame.text,
+          ...(frame.act === undefined ? {} : { act: frame.act }),
+        },
         limits: { maxSteps: frame.limits.maxSteps, timeoutMs: frame.limits.timeoutMs },
+      };
+    case "look":
+      return {
+        id: frame.requestId,
+        kind: "look",
+        screenshot: frame.screenshot,
+        ...(frame.app === undefined ? {} : { app: frame.app }),
+        ...(frame.region === undefined ? {} : { region: frame.region }),
       };
     case "stop":
       return { id: frame.requestId, kind: "stop", taskId: frame.taskId, reason: frame.reason };
@@ -225,6 +237,19 @@ const makeSession = Effect.scoped(
           yield* computer.hostRespond({
             hostId,
             reply: { requestId: message.id, ok: true, done: message.done },
+          });
+          return;
+        case "look":
+          yield* computer.hostRespond({
+            hostId,
+            reply: { requestId: message.id, ok: true, look: message.look },
+          });
+          return;
+        case "acted":
+          yield* computer.hostEvent({
+            hostId,
+            taskId: message.taskId,
+            event: { type: "acted", kind: message.action, mode: message.mode, how: message.how },
           });
           return;
         case "error": {

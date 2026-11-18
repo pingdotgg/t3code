@@ -114,7 +114,7 @@ This API replay measures routing and recovery decisions. Screenshots return prod
 
 ## Computer use cases
 
-`cases/computer-use.ndjson` checks the four computer tools: `computer_status`, `computer_control`, `computer_use` and `computer_stop`. They are new, so the cases guard the behaviour the tools' descriptions and the "Ada computer use" instruction section ask for rather than reproduce a past failure. Each names the computer-use plan's section 7 as its source; prompts and files are authored Acme data.
+`cases/computer-use.ndjson` checks the computer tools: `computer_status`, `computer_look`, `computer_act`, `computer_control`, `computer_use` and `computer_stop`. Most cases guard the behaviour the tools' descriptions and the "Ada computer use" instruction section ask for and name the computer-use plan's section 7 as their source; `cu-reads-display` and `cu-types-address` reproduce live failures. Prompts and files are authored Acme data.
 
 | Case                   | Kind    | What it checks                                                                                                                 |
 | ---------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -126,8 +126,10 @@ This API replay measures routing and recovery decisions. Screenshots return prod
 | cu-control-not-use     | guard   | Volume and "open Safari" use `computer_control`, not `computer_use`.                                                           |
 | cu-web-in-preview      | control | A page this project serves is preview work: `preview_snapshot`, and no computer tool.                                          |
 | cu-ordinary-coding     | control | An ordinary coding request calls no computer tool, even with computer use enabled for the thread.                              |
+| cu-reads-display       | bad     | Asked what an app shows, the agent reads it with `computer_look` and answers, instead of starting a task to read it.           |
+| cu-types-address       | bad     | Asked to open a web address, the agent opens or types it with `computer_act`, not a goal-only `computer_use`.                  |
 
-Worlds set `world.computer`: `outcome` is what the next started task does (`questions`, `tap`, `done`, `blocked`), `approvals` is the setting ("ask" or "skip"), and `computerAgentAccess: false` is the setting off. A case without `world.computer` still gets the tools, with the setting off, so a call is refused the way a thread that never enabled it is refused. The computer text is in the thread's prompt only when the case has `world.computer` with access on.
+Worlds set `world.computer`: `outcome` is what the next started task does (`questions`, `tap`, `done`, `blocked`; an act ends `done` unless it is `tap` or `blocked`), `screen` is what `computer_look` reads, `approvals` is the setting ("ask" or "skip"), and `computerAgentAccess: false` is the setting off. A case without `world.computer` still gets the tools, with the setting off, so a call is refused the way a thread that never enabled it is refused. The computer text is in the thread's prompt only when the case has `world.computer` with access on.
 
 Computer results are T3's own: `evals/mcp-tool-use/computer.ts` runs the checkout's toolkit handlers on a scripted `ComputerService`, so the questions, the tap card's fields and every `next` sentence come from source. Prior turns whose result is `"default"` run through it too, as device cases do. The scripted computer starts one task per call and keeps the latest; a second `computer_use` in the same sample starts a second task.
 

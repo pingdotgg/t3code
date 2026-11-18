@@ -245,11 +245,13 @@ const click = (label: string): ComputerAction => ({
 });
 
 describe("computer toolkit", () => {
-  it.effect("registers the four tools, and refuses each without the capability", () =>
+  it.effect("registers the six tools, and refuses each without the capability", () =>
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       expect(server.tools.map(({ tool }) => tool.name).toSorted()).toEqual([
+        "computer_act",
         "computer_control",
+        "computer_look",
         "computer_status",
         "computer_stop",
         "computer_use",
@@ -257,6 +259,8 @@ describe("computer toolkit", () => {
 
       for (const [name, args] of [
         ["computer_status", {}],
+        ["computer_look", {}],
+        ["computer_act", { action: "key", key: "return" }],
         ["computer_control", { kind: "open_app", app: "Safari" }],
         ["computer_use", { goal: "open the draft" }],
         ["computer_stop", {}],

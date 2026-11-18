@@ -16,7 +16,7 @@ import {
 } from "./validate.ts";
 import { execRunner } from "./runner.ts";
 import type { CommandOptions, CommandRunner } from "./runner.ts";
-import { CONTROL_ROLES, NeedsPointer } from "./types.ts";
+import { CONTROL_ROLES, fitScale, NeedsPointer, SCREENSHOT_MAX_EDGE } from "./types.ts";
 import type {
   ActOptions,
   ActResult,
@@ -29,6 +29,8 @@ import type {
   ScreenAction,
   ScreenBackend,
   ScreenControl,
+  Screenshot,
+  ScreenshotOptions,
 } from "./types.ts";
 
 /**
@@ -166,8 +168,9 @@ function pidOf(name) {
 // Posts an event to one process, so the person's own pointer and keyboard (the global tap) are untouched. A zero pid
 // falls back to the HID tap; CGEventPostToPid needs a real pid.
 function postToPid(pid, event, dryrun) { if (dryrun) return; if (pid > 0) $.CGEventPostToPid(pid, event); else $.CGEventPost($.kCGHIDEventTap, event); }
-function keyToPid(pid, code) {
+function keyToPid(pid, code, flags) {
   var down = $.CGEventCreateKeyboardEvent($(), code, true), up = $.CGEventCreateKeyboardEvent($(), code, false);
+  if (flags) { $.CGEventSetFlags(down, flags); $.CGEventSetFlags(up, flags); }
   postToPid(pid, down, false); postToPid(pid, up, false);
 }
 // Text typed as Unicode keyboard events to one process (CGEventKeyboardSetUnicodeString), never as a keystroke Apple
@@ -228,10 +231,19 @@ function clickAt(point, dryrun) {
 
 // The main window is used rather than "window 1" because apps often keep small floating panels
 // (input-method badges, palettes) ahead of the real window in the accessibility order.
-const FRONT = `
-function front() {
+const RUNNING = `
+function runningNamed(name) {
+  var apps = $.NSWorkspace.sharedWorkspace.runningApplications;
+  for (var i = 0; i < apps.count; i++) { var a = apps.objectAtIndex(i); if (ObjC.unwrap(a.localizedName) === name) return a; }
+  throw new Error('ADA_NO_APP_NAMED:' + name + ':');
+}
+`;
+
+/** `front(name)`: a running app read where it is, without bringing it forward. */
+const FRONT = `${RUNNING}
+function front(name) {
   trusted();
-  var running = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+  var running = name ? runningNamed(name) : $.NSWorkspace.sharedWorkspace.frontmostApplication;
   if (!running || running.isNil()) throw new Error('ADA_NO_APP');
   var app = axApp(running.processIdentifier);
   var win = attr(app, 'AXMainWindow') || attr(app, 'AXFocusedWindow');
@@ -268,8 +280,8 @@ function urlOf(el) {
   try { return ObjC.unwrap(value.absoluteString) || ''; } catch (error) { return ''; }
 }
 var WALK_MS = 4000;
-function run() {
-  var target = front();
+function run(argv) {
+  var target = front(argv && argv[0]);
   if (!target.win) return JSON.stringify({ app: target.name, title: '', controls: [], text: '' });
   var win = target.win, started = Date.now(), truncated = false;
   var wp = pair(win, 'AXPosition'), ws = pair(win, 'AXSize');
@@ -322,8 +334,8 @@ function run() {
  * Recording access, which is also what a screenshot of it needs).
  */
 const WINDOW_LIST = `
-function frontWindow() {
-  var running = $.NSWorkspace.sharedWorkspace.frontmostApplication;
+function frontWindow(name) {
+  var running = name ? runningNamed(name) : $.NSWorkspace.sharedWorkspace.frontmostApplication;
   if (!running || running.isNil()) throw new Error('ADA_NO_APP');
   var pid = running.processIdentifier;
   var list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements, 0))) || [];
@@ -406,6 +418,14 @@ function scrollArea(win) {
 }
 // Whether the text box took the typing focus after the click: the app's focused element is it, or sits inside it
 // (a combo box's own field), and is a text element.
+// The control under a screen point, only when it belongs to the app in front (never the overlay or another app).
+function elementAt(point) {
+  var found = Ref(), pid = Ref();
+  if ($.AXUIElementCopyElementAtPosition($.AXUIElementCreateSystemWide(), point[0], point[1], found) !== 0) return null;
+  var el = ObjC.castRefToObject(found[0]);
+  if ($.AXUIElementGetPid(el, pid) !== 0) return null;
+  return pid[0] === $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier ? el : null;
+}
 function hasFocus(app, el) {
   var focused = attr(app, 'AXFocusedUIElement');
   if (!focused) return false;
@@ -457,9 +477,14 @@ function run(argv) {
   var op = argv[0], payload = JSON.parse(argv[1] || '{}'), dryrun = payload.dryrun === true;
   trusted();
   if (op === 'press') {
-    // A key to the app's own process (CGEventPostToPid), not the global tap, so the person's keyboard is untouched.
+    // A key to the app's own process (CGEventPostToPid), not the global tap, so the person's keyboard is untouched. A
+    // Command shortcut is the app's own menu item first, which does not depend on the keyboard layout.
     var app = front();
-    if (!dryrun) keyToPid(app.app ? pidOf(app.app) : 0, payload.code);
+    if (dryrun) return JSON.stringify({ mode: 'background' });
+    var keyPid = app.name ? pidOf(app.name) : 0;
+    if (!payload.command) keyToPid(keyPid, payload.code);
+    else if (menuCommand(app.app, payload.command, 0)) return JSON.stringify({ mode: 'background', how: 'the app menu item' });
+    else keyToPid(keyPid, payload.code, $.kCGEventFlagMaskCommand);
     return JSON.stringify({ mode: 'background' });
   }
   if (op === 'scroll') {
@@ -498,8 +523,10 @@ function run(argv) {
     return JSON.stringify({ mode: 'pointer' });
   }
   var spot = /^v:(-?[\\d.]+),(-?[\\d.]+)$/.exec(String(payload.ref || '')), point, el = null, ax = null;
-  if (spot) point = [Number(spot[1]), Number(spot[2])];
-  else {
+  if (spot) {
+    point = [Number(spot[1]), Number(spot[2])];
+    if (op === 'click') el = elementAt(point);
+  } else {
     var here = front();
     if (!here.win) throw new Error('ADA_NO_WINDOW');
     ax = here.app;
@@ -541,8 +568,8 @@ function run(argv) {
 
 const FRONT_WINDOW_SCRIPT = `ObjC.import('AppKit');
 ObjC.import('CoreGraphics');
-${WINDOW_LIST}
-function run() { return JSON.stringify(frontWindow()); }`;
+${RUNNING}${WINDOW_LIST}
+function run(argv) { return JSON.stringify(frontWindow(argv && argv[0])); }`;
 
 type Window = { id: number; x: number; y: number; w: number; h: number; title: string };
 type FrontWindow = { app: string; window: Window | null };
@@ -616,12 +643,27 @@ export function visualControls(lines: OcrLine[], window: Window): ScreenControl[
     .map(({ label, x, y }) => ({ ref: `v:${x},${y}`, role: "text" as const, label }));
 }
 
-/** macOS virtual key codes for the keys a step may press. */
-const KEY_CODES = { enter: 36, escape: 53, tab: 48, space: 49 } as const;
+/** macOS virtual key codes for the keys a step may press (ANSI positions for the shortcut letters). */
+const KEY_CODES = {
+  enter: 36,
+  escape: 53,
+  tab: 48,
+  space: 49,
+  up: 126,
+  down: 125,
+  left: 123,
+  right: 124,
+  "cmd+l": 37,
+  "cmd+t": 17,
+  "cmd+w": 13,
+} as const;
 
 /** The JSON handed to the act script as argv: key codes for presses, otherwise the action's own fields. */
 function actionPayload(action: ScreenAction): object {
-  if (action.kind === "press") return { code: KEY_CODES[action.key] };
+  if (action.kind === "press")
+    return action.key.startsWith("cmd+")
+      ? { code: KEY_CODES[action.key], command: action.key.slice(4).toUpperCase() }
+      : { code: KEY_CODES[action.key] };
   if (action.kind === "scroll")
     return action.ref
       ? { direction: action.direction, ref: action.ref }
@@ -836,7 +878,11 @@ export class DesktopBackend implements ScreenBackend {
     let output: string;
     try {
       output = await this.runner.run(
-        ...jxa(OBSERVE_SCRIPT, [], options.signal ? { signal: options.signal } : {}),
+        ...jxa(
+          OBSERVE_SCRIPT,
+          options.app ? [options.app] : [],
+          options.signal ? { signal: options.signal } : {},
+        ),
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -957,6 +1003,71 @@ export class DesktopBackend implements ScreenBackend {
       : string(read.value, "typed value");
   }
 
+  /**
+   * A window, or a region of the screen, as a PNG scaled so its longer edge is at most `maxEdge` pixels (a Retina
+   * capture is twice the window's points). Without Screen Recording macOS returns the desktop instead (or opens its
+   * prompt), so access is checked first, never asking. The file is deleted at once.
+   */
+  async screenshot(options: ScreenshotOptions = {}): Promise<Screenshot> {
+    const access = await macAccess(this.runner);
+    if (!access.screenRecording)
+      throw new Error(
+        `${SCREEN_RECORDING_OFF} A screenshot needs it: allow Ada in System Settings › Privacy & Security › Screen Recording, then try again.`,
+      );
+    const front = frontWindowShape(
+      json(
+        (
+          await this.call(FRONT_WINDOW_SCRIPT, options.app ? [options.app] : [], options.signal)
+        ).trim(),
+        "front window",
+      ),
+    );
+    const window = front.window;
+    if (!options.region && !window) throw new Error("The app in front has no open window.");
+    const region = options.region ?? {
+      x: window?.x ?? 0,
+      y: window?.y ?? 0,
+      w: window?.w ?? 0,
+      h: window?.h ?? 0,
+    };
+    const file = this.tmp();
+    try {
+      const target = options.region
+        ? `-R${region.x},${region.y},${region.w},${region.h}`
+        : `-l${window?.id ?? 0}`;
+      await this.runner.run(
+        "screencapture",
+        ["-x", "-o", "-t", "png", target, file],
+        options.signal ? { signal: options.signal } : undefined,
+      );
+      let size = pixelSize(
+        await this.runner.run("sips", ["-g", "pixelWidth", "-g", "pixelHeight", file]),
+      );
+      const fit = fitScale(size.w, size.h, options.maxEdge ?? SCREENSHOT_MAX_EDGE);
+      if (fit < 1) {
+        await this.runner.run("sips", [
+          "--resampleWidth",
+          String(Math.max(1, Math.round(size.w * fit))),
+          file,
+        ]);
+        size = pixelSize(
+          await this.runner.run("sips", ["-g", "pixelWidth", "-g", "pixelHeight", file]),
+        );
+      }
+      return {
+        png: new Uint8Array(await NodeFSP.readFile(file)),
+        width: size.w,
+        height: size.h,
+        region,
+        scale: region.w > 0 ? size.w / region.w : 1,
+        app: front.app,
+        title: window?.title ?? "",
+      };
+    } finally {
+      await NodeFSP.rm(file, { force: true });
+    }
+  }
+
   async pointer(): Promise<PointerReading> {
     const value = json((await this.call(POINTER_SCRIPT, [])).trim(), "pointer");
     const point = pointShape(value, "pointer");
@@ -978,6 +1089,14 @@ export class DesktopBackend implements ScreenBackend {
       throw explain(error instanceof Error ? error.message : String(error)) ?? error;
     }
   }
+}
+
+/** `sips -g pixelWidth -g pixelHeight` output → the image's size. */
+export function pixelSize(output: string): { w: number; h: number } {
+  const w = Number(/pixelWidth:\s*(\d+)/.exec(output)?.[1]);
+  const h = Number(/pixelHeight:\s*(\d+)/.exec(output)?.[1]);
+  if (!(w > 0) || !(h > 0)) throw new Error("The screenshot could not be read.");
+  return { w, h };
 }
 
 /** An act script's result: its mode ("background" or "pointer"), where it acted (`at`) and where it left the real pointer. */
@@ -1015,6 +1134,8 @@ export const SCRIPTS = {
 /** A script failure in words a person can act on, or null to pass it through. */
 function explain(message: string): Error | null {
   if (message.includes("ADA_GONE")) return new Error("That control is gone; look again.");
+  const named = message.match(/ADA_NO_APP_NAMED:([^:]*):/);
+  if (named) return new Error(`No app named “${named[1] ?? ""}” is running on the Mac.`);
   if (message.includes("ADA_NO_APP")) return new Error("No app is in front on the Mac.");
   if (message.includes("ADA_NO_WINDOW")) return new Error("The app in front has no open window.");
   if (message.includes("ADA_OFFSCREEN"))

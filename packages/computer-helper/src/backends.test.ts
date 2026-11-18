@@ -236,6 +236,52 @@ describe("DesktopBackend", () => {
       ...observation,
     });
     expect(calls[0]?.argv).toEqual([]);
+    await new DesktopBackend(runner).observe({ app: "Calculator" });
+    expect(calls[1]?.argv).toEqual(["Calculator"]);
+  });
+
+  it("scales a Retina window capture to the longest edge asked for, and says how image pixels map to points", async () => {
+    let resized = false;
+    const { runner, calls } = fakeRunner((call) => {
+      if (call.script.includes("CGPreflightScreenCaptureAccess"))
+        return '{"accessibility":true,"screenRecording":true,"host":""}';
+      if (call.script.includes("CGWindowListCopyWindowInfo"))
+        return JSON.stringify({
+          app: "Safari",
+          window: { id: 7, x: 100, y: 50, w: 1440, h: 900, title: "Docs" },
+        });
+      if (call.file === "sips" && call.args.includes("--resampleWidth")) {
+        resized = true;
+        return "";
+      }
+      if (call.file === "sips")
+        return resized
+          ? "pixelWidth: 1568\n  pixelHeight: 980\n"
+          : "pixelWidth: 2880\n  pixelHeight: 1800\n";
+      return "";
+    });
+    const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "ada-shot-"));
+    const file = NodePath.join(dir, "shot.png");
+    NodeFS.writeFileSync(file, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const shot = await new DesktopBackend(runner, { tmp: () => file }).screenshot({
+      maxEdge: 1568,
+    });
+    expect(shot).toMatchObject({
+      width: 1568,
+      height: 980,
+      region: { x: 100, y: 50, w: 1440, h: 900 },
+      app: "Safari",
+      title: "Docs",
+    });
+    expect(shot.scale).toBeCloseTo(1568 / 1440);
+    expect(Array.from(shot.png.subarray(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(calls.find((call) => call.args.includes("--resampleWidth"))?.args).toEqual([
+      "--resampleWidth",
+      "1568",
+      file,
+    ]);
+    expect(NodeFS.existsSync(file)).toBe(false);
+    NodeFS.rmSync(dir, { recursive: true, force: true });
   });
 
   it("refuses an observation with a role outside the closed set", async () => {
@@ -262,6 +308,8 @@ describe("DesktopBackend", () => {
     await desktop.act({ kind: "scroll", direction: "bottom" });
     await desktop.act({ kind: "scroll", direction: "down", ref: "0.3" });
     await desktop.act({ kind: "press", key: "space" });
+    await desktop.act({ kind: "press", key: "up" });
+    await desktop.act({ kind: "press", key: "cmd+l" });
     expect(calls.map((call) => call.argv)).toEqual([
       ["setvalue", JSON.stringify({ ref: "0.2.4", text })],
       ["value", JSON.stringify({ ref: "0.2.4" })],
@@ -270,6 +318,8 @@ describe("DesktopBackend", () => {
       ["scroll", JSON.stringify({ direction: "bottom" })],
       ["scroll", JSON.stringify({ direction: "down", ref: "0.3" })],
       ["press", JSON.stringify({ code: 49 })],
+      ["press", JSON.stringify({ code: 126 })],
+      ["press", JSON.stringify({ code: 37, command: "L" })],
     ]);
     // The value and text travel as argv on stdin, never spliced into the script source.
     expect(calls[0]?.script).not.toContain("Finder");
@@ -762,6 +812,9 @@ return run;`;
     });
     await expect(new DesktopBackend(runner).observe()).rejects.toThrow(
       /^Google Chrome is refusing to show its window.*Screen Recording is off for Ada, so no screenshot was taken/,
+    );
+    await expect(new DesktopBackend(runner).screenshot()).rejects.toThrow(
+      /^Screen Recording is off for Ada/,
     );
     expect(calls.some((call) => call.file === "screencapture")).toBe(false);
   });

@@ -25,6 +25,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Electron from "electron";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { createComputerOverlay } from "./ComputerOverlay.ts";
 import {
   type ComputerHostProcess,
   startComputerHostProcess,
@@ -88,6 +89,7 @@ const make = Effect.gen(function* () {
   const hosted = new Set<EnvironmentId>();
   const pending = new Map<string, PendingCall>();
   let helper: ComputerHostProcess | null = null;
+  const overlay = createComputerOverlay();
   let running: ActiveTask | null = null;
   let callCounter = 0;
 
@@ -119,6 +121,7 @@ const make = Effect.gen(function* () {
 
   const dropHelper = () => {
     releaseStopShortcut();
+    overlay.end();
     helper?.close();
     helper = null;
     running = null;
@@ -128,6 +131,7 @@ const make = Effect.gen(function* () {
     if (helper !== null) return helper;
     const started = startComputerHostProcess({
       workerPath,
+      onActed: overlay.show,
       onExit: (reason) => {
         if (helper !== started) return;
         helper = null;
@@ -345,6 +349,7 @@ const make = Effect.gen(function* () {
       goal: frame.goal,
       text: frame.text,
       limits: frame.limits,
+      ...(frame.act === undefined ? {} : { act: frame.act }),
       ask: taskAsk({ environmentId, taskId: frame.taskId }),
     };
     return host.start(task).then((started): ComputerHostReply => {
@@ -381,6 +386,18 @@ const make = Effect.gen(function* () {
         return yield* Effect.promise(() => control(environmentId, next));
       case "start":
         return yield* Effect.promise(() => start(environmentId, next));
+      case "look": {
+        const host = helper;
+        if (host === null) return { requestId: next.requestId, ok: false, error: NO_HELPER };
+        return yield* Effect.promise(() =>
+          host.look({
+            requestId: next.requestId,
+            screenshot: next.screenshot,
+            ...(next.app === undefined ? {} : { app: next.app }),
+            ...(next.region === undefined ? {} : { region: next.region }),
+          }),
+        );
+      }
     }
   });
 

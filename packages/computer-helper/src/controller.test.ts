@@ -23,6 +23,7 @@ import type {
   Session,
 } from "./controller.ts";
 import type { Answer, Answers, Question } from "./decisions.ts";
+import { FakeNotes } from "./fake.ts";
 import { NeedsPointer } from "./types.ts";
 import type {
   BrowserTab,
@@ -1091,6 +1092,88 @@ describe("ComputerUse", () => {
   });
 });
 
+describe("an act the agent chose", () => {
+  const actWith = (extra: Partial<Deps> = {}) => {
+    const page = new FakeNotes();
+    const server = allowAll();
+    const acted: Array<{ kind: string; mode: string }> = [];
+    const { computer } = computerWith([], { page, tabs: null }, server.authorize, {
+      onAct: (action, result) => acted.push({ kind: action.kind, mode: result.mode }),
+      ...extra,
+    });
+    return { page, server, acted, computer };
+  };
+
+  it("clicks by label in the background, through the server's grant, with no decider", async () => {
+    const { page, server, acted, computer } = actWith();
+    const outcome = await computer.run({
+      goal: "",
+      text: null,
+      act: { action: "click", label: "New Note" },
+    });
+    expect(outcome).toMatchObject({ status: "done", steps: ["clicked the button “New Note”"] });
+    expect(server.requests[0]?.action).toEqual({
+      kind: "click",
+      ref: "new",
+      role: "button",
+      label: "New Note",
+    });
+    expect(page.notes.at(-1)).toBe("New Note");
+    expect(acted).toEqual([{ kind: "click", mode: "background" }]);
+  });
+
+  it("asks once for the mouse when the background cannot take the step", async () => {
+    const { page, server, acted, computer } = actWith();
+    page.pointerOnly.add("new");
+    await computer.run({ goal: "", text: null, act: { action: "click", ref: "new" } });
+    expect(server.requests.map((request) => request.action.kind)).toEqual(["click", "pointer"]);
+    expect(acted).toEqual([{ kind: "click", mode: "pointer" }]);
+  });
+
+  it("types into the focused box, or stops when none has the focus", async () => {
+    const { page, server, computer } = actWith();
+    expect(await computer.run({ goal: "", text: "milk", act: { action: "type" } })).toMatchObject({
+      status: "stuck",
+      reason: expect.stringMatching(/No text box has the focus/),
+    });
+    await computer.run({ goal: "", text: null, act: { action: "click", ref: "search" } });
+    await computer.run({ goal: "", text: "milk", act: { action: "type" } });
+    expect(server.requests.at(-1)?.action).toMatchObject({
+      kind: "type",
+      ref: "search",
+      text: "milk",
+    });
+    expect(page.query).toBe("milk");
+    await computer.run({ goal: "", text: null, act: { action: "key", key: "return" } });
+    expect(server.requests.at(-1)?.action).toMatchObject({ kind: "press", key: "enter" });
+    expect(page.searched).toBe(true);
+  });
+
+  it("opens a web address in the default browser once it is granted, and names the browser", async () => {
+    const opened: string[] = [];
+    const { server, computer } = actWith({
+      urls: {
+        open: async (url) => {
+          opened.push(url);
+          return "Safari";
+        },
+      },
+    });
+    const outcome = await computer.run({
+      goal: "",
+      text: null,
+      act: { action: "open_url", url: "https://example.com" },
+    });
+    expect(server.requests[0]?.action).toEqual({ kind: "open_url", url: "https://example.com" });
+    expect(opened).toEqual(["https://example.com"]);
+    expect(outcome).toMatchObject({
+      status: "done",
+      surface: "Safari",
+      steps: ["opened https://example.com in Safari"],
+    });
+  });
+});
+
 describe("ComputerUseRuns", () => {
   const session: Session = { decider: { ask: async () => ({}) }, authorize: async () => ALLOW };
 
@@ -1483,5 +1566,8 @@ describe("navigationText", () => {
     expect(navigationText("reply to the email from example.com")).toBeNull();
     expect(navigationText("open the email from paypal.com and click unsubscribe")).toBeNull();
     expect(navigationText("open the website example.org")).toBe("example.org");
+    expect(navigationText("open Chrome and go to app.t3.codes")).toBe("app.t3.codes");
+    expect(navigationText("go to localhost:3000/settings")).toBe("localhost:3000/settings");
+    expect(navigationText("open notes.txt")).toBeNull();
   });
 });

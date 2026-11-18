@@ -7,6 +7,7 @@ import { needsPointer } from "./types.ts";
 import type {
   ActResult,
   BrowserTab,
+  Key,
   BrowserTabs,
   Observation,
   PointerWatch,
@@ -26,6 +27,20 @@ export type ComputerTask = {
   goal: string;
   /** Exact text to type (a message, a search), if the task types anything. */
   text: string | null;
+  /** One step the agent chose itself, done instead of working toward the goal. */
+  act?: ComputerAct;
+};
+
+/** An agent's own step on the window in front; a `type` step types the task's `text`. */
+export type ComputerAct = {
+  action: "click" | "type" | "key" | "scroll" | "open_url";
+  ref?: string;
+  label?: string;
+  x?: number;
+  y?: number;
+  key?: Key | "return";
+  direction?: "up" | "down" | "top" | "bottom";
+  url?: string;
 };
 
 export type ComputerOutcome = {
@@ -48,9 +63,10 @@ export type AuthorizeAction =
   /** `field`: the text box typed into before this Enter. */
   | {
       kind: "press";
-      key: "enter" | "escape" | "tab" | "space";
+      key: Key;
       field?: { role: ScreenControl["role"]; label: string };
     }
+  | { kind: "open_url"; url: string }
   | { kind: "scroll"; direction: "up" | "down" | "top" | "bottom" }
   | { kind: "surface"; what: "tab" | "app"; name: string }
   /** The real pointer and keyboard for one step that cannot be done in the background (`step`: the action, `why`: the backend's reason). */
@@ -85,6 +101,8 @@ export type Session = {
   authorize: Authorize;
   /** Each thing it did, in words ("clicked the button “Search”"), as it happens. */
   onStep?: (text: string) => void;
+  /** How each action reached the app and where, for the audit and the overlay; never what it typed. */
+  onAct?: (action: ScreenAction, result: ActResult) => void;
 };
 
 export type Deps = Session & {
@@ -96,6 +114,8 @@ export type Deps = Session & {
   dock: { list(): Promise<string[]>; activate(name: string): Promise<unknown> } | null;
   /** Running app names, for apps that are not in the Dock, and bringing one to the front. */
   apps: { running(): Promise<string[]>; activate(name: string): Promise<void> } | null;
+  /** Opens a web address in the default browser and names that browser. */
+  urls?: { open(url: string): Promise<string> } | null;
   log: Logger;
   minConfidence?: number;
   /** Time for the screen to settle after an action. */
@@ -210,6 +230,7 @@ export class ComputerUse {
   }
 
   async run(given: ComputerTask, options: RunOptions = {}): Promise<ComputerOutcome> {
+    if (given.act) return this.runAct(given, given.act, options);
     // "Go to example.com" carries the text to type in the goal itself: the address, taken literally.
     const task: ComputerTask =
       given.text === null ? { ...given, text: navigationText(given.goal) } : given;
@@ -315,6 +336,66 @@ export class ComputerUse {
         await this.sleep(this.settleMs);
       }
       return end("stuck", `It did not finish within ${run.maxSteps} steps.`);
+    } catch (error) {
+      if (run.signal.aborted) return end("stopped", stopReason(run.signal));
+      if (error instanceof Halt) return end(error.status, error.message);
+      return end("failed", messageOf(error));
+    }
+  }
+
+  /** One step the agent chose: the same grant, background-first act and mouse fallback as a goal's step, no decider. */
+  private async runAct(
+    task: ComputerTask,
+    act: ComputerAct,
+    options: RunOptions,
+  ): Promise<ComputerOutcome> {
+    const run: Run = {
+      task,
+      secret: task.text,
+      signal: options.signal ?? new AbortController().signal,
+      watch: options.watch ?? null,
+      steps: [],
+      maxSteps: clampLimit(options.limits?.maxSteps, MAX_STEPS),
+      timeoutMs: clampLimit(options.limits?.timeoutMs, TIMEOUT_MS),
+      started: this.now(),
+      waited: 0,
+      authorized: 0,
+      typedInto: null,
+    };
+    let surface: string | null = null;
+    const end = (status: ComputerOutcome["status"], reason: string, where = surface) => {
+      this.deps.log.info("computer_use.acted", {
+        action: act.action,
+        status,
+        ms: this.now() - run.started,
+      });
+      return { status, reason: without(reason, run.secret), steps: run.steps, surface: where };
+    };
+    try {
+      this.checkpoint(run);
+      if (act.action === "open_url") {
+        const url = act.url ?? "";
+        if (!this.deps.urls)
+          return end("unavailable", "This computer cannot open web addresses.", null);
+        await this.authorize(run, { app: "", title: "" }, { kind: "open_url", url });
+        await this.beforeTouching(run);
+        const browser = await this.deps.urls.open(url);
+        this.record(run, `opened ${url} in ${browser}`);
+        return end("done", "", browser);
+      }
+      const backend = this.deps.desktop;
+      if (!backend)
+        return end(
+          "unavailable",
+          "Computer use needs accessibility access on this computer.",
+          null,
+        );
+      const seen = await backend.observe({ signal: run.signal });
+      surface = `${seen.app}: ${clip(seen.title, 60)}`;
+      const chosen = actOn(seen, act, task.text);
+      if ("stop" in chosen) return end("stuck", chosen.stop);
+      await this.act(run, backend, chosen.screen, chosen.action, chosen.said);
+      return end("done", "");
     } catch (error) {
       if (run.signal.aborted) return end("stopped", stopReason(run.signal));
       if (error instanceof Halt) return end(error.status, error.message);
@@ -453,6 +534,16 @@ export class ComputerUse {
       result = await this.perform(run, backend, action, true);
     }
     if (action.kind === "type") run.typedInto = this.control(screen, action.ref);
+    if (!result.at && (action.kind === "click" || action.kind === "type")) {
+      const b = this.control(screen, action.ref).bounds;
+      if (b)
+        result = { ...result, at: { x: Math.round(b.x + b.w / 2), y: Math.round(b.y + b.h / 2) } };
+    }
+    try {
+      this.deps.onAct?.(action, result);
+    } catch (error) {
+      this.deps.log.warn("computer_use.act_report_failed", { error: messageOf(error) });
+    }
     this.record(
       run,
       result.mode === "pointer" ? `${said} (with your mouse, as you allowed)` : said,
@@ -470,6 +561,15 @@ export class ComputerUse {
     if (action.kind !== "click" && action.kind !== "type") return;
     const chosen = this.control(screen, action.ref);
     const now = await backend.observe({ signal: run.signal });
+    // A screen point the agent named is what was approved: only the app under it must be the same.
+    if (chosen.role === "other" && chosen.ref.startsWith("v:")) {
+      if (now.app !== screen.app)
+        throw new Halt(
+          "stuck",
+          "The screen changed while it waited for your OK, so it did not act.",
+        );
+      return;
+    }
     const same = now.controls.find((control) => control.ref === action.ref);
     if (
       now.app !== screen.app ||
@@ -782,7 +882,9 @@ export class ComputerUse {
               }),
           ...(navigationUnmet(task.goal, screen)
             ? {}
-            : { done: "The goal is already done on this screen." }),
+            : {
+                done: "The goal is already done on this screen, or it only asks to read or report what this screen shows.",
+              }),
           stuck: "None of these moves toward the goal.",
         },
       },
@@ -844,6 +946,86 @@ export class ComputerUse {
       action: { kind: "click", ref: control.ref },
       step: `clicked the ${describeControl(control)}`,
     };
+  }
+}
+
+/** The smallest control whose bounds hold a screen point. */
+function controlAt(controls: ScreenControl[], x: number, y: number): ScreenControl | undefined {
+  return controls
+    .filter(
+      (c) =>
+        c.bounds &&
+        x >= c.bounds.x &&
+        x <= c.bounds.x + c.bounds.w &&
+        y >= c.bounds.y &&
+        y <= c.bounds.y + c.bounds.h,
+    )
+    .sort(
+      (a, b) => (a.bounds?.w ?? 0) * (a.bounds?.h ?? 0) - (b.bounds?.w ?? 0) * (b.bounds?.h ?? 0),
+    )[0];
+}
+
+/** An agent's step as an action on this screen, or why it cannot be one. */
+function actOn(
+  screen: Observation,
+  act: ComputerAct,
+  text: string | null,
+): { screen: Observation; action: ScreenAction; said: string } | { stop: string } {
+  const byRef = act.ref === undefined ? undefined : screen.controls.find((c) => c.ref === act.ref);
+  if (act.ref !== undefined && !byRef) return { stop: "That control is gone; look again." };
+  switch (act.action) {
+    case "click": {
+      const named = act.label === undefined ? null : matchControl(screen.controls, act.label);
+      if (act.label !== undefined && !byRef && !named)
+        return { stop: `No single control “${clip(act.label, 60)}” is on screen; look again.` };
+      const at =
+        act.x !== undefined && act.y !== undefined
+          ? { x: Math.round(act.x), y: Math.round(act.y) }
+          : null;
+      const target = byRef ?? named ?? (at ? controlAt(screen.controls, at.x, at.y) : undefined);
+      if (target)
+        return {
+          screen,
+          action: { kind: "click", ref: target.ref },
+          said: `clicked the ${describeControl(target)}`,
+        };
+      if (!at) return { stop: "Name the control to click: its ref, its label, or x and y." };
+      const spot: ScreenControl = {
+        ref: `v:${at.x},${at.y}`,
+        role: "other",
+        label: `the point ${at.x},${at.y}`,
+      };
+      return {
+        screen: { ...screen, controls: [...screen.controls, spot] },
+        action: { kind: "click", ref: spot.ref },
+        said: `clicked at ${at.x},${at.y}`,
+      };
+    }
+    case "type": {
+      if (!text) return { stop: "There is no text to type." };
+      const box = byRef ?? screen.controls.find((c) => c.role === "textbox" && c.focused);
+      if (!box) return { stop: "No text box has the focus: click one first, or pass its ref." };
+      return {
+        screen,
+        action: { kind: "type", ref: box.ref, text },
+        said: `typed the text into the ${describeControl(box)}`,
+      };
+    }
+    case "key": {
+      if (!act.key) return { stop: "Name the key to press." };
+      const key = act.key === "return" ? "enter" : act.key;
+      return { screen, action: { kind: "press", key }, said: `pressed ${act.key}` };
+    }
+    case "scroll": {
+      const direction = act.direction ?? "down";
+      return {
+        screen,
+        action: { kind: "scroll", direction, ...(byRef ? { ref: byRef.ref } : {}) },
+        said: `scrolled ${direction}`,
+      };
+    }
+    case "open_url":
+      return { stop: "Opening a web address is not a step on the screen." };
   }
 }
 
@@ -969,7 +1151,9 @@ export function navigationUnmet(goal: string, screen: Observation): boolean {
  */
 export function navigationText(goal: string): string | null {
   // Never an address inside an email address ("bob@example.com").
-  const address = String.raw`(?<![@\w.-])(?:https?:\/\/[^\s"“”'‘’<>]+|(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|org|net|io|tv|app|dev|co|ai|me|edu|gov|uk|de|fr|jp|info|news|blog)(?:\/[^\s"“”'‘’<>]*)?)`;
+  // Any top-level domain, but not a file name ("notes.txt"), plus localhost and an IPv4 address, with a port.
+  const host = String.raw`(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?!${FILE_EXTENSIONS}\b)[a-z]{2,24}\b)`;
+  const address = String.raw`(?<![@\w.-])(?:https?:\/\/[^\s"“”'‘’<>]+|${host}(?::\d{2,5})?(?:\/[^\s"“”'‘’<>]*)?)`;
   // The address right after the verb: "go to example.com", "navigate Chrome to x.com", "take me to x.com"; not "open the
   // email from x.com" (the address is not what is opened).
   const toVerb = String.raw`\b(?:go|navigate|browse|head|get|take\s+me|bring\s+me|switch)(?:\s+\S+){0,3}?\s+to\s+`;
@@ -978,6 +1162,8 @@ export function navigationText(goal: string): string | null {
   const found = new RegExp(`(?:${toVerb}|${openVerb})${what}(${address})`, "i").exec(goal)?.[1];
   return found ? found.replace(/[.,;:!?)]+$/, "") : null;
 }
+
+const FILE_EXTENSIONS = String.raw`(?:txt|md|pdf|png|jpe?g|gif|svg|webp|heic|docx?|xlsx?|pptx?|csv|json|ya?ml|toml|js|ts|tsx|jsx|mjs|py|rb|go|rs|sh|zip|dmg|pkg|mov|mp3|mp4|wav|log|key|pages|numbers|html?|css|swift|java)`;
 
 /** What a screen shows, for telling whether an action changed it: title, page, controls and text. */
 export function screenKey(screen: Observation): string {

@@ -1,5 +1,6 @@
 import type {
   ComputerAction,
+  ComputerLook,
   ComputerHostConnectInput,
   ComputerHostFrame,
   ComputerHostId,
@@ -184,6 +185,7 @@ type FakeHost = {
   readonly stops: Ref.Ref<ReadonlyArray<string>>;
   /** Each stop frame's task, as the computer receives it. */
   readonly stopFrames: Queue.Queue<string>;
+  readonly starts: Queue.Queue<Extract<ComputerHostFrame, { kind: "start" }>>;
   readonly authorize: (input: {
     readonly taskId: ComputerTaskId;
     readonly step: number;
@@ -194,7 +196,15 @@ type FakeHost = {
     readonly questions: Parameters<
       ComputerService.ComputerService["Service"]["hostDecide"]
     >[0]["questions"];
+    readonly state?: unknown;
   }) => ReturnType<ComputerService.ComputerService["Service"]["hostDecide"]>;
+};
+
+const CALCULATOR: ComputerLook = {
+  app: "Calculator",
+  title: "Calculator",
+  text: "42",
+  controls: [{ ref: "0.1", role: "button", label: "Equals" }],
 };
 
 /** A computer that answers every command the way a real one would. */
@@ -204,6 +214,7 @@ const startHost = (overrides: Partial<ComputerHostConnectInput> = {}) =>
     const hostId = yield* Deferred.make<ComputerHostId>();
     const stops = yield* Ref.make<ReadonlyArray<string>>([]);
     const stopFrames = yield* Queue.unbounded<string>();
+    const starts = yield* Queue.unbounded<Extract<ComputerHostFrame, { kind: "start" }>>();
     const handle = (frame: ComputerHostFrame) =>
       Effect.gen(function* () {
         if (frame.kind === "welcome") {
@@ -215,6 +226,7 @@ const startHost = (overrides: Partial<ComputerHostConnectInput> = {}) =>
           yield* Queue.offer(stopFrames, frame.taskId);
           return;
         }
+        if (frame.kind === "start") yield* Queue.offer(starts, frame);
         const id = yield* Deferred.await(hostId);
         yield* service.hostRespond({
           hostId: id,
@@ -222,6 +234,7 @@ const startHost = (overrides: Partial<ComputerHostConnectInput> = {}) =>
             requestId: frame.requestId,
             ok: true,
             ...(frame.kind === "control" ? { done: "Done." } : {}),
+            ...(frame.kind === "look" ? { look: CALCULATOR } : {}),
           },
         });
       });
@@ -234,6 +247,7 @@ const startHost = (overrides: Partial<ComputerHostConnectInput> = {}) =>
       fiber,
       stops,
       stopFrames,
+      starts,
       authorize: (input) =>
         service.hostAuthorize({
           hostId: id,
@@ -246,7 +260,7 @@ const startHost = (overrides: Partial<ComputerHostConnectInput> = {}) =>
         service.hostDecide({
           hostId: id,
           taskId: input.taskId,
-          state: {},
+          state: input.state ?? {},
           questions: input.questions,
         }),
     } satisfies FakeHost;
@@ -574,6 +588,121 @@ it.effect("an answer naming a key that was not offered is dropped", () =>
   }).pipe(Effect.provide(layerTest())),
 );
 
+it.effect("an ended task returns what its screen last showed, without the typed text", () =>
+  Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const host = yield* startHost();
+    const task = yield* startUse();
+    const look = (visibleText: string) =>
+      host.decide({
+        taskId: task.taskId,
+        state: { goal: task.goal, screen: { app: "Messages", title: "Dana", visibleText } },
+        questions: {
+          next: { type: "choice", instructions: "What next?", criteria: { done: "Done" } },
+        },
+      });
+
+    yield* look("Dana: are you coming? Me: on my way");
+    assert.strictEqual(
+      (yield* taskOf(task.taskId))?.screenText,
+      "Dana: are you coming? Me: [typed text]",
+    );
+    yield* host.authorize({ taskId: task.taskId, step: 1, action: scroll() });
+    assert.isUndefined((yield* taskOf(task.taskId))?.screenText, "a step since makes it stale");
+
+    yield* look("4".repeat(2_000));
+    yield* service.hostEvent({
+      hostId: host.hostId,
+      taskId: task.taskId,
+      event: { type: "finished", status: "done", reason: "", steps: [], surface: "Messages: Dana" },
+    });
+    const ended = yield* taskOf(task.taskId);
+    assert.strictEqual(ended?.status, "done");
+    assert.strictEqual(ended?.screenText, "4".repeat(1_500));
+    const client = yield* Stream.runHead(yield* service.subscribe);
+    assert.isUndefined(
+      client._tag === "Some" ? client.value.tasks[0]?.screenText : "missing",
+      "clients are not sent the screen",
+    );
+  }).pipe(
+    Effect.provide(
+      layerTest({
+        decider: ComputerDecider.ComputerDecider.of({
+          ask: () =>
+            Effect.succeed({
+              _tag: "answers",
+              answers: { next: { type: "choice", choice: "done", probability: 0.9 } },
+            } as const),
+          judge: () => Effect.succeed({ _tag: "not_configured" } as const),
+        }),
+      }),
+    ),
+  ),
+);
+
+it.effect("a look reads the screen without a task, and its audit keeps none of the screen", () =>
+  Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const audit = yield* ComputerAudit.ComputerAudit;
+    const host = yield* startHost();
+    yield* startUse();
+
+    const look = yield* service.look({ requester: "agent: test", app: "Calculator" });
+    assert.deepStrictEqual(look, CALCULATOR);
+    const { ts: _ts, ...line } =
+      (yield* audit.tail(10)).find((entry) => entry.event === "look") ?? {};
+    assert.deepStrictEqual(line, {
+      event: "look",
+      hostId: host.hostId,
+      requester: "agent: test",
+      app: "Calculator",
+      title: "Calculator",
+      controls: 1,
+      screenshot: null,
+    });
+  }).pipe(Effect.provide(layerTest())),
+);
+
+it.effect("an act is a one-step task: typed text stays out of its view and audit", () =>
+  Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const audit = yield* ComputerAudit.ComputerAudit;
+    const host = yield* startHost();
+
+    const task = yield* service.act({
+      act: { action: "type" },
+      text: "hunter2 rides again",
+      requester: "agent: test",
+    });
+    const start = yield* Queue.take(host.starts);
+    assert.deepStrictEqual(start.act, { action: "type" });
+    assert.strictEqual(start.text, "hunter2 rides again");
+    assert.notInclude(JSON.stringify(task), "hunter2");
+
+    yield* service.hostEvent({
+      hostId: host.hostId,
+      taskId: task.taskId,
+      event: { type: "acted", kind: "type", mode: "background", how: "value set" },
+    });
+    const lines = yield* audit.tail(10);
+    assert.notInclude(JSON.stringify(lines), "hunter2");
+    const started = lines.find((line) => line.event === "task.start");
+    assert.strictEqual(started?.textLength, 19);
+    assert.match(String(started?.textSha256), /^[0-9a-f]{12}$/);
+    assert.deepStrictEqual(
+      lines.find((line) => line.event === "act"),
+      {
+        ts: lines.find((line) => line.event === "act")?.ts,
+        event: "act",
+        taskId: task.taskId,
+        kind: "type",
+        mode: "background",
+        how: "value set",
+      },
+    );
+  }).pipe(Effect.provide(layerTest())),
+);
+
 it.effect("with approvals off a tap is granted at once and audited as skipped", () =>
   Effect.gen(function* () {
     const audit = yield* ComputerAudit.ComputerAudit;
@@ -597,6 +726,13 @@ it.effect("with approvals off a tap is granted at once and audited as skipped", 
       label: "Send",
     });
     assert.isFalse(lines.some((line) => line.event === "approval.request"));
+
+    const mouse = yield* host
+      .authorize({ taskId: task.taskId, step: 2, action: { kind: "pointer", why: "no action" } })
+      .pipe(Effect.forkScoped);
+    const approval = yield* waitForApproval(task.taskId);
+    assert.match(approval.binding.why, /needs your mouse/, "the real pointer always asks");
+    yield* Fiber.interrupt(mouse);
   }).pipe(Effect.provide(layerTest({ settings: { computerApprovals: "skip" } }))),
 );
 
@@ -608,7 +744,8 @@ it.effect("refused steps stay refused with approvals off", () =>
       yield* host.authorize({ taskId: task.taskId, step: 1, action: { kind: "teleport" } }),
       {
         ok: false,
-        denied: "not a step computer use takes (click, type, press, scroll, surface, pointer)",
+        denied:
+          "not a step computer use takes (click, type, press, scroll, surface, open_url, pointer)",
       },
     );
     assert.strictEqual((yield* taskOf(task.taskId))?.status, "blocked");

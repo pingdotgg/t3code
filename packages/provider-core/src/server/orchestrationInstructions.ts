@@ -64,6 +64,8 @@ export const T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH = deviceToolInstr
 
 const T3_CODE_COMPUTER_TOOLS = [
   "computer_status",
+  "computer_look",
+  "computer_act",
   "computer_control",
   "computer_use",
   "computer_stop",
@@ -71,8 +73,8 @@ const T3_CODE_COMPUTER_TOOLS = [
 
 const computerToolInstructions = (loadTools: string) => `## ${APP_NAME} computer use
 
-For something on the user's own Mac rather than in the checkout (clicking through a native app, reading a window only that app shows, filling a form in their browser), use \`computer_use\`, not \`osascript\`, AppleScript, \`open\` or \`screencapture\` in the shell.${loadTools}
-Put any words the task must type in \`text\`, exactly and in full: \`goal\` says what to do and types nothing. \`computer_control\` is for the fixed actions only: open or quit an app, volume, media, dark mode, and locking the screen.
+For something on the user's own Mac rather than in the checkout (clicking through a native app, reading a window only that app shows, filling a form in their browser), use the computer tools, not \`osascript\`, AppleScript, \`open\` or \`screencapture\` in the shell.${loadTools}
+Drive it yourself step by step: \`computer_look\` reads the window and its controls, then \`computer_act\` clicks, types, presses a key, scrolls or opens a web address; look again after each step. \`computer_use\` hands a whole goal to its own decider instead; put any words that task must type in \`text\`, exactly and in full, since \`goal\` types nothing. \`computer_control\` is for the fixed actions only: open or quit an app, volume, media, dark mode, and locking the screen.
 A task that comes back with questions wants \`taskId\`, \`decisionId\` and \`answers\`, each choosing one of the keys it offered, with a confidence of high, medium or low; never invent a key. When a step waits for the user's approval, wait for them or report it: you cannot approve it, and working around it fails. When a task ends \`blocked\` (the user denied it) or \`stuck\`, stop and say so instead of starting it again. \`computer_status\` follows a running task and \`computer_stop\` ends one.
 A page the preview browser can open is preview work, not computer work, and a change in the checkout needs neither.`;
 

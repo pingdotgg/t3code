@@ -128,6 +128,36 @@ describe("the helper child", () => {
     });
   });
 
+  it("reads a window on a look frame without a task, and reports how an act reached the app", async () => {
+    const parent = channel((message) =>
+      message.kind === "authorize"
+        ? { id: message.id, kind: "grant", grant: { ok: true, grant: "allow" } }
+        : null,
+    );
+    createChild({ transport: parent.transport, mac: machine, log: recorder().log });
+    parent.down({ id: "look_1", kind: "look" });
+    const look = await parent.until((message) => message.kind === "look");
+    expect(look).toMatchObject({ id: "look_1", look: { app: "Notes", text: "3 notes" } });
+    expect(look.kind === "look" ? look.look.controls[0] : null).toEqual({
+      ref: "search",
+      role: "textbox",
+      label: "Search",
+      value: "",
+    });
+
+    parent.down({
+      id: "act_1",
+      kind: "start",
+      task: { goal: "click Delete", text: null, act: { action: "click", ref: "delete" } },
+    });
+    await parent.until((message) => message.kind === "finished");
+    expect(parent.sent.find((message) => message.kind === "acted")).toMatchObject({
+      taskId: "act_1",
+      action: "click",
+      mode: "background",
+    });
+  });
+
   it("refuses a second task while one runs, and reports what is running", async () => {
     const parent = channel((message) =>
       message.kind === "authorize"

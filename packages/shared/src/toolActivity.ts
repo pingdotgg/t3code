@@ -42,6 +42,8 @@ const COMPUTER_TOOL_SOURCE = {
 } as const;
 
 const COMPUTER_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "computer_act",
+  "computer_look",
   "computer_control",
   "computer_use",
   "computer_status",

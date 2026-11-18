@@ -4,6 +4,7 @@ import { ComputerUse, ComputerUseRuns } from "./controller.ts";
 import type {
   Authorize,
   AuthorizeRequest,
+  ComputerAct,
   ComputerOutcome,
   ComputerTask,
   Grant,
@@ -21,7 +22,7 @@ import type { Logger } from "./log.ts";
 import { MacControls, parseControl } from "./macControls.ts";
 import type { ComputerControl } from "./macControls.ts";
 import { LocalStop } from "./stop.ts";
-import type { BrowserTabs, ScreenBackend } from "./types.ts";
+import type { BrowserTabs, Observation, Point, Rect, ScreenBackend } from "./types.ts";
 
 /** The fixed controls the server can ask this computer for, and the notice a task start shows. */
 export type MacControlRunner = {
@@ -36,11 +37,27 @@ export type Mac = {
   dock: { list(): Promise<string[]>; activate(name: string): Promise<unknown> } | null;
   apps: { running(): Promise<string[]>; activate(name: string): Promise<void> } | null;
   controls: MacControlRunner | null;
+  urls?: { open(url: string): Promise<string> } | null;
+};
+
+/** A window as a look reads it: the observation, and a PNG of it when asked or when it lists no controls. */
+export type Look = Omit<Observation, "backend" | "window" | "text"> & {
+  text: string;
+  screenshot?: {
+    mimeType: "image/png";
+    data: string;
+    width: number;
+    height: number;
+    region: Rect;
+    scale: number;
+  };
 };
 
 /** A request from the server that runs the helper. Its `id` is repeated on every reply about it. */
 export type ChildRequest =
-  | { id: string; kind: "start"; task: ComputerTask; limits?: Limits }
+  | { id: string; kind: "start"; task: ComputerTask & { act?: ComputerAct }; limits?: Limits }
+  /** Reads a window without changing anything. */
+  | { id: string; kind: "look"; app?: string; screenshot?: boolean; region?: Rect }
   | { id: string; kind: "stop"; taskId?: string; reason?: string }
   | { id: string; kind: "control"; control: unknown }
   | { id: string; kind: "status" }
@@ -58,6 +75,17 @@ export type ChildMessage =
   | { id: string; kind: "current"; current: { id: string; goal: string } | null }
   | { id: string; kind: "access"; access: MacAccess }
   | { id: string; kind: "control"; done: string }
+  | { id: string; kind: "look"; look: Look }
+  /** How one action reached the app and where, for the audit and the overlay; never what it typed. */
+  | {
+      id: string;
+      kind: "acted";
+      taskId: string;
+      action: string;
+      mode: "background" | "pointer";
+      how: string;
+      at?: Point;
+    }
   | { id: string; kind: "error"; error: string }
   | {
       id: string;
@@ -175,19 +203,22 @@ export function createChild(options: ChildOptions): Child {
 
   const runs = new ComputerUseRuns({
     create: (session: Session) => {
-      const { desktop, tabs, dock, apps } = machine();
-      return new ComputerUse({ ...session, desktop, tabs, dock, apps, log });
+      const { desktop, tabs, dock, apps, urls } = machine();
+      return new ComputerUse({ ...session, desktop, tabs, dock, apps, urls: urls ?? null, log });
     },
     watch: (abort) =>
       localStop()?.watch((reason) => {
         abort(reason);
         abandon(reason);
       }) ?? null,
-    onStart: () =>
+    // One notice a goal: an agent's single acts would post one per click.
+    onStart: (task) => {
+      if (task.act) return;
       void machine().controls?.notify(
         "Ada is using this Mac",
         "To stop it, hold the pointer in the top-left corner.",
-      ),
+      );
+    },
     log,
   });
 
@@ -197,6 +228,18 @@ export function createChild(options: ChildOptions): Child {
       decider,
       authorize,
       onStep: (text) => reply({ id, kind: "step", taskId: id, text }),
+      onAct: (action, result) =>
+        reply({
+          id,
+          kind: "acted",
+          taskId: id,
+          action: action.kind,
+          mode: result.mode,
+          how:
+            result.how ??
+            (result.mode === "pointer" ? "the real pointer, as allowed" : "in the background"),
+          ...(result.at ? { at: result.at } : {}),
+        }),
     };
     const started = runs.start(id, task, session, limits);
     if (!started.ok) return reply({ id, kind: "error", error: started.error });
@@ -238,6 +281,13 @@ export function createChild(options: ChildOptions): Child {
         return reply({ id: frame.id, kind: "current", current: runs.current });
       case "status":
         return reply({ id: frame.id, kind: "current", current: runs.current });
+      case "look": {
+        try {
+          return reply({ id: frame.id, kind: "look", look: await look(frame) });
+        } catch (error) {
+          return reply({ id: frame.id, kind: "error", error: messageOf(error) });
+        }
+      }
       case "control": {
         const controls = machine().controls;
         if (!controls)
@@ -261,6 +311,40 @@ export function createChild(options: ChildOptions): Child {
         }
       }
     }
+  };
+
+  const look = async (frame: Extract<ChildRequest, { kind: "look" }>): Promise<Look> => {
+    const desktop = machine().desktop;
+    if (!desktop) throw new Error("Computer use needs accessibility access on this computer.");
+    const {
+      backend: _backend,
+      window: _window,
+      ...observed
+    } = await desktop.observe(frame.app ? { app: frame.app } : {});
+    const seen: Look = { ...observed, text: observed.text ?? "" };
+    const wanted = frame.screenshot === true;
+    if (!desktop.screenshot || (!wanted && seen.controls.length > 0)) return seen;
+    const shot = await desktop
+      .screenshot({
+        ...(frame.app ? { app: frame.app } : {}),
+        ...(frame.region ? { region: frame.region } : {}),
+      })
+      .catch((error: unknown) => {
+        if (wanted) throw error;
+        return null;
+      });
+    if (!shot) return seen;
+    return {
+      ...seen,
+      screenshot: {
+        mimeType: "image/png",
+        data: Buffer.from(shot.png).toString("base64"),
+        width: shot.width,
+        height: shot.height,
+        region: shot.region,
+        scale: shot.scale,
+      },
+    };
   };
 
   const close = async (reason = PARENT_GONE) => {
@@ -312,6 +396,7 @@ function defaultMac(): Mac {
     dock: new DockApps(),
     apps: controls,
     controls,
+    urls: { open: (url) => controls.openUrl(url) },
   };
 }
 

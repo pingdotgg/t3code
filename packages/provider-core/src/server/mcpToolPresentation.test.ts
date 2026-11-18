@@ -27,6 +27,8 @@ describe("mcpToolPresentation", () => {
       "mcp__t3-code__computer_control",
       "mcp__t3-code__computer_status",
       "mcp__t3-code__computer_stop",
+      "mcp__t3-code__computer_look",
+      "mcp__t3-code__computer_act",
     ]) {
       expect(mcpToolPresentation({ toolName })).toEqual({
         toolSource: { key: "computer", name: "Computer use", kind: "computer" },

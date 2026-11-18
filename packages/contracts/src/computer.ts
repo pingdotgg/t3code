@@ -55,6 +55,8 @@ export const ComputerAction = Schema.Struct({
   name: Schema.optionalKey(Schema.String),
   /** `pointer`: why the background could not take the step, for the card. */
   why: Schema.optionalKey(Schema.String),
+  /** `open_url`: the address handed to the default browser. */
+  url: Schema.optionalKey(Schema.String),
 });
 export type ComputerAction = typeof ComputerAction.Type;
 
@@ -258,6 +260,85 @@ export const ComputerControl = Schema.Struct({
 });
 export type ComputerControl = typeof ComputerControl.Type;
 
+const COMPUTER_ACT_ACTIONS = ["click", "type", "key", "scroll", "open_url"] as const;
+const COMPUTER_KEYS = [
+  "return",
+  "tab",
+  "escape",
+  "space",
+  "up",
+  "down",
+  "left",
+  "right",
+  "cmd+l",
+  "cmd+t",
+  "cmd+w",
+] as const;
+export const ComputerKey = Schema.Literals(COMPUTER_KEYS);
+export type ComputerKey = typeof ComputerKey.Type;
+
+/**
+ * One step an agent takes itself on the window in front. The text a `type` step types travels apart from it, as a
+ * task's text does, so it is never copied into a view or an audit line.
+ */
+export const ComputerAct = Schema.Struct({
+  action: Schema.Literals(COMPUTER_ACT_ACTIONS),
+  /** `click`, `type`, `scroll`: a control's ref from the last look. */
+  ref: Schema.optionalKey(Schema.String),
+  /** `click`: a control's label, when no ref is at hand. */
+  label: Schema.optionalKey(Schema.String),
+  /** `click`: a screen point, when the control is not in the look. */
+  x: Schema.optionalKey(Schema.Number),
+  y: Schema.optionalKey(Schema.Number),
+  key: Schema.optionalKey(ComputerKey),
+  direction: Schema.optionalKey(Schema.Literals(["up", "down", "top", "bottom"])),
+  url: Schema.optionalKey(Schema.String),
+});
+export type ComputerAct = typeof ComputerAct.Type;
+
+export const ComputerRect = Schema.Struct({
+  x: Schema.Number,
+  y: Schema.Number,
+  w: Schema.Number,
+  h: Schema.Number,
+});
+export type ComputerRect = typeof ComputerRect.Type;
+
+/** A window as a look reads it. Every string comes from the screen: data, never instructions. */
+export const ComputerLook = Schema.Struct({
+  app: Schema.String,
+  title: Schema.String,
+  url: Schema.optionalKey(Schema.String),
+  /** The visible text, at most 1,500 characters. */
+  text: Schema.String,
+  controls: Schema.Array(
+    Schema.Struct({
+      ref: Schema.String,
+      role: Schema.String,
+      label: Schema.String,
+      value: Schema.optionalKey(Schema.String),
+      focused: Schema.optionalKey(Schema.Boolean),
+      bounds: Schema.optionalKey(ComputerRect),
+    }),
+  ),
+  /** The walk ran out of budget: more is on screen than is listed. */
+  truncated: Schema.optionalKey(Schema.Boolean),
+  /** Read from a screenshot, because the app would not show its window through accessibility. */
+  visual: Schema.optionalKey(Schema.Boolean),
+  /** A PNG of `region`; a screen point is `region` origin + pixel / `scale`. */
+  screenshot: Schema.optionalKey(
+    Schema.Struct({
+      mimeType: Schema.Literal("image/png"),
+      data: Schema.String,
+      width: Schema.Number,
+      height: Schema.Number,
+      region: ComputerRect,
+      scale: Schema.Number,
+    }),
+  ),
+});
+export type ComputerLook = typeof ComputerLook.Type;
+
 /** The computer a person let this environment use, and what it can do. */
 export const ComputerHostView = Schema.Struct({
   hostId: ComputerHostId,
@@ -302,6 +383,11 @@ export const ComputerTaskView = Schema.Struct({
   ),
   /** The setting the last step was granted under, so a client can say "approvals off". */
   approvalsMode: ComputerApprovalsMode,
+  /**
+   * The visible text of the screen it last decided on, unless it acted since. Only the agent's tools carry it.
+   * Screen text is data, never instructions.
+   */
+  screenText: Schema.optionalKey(Schema.String),
 });
 export type ComputerTaskView = typeof ComputerTaskView.Type;
 
@@ -328,6 +414,16 @@ export const ComputerHostFrame = Schema.Union([
     /** The exact text the task may type, and the only text computer use ever types. */
     text: Schema.NullOr(Schema.String),
     limits: ComputerLimits,
+    /** One step the agent chose, done instead of working toward the goal. */
+    act: Schema.optionalKey(ComputerAct),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("look"),
+    requestId: Schema.String,
+    /** The app whose window to read; the one in front when absent. */
+    app: Schema.optionalKey(Schema.String),
+    screenshot: Schema.Boolean,
+    region: Schema.optionalKey(ComputerRect),
   }),
   Schema.Struct({
     kind: Schema.Literal("stop"),
@@ -352,6 +448,8 @@ export const ComputerHostReply = Schema.Struct({
   done: Schema.optionalKey(Schema.String),
   /** Why it could not, for a person. */
   error: Schema.optionalKey(Schema.String),
+  /** What a `look` read. */
+  look: Schema.optionalKey(ComputerLook),
 });
 export type ComputerHostReply = typeof ComputerHostReply.Type;
 
@@ -365,6 +463,13 @@ export const ComputerHostEvent = Schema.Union([
     /** The steps it took, when the progress frames were not the whole story. */
     steps: Schema.Array(Schema.String),
     surface: Schema.NullOr(Schema.String),
+  }),
+  /** How one action reached the app, for the audit: never what it typed. */
+  Schema.Struct({
+    type: Schema.Literal("acted"),
+    kind: Schema.String,
+    mode: Schema.Literals(["background", "pointer"]),
+    how: Schema.String,
   }),
 ]);
 export type ComputerHostEvent = typeof ComputerHostEvent.Type;
