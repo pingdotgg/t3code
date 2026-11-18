@@ -1,4 +1,7 @@
 import type { ResourceTelemetryProcess, ResourceTelemetrySourceStatus } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export function processIdentityKey(process: Pick<ResourceTelemetryProcess, "identity">): string {
   return `${process.identity.pid}:${process.identity.startTimeMs}`;
@@ -18,6 +21,8 @@ export function visibleResourceTelemetryProcesses(
   const hidden = new Set<string>();
   const hideDescendants = (pid: number): void => {
     for (const child of childrenByParent.get(pid) ?? []) {
+      // Depth 0 rows are their own roots, e.g. the server launched by Electron main.
+      if (child.depth === 0) continue;
       const key = processIdentityKey(child);
       if (hidden.has(key)) continue;
       hidden.add(key);
@@ -59,12 +64,39 @@ export function resourceHistoryCpuScaleMax(
   return Math.max(1, ...buckets.map((bucket) => bucket.avgCpuPercent));
 }
 
-export function formatCpuTime(seconds: number): string {
+export function formatCpuTime(seconds: number, resolve: MessageResolver = m): string {
   const format = (value: number) => value.toFixed(value >= 10 ? 1 : 2).replace(/\.0+$/, "");
   // Pick the unit after rounding so 59.97 seconds never renders as "60s".
   const shortSeconds = format(seconds);
-  if (Number(shortSeconds) < 60) return `${shortSeconds}s`;
+  if (Number(shortSeconds) < 60) {
+    return resolve(msg("{value}s", { value: shortSeconds, $context: "CPU time in seconds" }));
+  }
   const shortMinutes = format(seconds / 60);
-  if (Number(shortMinutes) < 60) return `${shortMinutes}m`;
-  return `${(seconds / 3_600).toFixed(2).replace(/\.0+$/, "")}h`;
+  if (Number(shortMinutes) < 60) {
+    return resolve(msg("{value}m", { value: shortMinutes, $context: "CPU time in minutes" }));
+  }
+  return resolve(
+    msg("{value}h", {
+      value: (seconds / 3_600).toFixed(2).replace(/\.0+$/, ""),
+      $context: "CPU time in hours",
+    }),
+  );
+}
+
+export function formatSamplingStatus(intervalMs: number, resolve: MessageResolver = m): string {
+  // The server reports 0 while the native monitor is idle and samples only on request.
+  if (intervalMs <= 0) return resolve(msg("Sampling on demand"));
+  if (intervalMs < 1_000) {
+    return resolve(msg("Sampling every {ms} ms", { ms: Math.round(intervalMs) }));
+  }
+  const seconds = intervalMs / 1_000;
+  return resolve(
+    msg(
+      "{count, plural, one {Sampling every {seconds} second} other {Sampling every {seconds} seconds}}",
+      {
+        count: seconds,
+        seconds: seconds.toLocaleString(undefined, { maximumFractionDigits: 1 }),
+      },
+    ),
+  );
 }
