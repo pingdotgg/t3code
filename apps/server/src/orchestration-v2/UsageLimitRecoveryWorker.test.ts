@@ -264,7 +264,9 @@ it.effect("wakes for account exclusion expiry and keeps expired resets excluded"
           }),
           Layer.mock(ThreadManagement.ThreadManagementService)({
             dispatch: (command) =>
-              Queue.offer(dispatched, command.threadId!).pipe(Effect.as({} as never)),
+              command.type === "message.dispatch"
+                ? Queue.offer(dispatched, command.threadId).pipe(Effect.as({} as never))
+                : Effect.die("Expected an account-switch message dispatch"),
           }),
           Layer.mock(ProviderRegistry.ProviderRegistry)({
             getProviders: Effect.succeed([provider("claude_work"), provider("claude_personal")]),
