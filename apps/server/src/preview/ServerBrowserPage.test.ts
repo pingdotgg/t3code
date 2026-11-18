@@ -50,7 +50,7 @@ describe("snapshot deadline diagnostics", () => {
     readonly sizeReadIn?: (contextId: number | undefined) => void;
     readonly screenshot?: () => Promise<{ readonly data: string }>;
     /** Runs once everything the snapshot started without waiting has been asked for. */
-    readonly started?: () => void;
+    readonly started?: () => void | Promise<void>;
     /** Runs after the clock has advanced, while it is still faked. */
     readonly advanced?: () => Promise<void>;
     readonly advanceMs: number;
@@ -100,7 +100,7 @@ describe("snapshot deadline diagnostics", () => {
       }).catch((error: unknown) => error);
       if (options.started) {
         await vi.advanceTimersByTimeAsync(0);
-        options.started();
+        await options.started();
       }
       await vi.advanceTimersByTimeAsync(options.advanceMs);
       await options.advanced?.();
@@ -143,7 +143,8 @@ describe("snapshot deadline diagnostics", () => {
       page: { ariaSnapshot },
       screenshot: () => screenshot.promise,
       // Building the tree holds the page's main thread, so a screenshot still pending would starve.
-      started: () => {
+      started: async () => {
+        await vi.advanceTimersByTimeAsync(2_500);
         expect(ariaSnapshot).not.toHaveBeenCalled();
         screenshot.resolve({ data: png.toString("base64") });
       },
@@ -155,6 +156,8 @@ describe("snapshot deadline diagnostics", () => {
     });
     // The isolated world, which page script cannot reach.
     expect(sizeReadIn).toHaveBeenCalledWith(1);
+    // The 2.5 s the screenshot took leaves 7.5 s; 1 s of that is kept back for what follows the tree.
+    expect(ariaSnapshot).toHaveBeenCalledWith(expect.objectContaining({ timeout: 6_500 }));
   });
 
   it("starts no tree when the page's size is known only after the deadline", async () => {

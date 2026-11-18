@@ -755,16 +755,19 @@ const capture = async (
   // A screenshot still pending when a large page's tree takes the main thread gets no frame
   // before its own timeout, so on a large page, or one whose size went unread, it finishes
   // first. The page state, asked for before the tree, is ahead of it on that thread either way.
-  if ((await large)?.result?.value !== false) await pageAndScreenshot;
-  // A late reply must not begin a tree after the snapshot has timed out or a newer one began.
+  const screenshotFirst = (await large)?.result?.value !== false;
+  if (screenshotFirst) await pageAndScreenshot;
+  // A late reply must not begin a tree after the snapshot has timed out or its refs were revoked.
   if (Date.now() >= deadline) throw snapshotTimedOut(stages);
   if (state.generation !== generation) throw pageChanged();
   // Leaves time for the second read; a frame that never loads holds the tree until then.
+  // The screenshot's time is already spent when it went first, so less is kept back.
+  const reserveMs = screenshotFirst ? FRAME_ANSWER_MS : 2_000;
   const tree = await track("accessibility tree", () =>
     input.page.ariaSnapshot({
       mode: "ai",
       boxes: true,
-      timeout: Math.max(1, deadline - Date.now() - 2_000),
+      timeout: Math.max(1, deadline - Date.now() - reserveMs),
     }),
   );
   const after = await track("frames", () => read(before));
