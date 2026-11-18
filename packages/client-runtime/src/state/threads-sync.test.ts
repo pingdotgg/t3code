@@ -6,6 +6,7 @@ import {
   NodeId,
   ORCHESTRATION_V2_WS_METHODS,
   RuntimeRequestId,
+  RunId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ThreadDetailSnapshot,
@@ -2364,6 +2365,51 @@ describe("EnvironmentThreads", () => {
       expect(yield* Ref.get(harness.savedThreads)).toHaveLength(1);
       yield* Scope.close(scope, Exit.void);
       expect(yield* Ref.get(harness.savedThreads)).toHaveLength(1);
+    }),
+  );
+
+  it.effect("caches a running thread once when its view closes, not on each update", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const harness = yield* makeHarness().pipe(Effect.provideService(Scope.Scope, scope));
+      const running: OrchestrationV2ThreadProjection = {
+        ...BASE_PROJECTION,
+        runs: [
+          {
+            id: RunId.make("run-running"),
+            threadId: THREAD_ID,
+            ordinal: 1,
+            providerInstanceId: BASE_PROJECTION.thread.providerInstanceId,
+            modelSelection: BASE_PROJECTION.thread.modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make("message-running"),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status: "running",
+            requestedAt: v2Now,
+            startedAt: v2Now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        ],
+      };
+      yield* Queue.offer(harness.inputs, snapshot(running, 4));
+      yield* Queue.offer(harness.inputs, titleUpdated("Streaming update", 5));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          Option.isSome(value.data) && value.data.value.thread.title === "Streaming update",
+      );
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Ref.get(harness.savedThreads)).toHaveLength(0);
+
+      yield* Scope.close(scope, Exit.void);
+      const saved = yield* Ref.get(harness.savedThreads);
+      expect(saved).toHaveLength(1);
+      expect(saved[0]?.snapshotSequence).toBe(5);
+      expect(saved[0]?.projection.thread.title).toBe("Streaming update");
+      expect(saved[0]?.projection.runs[0]?.status).toBe("running");
     }),
   );
 

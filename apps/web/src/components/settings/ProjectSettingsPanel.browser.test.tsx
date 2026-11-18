@@ -132,7 +132,8 @@ vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
   getProjectFileQueryAtom: () => missingProjectFile,
 }));
 
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { assetEnvironment } from "../../state/assets";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
@@ -418,6 +419,37 @@ describe("project settings permissions", () => {
     expect(screen.router.state.location.href).toBe(initialHref);
   });
 
+  it("moves a draft on the removed checkout to a remaining checkout of the group", async () => {
+    setup();
+    const draftId = DraftId.make("draft-handed-off");
+    const [primaryProject, remoteProject] = state.projects;
+    const drafts = useComposerDraftStore.getState();
+    drafts.setLogicalProjectDraftThreadId(
+      "github.com/example/shared-repo",
+      scopeProjectRef(primaryId, primaryProject!.id),
+      draftId,
+    );
+    // "Add to another machine" hands the open draft to the new checkout this way.
+    drafts.setDraftThreadContext(draftId, {
+      projectRef: scopeProjectRef(remoteId, remoteProject!.id),
+      environmentSelection: "manual",
+      loadBalancedEnvironmentId: null,
+    });
+    drafts.setPrompt(draftId, "keep this prompt");
+    await using screen = await mountPanel();
+
+    await userEvent.click(removeCheckout(screen, "/work/remote"));
+    await vi.waitFor(() => expect(state.releaseUploads).toHaveBeenCalledOnce());
+
+    expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject({
+      environmentId: primaryId,
+      projectId: primaryProject!.id,
+    });
+    expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+      "keep this prompt",
+    );
+  });
+
   it("rechecks every removal target after confirmation before deleting or clearing drafts", async () => {
     setup();
     const confirmed = deferred<boolean>();
@@ -624,6 +656,33 @@ describe("project settings scope", () => {
     await userEvent.click(environmentMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).toBeVisible();
+  });
+
+  it("lists only the selected environment's projects and keeps it when one is opened", async () => {
+    setup();
+    const [primaryProject, remoteProject] = state.projects;
+    state.projects = [
+      primaryProject!,
+      {
+        ...remoteProject!,
+        title: "Remote only",
+        repositoryIdentity: null,
+      },
+    ];
+    await using screen = await mountSettings({ machine: primaryId });
+
+    await expect.element(page.getByRole("button", { name: /^Shared repo/ })).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: /^Remote only/ }))
+      .not.toBeInTheDocument();
+
+    await userEvent.click(page.getByRole("button", { name: /^Shared repo/ }));
+    await vi.waitFor(() =>
+      expect(screen.router.state.location.search).toEqual({
+        project: projectKey(),
+        machine: primaryId,
+      }),
+    );
   });
 
   it("offers only the selected project's checkout environments", async () => {

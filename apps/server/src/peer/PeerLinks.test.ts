@@ -173,7 +173,10 @@ it.effect("links with a pairing code, and the peer holds its agents to the limit
       expect(refused.reason).toBe("pairing_rejected");
       expect(yield* linkedSessions(b)).toEqual([]);
 
-      const pairing = yield* b.auth.issuePairingCredential();
+      const pairing = yield* b.auth.issuePairingCredential({
+        access: "auto",
+        purpose: "peer-link",
+      });
       const linked = yield* a.links.link({
         url: b.url,
         pairingCode: pairing.credential,
@@ -444,6 +447,38 @@ it.effect("lists a peer as reachable at another address while its first one slee
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("resolves a link at its answering address without waiting out a sleeping first", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const described = yield* HttpClient.get(`${b.url}/.well-known/t3/environment`).pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.provide(FetchHttpClient.layer),
+      );
+      const elsewhere = yield* serveRaw(() =>
+        Effect.succeed(HttpServerResponse.text(described, { contentType: "application/json" })),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({
+        url: b.url,
+        alternateUrls: [elsewhere],
+        pairingCode: pairing.credential,
+        access: "auto",
+      });
+
+      yield* Ref.set(b.asleep, true);
+      const first = yield* a.links.resolve(box.environmentId).pipe(Effect.forkScoped);
+      yield* Queue.take(b.unanswered);
+      yield* TestClock.adjust(Duration.seconds(3));
+      expect((yield* Fiber.join(first)).url).toBe(elsewhere);
+
+      // The clock no longer moves: a resolve that probes the sleeping address first never returns.
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(elsewhere);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("cancelling a descriptor probe aborts its request and leaves later resolves fresh", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -563,6 +598,37 @@ it.effect("a linked peer that is renamed shows its new name", () =>
       expect(Option.map(storedAfterList, (link) => link.label)).toEqual(Option.some("Box Studio"));
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect(
+  "a link forgotten while it resolves says it is not linked, not that it lost its credential",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const b = yield* serveB(box);
+        const beforeGet = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+        const racing = Layer.effect(
+          ServerSecretStore.ServerSecretStore,
+          Effect.map(ServerSecretStore.make, (store) =>
+            ServerSecretStore.ServerSecretStore.of({
+              ...store,
+              get: (name) =>
+                Ref.getAndSet(beforeGet, Effect.void).pipe(
+                  Effect.flatten,
+                  Effect.andThen(store.get(name)),
+                ),
+            }),
+          ),
+        );
+        const a = yield* makeA(laptop, racing);
+        const pairing = yield* b.auth.issuePairingCredential();
+        yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+        yield* Ref.set(beforeGet, Effect.orDie(Effect.asVoid(a.links.unlink(box.environmentId))));
+        const forgotten = yield* probe(a).pipe(Effect.flip);
+        expect(forgotten.message).toContain("not linked to");
+      }),
+    ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
 it.effect("tells the agent to link again once the peer revokes the link or it expires", () =>
