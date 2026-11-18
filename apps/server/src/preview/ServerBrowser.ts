@@ -603,6 +603,7 @@ const make = Effect.gen(function* () {
     profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
     idleBrowserMs: 5 * 60_000,
     executable: () => runPromise(previewBrowser.executable),
+    chrome: { version: PreviewBrowser.VERSION, platform: host.platform },
     // An agent scope keeps Chrome out of the server's memory protection and OOM score.
     launcher: async (executable) => {
       const launch = await runPromise(
