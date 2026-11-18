@@ -55,7 +55,7 @@ function headlineHeight(lane: HTMLElement): number {
 /**
  * Pool, Machines and Streak under the new-chat composer or a new tab's list. The grid never scrolls
  * and drops what does not fit, reserves its height as bottom margin on the stack above it (a CSS
- * variable on the pane), and centers in the visible pane rather than on the stack's lane.
+ * variable on the pane), and centers on the stack so it always lines up with the composer.
  */
 export function HeroWidgets() {
   const now = useNow(30_000);
@@ -87,6 +87,7 @@ export function HeroWidgets() {
         Number.parseFloat(style.paddingTop) -
         Number.parseFloat(style.paddingBottom),
       stackLeft: (offsetLeftIn(stack, frame) ?? overlayLeft) - overlayLeft,
+      stackWidth: stack.offsetWidth,
       stackHeight: stack.offsetHeight,
       headlineHeight:
         lane instanceof HTMLElement && !lane.contains(stack) ? headlineHeight(lane) : 0,

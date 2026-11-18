@@ -130,8 +130,9 @@ interface HeroPane {
   /** The conversation pane's content box. */
   readonly width: number;
   readonly height: number;
-  /** The composer stack's left edge in the pane, and its height. */
+  /** The composer stack's box in the pane. */
   readonly stackLeft: number;
+  readonly stackWidth: number;
   readonly stackHeight: number;
   /** Height the hero headline needs to show whole; 0 when it is hidden. */
   readonly headlineHeight: number;
@@ -147,8 +148,9 @@ export interface HeroArea {
 }
 
 /**
- * Centers the grid in the visible pane, left of an open details card, whatever the composer's
- * lane does. Its height leaves the headline the room it needs, so cards shrink or drop first.
+ * Centers the grid on the composer, as wide as fits on both sides of it inside the pane and left
+ * of an open details card. Its height leaves the headline the room it needs, so cards shrink or
+ * drop first.
  */
 export function heroWidgetArea(pane: HeroPane): HeroArea {
   const { gutter, maxWidth, gapAbove, headlineMin, edgeMargin } = HERO_AREA;
@@ -158,10 +160,11 @@ export function heroWidgetArea(pane: HeroPane): HeroArea {
       ? Number.POSITIVE_INFINITY
       : pane.detailsLeft - DETAILS_CARD_CLEARANCE,
   );
-  const room = Math.max(0, end - gutter);
-  const width = Math.floor(Math.min(maxWidth, room));
+  const axis = pane.stackLeft + pane.stackWidth / 2;
+  const half = Math.max(0, Math.min(axis - gutter, end - axis));
+  const width = 2 * Math.floor(Math.min(maxWidth, 2 * half) / 2);
   return {
-    left: Math.round(gutter + (room - width) / 2 - pane.stackLeft),
+    left: (pane.stackWidth - width) / 2,
     width,
     height: Math.max(
       0,
