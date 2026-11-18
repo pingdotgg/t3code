@@ -176,5 +176,8 @@ let it show through:
 }
 ```
 
+The thread details card, the terminal, and an empty right panel turn to glass over a scene on
+their own, following **Glass opacity** in Appearance settings.
+
 A scene keeps drawing while the window is visible, so a heavy one costs battery. Delete the HTML
 file to remove it.

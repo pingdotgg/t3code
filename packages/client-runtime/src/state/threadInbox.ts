@@ -78,20 +78,20 @@ type WorkingSortInput = Pick<
   "id" | "environmentId" | "createdAt" | "latestRun" | "latestUserAuthoredMessageAt"
 >;
 
-export function sortWorkingThreadsBySend<T extends WorkingSortInput>(threads: readonly T[]): T[] {
-  const timestamps = new Map(
-    threads.map((thread) => [
-      thread,
-      Math.max(
-        toSortableTimestamp(thread.createdAt) ?? 0,
-        toSortableTimestamp(
-          (thread.latestUserAuthoredMessageAt === undefined
-            ? thread.latestRun?.requestedAt
-            : thread.latestUserAuthoredMessageAt) ?? undefined,
-        ) ?? 0,
-      ),
-    ]),
+/** When the user last sent work to the thread, or when it was created; 0 when neither parses. */
+export function threadSendTime(thread: WorkingSortInput): number {
+  return Math.max(
+    toSortableTimestamp(thread.createdAt) ?? 0,
+    toSortableTimestamp(
+      (thread.latestUserAuthoredMessageAt === undefined
+        ? thread.latestRun?.requestedAt
+        : thread.latestUserAuthoredMessageAt) ?? undefined,
+    ) ?? 0,
   );
+}
+
+export function sortWorkingThreadsBySend<T extends WorkingSortInput>(threads: readonly T[]): T[] {
+  const timestamps = new Map(threads.map((thread) => [thread, threadSendTime(thread)]));
   return sortNewestFirst(threads, timestamps);
 }
 

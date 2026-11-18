@@ -1415,6 +1415,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           : gt("Workspace panel")
       }
       mode={props.mode}
+      empty={props.activeSurfaceId === null}
       {...(props.maximized !== undefined ? { maximized: props.maximized } : {})}
       {...(props.open !== undefined ? { open: props.open } : {})}
       {...(props.widthStorageKey !== undefined ? { widthStorageKey: props.widthStorageKey } : {})}

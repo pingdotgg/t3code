@@ -81,6 +81,8 @@ export interface GhosttyColor {
 export interface GhosttyTheme {
   readonly foreground: GhosttyColor;
   readonly background: GhosttyColor;
+  /** Below 1, cells in the default background let the page behind the canvas show. */
+  readonly backgroundAlpha?: number;
   readonly cursor: GhosttyColor;
   readonly palette?: readonly GhosttyColor[];
   readonly selectionBackground?: string;

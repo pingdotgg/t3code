@@ -184,6 +184,9 @@ import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
   groupSidebarThreadsByProject,
+  orderSidebarFolderGroups,
+  sidebarDateHeadings,
+  type SidebarDateBucket,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
@@ -210,6 +213,7 @@ import {
   sortPinnedThreadsForSidebar,
   sortThreadsForSidebar,
   sortWorkingThreadsBySend,
+  threadSendTime,
   useSnoozeWakeClock,
   threadShortcutContext,
   useThreadJumpHintsVisible,
@@ -278,6 +282,7 @@ import {
 } from "./sidebar/SidebarProjectFolderHeader";
 import {
   SidebarDragBoundary,
+  SidebarDateHeading,
   SidebarSectionHeader,
   SidebarSectionPlaceholder,
 } from "./sidebar/SidebarListMarkers";
@@ -333,6 +338,14 @@ const sidebarProviderEntriesAtom = Atom.make((get) => {
 
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, SidebarProviderEntry> = new Map();
 const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
+const EMPTY_DATE_HEADINGS: ReadonlyMap<EnvironmentThreadShell, SidebarDateBucket> = new Map();
+const SIDEBAR_DATE_HEADING_LABELS = {
+  today: msg("Today", { $context: "sidebar thread history heading" }),
+  yesterday: msg("Yesterday", { $context: "sidebar thread history heading" }),
+  week: msg("Previous 7 days", { $context: "sidebar thread history heading" }),
+  month: msg("Previous 30 days", { $context: "sidebar thread history heading" }),
+  older: msg("Older", { $context: "sidebar thread history heading" }),
+} as const;
 
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
@@ -545,6 +558,9 @@ function useSidebarThreads(input: {
             threads: collapsed
               ? routeThreadOnly(folder.threads, routeRowThreadKey)
               : folder.threads,
+            dateHeadings: collapsed
+              ? EMPTY_DATE_HEADINGS
+              : sidebarDateHeadings(folder.threads, threadSendTime, new Date(`${nowMinute}Z`)),
             hiddenThreads: collapsed
               ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
               : EMPTY_THREADS,
@@ -1353,10 +1369,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     routeRowThreadKey,
     folderGroups: boringSidebarEnabled
-      ? scopedProjectGroups.length === 0
-        ? // An archived project keeps a folder for its active threads, below the rest.
-          [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
-        : scopedProjectGroups
+      ? orderSidebarFolderGroups(
+          scopedProjectGroups.length === 0
+            ? // An archived project keeps a folder for its active threads, below the rest.
+              [...scopeGroups, ...projectGroups.filter((project) => project.archived)]
+            : scopedProjectGroups,
+        )
       : null,
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
@@ -3544,6 +3562,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />,
                             );
                             for (const thread of folder.threads) {
+                              const heading = folder.dateHeadings.get(thread);
+                              if (heading !== undefined) {
+                                items.push(
+                                  <SidebarDateHeading
+                                    key={`date:${folder.group.projectKey}:${heading}`}
+                                    label={messages(SIDEBAR_DATE_HEADING_LABELS[heading])}
+                                  />,
+                                );
+                              }
                               items.push(
                                 renderThreadRow(
                                   thread,

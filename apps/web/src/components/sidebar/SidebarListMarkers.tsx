@@ -145,3 +145,12 @@ export function SidebarSectionHeader(props: {
     </SortableSidebarMarker>
   );
 }
+
+/** A date heading inside a project folder, above the threads last sent to in that range. */
+export function SidebarDateHeading(props: { label: string }) {
+  return (
+    <li className="list-none px-(--sidebar-row-content-inset) pt-2 pb-0.5 text-xs text-sidebar-muted-foreground">
+      {props.label}
+    </li>
+  );
+}
