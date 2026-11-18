@@ -16,10 +16,12 @@ import { DitherCanvas } from "./DitherCanvas";
 import { bayer, drawDitherField, drawDottedLine } from "./dither";
 import {
   appendHostSample,
+  cpuColumns,
   formatGigabytes,
   HOST_HISTORY_MS,
   type HostSample,
   hostSamplesFromHistory,
+  hourAxisTicks,
 } from "./heroWidgets.logic";
 import { GHOST, readStored, useDebugValue, WidgetCard, writeStored } from "./widgetChrome";
 
@@ -118,7 +120,7 @@ export function MachinesWidget({ now }: { readonly now: number }) {
       meta={`${online} of ${environments.length} online`}
     >
       <ul className="mt-1 flex min-h-0 flex-1 flex-col divide-y divide-border/60">
-        {environments.map((environment) => {
+        {environments.map((environment, index) => {
           const entry = resourcesById.get(environment.environmentId);
           return (
             <MachineRow
@@ -132,6 +134,7 @@ export function MachinesWidget({ now }: { readonly now: number }) {
               isNext={next === environment.environmentId}
               now={now}
               compact={environments.length >= 3}
+              showAxis={environments.length < 3 || index === environments.length - 1}
             />
           );
         })}
@@ -151,10 +154,13 @@ interface MachineRowProps {
   readonly now: number;
   /** Three or more machines share the card, one line each. */
   readonly compact: boolean;
+  /** Compact rows share one time axis, under the last row. */
+  readonly showAxis: boolean;
 }
 
 function MachineRow(props: MachineRowProps) {
-  const { label, phase, resources, failed, history, agents, isNext, now, compact } = props;
+  const { label, phase, resources, failed, history, agents, isNext, now, compact, showAxis } =
+    props;
   const connected = phase === "connected";
   const cpu = resources?.cpuUtilization ?? null;
   const memoryUsed =
@@ -221,7 +227,12 @@ function MachineRow(props: MachineRowProps) {
           {name}
           {detail("text-caption")}
         </span>
-        <CpuSparkline history={history} now={now} className="h-full max-h-12 min-h-5" />
+        <CpuSparkline
+          history={history}
+          now={now}
+          showAxis={showAxis}
+          className="h-full max-h-15 min-h-5"
+        />
         <span className="flex flex-col items-end gap-1">
           {cpuLabel}
           <MemoryBar used={memoryUsed} className="h-1.5 w-full" />
@@ -237,7 +248,13 @@ function MachineRow(props: MachineRowProps) {
         <span className="ms-auto">{cpuLabel}</span>
       </div>
       {detail("text-meta")}
-      <CpuSparkline history={history} now={now} className="min-h-5 flex-1" showCeiling />
+      <CpuSparkline
+        history={history}
+        now={now}
+        showAxis={showAxis}
+        className="min-h-5 flex-1"
+        showCeiling
+      />
       <div className="grid grid-cols-[2.25rem_minmax(0,1fr)_2.5rem] items-center gap-2 text-caption text-muted-foreground tabular-nums">
         <span>RAM</span>
         <MemoryBar used={memoryUsed} className="h-2.5" />
@@ -249,59 +266,74 @@ function MachineRow(props: MachineRowProps) {
   );
 }
 
+const AXIS_TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+
 function CpuSparkline({
   history,
   now,
   className,
+  showAxis,
   showCeiling = false,
 }: {
   readonly history: ReadonlyArray<HostSample>;
   readonly now: number;
   readonly className: string;
+  readonly showAxis: boolean;
   readonly showCeiling?: boolean;
 }) {
   const peak = Math.max(0, ...history.map((sample) => sample.cpu ?? 0));
   const ceiling = Math.max(0.25, Math.min(1, peak * 1.25));
   const drawNow = Math.max(now, history.at(-1)?.t ?? 0);
   return (
-    <div className={cn("relative", className)}>
-      <DitherCanvas
-        className="h-full"
-        label={`CPU over the last ${HOST_HISTORY_MS / 60_000} minutes`}
-        draw={(context, { width, height }, color) => {
-          const cell = 3;
-          const rows = Math.floor(height / cell);
-          const columns = Math.floor(width / cell);
-          const fill = color(SPARK);
-          const crest = color(`color-mix(in oklab, ${SPARK} 55%, white)`);
-          drawDottedLine(context, [0, 0], [width, 0], color(GHOST), 6, 1);
-          context.fillStyle = color("color-mix(in oklab, var(--foreground) 12%, transparent)");
-          context.fillRect(0, rows * cell - 1, width, 1);
-          let index = 0;
-          for (let column = 0; column < columns; column += 1) {
-            const t = drawNow - HOST_HISTORY_MS + ((column + 0.5) / columns) * HOST_HISTORY_MS;
-            while (index + 1 < history.length && history[index + 1]!.t <= t) index += 1;
-            const sample = history[index];
-            if (!sample || sample.t > t || t - sample.t > 15_000 || sample.cpu === null) continue;
-            const filled = Math.max(
-              1,
-              Math.round((Math.min(ceiling, sample.cpu) / ceiling) * rows),
-            );
-            const first = rows - filled;
-            for (let row = first; row < rows; row += 1) {
-              const depth = (row - first) / Math.max(1, rows - 1);
-              const density = row === first ? 1 : 0.7 - 0.45 * depth;
-              if (density <= bayer(column, row)) continue;
-              context.fillStyle = row === first ? crest : fill;
-              context.fillRect(column * cell, row * cell, cell - 1, cell - 1);
-            }
-          }
-        }}
-      />
-      {showCeiling ? (
-        <span className="pointer-events-none absolute top-0.5 right-0 text-micro text-muted-foreground tabular-nums">
-          {Math.round(ceiling * 100)}%
-        </span>
+    <div className={cn("flex flex-col", className)}>
+      <div className="relative min-h-0 flex-1">
+        <DitherCanvas
+          className="h-full"
+          label={`CPU over the last ${HOST_HISTORY_MS / 60_000} minutes`}
+          draw={(context, { width, height }, color) => {
+            const cell = 3;
+            const rows = Math.floor(height / cell);
+            const columns = Math.floor(width / cell);
+            const fill = color(SPARK);
+            const crest = color(`color-mix(in oklab, ${SPARK} 55%, white)`);
+            drawDottedLine(context, [0, 0], [width, 0], color(GHOST), 6, 1);
+            context.fillStyle = color("color-mix(in oklab, var(--foreground) 12%, transparent)");
+            context.fillRect(0, rows * cell - 1, width, 1);
+            cpuColumns(history, drawNow, columns).forEach((cpu, column) => {
+              if (cpu === null) return;
+              const filled = Math.max(1, Math.round((Math.min(ceiling, cpu) / ceiling) * rows));
+              const first = rows - filled;
+              for (let row = first; row < rows; row += 1) {
+                const depth = (row - first) / Math.max(1, rows - 1);
+                const density = row === first ? 1 : 0.7 - 0.45 * depth;
+                if (density <= bayer(column, row)) continue;
+                context.fillStyle = row === first ? crest : fill;
+                context.fillRect(column * cell, row * cell, cell - 1, cell - 1);
+              }
+            });
+          }}
+        />
+        {showCeiling ? (
+          <span className="pointer-events-none absolute top-0.5 right-0 text-micro text-muted-foreground tabular-nums">
+            {Math.round(ceiling * 100)}%
+          </span>
+        ) : null}
+      </div>
+      {showAxis ? (
+        <div className="relative mt-1 h-3 shrink-0 text-micro leading-3 text-muted-foreground tabular-nums">
+          {hourAxisTicks(drawNow)
+            // Marks too close to an edge would be clipped by the card.
+            .filter((tick) => tick.x > 0.06 && tick.x < 0.94)
+            .map((tick) => (
+              <span
+                key={tick.t}
+                className="absolute -translate-x-1/2 whitespace-nowrap"
+                style={{ left: `${tick.x * 100}%` }}
+              >
+                {AXIS_TIME.format(tick.t)}
+              </span>
+            ))}
+        </div>
       ) : null}
     </div>
   );

@@ -1,5 +1,6 @@
 import * as NodeOS from "node:os";
-import type { HostCpuHistory, HostResourcesSnapshot } from "@t3tools/contracts";
+import { HostCpuHistory, type HostResourcesSnapshot } from "@t3tools/contracts";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
@@ -8,11 +9,43 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-const CPU_HISTORY_INTERVAL_MS = 5_000;
-const CPU_HISTORY_SAMPLES = 60;
+import * as ServerConfig from "../config.ts";
+
+const CPU_HISTORY_INTERVAL_MS = 15_000;
+const CPU_HISTORY_SAMPLES = (60 * 60_000) / CPU_HISTORY_INTERVAL_MS;
+
+/** Appends a reading at `at`, with a null for each tick missed since the last one. */
+function appendCpuReading(
+  history: HostCpuHistory,
+  at: number,
+  cpuUtilization: number | null,
+): HostCpuHistory {
+  const missed =
+    history.values.length === 0
+      ? 0
+      : Math.max(0, Math.round((at - history.endAt) / history.intervalMs) - 1);
+  return {
+    ...history,
+    endAt: at,
+    values: [
+      ...history.values,
+      ...Array.from({ length: Math.min(missed, CPU_HISTORY_SAMPLES) }, () => null),
+      cpuUtilization === null ? null : Math.round(cpuUtilization * 1000) / 1000,
+    ].slice(-CPU_HISTORY_SAMPLES),
+  };
+}
+
+const decodeHistoryJson = Schema.decodeEffect(Schema.fromJsonString(HostCpuHistory));
+const decodeHistory = (text: string) =>
+  decodeHistoryJson(text).pipe(
+    Effect.filterOrFail((entry) => entry.intervalMs === CPU_HISTORY_INTERVAL_MS),
+  );
 
 export class HostResources extends Context.Service<
   HostResources,
@@ -76,6 +109,8 @@ function cgroupNumber(text: string, pattern: RegExp): number | null {
 
 const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const config = yield* ServerConfig.ServerConfig;
   const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
@@ -202,30 +237,39 @@ const make = Effect.fn("makeHostResources")(function* () {
     timeToLive: "5 seconds",
   });
 
-  const history = yield* Ref.make<HostCpuHistory>({
-    endAt: 0,
-    intervalMs: CPU_HISTORY_INTERVAL_MS,
-    values: [],
-  });
+  // Kept on disk so a restarted server still shows the past hour; downtime reads as a gap.
+  const historyPath = path.join(config.stateDir, "host-cpu-history.json");
+  const saved = yield* fs
+    .readFileString(historyPath)
+    .pipe(Effect.flatMap(decodeHistory), Effect.option);
+  const history = yield* Ref.make<HostCpuHistory>(
+    Option.match(saved, {
+      onSome: (entry) => entry,
+      onNone: () => ({ endAt: 0, intervalMs: CPU_HISTORY_INTERVAL_MS, values: [] }),
+    }),
+  );
+  const persist = Ref.get(history).pipe(
+    Effect.flatMap((entry) =>
+      writeFileStringAtomically({ filePath: historyPath, contents: JSON.stringify(entry) }),
+    ),
+    Effect.ignore({ log: true }),
+  );
+  yield* Effect.addFinalizer(() => persist);
+
   yield* Effect.gen(function* () {
     yield* Effect.sleep(CPU_HISTORY_INTERVAL_MS);
     let previous = yield* readCounters();
-    while (true) {
+    for (let tick = 1; ; tick += 1) {
       yield* Effect.sleep(CPU_HISTORY_INTERVAL_MS);
       const current = yield* readCounters();
-      const { cpuUtilization } = cpuLoad(previous, current);
-      const hostSlept = current.at - previous.at > 2 * CPU_HISTORY_INTERVAL_MS;
+      // A late tick (host asleep) averages over the whole gap; record the gap instead.
+      const reading =
+        current.at - previous.at > 2 * CPU_HISTORY_INTERVAL_MS
+          ? null
+          : cpuLoad(previous, current).cpuUtilization;
       previous = current;
-      yield* Ref.update(history, (entry) => ({
-        ...entry,
-        endAt: current.at,
-        values: hostSlept
-          ? []
-          : [
-              ...entry.values,
-              cpuUtilization === null ? null : Math.round(cpuUtilization * 1000) / 1000,
-            ].slice(-CPU_HISTORY_SAMPLES),
-      }));
+      yield* Ref.update(history, (entry) => appendCpuReading(entry, current.at, reading));
+      if (tick % 4 === 0) yield* persist;
     }
   }).pipe(Effect.forkScoped);
 

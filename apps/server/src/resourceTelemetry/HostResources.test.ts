@@ -5,11 +5,13 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
+import * as ServerConfig from "../config.ts";
 import * as HostResources from "./HostResources.ts";
 
 // An 8-CPU host; every cpus() call advances each CPU by 100 ms at `host.busy` utilization.
@@ -50,13 +52,25 @@ const unlimitedCgroup = {
   [`${cgroup}/memory.stat`]: [`anon ${450 * MiB}\ninactive_file ${100 * MiB}\n`],
 };
 
-// Each path serves its values in order and repeats the last one.
-const linuxHost = (files: Record<string, ReadonlyArray<string>>) => {
+const historyPath = "/t3/userdata/host-cpu-history.json";
+
+// Each path serves its values in order and repeats the last one. Writes land in `written`.
+const linuxHost = (
+  files: Record<string, ReadonlyArray<string>>,
+  written = new Map<string, string>(),
+) => {
   const reads = new Map<string, number>();
   return HostResources.layer.pipe(
+    Layer.provide(ServerConfig.layerTest("/", "/t3")),
     Layer.provide(
       Layer.mergeAll(
+        Path.layer,
         FileSystem.layerNoop({
+          makeDirectory: () => Effect.void,
+          makeTempDirectory: () => Effect.succeed("/tmp/t3-write"),
+          remove: () => Effect.void,
+          writeFileString: (path, data) => Effect.sync(() => void written.set(path, data)),
+          rename: (from, to) => Effect.sync(() => void written.set(to, written.get(from) ?? "")),
           readFileString: (path) => {
             const values = files[path];
             if (!values) {
@@ -117,15 +131,52 @@ describe("HostResources.layer", () => {
   it.effect("serves the CPU history it samples in the background", () =>
     Effect.gen(function* () {
       setup(0.5);
-      yield* TestClock.adjust("20 seconds");
+      yield* TestClock.adjust("60 seconds");
       const snapshot = yield* read;
 
       assert.deepStrictEqual(snapshot.cpuHistory, {
-        endAt: 20_000,
-        intervalMs: 5_000,
+        endAt: 60_000,
+        intervalMs: 15_000,
         values: [0.5, 0.5, 0.5],
       });
     }).pipe(Effect.provide(linuxHost(unlimitedCgroup))),
+  );
+
+  it.effect(
+    "resumes the saved history, with the downtime as a gap, and saves it on shutdown",
+    () => {
+      const written = new Map<string, string>();
+      return Effect.gen(function* () {
+        setup(0.5);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* TestClock.adjust("60 seconds");
+            const snapshot = yield* read;
+
+            // Saved at 0 ms; the tick at 30 s finds the one at 15 s missing.
+            assert.deepStrictEqual(snapshot.cpuHistory?.values, [0.2, 0.4, null, 0.5, 0.5, 0.5]);
+          }).pipe(
+            Effect.provide(
+              linuxHost(
+                {
+                  ...unlimitedCgroup,
+                  [historyPath]: [
+                    JSON.stringify({ endAt: 0, intervalMs: 15_000, values: [0.2, 0.4] }),
+                  ],
+                },
+                written,
+              ),
+            ),
+          ),
+        );
+
+        assert.deepStrictEqual(JSON.parse(written.get(historyPath) ?? "null"), {
+          endAt: 60_000,
+          intervalMs: 15_000,
+          values: [0.2, 0.4, null, 0.5, 0.5, 0.5],
+        });
+      });
+    },
   );
 
   it.effect("reports memory against the server cgroup's memory.max", () =>

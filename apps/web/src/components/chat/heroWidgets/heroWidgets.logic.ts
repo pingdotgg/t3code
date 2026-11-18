@@ -678,14 +678,17 @@ export interface HostSample {
   readonly cpu: number | null;
 }
 
-export const HOST_HISTORY_MS = 5 * MINUTE_MS;
+export const HOST_HISTORY_MS = 60 * MINUTE_MS;
+const HOST_SAMPLE_EVERY_MS = 15_000;
+/** A reading stands in for later columns until it is this old; past that the chart shows a gap. */
+const HOST_SAMPLE_STALE_MS = 3 * HOST_SAMPLE_EVERY_MS;
 
 export function appendHostSample(
   samples: ReadonlyArray<HostSample>,
   sample: HostSample,
 ): ReadonlyArray<HostSample> {
   const last = samples.at(-1);
-  if (last && sample.t - last.t < 1000) return samples;
+  if (last && sample.t - last.t < HOST_SAMPLE_EVERY_MS) return samples;
   return [...samples.filter((entry) => sample.t - entry.t <= HOST_HISTORY_MS), sample];
 }
 
@@ -698,6 +701,46 @@ export function hostSamplesFromHistory(
     t: history.endAt + clientAheadOfServerMs - (last - index) * history.intervalMs,
     cpu,
   }));
+}
+
+/**
+ * One CPU value per column across the hour ending at `now`: the busiest reading in the column,
+ * so a short spike survives, or the latest earlier reading while it is fresh.
+ */
+export function cpuColumns(
+  samples: ReadonlyArray<HostSample>,
+  now: number,
+  columns: number,
+): ReadonlyArray<number | null> {
+  const start = now - HOST_HISTORY_MS;
+  let index = 0;
+  while (index < samples.length && samples[index]!.t <= start) index += 1;
+  return Array.from({ length: columns }, (_, column) => {
+    const end = start + ((column + 1) / columns) * HOST_HISTORY_MS;
+    let peak: number | null = null;
+    let any = false;
+    while (index < samples.length && samples[index]!.t <= end) {
+      const cpu = samples[index]!.cpu;
+      if (cpu !== null) peak = Math.max(peak ?? 0, cpu);
+      any = true;
+      index += 1;
+    }
+    if (any) return peak;
+    const previous = samples[index - 1];
+    return previous && end - previous.t <= HOST_SAMPLE_STALE_MS ? previous.cpu : null;
+  });
+}
+
+/** Quarter-hour marks inside the hour ending at `now`, as a fraction of the chart's width. */
+export function hourAxisTicks(
+  now: number,
+): ReadonlyArray<{ readonly t: number; readonly x: number }> {
+  const step = 15 * MINUTE_MS;
+  const ticks = [];
+  for (let t = Math.ceil((now - HOST_HISTORY_MS) / step) * step; t <= now; t += step) {
+    ticks.push({ t, x: 1 - (now - t) / HOST_HISTORY_MS });
+  }
+  return ticks;
 }
 
 export function formatGigabytes(bytes: number): string {

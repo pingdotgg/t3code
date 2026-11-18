@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   appendPoolSample,
   buildStreak,
+  cpuColumns,
   dailyWindow,
   dayKey,
   DAY_MS,
@@ -268,5 +269,23 @@ describe("pool samples", () => {
     expect(recordedSince(samples, now, 12 * HOUR_MS, 24 * HOUR_MS)).toBe(now - 24 * HOUR_MS);
     expect(recordedSince([at(5)], now, 3 * HOUR_MS, 24 * HOUR_MS)).toBe(now);
     expect(recordedSince([], now, 3 * HOUR_MS, 24 * HOUR_MS)).toBe(now);
+  });
+});
+
+describe("cpuColumns", () => {
+  // Four 15-minute columns across the hour ending at `now`.
+  const now = NOW.getTime();
+  const at = (minutesAgo: number, cpu: number | null) => ({ t: now - minutesAgo * 60_000, cpu });
+
+  it("keeps the busiest reading in a column and shows gaps where readings stop", () => {
+    const samples = [at(70, 1), at(50, 0.2), at(48, 0.9), at(47, 0.3), at(10, 0.4)];
+
+    // 70 min ago is outside the hour; nothing between 47 and 10 min ago fills columns 2 and 3.
+    expect(cpuColumns(samples, now, 4)).toEqual([0.9, null, null, 0.4]);
+  });
+
+  it("carries a fresh reading into a column it did not reach", () => {
+    expect(cpuColumns([at(30.25, 0.5)], now, 120)[60]).toBe(0.5);
+    expect(cpuColumns([at(30.25, 0.5)], now, 120)[62]).toBeNull();
   });
 });
