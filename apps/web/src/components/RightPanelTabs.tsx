@@ -969,22 +969,24 @@ function RightPanelTab(
   const sideChatState = sideChatTabState(sideChatShell);
   const content = (
     <>
-      <PanelTabCloseButton label={gt("Close {title}", { title })} onClick={() => onClose(surface)}>
-        <SurfaceIcon
-          surface={surface}
-          previewUrl={props.previewUrl}
-          previewCapturedUrl={props.previewCapturedUrl}
-          theme={props.theme}
-          environmentId={props.environmentId}
-          pullRequestStatusSeed={props.pullRequestStatusSeed}
-        />
-        {props.pending ? (
-          <span
-            className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
-            aria-hidden
+      <span className="flex size-4 shrink-0 items-center justify-center">
+        <span className="relative flex size-3 items-center justify-center">
+          <SurfaceIcon
+            surface={surface}
+            previewUrl={props.previewUrl}
+            previewCapturedUrl={props.previewCapturedUrl}
+            theme={props.theme}
+            environmentId={props.environmentId}
+            pullRequestStatusSeed={props.pullRequestStatusSeed}
           />
-        ) : null}
-      </PanelTabCloseButton>
+          {props.pending ? (
+            <span
+              className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
+              aria-hidden
+            />
+          ) : null}
+        </span>
+      </span>
       {audio === "none" || !audioRuntimeTabId ? null : (
         <Tooltip>
           <TooltipTrigger
@@ -1044,7 +1046,7 @@ function RightPanelTab(
                 onDoubleClick={() => {
                   if (surface.kind === "device" && props.canRename) onStartRename(surface.id);
                 }}
-                className="cursor-pointer flex min-w-0 items-center"
+                className="cursor-pointer flex min-w-0 items-center pr-0.5"
                 aria-label={
                   sideChatState === null
                     ? undefined
@@ -1072,11 +1074,20 @@ function RightPanelTab(
           </TooltipPopup>
         </Tooltip>
       )}
+      <PanelTabCloseButton
+        label={gt("Close {title}", { title })}
+        onClick={() => onClose(surface)}
+      />
     </>
   );
   return (
     <div
       data-active-tab={props.active}
+      onClick={(event) => {
+        // The icon and padding select the tab too; the buttons and rename field handle themselves.
+        if (event.target instanceof Element && event.target.closest("button, input")) return;
+        onActivate(surface);
+      }}
       onMouseDown={preventTabMiddleButtonDefault}
       onMouseUp={preventTabMiddleButtonDefault}
       onAuxClick={(event) => onAuxClick(event, surface)}
@@ -1085,7 +1096,7 @@ function RightPanelTab(
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
-        "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+        "cursor-pointer flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md px-1.5 text-xs",
         props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
         props.active
           ? "bg-accent text-foreground"

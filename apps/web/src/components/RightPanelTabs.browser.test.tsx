@@ -251,6 +251,28 @@ describe("right panel thumb buttons", () => {
   });
 });
 
+describe("right panel tab clicks", () => {
+  it("select the tab from its icon and close it from the close button without selecting it", async () => {
+    const onActivate = vi.fn();
+    const onCloseSurface = vi.fn();
+    const props = panel(BROWSER_SURFACE).props as RightPanelTabsProps;
+    await using screen = await render(
+      <RightPanelTabs {...props} onActivate={onActivate} onCloseSurface={onCloseSurface}>
+        {null}
+      </RightPanelTabs>,
+    );
+
+    const diffTab = screen.container.querySelector('[data-active-tab="false"]')!;
+    await userEvent.click(diffTab, { position: { x: 8, y: 3 } });
+    expect(onActivate).toHaveBeenCalledExactlyOnceWith(DIFF_SURFACE);
+
+    onActivate.mockClear();
+    await userEvent.click(screen.getByRole("button", { name: "Close Diff", exact: true }));
+    expect(onCloseSurface).toHaveBeenCalledExactlyOnceWith(DIFF_SURFACE);
+    expect(onActivate).not.toHaveBeenCalled();
+  });
+});
+
 const DEVICE_SURFACE: RightPanelSurface = {
   id: "device:host:phone",
   kind: "device",
