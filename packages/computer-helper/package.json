@@ -1,0 +1,67 @@
+{
+  "name": "@t3tools/computer-helper",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./chromeTabs": {
+      "types": "./src/chromeTabs.ts",
+      "import": "./src/chromeTabs.ts"
+    },
+    "./child": {
+      "types": "./src/child.ts",
+      "import": "./src/child.ts"
+    },
+    "./controller": {
+      "types": "./src/controller.ts",
+      "import": "./src/controller.ts"
+    },
+    "./decisions": {
+      "types": "./src/decisions.ts",
+      "import": "./src/decisions.ts"
+    },
+    "./desktop": {
+      "types": "./src/desktop.ts",
+      "import": "./src/desktop.ts"
+    },
+    "./dock": {
+      "types": "./src/dock.ts",
+      "import": "./src/dock.ts"
+    },
+    "./fake": {
+      "types": "./src/fake.ts",
+      "import": "./src/fake.ts"
+    },
+    "./log": {
+      "types": "./src/log.ts",
+      "import": "./src/log.ts"
+    },
+    "./macControls": {
+      "types": "./src/macControls.ts",
+      "import": "./src/macControls.ts"
+    },
+    "./runner": {
+      "types": "./src/runner.ts",
+      "import": "./src/runner.ts"
+    },
+    "./stop": {
+      "types": "./src/stop.ts",
+      "import": "./src/stop.ts"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "import": "./src/types.ts"
+    },
+    "./validate": {
+      "types": "./src/validate.ts",
+      "import": "./src/validate.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

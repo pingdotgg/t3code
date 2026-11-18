@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // The helper is plain Node with no runtime dependencies: its child runs outside any Effect
+    // runtime, so the Effect language service's host-API diagnostics do not apply here.
+    "plugins": []
+  },
+  "include": ["src"]
+}
