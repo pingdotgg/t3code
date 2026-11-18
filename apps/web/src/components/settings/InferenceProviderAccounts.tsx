@@ -19,6 +19,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingsRow } from "./settingsLayout";
 
 const { inferenceProxy } = serverEnvironment;
@@ -112,7 +113,15 @@ export function InferenceProviderAccounts({
           return (
             <SettingsRow
               key={account.name}
-              title={account.name}
+              title={
+                <RedactedSensitiveText
+                  value={account.name}
+                  ariaLabel="Toggle account name visibility"
+                  revealTooltip="Click to reveal account name"
+                  hideTooltip="Click to hide account name"
+                  className="max-w-full wrap-anywhere text-left"
+                />
+              }
               description={`${account.provider} · ${inferenceAccountStatus(account)}`}
               status={
                 retryAfter ? (

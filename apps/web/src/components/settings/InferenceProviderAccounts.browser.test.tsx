@@ -16,6 +16,7 @@ import { InferenceProviderAccounts } from "./InferenceProviderAccounts";
 import { serverEnvironment } from "../../state/server";
 
 const host = EnvironmentId.make("account-host");
+const workAccountName = "codex-work@example.com.json";
 function setup() {
   state.run.mockReset();
   state.query.mockReset().mockReturnValue({
@@ -23,7 +24,7 @@ function setup() {
       enabled: true,
       accounts: [
         {
-          name: "work.json",
+          name: workAccountName,
           provider: "codex",
           status: "error",
           availability: "rateLimited",
@@ -55,13 +56,19 @@ describe("inference provider accounts", () => {
     await using screen = await render(
       <InferenceProviderAccounts environmentId={host} driver="codex" />,
     );
-    await expect.element(screen.getByText("work.json")).toBeVisible();
+    const accountNames = screen.getByRole("button", { name: "Toggle account name visibility" });
+    expect(accountNames.all()).toHaveLength(2);
+    const workAccount = accountNames.first();
+    await expect.element(screen.getByText(workAccountName)).not.toBeInTheDocument();
+    await userEvent.click(workAccount);
+    await expect.element(screen.getByText(workAccountName)).toBeVisible();
+    await userEvent.click(workAccount);
+    await expect.element(screen.getByText(workAccountName)).not.toBeInTheDocument();
     await expect.element(screen.getByText("codex · Rate limited")).toBeVisible();
     await expect
       .element(screen.getByText("codex · Authentication or access rejected"))
       .toBeVisible();
     await expect.element(screen.getByText(/Retry after/)).toBeVisible();
-    await expect.element(screen.getByText("personal.json")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Codex", exact: true }));
     expect(state.run).toHaveBeenLastCalledWith({
       environmentId: host,
