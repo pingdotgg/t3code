@@ -11,7 +11,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import * as Schema from "effect/Schema";
-import { decodeMsg, msg, useMessages } from "gt-react";
+import { decodeMsg, decodeOptions, msg, useMessages } from "gt-react";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
 import type { MessageResolver } from "../../i18n/messages";
@@ -1699,10 +1699,15 @@ export function settingsForThisPlatform(
   );
 }
 
+// Plain catalog labels may contain a colon; decodeMsg alone treats it as metadata.
+function sourceLabel(message: string): string {
+  return decodeOptions(message)?.$_source ? decodeMsg(message) : message;
+}
+
 export function searchSettings(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
-  translate: (message: string) => string = decodeMsg,
+  translate: (message: string) => string = sourceLabel,
 ): ReadonlyArray<SettingsSearchItem> {
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return [];
@@ -1711,15 +1716,18 @@ export function searchSettings(
     .flatMap((item, index) => {
       const score = scoreSearchFields(
         [
-          decodeMsg(item.title),
-          { value: decodeMsg(SETTINGS_SECTION_LABELS[item.to]), weight: SEARCH_SECONDARY_FIELD_WEIGHT },
+          sourceLabel(item.title),
+          {
+            value: sourceLabel(SETTINGS_SECTION_LABELS[item.to]),
+            weight: SEARCH_SECONDARY_FIELD_WEIGHT,
+          },
           translate(item.title),
           {
             value: translate(SETTINGS_SECTION_LABELS[item.to]),
             weight: SEARCH_SECONDARY_FIELD_WEIGHT,
           },
           ...(item.searchTerms ?? [])
-            .flatMap((term) => [decodeMsg(term), translate(term)])
+            .flatMap((term) => [sourceLabel(term), translate(term)])
             .map((value) => ({
               value,
               weight: SEARCH_SECONDARY_FIELD_WEIGHT,
