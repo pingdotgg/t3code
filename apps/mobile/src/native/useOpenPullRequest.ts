@@ -1,12 +1,20 @@
 import { useNavigation, useRoute, StackActions } from "@react-navigation/native";
 import { AsyncResult } from "effect/reactivity";
-import { nativePullRequestDestination } from "../lib/pullRequestNavigation";
+import { resolveIssueLinkTarget } from "@t3tools/client-runtime/issue-links";
+import {
+  nativePullRequestDestination,
+  shouldOpenPullRequestInGitHubApp,
+  pullRequestCandidateForIssueLink,
+} from "../lib/pullRequestNavigation";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useProjects, useThreadShell } from "../state/entities";
 import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import { appAtomRegistry } from "../state/atom-registry";
 import { mobilePreferencesAtom } from "../state/preferences";
 import { environmentServerConfigsAtom } from "../state/server";
+import { composerPullRequests } from "../state/pull-requests";
+import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { withKnownPullRequestSummary } from "../state/use-thread-pr";
 
 let linkNavigationId = 0;
@@ -19,17 +27,65 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
   const navigation = useNavigation();
   const projects = useProjects();
   const replace = options?.replace;
+  const readPreview = useAtomQueryRunner(composerPullRequests.preview, {
+    reportFailure: false,
+    reportDefect: false,
+  });
   return async (url: string, context: PullRequestContext | null) => {
     // Read at press time so a config push does not hand every link a new handler.
     const preferences = appAtomRegistry.get(mobilePreferencesAtom);
-    if (AsyncResult.isSuccess(preferences) && preferences.value.openPullRequestsInGitHubApp) {
+    if (
+      AsyncResult.isSuccess(preferences) &&
+      shouldOpenPullRequestInGitHubApp(url, preferences.value.openPullRequestsInGitHubApp)
+    ) {
       return tryOpenExternalUrl(url, "pull-request");
     }
     const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
     const destination = nativePullRequestDestination(url, context, projects, (environmentId) =>
       serverConfigs.has(environmentId),
     );
-    if (!destination) return tryOpenExternalUrl(url, "pull-request");
+    if (!destination) {
+      // An issue link from the same text opens the issue; anything else leaves for the browser.
+      const environmentId = context && EnvironmentId.make(context.environmentId);
+      const issue =
+        environmentId && serverConfigs.get(environmentId)?.environment.capabilities.issues === true
+          ? resolveIssueLinkTarget({
+              url,
+              projects: projects.filter((project) => project.environmentId === environmentId),
+              preferredProjectId: context.projectId,
+            })
+          : null;
+      if (!issue || !environmentId) return tryOpenExternalUrl(url, "pull-request");
+      const candidate = pullRequestCandidateForIssueLink(url, issue.ref);
+      if (candidate) {
+        const preview = await readPreview({ environmentId, input: candidate.target });
+        if (preview._tag === "Success") {
+          const params = withKnownPullRequestSummary({
+            ...candidate.target,
+            environmentId,
+            ...(candidate.navigationUrl
+              ? { navigationUrl: candidate.navigationUrl, navigationId: nextLinkNavigationId() }
+              : {}),
+          });
+          if (replace) navigation.dispatch(StackActions.replace("PullRequest", params));
+          else navigation.dispatch(StackActions.push("PullRequest", params));
+          return true;
+        }
+        // A dropped connection says nothing about what the link names; the browser knows.
+        if (isAtomCommandInterrupted(preview)) return tryOpenExternalUrl(url, "pull-request");
+      }
+      const issueParams = {
+        environmentId,
+        projectId: issue.ref.projectId,
+        tracker: issue.ref.tracker,
+        ...(issue.ref.host === undefined ? {} : { host: issue.ref.host }),
+        scope: issue.ref.scope,
+        issueKey: issue.ref.key,
+      };
+      if (replace) navigation.dispatch(StackActions.replace("Issue", issueParams));
+      else navigation.dispatch(StackActions.push("Issue", issueParams));
+      return true;
+    }
     const params = withKnownPullRequestSummary({
       ...destination,
       ...(destination.navigationUrl ? { navigationId: nextLinkNavigationId() } : {}),
