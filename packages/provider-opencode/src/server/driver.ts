@@ -517,11 +517,13 @@ export const OpenCodeDriver: ProviderDriver<
       serverUrl: effectiveConfig.serverUrl,
       environment: processEnv,
       resolveEndpoint: (integrationId) =>
-        openCode2Server.withConnection((connection) =>
-          readProviderEndpoints(connection, host.paths.cwd).pipe(
-            Effect.map((endpoints) => endpoints.get(integrationId)),
-          ),
-        ),
+        openCode2Server
+          .withConnection((connection) =>
+            readProviderEndpoints(connection, host.paths.cwd).pipe(
+              Effect.map((endpoints) => endpoints.get(integrationId)),
+            ),
+          )
+          .pipe(Effect.catchCause(() => Effect.fail("OpenCode endpoint discovery failed."))),
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),

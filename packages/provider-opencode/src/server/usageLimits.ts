@@ -299,7 +299,7 @@ export interface OpenCodeUsageLimitsInput {
    * not probed: the key's owner would be unknown.
    */
   readonly resolveEndpoint?:
-    | ((integrationId: string) => Effect.Effect<string | undefined, unknown>)
+    | ((integrationId: string) => Effect.Effect<string | undefined, string>)
     | undefined;
 }
 
