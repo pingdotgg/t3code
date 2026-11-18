@@ -161,6 +161,28 @@ export function observeSummaries(
 
 export async function flushTelemetry(home = NodeOS.homedir(), env = process.env) {
   const queue = NodePath.join(home, ".cache/t3-task-cache/telemetry");
+  const deadline = Date.now() + 15_000;
+  const skipped = new Set<string>();
+  // A flusher that finds the lock taken exits and leaves its event to the holder. Re-check after
+  // releasing, or an event queued after the holder's last scan waits for the next command.
+  try {
+    while (
+      (await drainTelemetry(queue, home, env, deadline, skipped)) &&
+      Date.now() < deadline &&
+      NodeFS.readdirSync(queue).some((entry) => entry.endsWith(".json") && !skipped.has(entry))
+    );
+  } catch {
+    /* Leave unsent events for a later invocation. */
+  }
+}
+
+async function drainTelemetry(
+  queue: string,
+  home: string,
+  env: NodeJS.ProcessEnv,
+  deadline: number,
+  skipped: Set<string>,
+) {
   const lock = NodePath.join(queue, "flush.lock");
   try {
     NodeFS.mkdirSync(queue, { recursive: true, mode: 0o700 });
@@ -171,7 +193,7 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
     }
     NodeFS.mkdirSync(lock);
   } catch {
-    return;
+    return false;
   }
   try {
     const files = NodeFS.readdirSync(queue)
@@ -188,14 +210,12 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
     const credentials = NodeFS.existsSync(credentialsFile)
       ? JSON.parse(NodeFS.readFileSync(credentialsFile, "utf8"))
       : {};
-    const deadline = Date.now() + 15_000;
-    const skipped = new Set<string>();
     // Re-scan between sends so a concurrent command's final summary joins this flush.
     for (let sent = 0; sent < 100 && Date.now() < deadline;) {
       const file = NodeFS.readdirSync(queue)
         .filter((entry) => entry.endsWith(".json") && !skipped.has(entry))
         .sort()[0];
-      if (!file) break;
+      if (!file) return true;
       const path = NodePath.join(queue, file);
       const { endpoint, event } = JSON.parse(NodeFS.readFileSync(path, "utf8"));
       const url = new URL(endpoint);
@@ -229,7 +249,7 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
           headers: { Authorization: `Bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` },
           signal: AbortSignal.timeout(3000),
         });
-        if (!response.ok) return;
+        if (!response.ok) return false;
         const token = (await response.json()) as { value: string };
         authorization = `Bearer ${token.value}`;
       } else {
@@ -246,7 +266,7 @@ export async function flushTelemetry(home = NodeOS.homedir(), env = process.env)
       });
       await response.body?.cancel();
       if (response.ok || [400, 401, 403, 413].includes(response.status)) NodeFS.unlinkSync(path);
-      else return;
+      else return false;
     }
   } catch {
     /* Leave unsent events for a later invocation. */

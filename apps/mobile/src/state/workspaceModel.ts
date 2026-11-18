@@ -1,4 +1,9 @@
-import { type EnvironmentShellSummary } from "@t3tools/client-runtime/state/shell";
+import {
+  EMPTY_SHELL_STATE,
+  type EnvironmentShellState,
+  type EnvironmentShellSummary,
+} from "@t3tools/client-runtime/state/shell";
+import type { MarkedText } from "@t3tools/client-runtime/errors";
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 
 import {
@@ -8,7 +13,6 @@ import {
 
 import type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
 
-export { projectEnvironmentConnectionSummary as projectWorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
 export type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
 
 export interface WorkspaceConnectionState {
@@ -19,6 +23,7 @@ export interface WorkspaceConnectionState {
   readonly connectingEnvironments: ReadonlyArray<WorkspaceEnvironment>;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly connectionError: string | null;
+  readonly i18nConnectionError?: MarkedText;
   readonly networkStatus: NetworkStatus;
 }
 
@@ -66,6 +71,9 @@ export function projectWorkspaceConnectionState(input: {
   readonly environments: ReadonlyArray<WorkspaceEnvironment>;
 }): WorkspaceConnectionState {
   const activeEnvironments = input.environments.filter((environment) => environment.isEnabled);
+  const failedEnvironment = activeEnvironments.find(
+    (environment) => environment.connectionError !== null,
+  );
   const connectingEnvironments = activeEnvironments.filter(
     (environment) =>
       environment.connectionState === "connecting" ||
@@ -81,9 +89,10 @@ export function projectWorkspaceConnectionState(input: {
     hasConnectingEnvironment: connectingEnvironments.length > 0,
     connectingEnvironments,
     connectionState: overallConnectionState(activeEnvironments, input.networkStatus),
-    connectionError:
-      activeEnvironments.find((environment) => environment.connectionError !== null)
-        ?.connectionError ?? null,
+    connectionError: failedEnvironment?.connectionError ?? null,
+    ...(failedEnvironment?.i18nConnectionError !== undefined
+      ? { i18nConnectionError: failedEnvironment.i18nConnectionError }
+      : {}),
     networkStatus: input.networkStatus,
   };
 }
@@ -102,6 +111,19 @@ export function projectWorkspaceState(input: {
     hasSyncingConnectedEnvironment: input.hasSyncingConnectedEnvironment,
     shellSnapshotError: input.shellSummary.firstError,
   };
+}
+
+// The atom starts at EMPTY_SHELL_STATE itself; any state after the cache read is a new object.
+export function isEnvironmentShellPending(state: EnvironmentShellState): boolean {
+  return state === EMPTY_SHELL_STATE || state.status === "synchronizing";
+}
+
+// Reconnecting environments keep their last failure, so an error alone does not end the wait.
+export function isWorkspaceCatalogPending(state: WorkspaceState): boolean {
+  return (
+    state.networkStatus !== "offline" &&
+    (state.hasConnectingEnvironment || state.hasSyncingConnectedEnvironment)
+  );
 }
 
 export type ServerConfigByEnvironmentId = ReadonlyMap<EnvironmentId, ServerConfig>;

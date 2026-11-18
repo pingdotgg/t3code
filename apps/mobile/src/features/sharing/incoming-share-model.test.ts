@@ -54,7 +54,7 @@ describe("incoming native shares", () => {
       text: "Please explain this error\n\nhttps://example.com/issue/1",
       attachments: [
         {
-          id: "share-1:image:3",
+          id: "share-1-image-3",
           type: "image",
           name: "Screenshot.png",
           mimeType: "image/png",
@@ -131,7 +131,7 @@ describe("incoming native shares", () => {
 
     expect(result.attachments).toEqual([
       {
-        id: "share-report:file:0",
+        id: "share-report-file-0",
         type: "file",
         name: "report.pdf",
         mimeType: "application/pdf",
@@ -165,7 +165,7 @@ describe("incoming native shares", () => {
     expect(result.warnings).toEqual([]);
     expect(result.attachments).toEqual([
       {
-        id: "share-video:file:0",
+        id: "share-video-file-0",
         type: "file",
         name: video.originalName,
         mimeType: video.mimeType,
@@ -239,7 +239,7 @@ describe("incoming native shares", () => {
 
     expect(result.attachments).toEqual([
       {
-        id: "share-android-report:file:0",
+        id: "share-android-report-file-0",
         type: "file",
         name: "report",
         mimeType: "application/pdf",
@@ -350,7 +350,7 @@ describe("incoming native shares", () => {
     expect(
       selectIncomingShareAttachmentsForServer({
         attachments: [file],
-        serverConfig: { environment: { capabilities: { attachmentUploads: true } } },
+        serverConfig: { environment: { capabilities: {} } },
       }),
     ).toMatchObject({ status: "ready", attachments: [] });
     expect(
@@ -359,7 +359,6 @@ describe("incoming native shares", () => {
         serverConfig: {
           environment: {
             capabilities: {
-              attachmentUploads: true,
               fileAttachments: { maxUploadBytes: 5 * 1024 * 1024 },
             },
           },
@@ -372,7 +371,6 @@ describe("incoming native shares", () => {
         serverConfig: {
           environment: {
             capabilities: {
-              attachmentUploads: true,
               fileAttachments: { maxUploadBytes: 10 * 1024 * 1024 },
             },
           },

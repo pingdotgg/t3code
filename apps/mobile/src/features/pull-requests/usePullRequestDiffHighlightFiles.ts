@@ -37,7 +37,7 @@ export function usePullRequestDiffHighlightFiles(
     reportFailure: false,
   });
   const { environmentId, projectId, repository, number, host, commit } = params;
-  const cache = useMemo(() => createPullRequestDiffHighlightCache(), []);
+  const cache = createPullRequestDiffHighlightCache();
   return useMemo(() => {
     if (process.env.EXPO_PUBLIC_T3_DIFF_TRACE === "1") {
       const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);

@@ -1,7 +1,9 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Layer from "effect/Layer";
 import { expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import type * as Duration from "effect/Duration";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -73,6 +75,7 @@ const browserArchive = makeZip([
 
 const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
   options: {
+    readonly version?: string;
     readonly archive?: Buffer;
     readonly sha256?: string;
     readonly body?: Stream.Stream<Uint8Array>;
@@ -84,16 +87,16 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-preview-browser-test-" });
   const archive = options.archive ?? browserArchive;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const sha256 =
-    options.sha256 ?? Hex.encode(yield* crypto.digest("SHA-256", archive).pipe(Effect.orDie));
+    options.sha256 ?? Hex.encode(yield* digest.digest(Digest.sha256, archive).pipe(Effect.orDie));
   const requests: Array<string> = [];
   const browser = yield* PreviewBrowser.makePreviewBrowser({
     baseDir,
     release: options.unsupported
       ? null
       : {
-          version: "1.2.3",
+          version: options.version ?? "1.2.3",
           platform: "fixture",
           url: "https://storage.googleapis.com/chrome-headless-shell-fixture.zip",
           bytes: archive.byteLength,
@@ -120,11 +123,12 @@ const makeHarness = Effect.fn("test.makePreviewBrowser")(function* (
   return { browser, fs, path, baseDir, installRoot, requests };
 });
 
-it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
-  it.effect("installs a verified download with its file modes and then reuses it", () =>
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PreviewBrowser", (it) => {
+  it.effect.each(["0.8.0", "1.2.3"])("retains another version when installing %s", (current) =>
     Effect.gen(function* () {
-      const { browser, fs, path, installRoot, requests } = yield* makeHarness();
-      yield* fs.makeDirectory(path.join(installRoot, "1.0.0"), { recursive: true });
+      const { browser, fs, path, installRoot, requests } = yield* makeHarness({ version: current });
+      yield* fs.makeDirectory(path.join(installRoot, "0.9.0"), { recursive: true });
+      yield* fs.makeDirectory(path.join(installRoot, "0.10.0"));
       const active = path.join(installRoot, ".install-other");
       const abandoned = path.join(installRoot, ".install-abandoned");
       yield* fs.makeDirectory(active);
@@ -135,7 +139,7 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
 
       const executable = yield* browser.executable;
 
-      const version = path.join(installRoot, "1.2.3");
+      const version = path.join(installRoot, current);
       expect(executable).toBe(path.join(version, executableName));
       expect(yield* fs.readFileString(path.join(version, "locales", "en-US.pak"))).toBe("strings");
       if (hostPlatform !== "win32") {
@@ -145,10 +149,9 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
         expect(yield* mode("libEGL.so")).toBe(0o755);
         expect(yield* mode(path.join("locales", "en-US.pak"))).toBe(0o644);
       }
-      expect((yield* fs.readDirectory(installRoot)).toSorted()).toEqual([
-        ".install-other",
-        "1.2.3",
-      ]);
+      expect((yield* fs.readDirectory(installRoot)).toSorted()).toEqual(
+        [".install-other", "0.10.0", current].toSorted(),
+      );
       expect(yield* browser.executable).toBe(executable);
       expect(yield* browser.installed).toEqual(Option.some(executable));
       expect(requests).toHaveLength(1);

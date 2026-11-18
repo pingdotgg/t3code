@@ -2,168 +2,144 @@
 // @ts-check
 
 import { spawn } from "node:child_process";
-import { accessSync, existsSync, constants as fsConstants } from "node:fs";
 import * as NodeModule from "node:module";
-import { constants } from "node:os";
 import { pathToFileURL } from "node:url";
+import * as SemVer from "effect/SemVer";
+import * as SemVerRange from "effect/SemVerRange";
 import path from "pathe";
-
-NodeModule.enableCompileCache?.();
 
 const binDir = path.dirname(import.meta.filename);
 const entry = path.join(binDir, "alchemy.js");
-const isDev = !(
-  binDir.includes("/node_modules/") || binDir.includes("\\node_modules\\")
-);
+const args = process.argv.slice(2);
 
-const execpath = (process.env.npm_execpath ?? "").toLowerCase();
-const userAgent = (process.env.npm_config_user_agent ?? "").toLowerCase();
+// Alchemy's own TSX carries `@jsxRuntime automatic` pragmas and sigil's
+// jsx-dev-runtime is the production runtime, so Bun's startup JSX choice
+// (from the caller's tsconfig and NODE_ENV) cannot break the CLI. NODE_ENV
+// still names the mode for everything else.
+process.env.NODE_ENV = "production";
 
-const runningInBun =
-  // @ts-ignore
-  "Bun" in globalThis && typeof globalThis.Bun !== "undefined";
+/**
+ * `bun run`/`bunx` start a node-shebang bin under Node but always point
+ * npm_execpath at bun. npm_config_user_agent only names the package-manager
+ * role (e.g. nub reports `bun/<v>` for a bun project while running Node).
+ */
+const launchedByBun = () => path.basename(process.env.npm_execpath ?? "").startsWith("bun");
 
-const runtime =
-  runningInBun || execpath.includes("bun") || userAgent.startsWith("bun/")
-    ? "bun"
-    : "node";
+/**
+ * `execve` needs a Node that has it and a platform that does (not Windows),
+ * and must not sever an IPC channel a parent holds to this process.
+ */
+const canReplaceProcess = () =>
+  process.platform !== "win32" && process.execve !== undefined && process.send === undefined;
 
-if (runtime === "node") {
-  // Oxc's loader requires module.registerHooks. Keep this gate in sync with
-  // src/Util/Node.ts; the launcher must run before TypeScript can be loaded.
-  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-  const supportsHooks =
-    (major === 22 && minor >= 15) ||
-    (major === 23 && minor >= 5) ||
-    major >= 24;
-  if (!supportsHooks) {
-    process.stderr.write(
-      `alchemy: node ${process.versions.node} is not supported ` +
-        "(module.registerHooks needs node 22.15+, 23.5+, or 24+).\n" +
-        "Use a newer node, or run alchemy with bun.\n",
-    );
-    process.exit(1);
-  }
-
-  process.env.NODE_ENV = "production";
-  const loader = isDev ? "register-dev-mode.js" : "register-oxc.js";
-  await import(new URL(loader, import.meta.url).href);
-  await import(pathToFileURL(entry).href);
+if (typeof globalThis.Bun !== "undefined") {
+  await runUnderBun();
+} else if (launchedByBun()) {
+  handOffToBun();
 } else {
-  // Bun always loads source. Start a child so its JSX settings are established
-  // before loading the CLI, independent of the caller's tsconfig.
-  const tsconfig = path.join(binDir, isDev ? ".." : ".", "tsconfig.json");
-  const bun = runningInBun ? process.execPath : (findBun() ?? "bun");
-  const args = [
-    `--tsconfig-override=${tsconfig}`,
-    entry,
-    ...process.argv.slice(2),
-  ];
+  await runUnderNode();
+}
 
-  process.env.NODE_ENV = "production";
-  // Bun's tsconfig override can emit this benign diagnostic (oven-sh/bun#25730).
-  // Keep the parent to filter it and forward signals, IPC and exit status.
-  foregroundChild(
-    bun,
-    args,
-    (line) => !line.includes("directory mismatch for directory"),
-  );
+/** Already running under bun: nothing to set up. */
+async function runUnderBun() {
+  await import(pathToFileURL(entry).href);
 }
 
 /**
- * Run the CLI as a foreground child while retaining the launcher's filtered
- * stderr and IPC forwarding. Effect's child-process service intentionally
- * doesn't expose Node's IPC channel, so this small launcher keeps that boundary
- * on the native Node API.
+ * Started by bun as a package manager: run the CLI under bun, as asked.
+ * `npm_execpath` is the bun binary itself. Where possible this process is
+ * replaced outright (same pid, fds and process group, so the terminal's
+ * signals and the exit status are the CLI's own); otherwise the CLI runs as
+ * a child sharing this terminal.
+ */
+function handOffToBun() {
+  const bun = /** @type {string} */ (process.env.npm_execpath);
+  const bunArgs = [entry, ...args];
+  try {
+    if (canReplaceProcess()) {
+      process.execve(bun, [bun, ...bunArgs], process.env);
+    } else {
+      runAsChild(bun, bunArgs);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`alchemy: could not start ${bun}: ${message}\n`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Run `program` as a foreground child: signals, IPC messages and the exit
+ * status (or signal) are forwarded so the parent cannot tell the difference.
  *
  * @param {string} program
- * @param {ReadonlyArray<string>} args
- * @param {(line: string) => boolean} stderrFilter
+ * @param {ReadonlyArray<string>} programArgs
  */
-function foregroundChild(program, args, stderrFilter) {
-  /** @type {import("node:child_process").StdioOptions} */
-  const stdio = process.send ? [0, 1, "pipe", "ipc"] : [0, 1, "pipe"];
-  const child = spawn(program, args, { stdio });
-  /** @type {Map<NodeJS.Signals, () => void>} */
-  const listeners = new Map();
-
-  for (const signal of /** @type {Array<NodeJS.Signals>} */ (
-    Object.keys(constants.signals)
-  )) {
-    if (signal === "SIGKILL" || signal === "SIGSTOP") continue;
-    const forward = () => child.kill(signal);
-    try {
-      process.on(signal, forward);
-      listeners.set(signal, forward);
-    } catch {}
-  }
-
-  let buffer = "";
-  child.stderr?.on("data", (chunk) => {
-    buffer += chunk.toString();
-    const lines = buffer.split(/(?<=\n)/);
-    // The lookbehind split KEEPS separators, so a chunk ending in "\n"
-    // yields a COMPLETE final element — unconditionally popping it held
-    // the last line of every stderr burst (e.g. an error trace's final
-    // frame) until the next write or stream end, where it surfaced after
-    // Ctrl+C looking like unrelated output. Only buffer a genuine partial.
-    buffer =
-      lines.length > 0 && !lines[lines.length - 1].endsWith("\n")
-        ? (lines.pop() ?? "")
-        : "";
-    for (const line of lines) {
-      if (stderrFilter(line)) process.stderr.write(line);
-    }
+function runAsChild(program, programArgs) {
+  const child = spawn(program, programArgs, {
+    stdio: process.send ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
   });
-  child.stderr?.on("end", () => {
-    if (buffer && stderrFilter(buffer)) process.stderr.write(buffer);
+  child.on("error", (error) => {
+    process.stderr.write(`alchemy: could not start ${program}: ${error.message}\n`);
+    process.exit(1);
   });
+
+  /** @type {Array<NodeJS.Signals>} */
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT", "SIGUSR1", "SIGUSR2"];
+  for (const signal of signals) process.on(signal, () => child.kill(signal));
 
   if (process.send) {
-    child.on("message", (message, handle) =>
-      process.send?.(
-        /** @type {import("node:child_process").Serializable} */ (message),
-        handle,
-      ),
-    );
-    process.on("message", (message, handle) =>
-      child.send(
-        /** @type {import("node:child_process").Serializable} */ (message),
-        handle,
-      ),
-    );
+    const serializable = /** @param {unknown} message */ (message) =>
+      /** @type {import("node:child_process").Serializable} */ (message);
+    child.on("message", (message, handle) => process.send?.(serializable(message), handle));
+    process.on("message", (message, handle) => child.send(serializable(message), handle));
+    process.on("disconnect", () => child.disconnect());
   }
 
   child.on("close", (code, signal) => {
-    for (const [name, listener] of listeners) {
-      process.removeListener(name, listener);
-    }
-    if (signal) {
-      process.kill(process.pid, signal);
-    } else {
-      process.exit(code ?? 0);
-    }
+    if (signal) process.kill(process.pid, signal);
+    else process.exit(code ?? 0);
   });
 }
 
 /**
- * The bun executable, as an absolute path, or `undefined` when it cannot be
- * found. `bun run` names itself in `npm_execpath`; otherwise walk `PATH`.
- *
- * @returns {string | undefined}
+ * Plain Node: check the version, install the Oxc TypeScript loader, then
+ * run the CLI. A checkout (outside node_modules) runs from `src/` with the
+ * dev-mode hooks; a published install runs its built `lib/`.
  */
-function findBun() {
-  const execpath = process.env.npm_execpath;
-  if (execpath && path.basename(execpath).startsWith("bun")) {
-    return existsSync(execpath) ? execpath : undefined;
+async function runUnderNode() {
+  if (!supportsModuleHooks()) {
+    process.stderr.write(
+      `alchemy: node ${process.versions.node} is not supported. ` +
+        "Upgrade to node 22.22.3, 24.11.1 or newer.\n",
+    );
+    process.exit(1);
   }
-  for (const directory of (process.env.PATH ?? "").split(path.delimiter)) {
-    if (directory === "") continue;
-    const candidate = path.join(directory, "bun");
-    try {
-      accessSync(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {}
+  NodeModule.enableCompileCache?.();
+  // `--fast-distilled` opts in to distilled's lazy service stubs (see
+  // register-oxc.js). The env var carries the choice to the loader and to
+  // every Node child alchemy starts with it (dev exec child, sidecar).
+  // Flags after a `--` separator belong to someone else.
+  const separator = args.indexOf("--");
+  if ((separator === -1 ? args : args.slice(0, separator)).includes("--fast-distilled")) {
+    process.env.ALCHEMY_FAST_DISTILLED = "1";
   }
-  return undefined;
+  const isCheckout = !(binDir.includes("/node_modules/") || binDir.includes("\\node_modules\\"));
+  const register = isCheckout ? "register-dev-mode.js" : "register-oxc.js";
+  await import(new URL(register, import.meta.url).href);
+  await import(pathToFileURL(entry).href);
+}
+
+/**
+ * Oxc's loader needs complete `module.registerHooks` support: 24.11.1 and
+ * 25.1 carry the load-step fix for imported CommonJS (nodejs/node#59929).
+ * Keep this in sync with `isRegisterHooksSupported` in src/Util/Node.ts; the
+ * launcher must run before any TypeScript can be loaded.
+ */
+function supportsModuleHooks() {
+  return SemVerRange.matches(
+    SemVerRange.parseUnsafe(">=22.22.3 <23.0.0-0 || >=24.11.1 <25.0.0-0 || >=25.1.0"),
+    SemVer.parseUnsafe(process.versions.node),
+    { includePrerelease: true },
+  );
 }

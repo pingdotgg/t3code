@@ -1,3 +1,4 @@
+import * as Hetzner from "@alchemy.run/hetzner";
 /**
  * A Hetzner Cloud app that exercises the full module-scope graph:
  *
@@ -11,20 +12,10 @@
  * - `Worker` — background Service that writes the volume marker (`src/worker.ts`)
  */
 import * as Alchemy from "alchemy";
-import * as Hetzner from "alchemy/Hetzner";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import Api from "./src/api.ts";
-import {
-  API_PORT,
-  AppRecord,
-  Box,
-  Data,
-  DnsZone,
-  Edge,
-  Net,
-  Wall,
-} from "./src/shared.ts";
+import { API_PORT, AppRecord, Box, Data, DnsZone, Edge, Net, Wall } from "./src/shared.ts";
 import Worker from "./src/worker.ts";
 
 export default Alchemy.Stack(
@@ -42,8 +33,7 @@ export default Alchemy.Stack(
     const worker = yield* Worker;
     const api = yield* Api;
     const dns =
-      process.env.HETZNER_ZONE !== undefined &&
-      process.env.HETZNER_ZONE.length > 0
+      process.env.HETZNER_ZONE !== undefined && process.env.HETZNER_ZONE.length > 0
         ? yield* Effect.all({ zone: DnsZone, records: AppRecord })
         : undefined;
 

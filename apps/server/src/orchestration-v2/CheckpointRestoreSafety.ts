@@ -7,7 +7,7 @@ import type { ProjectionStoreV2 } from "./ProjectionStore.ts";
 import type * as ProjectStore from "./ProjectStore.ts";
 
 export const SHARED_WORKSPACE_RESTORE_MESSAGE =
-  "File restore requires an isolated worktree. This workspace may contain changes from another thread. Rewind the conversation without restoring files instead.";
+  "File restore requires an isolated worktree. This workspace may contain changes from another thread or a side chat. Rewind the conversation without restoring files instead, or delete side chats you no longer need.";
 
 // Check isolation at admission and rollback; checkpoints restore whole checkouts, which may become shared.
 export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpointRestoreIsolated")(
@@ -34,15 +34,12 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
     if (!shared && worktreePath !== null) {
       // Storage cleanup may have removed the worktree; rollback recreates it.
       const resolve = (target: string) =>
-        fileSystem
-          .realPath(target)
-          .pipe(
-            Effect.catch((error) =>
-              error.reason._tag === "NotFound"
-                ? Effect.succeed(path.resolve(target))
-                : Effect.fail(error),
-            ),
-          );
+        fileSystem.realPath(target).pipe(
+          Effect.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            (_error) => Effect.succeed(path.resolve(target)),
+          ),
+        );
       const cwd = yield* resolve(scope.cwd);
       const worktreeCwd = yield* resolve(worktreePath);
       shared = cwd !== worktreeCwd;
@@ -51,6 +48,21 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
         const checkedPaths = new Set<string>();
         for (const otherThread of [...shell.threads, ...shell.archivedThreads]) {
           if (otherThread.id === thread.id || otherThread.deletedAt !== null) continue;
+          // An idle side chat that only answered questions never touched the shared worktree.
+          if (
+            otherThread.lineage.sideChat === true &&
+            otherThread.activeRunId === null &&
+            otherThread.worktreePath === worktreePath
+          ) {
+            const { turnItems } = yield* projections.getThreadRecords(
+              otherThread.id,
+              ["turnItems"],
+              {
+                turnItemTypes: ["command_execution", "file_change", "dynamic_tool"],
+              },
+            );
+            if (turnItems.length === 0) continue;
+          }
           const other = yield* projections.getCheckpointContext(otherThread.id);
           const providerContext = yield* projections.getThreadProviderContext(otherThread.id);
           const paths = [
@@ -74,13 +86,12 @@ export const isCheckpointRestoreIsolated = Effect.fn("orchestrationV2.isCheckpoi
           for (const candidate of paths) {
             if (checkedPaths.has(candidate)) continue;
             checkedPaths.add(candidate);
-            const otherCwd = yield* fileSystem
-              .realPath(candidate)
-              .pipe(
-                Effect.catch((error) =>
-                  error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
-                ),
-              );
+            const otherCwd = yield* fileSystem.realPath(candidate).pipe(
+              Effect.catchIf(
+                (error) => error.reason._tag === "NotFound",
+                (_error) => Effect.succeed(null),
+              ),
+            );
             if (otherCwd !== null && (contains(cwd, otherCwd) || contains(otherCwd, cwd))) {
               shared = true;
               break;

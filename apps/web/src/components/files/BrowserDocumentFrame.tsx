@@ -7,6 +7,10 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import {
+  type FilePreviewScroll,
+  filePreviewRestoreScrollMessage,
+  isFilePreviewScrollRestored,
+  readFilePreviewScroll,
   type HtmlRenderShortcut,
   htmlRenderShortcutsMessage,
   htmlRenderThemeFragment,
@@ -33,6 +37,7 @@ import {
 } from "react";
 import { isElectron } from "~/env";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
+import type { PdfViewState } from "./PdfViewer";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
@@ -73,7 +78,29 @@ export const isPdfPreviewFile = (path: string): boolean =>
 
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
-function PdfDocument(props: { src: string; title: string }) {
+// The document stays mounted while each revision gets a fresh PDF.js document.
+function PdfDocument(props: { src: string; title: string; documentKey: string }) {
+  const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
+  return (
+    <PdfDocumentRevision
+      key={props.documentKey}
+      src={props.src}
+      title={props.title}
+      positionKey={props.documentKey}
+      initialView={view}
+      onViewChange={setView}
+    />
+  );
+}
+
+// Keep signed URL renewals from reloading the same revision.
+function PdfDocumentRevision(props: {
+  src: string;
+  title: string;
+  positionKey: string;
+  initialView: PdfViewState;
+  onViewChange: (view: PdfViewState) => void;
+}) {
   const [src] = useState(props.src);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
   // expose only the first page, even when pdfViewerEnabled reports support.
@@ -91,7 +118,13 @@ function PdfDocument(props: { src: string; title: string }) {
     />
   ) : (
     <Suspense fallback={<FileSurfaceLoading />}>
-      <PdfViewer src={src} title={props.title} />
+      <PdfViewer
+        src={src}
+        title={props.title}
+        positionKey={props.positionKey}
+        initialView={props.initialView}
+        onViewChange={props.onViewChange}
+      />
     </Suspense>
   );
 }
@@ -108,10 +141,17 @@ export function BrowserDocumentFrame(props: {
   readonly threadRef?: ScopedThreadRef | undefined;
   /** Stable resource identity and revision; defaults to src for callers that reload on URL changes. */
   readonly documentKey?: string | undefined;
+  /** Resource identity without its revision, so PDF reloads can retain the reading position. */
+  readonly documentId?: string | undefined;
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
-    <PdfDocument key={key} src={props.src} title={props.title} />
+    <PdfDocument
+      key={props.documentId ?? key}
+      documentKey={key}
+      src={props.src}
+      title={props.title}
+    />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
       key={key}
@@ -121,20 +161,119 @@ export function BrowserDocumentFrame(props: {
       className="min-h-0 flex-1"
     />
   ) : (
-    <FileDocument key={key} src={props.src} title={props.title} />
+    <FileDocument
+      key={props.documentId ?? key}
+      documentKey={key}
+      src={props.src}
+      title={props.title}
+    />
   );
 }
 
-// URL renewals must not discard form input or scroll; a new key mounts a fresh document.
-function FileDocument(props: { readonly src: string; readonly title: string }) {
-  const [src] = useState(props.src);
+interface FileDocumentRevision {
+  readonly key: string;
+  readonly src: string;
+}
+
+interface FileDocumentFrames {
+  readonly shown: FileDocumentRevision;
+  readonly next: FileDocumentRevision | null;
+}
+
+// Identity, not key, so a late load from a replaced frame cannot uncover a newer unloaded one.
+const showRevision =
+  (next: FileDocumentRevision) =>
+  (current: FileDocumentFrames): FileDocumentFrames =>
+    current.next === next ? { shown: next, next: null } : current;
+
+// A page whose load never fires (a stalled subresource) must not pin the previous revision.
+const FILE_DOCUMENT_SWAP_TIMEOUT_MS = 5_000;
+
+// URL renewals keep a revision's first URL, so they do not discard form input or scroll. A new
+// revision loads beneath the page on screen, takes its scroll position and replaces it once
+// painted, so no blank frame shows and the reader keeps their place.
+function FileDocument(props: {
+  readonly documentKey: string;
+  readonly src: string;
+  readonly title: string;
+}) {
+  const [frames, setFrames] = useState<FileDocumentFrames>(() => ({
+    shown: { key: props.documentKey, src: props.src },
+    next: null,
+  }));
+  if ((frames.next ?? frames.shown).key !== props.documentKey) {
+    setFrames({
+      shown: frames.shown,
+      next:
+        frames.shown.key === props.documentKey ? null : { key: props.documentKey, src: props.src },
+    });
+  }
+  const { next } = frames;
+  const shownFrame = useRef<HTMLIFrameElement>(null);
+  const nextFrame = useRef<HTMLIFrameElement>(null);
+  // The page reports its scroll position (see FILE_PREVIEW_SCROLL_SCRIPT); the next revision
+  // scrolls there before it is uncovered.
+  const scroll = useRef<FilePreviewScroll | null>(null);
+  // Two frames let the browser paint the incoming page before it is uncovered.
+  const reveal = (revision: FileDocumentRevision) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => setFrames(showRevision(revision))));
+  const onFrameMessage = useEffectEvent((event: MessageEvent) => {
+    const position = readFilePreviewScroll(event.data);
+    if (position !== undefined) {
+      if (event.source === shownFrame.current?.contentWindow) scroll.current = position;
+    } else if (
+      next !== null &&
+      event.source === nextFrame.current?.contentWindow &&
+      isFilePreviewScrollRestored(event.data)
+    ) {
+      reveal(next);
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for the frames' scroll reports
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => onFrameMessage(event);
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- swaps in a revision whose load event never arrives
+  useEffect(() => {
+    if (next === null) return;
+    const timer = setTimeout(() => setFrames(showRevision(next)), FILE_DOCUMENT_SWAP_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [next]);
+  // The shown frame stays last so it paints on top and is never moved, which would reload it.
   return (
-    <iframe
-      src={src}
-      title={props.title}
-      className="min-h-0 flex-1 border-0 bg-white"
-      sandbox="allow-scripts allow-forms allow-popups allow-downloads"
-    />
+    <div className="relative min-h-0 flex-1">
+      {[next, frames.shown].map((revision) =>
+        revision === null ? null : (
+          <iframe
+            key={revision.key}
+            ref={revision === next ? nextFrame : shownFrame}
+            src={revision.src}
+            title={props.title}
+            className="absolute inset-0 size-full border-0"
+            style={{ backgroundColor: "Canvas" }}
+            sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+            inert={revision === next}
+            aria-hidden={revision === next ? true : undefined}
+            onLoad={
+              revision === next
+                ? (event) => {
+                    if (scroll.current === null) {
+                      reveal(revision);
+                      return;
+                    }
+                    event.currentTarget.contentWindow?.postMessage(
+                      filePreviewRestoreScrollMessage(scroll.current),
+                      "*",
+                    );
+                  }
+                : undefined
+            }
+          />
+        ),
+      )}
+    </div>
   );
 }
 
@@ -156,6 +295,7 @@ export function HtmlRenderDocument(props: {
   const postTheme = () => {
     frameRef.current?.contentWindow?.postMessage(htmlRenderThemeMessage(theme), "*");
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts the current theme to the sandboxed iframe's window
   useEffect(postTheme, [theme]);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const environmentKeybindings = useAtomValue(
@@ -190,6 +330,7 @@ export function HtmlRenderDocument(props: {
       "*",
     );
   };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts allowed and blocked shortcuts to the sandboxed iframe's window
   useEffect(postShortcuts, [blocked, shortcuts]);
   // Pages can forge key/code pairs; reject pairs matching other bindings and require named keys to match the
   // shortcut.
@@ -229,85 +370,54 @@ export function HtmlRenderDocument(props: {
     }
     void openLink(url, { event: modifiers }).catch((cause: unknown) => console.error(cause));
   });
-  // Require frame focus and recent app use to block opens on load; scripts can still wait for the reader's
-  // next input.
-  useEffect(() => {
-    const openLink = (event: MessageEvent) => {
-      const frame = frameRef.current;
-      const request = readHtmlRenderLinkRequest(event.data);
-      if (
-        request === undefined ||
-        frame === null ||
-        event.source !== frame.contentWindow ||
-        document.activeElement !== frame ||
-        navigator.userActivation?.isActive === false
-      ) {
-        return;
-      }
-      open(request.url, request);
-      frame.contentWindow?.postMessage(htmlRenderResult(request.id), "*");
-    };
-    window.addEventListener("message", openLink);
-    return () => window.removeEventListener("message", openLink);
-  }, []);
-  useEffect(() => {
-    const replayKey = (event: MessageEvent) => {
-      const frame = frameRef.current;
-      const key = readHtmlRenderKeyDown(event.data);
-      if (
-        key === undefined ||
-        frame === null ||
-        event.source !== frame.contentWindow ||
-        document.activeElement !== frame ||
-        navigator.userActivation?.isActive === false
-      ) {
-        return;
-      }
-      if (!isShortcut(key)) return;
-      frame.dispatchEvent(
-        new KeyboardEvent("keydown", { ...key, bubbles: true, cancelable: true }),
-      );
-    };
-    window.addEventListener("message", replayKey);
-    return () => window.removeEventListener("message", replayKey);
-  }, []);
-  useEffect(() => {
-    const openImage = (event: MessageEvent) => {
-      const frame = frameRef.current;
-      const request = readHtmlRenderImageRequest(event.data);
-      if (
-        request === undefined ||
-        frame === null ||
-        event.source !== frame.contentWindow ||
-        document.activeElement !== frame ||
-        navigator.userActivation?.isActive === false
-      ) {
-        return;
-      }
-      setExpandedImage({ images: [{ src: request.src, name: request.name }], index: 0 });
-    };
-    window.addEventListener("message", openImage);
-    return () => window.removeEventListener("message", openImage);
-  }, []);
   const { onFullscreenChange } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports fullscreen to the parent while the image viewer is open, and clears it on unmount
   useEffect(() => {
     if (expandedImage === null) return;
     onFullscreenChange?.(true);
     return () => onFullscreenChange?.(false);
   }, [expandedImage, onFullscreenChange]);
-  const { onContentHeight } = props;
-  // Listen at commit because a fast page may post its initial height before passive effects run.
-  useLayoutEffect(() => {
-    if (onContentHeight === undefined) return;
-    const resize = (event: MessageEvent) => {
-      const height = readHtmlRenderContentHeight(event.data);
-      if (height !== undefined && event.source === frameRef.current?.contentWindow) {
-        onContentHeight(height);
+  // Links, keys and images require frame focus and recent reader activity: a page can take
+  // focus by script, so this blocks opens on load, though not a page that waits for the
+  // reader's next input.
+  const onFrameMessage = useEffectEvent((frame: HTMLIFrameElement, event: MessageEvent) => {
+    const height = readHtmlRenderContentHeight(event.data);
+    if (height !== undefined) {
+      props.onContentHeight?.(height);
+      return;
+    }
+    if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
+    const linkRequest = readHtmlRenderLinkRequest(event.data);
+    if (linkRequest !== undefined) {
+      open(linkRequest.url, linkRequest);
+      frame.contentWindow?.postMessage(htmlRenderResult(linkRequest.id), "*");
+      return;
+    }
+    const key = readHtmlRenderKeyDown(event.data);
+    if (key !== undefined) {
+      if (isShortcut(key)) {
+        frame.dispatchEvent(
+          new KeyboardEvent("keydown", { ...key, bubbles: true, cancelable: true }),
+        );
       }
+      return;
+    }
+    const imageRequest = readHtmlRenderImageRequest(event.data);
+    if (imageRequest !== undefined) {
+      setExpandedImage({ images: [...imageRequest.images], index: imageRequest.index });
+    }
+  });
+  // Attach at commit because a fast page may post its initial height before passive effects run.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches a window message listener for the iframe at commit, before its first height post
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    if (frame === null) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.source === frame.contentWindow) onFrameMessage(frame, event);
     };
-    window.addEventListener("message", resize);
-    return () => window.removeEventListener("message", resize);
-  }, [onContentHeight]);
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
   return (
     <>
       <iframe
@@ -316,6 +426,8 @@ export function HtmlRenderDocument(props: {
         title={props.title}
         // Never allow-same-origin: the opaque origin keeps the page out of the app's session.
         sandbox="allow-scripts allow-forms"
+        // Lets a page's video or image viewer take the screen.
+        allow="fullscreen"
         loading="lazy"
         onLoad={() => {
           setLoaded(true);

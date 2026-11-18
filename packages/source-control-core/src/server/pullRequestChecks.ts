@@ -1,4 +1,8 @@
-import type { PullRequestCheck } from "@t3tools/contracts";
+import type {
+  PullRequestCheck,
+  PullRequestCheckStatus,
+  PullRequestChecksState,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
@@ -36,6 +40,15 @@ function isAtLeastAsNew(candidate: string | null, kept: string | null): boolean 
   );
 }
 
+export function rollupCheckStatuses(
+  statuses: ReadonlyArray<PullRequestCheckStatus>,
+): PullRequestChecksState | null {
+  if (statuses.length === 0) return null;
+  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
+  if (statuses.includes("pending") || statuses.includes("action-required")) return "pending";
+  return statuses.includes("success") ? "passing" : null;
+}
+
 export function sortChecks(
   checks: ReadonlyArray<PullRequestCheck>,
 ): ReadonlyArray<PullRequestCheck> {
@@ -55,13 +68,25 @@ export function dedupeChecks(
     readonly check: PullRequestCheck;
     readonly workflowName: string | null;
     readonly at: string | null;
+    // Hosts with one-second timestamps can date a final and an earlier status alike.
+    readonly sequence?: number;
   }>,
 ): ReadonlyArray<PullRequestCheck> {
   const newestByCheck = new Map<string, (typeof entries)[number]>();
   for (const entry of entries) {
     const key = JSON.stringify([entry.workflowName ?? "", entry.check.name]);
     const kept = newestByCheck.get(key);
-    if (kept === undefined || isAtLeastAsNew(entry.at, kept.at)) newestByCheck.set(key, entry);
+    if (kept !== undefined) {
+      if (!isAtLeastAsNew(entry.at, kept.at)) continue;
+      if (
+        entry.sequence !== undefined &&
+        kept.sequence !== undefined &&
+        entry.sequence < kept.sequence &&
+        isAtLeastAsNew(kept.at, entry.at)
+      )
+        continue;
+    }
+    newestByCheck.set(key, entry);
   }
   const survivors = [...newestByCheck.values()];
   const countsByName = new Map<string, number>();

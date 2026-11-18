@@ -2,6 +2,7 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FiberMap from "effect/FiberMap";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -10,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 
+import * as CodexRpc from "./_generated/meta.gen.ts";
 import * as CodexError from "./errors.ts";
 import { JsonRpcId, JsonRpcResponseEnvelope } from "./_internal/shared.ts";
 const isJsonRpcId = Schema.is(JsonRpcId);
@@ -176,6 +178,9 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const terminationFailure = yield* Ref.make(Option.none<CodexError.CodexAppServerError>());
     const terminationSignal = yield* Deferred.make<void>();
     const activeRequestHandlers = yield* Ref.make(0);
+    const requestHandlers = yield* FiberMap.make<string | number>().pipe(
+      Scope.provide(requestHandlerScope),
+    );
 
     const logProtocol = (event: CodexAppServerProtocolLogEvent) => {
       if (event.direction === "incoming" && !options.logIncoming) {
@@ -223,6 +228,26 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
           true,
         ] as const;
       }).pipe(Effect.flatten);
+
+    // Node ends stdout before it reports the exit of a crashed process, so wait briefly
+    // for the exit status. Pipes can also close while the process keeps running, so the
+    // wait must not hang pending requests.
+    const exitStatusOr = (
+      fallback: CodexError.CodexAppServerError,
+      operation: "read-input-stream" | "write-output-stream",
+    ) =>
+      options.terminationError === undefined
+        ? Effect.succeed(fallback)
+        : options.terminationError.pipe(
+            Effect.timeoutOrElse({
+              duration: EXIT_STATUS_GRACE,
+              orElse: () => Effect.succeed(fallback),
+            }),
+            // A defect here would leave termination marked handled but unfinished.
+            Effect.catchDefect((cause) =>
+              Effect.succeed(new CodexError.CodexAppServerTransportError({ operation, cause })),
+            ),
+          );
 
     const offerOutgoing =
       /* Every protocol write reaches this helper; request spans cover the operation. */
@@ -322,7 +347,21 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
                 );
               }
 
-              return handler(request).pipe(
+              return Effect.suspend(() => handler(request)).pipe(
+                // Adapter handlers end in Effect.orDie; Codex waits for an answer regardless.
+                Effect.catchDefect(() =>
+                  Effect.logError("Codex request handler failed").pipe(
+                    Effect.annotateLogs({
+                      method:
+                        request.method in CodexRpc.SERVER_REQUEST_PARAMS
+                          ? request.method
+                          : "unknown",
+                    }),
+                    Effect.andThen(
+                      Effect.fail(CodexError.CodexAppServerRequestError.internalError()),
+                    ),
+                  ),
+                ),
                 Effect.matchEffect({
                   onFailure: (error) =>
                     respondError(
@@ -343,7 +382,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
                     Effect.asVoid,
                   ),
                 ),
-                Effect.forkIn(requestHandlerScope, { startImmediately: true }),
+                FiberMap.run(requestHandlers, request.id),
                 Effect.asVoid,
               );
             }),
@@ -352,8 +391,17 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
         Effect.asVoid,
       );
 
+    // Codex settles requests itself when their turn ends; a handler still waiting would hold its slot.
+    const releaseResolvedRequest = (notification: CodexAppServerIncomingNotification) =>
+      notification.method === "serverRequest/resolved" &&
+      isObject(notification.params) &&
+      isJsonRpcId(notification.params.requestId)
+        ? FiberMap.remove(requestHandlers, notification.params.requestId)
+        : Effect.void;
+
     const handleNotification = (notification: CodexAppServerIncomingNotification) =>
-      Queue.offer(incomingNotifications, notification).pipe(
+      releaseResolvedRequest(notification).pipe(
+        Effect.andThen(Queue.offer(incomingNotifications, notification)),
         Effect.andThen(options.onNotification ? options.onNotification(notification) : Effect.void),
         Effect.asVoid,
       );
@@ -446,27 +494,44 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             Effect.matchEffect({
               onFailure: (error) => handleTermination(() => Effect.succeed(error)),
               onSuccess: () =>
-                handleTermination(() => {
-                  const ended = new CodexError.CodexAppServerInputStreamEndedError({});
-                  // Node ends stdout before it reports the exit of a crashed process, so
-                  // wait briefly for the exit status. stdout can also close while the
-                  // process keeps running, so the wait must not hang pending requests.
-                  return options.terminationError === undefined
-                    ? Effect.succeed(ended)
-                    : options.terminationError.pipe(
-                        Effect.timeoutOrElse({
-                          duration: EXIT_STATUS_GRACE,
-                          orElse: () => Effect.succeed(ended),
-                        }),
-                      );
-                }),
+                handleTermination(() =>
+                  exitStatusOr(
+                    new CodexError.CodexAppServerInputStreamEndedError({}),
+                    "read-input-stream",
+                  ),
+                ),
             }),
           ),
       }),
+      Effect.catchCause((cause) =>
+        handleTermination(() =>
+          Effect.succeed(
+            new CodexError.CodexAppServerTransportError({
+              operation: "read-input-stream",
+              cause: Cause.squash(cause),
+            }),
+          ),
+        ),
+      ),
       Effect.forkScoped,
     );
 
-    yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
+    yield* Stream.fromQueue(outgoing).pipe(
+      Stream.run(options.stdio.stdout()),
+      Effect.catchCause((cause) =>
+        handleTermination(() =>
+          // Writing to a process that already exited fails with EPIPE; report the exit.
+          exitStatusOr(
+            new CodexError.CodexAppServerTransportError({
+              operation: "write-output-stream",
+              cause: Cause.squash(cause),
+            }),
+            "write-output-stream",
+          ),
+        ),
+      ),
+      Effect.forkScoped,
+    );
 
     const request = Effect.fn("CodexAppServerProtocol.request")(function* (
       method: string,
@@ -476,17 +541,30 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
         nextRequestId,
         (current) => [current, current + 1] as const,
       );
+      const attributes = {
+        "rpc.system": "jsonrpc",
+        "rpc.method": method,
+        "rpc.request_id": requestId,
+      };
+      yield* Effect.annotateCurrentSpan(attributes);
       const deferred = yield* Deferred.make<unknown, CodexError.CodexAppServerError>();
-      yield* Ref.update(pending, (current) =>
-        new Map(current).set(String(requestId), { deferred, method }),
-      );
-      yield* offerOutgoing({
-        id: requestId,
-        method,
-        ...(payload !== undefined ? { params: payload } : {}),
-      }).pipe(Effect.tapError(() => removePending(String(requestId))));
-      return yield* Deferred.await(deferred).pipe(
-        Effect.onInterrupt(() => removePending(String(requestId))),
+      return yield* Effect.acquireUseRelease(
+        Ref.update(pending, (current) =>
+          new Map(current).set(String(requestId), { deferred, method }),
+        ),
+        () =>
+          Effect.gen(function* () {
+            yield* offerOutgoing({
+              id: requestId,
+              method,
+              ...(payload !== undefined ? { params: payload } : {}),
+            }).pipe(Effect.withSpan("CodexAppServerProtocol.request.enqueue", { attributes }));
+            // Includes queue/stdin delivery, Codex work and response routing, not just T3 CPU.
+            return yield* Deferred.await(deferred).pipe(
+              Effect.withSpan("CodexAppServerProtocol.request.awaitResponse", { attributes }),
+            );
+          }),
+        () => removePending(String(requestId)),
       );
     });
 

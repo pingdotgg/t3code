@@ -13,20 +13,17 @@ type UpstreamCase = {
 
 describe("ignore v7.0.5 upstream cases", () => {
   cases((testCase: UpstreamCase) => {
-    const { description, patterns, paths_object, paths, expected, scopes } =
-      testCase;
+    const { description, patterns, paths_object, paths, expected, scopes } = testCase;
 
     if (scopes === false || scopes.includes("filter")) {
       it(`filter: ${description}`, () => {
-        expect(ignore().add(patterns).filter(paths).sort()).toEqual(
-          [...expected].sort(),
-        );
+        expect(ignore().add(patterns).filter(paths).sort()).toEqual([...expected].sort());
       });
 
       it(`createFilter: ${description}`, () => {
-        expect(
-          paths.filter(ignore().add(patterns).createFilter()).sort(),
-        ).toEqual([...expected].sort());
+        expect(paths.filter(ignore().add(patterns).createFilter()).sort()).toEqual(
+          [...expected].sort(),
+        );
       });
     }
 
@@ -48,10 +45,7 @@ describe("ignore v7.0.5 upstream cases", () => {
       });
     }
 
-    if (
-      SHOULD_TEST_WINDOWS &&
-      (scopes === false || scopes.includes("filter"))
-    ) {
+    if (SHOULD_TEST_WINDOWS && (scopes === false || scopes.includes("filter"))) {
       it(`win32 filter: ${description}`, () => {
         const windowsPaths = paths.map((path) => path.replaceAll("/", "\\"));
         expect(ignore().add(patterns).filter(windowsPaths).sort()).toEqual(

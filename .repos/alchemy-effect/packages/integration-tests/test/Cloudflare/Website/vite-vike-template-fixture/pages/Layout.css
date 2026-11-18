@@ -1,0 +1,29 @@
+/* Links */
+a {
+  text-decoration: none;
+}
+#sidebar a {
+  padding: 2px 10px;
+  margin-left: -10px;
+}
+#sidebar a.is-active {
+  background-color: #eee;
+}
+
+/* Reset */
+body {
+  margin: 0;
+  font-family: sans-serif;
+}
+* {
+  box-sizing: border-box;
+}
+
+/* Page Transition Animation */
+#page-content {
+  opacity: 1;
+  transition: opacity 0.3s ease-in-out;
+}
+body.page-transition #page-content {
+  opacity: 0;
+}

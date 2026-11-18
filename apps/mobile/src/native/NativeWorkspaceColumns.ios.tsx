@@ -1,8 +1,10 @@
 import { requireOptionalNativeModule } from "expo";
-import { useEffect, useState } from "react";
 import { Platform } from "react-native";
+import { useDeadlinePassed } from "../lib/clock";
 import type { NativeLayoutMetrics } from "../lib/reserved-regions";
-import { useNativeLayoutMetrics } from "./native-layout-metrics";
+import { useNativeLayoutMetrics, useNativeLayoutMetricsDeadline } from "./native-layout-metrics";
+
+export { NATIVE_METRICS_TIMEOUT_MS } from "./native-layout-metrics";
 
 const nativeControls = requireOptionalNativeModule<{
   readonly supportsWorkspaceColumns?: boolean;
@@ -19,24 +21,15 @@ export function nativeWorkspaceColumnsSupportedFor(metrics: NativeLayoutMetrics 
   );
 }
 
-// Binaries without the native no-hinge fallback never report metrics on ordinary
-// iPhones running iOS 27.1 or later. Use the compact navigator rather than staying blank.
-export const NATIVE_METRICS_TIMEOUT_MS = 1000;
-
 export function useNativeWorkspaceColumnsReady() {
   const metrics = useNativeLayoutMetrics();
-  const [timedOut, setTimedOut] = useState(false);
+  const metricsDeadline = useNativeLayoutMetricsDeadline();
   const waiting =
     !(Platform.OS === "ios" && Platform.isPad) &&
     !!nativeControls?.ViewPrototypes?.T3NativeControls_LayoutMetrics &&
     metrics === null;
-
-  useEffect(() => {
-    if (!waiting) return;
-    const timeout = setTimeout(() => setTimedOut(true), NATIVE_METRICS_TIMEOUT_MS);
-    return () => clearTimeout(timeout);
-  }, [waiting]);
-
+  // Without metrics by the deadline, use the compact navigator rather than staying blank.
+  const timedOut = useDeadlinePassed(waiting ? metricsDeadline : null);
   return !waiting || timedOut;
 }
 

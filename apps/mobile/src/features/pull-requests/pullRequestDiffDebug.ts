@@ -21,11 +21,14 @@ export function handlePullRequestDiffDebugEvent(
   event: Parameters<NonNullable<NativeReviewDiffViewProps["onDebug"]>>[0],
   input: {
     readonly rowCount: number;
+    /** The last row native can draw: a folded final file ends at its header. */
+    readonly lastShownRowIndex: number;
     readonly targetFileId: string | undefined;
     readonly focusIndex: number;
     readonly isIos: boolean;
     readonly nativeView: RefObject<NativeReviewDiffViewHandle | null>;
-    readonly jumpStarted: RefObject<boolean>;
+    readonly jumpStarted: () => boolean;
+    readonly setJumpStarted: (started: boolean) => void;
     readonly onDebug: NonNullable<NativeReviewDiffViewProps["onDebug"]>;
     readonly loadMore: () => void;
   },
@@ -46,18 +49,22 @@ export function handlePullRequestDiffDebugEvent(
   if (drawn) input.onDebug(event);
   if (
     input.targetFileId &&
-    !input.jumpStarted.current &&
+    !input.jumpStarted() &&
     input.nativeView.current &&
     (!input.isIos || decoded)
   ) {
-    input.jumpStarted.current = true;
+    input.setJumpStarted(true);
     if (input.focusIndex >= 0) return;
     void input.nativeView.current.scrollToFile(input.targetFileId, false).catch(() => {
-      input.jumpStarted.current = false;
+      input.setJumpStarted(false);
     });
     return;
   }
   if (!drawn) return;
   const lastRow = event.nativeEvent.lastRowIndex;
-  if (typeof lastRow === "number" && lastRow >= input.rowCount - 40) input.loadMore();
+  if (
+    typeof lastRow === "number" &&
+    lastRow >= Math.min(input.rowCount - 40, input.lastShownRowIndex)
+  )
+    input.loadMore();
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   getThemeColorsForMode,
+  parseThemeFile,
   themeColorToHex,
   THEME_FILE_VERSION,
   toCanonicalThemeColor,
@@ -9,6 +10,7 @@ import {
 import {
   isVsCodeThemeFile,
   pairVsCodeThemes,
+  parseThemeImport,
   parseVsCodeThemeFile,
   resolveThemeLabelCollisions,
 } from "./vscodeThemeImport";
@@ -62,6 +64,59 @@ const VSCODE_DARK = {
   },
   tokenColors: [],
 };
+
+describe("theme import text", () => {
+  it("preserves conversion of ordinary VS Code JSON", () => {
+    expect(parseThemeImport(JSON.stringify(VSCODE_DARK))).toEqual(
+      parseVsCodeThemeFile(VSCODE_DARK),
+    );
+  });
+
+  it.each([
+    '{ // line comment\n "name": "Test", "colors": { "editor.background": "#002b36" } }',
+    '{ /* block comment */ "name": "Test", "colors": { "editor.background": "#002b36" } }',
+    '{ "name": "Test", "colors": { "editor.background": "#002b36", }, "tokenColors": [ { "scope": ["comment",], "settings": {}, }, ], }',
+  ])("imports VS Code JSONC without changing conversion: %s", (source) => {
+    const theme = parseThemeImport(source);
+    expect(theme.label).toBe("Test");
+    expect(theme.appearance).toBe("dark");
+    expect(asHex(theme.colors.canvas)).toBe("#002b36");
+  });
+
+  it.each([
+    "",
+    '{ "name": "Test", "colors": { "editor.background": "#002b36" }',
+    '{ "name": "Test" "colors": { "editor.background": "#002b36" } }',
+    '{ "name": "Test", "colors": { "editor.background": "#002b36" } } /* unterminated',
+    '{ "name": "Test", "colors": { "editor.background": "#002b36" } } extra',
+  ])("rejects malformed input rather than using parser recovery: %s", (source) => {
+    expect(() => parseThemeImport(source)).toThrow("That theme file is not valid JSON.");
+  });
+
+  it("preserves native T3 theme parsing and strict JSON syntax", () => {
+    const nativeTheme = {
+      version: THEME_FILE_VERSION,
+      name: "Native theme",
+      appearance: "dark",
+      colors: { canvas: "#002b36" },
+    };
+    const source = JSON.stringify(nativeTheme);
+    expect(parseThemeImport(source)).toEqual(parseThemeFile(nativeTheme));
+    expect(() => parseThemeImport(source.replace("{", "{ /* native theme */"))).toThrow();
+    expect(() => parseThemeImport(source.slice(0, -1) + ",}")).toThrow();
+  });
+
+  it("still validates theme structure after parsing JSONC", () => {
+    expect(() =>
+      parseThemeImport('{ /* not a theme */ "colors": { "editor.foreground": "#fff" } }'),
+    ).toThrow('no "editor.background"');
+    expect(() =>
+      parseThemeImport(
+        '{ "version": 1, "name": "Bad native", "appearance": "dark", "colors": { "unknown": "#fff" } }',
+      ),
+    ).toThrow('"unknown" is not a supported theme color role.');
+  });
+});
 
 describe("VS Code theme import", () => {
   it("recognises workbench themes and rejects our own files", () => {
@@ -413,6 +468,35 @@ describe("VS Code theme import", () => {
     expect(getThemeColorsForMode(themes[2]!, "light")).toBeNull();
   });
 
+  it.each([
+    { name: "shared", light: "a {}", dark: "a {}", expected: [["Aurora", "a {}"]] },
+    { name: "light-only", light: "a {}", dark: undefined, expected: [["Aurora", "a {}"]] },
+    { name: "dark-only", light: undefined, dark: "a {}", expected: [["Aurora", "a {}"]] },
+    {
+      name: "conflicting",
+      light: "a {}",
+      dark: "b {}",
+      expected: [
+        ["Aurora Light", "a {}"],
+        ["Aurora Dark", "b {}"],
+      ],
+    },
+  ])("pairs light and dark halves with $name custom CSS", ({ light, dark, expected }) => {
+    const themes = pairVsCodeThemes(
+      (["light", "dark"] as const).map((appearance) => {
+        const css = appearance === "light" ? light : dark;
+        return parseThemeFile({
+          version: THEME_FILE_VERSION,
+          name: `Aurora ${appearance === "light" ? "Light" : "Dark"}`,
+          appearance,
+          colors: { canvas: appearance === "light" ? "#fafafa" : "#101014" },
+          ...(css ? { css } : {}),
+        });
+      }),
+    );
+    expect(themes.map((theme) => [theme.label, theme.css])).toEqual(expected);
+  });
+
   it("does not guess when a family is ambiguous", () => {
     const make = (name: string, type: "light" | "dark") =>
       parseVsCodeThemeFile({
@@ -430,22 +514,27 @@ describe("VS Code theme import", () => {
 
   it("tells same-named variants apart by their file names", () => {
     // Both Dracula theme files declare the same internal name.
-    const dracula = (bg: string) =>
-      parseVsCodeThemeFile({
+    const css = ".app { outline: 1px solid red; }";
+    const dracula = (bg: string) => ({
+      ...parseVsCodeThemeFile({
         name: "Dracula",
         type: "dark",
         colors: { "editor.background": bg, "editor.foreground": "#f8f8f2" },
-      });
+      }),
+      css,
+    });
     const themes = resolveThemeLabelCollisions([
       { theme: dracula("#282a36"), sourceName: "dracula.json" },
       { theme: dracula("#22232e"), sourceName: "dracula-soft.json" },
     ]);
     expect(themes.map((theme) => theme.label)).toEqual(["Dracula", "Dracula Soft"]);
     expect(themes.map((theme) => theme.id)).toEqual(["dracula", "dracula-soft"]);
+    expect(themes.map((theme) => theme.css)).toEqual([css, css]);
     const numbered = resolveThemeLabelCollisions([
       { theme: dracula("#282a36") },
       { theme: dracula("#22232e") },
     ]);
     expect(numbered.map((theme) => theme.label)).toEqual(["Dracula", "Dracula 2"]);
+    expect(numbered.map((theme) => theme.css)).toEqual([css, css]);
   });
 });

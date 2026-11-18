@@ -1,9 +1,12 @@
 /* oxlint-disable react/no-array-index-key -- Text spans retain their order within an immutable page. */
 /* oxlint-disable react/no-unstable-nested-components -- These callbacks return overlays, and are invoked as render functions. */
 import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
+import { msg } from "gt-react";
 import { Fragment, useEffect, useRef, useState } from "react";
+import { m } from "~/i18n/messages";
 import { FileSurfaceLoading } from "../fileSurfaceChrome";
 import { OfficePages, type PaintPage } from "./OfficePages";
+import { rasterize } from "./vector-pictures";
 import { createWorkerClient } from "./worker-rpc";
 import {
   layerFont,
@@ -28,7 +31,7 @@ export default function WordDocument(props: {
   const { onError, bytes, onDetails } = props;
   const [opened, setOpened] = useState<Opened>();
   const scroll = useRef<((index: number, y?: number) => void) | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Own the document worker and cancel its layout and painting requests when the document changes or unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the document worker and cancel its layout and painting requests when the document changes or unmounts.
   useEffect(() => {
     const controller = new AbortController();
     const worker = new Worker(new URL("./document.worker.ts", import.meta.url), { type: "module" });
@@ -39,8 +42,14 @@ export default function WordDocument(props: {
     worker.addEventListener("error", fail);
     worker.addEventListener("messageerror", fail);
     const buffer = bytes.slice(0);
-    const paint: PaintPage = async (index, canvas, scale, signal) => {
-      const bitmap = await engine.call(
+    const paint = async (
+      index: number,
+      canvas: HTMLCanvasElement,
+      scale: number,
+      signal: AbortSignal,
+      again = false,
+    ): Promise<void> => {
+      const painted = await engine.call(
         "paint",
         { index, scale, ratio: window.devicePixelRatio || 1 },
         { key: `paint:${index}`, signal },
@@ -48,30 +57,55 @@ export default function WordDocument(props: {
       void engine
         .call("build", { index: index + 1 }, { key: "build", signal })
         .catch(() => undefined);
-      if (!bitmap) return;
+      if (!painted) return;
       const context = canvas.getContext("bitmaprenderer");
       if (!context || signal.aborted) {
-        bitmap.close();
+        painted.bitmap.close();
         return;
       }
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      context.transferFromImageBitmap(bitmap);
+      canvas.width = painted.bitmap.width;
+      canvas.height = painted.bitmap.height;
+      context.transferFromImageBitmap(painted.bitmap);
+      if (again || !painted.vectors.length) return;
+      const bitmaps = await Promise.all(painted.vectors.map(rasterize));
+      if (signal.aborted) {
+        bitmaps.forEach((value) => value.bitmap?.close());
+        return;
+      }
+      await engine.call("vectors", bitmaps, {
+        transfer: bitmaps.flatMap((value) => (value.bitmap ? [value.bitmap] : [])),
+        signal,
+      });
+      if (!signal.aborted) await paint(index, canvas, scale, signal, true);
     };
     void engine
       .call("open", { bytes: buffer }, { transfer: [buffer], signal: controller.signal })
       .then(async (first) => {
         if (controller.signal.aborted) return;
         setOpened({ pages: first.pages, paint, engine });
-        onDetails(`${first.pages.length}${first.loading ? "+" : ""} pages`);
+        onDetails(
+          first.loading
+            ? m(msg("{count}+ pages", { count: String(first.pages.length) }))
+            : m(
+                msg("{count, plural, one {{count} page} other {{count} pages}}", {
+                  count: first.pages.length,
+                }),
+              ),
+        );
         if (!first.loading) return;
         await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         while (!controller.signal.aborted) {
           const step = await engine.call("layout", undefined, { signal: controller.signal });
           if (!step.done) continue;
-          if (step.pages.length > 1000) throw new Error("Preview limited to 1,000 pages.");
+          if (step.pages.length > 1000) throw new Error(m(msg("Preview limited to 1,000 pages.")));
           setOpened({ pages: step.pages, paint, engine });
-          onDetails(`${step.pages.length} pages`);
+          onDetails(
+            m(
+              msg("{count, plural, one {{count} page} other {{count} pages}}", {
+                count: step.pages.length,
+              }),
+            ),
+          );
           break;
         }
       })
@@ -98,7 +132,7 @@ export default function WordDocument(props: {
     <OfficePages
       pages={opened.pages}
       paint={opened.paint}
-      label="Page"
+      kind="page"
       scrollRef={scroll}
       onError={onError}
       overlay={(index) => (
@@ -121,7 +155,7 @@ function WordTextLayer(props: {
 }) {
   const { engine, index, page, follow } = props;
   const [spans, setSpans] = useState<readonly WordSpan[]>([]);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Request selectable text from the document worker and cancel the request when its page leaves the viewport.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Request selectable text from the document worker and cancel the request when its page leaves the viewport.
   useEffect(() => {
     if (!page) return;
     const controller = new AbortController();

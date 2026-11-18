@@ -3,6 +3,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import {
   isListedSettledThread,
   settledShelfFrontier,
+  sortOlderSettledScopes,
   unloadedOlderSettledCount,
   wantedOlderSettledPages,
   type OlderSettledScope,
@@ -27,15 +28,17 @@ export function useOlderSettledShelf(input: {
   /** Rows the shelf shows; pages are read until it lists that many. */
   readonly visibleCount: number;
 }) {
-  const scopeKey = JSON.stringify(input.scopes);
+  const scopes = sortOlderSettledScopes(input.scopes);
+  const scopeKey = JSON.stringify(scopes);
   const [requested, setRequested] = useState({ scopeKey, pages: NO_PAGES });
   const pages = requested.scopeKey === scopeKey && input.expanded ? requested.pages : NO_PAGES;
-  const shelfScopes = input.scopes.map((scope) => ({
+  const shelfScopes = scopes.map((scope) => ({
     scope,
     pages: pages.get(scope.environmentId) ?? 0,
   }));
   const shelfKey = JSON.stringify(shelfScopes);
   const shelf = useAtomValue(olderSettledThreads.shelfAtom(shelfScopes));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts the requested older settled pages into the thread family registry while shown
   useEffect(() => {
     const releases = (JSON.parse(shelfKey) as typeof shelfScopes).flatMap(({ scope, pages }) =>
       pages === 0
@@ -66,7 +69,7 @@ export function useOlderSettledShelf(input: {
     isListed: (thread: EnvironmentThreadShell) => isListedSettledThread(thread.source, frontier),
     /** Older settled threads in scope that are not local; add it to the local Settled rows. */
     unloadedCount: (threads: ReadonlyArray<EnvironmentThreadShell>) =>
-      unloadedOlderSettledCount({ olderSettled: olderOf, scopes: input.scopes, threads }),
+      unloadedOlderSettledCount({ olderSettled: olderOf, scopes, threads }),
     loading: loaded.some(({ scope }) => pagesOf(scope.environmentId)?.status === "pending"),
     failed: loaded.some(({ scope }) => pagesOf(scope.environmentId)?.status === "failed"),
     retry: () => {
@@ -89,6 +92,7 @@ export function useOlderSettledShelfGrowth(
     visibleCount: shelf.visibleCount,
   });
   const { grow, pages } = shelf;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests more older settled pages when the listed threads cannot fill the visible count
   useEffect(() => {
     if (wanted !== pages) grow(wanted);
   }, [wanted, pages, grow]);

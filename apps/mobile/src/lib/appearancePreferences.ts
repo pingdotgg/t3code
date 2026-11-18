@@ -12,7 +12,7 @@ export const MIN_BASE_FONT_SIZE = 11;
 export const MAX_BASE_FONT_SIZE = 22;
 export const BASE_FONT_SIZE_STEP = 1;
 
-export const DEFAULT_CODE_FONT_SIZE = MOBILE_CODE_SURFACE.fontSize;
+const DEFAULT_CODE_FONT_SIZE = MOBILE_CODE_SURFACE.fontSize;
 export const MIN_CODE_FONT_SIZE = 8;
 export const MAX_CODE_FONT_SIZE = 18;
 export const CODE_FONT_SIZE_STEP = 1;
@@ -205,6 +205,17 @@ export function resolveScaledTextRole(role: keyof typeof MOBILE_TYPOGRAPHY, base
   };
 }
 
+// React Native text applies the system text size itself, but the iOS composer sets a fixed
+// UIFont, so it needs pre-scaled metrics. Android's editor already sizes text in sp.
+export function resolveComposerTextRole(
+  role: { readonly fontSize: number; readonly lineHeight: number },
+  fontScale: number,
+  os: string,
+) {
+  if (os !== "ios") return role;
+  return { fontSize: role.fontSize * fontScale, lineHeight: role.lineHeight * fontScale };
+}
+
 export function resolveNativeMarkdownTypography(baseFontSize: number): NativeMarkdownTypography {
   const fontSizes = resolveMarkdownFontSizes(baseFontSize);
   return {
@@ -227,10 +238,4 @@ export function stepTerminalFontSize(current: number, direction: -1 | 1): number
   return normalizeTerminalFontSize(next);
 }
 
-export {
-  DEFAULT_TERMINAL_FONT_SIZE,
-  MAX_TERMINAL_FONT_SIZE,
-  MIN_TERMINAL_FONT_SIZE,
-  TERMINAL_FONT_SIZE_STEP,
-  normalizeTerminalFontSize,
-};
+export { MAX_TERMINAL_FONT_SIZE, MIN_TERMINAL_FONT_SIZE, TERMINAL_FONT_SIZE_STEP };

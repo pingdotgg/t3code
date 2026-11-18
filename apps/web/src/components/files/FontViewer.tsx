@@ -1,4 +1,8 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { msg, T, useGT } from "gt-react";
 import { useEffect, useState } from "react";
+
+import { m } from "~/i18n/messages";
 
 import { useTheme } from "~/hooks/useTheme";
 
@@ -8,11 +12,11 @@ const MAX_FONT_BYTES = 10 * 1024 * 1024;
 
 async function readFont(src: string, signal: AbortSignal) {
   const response = await fetch(src, { signal });
-  if (!response.ok) throw new Error("The font could not be loaded.");
+  if (!response.ok) throw new Error(m(msg("The font could not be loaded.")));
   if (Number(response.headers.get("content-length")) > MAX_FONT_BYTES)
-    throw new Error("Font previews are limited to 10 MB.");
+    throw new Error(m(msg("Font previews are limited to 10 MB.")));
   const reader = response.body?.getReader();
-  if (!reader) throw new Error("The font is unavailable.");
+  if (!reader) throw new Error(m(msg("The font is unavailable.")));
   const chunks: Uint8Array<ArrayBuffer>[] = [];
   let length = 0;
   try {
@@ -20,7 +24,7 @@ async function readFont(src: string, signal: AbortSignal) {
       const { done, value } = await reader.read();
       if (done) break;
       length += value.length;
-      if (length > MAX_FONT_BYTES) throw new Error("Font previews are limited to 10 MB.");
+      if (length > MAX_FONT_BYTES) throw new Error(m(msg("Font previews are limited to 10 MB.")));
       chunks.push(value);
     }
   } finally {
@@ -31,22 +35,25 @@ async function readFont(src: string, signal: AbortSignal) {
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.addEventListener("load", () => resolve(String(reader.result)), { once: true });
-    reader.addEventListener("error", () => reject(new Error("The font could not be decoded.")), {
-      once: true,
-    });
+    reader.addEventListener(
+      "error",
+      () => reject(new Error(m(msg("The font could not be decoded.")))),
+      { once: true },
+    );
     reader.readAsDataURL(blob);
   });
 }
 
 export default function FontViewer(props: { readonly src: string; readonly name: string }) {
+  const gt = useGT();
   const { resolvedTheme } = useTheme();
   const [data, setData] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Load the font from its URL and abort the request and timeout when the source changes or unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Load the font from its URL and abort the request and timeout when the source changes or unmounts.
   useEffect(() => {
     const controller = new AbortController();
     const timeout = setTimeout(() => {
-      setError("The font took too long to load.");
+      setError(m(msg("The font took too long to load.")));
       controller.abort();
     }, 30_000);
     void readFont(props.src, controller.signal)
@@ -55,7 +62,7 @@ export default function FontViewer(props: { readonly src: string; readonly name:
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : "The font is damaged or unsupported.");
+          setError(thrownErrorMessage(cause, m) ?? m(msg("The font is damaged or unsupported.")));
       })
       .finally(() => clearTimeout(timeout));
     return () => {
@@ -69,9 +76,11 @@ export default function FontViewer(props: { readonly src: string; readonly name:
         role="alert"
         className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center"
       >
-        <p className="text-sm font-medium">No preview for this file</p>
+        <p className="text-sm font-medium">
+          <T>No preview for this file</T>
+        </p>
         <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-          {error} Save it to open in another app.
+          {gt("{error} Save it to open in another app.", { error })}
         </p>
       </div>
     );
@@ -79,7 +88,11 @@ export default function FontViewer(props: { readonly src: string; readonly name:
   const tokens = getComputedStyle(document.documentElement);
   const background = tokens.getPropertyValue("--background");
   const foreground = tokens.getPropertyValue("--foreground");
-  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; font-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>@font-face{font-family:preview;src:url('${data}')}html{color-scheme:${resolvedTheme};background:${background};color:${foreground}}body{margin:0;padding:32px;font-family:preview;overflow-wrap:anywhere}h1{font-size:40px;font-weight:normal}p{line-height:1.4}small{font:12px monospace;display:block;opacity:.6;margin-bottom:8px}</style></head><body><h1>Font preview</h1><p style="font-size:24px">ABCDEFGHIJKLMNOPQRSTUVWXYZ<br>abcdefghijklmnopqrstuvwxyz<br>0123456789 !?&amp;@#%(){}[]</p>${[12, 16, 24, 40, 64].map((size) => `<p style="font-size:${size}px"><small>${size} px</small>The quick brown fox jumps over the lazy dog.</p>`).join("")}</body></html>`;
+  const escapeHtml = (text: string) =>
+    text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const heading = escapeHtml(gt("Font preview"));
+  const sample = escapeHtml(gt("The quick brown fox jumps over the lazy dog."));
+  const srcDoc = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; font-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>@font-face{font-family:preview;src:url('${data}')}html{color-scheme:${resolvedTheme};background:${background};color:${foreground}}body{margin:0;padding:32px;font-family:preview;overflow-wrap:anywhere}h1{font-size:40px;font-weight:normal}p{line-height:1.4}small{font:12px monospace;display:block;opacity:.6;margin-bottom:8px}</style></head><body><h1>${heading}</h1><p style="font-size:24px">ABCDEFGHIJKLMNOPQRSTUVWXYZ<br>abcdefghijklmnopqrstuvwxyz<br>0123456789 !?&amp;@#%(){}[]</p>${[12, 16, 24, 40, 64].map((size) => `<p style="font-size:${size}px"><small>${size} px</small>${sample}</p>`).join("")}</body></html>`;
   return (
     <iframe title={props.name} srcDoc={srcDoc} sandbox="" className="min-h-0 flex-1 border-0" />
   );

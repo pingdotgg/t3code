@@ -1,0 +1,45 @@
+import type * as config from "@distilled.cloud/aws/config-service";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `config:PutEvaluations` — report evaluation results
+ * to AWS Config from inside a custom Config rule's Lambda function, using
+ * the `resultToken` the rule invocation delivered.
+ *
+ * Provide `Config.PutEvaluationsHttp` on the hosting Lambda Function to
+ * satisfy the requirement.
+ * ### Reporting Evaluations (Custom Rules)
+ * **Example:** Report Evaluations from a Custom Rule
+ * ```typescript
+ * // init — grants config:PutEvaluations
+ * const putEvaluations = yield* AWS.Config.PutEvaluations();
+ *
+ * // runtime
+ * const result = yield* putEvaluations({
+ *   ResultToken: event.resultToken,
+ *   Evaluations: [
+ *     {
+ *       ComplianceResourceType: "AWS::S3::Bucket",
+ *       ComplianceResourceId: "my-bucket",
+ *       ComplianceType: "COMPLIANT",
+ *       OrderingTimestamp: new Date(),
+ *     },
+ *   ],
+ * });
+ * console.log(result.FailedEvaluations);
+ * ```
+ *
+ * @binding
+ */
+export interface PutEvaluations extends Binding.Service<
+  PutEvaluations,
+  "AWS.Config.PutEvaluations",
+  () => Effect.Effect<
+    (
+      request: config.PutEvaluationsRequest,
+    ) => Effect.Effect<config.PutEvaluationsResponse, config.PutEvaluationsError>
+  >
+> {}
+
+export const PutEvaluations = Binding.Service<PutEvaluations>("AWS.Config.PutEvaluations");

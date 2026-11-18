@@ -124,28 +124,35 @@ describe("composer file attachments", () => {
       width: 4032,
       height: 3024,
     };
+    type Size = { width: number; height: number };
     const native = {
-      size: { width: 1, height: 1 },
-      resizes: [] as Array<{ width?: number | null; height?: number | null }>,
+      size: { width: 1, height: 1 } as Size,
+      resizes: [] as Size[],
       saved: rendered as { uri: string; base64?: string },
+      encode: null as ((size: Size, format: string) => { uri: string; base64?: string }) | null,
     };
 
     beforeEach(() => {
       native.size = { width: 1, height: 1 };
       native.resizes = [];
       native.saved = rendered;
+      native.encode = null;
       mocks.manipulate.mockReset();
       mocks.release.mockReset();
-      mocks.manipulate.mockImplementation(() => {
+      mocks.manipulate.mockImplementation((source: string | Size) => {
+        let size = typeof source === "string" ? native.size : source;
         const context = {
-          resize(size: { width?: number | null; height?: number | null }) {
-            native.resizes.push(size);
+          resize(next: Size) {
+            native.resizes.push(next);
+            size = next;
             return context;
           },
           renderAsync: async () => ({
-            ...native.size,
+            width: size.width,
+            height: size.height,
             release: mocks.release,
-            saveAsync: async () => native.saved,
+            saveAsync: async (options: { format: string }) =>
+              native.encode?.(size, options.format) ?? native.saved,
           }),
         };
         return context;
@@ -208,6 +215,45 @@ describe("composer file attachments", () => {
           previewUri: photo.uri,
         }),
       ]);
+    });
+
+    it("shrinks a fitted PNG further when re-encoding it exceeds the image limit", async () => {
+      const header = Buffer.alloc(24);
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header);
+      header.write("IHDR", 12);
+      header.writeUInt32BE(1668, 16);
+      header.writeUInt32BE(2388, 20);
+      native.size = { width: 1668, height: 2388 };
+      // Native PNG encoding of the 2000px resample is larger than the 7 MB original.
+      native.encode = (size, format) => ({
+        uri: `file:///cache/fitted-${size.width}x${size.height}.${format}`,
+        base64: Buffer.alloc(size.width * size.height * 4).toString("base64"),
+      });
+      mocks.size.mockReturnValue(7 * 1024 * 1024);
+      mocks.readBase64.mockResolvedValue(header.toString("base64"));
+      mocks.pickMedia.mockResolvedValue({
+        canceled: false,
+        assets: [{ ...photo, fileName: "IMG_9280.png", mimeType: "image/png" }],
+      });
+
+      const result = await pickComposerImages({ existingCount: 0 });
+
+      expect(result.error).toBeNull();
+      const [image] = result.images;
+      const last = native.resizes.at(-1)!;
+      expect(native.resizes[0]).toEqual({ width: 1397, height: 2000 });
+      expect(Math.max(last.width, last.height)).toBeLessThan(2000);
+      expect(image).toEqual(
+        expect.objectContaining({
+          name: "IMG_9280.png",
+          mimeType: "image/png",
+          sizeBytes: last.width * last.height * 4,
+          previewUri: `file:///cache/fitted-${last.width}x${last.height}.png`,
+        }),
+      );
+      expect(image!.sizeBytes).toBeLessThanOrEqual(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES);
+      expect(mocks.delete).toHaveBeenCalledWith("file:///cache/fitted-1397x2000.png");
+      expect(mocks.delete).not.toHaveBeenCalledWith(image!.previewUri);
     });
 
     it("measures the picker file instead of trusting the reported size", async () => {
