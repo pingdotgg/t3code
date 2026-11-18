@@ -43,3 +43,9 @@ export function resolveLocale(
   }
   return fallback;
 }
+
+/** Locale for dates and times: the system's own variant when it speaks the UI language. */
+export function formattingLocale(uiLocale: string, systemLocale: string): string {
+  const language = (tag: string) => tag.toLowerCase().split(/[-_]/)[0];
+  return language(systemLocale) === language(uiLocale) ? systemLocale : uiLocale;
+}
