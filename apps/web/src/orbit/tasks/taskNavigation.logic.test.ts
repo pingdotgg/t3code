@@ -4,7 +4,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   openOrbitAgentConversation,
   prepareOrbitConversationEnvironment,
-  copyTasksPanelWidth,
   type OrbitAgentNavigationPorts,
 } from "./taskNavigation.logic";
 import { tasksPanelActions, useTasksPanelStore } from "./tasksPanelStore";
@@ -181,25 +180,5 @@ describe("Orbit task navigation", () => {
       environments: null,
     });
     expect(enabled).toBe(3);
-  });
-
-  it("carries the source width, including its default, without changing unrelated thread widths", () => {
-    const values = new Map<string, string>([["t3code:preview-panel-width:other", "500"]]);
-    const storage = {
-      getItem: (key: string) => values.get(key) ?? null,
-      setItem: (key: string, value: string) => {
-        values.set(key, value);
-      },
-      removeItem: (key: string) => {
-        values.delete(key);
-      },
-    };
-    storage.setItem("t3code:preview-panel-width:source", "850");
-    copyTasksPanelWidth("source", "destination", storage);
-    expect(storage.getItem("t3code:preview-panel-width:destination")).toBe("850");
-    storage.removeItem("t3code:preview-panel-width:source");
-    copyTasksPanelWidth("source", "destination", storage);
-    expect(storage.getItem("t3code:preview-panel-width:destination")).toBeNull();
-    expect(storage.getItem("t3code:preview-panel-width:other")).toBe("500");
   });
 });

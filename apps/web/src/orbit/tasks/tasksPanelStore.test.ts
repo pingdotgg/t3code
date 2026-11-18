@@ -31,6 +31,21 @@ describe("tasksPanelStore", () => {
     expect(at("env:b")).toMatchObject({ taskId: 431, subtaskId: null, tab: "brief" });
   });
 
+  it("returns from a subtask to the task's own tab", () => {
+    store().openTask("env:tabs", 482);
+    store().openSubtask("env:tabs", 484);
+    store().setTab("env:tabs", "agents");
+    store().openSubtask("env:tabs", null);
+    expect(at("env:tabs")).toMatchObject({ subtaskId: null, tab: "brief" });
+
+    store().setTab("env:tabs", "agents");
+    store().openSubtask("env:tabs", 484);
+    store().setTab("env:tabs", "brief");
+    store().openSubtask("env:tabs", 485, "agents");
+    store().openSubtask("env:tabs", null);
+    expect(at("env:tabs")).toMatchObject({ subtaskId: null, tab: "agents" });
+  });
+
   it("opens a different task at its brief, from the top", () => {
     store().openTask("env:c", 482);
     store().openSubtask("env:c", 483, "agents");

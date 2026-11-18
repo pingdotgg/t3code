@@ -56,18 +56,3 @@ export async function prepareOrbitConversationEnvironment(
   }
   await ports.enable();
 }
-
-export function copyTasksPanelWidth(
-  sourceKey: string,
-  targetKey: string,
-  storage: Pick<Storage, "getItem" | "setItem" | "removeItem">,
-): void {
-  try {
-    const value = storage.getItem(`t3code:preview-panel-width:${sourceKey}`);
-    const key = `t3code:preview-panel-width:${targetKey}`;
-    if (value === null) storage.removeItem(key);
-    else storage.setItem(key, value);
-  } catch {
-    /* Navigation still works when browser storage is unavailable. */
-  }
-}

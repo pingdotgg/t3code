@@ -12,6 +12,9 @@ import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 
+/** The Input colour of thread rows (SidebarThreadRow), so a waiting agent reads the same. */
+export const INPUT_TONE = "text-indigo-600 dark:text-indigo-300";
+
 export type StatusTone = "success" | "info" | "warning" | "destructive" | "muted";
 
 export const TASK_STATUS_TEXT: Record<OrbitTaskStatus, string> = {

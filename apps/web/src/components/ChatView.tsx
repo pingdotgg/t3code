@@ -4194,7 +4194,13 @@ export default function ChatView(props: ChatViewProps) {
         <ChatRightPanel
           sheet={shouldUsePlanSidebarSheet}
           workspaceLayoutElement={workspaceLayoutElement}
-          widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
+          // Conn: Tasks keeps one width of its own, by default the approved min(60rem, 52vw).
+          {...(activeRightPanelKind === "tasks"
+            ? {
+                widthStorageKey: "conn:tasks-panel-width",
+                defaultWidth: Math.min(960, Math.floor(window.innerWidth * 0.52)),
+              }
+            : { widthStorageKey: `t3code:preview-panel-width:${activeThreadKey}` })}
           sheetAnimationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
           onCloseSheet={closePreviewPanelStable}
           open={rightPanelOpen}

@@ -8,6 +8,7 @@ type ChatRightPanelProps = Omit<RightPanelTabsProps, "mode" | "inlineSize" | "ma
   readonly maximized: boolean;
   readonly workspaceLayoutElement: HTMLElement | null;
   readonly widthStorageKey: string;
+  readonly defaultWidth?: number;
   readonly sheetAnimationDurationMs: number;
   readonly onCloseSheet: () => void;
 };
@@ -22,6 +23,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     sheet,
     workspaceLayoutElement,
     widthStorageKey,
+    defaultWidth,
     sheetAnimationDurationMs,
     onCloseSheet,
     maximized,
@@ -31,6 +33,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
   const inlineSize = usePreviewPanelInlineSize({
     container: workspaceLayoutElement,
     widthStorageKey,
+    defaultWidth,
   });
   if (!sheet) {
     // Conn: the inline panel is an inset card on the shell, like the chat card beside it.

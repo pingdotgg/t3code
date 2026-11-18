@@ -1,14 +1,29 @@
 import {
+  ORBIT_TASK_LANES,
   orbitTaskLabel,
-  type OrbitTaskLabelTone,
+  orbitTaskLane,
+  type OrbitTaskLane,
   type OrbitTasksPage,
   type OrbitTasksResult,
   type OrbitTaskSummary,
   type OrbitTasksLiveStatus,
 } from "@t3tools/client-runtime/orbit-gateway";
-import { ListTodoIcon, LockIcon, UnplugIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  CircleDashedIcon,
+  ListTodoIcon,
+  LockIcon,
+  MessageCircleQuestionIcon,
+  SearchIcon,
+  SlidersHorizontalIcon,
+  UnplugIcon,
+} from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
+import { ProjectMonogram } from "~/components/ProjectMonogram";
+import { ToolbarGroup } from "~/components/ToolbarGroup";
+import { resolvePullRequestState } from "~/components/pullRequest/pullRequestPresentation";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { Button } from "~/components/ui/button";
 import {
   Empty,
@@ -17,18 +32,36 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "~/components/ui/empty";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuPopup,
+  MenuTrigger,
+} from "~/components/ui/menu";
 import { Spinner } from "~/components/ui/spinner";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { cn } from "~/lib/utils";
+import { PROJECT_ICON_COLORS } from "~/projectIconColors";
+import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { TaskDetail } from "./TaskDetail";
+import { INPUT_TONE } from "./taskDetail.logic";
 import {
   followTasksUpdates,
   loadOrbitTasksClient,
   orbitTasksAvailability,
 } from "./orbitTasksClient";
 import { taskCardDetail, tasksBoardLanes, tasksErrorNotice } from "./tasksBoard.logic";
-import { tasksPanelActions, useTasksNavigation } from "./tasksPanelStore";
+import {
+  tasksPanelActions,
+  useTasksBoardQuery,
+  useTasksLaneScroll,
+  useTasksNavigation,
+  useTasksBoardLanes,
+} from "./tasksPanelStore";
 
 type TaskListState = { readonly status: "loading" } | OrbitTasksResult<OrbitTasksPage>;
 
@@ -161,8 +194,8 @@ function TasksNotice(props: { icon: ReactNode; title: string; text: string; acti
 }
 
 /** Puts a remounted scroller back where the store says, once, without moving focus. */
-function useRestoredScroll(top: number, left: number) {
-  const ref = useRef<HTMLDivElement>(null);
+function useRestoredScroll<T extends HTMLElement>(top: number, left: number) {
+  const ref = useRef<T>(null);
   const [initial] = useState({ top, left });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the DOM scroll position saved before the tab unmounted
   useLayoutEffect(() => {
@@ -173,92 +206,247 @@ function useRestoredScroll(top: number, left: number) {
   return ref;
 }
 
-/** Backlog, To do, In progress, Done side by side. Read-only: Orbit owns task state. */
+/** Search fills the row; Lanes sits in Conn's toolbar pill, like the terminal controls. */
+function BoardToolbar() {
+  const query = useTasksBoardQuery((state) => state.query);
+  const hiddenLanes = useTasksBoardLanes((state) => state.hiddenLanes);
+  const hidden = hiddenLanes.length;
+  return (
+    <div className="flex shrink-0 items-center gap-2 px-3 pb-3">
+      <InputGroup variant="soft" className="h-8 min-w-0 flex-1">
+        <InputGroupAddon>
+          <SearchIcon aria-hidden className="size-4 opacity-50" />
+        </InputGroupAddon>
+        <InputGroupInput
+          type="search"
+          size="sm"
+          aria-label="Search tasks"
+          placeholder="Search tasks"
+          spellCheck={false}
+          value={query}
+          onChange={(event) => useTasksBoardQuery.getState().setQuery(event.currentTarget.value)}
+        />
+      </InputGroup>
+      <ToolbarGroup className="shrink-0">
+        <Menu>
+          <MenuTrigger
+            render={
+              <button
+                type="button"
+                className="flex h-6.5 cursor-pointer items-center gap-1.5 rounded-(--control-radius) px-2 text-ui text-muted-foreground transition-colors hover:bg-(--shell-control) hover:text-foreground"
+              />
+            }
+          >
+            <SlidersHorizontalIcon aria-hidden className="size-4" />
+            Lanes
+            {hidden > 0 ? (
+              <span className="text-muted-foreground/70 tabular-nums">
+                · {ORBIT_TASK_LANES.length - hidden} of {ORBIT_TASK_LANES.length}
+              </span>
+            ) : null}
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuGroup>
+              <MenuGroupLabel>Show lanes</MenuGroupLabel>
+              {ORBIT_TASK_LANES.map((lane) => {
+                const shown = !hiddenLanes.includes(lane.id);
+                return (
+                  <MenuCheckboxItem
+                    key={lane.id}
+                    checked={shown}
+                    // One lane always stays on the board.
+                    disabled={shown && hidden === ORBIT_TASK_LANES.length - 1}
+                    onCheckedChange={() => useTasksBoardLanes.getState().toggleLane(lane.id)}
+                    closeOnClick={false}
+                  >
+                    {lane.label}
+                  </MenuCheckboxItem>
+                );
+              })}
+            </MenuGroup>
+          </MenuPopup>
+        </Menu>
+      </ToolbarGroup>
+    </div>
+  );
+}
+
+/** The visible lanes side by side, each a subtle container. Read-only: Orbit owns task state. */
 function TasksBoard(props: {
   threadKey: string;
   tasks: ReadonlyArray<OrbitTaskSummary>;
   scroll: { readonly top: number; readonly left: number };
 }) {
-  const scrollRef = useRestoredScroll(props.scroll.top, props.scroll.left);
+  const laneScroll = useTasksLaneScroll((state) => state.byThreadKey[props.threadKey]);
+  const scrollRef = useRestoredScroll<HTMLDivElement>(props.scroll.top, props.scroll.left);
+  const query = useTasksBoardQuery((state) => state.query);
+  const hiddenLanes = useTasksBoardLanes((state) => state.hiddenLanes);
+  const searching = query.trim().length > 0;
   return (
-    <div
-      ref={scrollRef}
-      onScrollEnd={(event) =>
-        tasksPanelActions().saveBoardScroll(
-          props.threadKey,
-          event.currentTarget.scrollTop,
-          event.currentTarget.scrollLeft,
-        )
-      }
-      className="scrollbar-inset flex min-h-0 flex-1 items-start gap-2 overflow-auto px-2 pb-2"
-    >
-      {tasksBoardLanes(props.tasks).map((lane) => (
-        <section
-          key={lane.id}
-          aria-label={lane.label}
-          className="flex min-w-48 flex-1 basis-0 flex-col"
-        >
-          <div className="flex h-9 shrink-0 items-center justify-between px-2.5 text-ui text-muted-foreground">
-            <span className="font-medium">{lane.label}</span>
-            <span className="tabular-nums">{lane.tasks.length}</span>
-          </div>
-          <ul className="m-0 flex list-none flex-col gap-2 p-0">
-            {lane.tasks.map((task) => (
-              <TaskCard
-                key={task.id}
-                task={task}
-                onOpen={() => tasksPanelActions().openTask(props.threadKey, task.id)}
-              />
-            ))}
-            {lane.tasks.length === 0 ? (
-              <li className="rounded-lg border border-dashed border-(--shell-divider)! px-3 py-4 text-center text-ui text-muted-foreground">
-                Nothing here
-              </li>
-            ) : null}
-          </ul>
-        </section>
-      ))}
+    <div className="flex min-h-0 flex-1 flex-col">
+      <BoardToolbar />
+      <div
+        ref={scrollRef}
+        onScrollEnd={(event) =>
+          tasksPanelActions().saveBoardScroll(
+            props.threadKey,
+            event.currentTarget.scrollTop,
+            event.currentTarget.scrollLeft,
+          )
+        }
+        className="scrollbar-inset flex min-h-0 flex-1 gap-2 overflow-x-auto px-3 pb-3"
+      >
+        {tasksBoardLanes(props.tasks, { query, hiddenLanes }).map((lane) => (
+          <section
+            key={lane.id}
+            aria-label={lane.label}
+            className="flex min-w-48 flex-1 basis-0 flex-col rounded-xl bg-(--shell-highlight)/60 p-1.5 dark:bg-(--shell-highlight)/30"
+          >
+            <div className="flex h-8 shrink-0 items-center justify-between px-2 text-ui text-muted-foreground">
+              <span className="font-medium">{lane.label}</span>
+              <span className="tabular-nums">
+                {searching ? `${lane.tasks.length} of ${lane.total}` : lane.tasks.length}
+              </span>
+            </div>
+            <LaneList threadKey={props.threadKey} lane={lane.id} top={laneScroll?.[lane.id] ?? 0}>
+              {lane.tasks.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  onOpen={(laneTop) => {
+                    // The lane unmounts at once, before a running scroll reports its end.
+                    useTasksLaneScroll.getState().save(props.threadKey, lane.id, laneTop);
+                    tasksPanelActions().openTask(props.threadKey, task.id);
+                  }}
+                />
+              ))}
+              {lane.tasks.length === 0 ? (
+                <li className="px-3 py-4 text-center text-ui text-muted-foreground/70">
+                  {searching && lane.total > 0 ? "No matches" : "Nothing here"}
+                </li>
+              ) : null}
+            </LaneList>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
 
-const TONE_DOT: Record<OrbitTaskLabelTone, string> = {
-  info: "bg-info",
-  warning: "bg-warning",
-  destructive: "bg-destructive",
-  muted: "bg-muted-foreground",
-};
+/** One lane's cards. It scrolls on its own and comes back where it was after a task. */
+function LaneList(props: {
+  threadKey: string;
+  lane: OrbitTaskLane;
+  top: number;
+  children: ReactNode;
+}) {
+  const ref = useRestoredScroll<HTMLUListElement>(props.top, 0);
+  return (
+    <ul
+      ref={ref}
+      onScrollEnd={(event) =>
+        useTasksLaneScroll
+          .getState()
+          .save(props.threadKey, props.lane, event.currentTarget.scrollTop)
+      }
+      className="scrollbar-inset m-0 flex min-h-0 flex-1 list-none flex-col gap-1.5 overflow-y-auto p-0"
+    >
+      {props.children}
+    </ul>
+  );
+}
 
-const TONE_TEXT: Record<OrbitTaskLabelTone, string> = {
-  info: "text-muted-foreground",
-  warning: "text-warning-foreground",
-  destructive: "text-destructive",
-  muted: "text-muted-foreground",
-};
+/** Stands in for a favicon: Orbit Projects have no Conn project icon here. */
+function TaskProjectIcon(props: { project: OrbitTaskSummary["project"] }) {
+  const hash = [...props.project.slug].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const color = PROJECT_ICON_COLORS[hash % PROJECT_ICON_COLORS.length]!.value;
+  return <ProjectMonogram text={(props.project.name[0] ?? "?").toUpperCase()} color={color} />;
+}
 
-function TaskCard(props: { task: OrbitTaskSummary; onOpen: () => void }) {
-  const label = orbitTaskLabel(props.task);
+/**
+ * The status at the card's top right. In progress shows only the working icon: the lane already
+ * says it runs, and the list has no run time to show. Input and Blocked need the user.
+ */
+function TaskCardStatus(props: { task: OrbitTaskSummary }) {
+  const { task } = props;
+  const label = orbitTaskLabel(task);
+  if (task.attention?.kind === "question") {
+    return (
+      <span className={cn("flex items-center gap-1 font-medium", INPUT_TONE)}>
+        <MessageCircleQuestionIcon aria-hidden className="size-3.5" />
+        Input
+      </span>
+    );
+  }
+  if (label?.tone === "destructive") {
+    return (
+      <span className="flex items-center gap-1 font-medium text-destructive-foreground">
+        <CircleAlertIcon aria-hidden className="size-3.5" />
+        {label.label}
+      </span>
+    );
+  }
+  if (label?.tone === "muted") {
+    return <span className="text-muted-foreground">{label.label}</span>;
+  }
+  if (orbitTaskLane(task.status) === "in-progress") {
+    return (
+      <span className="flex items-center text-info-foreground">
+        <CircleDashedIcon aria-hidden className="size-3.5" />
+        <span className="sr-only">{label?.label ?? "In progress"}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="text-muted-foreground/80 tabular-nums">
+      {formatRelativeTimeLabel(task.updatedAt)}
+    </span>
+  );
+}
+
+function TaskCard(props: { task: OrbitTaskSummary; onOpen: (laneTop: number) => void }) {
+  const { task } = props;
+  const pr = task.pullRequest;
+  const prState = pr?.state ? resolvePullRequestState({ state: pr.state, isDraft: false }) : null;
+  const working = orbitTaskLane(task.status) === "in-progress" && task.attention === null;
   return (
     <li>
       <button
         type="button"
-        onClick={props.onOpen}
-        className="flex w-full cursor-pointer flex-col gap-1.5 rounded-lg border border-(--shell-divider-header)! px-3 py-2.5 text-left transition-colors hover:bg-(--shell-highlight) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
+        onClick={(event) => props.onOpen(event.currentTarget.closest("ul")?.scrollTop ?? 0)}
+        className="flex w-full cursor-pointer flex-col gap-1.5 rounded-lg border border-(--shell-divider)! bg-(--shell-card) px-3 py-2.5 text-left transition-colors hover:bg-(--shell-card)/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none dark:bg-(--shell-highlight)/70 dark:hover:bg-(--shell-highlight)"
       >
-        <span className="text-ui font-medium text-foreground [overflow-wrap:anywhere]">
-          {props.task.title}
-        </span>
-        {label ? (
-          <span className={cn("flex items-center gap-1.5 text-ui", TONE_TEXT[label.tone])}>
-            <span
-              aria-hidden
-              className={cn("size-1.5 shrink-0 rounded-full", TONE_DOT[label.tone])}
-            />
-            {label.label}
+        <span className="flex items-center gap-1.5 text-ui leading-4">
+          <TaskProjectIcon project={task.project} />
+          <span className="min-w-0 flex-1 truncate text-muted-foreground tabular-nums">
+            #{task.id}
           </span>
-        ) : null}
-        <span className="truncate text-ui text-muted-foreground tabular-nums">
-          {taskCardDetail(props.task)}
+          <span className="shrink-0">
+            <TaskCardStatus task={task} />
+          </span>
+        </span>
+        <span
+          className={cn(
+            "text-ui leading-5 text-foreground/90 [overflow-wrap:anywhere]",
+            // Background work recedes to regular weight, like a working thread.
+            working ? "font-normal" : "font-medium",
+          )}
+        >
+          {task.title}
+        </span>
+        <span className="flex items-center gap-2 text-ui leading-4 text-muted-foreground tabular-nums">
+          <span className="min-w-0 flex-1 truncate">{taskCardDetail(task)}</span>
+          {pr ? (
+            <span className={cn("flex shrink-0 items-center gap-1", prState?.toneClassName)}>
+              {prState ? (
+                <prState.Icon aria-hidden className="size-3.5" />
+              ) : (
+                <PullRequestGlyph.pullRequest className="size-3.5" />
+              )}
+              <span className="sr-only">Pull request{prState ? ` (${prState.label})` : ""}</span>#
+              {pr.number}
+            </span>
+          ) : null}
         </span>
       </button>
     </li>

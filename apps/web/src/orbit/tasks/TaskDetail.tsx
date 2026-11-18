@@ -1,6 +1,5 @@
 import {
   orbitTaskEnvironment,
-  orbitTaskLabel,
   type OrbitSubtask,
   type OrbitTaskAgent,
   type OrbitTaskDetail,
@@ -9,17 +8,17 @@ import {
 } from "@t3tools/client-runtime/orbit-gateway";
 import {
   BotIcon,
+  CheckIcon,
   ChevronLeftIcon,
   CircleAlertIcon,
-  CircleCheckIcon,
-  CircleDotIcon,
-  CircleHelpIcon,
+  CircleDashedIcon,
   CircleIcon,
-  FolderIcon,
   GaugeIcon,
   GitBranchIcon,
+  MessageCircleQuestionIcon,
   ServerIcon,
   UnplugIcon,
+  XIcon,
 } from "lucide-react";
 import {
   createContext,
@@ -47,6 +46,8 @@ import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
+import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
+import { formatTokens } from "@t3tools/shared/usageFormat";
 
 import { observeOrbitTask } from "./taskDetail.logic";
 import { useOrbitTaskNavigation } from "./orbitAgentConversation";
@@ -59,12 +60,12 @@ import {
   subtaskLead,
   subtaskStatusText,
   subtaskUsageText,
-  TASK_STATUS_TEXT,
   taskLevelAgents,
   agentRowInteraction,
   taskUsage,
   type AgentRowModel,
   type StatusTone,
+  INPUT_TONE,
 } from "./taskDetail.logic";
 import { tasksErrorNotice } from "./tasksBoard.logic";
 import { tasksPanelActions, type TasksDetailTab, type TasksNavigation } from "./tasksPanelStore";
@@ -114,20 +115,6 @@ function useOrbitTask(taskId: number) {
   };
 }
 
-const ENVIRONMENT_TEXT = {
-  disposed: "Workspace removed",
-  stopped: "Workspace asleep",
-  unreachable: "Conversations not reachable from here",
-} as const;
-
-const TONE_TEXT: Record<StatusTone, string> = {
-  success: "text-success-foreground",
-  info: "text-info-foreground",
-  warning: "text-warning-foreground",
-  destructive: "text-destructive-foreground",
-  muted: "text-muted-foreground",
-};
-
 const TONE_DOT: Record<StatusTone, string> = {
   success: "bg-success",
   info: "bg-info",
@@ -146,35 +133,66 @@ export function TaskDetail(props: {
   const navigation = useOrbitTaskNavigation(props.threadKey);
   const { state, retry } = useOrbitTask(props.navigation.taskId);
   const title = state.status === "ok" ? state.value.title : props.listTitle;
+  const subtaskTitle =
+    state.status === "ok" && props.navigation.subtaskId !== null
+      ? (state.value.subtasks.find((entry) => entry.id === props.navigation.subtaskId)?.title ??
+        null)
+      : null;
   return (
     <NavigationContext value={navigation}>
       <div className="flex min-h-0 flex-1 flex-col">
         <nav
           aria-label="Tasks path"
-          className="flex h-9 shrink-0 items-center gap-1 border-b border-(--shell-divider)! px-2 text-ui"
+          className="flex h-9 shrink-0 items-center gap-2 border-b border-(--shell-divider)! px-4.5 text-ui"
         >
           {props.navigation.originThreadKey ? (
-            <Button size="xs" variant="ghost-muted" onClick={navigation.returnToOrigin}>
-              Origin thread
-            </Button>
-          ) : null}
-          <Button
-            size="xs"
-            variant="ghost-muted"
-            onClick={() => tasksPanelActions().showBoard(props.threadKey)}
-          >
-            <ChevronLeftIcon aria-hidden />
-            Tasks
-          </Button>
-          {title ? (
             <>
-              <span aria-hidden className="text-muted-foreground">
-                /
+              <button
+                type="button"
+                onClick={navigation.returnToOrigin}
+                className="shrink-0 cursor-pointer rounded-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Origin thread
+              </button>
+              <span aria-hidden className="text-muted-foreground/60">
+                ·
               </span>
-              <span className="min-w-0 truncate px-1 text-foreground">{title}</span>
             </>
           ) : null}
-          <span className="ml-auto shrink-0 text-muted-foreground">
+          <button
+            type="button"
+            onClick={() => tasksPanelActions().showBoard(props.threadKey)}
+            className="flex shrink-0 cursor-pointer items-center gap-1 rounded-sm text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ChevronLeftIcon aria-hidden className="size-4 shrink-0" />
+            Tasks
+          </button>
+          {title ? (
+            <>
+              <span aria-hidden className="text-muted-foreground/60">
+                /
+              </span>
+              {subtaskTitle ? (
+                <>
+                  {/* In a subtask the task is a step back, on the task's own tab. */}
+                  <button
+                    type="button"
+                    onClick={() => tasksPanelActions().openSubtask(props.threadKey, null)}
+                    className="max-w-[45%] min-w-0 shrink cursor-pointer truncate rounded-sm text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {title}
+                  </button>
+                  <span aria-hidden className="text-muted-foreground/60">
+                    /
+                  </span>
+                  <span className="min-w-0 truncate text-foreground/85">{subtaskTitle}</span>
+                </>
+              ) : (
+                <span className="min-w-0 truncate text-foreground/85">{title}</span>
+              )}
+            </>
+          ) : null}
+          <span className="ml-auto shrink-0 text-muted-foreground/70">
             {props.liveStatus === "live"
               ? "Live"
               : props.liveStatus === "polling"
@@ -299,47 +317,24 @@ function TaskContent(props: {
 }) {
   const { task, subtask } = props;
   const agents = agentsFor(task, subtask?.id ?? null);
-  const label = orbitTaskLabel(task);
-  const environment = orbitTaskEnvironment(task);
-  const meta = subtask
-    ? [subtaskStatusText(subtask, task)]
-    : [
-        TASK_STATUS_TEXT[task.status],
-        label && label.label !== "In review" && label.label !== "Working" ? label.label : null,
-        environment.kind === "ready" || environment.kind === "not-started"
-          ? null
-          : ENVIRONMENT_TEXT[environment.kind],
-      ].filter((part) => part !== null);
   const attention = subtask ? subtask.attention : task.attention;
   const attentionText =
     attention && attention.kind !== "observation" ? (attention.question ?? attention.reason) : null;
+  const brief = subtask ? subtask.brief : task.brief;
   return (
     <article className="flex flex-col gap-6">
       <header className="flex flex-col gap-2">
-        <h2 className="m-0 text-lg leading-6 font-semibold text-foreground [overflow-wrap:anywhere]">
+        <h2 className="m-0 text-lg leading-6 font-medium text-foreground [overflow-wrap:anywhere]">
           {subtask ? subtask.title : task.title}
         </h2>
-        <p className="m-0 text-ui text-muted-foreground">{meta.join(" · ")}</p>
       </header>
-      {attentionText ? (
-        <p
-          className={cn(
-            "m-0 rounded-lg px-3 py-2 text-ui",
-            attention?.kind === "question" || attention?.kind === "direction"
-              ? "bg-warning/10 text-warning-foreground"
-              : "bg-destructive/10 text-destructive-foreground",
-          )}
-        >
-          {attentionText}
-        </p>
-      ) : null}
       <div
         role="tablist"
         aria-label="Show"
         className="-mt-2 flex items-center gap-5 border-b border-(--shell-divider)!"
       >
         <ContentTab threadKey={props.threadKey} tab="brief" selected={props.tab === "brief"}>
-          Brief
+          Overview
         </ContentTab>
         <ContentTab threadKey={props.threadKey} tab="agents" selected={props.tab === "agents"}>
           Agents
@@ -352,18 +347,31 @@ function TaskContent(props: {
         <AgentsList agents={agents} />
       ) : (
         <>
-          {(subtask ? subtask.brief : task.brief).trim().length > 0 ? (
-            <ChatMarkdown
-              text={subtask ? subtask.brief : task.brief}
-              cwd={undefined}
-              headingLevelOffset={2}
-            />
+          {subtask ? <SubtaskSummaryRows task={task} subtask={subtask} /> : null}
+          {attentionText ? (
+            <p
+              className={cn(
+                "m-0 rounded-lg px-3 py-2 text-ui",
+                attention?.kind === "question" || attention?.kind === "direction"
+                  ? "bg-warning/10 text-warning-foreground"
+                  : "bg-destructive/10 text-destructive-foreground",
+              )}
+            >
+              {attentionText}
+            </p>
+          ) : null}
+          <h2 className="m-0 -mb-2 text-base leading-6 font-medium text-foreground">Brief</h2>
+          {brief.trim().length > 0 ? (
+            // Headings inside a brief stay below the Brief heading: body size, medium weight.
+            <div className="[&_:is(h1,h2,h3,h4,h5,h6)]:text-sm! [&_:is(h1,h2,h3,h4,h5,h6)]:font-medium!">
+              <ChatMarkdown text={brief} cwd={undefined} headingLevelOffset={2} />
+            </div>
           ) : (
             <p className="m-0 text-ui text-muted-foreground">No brief.</p>
           )}
           {subtask && subtask.deliverables.length > 0 ? (
-            <section className="flex flex-col gap-2">
-              <h3 className="m-0 text-sm font-medium text-muted-foreground">Deliverables</h3>
+            <section className="flex flex-col gap-4">
+              <h2 className="m-0 text-base leading-6 font-medium text-foreground">Deliverables</h2>
               <ul className="m-0 flex list-disc flex-col gap-1 ps-5 text-sm text-foreground/85">
                 {subtask.deliverables.map((item) => (
                   <li key={item.id}>{item.description}</li>
@@ -374,6 +382,32 @@ function TaskContent(props: {
         </>
       )}
     </article>
+  );
+}
+
+/** A subtask's Overview opens with its status and usage, the rows the task keeps in its sidebar. */
+function SubtaskSummaryRows(props: { task: OrbitTaskDetail; subtask: OrbitSubtask }) {
+  const { task, subtask } = props;
+  const lead = subtaskLead(task, subtask);
+  return (
+    <div className="-mx-2.5 -my-1 flex flex-col">
+      <div className={cn(THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS, "flex items-center font-normal")}>
+        <SubtaskLeadIcon lead={lead} />
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground/90">
+          {subtaskStatusText(subtask, task)}
+        </span>
+        <span className="shrink-0 text-muted-foreground tabular-nums">
+          {subtask.position} of {task.subtasks.length}
+        </span>
+      </div>
+      <div className={ROW}>
+        <GaugeIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+        <span className="min-w-0 flex-1 truncate">
+          <SubtaskMeta metrics={subtask.metrics} />
+        </span>
+        <SubtaskDiff metrics={subtask.metrics} />
+      </div>
+    </div>
   );
 }
 
@@ -452,38 +486,83 @@ function AgentIcon(props: { agent: OrbitTaskAgent; tone: StatusTone }) {
   );
 }
 
-/** One agent. Only an agent with a Conn conversation is a control; the rest are plain rows. */
-function AgentRow(props: { row: AgentRowModel }) {
+/** Same run states as thread rows: the working icon, Input, Failed, else the state in words. */
+function AgentState(props: { agent: OrbitTaskAgent }) {
+  const { agent } = props;
+  if (agent.needsInput || agent.state === "asking_for_input") {
+    return (
+      <span className={cn("flex shrink-0 items-center gap-1 text-ui font-medium", INPUT_TONE)}>
+        <MessageCircleQuestionIcon aria-hidden className="size-3.5" />
+        Input
+      </span>
+    );
+  }
+  if (agent.state === "working") {
+    return (
+      <span className="flex shrink-0 items-center text-info-foreground">
+        <CircleDashedIcon aria-hidden className="size-3.5" />
+        <span className="sr-only">{agentStateText(agent)}</span>
+      </span>
+    );
+  }
+  return (
+    <span
+      className={cn(
+        "shrink-0 text-ui font-normal tabular-nums",
+        agent.state === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
+      )}
+    >
+      {agentStateText(agent)}
+    </span>
+  );
+}
+
+/**
+ * One agent on two lines: the role, then what it works on and its model. Only an agent with a
+ * Conn conversation is a control; the rest are plain rows.
+ */
+function AgentRow(props: { row: AgentRowModel; detail?: string }) {
   const navigation = use(NavigationContext);
   const { agent, conversation, label } = props.row;
   const interaction = agentRowInteraction(props.row);
   const tone = agentStateTone(agent);
+  const [role, ...rest] = label.split(" · ");
+  const detail =
+    props.detail ??
+    [rest.join(" · ") || null, agent.model].filter((part) => part !== null).join(" · ");
   const content = (
     <>
       <AgentIcon agent={agent} tone={tone} />
-      <span className="min-w-0 flex-1 truncate text-left">
-        {label}
-        {agent.model ? (
-          <span className="font-normal text-muted-foreground"> · {agent.model}</span>
+      <span className="flex min-w-0 flex-1 flex-col text-left">
+        <span className="truncate text-ui font-medium text-foreground/85">{role}</span>
+        {detail ? (
+          <span className="truncate text-ui leading-4 font-normal text-muted-foreground">
+            {detail}
+          </span>
         ) : null}
       </span>
-      <span className={cn("shrink-0 font-normal", TONE_TEXT[tone])}>{agentStateText(agent)}</span>
+      <AgentState agent={agent} />
     </>
   );
   return (
-    <li className="flex min-h-8 items-center border-b border-(--shell-divider)! last:border-b-0">
+    <li className="relative flex min-h-8 items-center">
       {interaction === "button" && conversation ? (
         <ThreadDetailsControl
           size="sm"
           variant="ghost"
           part="row"
+          multiline
+          className="items-start [&>*:first-child]:mt-0.5"
           onClick={() => void navigation?.openAgent(conversation)}
         >
           {content}
         </ThreadDetailsControl>
       ) : (
         <div
-          className={cn(THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS, "flex items-center")}
+          className={cn(
+            THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
+            "flex h-auto min-h-8 items-start py-1.5 sm:h-auto [&>*:first-child]:mt-0.5",
+          )}
           aria-label={`${label}. Conversation unavailable`}
         >
           {content}
@@ -500,55 +579,65 @@ function TaskSidebar(props: {
 }) {
   const { task } = props;
   const taskAgents = taskLevelAgents(task);
+  const done = task.subtasks.filter((subtask) => subtask.status === "completed").length;
   return (
     <nav
       aria-label="Task contents"
-      className="order-1 flex shrink-0 flex-col border-b border-(--shell-divider)! px-2 pb-3 @3xl/task:order-2 @3xl/task:w-88 @3xl/task:overflow-y-auto @3xl/task:border-s @3xl/task:border-b-0 scrollbar-inset"
+      className="order-1 flex shrink-0 flex-col border-b border-(--shell-divider)! @3xl/task:order-2 @3xl/task:w-88 @3xl/task:overflow-y-auto @3xl/task:border-s @3xl/task:border-b-0 scrollbar-inset"
     >
-      {/* "Task #id" opens the task's own brief, level with the content title. */}
-      <div className="mt-5 shrink-0">
-        <ThreadDetailsControl
-          size="sm"
-          variant="ghost"
-          part="row"
-          aria-current={props.subtaskId === null ? "page" : undefined}
-          onClick={() => tasksPanelActions().openSubtask(props.threadKey, null, "brief")}
-        >
-          <span className="text-foreground/90">Task</span>
-          <span className="-ms-1 font-normal text-muted-foreground tabular-nums">#{task.id}</span>
-        </ThreadDetailsControl>
+      {/* No "Task #id" row: the path leads back to the task. Rows start level with the title. */}
+      <div className="mt-4.75 shrink-0 px-2">
+        <TaskWorkspaceRows task={task} />
       </div>
-      <TaskWorkspaceRows task={task} />
-      <div className="mt-3 flex h-8 shrink-0 items-center px-2.5 text-ui font-medium text-muted-foreground">
-        Subtasks
+      {/* Full-width dividers; every section keeps the same space above and below its text. */}
+      <div aria-hidden className="mt-4.75 h-px shrink-0 bg-(--shell-divider)" />
+      <div className="mt-4.5 flex h-8 shrink-0 items-center justify-between px-4.5 text-ui text-muted-foreground">
+        <span className="font-medium">Subtasks</span>
+        {task.subtasks.length > 0 ? (
+          <span className="tabular-nums">
+            {done}/{task.subtasks.length}
+          </span>
+        ) : null}
       </div>
-      {task.subtasks.length > 0 ? (
-        <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
-          {task.subtasks.map((subtask) => (
-            <SubtaskRow
-              key={subtask.id}
-              threadKey={props.threadKey}
-              task={task}
-              subtask={subtask}
-              selected={subtask.id === props.subtaskId}
-            />
-          ))}
-        </ul>
-      ) : (
-        <p className="m-0 px-2.5 text-ui text-muted-foreground">No subtasks yet.</p>
-      )}
-      {taskAgents.length > 0 ? (
-        <>
-          <div className="mt-3 flex h-8 shrink-0 items-center px-2.5 text-ui font-medium text-muted-foreground">
-            Agents
-          </div>
-          <ul className="m-0 list-none p-0">
-            {taskAgents.map((row) => (
-              <AgentRow key={row.agent.id} row={row} />
+      <div className="flex flex-col px-2 pb-3">
+        {task.subtasks.length > 0 ? (
+          <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+            {task.subtasks.map((subtask) => (
+              <SubtaskRow
+                key={subtask.id}
+                threadKey={props.threadKey}
+                task={task}
+                subtask={subtask}
+                selected={subtask.id === props.subtaskId}
+              />
             ))}
           </ul>
-        </>
-      ) : null}
+        ) : (
+          <p className="m-0 px-2.5 text-ui text-muted-foreground">No subtasks yet.</p>
+        )}
+        {taskAgents.length > 0 ? (
+          <>
+            <div aria-hidden className="-mx-2 mt-4.5 h-px shrink-0 bg-(--shell-divider)" />
+            <div className="mt-4.5 flex h-8 shrink-0 items-center px-2.5 text-ui font-medium text-muted-foreground">
+              Agents
+            </div>
+            <ul className="m-0 list-none p-0">
+              {taskAgents.map((row) => (
+                <AgentRow
+                  key={row.agent.id}
+                  row={row}
+                  detail={[
+                    row.label.endsWith("all subtasks") ? "All subtasks" : "Whole task",
+                    row.agent.model,
+                  ]
+                    .filter((part) => part !== null)
+                    .join(" · ")}
+                />
+              ))}
+            </ul>
+          </>
+        ) : null}
+      </div>
     </nav>
   );
 }
@@ -560,27 +649,29 @@ const ROW = cn(
 
 const MACHINE_STATE = {
   "not-started": "No workspace yet",
-  disposed: "Removed",
-  stopped: "Asleep",
-  unreachable: "Not reachable",
+  disposed: "removed",
+  stopped: "asleep",
+  unreachable: "offline",
 } as const;
 
-/** Where the task runs and what it led to. */
+/** Where the task runs and what it led to: the same rows as the Thread details card. */
 function TaskWorkspaceRows(props: { task: OrbitTaskDetail }) {
   const { task } = props;
   const environment = orbitTaskEnvironment(task);
   const usage = taskUsage(task.metrics);
   const machine = task.workspace?.node?.name ?? task.workspace?.name ?? null;
+  const machineText =
+    environment.kind === "ready"
+      ? machine
+      : environment.kind === "not-started"
+        ? MACHINE_STATE["not-started"]
+        : [machine, MACHINE_STATE[environment.kind]].filter((part) => part !== null).join(" · ");
   return (
-    <div className="mt-3 flex flex-col">
-      <div className={ROW}>
-        <FolderIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-        <span className="min-w-0 flex-1 truncate text-foreground/85">{task.project.name}</span>
-      </div>
+    <div className="flex flex-col">
       <div className={ROW}>
         <ServerIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-        <span className="min-w-0 flex-1 truncate">{machine ?? "No machine"}</span>
-        {environment.kind === "ready" ? null : (
+        <span className="min-w-0 flex-1 truncate">{task.project.name}</span>
+        {machineText ? (
           <span
             className={cn(
               "shrink-0",
@@ -589,9 +680,9 @@ function TaskWorkspaceRows(props: { task: OrbitTaskDetail }) {
                 : undefined,
             )}
           >
-            {MACHINE_STATE[environment.kind]}
+            {machineText}
           </span>
-        )}
+        ) : null}
       </div>
       {task.workspace?.branch ? (
         <div className={ROW}>
@@ -601,20 +692,15 @@ function TaskWorkspaceRows(props: { task: OrbitTaskDetail }) {
       ) : null}
       {task.pullRequest ? <PullRequestRow pr={task.pullRequest} /> : null}
       <Tooltip>
-        <TooltipTrigger
-          delay={200}
-          render={<div tabIndex={0} className={cn(ROW, "h-auto min-h-8 flex-wrap py-1.5")} />}
-        >
+        <TooltipTrigger delay={200} render={<div tabIndex={0} className={ROW} />}>
           <GaugeIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-          <span className="min-w-0 flex-1 tabular-nums">{usage.text}</span>
+          <span className="min-w-0 flex-1 truncate tabular-nums">{usage.text}</span>
           {usage.lines ? (
-            <span className="flex shrink-0 items-baseline gap-1">
-              Branch diff
-              <span className="text-success-foreground">+{usage.lines.added.toLocaleString()}</span>
-              <span className="text-destructive-foreground">
-                −{usage.lines.deleted.toLocaleString()}
-              </span>
-            </span>
+            <PullRequestDiffStat
+              additions={usage.lines.added}
+              deletions={usage.lines.deleted}
+              className="shrink-0"
+            />
           ) : null}
         </TooltipTrigger>
         <TooltipPopup side="left" className="max-w-72">
@@ -625,29 +711,42 @@ function TaskWorkspaceRows(props: { task: OrbitTaskDetail }) {
   );
 }
 
-/** The task's pull request. Opening it in the PR tab comes with the PR round trip. */
+/** The task's pull request. It opens in Conn's pull request panel as a tab. */
 function PullRequestRow(props: { pr: NonNullable<OrbitTaskDetail["pullRequest"]> }) {
   const navigation = use(NavigationContext);
   const { pr } = props;
   const state = pr.state ? resolvePullRequestState({ state: pr.state, isDraft: false }) : null;
   const Icon = state?.Icon;
   return (
-    <ThreadDetailsControl
-      part="row"
-      variant="ghost"
-      onClick={() => navigation?.openPullRequest(pr.url)}
-      aria-label={`Open pull request #${pr.number}`}
-    >
-      {Icon ? (
-        <Icon aria-hidden className={cn("size-4 shrink-0", state?.toneClassName)} />
-      ) : (
-        <PullRequestGlyph.pullRequest className="size-4 shrink-0 text-muted-foreground" />
-      )}
-      <span className="min-w-0 flex-1 truncate text-foreground/85">Pull request</span>
-      <span className="shrink-0 tabular-nums">
-        #{pr.number} · {state?.label ?? "State unknown"}
-      </span>
-    </ThreadDetailsControl>
+    <Tooltip>
+      <TooltipTrigger
+        delay={200}
+        render={
+          <ThreadDetailsControl
+            size="sm"
+            part="row"
+            variant="ghost"
+            onClick={() => navigation?.openPullRequest(pr.url)}
+            aria-label={`Pull request #${pr.number}. ${state?.label ?? "State unknown"}. Open in the pull request panel`}
+          />
+        }
+      >
+        {Icon ? (
+          <Icon aria-hidden className={cn("size-4 shrink-0", state?.toneClassName)} />
+        ) : (
+          <PullRequestGlyph.pullRequest className="size-4 shrink-0 text-muted-foreground" />
+        )}
+        <span className="min-w-0 flex-1 truncate text-left font-normal text-foreground/85">
+          Pull request
+        </span>
+        <span className="shrink-0 font-normal text-muted-foreground tabular-nums">
+          #{pr.number}
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup side="left" className="max-w-72">
+        {state?.label ?? "State unknown"}. Opens in the pull request panel.
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -658,28 +757,68 @@ function SubtaskLeadIcon(props: { lead: ReturnType<typeof subtaskLead> }) {
     case "agent":
       return <AgentIcon agent={lead.agent} tone={lead.tone} />;
     case "done":
-      return <CircleCheckIcon aria-hidden className={cn(className, "text-muted-foreground")} />;
+      return <CheckIcon aria-hidden className={cn(className, "text-muted-foreground")} />;
     case "not-started":
-      return <CircleIcon aria-hidden className={cn(className, "text-muted-foreground/45")} />;
-    case "state": {
-      const Icon =
-        lead.tone === "success"
-          ? CircleCheckIcon
-          : lead.tone === "warning"
-            ? CircleHelpIcon
-            : lead.tone === "destructive"
-              ? CircleAlertIcon
-              : lead.tone === "info"
-                ? CircleDotIcon
-                : CircleIcon;
-      return <Icon aria-hidden className={cn(className, TONE_TEXT[lead.tone])} />;
-    }
+      return (
+        <CircleIcon aria-hidden className={cn(className, "text-muted-foreground opacity-40")} />
+      );
+    case "state":
+      switch (lead.tone) {
+        case "success":
+          return <CheckIcon aria-hidden className={cn(className, "text-muted-foreground")} />;
+        case "info":
+          return <CircleDashedIcon aria-hidden className={cn(className, "text-info-foreground")} />;
+        case "warning":
+          return (
+            <CircleAlertIcon aria-hidden className={cn(className, "text-warning-foreground")} />
+          );
+        case "destructive":
+          return <XIcon aria-hidden className={cn(className, "text-destructive-foreground")} />;
+        case "muted":
+          return <CircleIcon aria-hidden className={cn(className, "text-muted-foreground")} />;
+      }
   }
 }
 
+/** Unreported values show a dash, never zero. */
+const UNKNOWN = <span className="opacity-50">–</span>;
+
+/** Lines on the title line, right-aligned like the task's usage row. */
+function SubtaskDiff(props: { metrics: OrbitSubtask["metrics"] }) {
+  const { linesAdded, linesDeleted } = props.metrics;
+  return (
+    <span
+      aria-hidden
+      className="shrink-0 text-ui leading-5 font-normal text-muted-foreground tabular-nums"
+    >
+      {linesAdded === null || linesDeleted === null ? (
+        UNKNOWN
+      ) : linesAdded === 0 && linesDeleted === 0 ? (
+        "No changes"
+      ) : (
+        <PullRequestDiffStat additions={linesAdded} deletions={linesDeleted} />
+      )}
+    </span>
+  );
+}
+
+/** Time and tokens under the title. */
+function SubtaskMeta(props: { metrics: OrbitSubtask["metrics"] }) {
+  const { durationMs, tokens } = props.metrics;
+  return (
+    <span
+      aria-hidden
+      className="text-ui leading-4 font-normal whitespace-nowrap text-muted-foreground tabular-nums"
+    >
+      {durationMs === null ? UNKNOWN : formatWorkingDurationLabel(durationMs)} ·{" "}
+      {tokens === null ? UNKNOWN : `${formatTokens(tokens)} tokens`}
+    </span>
+  );
+}
+
 /**
- * A subtask: the row opens its brief; an agent icon in front opens its Agents tab. Lines show only
- * when Orbit reports them (never today), and the quiet line only what is known.
+ * A subtask: the row opens its Overview; an agent icon in front opens its Agents tab. Lines and
+ * the quiet line show a dash for what Orbit does not report.
  */
 function SubtaskRow(props: {
   threadKey: string;
@@ -690,7 +829,6 @@ function SubtaskRow(props: {
   const { subtask } = props;
   const lead = subtaskLead(props.task, subtask);
   const usage = subtaskUsageText(subtask.metrics);
-  const { linesAdded, linesDeleted } = subtask.metrics;
   const status = subtaskStatusText(subtask, props.task);
   return (
     <li
@@ -704,13 +842,13 @@ function SubtaskRow(props: {
           type="button"
           aria-label={`${status}. Agents for ${subtask.title}`}
           onClick={() => tasksPanelActions().openSubtask(props.threadKey, subtask.id, "agents")}
-          className="ms-1.5 mt-1.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-(--shell-highlight) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:outline-none"
+          className="ms-2 mt-1.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-(--shell-highlight) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
         >
           <SubtaskLeadIcon lead={lead} />
         </button>
       ) : (
         <span
-          className="ms-1.5 mt-1.5 flex size-5 shrink-0 items-center justify-center"
+          className="ms-2 mt-1.5 flex size-5 shrink-0 items-center justify-center"
           aria-label={status}
         >
           <SubtaskLeadIcon lead={lead} />
@@ -719,8 +857,8 @@ function SubtaskRow(props: {
       <button
         type="button"
         aria-current={props.selected ? "page" : undefined}
-        aria-label={`${subtask.title}. ${status}. Open brief`}
-        onClick={() => tasksPanelActions().openSubtask(props.threadKey, subtask.id, "brief")}
+        aria-label={`${subtask.title}. ${status}.${usage ? ` ${usage}.` : ""} Open subtask`}
+        onClick={() => tasksPanelActions().openSubtask(props.threadKey, subtask.id)}
         className="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 rounded-lg py-1.5 ps-2 pe-2.5 text-left text-ui focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
       >
         <span className="flex min-w-0 items-start gap-2">
@@ -732,17 +870,9 @@ function SubtaskRow(props: {
           >
             {subtask.title}
           </span>
-          {linesAdded !== null && linesDeleted !== null ? (
-            <PullRequestDiffStat
-              additions={linesAdded}
-              deletions={linesDeleted}
-              className="shrink-0 leading-5"
-            />
-          ) : null}
+          <SubtaskDiff metrics={subtask.metrics} />
         </span>
-        {usage ? (
-          <span className="leading-4 text-muted-foreground tabular-nums">{usage}</span>
-        ) : null}
+        <SubtaskMeta metrics={subtask.metrics} />
       </button>
     </li>
   );

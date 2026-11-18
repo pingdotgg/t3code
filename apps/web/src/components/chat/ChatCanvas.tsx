@@ -3,7 +3,12 @@ import { useStore } from "zustand";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import type { ChatCanvasPreview } from "./chatCanvasLayout";
 import { resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
-import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
+import {
+  selectActiveRightPanel,
+  selectThreadPanelOpen,
+  useRightPanelStore,
+} from "../../rightPanelStore";
+import { cn } from "~/lib/utils";
 import { observeResize } from "../../lib/observeResize";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
@@ -139,6 +144,11 @@ export function ChatCanvas({
       ? false
       : selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
   );
+  // Conn: beside the Tasks app the chat may narrow, so Thread details stays inline beside it.
+  const tasksPanelActive = useRightPanelStore(
+    (state) =>
+      threadRef !== null && selectActiveRightPanel(state.byThreadKey, threadRef) === "tasks",
+  );
   const model = resolveChatCanvasModel({
     measurements,
     detailsCardMeasurement,
@@ -177,7 +187,10 @@ export function ChatCanvas({
         <div
           ref={widthProbeRef}
           aria-hidden
-          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-12"
+          className={cn(
+            "pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) box-content ps-3",
+            tasksPanelActive ? "min-w-64 sm:ps-6" : "min-w-[40rem] sm:ps-12",
+          )}
         />
         {children}
       </div>

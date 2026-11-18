@@ -6,22 +6,43 @@ import {
   type OrbitTaskSummary,
 } from "@t3tools/client-runtime/orbit-gateway";
 
-export function tasksBoardLanes(tasks: ReadonlyArray<OrbitTaskSummary>): ReadonlyArray<{
+/** Search matches the title, the project, the task number (with or without "#") and the machine. */
+export function matchesTaskQuery(task: OrbitTaskSummary, query: string): boolean {
+  const needle = query.trim().toLowerCase().replace(/^#/, "");
+  if (needle.length === 0) return true;
+  return [task.title, task.project.name, String(task.id), task.workspace?.node?.name ?? ""]
+    .join(" ")
+    .toLowerCase()
+    .includes(needle);
+}
+
+/** The lanes the user keeps on, with the tasks that match the search and the lane's full count. */
+export function tasksBoardLanes(
+  tasks: ReadonlyArray<OrbitTaskSummary>,
+  options: { readonly query?: string; readonly hiddenLanes?: ReadonlyArray<OrbitTaskLane> } = {},
+): ReadonlyArray<{
   readonly id: OrbitTaskLane;
   readonly label: string;
   readonly tasks: ReadonlyArray<OrbitTaskSummary>;
+  readonly total: number;
 }> {
-  return ORBIT_TASK_LANES.map((lane) => ({
-    ...lane,
-    tasks: tasks.filter((task) => orbitTaskLane(task.status) === lane.id),
-  }));
+  const hidden = options.hiddenLanes ?? [];
+  return ORBIT_TASK_LANES.filter((lane) => !hidden.includes(lane.id)).map((lane) => {
+    const inLane = tasks.filter((task) => orbitTaskLane(task.status) === lane.id);
+    return {
+      ...lane,
+      tasks: inLane.filter((task) => matchesTaskQuery(task, options.query ?? "")),
+      total: inLane.length,
+    };
+  });
 }
 
-/** The card's quiet line: subtask progress and the pull request, when there is one. */
+/** The card's quiet line: subtask progress and the machine the task runs on. */
 export function taskCardDetail(task: OrbitTaskSummary): string {
   const { total, completed } = task.subtaskCounts;
   const parts = [total > 0 ? `${completed}/${total} subtasks` : "No subtasks"];
-  if (task.pullRequest) parts.push(`PR #${task.pullRequest.number}`);
+  const machine = task.workspace?.node?.name;
+  if (machine) parts.push(machine);
   return parts.join(" · ");
 }
 

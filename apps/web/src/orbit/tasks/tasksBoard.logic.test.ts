@@ -46,6 +46,24 @@ describe("tasks board", () => {
     ]);
   });
 
+  it("searches by title, project, number or machine and leaves hidden lanes out", async () => {
+    const tasks = await fixtureTasks();
+    const shown = (query: string) =>
+      tasksBoardLanes(tasks, { query, hiddenLanes: ["backlog"] }).map((lane) => [
+        lane.id,
+        lane.tasks.map((task) => task.id),
+        lane.total,
+      ]);
+    expect(shown("#482")).toEqual([
+      ["todo", [], 1],
+      ["in-progress", [482], 5],
+      ["done", [], 3],
+    ]);
+    expect(shown("composer")[1]).toEqual(["in-progress", [482], 5]);
+    expect(shown("beast")[0]).toEqual(["todo", [], 1]);
+    expect(shown("conn").flatMap(([, ids]) => ids)).toHaveLength(9);
+  });
+
   it("tells the workspace states apart", async () => {
     const tasks = await fixtureTasks();
     expect(

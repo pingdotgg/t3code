@@ -44,6 +44,11 @@ type SidebarContextProps = {
   setOpenMobile: (open: boolean) => void;
   isMobile: boolean;
   toggleSidebar: () => void;
+  /**
+   * Folds the desktop sidebar for this window only, without saving it. Any explicit open or
+   * close clears the fold and is saved as usual.
+   */
+  setFolded: (folded: boolean) => void;
   /** Runs before the desktop sidebar collapses. */
   onCollapse: (listener: () => void) => () => void;
 };
@@ -139,6 +144,8 @@ function moveFocusOutOfCollapsingSidebar() {
 interface SidebarOpenState {
   readonly open: boolean;
   readonly openMobile: boolean;
+  /** A temporary, unsaved fold over `open`. */
+  readonly folded: boolean;
 }
 
 /** Per-provider open state, kept outside React so shortcuts can toggle it at event time. */
@@ -146,6 +153,7 @@ function createSidebarOpenStore(defaultOpen: boolean, storageKey: string | undef
   let state: SidebarOpenState = {
     open: readStoredSidebarOpen(storageKey) ?? defaultOpen,
     openMobile: false,
+    folded: false,
   };
   const listeners = new Set<() => void>();
   const collapseListeners = new Set<() => void>();
@@ -153,17 +161,21 @@ function createSidebarOpenStore(defaultOpen: boolean, storageKey: string | undef
     state = next;
     for (const listener of listeners) listener();
   };
-  const setOpen = (open: boolean) => {
-    if (!open && state.open) {
+  const shown = () => state.open && !state.folded;
+  const show = (next: SidebarOpenState) => {
+    const visible = next.open && !next.folded;
+    if (!visible && shown()) {
       for (const listener of collapseListeners) listener();
       moveFocusOutOfCollapsingSidebar();
     }
-    if (open !== state.open) {
-      if (!isMobileViewport()) announceSidebarVisibility(open);
-      publish({ ...state, open });
-    }
+    if (visible !== shown() && !isMobileViewport()) announceSidebarVisibility(visible);
+    if (next.open !== state.open || next.folded !== state.folded) publish(next);
+  };
+  const setOpen = (open: boolean) => {
+    show({ ...state, open, folded: false });
     if (storageKey) writeLocalStorageValue(storageKey, open, defaultOpen, Schema.Boolean);
   };
+  const setFolded = (folded: boolean) => show({ ...state, folded });
   const setOpenMobile = (openMobile: boolean) => {
     if (openMobile !== state.openMobile) publish({ ...state, openMobile });
   };
@@ -176,8 +188,9 @@ function createSidebarOpenStore(defaultOpen: boolean, storageKey: string | undef
     },
     getSnapshot: () => state,
     setOpen,
+    setFolded,
     setOpenMobile,
-    toggle: () => (isMobileViewport() ? setOpenMobile(!state.openMobile) : setOpen(!state.open)),
+    toggle: () => (isMobileViewport() ? setOpenMobile(!state.openMobile) : setOpen(!shown())),
     onCollapse: (listener: () => void) => {
       collapseListeners.add(listener);
       return () => {
@@ -200,11 +213,13 @@ function SidebarProvider({
 }) {
   const isMobile = useMediaQuery(SIDEBAR_MOBILE_QUERY);
   const [store] = React.useState(() => createSidebarOpenStore(defaultOpen, storageKey));
-  const { open, openMobile } = React.useSyncExternalStore(
+  const snapshot = React.useSyncExternalStore(
     store.subscribe,
     store.getSnapshot,
     store.getSnapshot,
   );
+  const open = snapshot.open && !snapshot.folded;
+  const { openMobile } = snapshot;
   const [mobileSheetMounted, setMobileSheetMounted] = React.useState(false);
   if (openMobile && !mobileSheetMounted) {
     setMobileSheetMounted(true);
@@ -226,6 +241,7 @@ function SidebarProvider({
     setOpenMobile: store.setOpenMobile,
     state,
     toggleSidebar: store.toggle,
+    setFolded: store.setFolded,
     onCollapse: store.onCollapse,
   };
 

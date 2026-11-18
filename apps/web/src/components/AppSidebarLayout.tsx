@@ -46,6 +46,7 @@ import { isAppModalPage } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import { WorkspaceRail } from "./sidebar/WorkspaceRail";
+import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
 import {
   clampThreadSidebarWidth,
   resolveInitialThreadSidebarWidth,
@@ -415,6 +416,26 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   );
 }
 
+/**
+ * Conn: the Tasks app needs the width, so the thread list folds away in this window while Tasks
+ * is the shown panel tab, and comes back when Tasks closes or another tab or thread takes over.
+ * The fold is never saved; the sidebar toggle clears it and is saved as usual.
+ */
+function TasksModeThreadListFold() {
+  const { setFolded, isMobile } = useSidebar();
+  const shownTarget = useShownThreadRouteTarget().shownTarget;
+  const threadRef = shownTarget?.kind === "server" ? shownTarget.threadRef : null;
+  const tasksActive = useRightPanelStore(
+    (state) => selectActiveRightPanel(state.byThreadKey, threadRef) === "tasks",
+  );
+  const fold = tasksActive && !isMobile;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- folds the sidebar store when the Tasks tab is entered and unfolds it when left
+  useEffect(() => {
+    setFolded(fold);
+  }, [fold, setFolded]);
+  return null;
+}
+
 export function AppSidebarLayout({
   children,
   showSidebar = true,
@@ -507,6 +528,7 @@ export function AppSidebarLayout({
         {children}
         <BackgroundThreadAnnouncer />
         <SidebarControl showSidebar={showSidebar} />
+        {showSidebar ? <TasksModeThreadListFold /> : null}
         {isElectron && historySwipeNavigation ? <HistorySwipeNavigation /> : null}
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>

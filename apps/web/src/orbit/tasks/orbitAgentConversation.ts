@@ -19,7 +19,6 @@ import { tasksPanelActions, useTasksPanelStore } from "./tasksPanelStore";
 import {
   openOrbitAgentConversation,
   prepareOrbitConversationEnvironment,
-  copyTasksPanelWidth,
 } from "./taskNavigation.logic";
 
 /** Conn: a Tasks agent click peeks; marks go down before the environment connects. */
@@ -105,7 +104,6 @@ export function useOrbitTaskNavigation(threadKey: string) {
         prepare: (target) => prepareEnvironment(target, peek),
         handoff: (from, to) => {
           tasksPanelActions().handoff(scopedThreadKey(from), scopedThreadKey(to));
-          copyTasksPanelWidth(scopedThreadKey(from), scopedThreadKey(to), window.localStorage);
           useRightPanelStore.getState().open(to, "tasks");
         },
         navigate: async (target) => {
