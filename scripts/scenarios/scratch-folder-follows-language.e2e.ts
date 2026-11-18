@@ -71,9 +71,13 @@ test(
     await screen.getByLabel("Two-line folder rows", { exact: true }).waitFor();
 
     await t3.open("/settings/general");
+    const openFolder = screen.getByTestId("sidebar-project-folder");
+    await expect(openFolder).toContainText("No project", { timeout: 60_000 });
     await screen.getByLabel("Language", { exact: true }).tap();
     await screen.getByText("日本語", { exact: true }).tap();
     await screen.getByLabel("言語", { exact: true }).waitFor();
+    // Settings leaves the sidebar mounted. Keep this failure through the capture after reopening.
+    await expect.soft(openFolder).toContainText("プロジェクトなし");
 
     await t3.open(thread);
     const folder = screen.getByTestId("sidebar-project-folder");
