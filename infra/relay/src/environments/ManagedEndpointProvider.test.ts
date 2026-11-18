@@ -290,6 +290,7 @@ function makeAllocations(calls: AllocationCall[] = []) {
           .map((allocation) => ({
             ...allocation,
             recoveryEnabled: recoveryEnabled.has(allocationKey(allocation)),
+            recoveryUsable: recoveryEnabled.has(allocationKey(allocation)),
           })),
       ),
     claimRelease: (input) =>
@@ -1288,7 +1289,7 @@ describe("ManagedEndpointProvider", () => {
     readonly when: string;
     readonly inactiveBefore: string;
     readonly listed?: {
-      readonly recoveryEnabled: boolean;
+      readonly recoveryUsable: boolean;
       readonly at: "before-registration" | "after-registration";
     };
     readonly released: boolean;
@@ -1298,13 +1299,13 @@ describe("ManagedEndpointProvider", () => {
     {
       when: "after, with a replaced environment key",
       inactiveBefore: "2026-06-01T00:05:00.000Z",
-      listed: { recoveryEnabled: false, at: "after-registration" },
+      listed: { recoveryUsable: false, at: "after-registration" },
       released: true,
     },
     {
       when: "after, registered again since a replaced-key listing",
       inactiveBefore: "2026-06-01T00:05:00.000Z",
-      listed: { recoveryEnabled: false, at: "before-registration" },
+      listed: { recoveryUsable: false, at: "before-registration" },
       released: false,
     },
   ])(
@@ -1343,7 +1344,7 @@ describe("ManagedEndpointProvider", () => {
             ...(listed === undefined || listing === null
               ? {}
               : {
-                  expectedRecoveryEnabled: listed.recoveryEnabled,
+                  expectedRecoveryUsable: listed.recoveryUsable,
                   expectedGeneration: listing.generation,
                 }),
           }),

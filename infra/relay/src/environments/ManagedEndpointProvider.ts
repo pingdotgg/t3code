@@ -179,13 +179,16 @@ export class ManagedEndpointProvider extends Context.Service<
       readonly environmentId: string;
       readonly target?: ManagedEndpointDeprovisionTarget | null;
     }) => Effect.Effect<boolean, ManagedEndpointDeprovisioningFailed>;
-    /** True means the connector token is dead; false means concurrent provisioning kept its tunnel live. */
+    /**
+     * True means the connector token is dead. False means the tunnel or allocation changed, usable
+     * recovery came after the cutoff, the tunnel is no longer inactive, or it is still in use.
+     */
     readonly release: (input: {
       readonly userId: string;
       readonly environmentId: string;
       readonly expectedTunnelId?: string;
       readonly expectedInactiveBefore?: string;
-      readonly expectedRecoveryEnabled?: boolean;
+      readonly expectedRecoveryUsable?: boolean;
       readonly expectedGeneration?: number;
       readonly expectedStatus?: "inactive" | "down";
       readonly markReleased?: boolean;
@@ -993,18 +996,13 @@ export const make = Effect.gen(function* () {
       // Cloudflare reports old inactivity while a registered host is reconnecting.
       if (
         input.expectedInactiveBefore !== undefined &&
-        input.expectedRecoveryEnabled !== false &&
-        allocation.recoveryEnabledAt !== null
+        input.expectedRecoveryUsable !== false &&
+        ManagedEndpointAllocations.isRecoveryRegisteredAfter(
+          allocation.recoveryEnabledAt,
+          input.expectedInactiveBefore,
+        )
       ) {
-        const registeredAt = DateTime.make(allocation.recoveryEnabledAt);
-        const cutoff = DateTime.make(input.expectedInactiveBefore);
-        if (
-          Option.isSome(registeredAt) &&
-          Option.isSome(cutoff) &&
-          registeredAt.value.epochMilliseconds > cutoff.value.epochMilliseconds
-        ) {
-          return false;
-        }
+        return false;
       }
       // Claim before deleting: concurrent provisioning can advance the generation and reuse the tunnel.
       const claimedGeneration = yield* allocations

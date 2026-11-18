@@ -44,6 +44,7 @@ export interface ManagedEndpointSweepResult {
   readonly skippedOrphan: number;
   readonly skippedReplaced: number;
   readonly skippedUnrecorded: number;
+  readonly skippedReconnecting: number;
   readonly totalDown: number | null;
   readonly totalInactive: number | null;
   readonly failed: number;
@@ -141,6 +142,7 @@ const emptyResult = (
   skippedOrphan: 0,
   skippedReplaced: 0,
   skippedUnrecorded: 0,
+  skippedReconnecting: 0,
   totalDown: null,
   totalInactive: null,
   failed: 0,
@@ -271,6 +273,7 @@ export const make = Effect.gen(function* () {
     let skippedOrphan = 0;
     let skippedReplaced = 0;
     let skippedUnrecorded = 0;
+    let skippedReconnecting = 0;
     let failed = 0;
 
     for (const { tunnel, status, cutoff } of uniqueExpired) {
@@ -312,6 +315,14 @@ export const make = Effect.gen(function* () {
         if (legacyMode === "dry-run") continue;
       } else {
         if (mode === "off") continue;
+        // Cloudflare reports old inactivity while a registered host is reconnecting.
+        if (
+          owner.recoveryUsable &&
+          ManagedEndpointAllocations.isRecoveryRegisteredAfter(owner.recoveryEnabledAt, cutoff)
+        ) {
+          skippedReconnecting += 1;
+          continue;
+        }
         wouldDelete += 1;
         if (mode === "dry-run") continue;
       }
@@ -346,7 +357,7 @@ export const make = Effect.gen(function* () {
               environmentId: candidate.owner.environmentId,
               expectedTunnelId: candidate.tunnel.id,
               expectedInactiveBefore: candidate.inactiveBefore,
-              expectedRecoveryEnabled: candidate.owner.recoveryEnabled,
+              expectedRecoveryUsable: candidate.owner.recoveryUsable,
               expectedGeneration: candidate.owner.generation,
               expectedStatus: candidate.status,
               ...(candidate.legacy ? { markReleased: true } : {}),
@@ -395,6 +406,7 @@ export const make = Effect.gen(function* () {
       skippedOrphan,
       skippedReplaced,
       skippedUnrecorded,
+      skippedReconnecting,
       totalDown: totals.down,
       totalInactive: totals.inactive,
       failed,

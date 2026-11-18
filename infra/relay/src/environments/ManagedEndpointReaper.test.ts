@@ -42,6 +42,8 @@ function recoverableOwners(
 function allocation(input: {
   readonly tunnelId: string | null;
   readonly recoveryEnabled: boolean;
+  readonly recoveryUsable?: boolean;
+  readonly recoveryEnabledAt?: string;
 }): ManagedEndpointAllocations.ManagedEndpointTunnelAllocation {
   return {
     userId: "user-1",
@@ -55,8 +57,9 @@ function allocation(input: {
     updatedAt: "2026-08-25T11:00:00.000Z",
     generation: 1,
     tunnelReleasedAt: null,
-    recoveryEnabledAt: null,
+    recoveryEnabledAt: input.recoveryEnabledAt ?? null,
     recoveryEnabled: input.recoveryEnabled,
+    recoveryUsable: input.recoveryUsable ?? input.recoveryEnabled,
   };
 }
 
@@ -278,10 +281,26 @@ describe("ManagedEndpointReaper", () => {
           status: "inactive",
           timestamp: "2026-08-25T10:59:00.000Z",
         }),
+        tunnel({
+          id: "reconnecting",
+          suffix: "cccccccccccccccc",
+          status: "down",
+          timestamp: "2026-08-25T11:00:00.000Z",
+        }),
       ],
       allocations: [
         allocation({ tunnelId: "down-1", recoveryEnabled: true }),
-        allocation({ tunnelId: "inactive-1", recoveryEnabled: true }),
+        allocation({
+          tunnelId: "inactive-1",
+          recoveryEnabled: true,
+          recoveryUsable: false,
+          recoveryEnabledAt: "2026-08-25T11:58:00.000Z",
+        }),
+        allocation({
+          tunnelId: "reconnecting",
+          recoveryEnabled: true,
+          recoveryEnabledAt: "2026-08-25T11:58:00.000Z",
+        }),
       ],
     });
 
@@ -289,16 +308,20 @@ describe("ManagedEndpointReaper", () => {
       yield* TestClock.setTime(NOW_MILLIS);
       const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
       expect(yield* reaper.sweep).toMatchObject({
-        scanned: 2,
+        scanned: 3,
+        attempted: 2,
+        skippedReconnecting: 1,
         deleted: 2,
         skippedLegacy: 0,
         failed: 0,
       });
       expect(state.deleted).toEqual(["down-1", "inactive-1"]);
       expect(state.releases.some((release) => release.markReleased === true)).toBe(false);
-      expect(state.releases.map((request) => request.expectedTunnelId)).toEqual([
-        "down-1",
-        "inactive-1",
+      expect(
+        state.releases.map((request) => [request.expectedTunnelId, request.expectedRecoveryUsable]),
+      ).toEqual([
+        ["down-1", true],
+        ["inactive-1", false],
       ]);
       expect(state.listRequests).toEqual([
         {
@@ -488,7 +511,7 @@ describe("ManagedEndpointReaper", () => {
         expect(state.releases.every((release) => release.markReleased === true)).toBe(true);
         for (const release of state.releases) {
           expect(release.expectedInactiveBefore).toBe("2026-08-18T12:00:00.000Z");
-          expect(release.expectedRecoveryEnabled).toBe(false);
+          expect(release.expectedRecoveryUsable).toBe(false);
           expect(release.expectedGeneration).toBe(1);
         }
       }).pipe(Effect.provide(state.layer));
@@ -660,8 +683,21 @@ describe("ManagedEndpointReaper", () => {
           status: "down",
           timestamp: "2026-08-25T11:00:00.000Z",
         }),
+        tunnel({
+          id: "reconnecting",
+          suffix: "bbbbbbbbbbbbbbbb",
+          status: "down",
+          timestamp: "2026-08-25T11:00:00.000Z",
+        }),
       ],
-      allocations: [allocation({ tunnelId: "expired", recoveryEnabled: true })],
+      allocations: [
+        allocation({ tunnelId: "expired", recoveryEnabled: true }),
+        allocation({
+          tunnelId: "reconnecting",
+          recoveryEnabled: true,
+          recoveryEnabledAt: "2026-08-25T11:58:00.000Z",
+        }),
+      ],
     });
 
     return Effect.gen(function* () {
@@ -669,10 +705,11 @@ describe("ManagedEndpointReaper", () => {
       const reaper = yield* ManagedEndpointReaper.ManagedEndpointReaper;
       expect(yield* reaper.sweep).toMatchObject({
         mode: "dry-run",
-        scanned: 1,
+        scanned: 2,
         attempted: 0,
         deleted: 0,
         wouldDelete: 1,
+        skippedReconnecting: 1,
       });
       expect(state.deleted).toEqual([]);
       expect(state.releases).toEqual([]);

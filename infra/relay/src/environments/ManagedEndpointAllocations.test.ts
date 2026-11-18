@@ -35,6 +35,7 @@ describe("ManagedEndpointAllocations", () => {
                     recoveryEnabledAt: "2026-08-25T12:00:00.000Z",
                     recoveryEnvironmentPublicKey: "current-key",
                     linkedEnvironmentPublicKey: "current-key",
+                    linkedEndpointProviderKind: "cloudflare_tunnel",
                   },
                   {
                     ...base,
@@ -43,6 +44,7 @@ describe("ManagedEndpointAllocations", () => {
                     recoveryEnabledAt: null,
                     recoveryEnvironmentPublicKey: null,
                     linkedEnvironmentPublicKey: "current-key",
+                    linkedEndpointProviderKind: "cloudflare_tunnel",
                   },
                   {
                     ...base,
@@ -51,6 +53,16 @@ describe("ManagedEndpointAllocations", () => {
                     recoveryEnabledAt: "2026-08-25T12:00:00.000Z",
                     recoveryEnvironmentPublicKey: "old-key",
                     linkedEnvironmentPublicKey: "new-key",
+                    linkedEndpointProviderKind: "cloudflare_tunnel",
+                  },
+                  {
+                    ...base,
+                    environmentId: "environment-4",
+                    tunnelId: "tunnel-4",
+                    recoveryEnabledAt: "2026-08-25T12:00:00.000Z",
+                    recoveryEnvironmentPublicKey: "current-key",
+                    linkedEnvironmentPublicKey: "current-key",
+                    linkedEndpointProviderKind: "manual",
                   },
                 ]),
             }),
@@ -65,12 +77,16 @@ describe("ManagedEndpointAllocations", () => {
         "first-tunnel",
         "second-tunnel",
         "third-tunnel",
+        "fourth-tunnel",
       ]);
 
-      expect(result.map((entry) => [entry.tunnelId, entry.recoveryEnabled])).toEqual([
-        ["tunnel-1", true],
-        ["tunnel-2", false],
-        ["tunnel-3", false],
+      expect(
+        result.map((entry) => [entry.tunnelId, entry.recoveryEnabled, entry.recoveryUsable]),
+      ).toEqual([
+        ["tunnel-1", true, true],
+        ["tunnel-2", false, false],
+        ["tunnel-3", false, false],
+        ["tunnel-4", true, false],
       ]);
     }).pipe(Effect.provide(layerWithDb(fakeDb)));
   });

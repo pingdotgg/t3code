@@ -30,9 +30,25 @@ export interface ManagedEndpointAllocation {
 
 export interface ManagedEndpointTunnelAllocation extends ManagedEndpointAllocation {
   readonly recoveryEnabled: boolean;
+  // The recovery endpoints accept only a tunnel link.
+  readonly recoveryUsable: boolean;
 }
 
 export const MANAGED_ENDPOINT_ALLOCATION_LOOKUP_BATCH_SIZE = 500;
+
+export function isRecoveryRegisteredAfter(
+  recoveryEnabledAt: string | null,
+  cutoff: DateTime.DateTime.Input,
+): boolean {
+  if (recoveryEnabledAt === null) return false;
+  const registeredAt = DateTime.make(recoveryEnabledAt);
+  const cutoffAt = DateTime.make(cutoff);
+  return (
+    Option.isSome(registeredAt) &&
+    Option.isSome(cutoffAt) &&
+    DateTime.isGreaterThan(registeredAt.value, cutoffAt.value)
+  );
+}
 
 export function resolveReadyManagedEndpoint(input: {
   readonly allocation: ManagedEndpointAllocation;
@@ -475,6 +491,7 @@ export const make = Effect.gen(function* () {
                 recoveryEnvironmentPublicKey:
                   relayManagedEndpointAllocations.recoveryEnvironmentPublicKey,
                 linkedEnvironmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
+                linkedEndpointProviderKind: relayEnvironmentLinks.endpointProviderKind,
               })
               .from(relayManagedEndpointAllocations)
               .leftJoin(
@@ -495,14 +512,20 @@ export const make = Effect.gen(function* () {
                     ({
                       recoveryEnvironmentPublicKey,
                       linkedEnvironmentPublicKey,
+                      linkedEndpointProviderKind,
                       ...allocation
-                    }) => ({
-                      ...allocation,
-                      recoveryEnabled:
+                    }) => {
+                      const recoveryEnabled =
                         allocation.recoveryEnabledAt !== null &&
                         recoveryEnvironmentPublicKey !== null &&
-                        recoveryEnvironmentPublicKey === linkedEnvironmentPublicKey,
-                    }),
+                        recoveryEnvironmentPublicKey === linkedEnvironmentPublicKey;
+                      return {
+                        ...allocation,
+                        recoveryEnabled,
+                        recoveryUsable:
+                          recoveryEnabled && linkedEndpointProviderKind === "cloudflare_tunnel",
+                      };
+                    },
                   ),
                 ),
                 Effect.mapError(
