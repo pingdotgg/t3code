@@ -98,10 +98,11 @@ export function ThreadDetailsStats({
   /** The thread to price. Null hides the cost row. */
   readonly cost: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null;
 }) {
+  const gt = useGT();
   return (
     <ThreadDetailsSection
       headingId="thread-details-stats-heading"
-      title="Context and cost"
+      title={gt("Context and cost")}
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
@@ -136,9 +137,7 @@ function ContextRow({ usage }: { readonly usage: ContextWindowSnapshot }) {
       tick={tick}
       muted
       value={
-        maxTokens !== null
-          ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}`
-          : usedTokens
+        maxTokens !== null ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}` : usedTokens
       }
       ariaValue={
         used !== null
@@ -182,59 +181,60 @@ function CostRow({
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const gt = useGT();
+  const m = useMessages();
+  const locale = useLocale();
   const usage = useThreadUsage({ environmentId, threadId });
   // No records means the provider's usage is not read here, which is not a cost of zero.
   if (usage === null || usage.records === 0) return null;
+  const tokens = gt("{tokens} tokens", { tokens: formatContextWindowTokens(usage.totalTokens) });
+  const label = gt("Cost", { $context: "thread cost row label" });
   const { unpricedShare } = usage.costQuality;
   if (unpricedShare >= 1) {
     return (
       <UsageRow
-        label="Cost"
+        label={label}
         fill={null}
         tone={null}
-        value="Unpriced"
+        value={gt("Unpriced")}
         tooltip={
           <>
-            <span className="text-foreground">Cost: no known price for this model</span>
-            <span className="text-muted-foreground">
-              {formatContextWindowTokens(usage.totalTokens)} tokens
-            </span>
+            <span className="text-foreground">{gt("Cost: no known price for this model")}</span>
+            <span className="text-muted-foreground">{tokens}</span>
           </>
         }
       />
     );
   }
-  const value = formatCost(usage.costUsd);
+  const value = formatCost(usage.costUsd, locale);
   // A part that rounds to no cents says nothing next to the total.
   const parts = costTypeSegments(usage.categoryCost).filter((part) => part.value >= 0.005);
   return (
     <UsageRow
-      label="Cost"
+      label={label}
       fill={null}
       tone={null}
       dimValue={false}
       value={value}
       tooltip={
         <>
-          <span className="text-foreground">Cost: {value} · API estimate</span>
+          <span className="text-foreground">{gt("Cost: {value} · API estimate", { value })}</span>
           {parts.length > 0 ? (
             <span className="my-1 grid grid-cols-[1fr_auto] gap-x-6 gap-y-0.5">
               {parts.map((part) => (
                 <Fragment key={part.label}>
-                  <span className="text-muted-foreground">{part.label}</span>
+                  <span className="text-muted-foreground">{m(part.label)}</span>
                   <span className="text-end text-foreground tabular-nums">
-                    {formatUsd(part.value)}
+                    {formatUsd(part.value, locale)}
                   </span>
                 </Fragment>
               ))}
             </span>
           ) : null}
-          <span className="text-muted-foreground">
-            {formatContextWindowTokens(usage.totalTokens)} tokens
-          </span>
+          <span className="text-muted-foreground">{tokens}</span>
           {unpricedShare > 0 ? (
             <span className="text-muted-foreground">
-              Excludes {formatPercent(unpricedShare)} unpriced records
+              {gt("Excludes {share} unpriced records", { share: formatPercent(unpricedShare) })}
             </span>
           ) : null}
         </>
@@ -244,8 +244,8 @@ function CostRow({
 }
 
 /** A cost that rounds to no cents still cost something. */
-function formatCost(usd: number): string {
-  return usd > 0 && usd < 0.005 ? "<$0.01" : formatUsd(usd);
+function formatCost(usd: number, locale: string): string {
+  return usd > 0 && usd < 0.005 ? `<${formatUsd(0.01, locale)}` : formatUsd(usd, locale);
 }
 
 function LimitRow({
