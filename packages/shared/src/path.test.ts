@@ -32,6 +32,7 @@ describe("path helpers", () => {
     expect(newProjectFolderName("Đặt tên dự án")).toBe("dat-ten-du-an");
     expect(newProjectFolderName("Straßenbahn GROẞ")).toBe("strassenbahn-gross");
     expect(newProjectFolderName("Łódź sklep")).toBe("lodz-sklep");
+    expect(newProjectFolderName("Øl på Þingvellir ı")).toBe("ol-pa-thingvellir-i");
     expect(newProjectFolderName("../../etc")).toBe("etc");
     expect(newProjectFolderName("🎱🎱")).toBe("project");
     expect(newProjectFolderName(`${"a".repeat(63)} b`)).toBe("a".repeat(63));
