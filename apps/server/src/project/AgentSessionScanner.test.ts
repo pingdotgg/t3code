@@ -1012,6 +1012,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("drops candidates whose directory no longer exists", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-02T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
 
@@ -1058,6 +1059,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("excludes T3-managed worktree sandboxes", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-02T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const fileSystem = yield* FileSystem.FileSystem;
@@ -1339,6 +1341,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("excludes sandboxes under the configured worktrees dir without .t3 in the path", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-02T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
@@ -1361,6 +1364,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("excludes sandboxes reached through a symlink into the worktrees dir", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        yield* TestClock.setTime(Date.parse("2026-01-02T00:00:00.000Z"));
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
         const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
