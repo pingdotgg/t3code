@@ -23,6 +23,7 @@ import * as References from "effect/References";
 // oxlint-disable-next-line t3code/no-raw-mcp-registration -- the eval calls the tool McpHttpServer registered and registers none.
 import { McpSchema, McpServer } from "effect/ai";
 
+import * as ServerEnvironment from "../../apps/server/src/environment/ServerEnvironment.ts";
 import * as McpHttpServer from "../../apps/server/src/mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
 import { liveThreadShell } from "../../apps/server/src/mcp/McpToolAccess.testkit.ts";
@@ -71,6 +72,8 @@ export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWa
   } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
   const real = yield* Layer.build(
     ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({})),
+      Layer.provide(SqlitePersistence.layerMemory),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(Orchestrator.OrchestratorV2)({

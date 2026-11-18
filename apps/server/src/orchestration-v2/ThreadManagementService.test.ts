@@ -287,7 +287,7 @@ it.effect.each([
       }),
     ),
     Layer.provide(ServerSettings.layerTest()),
-    Layer.provideMerge(layerReceiptsTest),
+    Layer.provideMerge(layerStoresTest),
   );
 
   return Effect.gen(function* () {
@@ -1203,7 +1203,7 @@ it.effect(
           }),
         ),
         Layer.provide(ServerSettings.layerTest()),
-        Layer.provide(layerReceiptsTest),
+        Layer.provide(layerStoresTest),
       );
 
       yield* Effect.gen(function* () {
