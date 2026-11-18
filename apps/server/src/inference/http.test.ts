@@ -316,6 +316,17 @@ it("tries another authorized host for the same model after an upstream auth fail
       "http://primary.test/v1/models",
       "http://backup.test/v1/models",
     ]);
+    primaryStatus = 529;
+    const overload = await send();
+    expect(overload.status).toBe(200);
+    expect(calls.slice(10)).toEqual([
+      "http://primary.test/v1/messages",
+      "http://backup.test/v1/messages",
+    ]);
+    backupStatus = 400;
+    const invalid = await send();
+    expect(invalid.status).toBe(400);
+    expect(calls.slice(12)).toEqual(["http://backup.test/v1/messages"]);
   } finally {
     await dispose();
   }

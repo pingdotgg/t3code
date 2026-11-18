@@ -79,7 +79,7 @@ can also return HTTP 429. OpenCode handles those retries itself.
 
 OpenCode can use the accounts on an [inference host](./providers-claude.md), next to
 its own logins. In **Settings > Inference accounts**, choose **OpenCode** beside the
-host, or turn on **Use CLI proxy** in OpenCode's provider settings. The host's models
+host, or turn on **Inference routing** in OpenCode's provider settings. The host's models
 then appear in the model picker under **T3 inference**.
 
 OpenCode and [Pi](./providers-pi.md#shared-inference-accounts) can run every model the host has

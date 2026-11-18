@@ -4,6 +4,7 @@ import {
   INFERENCE_HARNESSES,
   ProviderDriverKind,
   type CustomModelSetting,
+  type ServerProviderModel,
   type SettingsSecretValue,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
@@ -31,6 +32,9 @@ export function inferencePath(method: string, rawUrl: string): string | null {
     ? path
     : null;
 }
+
+export const isRetryableInferenceStatus = (status: number): boolean =>
+  [401, 403, 429, 502, 503, 529].includes(status);
 
 export function inferenceTarget(method: string, rawUrl: string) {
   const linked = /^\/api\/inference\/linked\/([^/]+)\/([^/]+)(\/.*)$/.exec(rawUrl);
@@ -122,6 +126,8 @@ interface Route {
 const blank = (names: readonly string[], value = "") =>
   names.map((name) => ({ name, value, sensitive: false }));
 const VENDORS = ["openai", "anthropic"];
+// GPT Image IDs are selected by the image tool or Images API, not as chat models.
+const isGptImageModel = (id: string) => /^gpt-image(?:-|$)/i.test(id);
 const ownedBy = (vendor: string, pattern: RegExp) => (model: ProxyModel) => {
   const owner = model.owned_by?.toLowerCase();
   return owner !== undefined && VENDORS.includes(owner) ? owner === vendor : pattern.test(model.id);
@@ -249,12 +255,15 @@ export function modelsForDriver(
   driver: InferenceDriver,
   availability?: AccountModelAvailability,
 ) {
-  const models = data.filter((model) => harnesses[driver].serves(model));
+  const models = data.filter(
+    (model) => !isGptImageModel(model.id) && harnesses[driver].serves(model),
+  );
+  const modelIds = [...new Set(models.map((model) => model.id))];
   if (
     !availability ||
     !needsAccountModelLookup(availability.accounts, availability.excludedNames, availability.now)
   )
-    return models.map((model) => model.id);
+    return modelIds;
   const available = new Set<string>();
   for (const account of availability.accounts) {
     if (!usableAccount(account, availability.excludedNames)) continue;
@@ -287,18 +296,22 @@ export function modelsForDriver(
       if (!blocked.has(model)) available.add(model);
     }
   }
-  return models.filter((model) => available.has(model.id)).map((model) => model.id);
+  return modelIds.filter((id) => available.has(id));
 }
 
 export function routeProvider(driver: InferenceDriver, label: string | null, route: Route) {
   const harness = harnesses[driver];
   const name = INFERENCE_HARNESSES[driver].label;
+  const chatRoute = {
+    ...route,
+    models: [...new Set(route.models.filter((id) => !isGptImageModel(id)))],
+  };
   return {
     driver: ProviderDriverKind.make(driver),
     displayName: label === null ? name : `${name} via ${label}`,
     enabled: true,
-    config: harness.config(route),
-    environment: harness.environment(route),
+    config: harness.config(chatRoute),
+    environment: harness.environment(chatRoute),
   };
 }
 
@@ -309,4 +322,15 @@ export function inferenceModelSlugs(config: {
   return config.setupMode === "inference"
     ? new Set(config.customModels.map((entry) => (typeof entry === "string" ? entry : entry.slug)))
     : null;
+}
+
+export function withInferenceModelCatalog(
+  models: ReadonlyArray<ServerProviderModel>,
+  hostedSlugs: ReadonlySet<string> | null,
+): ReadonlyArray<ServerProviderModel> {
+  if (!hostedSlugs) return models;
+  // Codex and Claude ingest host discoveries through their custom model config.
+  return models
+    .filter((model) => hostedSlugs.has(model.slug))
+    .map((model) => (model.isCustom ? { ...model, isCustom: false } : model));
 }

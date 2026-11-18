@@ -21,12 +21,19 @@ export const SECOND_HOME = `${T3_HOME}-second-environment`;
 const runSecondServer = Effect.fn("scenario.secondServer")(function* (
   devUrl: string,
   paired: (target: { readonly host: string; readonly token: string }) => void,
+  prepare?: (home: string) => Promise<NodeJS.ProcessEnv>,
 ) {
   const path = yield* Path.Path;
   const node = yield* HostProcess.ExecutablePath;
   const hostEnvironment = yield* HostProcess.Environment;
   const port = yield* (yield* NetService.NetService).reserveLoopbackPort();
   yield* prepareHome(SECOND_HOME);
+  const extraEnvironment = prepare
+    ? yield* Effect.tryPromise({
+        try: () => prepare(SECOND_HOME),
+        catch: () => new ScenarioError({ message: "Could not prepare the second server fixture." }),
+      })
+    : {};
   const token = yield* Deferred.make<string>();
   const server = yield* start({
     cwd: APP_DIR,
@@ -47,6 +54,7 @@ const runSecondServer = Effect.fn("scenario.secondServer")(function* (
       PATH: `${path.join(SECOND_HOME, "bin")}:${hostEnvironment.PATH ?? ""}`,
       HOME: hostEnvironment.HOME,
       T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
+      ...extraEnvironment,
     },
     onLine: (line) => {
       const value = /^Token:\s*(\S+)/.exec(line)?.[1];
@@ -68,10 +76,13 @@ const runSecondServer = Effect.fn("scenario.secondServer")(function* (
 });
 
 /** Starts the second server for the web app at `devUrl`. `ready` settles with its pairing input. */
-export function startSecondServer(devUrl: string) {
+export function startSecondServer(
+  devUrl: string,
+  prepare?: (home: string) => Promise<NodeJS.ProcessEnv>,
+) {
   const pairing = Promise.withResolvers<{ readonly host: string; readonly token: string }>();
   const server = Effect.runFork(
-    runSecondServer(devUrl, pairing.resolve).pipe(
+    runSecondServer(devUrl, pairing.resolve, prepare).pipe(
       Effect.scoped,
       Effect.provide([NodeServices.layer, NetService.layer]),
     ),

@@ -1,4 +1,4 @@
-import { inferenceModelSlugs } from "../../inference/routes.ts";
+import { inferenceModelSlugs, withInferenceModelCatalog } from "../../inference/routes.ts";
 import { ClaudeSettings, ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import type * as Cause from "effect/Cause";
@@ -187,9 +187,7 @@ export const ClaudeDriver: ProviderDriver<
     const stampSnapshot = (draft: Parameters<typeof stampIdentity>[0]) =>
       stampIdentity({
         ...draft,
-        ...(hostedModels
-          ? { models: draft.models.filter((model) => hostedModels.has(model.slug)) }
-          : {}),
+        models: withInferenceModelCatalog(draft.models, hostedModels),
         ...(auth
           ? {
               setup: {

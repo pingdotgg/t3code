@@ -45,6 +45,7 @@ function setup() {
 describe("inference provider accounts", () => {
   it("adds an account through the inference host and completes its callback without creating a profile", async () => {
     setup();
+    const reconnect = vi.fn();
     using _permission = vi
       .spyOn(serverEnvironment.inferenceProxy.manageInference, "permissionAtom")
       .mockReturnValue(Atom.make(true));
@@ -54,7 +55,11 @@ describe("inference provider accounts", () => {
       value: { login: { url: "https://provider.example/sign-in", state: "proxy-login" } },
     });
     await using screen = await render(
-      <InferenceProviderAccounts environmentId={host} driver="codex" />,
+      <InferenceProviderAccounts
+        environmentId={host}
+        driver="codex"
+        onAccountsChanged={reconnect}
+      />,
     );
     const accountNames = screen.getByRole("button", { name: "Toggle account name visibility" });
     expect(accountNames.all()).toHaveLength(2);
@@ -92,5 +97,30 @@ describe("inference provider accounts", () => {
     });
     await expect.element(screen.getByRole("button", { name: "Codex", exact: true })).toBeVisible();
     expect(state.run).toHaveBeenCalledTimes(2);
+    expect(reconnect).toHaveBeenCalledOnce();
+  });
+
+  it("can start hosting on the selected environment during provider setup", async () => {
+    setup();
+    using _permission = vi
+      .spyOn(serverEnvironment.inferenceProxy.manageInference, "permissionAtom")
+      .mockReturnValue(Atom.make(true));
+    state.query.mockReturnValue({ data: { enabled: false } });
+    state.run.mockResolvedValueOnce({ _tag: "Success", value: {} });
+    const reconnect = vi.fn();
+    await using screen = await render(
+      <InferenceProviderAccounts
+        environmentId={host}
+        driver="codex"
+        enableLocalHosting
+        onAccountsChanged={reconnect}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Start hosting here" }));
+    expect(state.run).toHaveBeenCalledWith({
+      environmentId: host,
+      input: { operation: "configure", enabled: true, sharing: false, expectedEnabled: false },
+    });
+    expect(reconnect).toHaveBeenCalledOnce();
   });
 });

@@ -62,6 +62,7 @@ describe("filterSettingsSections", () => {
       expected: [["Server settings", ["Provider accounts"]]],
     },
     { query: "inference accounts", expected: [["Server settings", ["Provider accounts"]]] },
+    { query: "inference routing", expected: [["Server settings", ["Provider accounts"]]] },
     { query: "CLIProxyAPI", expected: [["Server settings", ["Provider accounts"]]] },
     { query: "usage", expected: [[null, ["Usage"]]] },
     { query: "zzzz", expected: [] },

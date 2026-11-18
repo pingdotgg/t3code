@@ -72,7 +72,7 @@ image appears in the thread.
 
 ## Use multiple accounts
 
-Add accounts on the inference host, then turn on **Use CLI proxy** for Codex on each environment that needs them. Threads keep using the normal Codex provider and model names. While the proxy is on, other Codex accounts on that environment are hidden; turn it off to use an individual CLI login again. [Host and share inference accounts](./providers-claude.md#host-and-share-inference-accounts)
+Add accounts on the inference host, then turn on **Inference routing** for Codex on each environment that needs them. Threads keep using the normal Codex provider and model names. While the proxy is on, other Codex accounts on that environment are hidden; turn it off to use an individual CLI login again. [Host and share inference accounts](./providers-claude.md#host-and-share-inference-accounts)
 
 ## Answer questions while Codex works
 

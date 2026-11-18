@@ -2,7 +2,9 @@ import { pipe } from "effect/Function";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  inferenceHarness,
   isInferenceAccountReplaced,
+  isInferenceRoutingEnabled,
   providerLimitedUntilMs,
   resolveProjectProviderInstanceEnabled,
   type ModelSelection,
@@ -21,6 +23,18 @@ import {
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
 export { normalizeProviderAccentColor, shouldShowInstanceBadge };
+
+export function usesHostedModelCatalog(
+  instanceId: ProviderInstanceId,
+  driver: ProviderDriverKind,
+  config: unknown,
+): boolean {
+  return (
+    instanceId === defaultInstanceIdForDriver(driver) &&
+    inferenceHarness(driver)?.replacesAccounts === true &&
+    isInferenceRoutingEnabled(config)
+  );
+}
 
 type ProviderInstanceSettings = Pick<
   ServerSettings,

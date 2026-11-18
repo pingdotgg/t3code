@@ -650,6 +650,44 @@ it.layer(layerTest)("CodexDriver", (it) => {
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
   );
 
+  it.effect.each(["inference", "existing"] as const)(
+    "publishes models with the right provenance in %s mode",
+    (setupMode) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-models-" });
+        const model = {
+          slug: "gpt-6.2-sol",
+          name: "GPT-6.2 Sol",
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Reasoning",
+                type: "select",
+                options: [{ id: "low", label: "Low", isDefault: true }],
+              },
+            ],
+          },
+        } as const;
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make("codex-catalog"),
+          displayName: "Codex",
+          enabled: false,
+          environment: [],
+          config: {
+            ...CodexDriver.defaultConfig(),
+            homePath,
+            setupMode,
+            customModels: [model, model.slug],
+          },
+        });
+        expect((yield* instance.snapshot.getSnapshot).models).toEqual([
+          { ...model, isCustom: setupMode === "existing" },
+        ]);
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
+  );
+
   it.effect.skipIf(windowsHost)(
     "shares state from the environment CODEX_HOME in a shadow home",
     () =>

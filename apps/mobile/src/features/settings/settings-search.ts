@@ -84,6 +84,7 @@ const SETTINGS_SEARCH_TERMS = {
   SettingsProviderAccounts: [
     "provider accounts",
     "inference accounts",
+    "inference routing",
     "CLIProxyAPI",
     "host accounts",
     "route requests",

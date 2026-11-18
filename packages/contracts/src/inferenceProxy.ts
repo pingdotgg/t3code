@@ -132,6 +132,7 @@ export const InferenceProxyAction = Schema.Union([
     operation: Schema.Literal("configure"),
     enabled: Schema.Boolean,
     sharing: Schema.Boolean,
+    expectedEnabled: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({ operation: Schema.Literal("signIn"), upstream: InferenceUpstream }),
   Schema.Struct({

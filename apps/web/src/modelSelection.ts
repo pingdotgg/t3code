@@ -39,6 +39,7 @@ import {
   NO_PROVIDER_MODEL_SELECTION,
   resolveDefaultProviderModelSelection,
   resolveProjectDefaultProviderModelSelection,
+  usesHostedModelCatalog,
 } from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
@@ -55,6 +56,7 @@ export function readInstanceCustomModels(
   if (driverKind === "antigravity") return [];
   const instance = settings.providerInstances?.[instanceId];
   const config = instance?.config;
+  if (usesHostedModelCatalog(instanceId, driverKind, config)) return [];
   if (config !== null && typeof config === "object") {
     const value = (config as Record<string, unknown>).customModels;
     if (Array.isArray(value)) {

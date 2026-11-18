@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { SettingsGroup } from "./SettingsGroup";
 import { InferenceProviderAccounts } from "./InferenceProviderAccounts";
 import { inferenceAccountHostId } from "./AddProviderInstanceDialog.logic";
@@ -26,6 +26,7 @@ import {
 import {
   defaultInstanceIdForDriver,
   type EnvironmentId,
+  type InferenceDriver,
   type AcpRegistryUrlAuthAction,
   PROVIDER_DISPLAY_NAMES,
   ProviderDriverKind,
@@ -113,6 +114,7 @@ import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetup
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
 import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSection";
 import { readProviderConfigString } from "./ProviderSettingsForm";
+import { useEnableInferenceRouting } from "./useEnableInferenceRouting";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { providerClients } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
@@ -1357,8 +1359,7 @@ function ProviderInstanceRow({
     supportsInference &&
     isDefault &&
     inferenceDriver !== undefined &&
-    (isInferenceProviderConfig(instance.config) || !isCustomInferenceBackend(instance));
-  const navigate = useNavigate();
+    !isCustomInferenceBackend(instance);
   const recommendedVersion = liveProvider?.compatibilityAdvisory?.recommendedVersion;
   const canInstallRecommended =
     !readOnly &&
@@ -1477,44 +1478,15 @@ function ProviderInstanceRow({
       setup={
         mode === "editor" && canUseProxy ? (
           <>
-            <SettingsRow
-              title="Use CLI proxy"
-              description={
-                inferenceDriver && !INFERENCE_HARNESSES[inferenceDriver].replacesAccounts
-                  ? "Add an inference host's models to this provider as T3 inference. Its own logins keep working."
-                  : proxyHiddenNames.length === 0
-                    ? "Route this provider through an inference host. Your standalone CLI keeps its own settings."
-                    : `Routed through an inference host. ${formatList(proxyHiddenNames)} ${
-                        proxyHiddenNames.length === 1 ? "is" : "are"
-                      } hidden while the proxy is on and return${
-                        proxyHiddenNames.length === 1 ? "s" : ""
-                      } when you turn it off.`
-              }
-              control={
-                <Switch
-                  aria-label="Use CLI proxy"
-                  checked={accountHostId !== null}
-                  disabled={readOnly || !canWriteSettings}
-                  onCheckedChange={(inferenceEnabled) => {
-                    if (inferenceEnabled && !isInferenceProviderConfig(instance.config)) {
-                      void navigate({
-                        to: "/settings/inference",
-                        search: { machine: environmentId },
-                      });
-                      return;
-                    }
-                    void actions.updateInstance(instanceId, instance, {
-                      ...instance,
-                      config: {
-                        ...(instance.config !== null && typeof instance.config === "object"
-                          ? instance.config
-                          : {}),
-                        inferenceEnabled,
-                      },
-                    });
-                  }}
-                />
-              }
+            <InferenceProxySetting
+              environmentId={environmentId}
+              environmentLabel={environmentLabel}
+              instanceId={instanceId}
+              driver={inferenceDriver}
+              accountHostId={accountHostId}
+              config={instance.config}
+              hiddenNames={proxyHiddenNames}
+              disabled={readOnly || !canWriteSettings}
             />
             {setup}
           </>
@@ -1592,5 +1564,115 @@ function ProviderInstanceRow({
       }
       isUpdating={isInstanceUpdateRunning}
     />
+  );
+}
+
+function InferenceProxySetting({
+  environmentId,
+  environmentLabel,
+  instanceId,
+  driver,
+  accountHostId,
+  config,
+  hiddenNames,
+  disabled,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly instanceId: ProviderInstanceId;
+  readonly driver: InferenceDriver;
+  readonly accountHostId: EnvironmentId | null;
+  readonly config: ProviderInstanceConfig["config"];
+  readonly hiddenNames: ReadonlyArray<string>;
+  readonly disabled: boolean;
+}) {
+  const route = isInferenceProviderConfig(config) ? config : null;
+  const [disabling, setDisabling] = useState(false);
+  const [disableError, setDisableError] = useState<string | null>(null);
+  const [localSetup, setLocalSetup] = useState(false);
+  const manage = useAtomCommand(serverEnvironment.inferenceProxy.manageInference, {
+    reportFailure: false,
+  });
+  const { canConnect, pending, error, run } = useEnableInferenceRouting(
+    environmentId,
+    environmentLabel,
+  );
+  const usingProxy = accountHostId !== null;
+  const host = accountHostId === environmentId ? environmentLabel : route?.inferenceHostLabel;
+  const accountBehavior = !INFERENCE_HARNESSES[driver].replacesAccounts
+    ? "Its own logins keep working."
+    : hiddenNames.length > 0
+      ? `${formatList(hiddenNames)} ${hiddenNames.length === 1 ? "is" : "are"} hidden while the proxy is on and return${hiddenNames.length === 1 ? "s" : ""} when you turn it off.`
+      : "Your standalone CLI keeps its own settings.";
+
+  return (
+    <>
+      <SettingsRow
+        title="Inference routing"
+        description={
+          usingProxy
+            ? `Using ${host || "the inference host"} for inference via the CLI proxy. ${accountBehavior}`
+            : `Use the CLI proxy on this environment or a paired host. ${accountBehavior}`
+        }
+        status={
+          pending ? (
+            <span role="status">Connecting to an inference host…</span>
+          ) : !usingProxy && error ? (
+            <>
+              <span role="status">{error}</span>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {!localSetup && (
+                  <Button size="sm" variant="outline" onClick={() => setLocalSetup(true)}>
+                    Set up accounts here
+                  </Button>
+                )}
+                <Link
+                  className="underline"
+                  to="/settings/inference"
+                  search={{ machine: environmentId }}
+                >
+                  Choose another host
+                </Link>
+              </div>
+            </>
+          ) : usingProxy && disableError ? (
+            <span role="status">{disableError}</span>
+          ) : undefined
+        }
+        control={
+          <Switch
+            aria-label="Inference routing"
+            checked={usingProxy}
+            disabled={disabled || !canConnect || pending || disabling}
+            onCheckedChange={async (enabled) => {
+              if (enabled) {
+                await run(driver, route?.inferenceHostId);
+                return;
+              }
+              setDisabling(true);
+              setDisableError(null);
+              const result = await manage({
+                environmentId,
+                input: { operation: "removeRoute", instanceId },
+              });
+              setDisabling(false);
+              if (result._tag === "Failure") {
+                const failure = squashAtomCommandFailure(result);
+                setDisableError(failure instanceof Error ? failure.message : String(failure));
+              }
+            }}
+          />
+        }
+      />
+      {!usingProxy && localSetup && (
+        <InferenceProviderAccounts
+          environmentId={environmentId}
+          driver={driver}
+          hostLabel={environmentLabel}
+          enableLocalHosting
+          onAccountsChanged={() => void run(driver, environmentId)}
+        />
+      )}
+    </>
   );
 }

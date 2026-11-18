@@ -1,4 +1,4 @@
-import { inferenceModelSlugs } from "../../inference/routes.ts";
+import { inferenceModelSlugs, withInferenceModelCatalog } from "../../inference/routes.ts";
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { CodexSettings, ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
@@ -281,9 +281,7 @@ export const CodexDriver: ProviderDriver<
     const stampSnapshot = (draft: Parameters<typeof stampIdentity>[0]) =>
       stampIdentity({
         ...draft,
-        ...(hostedModels
-          ? { models: draft.models.filter((model) => hostedModels.has(model.slug)) }
-          : {}),
+        models: withInferenceModelCatalog(draft.models, hostedModels),
         ...(cliAccount
           ? {
               setup: {

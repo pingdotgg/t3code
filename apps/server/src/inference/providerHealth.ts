@@ -4,6 +4,7 @@ import {
   type ServerProvider,
   type InferenceProviderConfig,
 } from "@t3tools/contracts";
+import { isProviderInstanceEnabledInAnyScope } from "@t3tools/shared/serverSettings";
 import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import { InferenceProxy } from "./InferenceProxy.ts";
@@ -122,18 +123,31 @@ export const makeInferenceProviderHealth = Effect.fn("makeInferenceProviderHealt
       ),
   );
 
+  const instanceIds = settings.getSettings.pipe(
+    Effect.map((settings) =>
+      Object.entries(settings.providerInstances).flatMap(([id, instance]) => {
+        const instanceId = ProviderInstanceId.make(id);
+        return isProviderInstanceEnabledInAnyScope(settings, instanceId) &&
+          isInferenceProviderConfig(instance.config) &&
+          instance.config.inferenceEnabled
+          ? [instanceId]
+          : [];
+      }),
+    ),
+    Effect.orElseSucceed((): ProviderInstanceId[] => []),
+  );
+  const refreshModelCatalog = Effect.fn("InferenceProviderHealth.refreshModelCatalog")(function* (
+    fresh?: boolean,
+    instanceId?: ProviderInstanceId,
+  ) {
+    const ids = yield* instanceIds;
+    if (instanceId === undefined ? ids.length > 0 : ids.includes(instanceId))
+      yield* proxy.refreshModelCatalog(fresh, instanceId);
+  });
   return {
     apply,
-    instanceIds: settings.getSettings.pipe(
-      Effect.map(({ providerInstances }) =>
-        Object.entries(providerInstances).flatMap(([id, instance]) =>
-          isInferenceProviderConfig(instance.config) && instance.config.inferenceEnabled
-            ? [ProviderInstanceId.make(id)]
-            : [],
-        ),
-      ),
-      Effect.orElseSucceed(() => []),
-    ),
+    instanceIds,
+    refreshModelCatalog,
     invalidate: Cache.invalidateAll(catalogs),
   };
 });

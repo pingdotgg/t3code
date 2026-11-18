@@ -40,7 +40,7 @@ import {
 import { cn } from "../../lib/utils";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { normalizeProviderAccentColor } from "../../providerInstances";
+import { normalizeProviderAccentColor, usesHostedModelCatalog } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
@@ -875,9 +875,12 @@ export function ProviderInstanceCard({
       return onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
     },
   );
+  const hostedModelCatalog =
+    driverKind !== null && usesHostedModelCatalog(instanceId, driverKind, instance.config);
+  const visibleCustomModels = hostedModelCatalog ? NO_CUSTOM_MODELS : customModels;
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
-    customModels,
+    customModels: visibleCustomModels,
   });
   const updateDisplayName = (value: string) => {
     const trimmed = value.trim();
@@ -1450,12 +1453,12 @@ export function ProviderInstanceCard({
               across connected devices.
             </p>
             <ProviderModelsSection
-              canManageCustomModels={!readOnly}
+              canManageCustomModels={!readOnly && !hostedModelCatalog}
               canWritePreferences={canWriteSettings}
               instanceId={instanceId}
               driverKind={driverKind}
               models={modelsForDisplay}
-              customModels={customModels}
+              customModels={visibleCustomModels}
               hiddenModels={hiddenModels}
               favoriteModels={favoriteModels}
               modelOrder={modelOrder}
