@@ -8,6 +8,7 @@ import {
   issueTrackerKey,
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
+import { issueTrackerDetailText } from "@t3tools/client-runtime/state/issue-trackers";
 import { issueEntryKey } from "@t3tools/client-runtime/state/issues";
 import type {
   EnvironmentId,
@@ -32,7 +33,8 @@ import {
   UserCheckIcon,
   UsersIcon,
 } from "lucide-react";
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { Fragment, useEffect, useEffectEvent, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { IssueDetailPanel } from "~/components/issue/IssueDetailPanel";
@@ -50,6 +52,8 @@ import {
   PullRequestSearchInput,
   type PullRequestFilterOption,
 } from "~/components/pullRequest/PullRequestListFilters";
+import { m, type MessageResolver } from "~/i18n/messages";
+import { resolveFilterOptions } from "../pullRequest/pullRequestListOptions";
 import { IssueFiltersMenu } from "./IssueListFilterPickers";
 import { issueFilterProjects } from "./issuesSearch.logic";
 import { ISSUE_SAVED_VIEWS } from "./issueSavedViews";
@@ -71,9 +75,10 @@ import {
 } from "~/components/ui/empty";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
 import { SidebarInset } from "~/components/ui/sidebar";
+import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
-import { shortcutLabelForCommand } from "~/keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { usePanelAnimationSettings, usePanelPresence } from "~/panelAnimations";
 import {
@@ -104,21 +109,25 @@ export interface IssuesSearch extends IssueListPreferences {
 }
 
 const STATE_TABS = [
-  { value: "open", label: "Open", Icon: IssueGlyph.issue },
-  { value: "closed", label: "Closed", Icon: CircleCheckIcon },
-  { value: "all", label: "All", Icon: LayersIcon },
+  { value: "open", label: msg("Open", { $context: "issue state" }), Icon: IssueGlyph.issue },
+  { value: "closed", label: msg("Closed", { $context: "issue state" }), Icon: CircleCheckIcon },
+  { value: "all", label: msg("All", { $context: "issue filter" }), Icon: LayersIcon },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<IssueListState>>;
 
 const INVOLVEMENT_TABS = [
-  { value: "all", label: "Everyone", Icon: UsersIcon },
-  { value: "assigned", label: "Assigned to me", Icon: UserCheckIcon },
-  { value: "authored", label: "Opened by me", Icon: PenLineIcon },
-  { value: "mentioned", label: "Mentioning me", Icon: AtSignIcon },
+  { value: "all", label: msg("Everyone", { $context: "issue filter" }), Icon: UsersIcon },
+  { value: "assigned", label: msg("Assigned to me"), Icon: UserCheckIcon },
+  { value: "authored", label: msg("Opened by me"), Icon: PenLineIcon },
+  { value: "mentioned", label: msg("Mentioning me"), Icon: AtSignIcon },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<IssueInvolvement>>;
 
 const SORT_OPTIONS = [
-  { value: "updated", label: "Recently updated", Icon: ClockIcon },
-  { value: "created", label: "Newest", Icon: CalendarArrowDownIcon },
+  { value: "updated", label: msg("Recently updated"), Icon: ClockIcon },
+  {
+    value: "created",
+    label: msg("Newest", { $context: "sort order" }),
+    Icon: CalendarArrowDownIcon,
+  },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<IssueListSort>>;
 
 const PAGE_SIZE = 50;
@@ -138,7 +147,11 @@ function getShortcutContext() {
   };
 }
 
-function hostOptionsFor(trackers: ReadonlyArray<IssueTrackerSummary>, chosen: string | undefined) {
+function hostOptionsFor(
+  trackers: ReadonlyArray<IssueTrackerSummary>,
+  chosen: string | undefined,
+  resolve: MessageResolver,
+) {
   const hosts = new Map<string, IssueTrackerSummary>();
   const ordered = [...trackers].sort((a, b) =>
     issueTrackerKey(a).localeCompare(issueTrackerKey(b)),
@@ -149,7 +162,7 @@ function hostOptionsFor(trackers: ReadonlyArray<IssueTrackerSummary>, chosen: st
       hosts.set(tracker.host, tracker);
   }
   return [
-    { value: "", label: "All", Icon: Plug2Icon },
+    { value: "", label: resolve(msg("All", { $context: "issue filter" })), Icon: Plug2Icon },
     // A remembered host no project is on any more stays listed, so the filter can be taken off.
     ...(chosen !== undefined && !hosts.has(chosen)
       ? [{ value: chosen, label: chosen, Icon: Plug2Icon }]
@@ -161,12 +174,21 @@ function hostOptionsFor(trackers: ReadonlyArray<IssueTrackerSummary>, chosen: st
           ? tracker.host
           : `${issueTrackerPresentation(tracker.tracker).providerName} (${tracker.host})`,
       Icon: issueTrackerPresentation(tracker.tracker).Icon,
-      ...(tracker.configured ? {} : { unavailable: tracker.detail ?? "Unavailable" }),
+      ...(tracker.configured
+        ? {}
+        : {
+            unavailable:
+              tracker.detail === null
+                ? resolve(msg("Unavailable"))
+                : issueTrackerDetailText(tracker.detail, resolve),
+          }),
     })),
   ];
 }
 
 export function IssuesPage() {
+  const gt = useGT();
+  const resolve = useMessages();
   const navigate = useNavigate({ from: "/issues" });
   const search = useSearch({ from: "/_chat/issues" });
   const { environments } = useEnvironments();
@@ -227,7 +249,10 @@ export function IssuesPage() {
         continueIssuePage(
           page,
           result._tag === "Failure"
-            ? { failure: failure instanceof Error ? failure.message : "The next page failed." }
+            ? {
+                failure:
+                  failure instanceof Error ? failure.message : m(msg("The next page failed.")),
+              }
             : result.value,
           cursors,
         ),
@@ -262,6 +287,7 @@ export function IssuesPage() {
   const hostOptions = hostOptionsFor(
     [...held.values()].flatMap((page) => page.answer.trackers),
     search.host,
+    resolve,
   );
 
   const updateSearch = (patch: { [Key in keyof IssuesSearch]?: IssuesSearch[Key] | undefined }) => {
@@ -418,6 +444,23 @@ export function IssuesPage() {
     selectSurfaceInUrl(panelSurface);
   };
 
+  const onRightPanelKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented || isCommandPaletteOpen() || panelSurface === null) return;
+    const command = resolveShortcutCommand(event, keybindings, {
+      context: { ...getShortcutContext(), rightPanelOpen: rightPanelState.isOpen },
+    });
+    if (command !== "rightPanel.toggle") return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) toggleRightPanel();
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the document right panel shortcut
+  useEffect(() => {
+    document.addEventListener("keydown", onRightPanelKeyDown);
+    return () => document.removeEventListener("keydown", onRightPanelKeyDown);
+  }, []);
+
   // Every writable scope the workspace has, for the composer.
 
   const showTracker = groups.length > 1;
@@ -425,8 +468,8 @@ export function IssuesPage() {
 
   const listBody: ReactNode = !issuesSupported ? (
     <PullRequestsUnavailableState
-      title="Issues unavailable"
-      error="Update this environment's T3 Code server to browse issues."
+      title={gt("Issues unavailable")}
+      error={gt("Update this environment's T3 Code server to browse issues.")}
     />
   ) : noneAnswered && list.isPending ? (
     <PullRequestListGhost />
@@ -442,17 +485,25 @@ export function IssuesPage() {
         <IssueGlyph.issue />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No trackers to read</EmptyTitle>
-        <EmptyDescription>Add a project whose remote is on a supported tracker.</EmptyDescription>
+        <EmptyTitle>
+          <T>No trackers to read</T>
+        </EmptyTitle>
+        <EmptyDescription>
+          <T>Add a project whose remote is on a supported tracker.</T>
+        </EmptyDescription>
       </EmptyHeader>
     </Empty>
   ) : (
     <div className="flex flex-col gap-6">
       {list.error ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
-          <span>{list.error} Showing the issues that loaded.</span>
+          <span>
+            <T>
+              <Var>{list.error}</Var> Showing the issues that loaded.
+            </T>
+          </span>
           <Button size="xs" variant="outline" onClick={list.refresh}>
-            Retry
+            <T>Retry</T>
           </Button>
         </div>
       ) : null}
@@ -468,13 +519,17 @@ export function IssuesPage() {
                 <span className="font-normal">· {group.tracker.host}</span>
               ) : null}
               <span className="font-normal">
-                · {group.tracker.projectCount}{" "}
-                {group.tracker.projectCount === 1 ? "project" : "projects"}
+                ·{" "}
+                {gt("{count, plural, one {{count} project} other {{count} projects}}", {
+                  count: group.tracker.projectCount,
+                })}
               </span>
             </h2>
             {!group.tracker.configured ? (
               <p className="px-3 text-sm text-muted-foreground">
-                {group.tracker.detail ?? "This tracker cannot be read right now."}
+                {group.tracker.detail === null
+                  ? gt("This tracker cannot be read right now.")
+                  : issueTrackerDetailText(group.tracker.detail, resolve)}
               </p>
             ) : null}
             {group.errors.map((error) => (
@@ -487,7 +542,11 @@ export function IssuesPage() {
             ))}
             {group.tracker.configured && group.rows.length === 0 && group.errors.length === 0 ? (
               <p className="px-3 text-sm text-muted-foreground">
-                {debouncedQuery ? "Nothing matches that." : "No issues under these filters."}
+                {debouncedQuery ? (
+                  <T>Nothing matches that.</T>
+                ) : (
+                  <T>No issues under these filters.</T>
+                )}
               </p>
             ) : null}
             {group.rows.map((row) => {
@@ -528,11 +587,13 @@ export function IssuesPage() {
                     disabled={loadingMore !== null}
                     onClick={() => void loadMore(environmentId, group.tracker.host)}
                   >
-                    {loadingMore === `${environmentId} ${group.tracker.host}`
-                      ? "Loading…"
-                      : moreFailure === null
-                        ? "Load more"
-                        : "Retry"}
+                    {loadingMore === `${environmentId} ${group.tracker.host}` ? (
+                      <T>Loading…</T>
+                    ) : moreFailure === null ? (
+                      <T>Load more</T>
+                    ) : (
+                      <T>Retry</T>
+                    )}
                   </Button>
                 </Fragment>
               );
@@ -552,9 +613,11 @@ export function IssuesPage() {
             reserveNativeControls={!rightPanelState.isOpen}
             className="relative bg-background"
           >
-            <WorkspaceBreadcrumb ariaLabel="Issues breadcrumb">
+            <WorkspaceBreadcrumb ariaLabel={gt("Issues breadcrumb")}>
               <WorkspaceBreadcrumbItem current>
-                <h1 className="truncate">Issues</h1>
+                <h1 className="truncate">
+                  <T context="page title, list of issues">Issues</T>
+                </h1>
               </WorkspaceBreadcrumbItem>
             </WorkspaceBreadcrumb>
             <div className="min-w-0 flex-1" />
@@ -575,7 +638,7 @@ export function IssuesPage() {
                 rightPanelAvailable={panelSurface !== null}
                 rightPanelOpen={rightPanelState.isOpen}
                 rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
-                rightPanelUnavailableLabel="Select an issue first"
+                rightPanelUnavailableLabel={gt("Select an issue first")}
                 onToggleTerminal={() => undefined}
                 onToggleRightPanel={toggleRightPanel}
               />
@@ -588,8 +651,8 @@ export function IssuesPage() {
                 <div className="min-w-0 basis-full @lg/issue-list:min-w-48 @lg/issue-list:basis-0 @lg/issue-list:flex-1">
                   <PullRequestSearchInput
                     value={search.q ?? ""}
-                    label="Search issues"
-                    placeholder="Search issues"
+                    label={gt("Search issues")}
+                    placeholder={gt("Search issues")}
                     busy={
                       (search.q ?? "") !== debouncedQuery ||
                       (debouncedQuery.length > 0 && list.isPending)
@@ -599,22 +662,22 @@ export function IssuesPage() {
                   />
                 </div>
                 <PullRequestCompactFilterMenu
-                  label="Sort issues"
+                  label={gt("Sort issues")}
                   triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
-                  triggerLabel="Sort"
+                  triggerLabel={gt("Sort", { $context: "verb, button that sorts a list" })}
                   outlined
                   value={search.order ?? "updated"}
-                  options={SORT_OPTIONS}
+                  options={resolveFilterOptions(SORT_OPTIONS, resolve)}
                   onChange={(order) =>
                     updateSearch({ order: order === "created" ? "created" : undefined })
                   }
                 />
                 <IssueFiltersMenu
                   state={search.status}
-                  stateOptions={STATE_TABS}
+                  stateOptions={resolveFilterOptions(STATE_TABS, resolve)}
                   onState={(status) => updateSearch({ status })}
                   involvement={search.who}
-                  involvementOptions={INVOLVEMENT_TABS}
+                  involvementOptions={resolveFilterOptions(INVOLVEMENT_TABS, resolve)}
                   onInvolvement={(who) => updateSearch({ who })}
                   scopes={filterScopes}
                   labels={search.label ?? []}
@@ -650,7 +713,7 @@ export function IssuesPage() {
                 />
                 {hostOptions.length > 1 ? (
                   <FilterMenu
-                    label="Filter by tracker"
+                    label={gt("Filter by tracker")}
                     value={search.host ?? ""}
                     options={hostOptions}
                     onChange={(host) => updateSearch({ host: host || undefined })}
@@ -659,7 +722,7 @@ export function IssuesPage() {
                 <Button
                   size="icon"
                   variant="outline"
-                  aria-label="Refresh issues"
+                  aria-label={gt("Refresh issues")}
                   onClick={list.refresh}
                   disabled={list.isPending}
                 >
@@ -733,7 +796,7 @@ export function IssuesPage() {
           >
             {renderedSurface.kind === "issue" ? (
               <IssueDetailPanel
-                key={renderedSurface.id}
+                key={`${panelEnvironmentId}:${renderedSurface.id}`}
                 environmentId={panelEnvironmentId}
                 listEntry={panelListEntry}
                 reference={{

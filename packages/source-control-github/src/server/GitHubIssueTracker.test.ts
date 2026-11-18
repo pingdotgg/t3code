@@ -80,6 +80,7 @@ const DETAIL_RESPONSE = JSON.stringify({
         viewerCanReopen: true,
         reactionGroups: [],
         closedByPullRequestsReferences: {
+          pageInfo: { hasNextPage: true, endCursor: "links-next" },
           nodes: [
             {
               number: 50,
@@ -186,9 +187,18 @@ function tracker(onRequest: (variables: unknown) => void, templateRepository?: u
                             pageInfo: { hasNextPage: false, endCursor: null },
                             nodes: [{ name: "needs repro", color: "ffffff" }],
                           },
-                          assignees: {
+                          closedByPullRequestsReferences: {
                             pageInfo: { hasNextPage: false, endCursor: null },
-                            nodes: [],
+                            nodes: [
+                              {
+                                number: 61,
+                                title: "fix(web): restore focus after paste",
+                                url: "https://github.com/acme/web/pull/61",
+                                state: "OPEN",
+                                isDraft: true,
+                                repository: { nameWithOwner: "acme/web" },
+                              },
+                            ],
                           },
                         },
                       },
@@ -397,7 +407,6 @@ describe("GitHubIssueTracker", () => {
           scope: "acme/web",
           state: "open",
           involvement: "all",
-          viewer: "julius",
           labels: ['needs "repro"'],
           assignee: "theo",
           sort: "created",
@@ -550,6 +559,10 @@ Redact secrets before uploading.`);
           number: 42,
           labelsCursor: "labels-next",
           assigneesCursor: null,
+          closingPullRequestsCursor: "links-next",
+          withLabels: true,
+          withAssignees: false,
+          withClosingPullRequests: true,
         },
       ]);
       expect(issue).toMatchObject({
@@ -599,6 +612,16 @@ Redact secrets before uploading.`);
           url: "https://github.com/acme/web/pull/50",
           state: "merged",
           isDraft: false,
+          closesIssue: true,
+        },
+        // A closing reference past the first page, with no timeline sighting, still shows.
+        {
+          repository: "acme/web",
+          number: 61,
+          title: "fix(web): restore focus after paste",
+          url: "https://github.com/acme/web/pull/61",
+          state: "open",
+          isDraft: true,
           closesIssue: true,
         },
       ]);
