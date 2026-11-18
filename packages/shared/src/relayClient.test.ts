@@ -11,6 +11,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -721,8 +722,18 @@ describe("RelayClient", () => {
       run(
         (baseDir) =>
           Effect.gen(function* () {
-            const managedPath = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/win32-x64/cloudflared.exe`;
-            yield* writeExecutable(managedPath);
+            const path = yield* Path.Path;
+            const fileSystem = yield* FileSystem.FileSystem;
+            const managedPath = path.join(
+              baseDir,
+              "tools",
+              "cloudflared",
+              RelayClient.CLOUDFLARED_VERSION,
+              "win32-x64",
+              "cloudflared.exe",
+            );
+            yield* fileSystem.makeDirectory(path.dirname(managedPath), { recursive: true });
+            yield* fileSystem.writeFileString(managedPath, "cloudflared");
             const probeStarted = yield* Deferred.make<void>();
             const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir }).pipe(
               Effect.provideService(
