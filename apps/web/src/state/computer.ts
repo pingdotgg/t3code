@@ -17,8 +17,8 @@ import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentPresentations } from "./presentation";
 import { useEnvironmentQuery } from "./query";
-import { environmentServerConfigsAtom } from "./server";
 import { useEnvironmentScope } from "./session";
 
 export const computerEnvironment = createComputerEnvironmentAtoms(connectionAtomRuntime);
@@ -46,7 +46,7 @@ const EMPTY_HOSTS: ReadonlyArray<ComputerHostEntry> = [];
  */
 const computerActivityAtom = Atom.make((get): ReadonlyArray<ComputerActivityEntry> => {
   const entries: ComputerActivityEntry[] = [];
-  for (const [environmentId, config] of get(environmentServerConfigsAtom)) {
+  for (const [environmentId, config] of get(environmentPresentations.serverConfigsAtom)) {
     if (config.environment.capabilities.computerUse !== true) continue;
     const result = get(computerEnvironment.state({ environmentId, input: {} }));
     const snapshot = Option.getOrUndefined(AsyncResult.value(result));
@@ -69,7 +69,7 @@ export function useComputerActivity(): ReadonlyArray<ComputerActivityEntry> {
 /** Every environment's connected computers, for Settings. */
 const computerHostsAtom = Atom.make((get): ReadonlyArray<ComputerHostEntry> => {
   const entries: ComputerHostEntry[] = [];
-  for (const [environmentId, config] of get(environmentServerConfigsAtom)) {
+  for (const [environmentId, config] of get(environmentPresentations.serverConfigsAtom)) {
     if (config.environment.capabilities.computerUse !== true) continue;
     const result = get(computerEnvironment.state({ environmentId, input: {} }));
     const snapshot = Option.getOrUndefined(AsyncResult.value(result));
@@ -96,7 +96,7 @@ export function useComputerSnapshot(environmentId: EnvironmentId | null): {
   readonly refresh: () => void;
 } {
   const supported = useAtomValue(
-    environmentServerConfigsAtom,
+    environmentPresentations.serverConfigsAtom,
     (configs) =>
       environmentId !== null &&
       configs.get(environmentId)?.environment.capabilities.computerUse === true,

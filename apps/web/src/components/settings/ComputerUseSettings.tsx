@@ -23,7 +23,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { ComputerPermissionRows } from "./ComputerPermissionRows";
 import { SecretInput } from "./SecretInput";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { searchableSetting } from "./settingsSearch";
 import {
   SettingsPageContainer,
@@ -64,9 +63,14 @@ function hostAbility(host: ComputerHostView): { readonly text: string; readonly 
   return { text: "Ready", ok: true };
 }
 
-/** The grounder and the audit log belong to one server, so they need exactly one selected. */
-function isSingleEnvironmentScope(scopeKind: string): boolean {
-  return scopeKind === "environment";
+/**
+ * The decision endpoint and the audit log belong to one server, so they read the page's scope:
+ * the environment the picker has selected, or nothing when it covers more than one.
+ */
+function useSoleEnvironment() {
+  const { environment, scope } = useSettingsScope();
+  if (scope.environmentIds.length !== 1) return null;
+  return environment?.environmentId === scope.environmentIds[0] ? environment : null;
 }
 
 function AgentComputerUseSetting() {
@@ -328,22 +332,28 @@ function GrounderForm({ environmentId }: { readonly environmentId: EnvironmentId
 }
 
 function GrounderSection() {
-  const { environment, scope } = useSettingsScope();
-  const environmentId = environment?.environmentId ?? null;
-  const supported =
-    environment?.serverConfig?.environment.capabilities.computerUse === true &&
-    isSingleEnvironmentScope(scope.kind);
-
-  if (!supported || environmentId === null) {
+  const environment = useSoleEnvironment();
+  if (environment === null) {
     return (
       <SettingsSection id="computer-use-grounder" title="Decision endpoint">
-        <SettingsScopeNotice target="environment" inline>
-          Choose one environment to configure its computer-use decision endpoint.
-        </SettingsScopeNotice>
+        <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
+          Select one environment above to set the endpoint that answers a click computer use
+          cannot settle.
+        </p>
       </SettingsSection>
     );
   }
-  return <GrounderForm environmentId={environmentId} />;
+  if (environment.serverConfig?.environment.capabilities.computerUse !== true) {
+    return (
+      <SettingsSection id="computer-use-grounder" title="Decision endpoint">
+        <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
+          This environment's server does not offer computer use yet. Update it to configure a
+          decision endpoint.
+        </p>
+      </SettingsSection>
+    );
+  }
+  return <GrounderForm environmentId={environment.environmentId} />;
 }
 
 /** One audit line: the event, then the few fields a person needs to read it. */
@@ -370,12 +380,10 @@ function AuditLine({ line }: { readonly line: Readonly<Record<string, unknown>> 
 }
 
 function AuditSection() {
-  const { environment, scope } = useSettingsScope();
+  const environment = useSoleEnvironment();
   const environmentId = environment?.environmentId ?? null;
   const [limit, setLimit] = useState(50);
-  const supported =
-    environment?.serverConfig?.environment.capabilities.computerUse === true &&
-    isSingleEnvironmentScope(scope.kind);
+  const supported = environment?.serverConfig?.environment.capabilities.computerUse === true;
   const query = useEnvironmentQuery(
     supported && environmentId !== null
       ? computerEnvironment.audit({ environmentId, input: { limit } })
@@ -403,7 +411,9 @@ function AuditSection() {
         <p className="px-3 pb-2 text-xs text-destructive sm:px-4">{query.error}</p>
       ) : lines.length === 0 ? (
         <p className="px-3 pb-3 text-xs text-muted-foreground sm:px-4">
-          {supported ? "Nothing yet." : "Choose one environment to read its activity."}
+          {supported
+            ? "Nothing yet."
+            : "Select one environment above to read what computer use did there."}
         </p>
       ) : (
         <div className="max-h-80 overflow-auto border-t border-border/50">
