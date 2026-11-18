@@ -662,3 +662,85 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
   await expect.element(sideEditor).toHaveFocus();
   await expect.element(mainEditor).toHaveTextContent("main draft");
 });
+
+it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {
+  await page.viewport(1400, 900);
+  const thread = threadWithHistory("side-attachments", 1);
+  let holdFork = false;
+  using _environment = installFakeEnvironment([thread], {
+    acceptCommands: true,
+    holdCommand: (command) => holdFork && command.type === "thread.fork",
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _uploads = acceptAttachmentUploads();
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+
+  const editor = page.getByRole("textbox", { name: `Message ${thread.title}`, exact: true });
+  const image = page.getByRole("img", { name: "shot.png" });
+  const sendImageToSideChat = async () => {
+    await userEvent.click(editor);
+    const clipboardData = new DataTransfer();
+    clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+    editor
+      .element()
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+    await expect.element(image).toBeVisible();
+    await userEvent.keyboard("/side what is this?{Enter}");
+    await expect.element(image).not.toBeInTheDocument();
+  };
+  const sentMessage = (fields: Record<string, unknown>) =>
+    vi.waitFor(() =>
+      expect(dispatchedCommands()).toContainEqual(
+        expect.objectContaining({ type: "message.dispatch", ...fields }),
+      ),
+    );
+
+  await sendImageToSideChat();
+  await sentMessage({
+    text: "what is this?",
+    attachments: [expect.objectContaining({ type: "image", id: "upload-1" })],
+    context: {
+      version: 1,
+      records: [expect.objectContaining({ kind: "image", attachmentId: "upload-1" })],
+    },
+  });
+
+  // A reply alone is enough to send.
+  await page.getByRole("button", { name: "Reply to this response" }).first().click();
+  await userEvent.click(editor);
+  await userEvent.keyboard("/side {Enter}");
+  await sentMessage({
+    context: expect.objectContaining({ records: [expect.objectContaining({ kind: "response" })] }),
+  });
+
+  // A failed start puts the message back after the draft typed meanwhile.
+  holdFork = true;
+  await sendImageToSideChat();
+  await userEvent.keyboard("next draft");
+  await vi.waitFor(() =>
+    expect(dispatchedCommands().filter((command) => command.type === "thread.fork")).toHaveLength(
+      3,
+    ),
+  );
+  await rejectPendingCommand("Side chats are paused.");
+  await expect.element(image).toBeVisible();
+  await vi.waitFor(() =>
+    expect((editor.element() as HTMLElement).innerText.split("\n").filter(Boolean)).toEqual([
+      "next draft",
+      "/side what is this?",
+    ]),
+  );
+});
