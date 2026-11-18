@@ -10,6 +10,8 @@ export function scheduledTaskDestinationRows(
     readonly projectId: string | null;
     readonly current: { readonly id: ThreadId; readonly title: string } | null;
     readonly query: string;
+    /** Shown for threads without a title; each client translates it. */
+    readonly untitledTitle: string;
   },
 ): ReadonlyArray<{ readonly id: ThreadId; readonly title: string }> {
   const search = target.query.trim().toLocaleLowerCase();
@@ -24,7 +26,7 @@ export function scheduledTaskDestinationRows(
         thread.title.toLocaleLowerCase().includes(search),
     )
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-    .map((thread) => ({ id: thread.id, title: thread.title.trim() || "Untitled thread" }));
+    .map((thread) => ({ id: thread.id, title: thread.title.trim() || target.untitledTitle }));
   return target.current !== null && target.current.title.toLocaleLowerCase().includes(search)
     ? [target.current, ...others]
     : others;
