@@ -105,7 +105,7 @@ describe("vibeHistoryTurnItem", () => {
       "failed web search",
       effect(
         { kind: "web_search", input: { query: "layout" } },
-        { status: "failed", error: { message: "Search unavailable" } },
+        { status: "failed", output: {}, error: { message: "Search unavailable" } },
       ),
       { type: "web_search", status: "failed", results: [{ snippet: "Search unavailable" }] },
     ],

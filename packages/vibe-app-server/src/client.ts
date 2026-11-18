@@ -71,6 +71,7 @@ export const PublicSessionState = Schema.Struct({
   eventId: Schema.optional(Schema.Number),
   session: PublicSession,
   isQuiescent: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  history: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
   turns: Schema.optional(Schema.NullOr(Schema.Array(PublicTurn))),
   activeCallbacks: Schema.optional(Schema.Array(Schema.Unknown)),
   childSessions: Schema.optional(Schema.Array(Schema.Unknown)),
@@ -250,6 +251,7 @@ export class VibeAppServerClient extends Context.Service<
     readonly sessionResume: (input: {
       sessionId: string;
       agentConfig?: unknown;
+      historyLimit?: number;
     }) => Effect.Effect<SessionResumeResult, VibeError.VibeAppServerError>;
     readonly sessionRead: (input: {
       sessionId: string;
@@ -459,6 +461,7 @@ export const make = Effect.fn("@t3tools/vibe-app-server/VibeAppServerClient.make
       return yield* typed("session/resume", SessionResumeResult, {
         sessionId: input.sessionId,
         ...(input.agentConfig !== undefined ? { agentConfig: input.agentConfig } : {}),
+        ...(input.historyLimit !== undefined ? { historyLimit: input.historyLimit } : {}),
       });
     }),
     sessionRead: Effect.fn("VibeAppServerClient.sessionRead")(function* (input) {

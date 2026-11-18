@@ -212,7 +212,7 @@ export function vibeHistoryTurnItem(
         }
       }
       if (status === "failed" && results.length === 0) {
-        const diagnostic = effectOutput(state);
+        const diagnostic = str(asRecord(state?.["error"])?.["message"]) ?? effectOutput(state);
         if (diagnostic?.trim())
           results.push({ snippet: diagnostic.slice(0, SEARCH_PREVIEW_MAX_CHARS) });
       }

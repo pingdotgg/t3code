@@ -486,7 +486,16 @@ describe("Vibe adapter against an in-memory app-server", () => {
       Effect.gen(function* () {
         let modelWrites = 0;
         let starts = 0;
-        const vibe = yield* openFakeVibe((method) => {
+        let failNextResume = false;
+        const resumedAgents: unknown[] = [];
+        const vibe = yield* openFakeVibe((method, params) => {
+          if (method === "session/resume") {
+            resumedAgents.push(params["agentConfig"]);
+            if (failNextResume) {
+              failNextResume = false;
+              return { error: { code: "unavailable", message: "Plan resume failed" } };
+            }
+          }
           if (method === "config/model/write" && ++modelWrites === 2) {
             return { result: { failures: ["Model unavailable"] } };
           }
@@ -566,6 +575,8 @@ describe("Vibe adapter against an in-memory app-server", () => {
             },
           ],
         });
+        expect((yield* takeEvent("provider_thread.updated")).providerThread.status).toBe("idle");
+        expect((yield* takeEvent("provider_thread.updated")).providerThread.status).toBe("active");
         const first = (yield* takeEvent("provider_turn.updated")).providerTurn;
         expect((yield* Effect.flip(runtime.startTurn(input(2))))._tag).toBe(
           "ProviderAdapterProtocolError",
@@ -579,6 +590,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
           runAttemptId: input(1).attemptId,
           status: "interrupted",
         });
+        expect((yield* takeEvent("provider_thread.updated")).providerThread.status).toBe("idle");
         expect(yield* takeEvent("turn.terminal")).toMatchObject({ runOrdinal: 1 });
 
         const rejection = yield* Effect.flip(runtime.startTurn(input(2)));
@@ -635,6 +647,18 @@ describe("Vibe adapter against an in-memory app-server", () => {
                 : { agent: "accept-edits", autoApprove: true },
           });
         }
+        failNextResume = true;
+        expect(
+          (yield* Effect.flip(
+            runtime.resumeThread({
+              providerThread,
+              runtimePolicy: { ...runtimePolicy, interactionMode: "plan" },
+            }),
+          ))._tag,
+        ).toBe("ProviderAdapterProtocolError");
+        yield* runtime.startTurn(input(4));
+        expect(resumedAgents).toHaveLength(4);
+        expect(resumedAgents.at(-1)).toMatchObject({ agent: "accept-edits" });
       }).pipe(Effect.provide(layerTest)),
     ),
   );
@@ -685,11 +709,21 @@ describe("Vibe adapter against an in-memory app-server", () => {
         };
         const session = { id: "native-session" };
         let rewound = false;
+        let resumeAttempt = 0;
         let resuming = false;
         const vibe = yield* openFakeVibe((method, params) => {
           if (method === "session/resume") {
+            resumeAttempt++;
             resuming = true;
-            return { result: { state: { session } } };
+            return {
+              result: {
+                state: {
+                  session,
+                  eventId: 10,
+                  history: [message("a2", "assistant", "t2", "two", 2100)],
+                },
+              },
+            };
           }
           if (method === "session/rewind") {
             expect(params).toEqual({ sessionId: "native-session", entryId: "u2", inplace: true });
@@ -712,29 +746,59 @@ describe("Vibe adapter against an in-memory app-server", () => {
           if (rewound) return history["u2"];
           if (resuming && cursor === "") {
             resuming = false;
+            const recovered = `recovered-${resumeAttempt}`;
+            const callback = {
+              id: 500 + resumeAttempt,
+              method: "callback/call",
+              params: {
+                callback: {
+                  callbackId: recovered,
+                  sessionId: "native-session",
+                  turnId: recovered,
+                  detail: { kind: "approval" },
+                },
+              },
+            };
+            if (resumeAttempt === 1) {
+              return {
+                error: { code: "unavailable", message: "history failed after callback" },
+                notifications: [callback],
+              };
+            }
             return {
-              ...history[""]!,
+              result: {
+                items: [
+                  message("u2", "user", "t2", "second", 2000),
+                  message(
+                    "a2",
+                    "assistant",
+                    "t2",
+                    resumeAttempt === 2 ? "two" : "two continued",
+                    2100,
+                  ),
+                ],
+                nextCursor: "u2",
+              },
               notifications: [
                 {
                   method: "turn/started",
-                  params: { sessionId: "native-session", turn: { id: "recovered" } },
+                  params: { sessionId: "native-session", turn: { id: recovered } },
                 },
+                callback,
                 {
-                  id: 501,
-                  method: "callback/call",
+                  method: "history/entryUpdated",
                   params: {
-                    callback: {
-                      callbackId: "recovered-approval",
-                      sessionId: "native-session",
-                      turnId: "recovered",
-                      detail: { kind: "approval" },
-                    },
+                    sessionId: "native-session",
+                    eventId: 9,
+                    entryId: "a2",
+                    patch: [{ op: "append", path: "/content/0/text", value: " already included" }],
                   },
                 },
                 {
                   method: "history/entryUpdated",
                   params: {
                     sessionId: "native-session",
+                    eventId: 11,
                     entryId: "a2",
                     patch: [{ op: "append", path: "/content/0/text", value: " continued" }],
                   },
@@ -774,41 +838,63 @@ describe("Vibe adapter against an in-memory app-server", () => {
           ["t2", 2, "interrupted"],
         ]);
 
-        yield* runtime.ensureThread({
+        const resume = {
           threadId,
           modelSelection,
           runtimePolicy,
           existingProviderThread: providerThread,
-        });
-        const recovered = yield* takeEvent("provider_turn.updated");
-        expect(recovered.providerTurn).toMatchObject({
-          nativeTurnRef: { nativeId: "recovered" },
-          ordinal: 3,
-          status: "running",
-        });
+        };
+        expect((yield* Effect.flip(runtime.ensureThread(resume)))._tag).toBe(
+          "ProviderAdapterProtocolError",
+        );
         expect(yield* Queue.take(vibe.responses)).toMatchObject({
           id: 501,
-          result: { callbackId: "recovered-approval", accepted: true },
+          result: { callbackId: "recovered-1", accepted: true },
         });
-        expect(yield* takeEvent("runtime_request.updated")).toMatchObject({
-          runtimeRequest: {
-            providerTurnId: recovered.providerTurn.id,
-            nodeId: recovered.providerTurn.nodeId,
+        expect(yield* vibe.takeRequest("callback/result")).toEqual({
+          sessionId: "native-session",
+          result: {
+            callbackId: "recovered-1",
+            output: { type: "approval", decision: { type: "cancel_turn" } },
           },
         });
-        expect(yield* takeEvent("message.updated")).toMatchObject({
-          message: { text: "two continued" },
-        });
-        yield* runtime.interruptTurn({ providerThread, providerTurnId: recovered.providerTurn.id });
-        expect(yield* vibe.takeRequest("turn/interrupt")).toMatchObject({
-          expectedTurnId: "recovered",
-        });
-        yield* notify("turn/started", { turn: { id: "recovered" } });
-        yield* notify("turn/interrupted", { turn: { id: "recovered" } });
-        expect((yield* takeEvent("provider_turn.updated")).providerTurn).toMatchObject({
-          ordinal: 3,
-          status: "interrupted",
-        });
+
+        for (const attempt of [2, 3]) {
+          const nativeTurnId = `recovered-${attempt}`;
+          yield* runtime.ensureThread(resume);
+          const recovered = yield* takeEvent("provider_turn.updated");
+          expect(recovered.providerTurn).toMatchObject({
+            nativeTurnRef: { nativeId: nativeTurnId },
+            ordinal: 3,
+            status: "running",
+          });
+          expect(yield* Queue.take(vibe.responses)).toMatchObject({
+            id: 500 + attempt,
+            result: { callbackId: nativeTurnId, accepted: true },
+          });
+          expect(yield* takeEvent("runtime_request.updated")).toMatchObject({
+            runtimeRequest: {
+              providerTurnId: recovered.providerTurn.id,
+              nodeId: recovered.providerTurn.nodeId,
+            },
+          });
+          expect(yield* takeEvent("message.updated")).toMatchObject({
+            message: { text: "two continued" },
+          });
+          yield* runtime.interruptTurn({
+            providerThread,
+            providerTurnId: recovered.providerTurn.id,
+          });
+          expect(yield* vibe.takeRequest("turn/interrupt")).toMatchObject({
+            expectedTurnId: nativeTurnId,
+          });
+          yield* notify("turn/started", { turn: { id: nativeTurnId } });
+          yield* notify("turn/interrupted", { turn: { id: nativeTurnId } });
+          expect((yield* takeEvent("provider_turn.updated")).providerTurn).toMatchObject({
+            ordinal: 3,
+            status: "interrupted",
+          });
+        }
 
         const providerTurn = snapshot.providerTurns[1]!;
         const rewoundSnapshot = yield* runtime.rollbackThread({
