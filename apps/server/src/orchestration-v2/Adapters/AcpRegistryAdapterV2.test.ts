@@ -234,6 +234,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
       }).pipe(Effect.andThen(Queue.offer(offered, undefined)), Effect.asVoid),
   };
   const instanceId = ProviderInstanceId.make("claude-lifecycle");
+  const outgoing = yield* Queue.unbounded<unknown>();
   let onTermination: NonNullable<
     AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"]
   > = () => Effect.die("Runtime has not started");
@@ -255,7 +256,17 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
       onTermination = runtimeInput.onTermination;
-      return replayRuntime(runtimeInput);
+      return replayRuntime({
+        ...runtimeInput,
+        protocolLogging: {
+          logIncoming: false,
+          logOutgoing: true,
+          logger: (event) =>
+            event.stage === "raw" && typeof event.payload === "string"
+              ? Queue.offer(outgoing, JSON.parse(event.payload)).pipe(Effect.asVoid)
+              : Effect.void,
+        },
+      });
     },
   };
   const adapter = yield* makeAcpRegistryAdapterV2(adapterOptions).pipe(
@@ -365,6 +376,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     terminal,
     offers,
     offered,
+    outgoing,
     terminate: () =>
       onTermination(
         new EffectAcpErrors.AcpTransportError({
@@ -1889,6 +1901,205 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // Copilot wakes its root agent when a background subagent finishes, after the run settled.
+  it.effect("does not drop Copilot's root reply when a finished background agent wakes it", () =>
+    Effect.gen(function* () {
+      const sessionId = "copilot-session";
+      const sessionEvent = (type: string) => ({
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "github.com/copilot/sessionEvent",
+          params: { sessionId, type, data: {} },
+        },
+      });
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(sessionId, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "Copilot", version: "1.0.112" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: { kind: "response", method: "session/new", result: { sessionId } },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          sessionEvent("assistant.turn_start"),
+          update({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Agents are still working." },
+          }),
+          sessionEvent("assistant.idle"),
+          update({ sessionUpdate: "session_info_update", title: "after foreground idle" }),
+          // The background agent finishes; Copilot reads it and starts a new root turn.
+          sessionEvent("assistant.turn_start"),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "read-agent-1",
+            title: "read_agent",
+            kind: "other",
+            status: "completed",
+            rawInput: { agent_id: "agent-1" },
+          }),
+          update({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Agent 1 finished" },
+          }),
+          sessionEvent("assistant.idle"),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          update({ sessionUpdate: "session_info_update", title: "after wake idle" }),
+        ],
+        undefined,
+        true,
+        "github-copilot-cli",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const foreground = yield* session.throughMarker("after foreground idle");
+      assert.isDefined(foreground.find((event) => event.type === "turn.terminal"));
+      const wake = yield* session.throughMarker("after wake idle");
+      assert.isTrue(
+        session.offers.length > 0 || JSON.stringify(wake).includes("Agent 1 finished"),
+        "the woken root reply is shown or opens a continuation run",
+      );
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      const continuation = yield* session.until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(continuation), "Agent 1 finished");
+      assert.include(JSON.stringify(continuation.at(-1)), '"status":"completed"');
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  // Copilot flattens MCP titles and reports kind "read" for MCP calls and glob ("other" for rg);
+  // its native tool.execution_start event carries the real identity.
+  it.effect.each(["glob", "rg"])("keeps Copilot's MCP and %s identity", (toolName) =>
+    Effect.gen(function* () {
+      const sessionId = "copilot-session";
+      const executionStart = (data: Record<string, unknown>) => ({
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "github.com/copilot/sessionEvent",
+          params: { sessionId, type: "tool.execution_start", data },
+        },
+      });
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(sessionId, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "Copilot", version: "1.0.112" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: { kind: "response", method: "session/new", result: { sessionId } },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          executionStart({
+            toolCallId: "mcp-call",
+            mcpServerName: "demo-library",
+            mcpToolName: "search_books",
+          }),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "mcp-call",
+            title: "demo-library-search_books",
+            kind: "read",
+            status: "completed",
+            rawInput: { arguments: { query: "paper airplanes" }, limit: 2 },
+          }),
+          executionStart({
+            toolCallId: "native-search",
+            toolName,
+            toolTitle: "Finding files",
+            arguments: { pattern: "*.ts", paths: ["/workspace"] },
+          }),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "native-search",
+            title: "Finding files matching *.ts",
+            kind: toolName === "rg" ? "other" : "read",
+            status: "completed",
+            rawInput: { pattern: "*.ts", paths: ["/workspace"] },
+            locations: [{ path: "/workspace" }],
+          }),
+          update({ sessionUpdate: "session_info_update", title: "after tools" }),
+        ],
+        undefined,
+        false,
+        "github-copilot-cli",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.throughMarker("after tools");
+      const lastItem = (nativeId: string) =>
+        events
+          .flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === nativeId
+              ? [event.turnItem]
+              : [],
+          )
+          .at(-1);
+      const mcp = lastItem("mcp-call");
+      const search = lastItem("native-search");
+      assert.deepEqual(
+        {
+          mcp: mcp?.type === "dynamic_tool" ? mcp.toolName : mcp?.type,
+          search: search?.type === "dynamic_tool" ? search.toolName : search?.type,
+        },
+        { mcp: "demo-library.search_books", search: "file_search" },
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     { kind: "approval", stopReason: "end_turn", status: "completed" },
     { kind: "question", stopReason: "error", status: "failed" },
@@ -2272,6 +2483,103 @@ describe("AcpRegistryAdapterV2", () => {
         { type: "Text", text: "replacement-morePATCH" },
       ]);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("approves Devin's plan without choosing a bypass option it lists first", () =>
+    Effect.gen(function* () {
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call",
+            toolCallId: "exit-plan",
+            title: "Exit plan mode",
+            kind: "switch_mode",
+            status: "pending",
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "request",
+              method: "session/request_permission",
+              params: {
+                sessionId: CLAUDE_ROOT_SESSION,
+                toolCall: { toolCallId: "exit-plan" },
+                // Devin gives both plan approvals allow_once and does not promise their order.
+                options: [
+                  {
+                    optionId: "plan_bypass",
+                    name: "Yes, implement plan and bypass permissions",
+                    kind: "allow_once",
+                  },
+                  {
+                    optionId: "plan_accept_edits",
+                    name: "Yes, implement plan and accept edits",
+                    kind: "allow_once",
+                  },
+                  { optionId: "reject_once", name: "No, plan needs changes", kind: "reject_once" },
+                ],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              kind: "response",
+              method: "session/request_permission",
+              result: { outcome: { outcome: "selected", optionId: "<any>" } },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1)).pipe(Effect.forkScoped);
+      const seen = yield* session.until(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      const request = seen.at(-1)!;
+      if (request.type !== "runtime_request.updated") throw new Error("Missing request");
+      yield* session.runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        decision: "accept",
+      });
+      let answer: unknown;
+      while (answer === undefined) {
+        const frame = (yield* Queue.take(session.outgoing)) as {
+          readonly result?: { readonly outcome?: { readonly optionId?: string } };
+        };
+        answer = frame.result?.outcome;
+      }
+      assert.deepEqual(answer, { outcome: "selected", optionId: "plan_accept_edits" });
+      assert.equal((yield* session.terminal).status, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("keeps stopped child tools interrupted when a late output chunk arrives", () =>

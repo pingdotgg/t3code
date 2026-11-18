@@ -119,10 +119,7 @@ export function resolveMessageDispatchIntent(
     target === undefined || !isActiveRun(target)
       ? undefined
       : providerTurnCapabilities(projection, target);
-  return turns !== undefined &&
-    !turns.supportsActiveSteering &&
-    !(turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart) &&
-    turns.supportsQueuedMessages
+  return turns !== undefined && !turns.supportsActiveSteering && providerSwitchWaitsForTurn(turns)
     ? { type: "queue_after_active" }
     : mode;
 }
@@ -146,7 +143,17 @@ export function followUpOwnerRun(
   );
 }
 
-function providerTurnCapabilities(
+/** A provider that cannot restart its turn for new input runs a provider switch after the turn. */
+export function providerSwitchWaitsForTurn(
+  turns: OrchestrationV2ProviderCapabilities["turns"],
+): boolean {
+  return (
+    turns.supportsQueuedMessages &&
+    !(turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart)
+  );
+}
+
+export function providerTurnCapabilities(
   projection: OrchestrationV2ThreadProjection,
   run: OrchestrationV2Run,
 ) {
@@ -333,9 +340,11 @@ const ensureNativeFork: CommandPolicyV2Shape["ensureNativeFork"] = (input) => {
 };
 
 const ensureRollback: CommandPolicyV2Shape["ensureRollback"] = (input) => {
+  // Without native truncation, the next turn replays the kept conversation as a handoff.
   if (
     !input.capabilities.threads.canRollbackThread ||
-    !input.capabilities.checkpointing.providerCanRollbackConversation
+    (!input.capabilities.checkpointing.providerCanRollbackConversation &&
+      !input.capabilities.context.canConsumeHandoffSummaries)
   ) {
     return Effect.fail(
       unsupported(input, "rollback", "providerInstanceId conversation rollback is unavailable"),
@@ -397,7 +406,7 @@ const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input)
     (input.sourceRunStatus === "completed" || input.sourceRunStatus === "waiting") &&
     input.sameProvider &&
     input.hasStrongNativeSource &&
-    !input.sourceBusy &&
+    (!input.sourceBusy || input.capabilities.threads.canForkWhileSourceRunning === true) &&
     input.capabilities.threads.canForkThread &&
     (!input.fromSpecificTurn || input.capabilities.threads.canForkFromTurn) &&
     input.capabilities.identity.nativeThreadIds === "strong";
