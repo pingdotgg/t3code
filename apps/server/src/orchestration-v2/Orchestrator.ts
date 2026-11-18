@@ -12586,6 +12586,64 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   });
 
+  /**
+   * A parent's settlement arriving from another environment (RemoteSettlementCascade). A child
+   * still working, background work included, refuses it so the sender retries once it is idle;
+   * an un-settle reopens only what that settlement settled. Its sub-runs here follow either way.
+   */
+  const followRemoteSettlement = Effect.fn("orchestrationV2.dispatch.followRemoteSettlement")(
+    function* (
+      command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.settlement.follow" }>,
+      action: "settle" | "unsettle",
+      thread: OrchestrationV2AppThread,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    ) {
+      const { commandId, threadId, settledBy, settledAt } = command;
+      const settled = thread.settledOverride === "settled";
+      if (action === "settle" && !settled) {
+        const shell = yield* projectionStore
+          .getThreadShell(threadId)
+          .pipe(mapDispatchError(command));
+        if (
+          shell !== null &&
+          (threadShellHasActiveWork(shell) || (shell.pendingBackgroundTasks?.length ?? 0) > 0)
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId,
+            commandType: command.type,
+            cause: `Thread ${threadId} is still working; it settles with its parent once it finishes.`,
+          });
+        }
+        yield* dispatchThreadMutation(
+          { type: "thread.settle", commandId, threadId, settledAt },
+          events,
+          effects,
+          { settledBy },
+        );
+      }
+      if (action === "unsettle") {
+        if (!settled) return;
+        if (thread.settlementSource !== "inactivity" && thread.settledBy === settledBy) {
+          yield* dispatchThreadMutation(
+            { type: "thread.unsettle", commandId, threadId, reason: "user" },
+            events,
+            effects,
+          );
+        }
+      }
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${commandId}:thread-settlement.cascade`,
+          commandId,
+          threadId,
+          request: { type: "thread-settlement.cascade", action, settledBy, settledAt },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
+    },
+  );
+
   /** One step of a cascade the effect worker walks; see SettlementCascade. */
   const dispatchSettlementFollow = Effect.fn("orchestrationV2.dispatch.settlementFollow")(
     function* (
@@ -12594,6 +12652,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     ) {
       const { commandId, threadId } = command;
+      if (command.action !== "sub-run.settle") {
+        const thread = yield* projectionStore.getThread(threadId).pipe(mapDispatchError(command));
+        if (thread.parentEnvironmentId != null) {
+          return yield* followRemoteSettlement(command, command.action, thread, events, effects);
+        }
+      }
       switch (command.action) {
         case "settle":
           return yield* dispatchThreadMutation(

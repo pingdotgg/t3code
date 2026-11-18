@@ -1834,3 +1834,116 @@ it.effect("a busy sub-run follows a repeat settle once it finishes, with its sub
     }
   }).pipe(Effect.provide(testLayer)),
 );
+
+it.effect(
+  "a linked parent's settle waits for a busy child and its un-settle reopens only what it settled",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* OrchestratorV2;
+      const projections = yield* ProjectionStoreV2;
+      const sink = yield* EventSinkV2;
+      const devBox = EnvironmentId.make("environment-dev-box");
+      const cardSettledAt = DateTime.makeUnsafe("2026-10-22T10:00:00.000Z");
+      const ownSettledAt = DateTime.subtract(cardSettledAt, { seconds: 30 });
+      const thread = (id: string) => projections.getThread(ThreadId.make(id));
+      // What t3_thread_organize dispatches for the card's cascade over the link.
+      const follow = (id: string, action: "settle" | "unsettle", attempt: string) =>
+        orchestrator
+          .dispatch({
+            type: "thread.settlement.follow",
+            commandId: CommandId.make(`follow:${action}:${id}:${attempt}`),
+            threadId: ThreadId.make(id),
+            action,
+            settledBy: ThreadId.make("card"),
+            settledAt: cardSettledAt,
+          })
+          .pipe(Effect.andThen(drainEffects));
+
+      for (const id of ["with-card", "own", "busy"]) {
+        yield* createUnder(id, { threadId: "card", environmentId: devBox });
+      }
+      yield* createUnder("with-card-helper", { threadId: "with-card" });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("settle:own"),
+        threadId: ThreadId.make("own"),
+        settledAt: ownSettledAt,
+      });
+      yield* drainEffects;
+
+      // The busy child's turn ended while a command it started keeps running.
+      yield* sendTo("busy", "Run sleep 90 in the background", { type: "defer_start" });
+      const busy = ThreadId.make("busy");
+      const run = (yield* projections.getThreadRecords(busy, ["runs"])).runs.at(-1)!;
+      const now = yield* DateTime.now;
+      const sleep = (status: "running" | "completed") => ({
+        id: EventId.make(`event:busy-sleep:${status}`),
+        type: "turn-item.updated" as const,
+        threadId: busy,
+        runId: run.id,
+        providerInstanceId: instanceId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("item:busy-sleep"),
+          threadId: busy,
+          runId: run.id,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status,
+          title: "sleep 90",
+          startedAt: now,
+          completedAt: status === "completed" ? now : null,
+          updatedAt: now,
+          type: "command_execution" as const,
+          input: "sleep 90",
+        },
+      });
+      yield* sink.write({
+        events: [
+          ...(yield* finishOpenTurnItems(busy)),
+          sleep("running"),
+          {
+            id: EventId.make(`event:complete:${run.id}`),
+            type: "run.updated",
+            threadId: busy,
+            runId: run.id,
+            ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+            providerInstanceId: instanceId,
+            occurredAt: now,
+            payload: { ...run, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      assert.equal((yield* projections.getThreadShell(busy))?.pendingBackgroundTasks?.length, 1);
+
+      yield* follow("with-card", "settle", "1");
+      yield* follow("own", "settle", "1");
+      const refused = yield* Effect.exit(follow("busy", "settle", "1"));
+      assert.isTrue(refused._tag === "Failure");
+      assert.isNull((yield* thread("busy")).settledOverride);
+      for (const id of ["with-card", "with-card-helper"]) {
+        const settled = yield* thread(id);
+        assert.equal(settled.settledBy, "card");
+        assert.deepEqual(settled.settledAt, cardSettledAt);
+      }
+      // Settled on its own, it keeps its own settle.
+      assert.isNull((yield* thread("own")).settledBy);
+      assert.deepEqual((yield* thread("own")).settledAt, ownSettledAt);
+
+      // The sender retries once the background work ended.
+      yield* sink.write({ events: [sleep("completed")] });
+      yield* follow("busy", "settle", "2");
+      assert.equal((yield* thread("busy")).settledBy, "card");
+
+      for (const id of ["with-card", "own", "busy"]) yield* follow(id, "unsettle", "1");
+      for (const id of ["with-card", "with-card-helper", "busy"]) {
+        assert.equal((yield* thread(id)).settledOverride, "active");
+      }
+      assert.equal((yield* thread("own")).settledOverride, "settled");
+      assert.deepEqual((yield* thread("own")).settledAt, ownSettledAt);
+    }).pipe(Effect.provide(testLayer)),
+);

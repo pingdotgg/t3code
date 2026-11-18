@@ -233,30 +233,45 @@ export const make = Effect.gen(function* () {
       ),
   );
 
-  /** Settles over this server's link; false when the peer is too old to list remote parents. */
+  /**
+   * Settles over this server's link; false when the peer is too old to list remote parents. The
+   * peer records which settlement it follows, so an un-settle there reopens only what it settled,
+   * and a child still working refuses until it finishes, leaving this effect to retry.
+   */
   const overLink = Effect.fn("RemoteSettlementCascade.overLink")(function* (
-    request: RemoteSettlementRequest,
+    input: RemoteSettlementInput,
     environmentId: EnvironmentId,
   ) {
+    const { request } = input;
     const threads = yield* remoteChildren(request, environmentId).pipe(Effect.mapError(pending));
     if (threads === false) return false;
+    const follows = {
+      settledBy: request.settledBy ?? input.threadId,
+      settledAt: DateTime.formatIso(request.settledAt),
+    };
+    const organize = (args: Record<string, unknown>) =>
+      peers.call({
+        environmentId,
+        tool: "t3_thread_organize",
+        arguments: args,
+        limits: LINK_LIMITS,
+        success: Schema.Unknown,
+      });
     let failure: string | undefined;
     for (const thread of childrenOf(request, threads)) {
-      yield* peers
-        .call({
-          environmentId,
-          tool: "t3_thread_organize",
-          arguments: { threadId: thread.id, action: request.action },
-          limits: LINK_LIMITS,
-          success: Schema.Unknown,
-        })
-        .pipe(
-          Effect.catch((error) =>
-            Effect.sync(() => {
-              failure = error.message;
-            }),
-          ),
-        );
+      const change = { threadId: thread.id, action: request.action };
+      yield* organize({ ...change, follows }).pipe(
+        // A peer from before `follows` takes the plain change, as it did before.
+        Effect.catchIf(
+          (error) => error.message.includes('Unknown argument "follows"'),
+          () => organize(change),
+        ),
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            failure = error.message;
+          }),
+        ),
+      );
     }
     if (failure !== undefined) return yield* new RemoteSettlementPending({ message: failure });
     return true;
@@ -323,7 +338,7 @@ export const make = Effect.gen(function* () {
     if (!(yield* stillCurrent(input.threadId, request))) return;
     let linkFailure: string | undefined;
     if (yield* linkSettles(environmentId)) {
-      const handled = yield* overLink(request, environmentId).pipe(
+      const handled = yield* overLink(input, environmentId).pipe(
         Effect.catch((error) =>
           Effect.sync(() => {
             linkFailure = error.message;
