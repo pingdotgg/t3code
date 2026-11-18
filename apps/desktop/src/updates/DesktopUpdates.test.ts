@@ -496,6 +496,53 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("fails a download that stops making progress and lets it be retried", () => {
+    let downloads = 0;
+    let stalledDownloadCancelled = false;
+    const harness = makeHarness({
+      downloadUpdate: Effect.suspend(() => {
+        downloads += 1;
+        return downloads === 1
+          ? Effect.never.pipe(
+              Effect.onInterrupt(() =>
+                Effect.sync(() => {
+                  stalledDownloadCancelled = true;
+                }),
+              ),
+            )
+          : Effect.sync(() => harness.emit("update-downloaded", { version: "1.2.4" }));
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const download = yield* updates.download.pipe(Effect.forkScoped);
+        yield* TestClock.adjust(Duration.minutes(4));
+        harness.emit("download-progress", { percent: 40 });
+        yield* flushCallbacks;
+        yield* TestClock.adjust(Duration.minutes(4));
+        assert.equal((yield* updates.getState).status, "downloading");
+
+        yield* TestClock.adjust(Duration.minutes(1));
+        assert.isFalse((yield* Fiber.join(download)).completed);
+        assert.isTrue(stalledDownloadCancelled);
+        const stalled = yield* updates.getState;
+        assert.equal(stalled.status, "available");
+        assert.equal(stalled.errorContext, "download");
+        assert.isTrue(stalled.canRetry);
+        assert.include(stalled.message ?? "", "No download progress for 5 minutes");
+
+        assert.isTrue((yield* updates.download).completed);
+        assert.equal((yield* updates.getState).status, "downloaded");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("downloads the newest release published since the last check", () => {
     // electron-updater downloads the release its last checkForUpdates found.
     let published = "1.2.4";
