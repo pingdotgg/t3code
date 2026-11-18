@@ -23,6 +23,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
+    /** Refuse a trimmed delta from another provider thread into this resumed native thread. */
+    readonly requireWholeSwitchDelta?: boolean;
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
     readonly inject?: (
       history: ProviderAdapter.ProviderAdapterV2HistoricalContext,
@@ -52,12 +54,6 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
       coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover an omitted item only when the request needs it, with t3_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",itemId:"<omitted item ID>",maxCharsPerItem:4000}); continue long text with textOffset=nextTextOffset until null. Follow fork/handoff source references in activity. Items included below need no read.`;
     }
-    // A resumed native thread otherwise weighs its own older turns above this delta.
-    if (
-      nativeThreadId !== undefined &&
-      pending.some((handoff) => handoff.strategy === "delta_since_target_last_seen")
-    )
-      coverage += `\nThe delta runs above happened after this conversation's own earlier turns and supersede them where they conflict.`;
     const seen = new Set(input.alreadyDeliveredItemIds);
     const messages = pending
       .flatMap((handoff) => handoff.history?.messages ?? [])
@@ -86,6 +82,18 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       return yield* new ContextHandoffBudgetError();
     }
     const omittedItemIds = new Set(selected.omittedItemIds);
+    // The resumed native history would outweigh what the trimmed delta dropped; the caller starts fresh.
+    if (
+      input.requireWholeSwitchDelta &&
+      pending.some(
+        (handoff) =>
+          handoff.strategy === "delta_since_target_last_seen" &&
+          !handoff.fromProviderThreadIds.includes(handoff.toProviderThreadId) &&
+          ((handoff.history?.omittedItems ?? 0) > 0 ||
+            handoff.history?.messages.some((message) => omittedItemIds.has(message.itemId))),
+      )
+    )
+      return yield* new ContextHandoffBudgetError();
     const persist = (status: "pending" | "injected" | "inline") =>
       Effect.forEach(
         pending,

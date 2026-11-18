@@ -1450,6 +1450,7 @@ export const layer: Layer.Layer<
             providerThread: { ...resumed.success, id: providerThread.id },
             budget: context.budget,
             deferInline: isCompactionCommandMessage(providerMessage) || goalCommand,
+            requireWholeSwitchDelta: true,
             alreadyDeliveredItemIds: context.deliveredItemIds,
             persist: () => Effect.void,
           }).pipe(

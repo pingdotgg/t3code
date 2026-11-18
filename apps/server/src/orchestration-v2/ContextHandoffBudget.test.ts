@@ -491,30 +491,35 @@ describe("handoff delivery", () => {
     }),
   );
 
-  it.effect("tells a resumed native thread that a delta handoff supersedes its own history", () =>
+  it.effect.each([
+    { label: "a trimmed switch delta", from: "provider-thread:other", omitted: 366, fits: false },
+    { label: "a whole switch delta", from: "provider-thread:other", omitted: 0, fits: true },
+    {
+      label: "a trimmed same-thread retry delta",
+      from: "provider-thread:target",
+      omitted: 1,
+      fits: true,
+    },
+  ])("treats a resumed native thread as stale only for $label", ({ from, omitted, fits }) =>
     Effect.gen(function* () {
-      const result = yield* deliverContextHandoffs({
-        handoffs: [
-          {
-            ...handoff,
-            strategy: "delta_since_target_last_seen",
-            coveredRunOrdinals: { from: 158, to: 264 },
-            history: {
-              ...handoff.history!,
-              coverage: handoffCoverage({
-                threadId,
-                coveredRunOrdinals: { from: 158, to: 264 },
-                items: [],
-              }),
+      const result = yield* Effect.result(
+        deliverContextHandoffs({
+          handoffs: [
+            {
+              ...handoff,
+              strategy: "delta_since_target_last_seen",
+              fromProviderThreadIds: [ProviderThreadId.make(from)],
+              history: { ...handoff.history!, omittedItems: omitted },
             },
-          },
-        ],
-        providerThread,
-        budget: 16_000,
-        alreadyDeliveredItemIds: new Set(),
-        persist: () => Effect.void,
-      });
-      assert.match(result.context, /supersede/i);
+          ],
+          providerThread,
+          budget: 16_000,
+          requireWholeSwitchDelta: true,
+          alreadyDeliveredItemIds: new Set(),
+          persist: () => Effect.void,
+        }),
+      );
+      assert.equal(result._tag === "Success", fits);
     }),
   );
 

@@ -1292,7 +1292,19 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
-  it.live("keeps a native session whose stored prose is far below an unreported window", () =>
+  it.live.each([
+    {
+      label: "keeps a native session whose stored prose is far below an unreported window",
+      sourceWork: "Source work",
+      generations: 1,
+    },
+    // The resumed native history would outweigh what a trimmed delta drops, so the session is stale.
+    {
+      label: "replaces the native session when the switch-back delta must be trimmed",
+      sourceWork: "Newer decision. ".repeat(8_000),
+      generations: 2,
+    },
+  ])("$label", ({ sourceWork, generations }) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("handoff-estimate-headroom");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
@@ -1305,7 +1317,7 @@ describe("orchestration v2 provider switching", () => {
           driver: CODEX_DRIVER,
           capabilities: CodexProviderCapabilitiesV2,
           modelSelection: CODEX_MODEL_SELECTION,
-          responseByRunOrdinal: { 2: "Source work" },
+          responseByRunOrdinal: { 2: sourceWork },
           capturedTurns,
         }),
         // No window and no usage, like an ACP registry agent that sends no usage_update.
@@ -1370,8 +1382,8 @@ describe("orchestration v2 provider switching", () => {
           (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
           "completed",
         );
-        // A second generation means T3 discarded the native session as full.
-        assert.equal(yield* Ref.get(generation), 1);
+        // A second generation means T3 discarded the native session.
+        assert.equal(yield* Ref.get(generation), generations);
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
