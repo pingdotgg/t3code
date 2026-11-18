@@ -259,7 +259,7 @@ describe("project script runs", () => {
   });
 
   it("wraps headless actions in a shell-portable child shell", () => {
-    expect(wrapProjectScriptCommand("pnpm dev", false)).toMatch(/^sh -c /);
+    expect(wrapProjectScriptCommand("pnpm dev", "/usr/bin/fish")).toMatch(/^sh -c /);
   });
 });
 
@@ -363,8 +363,8 @@ it("keeps completion observed while a requested stop is pending", () => {
 });
 
 describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX project commands", () => {
-  it("runs commands in the user's shell and reports the exit code", () => {
-    const wrapped = wrapProjectScriptCommand("greet; [[ 1 == 1 ]]; exit 7");
+  it.each(["/bin/bash", "/bin/zsh"])("runs commands in %s and reports the exit code", (shell) => {
+    const wrapped = wrapProjectScriptCommand("greet; [[ 1 == 1 ]]; exit 7", shell);
     const output = NodeChildProcess.execFileSync(
       "bash",
       ["-c", "greet() { printf 'hello\\n'; };\n" + wrapped],
@@ -382,20 +382,23 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX project 
     expect(output).toContain("done:7");
   });
 
-  it("runs quoted commands through the fallback shell", () => {
-    const output = NodeChildProcess.execFileSync(
-      "sh",
-      ["-c", wrapProjectScriptCommand("printf '%s' \"it's working\"", false)],
-      {
-        env: {
-          PATH: HostProcess.Environment.defaultValue().PATH,
-          __T3_SCRIPT_BEGIN: "begin",
-          __T3_SCRIPT_SENTINEL: "done:",
+  it.each(["/usr/bin/fish", null])(
+    "runs quoted commands through the fallback shell (%s)",
+    (shell) => {
+      const output = NodeChildProcess.execFileSync(
+        "sh",
+        ["-c", wrapProjectScriptCommand("printf '%s' \"it's working\"", shell)],
+        {
+          env: {
+            PATH: HostProcess.Environment.defaultValue().PATH,
+            __T3_SCRIPT_BEGIN: "begin",
+            __T3_SCRIPT_SENTINEL: "done:",
+          },
+          encoding: "utf8",
         },
-        encoding: "utf8",
-      },
-    );
-    expect(output).toContain("it's working");
-    expect(output).toContain("done:0");
-  });
+      );
+      expect(output).toContain("it's working");
+      expect(output).toContain("done:0");
+    },
+  );
 });

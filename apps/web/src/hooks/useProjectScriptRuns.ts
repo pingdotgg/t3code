@@ -189,8 +189,10 @@ export function useProjectScriptRunActions() {
       }
 
       startRun(run);
-      // The typed command must parse in fish as well as POSIX shells.
-      const wrappedCommand = wrapProjectScriptCommand(script.command, false);
+      const wrappedCommand = wrapProjectScriptCommand(
+        script.command,
+        openResult.value.shell ?? null,
+      );
       const writeResult = await writeTerminal({
         environmentId: project.environmentId,
         input: {

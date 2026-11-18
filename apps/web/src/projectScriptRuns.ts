@@ -147,7 +147,7 @@ export function sortProjectScriptRuns(
  * sentinel that the run coordinator parses from the terminal stream. The tokens travel
  * in the environment, so the echoed command line never contains them.
  */
-export function wrapProjectScriptCommand(command: string, useCurrentShell = true): string {
+export function wrapProjectScriptCommand(command: string, shell: string | null = null): string {
   // The wrapper may be typed into a shell or passed as an initial command to a
   // shell's -c, so every separator has to be a real line break.
   const body = command.replace(/\r\n|\r/g, "\n");
@@ -159,7 +159,10 @@ export function wrapProjectScriptCommand(command: string, useCurrentShell = true
     "__t3_status=$?",
     `printf "\\n%s%s\\n" "$${PROJECT_SCRIPT_SENTINEL_ENV}" "$__t3_status"`,
   ].join("\n");
-  return useCurrentShell ? script : `sh -c '${script.replaceAll("'", "'\\''")}'`;
+  const shellName = shell?.split(/[/\\]/).at(-1);
+  const executor =
+    shellName !== undefined && /^(?:ba|z|da|k|a)?sh$/.test(shellName) ? "eval" : "sh -c";
+  return `${executor} '${script.replaceAll("'", "'\\''")}'`;
 }
 
 export function projectScriptBeginMarker(sentinel: string): string {
