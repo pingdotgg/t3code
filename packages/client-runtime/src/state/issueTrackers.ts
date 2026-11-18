@@ -4,7 +4,9 @@ import {
   type IssueTrackerConnectionList,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { Atom } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import {
   createAtomCommandScheduler,
@@ -66,6 +68,24 @@ export function createIssueTrackerEnvironmentAtoms<R, E>(
   };
 }
 
+// Tracker packages name their credential and scope in English, so a sentence is translated only
+// when it matches a known tracker's whole sentence; any other tracker keeps the English one.
+function knownTrackerSentence(
+  english: string,
+  candidates: ReadonlyArray<string>,
+  resolve: MFunctionType,
+): string {
+  const known = candidates.find((candidate) => mFallback(candidate) === english);
+  return known === undefined ? english : resolve(known);
+}
+
+const SERVER_TRACKER_DETAILS = [msg("Issues cannot be browsed for this host yet.")];
+
+/** A tracker's `detail` from the issue list, translated when it is a fixed server line. */
+export function issueTrackerDetailText(detail: string, resolve: MFunctionType = mFallback): string {
+  return knownTrackerSentence(detail, SERVER_TRACKER_DETAILS, resolve);
+}
+
 /**
  * The line under a tracker's name. A connected tracker lists nothing until a project is linked
  * to one of its scopes, so the line says how many are, and what to do when none is.
@@ -73,16 +93,34 @@ export function createIssueTrackerEnvironmentAtoms<R, E>(
 export function issueTrackerSummary(
   tracker: IssueTrackerConnection,
   bindings: IssueTrackerConnectionList["bindings"],
+  resolve: MFunctionType = mFallback,
 ): string {
   if (!tracker.connected)
-    return `Not connected. Add a ${tracker.credential.label.toLowerCase()} to list its issues.`;
-  if (tracker.account === null) return tracker.detail ?? "The saved credential was rejected.";
+    return knownTrackerSentence(
+      `Not connected. Add a ${tracker.credential.label.toLowerCase()} to list its issues.`,
+      [msg("Not connected. Add a personal api key to list its issues.")],
+      resolve,
+    );
+  if (tracker.account === null)
+    return tracker.detail ?? resolve(msg("The saved credential was rejected."));
   const linked = Object.values(bindings).filter(
     (binding) => binding.tracker === tracker.tracker,
   ).length;
-  const projects =
-    linked === 0
-      ? `no projects linked yet. Pick a ${tracker.scopeNoun} for a project to list its issues.`
-      : `${linked} ${linked === 1 ? "project" : "projects"} linked`;
-  return `Connected as ${tracker.account} · ${projects}`;
+  return linked === 0
+    ? knownTrackerSentence(
+        `Connected as ${tracker.account} · no projects linked yet. Pick a ${tracker.scopeNoun} for a project to list its issues.`,
+        [
+          msg(
+            "Connected as {account} · no projects linked yet. Pick a team for a project to list its issues.",
+            { account: tracker.account },
+          ),
+        ],
+        resolve,
+      )
+    : resolve(
+        msg(
+          "{count, plural, one {Connected as {account} · {count} project linked} other {Connected as {account} · {count} projects linked}}",
+          { account: tracker.account, count: linked },
+        ),
+      );
 }

@@ -421,7 +421,7 @@ describe("IssueService", () => {
       expect(result.errors).toEqual([
         { projectId: "api", projectTitle: "api", message: "The issue tracker request failed." },
       ]);
-      expect(result.viewers).toEqual({ "github.com": "julius" });
+      expect(result.viewers).toEqual({});
       expect(result.trackers).toEqual([
         expect.objectContaining({ host: "github.com", projectCount: 4, configured: true }),
         expect.objectContaining({
@@ -434,7 +434,13 @@ describe("IssueService", () => {
       ]);
 
       // Narrowing to one host still names every tracker, so the client can switch between them.
-      const narrowed = yield* service.list({ state: "open", host: "github.com" });
+      // Narrowing by involvement reads the account it compares against.
+      const narrowed = yield* service.list({
+        state: "open",
+        host: "github.com",
+        involvement: "assigned",
+      });
+      expect(narrowed.viewers).toEqual({ "github.com": "julius" });
       expect(narrowed.entries.every((entry) => entry.host === "github.com")).toBe(true);
       expect(narrowed.trackers.map((tracker) => tracker.host)).toEqual([
         "github.com",
