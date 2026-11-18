@@ -1133,7 +1133,25 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   // Sign-in guidance still applies when Codex itself says it needs an OpenAI login.
   const usageLimits =
     !snapshot.nativeUsage && !accountStatus.message
-      ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
+      ? {
+          ...makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "unsupported",
+            ...(snapshot.endpoint
+              ? {
+                  message: "Codex uses a custom endpoint. Check that service for its usage limits.",
+                }
+              : {}),
+          }),
+          ...(snapshot.endpoint && snapshot.account.account?.type === "chatgpt"
+            ? {
+                externalUsage: {
+                  label: "Codex account usage",
+                  url: "https://chatgpt.com/codex/settings/usage",
+                },
+              }
+            : {}),
+        }
       : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
         ? makeUnavailableUsageLimits({
             checkedAt,

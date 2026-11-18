@@ -635,6 +635,21 @@ it.layer(
       }),
     );
 
+    it.effect("links to the Codex account's limits when a custom endpoint is in use", () =>
+      Effect.gen(function* () {
+        const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.succeed(makeCodexProbeSnapshot({ endpoint: "http://127.0.0.1:10100" })),
+        );
+
+        assert.strictEqual(status.usageLimits?.unavailable?.reason, "unsupported");
+        assert.deepStrictEqual(status.usageLimits?.windows, []);
+        assert.strictEqual(
+          status.usageLimits?.externalUsage?.url,
+          "https://chatgpt.com/codex/settings/usage",
+        );
+      }),
+    );
+
     it.effect("allows a slow successful Codex probe with a configured budget", () =>
       Effect.gen(function* () {
         const fiber = yield* checkCodexProviderStatus(
