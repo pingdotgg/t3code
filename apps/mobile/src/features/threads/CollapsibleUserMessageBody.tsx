@@ -6,6 +6,7 @@ import {
   type LayoutChangeEvent,
   type ViewInstance,
 } from "react-native";
+import { useGT } from "gt-react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { AppText as Text } from "../../components/ui/AppText";
 
@@ -21,6 +22,7 @@ export function CollapsibleUserMessageBody(props: {
   readonly bubbleColor: ColorValue;
   readonly children: ReactNode;
 }) {
+  const gt = useGT();
   const gradientId = `user-message-fade-${useId().replaceAll(":", "")}`;
   const contentRef = useRef<ViewInstance>(null);
   const [tallEnough, setTallEnough] = useState(false);
@@ -66,7 +68,7 @@ export function CollapsibleUserMessageBody(props: {
           className="mt-1.5 min-h-11 items-end justify-center active:opacity-70"
         >
           <Text className="font-t3-medium text-xs text-user-bubble-foreground-muted">
-            {props.expanded ? "Show less" : "Show full message"}
+            {props.expanded ? gt("Show less") : gt("Show full message")}
           </Text>
         </Pressable>
       ) : null}
