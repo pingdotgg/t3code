@@ -7,7 +7,6 @@ import * as Cache from "effect/Cache";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -627,7 +626,7 @@ export const make: Effect.Effect<
                 Effect.flatMap((previous) =>
                   Cache.get(workflowReads, key).pipe(
                     Effect.catch((error) =>
-                      Option.isSome(previous) ? Effect.succeed(previous.value) : Effect.fail(error),
+                      Effect.fromOption(previous).pipe(Effect.mapError(() => error)),
                     ),
                   ),
                 ),
