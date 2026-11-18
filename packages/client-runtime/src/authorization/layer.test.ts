@@ -684,6 +684,9 @@ describe("RemoteEnvironmentAuthorization", () => {
             rejectedAccessToken: "lan-minted",
           })
           .pipe(Effect.forkChild);
+        // One cache read each for the relay, direct and joining callers: the joiner is
+        // past its cache read before the relay mint can store, so only the pending mint answers it.
+        yield* Queue.takeN(harness.tokenReads, 3);
         yield* Deferred.succeed(release, undefined);
         for (const fiber of [relay, joined]) {
           expect((yield* Fiber.join(fiber)).httpAuthorization).toMatchObject({
