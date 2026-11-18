@@ -447,6 +447,34 @@ own CLI, and some from the model provider.
 - **What the provider adds.** A provider can add text after a request leaves your machine.
   T3 Code cannot show it or turn it off.
 
+## Request rules
+
+Request rules change the text a Claude session sends to the model, including text that has no
+switch, such as Claude Code's own system prompt and its system reminders. Add them under
+**Settings → Threads → Request rules** on web or desktop; mobile shows each rule with an on/off
+switch. A rule removes, replaces or adds text in one target: the system prompt, system
+reminders, all message text, or tool descriptions. Remove and Replace take a JavaScript regular
+expression; Add appends a block to the system prompt or the latest message. New rules start
+off. Only you can change them; agents cannot.
+
+- **Which sessions.** Rules apply to Claude sessions opened while at least one rule is on. A
+  session opened with every rule off keeps its direct connection until it reopens. Turning a
+  rule on or off in a routed session takes effect on its next request.
+- **What routing costs.** A routed session sends through T3 Code on the same machine. Claude
+  Code then leaves out 5 beta features, the advisor tool and global prompt caching. Changing a
+  rule mid-session rewrites the prompt cache once, which costs more the longer the session is.
+  Rules also apply to subagent and helper requests of the session.
+- **Dry run.** In the rule editor, **Dry run** applies the rule to the newest request of a live
+  routed session and shows what it would change, without sending anything.
+- **Warnings.** Nothing is refused, but some edits break requests. If the first system block is
+  no longer Claude Code's billing header or identity line, or no system prompt is left, the
+  provider rejects the request with HTTP 429 and Claude Code retries for about 3 minutes before
+  it fails. Removing or changing a block that carries a prompt-cache breakpoint makes less of
+  the prompt cacheable. A dry run shows these warnings beside the rule's switch.
+- **In the thread.** A row named **Your rules changed what was sent this turn** lists each rule
+  that changed something, with the characters removed and added. A request a rule changed that
+  then fails gets its own row with the provider's error.
+
 ## Attached files
 
 Select a file chip in your draft or a sent message to preview it. Code and JSON use syntax
