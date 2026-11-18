@@ -9464,48 +9464,51 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
           }
 
-          if (input.status === "interrupted") {
-            for (const [uuid, { text, liveQuery }] of droppedSteers) {
-              // Only a CLI proven to echo prompt uuids can leave an offered steer unconfirmed.
-              if (
-                !heldSteerUuids.has(uuid) &&
-                liveQuery.promptEchoMode !== "early" &&
-                liveQuery.promptEchoMode !== "result_only"
-              ) {
-                continue;
-              }
-              const nativeItemId = `unread-steer:${uuid}`;
-              const notice = `Claude did not confirm reading your steer before Stop. It may not have been delivered. Resend it if needed: "${text}"`;
-              yield* emitProviderEvent({
-                type: "turn_item.updated",
-                driver: CLAUDE_PROVIDER,
-                turnItem: {
-                  id: idAllocator.derive.turnItemFromProviderItem({
-                    driver: CLAUDE_PROVIDER,
-                    nativeItemId,
-                  }),
-                  threadId: input.context.input.threadId,
-                  runId: input.context.input.runId,
-                  nodeId: input.context.input.rootNodeId,
-                  providerThreadId: input.context.input.providerThread.id,
-                  providerTurnId: input.context.providerTurnId,
-                  nativeItemRef: {
-                    driver: CLAUDE_PROVIDER,
-                    nativeId: nativeItemId,
-                    strength: "weak",
-                  },
-                  parentItemId: null,
-                  ordinal: yield* resolveItemOrdinal(input.context, nativeItemId),
-                  type: "system_notice",
-                  status: "completed",
-                  title: "Steer delivery not confirmed",
-                  message: notice,
-                  startedAt: input.completedAt,
-                  completedAt: input.completedAt,
-                  updatedAt: input.completedAt,
-                },
-              });
+          for (const [uuid, { text, liveQuery }] of droppedSteers) {
+            const held = heldSteerUuids.has(uuid);
+            // A held steer was never sent, whatever ended the turn. An offered one can be unread
+            // only after Stop, and only a CLI proven to echo prompt uuids can show it.
+            if (
+              !held &&
+              (input.status !== "interrupted" ||
+                (liveQuery.promptEchoMode !== "early" &&
+                  liveQuery.promptEchoMode !== "result_only"))
+            ) {
+              continue;
             }
+            const nativeItemId = `unread-steer:${uuid}`;
+            const notice = held
+              ? `The turn ended while Claude was compacting, so this steer was not sent. Resend it if needed: "${text}"`
+              : `Claude did not confirm reading your steer before Stop. It may not have been delivered. Resend it if needed: "${text}"`;
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({
+                  driver: CLAUDE_PROVIDER,
+                  nativeItemId,
+                }),
+                threadId: input.context.input.threadId,
+                runId: input.context.input.runId,
+                nodeId: input.context.input.rootNodeId,
+                providerThreadId: input.context.input.providerThread.id,
+                providerTurnId: input.context.providerTurnId,
+                nativeItemRef: {
+                  driver: CLAUDE_PROVIDER,
+                  nativeId: nativeItemId,
+                  strength: "weak",
+                },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(input.context, nativeItemId),
+                type: "system_notice",
+                status: "completed",
+                title: held ? "Steer not sent" : "Steer delivery not confirmed",
+                message: notice,
+                startedAt: input.completedAt,
+                completedAt: input.completedAt,
+                updatedAt: input.completedAt,
+              },
+            });
           }
 
           const threadDisposition = input.threadDisposition ?? "reusable";

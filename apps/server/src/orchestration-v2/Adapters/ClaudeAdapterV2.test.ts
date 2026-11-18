@@ -11047,7 +11047,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each(["boundary", "failed", "interrupt"] as const)(
+  it.effect.each(["boundary", "failed", "interrupt", "query exit"] as const)(
     "holds a steer until Claude's auto-compaction settles: %s",
     (outcome) =>
       Effect.gen(function* () {
@@ -11093,12 +11093,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         assert.lengthOf(harness.offeredMessages, 1);
 
-        if (outcome === "interrupt") {
-          yield* harness.runtime.interruptTurn({
-            providerThread: harness.providerThread,
-            providerTurnId,
-          });
-          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        if (outcome === "interrupt" || outcome === "query exit") {
+          if (outcome === "interrupt") {
+            yield* harness.runtime.interruptTurn({
+              providerThread: harness.providerThread,
+              providerTurnId,
+            });
+          } else {
+            yield* Queue.shutdown(harness.sdkMessages);
+          }
+          assert.equal(
+            (yield* Queue.take(harness.terminalReceipts)).status,
+            outcome === "interrupt" ? "interrupted" : "failed",
+          );
           assert.lengthOf(harness.offeredMessages, 1);
           assert.deepEqual(
             harness.events.flatMap((event) =>
@@ -11106,14 +11113,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ),
             ["pending", "cancelled"],
           );
-          assert.isTrue(
-            harness.events.some(
-              (event) =>
-                event.type === "turn_item.updated" &&
-                event.turnItem.type === "system_notice" &&
-                event.turnItem.message?.includes("Subagent finished.") === true,
-            ),
+          const notices = harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+              ? [event.turnItem]
+              : [],
           );
+          const notice = notices.find((item) => item.message?.includes("Subagent finished."));
+          assert.equal(notice?.title, "Steer not sent");
+          assert.notInclude(notice?.message ?? "", "Stop");
           return;
         }
         yield* harness.offerAndWait(
