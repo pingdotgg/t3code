@@ -85,6 +85,7 @@ export function CommitFileTree(props: {
           <button
             type="button"
             className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
+            aria-label={gt("Folder {path}", { path: node.path })}
             aria-expanded={isExpanded}
             onClick={() => toggleDirectory(node.path)}
           >
