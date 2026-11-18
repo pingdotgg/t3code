@@ -234,7 +234,6 @@ interface AdoptionEvent {
 
 interface ThreadAdoption {
   readonly notifications: AdoptionEvent[];
-  recoverySessionId?: string;
   snapshot?: {
     readonly state: VibeAppServer.PublicSessionState;
     readonly watermark: number | undefined;
@@ -363,7 +362,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         else state.streamingEntries.delete(nativeItemId);
       }
       if (entry["type"] !== "message") {
-        const timestamp = yield* DateTime.now;
+        const timestamp = entryTime(entry, "updatedAt") ?? (yield* DateTime.now);
         const turnItem = vibeHistoryTurnItem(
           {
             id: idAllocator.derive.turnItemFromProviderItem({
@@ -404,7 +403,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         driver: VIBE_PROVIDER,
         nativeItemId,
       });
-      const timestamp = yield* DateTime.now;
+      const timestamp = entryTime(entry, "updatedAt") ?? (yield* DateTime.now);
       const message: OrchestrationV2ConversationMessage = {
         createdBy: "agent",
         creationSource: "provider",
@@ -573,18 +572,22 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         if (state.activeTurn.nativeTurnId !== nativeTurnId) return;
         const { providerTurn, runOrdinal } = state.activeTurn;
         const providerTurnId = providerTurn.id;
+        const completedAt = entryTime(turn ?? {}, "completedAt") ?? (yield* DateTime.now);
         // Turn mode hides streaming text until a final snapshot, so never end a turn without one.
         for (const entryId of state.streamingEntries) {
           const entry = state.entries.get(entryId);
           if (entry)
             yield* projectHistoryEntry(
-              { ...entry, generationStatus: "completed" },
+              {
+                ...entry,
+                generationStatus: "completed",
+                updatedAt: DateTime.toEpochMillis(completedAt),
+              },
               entryId,
               input.threadId,
             );
         }
         state.streamingEntries.clear();
-        const completedAt = yield* DateTime.now;
         const status = str(turn?.["status"]) ?? method.replace("turn/", "");
         // A user-cancelled turn is its own terminal status, not a failure.
         const terminalStatus =
@@ -598,7 +601,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         const completedTurn = {
           ...providerTurn,
           status: terminalStatus,
-          completedAt: entryTime(turn ?? {}, "completedAt") ?? completedAt,
+          completedAt,
         } satisfies OrchestrationV2ProviderTurn;
         state.observedTurns.set(nativeTurnId, completedTurn);
         yield* emit({
@@ -1089,15 +1092,11 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             if (cause._tag !== "VibeAppServerRequestError" || cause.code === "terminated") {
               const previousSessionId =
                 attached.attachedSessionId ?? attached.unreconciledSessionId;
-              if (
-                cause._tag === "VibeAppServerProtocolError" &&
-                nativeId !== undefined &&
-                nativeId === previousSessionId
-              ) {
-                adoption.recoverySessionId = previousSessionId;
-              }
               attached.attachedSessionId = undefined;
-              attached.unreconciledSessionId = undefined;
+              attached.unreconciledSessionId =
+                cause._tag === "VibeAppServerProtocolError" && nativeId === previousSessionId
+                  ? previousSessionId
+                  : undefined;
             }
           }),
         ),
@@ -1208,7 +1207,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
                 state.adoptingThread = undefined;
                 return;
               }
-              const sessionId = adoption.recoverySessionId ?? connection.unreconciledSessionId;
+              const sessionId = connection.unreconciledSessionId;
               if (sessionId !== undefined) yield* recoverFailedAdoption(sessionId, adoption);
               state.adoptingThread = undefined;
               const outcomes = yield* Effect.forEach(

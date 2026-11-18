@@ -532,6 +532,14 @@ describe("Vibe adapter against an in-memory app-server", () => {
             patch: [{ op: "append", path: "/content/0/text", value }],
           },
         });
+        const reasoning = {
+          id: "reasoning",
+          turnId,
+          type: "reasoning",
+          text: "Check the layout",
+          generationStatus: "completed",
+          updatedAt: 1_700_000_000_000,
+        };
         const { runtime, providerThread, notify, takeEvent } = yield* openFakeVibe((method) => {
           if (method === "session/resume") {
             return {
@@ -542,6 +550,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
                   turns: [{ id: turnId, sessionId: session.id, status: "completed" }],
                   history: [
                     entry("old-answer", "earlier-turn", "Earlier", "completed"),
+                    reasoning,
                     entry("answer", turnId, "Hello", "completed"),
                   ],
                 },
@@ -555,12 +564,19 @@ describe("Vibe adapter against an in-memory app-server", () => {
         });
         yield* notify("turn/started", { turn: { id: turnId } });
         yield* takeEvent("provider_turn.updated");
+        yield* notify("history/entryAdded", { entry: reasoning });
+        const live = (yield* takeEvent("turn_item.updated")).turnItem;
         yield* notify("history/entryAdded", {
           entry: entry("answer", turnId, "Hel", "in_progress"),
         });
         expect((yield* takeEvent("message.updated")).message.text).toBe("Hel");
+        yield* takeEvent("turn_item.updated");
 
         yield* runtime.resumeThread({ providerThread });
+        const replayed = (yield* takeEvent("turn_item.updated")).turnItem;
+        expect(replayed.type).toBe("reasoning");
+        expect(replayed.completedAt).toEqual(live.completedAt);
+        expect(millis(replayed.completedAt)).toBe(reasoning.updatedAt);
         expect((yield* takeEvent("message.updated")).message).toMatchObject({
           text: "Hello",
           streaming: false,
@@ -716,18 +732,29 @@ describe("Vibe adapter against an in-memory app-server", () => {
 
         // Vibe can end a turn with an entry still in progress: it must still get a final snapshot.
         yield* notify("history/entryAdded", {
-          entry: { id: "thought", type: "reasoning", text: "Hmm", generationStatus: "in_progress" },
+          entry: {
+            id: "thought",
+            type: "reasoning",
+            text: "Hmm",
+            generationStatus: "in_progress",
+            updatedAt: 1_700_000_000_000,
+          },
         });
         expect((yield* takeEvent("turn_item.updated")).turnItem).toMatchObject({
           type: "reasoning",
           streaming: true,
         });
-        yield* notify("turn/completed", { turn: { id: "native-turn", status: "completed" } });
-        expect((yield* takeEvent("turn_item.updated")).turnItem).toMatchObject({
+        const completedAt = 1_700_000_000_100;
+        yield* notify("turn/completed", {
+          turn: { id: "native-turn", status: "completed", completedAt },
+        });
+        const finalReasoning = (yield* takeEvent("turn_item.updated")).turnItem;
+        expect(finalReasoning).toMatchObject({
           type: "reasoning",
           status: "completed",
           streaming: false,
         });
+        expect(millis(finalReasoning.completedAt)).toBe(completedAt);
         const completed = (yield* takeEvent("provider_turn.updated")).providerTurn;
         expect(completed.status).toBe("completed");
         expect(completed.startedAt).not.toBeNull();
@@ -1032,8 +1059,8 @@ describe("Vibe adapter against an in-memory app-server", () => {
     ),
   );
 
-  it.effect.each(["rejected", "malformed"] as const)(
-    "recovers buffered final updates when a same-session resume retry is %s",
+  it.effect.each(["rejected", "malformed", "malformed with late events"] as const)(
+    "recovers final updates when a same-session resume retry is %s",
     (failure) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -1041,6 +1068,19 @@ describe("Vibe adapter against an in-memory app-server", () => {
           let interruptRequests = 0;
           const sessionId = "native-session";
           const turnId = "tracked-turn";
+          const finalNotifications = [
+            {
+              method: "history/entryUpdated",
+              params: {
+                sessionId,
+                eventId: 8,
+                entryId: "tracked-answer",
+                patch: [{ op: "append", path: "/content/0/text", value: " answer" }],
+              },
+            },
+            { method: "turn/completed", params: { sessionId, turn: { id: turnId } } },
+          ];
+          const late = failure === "malformed with late events";
           const vibe = yield* openFakeVibe((method) => {
             if (method === "turn/interrupt") interruptRequests++;
             if (method === "session/history/list") {
@@ -1080,16 +1120,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
                     patch: [{ op: "append", path: "/content/0/text", value: " wrong" }],
                   },
                 },
-                {
-                  method: "history/entryUpdated",
-                  params: {
-                    sessionId,
-                    eventId: 8,
-                    entryId: "tracked-answer",
-                    patch: [{ op: "append", path: "/content/0/text", value: " answer" }],
-                  },
-                },
-                { method: "turn/completed", params: { sessionId, turn: { id: turnId } } },
+                ...(late ? [] : finalNotifications),
               ],
             };
           });
@@ -1099,6 +1130,19 @@ describe("Vibe adapter against an in-memory app-server", () => {
           const resume = vibe.runtime.resumeThread({ providerThread: vibe.providerThread });
           expect((yield* Effect.flip(resume))._tag).toBe("ProviderAdapterProtocolError");
           expect((yield* Effect.flip(resume))._tag).toBe("ProviderAdapterProtocolError");
+          if (late) {
+            for (const { method, params } of finalNotifications) yield* vibe.notify(method, params);
+            yield* vibe.send({
+              jsonrpc: "2.0",
+              id: 500,
+              method: "callback/call",
+              params: { sessionId, callback: { callbackId: "late", detail: { kind: "approval" } } },
+            });
+            expect((yield* Queue.take(vibe.responses))["result"]).toEqual({
+              callbackId: "late",
+              accepted: false,
+            });
+          }
           yield* vibe.runtime.interruptTurn({
             providerThread: vibe.providerThread,
             providerTurnId: providerTurn.id,
