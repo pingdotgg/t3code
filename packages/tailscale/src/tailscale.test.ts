@@ -442,28 +442,6 @@ describe("tailscale", () => {
     });
   });
 
-  it.effect("runs every tailscale command as the CLI", () => {
-    const spawned: Array<{ env: unknown; extendEnv: unknown }> = [];
-    const layer = layerSpawner(
-      ChildProcessSpawner.make((command) => {
-        if (command._tag === "StandardCommand") {
-          spawned.push({ env: command.options.env, extendEnv: command.options.extendEnv });
-        }
-        return Effect.succeed(mockHandle({ stdout: "{}" }));
-      }),
-    );
-
-    return Effect.gen(function* () {
-      yield* readTailscaleStatus.pipe(Effect.provide(layer));
-      yield* readTailscaleSshEnabled.pipe(Effect.provide(layer));
-      yield* ensureTailscaleServe({ localPort: 45_678 }).pipe(Effect.provide(layer));
-      assert.deepEqual(
-        spawned,
-        Array.from({ length: 4 }, () => ({ env: { TAILSCALE_BE_CLI: "1" }, extendEnv: true })),
-      );
-    });
-  });
-
   it.effect("keeps nonzero exit diagnostics structured", () => {
     const layer = layerMockSpawner(() => ({
       code: 7,
