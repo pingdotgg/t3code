@@ -106,6 +106,7 @@ import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
 import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
+import { usePromptSuggestion } from "./usePromptSuggestion";
 import type { ComposerEnvironmentCandidate } from "@t3tools/client-runtime/composerThreadItems";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import {
@@ -151,6 +152,8 @@ export interface ThreadComposerProps {
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   readonly onFreshSession?: () => void;
   readonly offersSideChat?: boolean;
+  /** False while an approval, question or queued edit owns the composer. */
+  readonly offersPromptSuggestion?: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
@@ -298,6 +301,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     text: draftMessage,
     attachments: draftAttachments,
     context: draftContext,
+    freshContext: freshSessionArmed,
   } = useComposerDraft(composerDraftKey);
   const queuedEdit = props.queuedEdit ?? null;
   const hasContent =
@@ -459,6 +463,33 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     messages,
   );
   const isVoiceInputPresented = voicePresentation.statusKind === "active";
+  const promptSuggestion = usePromptSuggestion(
+    props.selectedThread,
+    props.offersPromptSuggestion === true &&
+      !props.isDraft &&
+      props.canOperateThread &&
+      // Older servers decode the missing setting as false, so true also proves the method exists.
+      props.serverConfig?.settings.promptSuggestionsEnabled === true,
+  );
+  // After /clear the next message starts a session that cannot see what the suggestion refers to.
+  const offeredPromptSuggestion =
+    !hasContent &&
+    !props.activeThreadBusy &&
+    !showStopAction &&
+    !showResumeAction &&
+    !isSubmissionLocked &&
+    !isVoiceInputPresented &&
+    freshSessionArmed !== true
+      ? promptSuggestion
+      : null;
+  const acceptPromptSuggestion = () => {
+    if (offeredPromptSuggestion === null) return;
+    onChangeDraftMessage(offeredPromptSuggestion);
+    composerMenu.onSelectionChange({
+      start: offeredPromptSuggestion.length,
+      end: offeredPromptSuggestion.length,
+    });
+  };
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { usesLargeControls, paddingVertical: surfacePaddingVertical } = useComposerChrome();
   const [compactRowWidth, setCompactRowWidth] = useState(0);
@@ -468,6 +499,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     bodyText,
     draftMessage,
     Platform.OS === "ios" && isFocused,
+    offeredPromptSuggestion !== null,
   );
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
@@ -941,7 +973,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     }
                     insertPaste();
                   }}
-                  placeholder={props.placeholder}
+                  placeholder={offeredPromptSuggestion ?? props.placeholder}
                   onFocus={handleFocus}
                   onBlur={handleBlur}
                   onSubmit={(alternate) =>
@@ -1025,6 +1057,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     icon="play"
                     disabled={!props.canOperateThread || resumingQueue}
                     onPress={() => void handleResumeQueue()}
+                  />
+                ) : offeredPromptSuggestion !== null ? (
+                  <ComposerActionButton
+                    size={usesLargeControls ? "large" : "regular"}
+                    accessibilityLabel={gt("Use suggestion: {suggestion}", {
+                      suggestion: offeredPromptSuggestion,
+                    })}
+                    icon={{ ios: "text.insert", android: "edit" }}
+                    onPress={acceptPromptSuggestion}
                   />
                 ) : (
                   <SendActionButton

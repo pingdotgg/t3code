@@ -8,7 +8,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { offeredPromptSuggestion } from "./usePromptSuggestion";
+import { offeredPromptSuggestion } from "./promptSuggestion.ts";
 
 const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 const run = (

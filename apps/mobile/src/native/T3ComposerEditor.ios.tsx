@@ -90,6 +90,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly clipboardFragment: string;
   readonly themeJson: string;
   readonly placeholder: string;
+  readonly growsWithPlaceholder: boolean;
   readonly fontFamily: string;
   readonly fontSize: number;
   readonly lineHeight: number;
@@ -351,6 +352,7 @@ export function ComposerEditor({
       clipboardFragment={props.clipboardFragment ?? ""}
       themeJson={themeJson}
       placeholder={props.placeholder ?? ""}
+      growsWithPlaceholder={props.growsWithPlaceholder ?? false}
       fontFamily={
         typeof resolvedTextStyle.fontFamily === "string" ? resolvedTextStyle.fontFamily : fontFamily
       }

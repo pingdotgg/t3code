@@ -63,6 +63,15 @@ export function SettingsLabsRouteScreen() {
             "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
           )}
         />
+        <MachineBetaSection
+          title={gt("Suggest next prompt")}
+          icon="text.bubble"
+          capability={null}
+          setting="promptSuggestionsEnabled"
+          description={gt(
+            "After a Claude or Codex turn, show a predicted next message in the empty composer. Tap the button next to it to fill it in. Each suggestion is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
+          )}
+        />
       </ScrollView>
     </SettingsScreen>
   );
@@ -257,7 +266,21 @@ export function NewThreadSettingsSection() {
   );
 }
 
-type MachineBetaSetting = "linkedEnvironmentsEnabled" | "fastWorktreeCheckout";
+type MachineBetaSetting =
+  | "linkedEnvironmentsEnabled"
+  | "fastWorktreeCheckout"
+  | "promptSuggestionsEnabled";
+
+function machineBetaPatch(setting: MachineBetaSetting, value: boolean): ServerSettingsPatch {
+  switch (setting) {
+    case "linkedEnvironmentsEnabled":
+      return { linkedEnvironmentsEnabled: value };
+    case "fastWorktreeCheckout":
+      return { fastWorktreeCheckout: value };
+    case "promptSuggestionsEnabled":
+      return { promptSuggestionsEnabled: value };
+  }
+}
 
 /** One switch per connected machine that offers the beta, since each machine's own setting decides. */
 function MachineBetaSection({
@@ -269,7 +292,8 @@ function MachineBetaSection({
 }: {
   readonly title: string;
   readonly icon: ComponentProps<typeof SettingsSwitchRow>["icon"];
-  readonly capability: "peerLinks" | "fastWorktreeCheckout";
+  /** Null for a setting with no capability flag; older servers ignore the unknown setting. */
+  readonly capability: "peerLinks" | "fastWorktreeCheckout" | null;
   readonly setting: MachineBetaSetting;
   readonly description: string;
 }) {
@@ -278,7 +302,9 @@ function MachineBetaSection({
   const supported = environments.filter(
     (environment) =>
       environment.connection.phase === "connected" &&
-      environment.serverConfig?.environment.capabilities[capability] === true,
+      (capability === null
+        ? environment.serverConfig != null
+        : environment.serverConfig?.environment.capabilities[capability] === true),
   );
   const writable = useEnvironmentsWithScope(supported, AuthSettingsWriteScope);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
@@ -309,12 +335,7 @@ function MachineBetaSection({
               onValueChange={(value) =>
                 void updateSettings({
                   environmentId: environment.environmentId,
-                  input: {
-                    patch:
-                      setting === "linkedEnvironmentsEnabled"
-                        ? { linkedEnvironmentsEnabled: value }
-                        : { fastWorktreeCheckout: value },
-                  },
+                  input: { patch: machineBetaPatch(setting, value) },
                 })
               }
             />

@@ -367,6 +367,10 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
+    "./state/prompt-suggestion": {
+      "types": "./src/state/promptSuggestion.ts",
+      "default": "./src/state/promptSuggestion.ts"
+    },
     "./state/thread-activity-announcement": {
       "types": "./src/state/threadActivityAnnouncement.ts",
       "default": "./src/state/threadActivityAnnouncement.ts"
