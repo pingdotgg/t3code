@@ -17,7 +17,7 @@ import { PoolWidget } from "./PoolWidget";
 import { STREAK_SPAN_DAYS, StreakWidget } from "./StreakWidget";
 import { useNow } from "./widgetChrome";
 
-const PANE = '[data-chat-composer-overlay="true"]';
+const PANE = '[data-chat-composer-overlay="true"], [data-new-tab-launcher]';
 
 /** Left edge inside `frame` from layout offsets, so a sidebar slide's transform never counts. */
 function offsetLeftIn(element: HTMLElement, frame: Element): number | null {
@@ -53,10 +53,9 @@ function headlineHeight(lane: HTMLElement): number {
 }
 
 /**
- * Widgets under the new-chat composer: Pool across the top, Machines and Streak below. The grid
- * never scrolls and drops the widgets that do not fit. It reserves its rendered height as bottom
- * margin on the composer stack (a CSS variable on the overlay), lifting the bottom-docked composer
- * above it, and centers in the visible pane rather than on the composer's lane.
+ * Pool, Machines and Streak under the new-chat composer or a new tab's list. The grid never scrolls
+ * and drops what does not fit, reserves its height as bottom margin on the stack above it (a CSS
+ * variable on the pane), and centers in the visible pane rather than on the stack's lane.
  */
 export function HeroWidgets() {
   const now = useNow(30_000);
@@ -129,9 +128,7 @@ export function HeroWidgets() {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the grid's height to the overlay so the composer stack sits above it
   useLayoutEffect(() => {
-    const overlay = containerRef.current?.closest<HTMLElement>(
-      '[data-chat-composer-overlay="true"]',
-    );
+    const overlay = containerRef.current?.closest<HTMLElement>(PANE);
     if (!overlay) return;
     overlay.style.setProperty(
       "--hero-widgets-below",
