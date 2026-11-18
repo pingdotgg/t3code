@@ -133,8 +133,8 @@ function xml(source: string, extension: string): XmlNode {
   return root;
 }
 
-const children = (node: XmlNode) =>
-  node.children.filter((child): child is XmlNode => typeof child !== "string");
+const children = (node: XmlNode | undefined) =>
+  node?.children.filter((child): child is XmlNode => typeof child !== "string") ?? [];
 function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNode, void> {
   for (const child of children(node)) {
     if (typeof name === "string" ? child.name === name : name.includes(child.name)) yield child;
@@ -630,8 +630,10 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       }
     } else if (extension === ".pptx") {
       const rels = relations("ppt/_rels/presentation.xml.rels");
+      const [presentation] = children(read("ppt/presentation.xml"));
+      const slideList = children(presentation).find((node) => node.name === "sldIdLst");
       let index = 0;
-      for (const slide of all(read("ppt/presentation.xml"), "sldId")) {
+      for (const slide of children(slideList).filter((node) => node.name === "sldId")) {
         yield `\n\n## Slide ${++index}\n`;
         const target = rels.get(slide.attrs["r:id"] ?? slide.attrs.id);
         if (!target) {
