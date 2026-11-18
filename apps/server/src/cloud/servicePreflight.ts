@@ -17,6 +17,7 @@ import {
   compareExactServiceVersions,
   isExactServiceVersion,
   isSupportedLauncherProtocol,
+  SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   type SupportedLauncherProtocol,
 } from "./serviceProtocol.ts";
@@ -155,6 +156,8 @@ export const runStagedServicePreflight = Effect.fn("cloud.service_preflight.run_
     readonly targetVersion: string;
     readonly databasePath: string;
     readonly launcherProtocol: SupportedLauncherProtocol;
+    /** A local switch installs the target's own launcher, so the running one does not matter. */
+    readonly replacesLauncher?: boolean;
   }) {
     const step = "running the staged service preflight";
     const command = pinnedRuntimeCommand(input.runtime);
@@ -170,6 +173,8 @@ export const runStagedServicePreflight = Effect.fn("cloud.service_preflight.run_
           String(input.launcherProtocol),
         ],
         timeout: PREFLIGHT_TIMEOUT,
+        // A CLI run from a T3 terminal inherits the service's launcher context.
+        ...(input.replacesLauncher === true ? { env: { [SERVICE_LAUNCHER_CONTEXT_ENV]: "" } } : {}),
       })
       .pipe(Effect.mapError((cause) => new PinnedRuntimeInstallError({ step, cause })));
     if (result.code !== 0) {

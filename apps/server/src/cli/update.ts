@@ -505,6 +505,7 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
           compareExactServiceVersions(targetVersion, currentVersion) < 0
             ? 3
             : SERVICE_LAUNCHER_PROTOCOL,
+        replacesLauncher: true,
       }).pipe(
         Effect.catchTags({
           PinnedRuntimeInstallError: (error) =>

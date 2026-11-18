@@ -18,7 +18,10 @@ import { afterEach, vi } from "vite-plus/test";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
-import { SERVICE_LAUNCHER_PROTOCOL } from "../cloud/serviceProtocol.ts";
+import {
+  SERVICE_LAUNCHER_CONTEXT_ENV,
+  SERVICE_LAUNCHER_PROTOCOL,
+} from "../cloud/serviceProtocol.ts";
 import {
   pinnedRuntimePaths,
   posixLauncherScript,
@@ -692,10 +695,12 @@ it.layer(NodeServices.layer)("t3 update checks the database before switching", (
         }),
       });
       const preflightArgs: Array<ReadonlyArray<string>> = [];
+      const preflightEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
       const runner = ProcessRunner.ProcessRunner.of({
         run: (input) => {
           if (input.args?.includes("__service-preflight") === true) {
             preflightArgs.push(input.args);
+            preflightEnvs.push(input.env);
             return Effect.succeed(preflight);
           }
           // A target's --version always answers, whatever its database support.
@@ -742,6 +747,9 @@ it.layer(NodeServices.layer)("t3 update checks the database before switching", (
           String(launcherProtocol),
         ],
       ]);
+      // regression: #38526 the switch replaces the launcher, so the target must not refuse the
+      // installed one when this runs from a T3 terminal under the service.
+      assert.deepEqual(preflightEnvs, [{ [SERVICE_LAUNCHER_CONTEXT_ENV]: "" }]);
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.Environment, { PATH: "" }),
