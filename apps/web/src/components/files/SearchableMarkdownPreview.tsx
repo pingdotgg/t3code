@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import {
   useEffect,
   useEffectEvent,
@@ -20,6 +21,7 @@ export function SearchableMarkdownPreview({
   readonly children: ReactNode;
   readonly onContentKeyDown?: KeyboardEventHandler<HTMLDivElement> | undefined;
 }) {
+  const gt = useGT();
   const [preview, setPreview] = useState<HTMLDivElement | null>(null);
   const [content, setContent] = useState<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -105,7 +107,7 @@ export function SearchableMarkdownPreview({
       }}
     >
       <FindBar
-        label="Find in file"
+        label={gt("Find in file")}
         open={open}
         query={query}
         matchCount={result.matchCount}

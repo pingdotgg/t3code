@@ -1407,7 +1407,7 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:find-in-file",
-      title: "Find in rendered file",
+      title: gt("Find in rendered file"),
       searchTerms: ["search", "markdown", "file", "preview"],
       icon: <TextSearchIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "file.find",

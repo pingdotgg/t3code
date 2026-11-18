@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { createContext, use, type ReactNode, type ComponentProps } from "react";
 import { useThreadFind } from "./useThreadFind";
 import { FindBar } from "../FindBar";
@@ -34,11 +35,12 @@ function ThreadFindProvider({
 }
 
 export function ThreadFind({ onClose }: { onClose: () => void }) {
+  const gt = useGT();
   const bar = use(ThreadFindBarContext);
   if (!bar) return null;
   return (
     <FindBar
-      label="Find in thread"
+      label={gt("Find in thread")}
       {...bar}
       onClose={() => {
         bar.onClose();
