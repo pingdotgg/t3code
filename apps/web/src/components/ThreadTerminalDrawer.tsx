@@ -218,26 +218,37 @@ export function synchronizeTerminalSession(
   return nextCursor;
 }
 
-function parseTerminalColor(value: string, fallback: GhosttyColor): GhosttyColor {
-  if (typeof document === "undefined") return fallback;
+function sampleTerminalColor(value: string): Uint8ClampedArray | null {
+  if (typeof document === "undefined") return null;
 
   const canvas = document.createElement("canvas");
   canvas.width = 1;
   canvas.height = 1;
   const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) return fallback;
+  if (!context) return null;
 
   context.clearRect(0, 0, 1, 1);
   context.fillStyle = value;
   context.fillRect(0, 0, 1, 1);
-  const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
-  if (alpha === 0) return fallback;
+  return context.getImageData(0, 0, 1, 1).data;
+}
+
+function parseTerminalColor(value: string, fallback: GhosttyColor): GhosttyColor {
+  const [red, green, blue, alpha] = sampleTerminalColor(value) ?? [];
+  if (!alpha) return fallback;
 
   return {
     r: red ?? fallback.r,
     g: green ?? fallback.g,
     b: blue ?? fallback.b,
   };
+}
+
+/** Opacity of a CSS color from 0 to 1; an unreadable value counts as opaque. */
+function terminalColorAlpha(value: string): number {
+  if (value.trim() === "") return 1;
+  const alpha = sampleTerminalColor(value)?.[3];
+  return alpha === undefined ? 1 : alpha / 255;
 }
 
 function hexToGhosttyColor(hex: string): GhosttyColor {
@@ -387,6 +398,9 @@ export function terminalThemeFromApp(mountElement?: HTMLElement | null): Ghostty
       terminalCursor,
       isDark ? { r: 180, g: 203, b: 255 } : { r: 38, g: 56, b: 78 },
     ),
+    // A theme scene makes the drawer's own background transparent; the color above stays the
+    // theme's, for text drawn in it.
+    backgroundAlpha: terminalColorAlpha(themeStyles.getPropertyValue("--terminal-background")),
     palette: TERMINAL_PALETTES[isDark ? "dark" : "light"],
     selectionBackground: terminalSelection,
   };
@@ -1129,7 +1143,7 @@ function TerminalSessionViewport({
       });
       themeObserver.observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ["class", "style"],
+        attributeFilter: ["class", "style", "data-theme-scene"],
       });
       setupCleanups.push(() => themeObserver.disconnect());
 
@@ -1859,7 +1873,10 @@ export default function ThreadTerminalDrawer({
 
       {!hasTerminalSidebar && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">
-          <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs">
+          <div
+            data-terminal-actions
+            className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background shadow-xs"
+          >
             <TerminalActionButton
               disabled={!canOperateTerminal}
               className={`p-1 text-foreground/90 transition-colors ${

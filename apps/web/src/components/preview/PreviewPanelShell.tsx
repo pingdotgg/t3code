@@ -25,6 +25,8 @@ interface PreviewPanelShellProps {
   workspaceFocusKey?: string;
   workspaceLabel?: string;
   mode: PreviewPanelMode;
+  /** No surface is open, so a theme scene may show through. */
+  empty?: boolean;
   maximized?: boolean;
   inlineSize?: PreviewPanelInlineSize;
   open?: boolean;
@@ -158,6 +160,7 @@ function PreviewPanelShellFrame(
       {...(props.workspaceArea ? panelArea : {})}
       data-workspace-focus-key={props.workspaceFocusKey}
       data-workspace-unavailable={collapsible && !open ? "true" : undefined}
+      data-panel-empty={props.empty ? "" : undefined}
       onMouseDown={props.onMouseDown}
       onMouseUp={props.onMouseUp}
       className={cn(

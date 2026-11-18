@@ -546,8 +546,22 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onContextMenu?: (event: MouseEvent) => void;
 }
 
+const translucentBackground = (theme: GhosttyTheme) => (theme.backgroundAlpha ?? 1) < 1;
+
+// An opaque context keeps subpixel text where the platform offers it.
+function createTerminalCanvas(theme: GhosttyTheme) {
+  const canvas = document.createElement("canvas");
+  canvas.className = "block size-full cursor-text";
+  canvas.style.touchAction = "pan-x pinch-zoom";
+  canvas.setAttribute("aria-hidden", "true");
+  const context = canvas.getContext("2d", { alpha: translucentBackground(theme) });
+  if (!context) throw new Error("Canvas 2D is unavailable");
+  return { canvas, context };
+}
+
 export class GhosttyTerminalSurface {
-  readonly canvas: HTMLCanvasElement;
+  /** Replaced when the theme's background gains or loses transparency. */
+  canvas: HTMLCanvasElement;
   readonly input: HTMLTextAreaElement;
   readonly scrollbar: HTMLDivElement;
   /** The drawn grid: the shared PTY grid, clamped per axis to the measured one. */
@@ -558,7 +572,9 @@ export class GhosttyTerminalSurface {
   private measuredCols = 1;
   private measuredRows = 1;
   private sharedGrid: { readonly cols: number; readonly rows: number } | null = null;
-  private readonly context: CanvasRenderingContext2D;
+  private context: CanvasRenderingContext2D;
+  /** Whether the context has an alpha channel, fixed when the canvas is created. */
+  private canvasAlpha: boolean;
   private readonly core: GhosttyTerminalCore;
   private readonly options: GhosttyTerminalSurfaceOptions;
   private visible: boolean;
@@ -680,6 +696,7 @@ export class GhosttyTerminalSurface {
     this.options = options;
     this.visible = options.visible ?? true;
     this.theme = options.theme;
+    this.canvasAlpha = translucentBackground(options.theme);
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
@@ -696,10 +713,7 @@ export class GhosttyTerminalSurface {
     mount: HTMLElement,
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
-    const canvas = document.createElement("canvas");
-    canvas.className = "block size-full cursor-text";
-    canvas.style.touchAction = "pan-x pinch-zoom";
-    canvas.setAttribute("aria-hidden", "true");
+    const { canvas, context } = createTerminalCanvas(options.theme);
 
     const input = document.createElement("textarea");
     input.className = "t3-ghostty-input";
@@ -724,10 +738,10 @@ export class GhosttyTerminalSurface {
     scrollbar.append(scrollbarThumb);
     mount.replaceChildren(canvas, input, scrollbar);
 
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) throw new Error("Canvas 2D is unavailable");
-    context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    if (!translucentBackground(options.theme)) {
+      context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+    }
     const fontSize = terminalFontSize(options.font?.size);
     try {
       // Load bundled fonts before measuring; fallback metrics would size the wrong grid.
@@ -807,6 +821,9 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.theme = theme;
     this.core.setTheme(theme);
+    if (translucentBackground(theme) !== this.canvasAlpha) {
+      this.replaceCanvas(theme);
+    }
     this.forceFullRender = true;
     this.requestRender();
   }
@@ -1866,6 +1883,44 @@ export class GhosttyTerminalSurface {
     this.scrollViewport(delta);
   };
 
+  private installCanvasEvents(): void {
+    this.canvas.addEventListener("pointerdown", this.onPointerDown);
+    this.canvas.addEventListener("pointermove", this.onPointerMove);
+    this.canvas.addEventListener("pointerleave", this.onPointerLeave);
+    this.canvas.addEventListener("pointerup", this.onPointerUp);
+    this.canvas.addEventListener("pointercancel", this.onPointerUp);
+    this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    this.canvas.addEventListener("mousedown", this.onMouseDown);
+    this.canvas.addEventListener("mouseup", this.onMouseUp);
+    this.canvas.addEventListener("contextmenu", this.onContextMenu);
+  }
+
+  private removeCanvasEvents(): void {
+    this.canvas.removeEventListener("pointerdown", this.onPointerDown);
+    this.canvas.removeEventListener("pointermove", this.onPointerMove);
+    this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
+    this.canvas.removeEventListener("pointerup", this.onPointerUp);
+    this.canvas.removeEventListener("pointercancel", this.onPointerUp);
+    this.canvas.removeEventListener("wheel", this.onWheel);
+    this.canvas.removeEventListener("mousedown", this.onMouseDown);
+    this.canvas.removeEventListener("mouseup", this.onMouseUp);
+    this.canvas.removeEventListener("contextmenu", this.onContextMenu);
+  }
+
+  /** A context's alpha channel is fixed at creation, so a change needs a new canvas. */
+  private replaceCanvas(theme: GhosttyTheme): void {
+    const { canvas, context } = createTerminalCanvas(theme);
+    canvas.style.cursor = this.canvas.style.cursor;
+    this.removeCanvasEvents();
+    this.canvas.replaceWith(canvas);
+    this.canvas = canvas;
+    this.context = context;
+    this.canvasAlpha = translucentBackground(theme);
+    this.installCanvasEvents();
+    this.canvasConfigured = false;
+    this.fit();
+  }
+
   private installEvents(): void {
     this.input.addEventListener("keydown", this.onKeyDown);
     this.input.addEventListener("keyup", this.onKeyUp);
@@ -1879,15 +1934,7 @@ export class GhosttyTerminalSurface {
     this.input.addEventListener("copy", this.onCopyEvent);
     this.input.addEventListener("compositionstart", this.onCompositionStart);
     this.input.addEventListener("compositionend", this.onCompositionEnd);
-    this.canvas.addEventListener("pointerdown", this.onPointerDown);
-    this.canvas.addEventListener("pointermove", this.onPointerMove);
-    this.canvas.addEventListener("pointerleave", this.onPointerLeave);
-    this.canvas.addEventListener("pointerup", this.onPointerUp);
-    this.canvas.addEventListener("pointercancel", this.onPointerUp);
-    this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
-    this.canvas.addEventListener("mousedown", this.onMouseDown);
-    this.canvas.addEventListener("mouseup", this.onMouseUp);
-    this.canvas.addEventListener("contextmenu", this.onContextMenu);
+    this.installCanvasEvents();
     this.scrollbar.addEventListener("pointerdown", this.onScrollbarPointerDown);
     this.scrollbar.addEventListener("pointermove", this.onScrollbarPointerMove);
     this.scrollbar.addEventListener("pointerup", this.onScrollbarPointerUp);
@@ -1909,15 +1956,7 @@ export class GhosttyTerminalSurface {
     this.input.removeEventListener("copy", this.onCopyEvent);
     this.input.removeEventListener("compositionstart", this.onCompositionStart);
     this.input.removeEventListener("compositionend", this.onCompositionEnd);
-    this.canvas.removeEventListener("pointerdown", this.onPointerDown);
-    this.canvas.removeEventListener("pointermove", this.onPointerMove);
-    this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
-    this.canvas.removeEventListener("pointerup", this.onPointerUp);
-    this.canvas.removeEventListener("pointercancel", this.onPointerUp);
-    this.canvas.removeEventListener("wheel", this.onWheel);
-    this.canvas.removeEventListener("mousedown", this.onMouseDown);
-    this.canvas.removeEventListener("mouseup", this.onMouseUp);
-    this.canvas.removeEventListener("contextmenu", this.onContextMenu);
+    this.removeCanvasEvents();
     this.scrollbar.removeEventListener("pointerdown", this.onScrollbarPointerDown);
     this.scrollbar.removeEventListener("pointermove", this.onScrollbarPointerMove);
     this.scrollbar.removeEventListener("pointerup", this.onScrollbarPointerUp);
@@ -2092,6 +2131,7 @@ export class GhosttyTerminalSurface {
       previousCursorY: this.renderedCursorY,
       focused: this.focused,
       hoveredLinkRange: this.hoveredLink?.range ?? null,
+      backgroundAlpha: this.canvasAlpha ? (this.theme.backgroundAlpha ?? 1) : 1,
       ...(this.theme.selectionBackground !== undefined
         ? { selectionBackground: this.theme.selectionBackground }
         : {}),

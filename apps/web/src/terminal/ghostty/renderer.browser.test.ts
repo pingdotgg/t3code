@@ -36,6 +36,12 @@ function isDarkAt(context: CanvasRenderingContext2D, x: number, y: number): bool
   return data[0]! < 128 && data[1]! < 128 && data[2]! < 128;
 }
 
+/** Alpha of the device pixel under a CSS pixel position. */
+function alphaAt(context: CanvasRenderingContext2D, x: number, y: number): number {
+  const { a, d } = context.getTransform();
+  return context.getImageData(Math.floor(x * a), Math.floor(y * d), 1, 1).data[3]!;
+}
+
 /** A 40 by 60 CSS pixel canvas drawn at the given device pixel ratio. */
 function scaledContext(scale: number): CanvasRenderingContext2D {
   const canvas = document.createElement("canvas");
@@ -153,6 +159,41 @@ describe.each([1.25, 2.2])("renderGhosttySnapshot at a %sx device pixel ratio", 
 
     renderGhosttySnapshot({ ...options, snapshot: snapshot(true), cursorOn: true });
     expect(isDarkAt(context, 15.7, 12.5)).toBe(true);
+  });
+
+  it("leaves a transparent default background clear, and clears text it repaints", () => {
+    const context = scaledContext(scale);
+    const colored = { ...blank, background: { r: 0, g: 0, b: 0 } };
+    const snapshot = (text: string): GhosttySnapshot => ({
+      cols: 3,
+      rows: 1,
+      foreground: { r: 0, g: 0, b: 0 },
+      background,
+      cursor: { r: 0, g: 0, b: 0 },
+      cursorX: -1,
+      cursorY: -1,
+      cursorVisible: false,
+      cursorBlinking: false,
+      cursorStyle: 1,
+      dirtyRows: new Set([0]),
+      rowData: [
+        {
+          cells: [{ ...blank, text }, colored, blank],
+          text: "",
+          isWrapContinuation: false,
+          wrapsToNext: false,
+        },
+      ],
+    });
+    const options = { ...layout, context, cursorOn: false, backgroundAlpha: 0 };
+
+    renderGhosttySnapshot({ ...options, snapshot: snapshot("█"), forceFull: true });
+    expect(alphaAt(context, 8, 12.5)).toBe(255);
+    expect(alphaAt(context, 15.7, 12.5)).toBe(255);
+    expect(alphaAt(context, 30, 12.5)).toBe(0);
+
+    renderGhosttySnapshot({ ...options, snapshot: snapshot(""), forceFull: false });
+    expect(alphaAt(context, 8, 12.5)).toBe(0);
   });
 
   // Cell 1 spans x 11.8 to 19.6 and row 0 spans y 4 to 21 in CSS pixels.

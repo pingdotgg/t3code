@@ -1763,6 +1763,19 @@ html[data-theme-scene] #root {
   position: relative;
   z-index: 1;
 }
+/* Panels that paint the page background become glass over a scene. Outranks a theme's own fill
+   for them, which only makes sense without a scene. The terminal canvas reads the transparent
+   background and clears its default cells. */
+html[data-theme-scene] [data-thread-details-card] {
+  @apply dropdown-glass;
+}
+html[data-theme-scene]
+  :is([data-thread-terminal-drawer], [data-terminal-actions], [data-panel-empty]) {
+  @apply surface-glass;
+}
+html[data-theme-scene] [data-thread-terminal-drawer] {
+  --terminal-background: transparent;
+}
 
 #root {
   height: 100%;
