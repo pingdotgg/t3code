@@ -23,34 +23,38 @@ const withoutOutputDevice: AudioContextOptions & { readonly sinkId: { readonly t
 
 /** Opens the microphone and its context; both are released on abort until the recorder claims them. */
 function openCapture(getMicrophoneId: () => string | Promise<string>, signal: AbortSignal) {
+  signal.throwIfAborted();
   const owner = new AbortController();
   const follow = () => owner.abort(signal.reason);
-  if (signal.aborted) follow();
-  else signal.addEventListener("abort", follow, { once: true });
+  signal.addEventListener("abort", follow, { once: true });
   const captureSignal = owner.signal;
-  // Capture plays nothing. On devices that share input and output, an output device or a
-  // context created just after the microphone opens can each stall startup by ~450 ms.
-  const context = new AudioContext(withoutOutputDevice);
-  // Insecure origins have no audioWorklet; the rejection must reach release below.
-  const loadingWorklet = Promise.resolve().then(() => context.audioWorklet.addModule(workletUrl));
-  loadingWorklet.catch(() => undefined);
+  let context: AudioContext | undefined;
   let stream: MediaStream | undefined;
   let released = false;
   const release = () => {
     stream?.getTracks().forEach((track) => track.stop());
     if (released) return;
     released = true;
-    void context.close();
+    void context?.close();
   };
   captureSignal.addEventListener("abort", release, { once: true });
   const opened = (async (): Promise<OpenedCapture> => {
+    // Capture plays nothing. On devices that share input and output, an output device or a
+    // context created just after the microphone opens can each stall startup by ~450 ms.
+    const openedContext = new AudioContext(withoutOutputDevice);
+    context = openedContext;
+    // Insecure origins have no audioWorklet; the rejection must reach release below.
+    const loadingWorklet = Promise.resolve().then(() =>
+      openedContext.audioWorklet.addModule(workletUrl),
+    );
+    loadingWorklet.catch(() => undefined);
     const microphoneId = await getMicrophoneId();
     captureSignal.throwIfAborted();
     stream = await requestMicrophone(microphoneId, captureSignal);
     captureSignal.throwIfAborted();
     await loadingWorklet;
     captureSignal.throwIfAborted();
-    return { stream, context };
+    return { stream, context: openedContext };
   })();
   opened.catch(release);
   return {

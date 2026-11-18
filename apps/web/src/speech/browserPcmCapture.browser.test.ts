@@ -38,6 +38,23 @@ it("records from the chosen microphone, cancels an unanswered prompt, and stops 
     await preparing;
   }
   await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+
+  const getMicrophoneId = vi.fn(() => new Promise<string>(() => undefined));
+  using contexts = vi.spyOn(window, "AudioContext");
+  const cancelledCapture = createBrowserPcmCapture(
+    { getMicrophoneId, onLevel: vi.fn(), onDurationLimit: vi.fn(), onError: vi.fn() },
+    async () => ({ locale: "en", transcribe: async () => "" }),
+  );
+  const cancelled = AbortSignal.abort();
+  try {
+    await expect(cancelledCapture.transcriber.prepare({ signal: cancelled })).rejects.toBe(
+      cancelled.reason,
+    );
+    expect(contexts).not.toHaveBeenCalled();
+    expect(getMicrophoneId).not.toHaveBeenCalled();
+  } finally {
+    await Promise.all(contexts.mock.instances.map((context) => context.close()));
+  }
 });
 
 it("opens the microphone while the destination is prepared and releases it as soon as the start is abandoned", async () => {
@@ -107,6 +124,23 @@ it("reports microphone and worklet failures when recording starts and releases w
   );
   expect(stop).toHaveBeenCalledOnce();
   expect(close).toHaveBeenCalledTimes(2);
+
+  const exhausted = new DOMException("context limit", "NotSupportedError");
+  using _contexts = vi.spyOn(window, "AudioContext").mockImplementation(function () {
+    throw exhausted;
+  });
+  const unavailable = new Error("destination unavailable");
+  const prepare = vi
+    .fn(async () => ({ locale: "en", transcribe: async () => "" }))
+    .mockRejectedValueOnce(unavailable);
+  const limited = createBrowserPcmCapture(
+    { getMicrophoneId: () => "", onLevel: vi.fn(), onDurationLimit: vi.fn(), onError: vi.fn() },
+    prepare,
+  );
+  const signal = new AbortController().signal;
+  await expect(limited.transcriber.prepare({ signal })).rejects.toBe(unavailable);
+  await limited.transcriber.prepare({ signal });
+  await expect(limited.recorder.prepareToRecordAsync(signal)).rejects.toBe(exhausted);
 });
 
 it("records through an audio context that opens no output device", async () => {
