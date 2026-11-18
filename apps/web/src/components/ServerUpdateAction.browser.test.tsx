@@ -14,6 +14,7 @@ const testState = vi.hoisted(() => ({
   toast: vi.fn(),
   clipboard: vi.fn(),
   sessionAtom: null as unknown,
+  sessionAtoms: new Map<EnvironmentId, unknown>(),
   serverVersions: new Map<string, string>(),
 }));
 
@@ -29,12 +30,13 @@ vi.mock(import("~/hooks/useCopyToClipboard"), async (original) => ({
 }));
 vi.mock(import("~/state/session"), async (original) => {
   const actual = await original();
+  const { environmentAtomList } = await import("~/state/environmentAtomList");
+  const sessionStateAtom = ((environmentId: EnvironmentId) =>
+    testState.sessionAtoms.get(environmentId) ?? testState.sessionAtom) as never;
   return {
     ...actual,
-    environmentSession: {
-      ...actual.environmentSession,
-      sessionStateAtom: (() => testState.sessionAtom) as never,
-    },
+    environmentSession: { ...actual.environmentSession, sessionStateAtom },
+    environmentSessionStatesAtom: environmentAtomList("test-session-states", sessionStateAtom),
   };
 });
 vi.mock(import("~/state/entities"), async (original) => ({
@@ -82,6 +84,19 @@ const currentSession = {
   },
 } as const satisfies AuthSessionState;
 
+// Paired before environment:maintain was split out; the server reports the stored grant.
+const legacyGrant = [
+  "orchestration:read",
+  "orchestration:operate",
+  "terminal:operate",
+  "relay:read",
+] as const;
+const legacyPairedSession = decodeSessionState({
+  ...currentSession,
+  scopes: legacyGrant,
+  permissions: legacyGrant,
+});
+
 const success = (method: "boot-service" | "desktop-app" = "boot-service", version = "0.0.31") =>
   AsyncResult.success({ targetVersion: version, method });
 
@@ -98,6 +113,7 @@ function setup(): Disposable {
   testState.serverVersions.clear();
   sessionAtom = Atom.make<SessionResult>(AsyncResult.success(currentSession));
   testState.sessionAtom = sessionAtom;
+  testState.sessionAtoms.clear();
   resetConfirmDialogForTests();
   return { [Symbol.dispose]: resetConfirmDialogForTests };
 }
@@ -113,6 +129,11 @@ function button(screen: Screen, name?: string) {
   return name === undefined
     ? buttons[0]
     : buttons.find((element) => element.textContent?.trim() === name);
+}
+
+function description(screen: Screen, name?: string) {
+  const id = button(screen, name)?.getAttribute("aria-describedby");
+  return id ? (document.getElementById(id)?.textContent ?? "") : "";
 }
 
 async function click(screen: Screen, name?: string) {
@@ -179,6 +200,17 @@ describe("ServerUpdateAction", () => {
     await click(screen, "Update");
     expect(testState.updateServer).not.toHaveBeenCalled();
   });
+
+  it("explains that a connection paired before environment:maintain must re-pair", async () => {
+    using _state = setup();
+    setSession(AsyncResult.success(legacyPairedSession));
+    await using screen = await renderAction();
+
+    expect(button(screen, "Update")!.disabled).toBe(true);
+    expect(description(screen, "Update")).toBe(
+      "Test server can't be updated from this connection. Pair again with a link that permits server updates.",
+    );
+  });
 });
 
 describe("ServerUpdatesAction", () => {
@@ -223,6 +255,67 @@ describe("ServerUpdatesAction", () => {
       expect.objectContaining({ type: "success", title: "Office updated" }),
     );
     expect(button(screen, "Update all")!.disabled).toBe(false);
+  });
+
+  it("does not offer Update all when no target grants environment:maintain", async () => {
+    using _state = setup();
+    setSession(AsyncResult.success(legacyPairedSession));
+    await using screen = await mount(targets.slice(0, 2));
+
+    expect(button(screen, "Update all")!.disabled).toBe(true);
+    expect(description(screen, "Update all")).toContain("Pair again");
+  });
+
+  it("does not ask to pair again when a mixed batch is pending", async () => {
+    using _state = setup();
+    const denied = Atom.make<SessionResult>(AsyncResult.success(legacyPairedSession));
+    testState.sessionAtoms.set("batch-b" as EnvironmentId, denied);
+    let resolveUpdate!: (result: ReturnType<typeof success>) => void;
+    const update = new Promise<ReturnType<typeof success>>((resolve) => {
+      resolveUpdate = resolve;
+    });
+    testState.updateServer.mockReturnValue(update);
+    await using screen = await mount(targets.slice(0, 2));
+
+    try {
+      await click(screen, "Update all");
+      expect(button(screen, "Update all")!.disabled).toBe(true);
+      expect(testState.toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Office skipped" }),
+      );
+
+      await act(() => button(screen, "Update all")!.parentElement!.click());
+
+      expect(testState.toast).not.toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Pair again to update" }),
+      );
+    } finally {
+      await act(async () => {
+        resolveUpdate(success());
+        await update;
+      });
+    }
+    expect(button(screen, "Update all")!.disabled).toBe(false);
+  });
+
+  it("names a target it skips for missing environment:maintain", async () => {
+    using _state = setup();
+    const denied = Atom.make<SessionResult>(AsyncResult.success(legacyPairedSession));
+    testState.sessionAtoms.set("batch-b" as EnvironmentId, denied);
+    testState.updateServer.mockResolvedValue(success());
+    await using screen = await mount(targets.slice(0, 2));
+    await click(screen, "Update all");
+
+    expect(testState.updateServer).toHaveBeenCalledTimes(1);
+    expect(testState.updateServer).toHaveBeenCalledWith(
+      expect.objectContaining({ environmentId: "batch-a" }),
+    );
+    expect(testState.toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Office skipped",
+        description: expect.stringContaining("Pair again"),
+      }),
+    );
   });
 
   it("skips a machine whose update would cross Stable and Nightly", async () => {
