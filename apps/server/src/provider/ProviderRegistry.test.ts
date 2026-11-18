@@ -1120,6 +1120,7 @@ it.layer(
         Effect.gen(function* () {
           let proxyStatus = 503;
           let poolAvailable = true;
+          let coolingDown = false;
           const mixedCatalog = driver === "pi" || driver === "opencode";
           const routedSlug = mixedCatalog ? "t3proxy/claude-fixture" : "claude-fixture";
           const offlineSlug = mixedCatalog ? "t3proxy/claude-offline" : "claude-offline";
@@ -1244,7 +1245,24 @@ it.layer(
                 ).toEqual(status === 200 ? [routedSlug, "morph/project"] : ["morph/project"]);
               }
             }
+            coolingDown = true;
+            yield* TestClock.adjust("16 seconds");
+            const cooled = (yield* registry.getProviders)[0]!;
+            expect(cooled.models.find((model) => model.slug === offlineSlug)).toMatchObject({
+              isUnavailable: true,
+            });
+            if (mixedCatalog)
+              expect(
+                cooled.workspaceSnapshots?.[0]?.models?.find((model) => model.slug === offlineSlug),
+              ).toMatchObject({ isUnavailable: true });
             poolAvailable = false;
+            yield* TestClock.adjust("16 seconds");
+            const coolingPool = (yield* registry.getProviders)[0]!;
+            expect(coolingPool.availability).toBeUndefined();
+            expect(
+              coolingPool.models.find((model) => model.slug === offlineSlug)?.isUnavailable,
+            ).toBe(true);
+            coolingDown = false;
             yield* TestClock.adjust("16 seconds");
             expect((yield* registry.getProviders)[0]?.availability).toBe(
               mixedCatalog ? undefined : "unavailable",
@@ -1277,6 +1295,7 @@ it.layer(
                         ? Effect.succeed({
                             availableDrivers: poolAvailable ? [driver] : [],
                             models: ["claude-fixture"],
+                            ...(coolingDown ? { unavailableModels: ["claude-offline"] } : {}),
                           })
                         : Effect.fail(new InferenceProxyError({ message: "Unavailable" })),
                   }),

@@ -49,7 +49,11 @@ export function normalizeHostedModelCatalog(
       : null;
   // Older hosts mark models discovered through CLI proxy as custom.
   return models
-    .filter((model) => (hostedSlugs === null ? !model.isCustom : hostedSlugs.has(model.slug)))
+    .filter(
+      (model) =>
+        (!model.isCustom && model.isUnavailable) ||
+        (hostedSlugs === null ? !model.isCustom : hostedSlugs.has(model.slug)),
+    )
     .map((model) => (model.isCustom ? { ...model, isCustom: false } : model));
 }
 
@@ -273,13 +277,15 @@ export function getDefaultProviderInstanceModel(
   const entry = getProviderInstanceEntry(providers, instanceId);
   if (!entry) return undefined;
   const config = settings?.providerInstances[instanceId]?.config;
-  const models = usesHostedModelCatalog(instanceId, entry.driverKind, config)
+  const catalog = usesHostedModelCatalog(instanceId, entry.driverKind, config)
     ? normalizeHostedModelCatalog(entry.models, config)
     : entry.models;
+  const models = catalog.filter((model) => !model.isUnavailable);
   return (
     models.find((model) => model.isDefault && !model.isCustom)?.slug ??
     models.find((model) => !model.isCustom)?.slug ??
     models[0]?.slug ??
+    catalog[0]?.slug ??
     DEFAULT_MODEL_BY_PROVIDER[entry.driverKind]
   );
 }

@@ -112,6 +112,7 @@ function shouldIncludeModelPickerOption(input: {
     return false;
   }
   if (isProviderInstancePickerReady(input.entry)) return true;
+  if (input.option.isUnavailable && isProviderInstancePickerVisible(input.entry)) return true;
   return (
     input.entry.enabled &&
     hasRuntimeModelCatalog(input.entry.driverKind) &&
@@ -501,7 +502,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return null;
     }
     const resolvedModel = resolveSelectableModel(entry.driverKind, modelSlug, options);
-    if (!resolvedModel) return null;
+    if (!resolvedModel || options.find((option) => option.slug === resolvedModel)?.isUnavailable)
+      return null;
     if (additive && onToggleModel) {
       onToggleModel(instanceId, resolvedModel);
     } else {
@@ -534,13 +536,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (activeInstanceHasSelectableUnavailableModel) {
       instanceIds.add(props.activeInstanceId);
     }
-    if (canOpenProviderSetup) {
-      for (const entry of instanceEntries) {
-        if (
-          shouldOfferModelPickerSetup(entry, modelOptionsByInstance.get(entry.instanceId) ?? [])
-        ) {
-          instanceIds.add(entry.instanceId);
-        }
+    for (const entry of instanceEntries) {
+      const models = modelOptionsByInstance.get(entry.instanceId) ?? [];
+      if (
+        (canOpenProviderSetup && shouldOfferModelPickerSetup(entry, models)) ||
+        (entry.status === "warning" && models.some((model) => model.isUnavailable))
+      ) {
+        instanceIds.add(entry.instanceId);
       }
     }
     return instanceIds.size > 0 ? instanceIds : undefined;
@@ -742,7 +744,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   });
 
   const modelJumpModelKeys = visibleModels
-    .filter((model) => !getModelDisabledReason?.(model.instanceId, model.slug))
+    .filter(
+      (model) => !model.isUnavailable && !getModelDisabledReason?.(model.instanceId, model.slug),
+    )
     .slice(0, MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.length)
     .map((model) => modelPickerModelKey(model.instanceId, model.slug));
   const allItemKeys = ((): string[] => [

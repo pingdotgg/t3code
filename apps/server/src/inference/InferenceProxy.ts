@@ -73,6 +73,7 @@ import { claudeKeychainEntry } from "./claudeKeychain.ts";
 import { install, proxyVersion, resolveRelease, Release } from "./install.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import {
+  inferenceRetryDelayMs,
   isRetryableInferenceStatus,
   modelsForDriver,
   needsAccountModelLookup,
@@ -1514,19 +1515,22 @@ const make = Effect.gen(function* () {
         const baseUrl = yield* candidateAddress(input.candidate, ownId);
         const health =
           input.candidate.hostId === ownId
-            ? yield* mutex.withPermit(localHealth())
+            ? yield* mutex.withPermit(localHealth(input.candidate.key))
             : yield* jsonRequest(baseUrl + "/health", input.candidate.key, InferenceRouteHealth);
-        const models = input.candidate.models.filter((model) => health.models.includes(model));
-        return health.availableDrivers.includes(input.driver) && models.length
-          ? { baseUrl, key: input.candidate.key, models }
-          : undefined;
+        const models = health.availableDrivers.includes(input.driver)
+          ? input.candidate.models.filter((model) => health.models.includes(model))
+          : [];
+        const unavailableModels = input.candidate.models.filter((model) =>
+          health.unavailableModels?.includes(model),
+        );
+        return { baseUrl, key: input.candidate.key, models, unavailableModels };
       },
       Effect.timeout("3 seconds"),
       Effect.orElseSucceed(() => undefined),
     ),
   });
 
-  const hasFallback = Effect.fn("InferenceProxy.hasFallback")(
+  const hasRoutePool = Effect.fn("InferenceProxy.hasRoutePool")(
     function* (key: string, hostId: EnvironmentId | undefined, driver: string | undefined) {
       if (!hostId || !driver) return false;
       const instanceId = defaultInstanceIdForDriver(ProviderDriverKind.make(driver));
@@ -1544,15 +1548,15 @@ const make = Effect.gen(function* () {
       return (
         (yield* read).routePools?.some(
           (entry) =>
-            entry.driver === driver &&
-            entry.primary.hostId === hostId &&
-            entry.primary.key === key &&
-            entry.alternates.length > 0,
+            entry.driver === driver && entry.primary.hostId === hostId && entry.primary.key === key,
         ) ?? false
       );
     },
     Effect.mapError(safeFailure("Could not inspect inference routes.")),
   );
+
+  const routeCoolingDown = (driver: string, hostId: EnvironmentId, model: string, now: number) =>
+    (routeFailures.get(`${driver}\0${hostId}\0${model}`) ?? 0) > now;
 
   const routeCandidates = Effect.fn("InferenceProxy.routeCandidates")(
     function* (
@@ -1561,10 +1565,11 @@ const make = Effect.gen(function* () {
       driver?: string,
       model?: string,
       includeAll = false,
+      includeUnavailable = false,
     ) {
       if (hostId === undefined) {
         const target = yield* authorize(key);
-        return target ? [{ ...target, models: [] }] : null;
+        return target ? [{ ...target, models: [], unavailableModels: [] }] : null;
       }
       const current = yield* settings.getSettings;
       const active = Arr.findFirst(INFERENCE_DRIVERS, (candidateDriver) => {
@@ -1584,7 +1589,9 @@ const make = Effect.gen(function* () {
       const pool = (yield* read).routePools?.find((entry) => entry.driver === activeDriver);
       if (!pool || pool.primary.hostId !== hostId || pool.primary.key !== key) {
         const target = yield* authorize(key, hostId, driver);
-        return target ? [{ ...target, models: route.inferenceModels }] : null;
+        return target
+          ? [{ ...target, models: route.inferenceModels, unavailableModels: [] }]
+          : null;
       }
       const matching = model
         ? [pool.primary, ...pool.alternates].filter((candidate) => candidate.models.includes(model))
@@ -1601,11 +1608,14 @@ const make = Effect.gen(function* () {
       const available = candidates.flatMap((candidate, index) => {
         if (!candidate) return [];
         const host = matching[index]!;
-        const models = candidate.models.filter(
-          (slug) => (routeFailures.get(`${activeDriver}\0${host.hostId}\0${slug}`) ?? 0) <= now,
-        );
-        return models.length && (model === undefined || models.includes(model))
-          ? [{ ...candidate, hostId: host.hostId, models }]
+        const cooling = (slug: string) => routeCoolingDown(activeDriver, host.hostId, slug, now);
+        const models = candidate.models.filter((slug) => !cooling(slug));
+        const unavailableModels = includeUnavailable
+          ? [...new Set([...candidate.unavailableModels, ...host.models.filter(cooling)])]
+          : [];
+        return (models.length && (model === undefined || models.includes(model))) ||
+          unavailableModels.length
+          ? [{ ...candidate, hostId: host.hostId, models, unavailableModels }]
           : [];
       });
       return available;
@@ -1628,26 +1638,13 @@ const make = Effect.gen(function* () {
     }
     if (!isRetryableInferenceStatus(input.status)) return;
     const now = yield* Clock.currentTimeMillis;
-    const numericDelay = (value: string | undefined, scale: number) => {
-      if (!value?.trim()) return undefined;
-      const amount = Number(value);
-      if (!Number.isFinite(amount) || amount < 0) return undefined;
-      const delay = amount * scale;
-      return Number.isSafeInteger(Math.ceil(delay)) ? Math.ceil(delay) : undefined;
-    };
-    const millis = numericDelay(input.retryAfterMs, 1);
-    const seconds = input.retryAfter?.trim() ? Number(input.retryAfter) : Number.NaN;
-    const standard = Number.isFinite(seconds)
-      ? numericDelay(input.retryAfter, 1000)
-      : input.retryAfter
-        ? Date.parse(input.retryAfter) - now
-        : undefined;
-    const retryDelay =
-      millis ??
-      (standard !== undefined && Number.isFinite(standard) && standard >= 0 ? standard : undefined);
+    const retryDelay = inferenceRetryDelayMs(input.retryAfter, input.retryAfterMs, now);
     const duration =
-      input.status === 429 && retryDelay !== undefined
-        ? Math.max(5_000, Math.min(retryDelay, Number.MAX_SAFE_INTEGER - now))
+      (input.status === 429 || input.status === 503) && retryDelay !== undefined
+        ? Math.max(
+            input.status === 429 ? 5_000 : 0,
+            Math.min(retryDelay, Number.MAX_SAFE_INTEGER - now),
+          )
         : input.status === 502 || input.status === 503 || input.status === 529
           ? 5_000
           : 30_000;
@@ -1710,10 +1707,12 @@ const make = Effect.gen(function* () {
     Effect.mapError(safeFailure("Inference host unavailable.")),
   );
 
-  const localHealth = Effect.fn("InferenceProxy.localHealth")(function* () {
+  const localHealth = Effect.fn("InferenceProxy.localHealth")(function* (expectedKey?: string) {
     const state = yield* read;
     if (!state.enabled) return yield* failure("Inference hosting is disabled.");
     const runtime = yield* ensureWatched(state);
+    if (expectedKey !== undefined && runtime.key !== expectedKey)
+      return yield* failure("Inference route credentials have changed. Connect the route again.");
     const [{ files }, { data }] = yield* Effect.all(
       [
         jsonRequest(runtime.baseUrl + "/v0/management/auth-files", runtime.management, Files),
@@ -1729,10 +1728,12 @@ const make = Effect.gen(function* () {
       const eligible = files
         .filter(
           (file) =>
-            file.status === "active" &&
             !file.disabled &&
-            !file.unavailable &&
-            !excludedNames.has(file.name),
+            ((file.status === "active" && !file.unavailable && !excludedNames.has(file.name)) ||
+              file.cooldowns?.some(
+                (cooldown) =>
+                  cooldown.scope === "credential" && Date.parse(cooldown.retry_at) > now,
+              )),
         )
         .slice(0, 128);
       const keys: AccountModelsCacheKey[] = eligible.map((file) => ({
@@ -1750,14 +1751,45 @@ const make = Effect.gen(function* () {
           );
       }
     }
+    const models = modelsForDriver(data, "opencode", {
+      accounts: files,
+      excludedNames,
+      registeredModels,
+      now,
+    });
+    const unavailable = new Set<string>();
+    for (const file of files) {
+      if (file.disabled) continue;
+      for (const cooldown of file.cooldowns ?? []) {
+        if (!(Date.parse(cooldown.retry_at) > now)) continue;
+        if (cooldown.scope === "model" && cooldown.model_key) unavailable.add(cooldown.model_key);
+        if (cooldown.scope === "credential")
+          for (const model of registeredModels.get(file.id || file.name) ?? [])
+            unavailable.add(model);
+      }
+    }
+    for (const model of models) unavailable.delete(model);
     return {
       availableDrivers: availableDrivers(files.filter((file) => !evidence.has(file.name))),
-      models: modelsForDriver(data, "opencode", {
-        accounts: files,
-        excludedNames,
-        registeredModels,
-        now,
-      }),
+      models,
+      ...(unavailable.size ? { unavailableModels: [...unavailable] } : {}),
+    };
+  });
+
+  const poolHealth = Effect.fn("InferenceProxy.poolHealth")(function* (
+    key: string,
+    hostId: EnvironmentId,
+    driver: InferenceDriver,
+  ) {
+    const candidates = yield* routeCandidates(key, hostId, driver, undefined, true, true);
+    if (candidates === null) return null;
+    const models = new Set(candidates.flatMap((candidate) => candidate.models));
+    const unavailable = new Set(candidates.flatMap((candidate) => candidate.unavailableModels));
+    for (const model of models) unavailable.delete(model);
+    return {
+      availableDrivers: models.size ? [driver] : [],
+      models: [...models],
+      ...(unavailable.size ? { unavailableModels: [...unavailable] } : {}),
     };
   });
 
@@ -1771,14 +1803,7 @@ const make = Effect.gen(function* () {
               entry.primary.key === key,
           )
         : undefined;
-      if (pool) {
-        const candidates = yield* routeCandidates(key, hostId, pool.driver, undefined, true);
-        if (candidates === null) return null;
-        return {
-          availableDrivers: candidates.length ? [pool.driver] : [],
-          models: [...new Set(candidates.flatMap((candidate) => candidate.models))],
-        };
-      }
+      if (pool) return yield* poolHealth(key, pool.primary.hostId, pool.driver);
       const target = yield* authorize(key, hostId, driver);
       if (!target) return null;
       return hostId === undefined
@@ -1796,39 +1821,15 @@ const make = Effect.gen(function* () {
           entry.primary.hostId === route.inferenceHostId &&
           entry.primary.key === key,
       );
-      if (pool?.alternates.length) {
-        const candidates = yield* routeCandidates(
-          key,
-          route.inferenceHostId,
-          pool.driver,
-          undefined,
-          true,
-        );
-        if (!candidates?.length)
-          return yield* failure("No authorized inference host is available.");
-        return {
-          availableDrivers: [pool.driver],
-          models: [...new Set(candidates.flatMap((candidate) => candidate.models))],
-        };
+      if (pool) {
+        const health = yield* poolHealth(key, route.inferenceHostId, pool.driver);
+        if (health === null) return yield* failure("No authorized inference host is available.");
+        return health;
       }
       const ownId = yield* environment.getEnvironmentId;
-      if (route.inferenceHostId === ownId) {
-        return yield* mutex.withPermit(
-          Effect.gen(function* () {
-            const state = yield* read;
-            if (!state.enabled) return yield* failure("Inference hosting is disabled.");
-            const runtime = yield* ensureWatched(state);
-            if (runtime.key !== key)
-              return yield* failure(
-                "Inference route credentials have changed. Connect the route again.",
-              );
-            return yield* localHealth();
-          }),
-        );
-      }
-      const address = pool
-        ? yield* candidateAddress(pool.primary, ownId)
-        : route.inferenceConnection || route.inferenceBaseUrl.includes("/api/inference/linked/")
+      if (route.inferenceHostId === ownId) return yield* mutex.withPermit(localHealth(key));
+      const address =
+        route.inferenceConnection || route.inferenceBaseUrl.includes("/api/inference/linked/")
           ? new URL(
               "/api/inference",
               yield* peerAddress(route.inferenceHostId, route.inferenceConnection),
@@ -2096,6 +2097,33 @@ const make = Effect.gen(function* () {
       const catalog = yield* Cache.get(catalogs, connection);
       if (catalog === undefined) return candidate;
       const models = modelsForDriver(catalog, driver);
+      const discovered = new Set(models);
+      const missing = candidate.models.filter((model) => !discovered.has(model));
+      const probeKey = { candidate, driver };
+      if (!missing.length) {
+        yield* Cache.invalidate(routeProbes, probeKey);
+      } else {
+        // CLIProxyAPI omits a model from /v1/models during a cooldown.
+        const now = yield* Clock.currentTimeMillis;
+        const health = yield* Cache.refresh(routeProbes, probeKey);
+        if (!health) return candidate;
+        const retained = missing.filter(
+          (model) =>
+            routeCoolingDown(driver, candidate.hostId, model, now) ||
+            health.unavailableModels.includes(model),
+        );
+        if (retained.length) {
+          const previous = new Set(candidate.models);
+          for (const model of retained) discovered.add(model);
+          const persisted = [
+            ...candidate.models.filter((model) => discovered.has(model)),
+            ...models.filter((model) => !previous.has(model)),
+          ];
+          return Equal.equals(persisted, candidate.models)
+            ? candidate
+            : { ...candidate, models: persisted };
+        }
+      }
       return Equal.equals(models, candidate.models) ? candidate : { ...candidate, models };
     });
     let changed = false;
@@ -2204,7 +2232,7 @@ const make = Effect.gen(function* () {
     status,
     manage,
     authorize,
-    hasFallback,
+    hasRoutePool,
     routeCandidates,
     recordRouteOutcome,
     health,
@@ -2266,7 +2294,7 @@ export class InferenceProxy extends Context.Service<
       }> | null,
       InferenceProxyError
     >;
-    readonly hasFallback: (
+    readonly hasRoutePool: (
       key: string,
       hostId: EnvironmentId | undefined,
       driver: string | undefined,

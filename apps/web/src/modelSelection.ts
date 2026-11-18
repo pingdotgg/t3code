@@ -14,6 +14,7 @@ import {
 import {
   type CustomModelDefinition,
   createModelSelection,
+  formatModelSlugName,
   normalizeCustomModelSlug,
   readCustomModelEntries,
   resolveSelectableModel,
@@ -84,8 +85,9 @@ function appendUnavailableDynamicModelSelection(
   provider: ProviderDriverKind,
   selectedModel: string | null | undefined,
   hiddenModels: ReadonlyArray<string>,
+  hostedModelCatalog: boolean,
 ): AppModelOption[] {
-  if (!hasRuntimeModelCatalog(provider)) return options;
+  if (!hostedModelCatalog && !hasRuntimeModelCatalog(provider)) return options;
   const slug = normalizeCustomModelSlug(selectedModel);
   if (!slug) return options;
   if (isRuntimeModelDefaultAlias(provider, slug)) return options;
@@ -94,7 +96,8 @@ function appendUnavailableDynamicModelSelection(
   if (hiddenModels.includes(slug)) return options;
   if (options.some((option) => option.slug === slug)) return options;
 
-  return [...options, { slug, name: slug, isCustom: false, isUnavailable: true }];
+  const name = hostedModelCatalog ? formatModelSlugName(slug) : slug;
+  return [...options, { slug, name, isCustom: false, isUnavailable: true }];
 }
 
 function toAppModelOption(
@@ -113,6 +116,7 @@ function toAppModelOption(
   if (model.badge) option.badge = model.badge;
   if (model.isDefault) option.isDefault = true;
   if (model.isLegacy) option.isLegacy = true;
+  if (model.isUnavailable) option.isUnavailable = true;
   return option;
 }
 
@@ -193,10 +197,11 @@ export function getAppModelOptionsForInstance(
   const preferences = readInstanceModelPreferences(settings, entry.instanceId);
   return appendUnavailableDynamicModelSelection(
     applyInstanceModelPreferences(options, preferences),
-    entry.models,
+    hostedModelCatalog ? serverModels : entry.models,
     entry.driverKind,
     selectedModel,
     preferences.hiddenModels,
+    hostedModelCatalog,
   );
 }
 
@@ -218,10 +223,11 @@ export function resolveAppModelSelection(
     selectedModel,
   );
   const config = settings.providerInstances[instanceId]?.config;
+  const available = options.filter((option) => !option.isUnavailable);
   return (
     resolveSelectableModel(resolvedProvider, selectedModel, options) ??
     (usesHostedModelCatalog(instanceId, resolvedProvider, config)
-      ? (options.find((option) => option.isDefault)?.slug ?? options[0]?.slug)
+      ? (available.find((option) => option.isDefault)?.slug ?? available[0]?.slug)
       : undefined) ??
     getDefaultServerModel(providers, resolvedProvider)
   );
@@ -247,19 +253,12 @@ export function resolveAppModelSelectionForInstance(
   if (resolvedSelection) {
     return resolvedSelection;
   }
-  if (resolutionOptions?.preserveUnavailableSelection && hasRuntimeModelCatalog(entry.driverKind)) {
-    const unavailableSelection = normalizeCustomModelSlug(selectedModel);
-    const hiddenModels = readInstanceModelPreferences(settings, entry.instanceId).hiddenModels;
-    if (
-      unavailableSelection &&
-      !hiddenModels.includes(unavailableSelection) &&
-      resolveSelectableModel(entry.driverKind, selectedModel, entry.models) === null &&
-      !isRuntimeModelDefaultAlias(entry.driverKind, unavailableSelection)
-    ) {
-      return unavailableSelection;
-    }
-  }
-  return options.find((option) => option.isDefault)?.slug ?? options[0]?.slug ?? null;
+  return (
+    options.find((option) => option.isDefault && !option.isUnavailable)?.slug ??
+    options.find((option) => !option.isUnavailable)?.slug ??
+    options[0]?.slug ??
+    null
+  );
 }
 
 // New drafts carry the stored selection; capabilities resolve its raw options later.
@@ -395,7 +394,9 @@ export function resolveAppModelSelectionState(
   if (entry) {
     const selectedModel = selectedEntry ? selection.model : null;
     // Use the cheap generation default; the catalog default is the expensive chat flagship.
-    const options = getTextGenerationModelOptionsForInstance(settings, entry);
+    const options = getTextGenerationModelOptionsForInstance(settings, entry).filter(
+      (option) => !option.isUnavailable || option.slug === selectedModel,
+    );
     const model =
       resolveSelectableModel(entry.driverKind, selectedModel, options) ??
       resolveSelectableModel(

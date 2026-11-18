@@ -1,5 +1,6 @@
 import type { ProjectKnowledgeContextRecord } from "@t3tools/contracts";
 import { toServerClock } from "@t3tools/client-runtime/clock";
+import { unavailableModelReason } from "@t3tools/client-runtime/provider-clients";
 import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
@@ -560,14 +561,14 @@ export function resolveComposerInteractionMode(input: {
   };
 }
 
-export function getAntigravitySendBlockReason(
+export function getProviderModelSendBlockReason(
   provider:
     | Pick<ServerProvider, "driver" | "installed" | "auth" | "models" | "status">
     | null
     | undefined,
   model: string,
 ): string | null {
-  if (provider?.driver !== "antigravity") return null;
+  if (provider?.driver !== "antigravity") return unavailableModelReason(provider, model);
   if (!provider.installed) {
     return "Install Antigravity in provider settings before sending.";
   }

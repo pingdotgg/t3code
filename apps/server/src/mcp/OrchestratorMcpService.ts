@@ -1482,7 +1482,15 @@ const make = Effect.gen(function* () {
     return { parent, target, shell, runCount } as const;
   });
 
-  const loadProviders = providerRegistry.getProviders;
+  const loadProviders = providerRegistry.getProviders.pipe(
+    Effect.map((providers) =>
+      providers.map((provider) =>
+        provider.models.some((model) => model.isUnavailable)
+          ? { ...provider, models: provider.models.filter((model) => !model.isUnavailable) }
+          : provider,
+      ),
+    ),
+  );
 
   const loadOrchestrationCapableInstanceIds = () =>
     readOrchestrationProviders().pipe(

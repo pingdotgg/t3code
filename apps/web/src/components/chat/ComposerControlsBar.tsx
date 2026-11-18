@@ -50,6 +50,7 @@ export function ComposerControlsBar(props: {
   selectedInstanceId: ProviderInstanceId;
   selectedModel: string;
   selectedProviderModels: ServerProvider["models"];
+  hostedModelCatalog: boolean;
   composerModelOptions: ReturnType<typeof useComposerProviderModel>["composerModelOptions"];
   reportedModelSelection: ChatComposerProps["reportedModelSelection"];
   promptUltrathink: PromptUltrathink;
@@ -159,6 +160,7 @@ export function ComposerControlsBar(props: {
   const applyRouteThreadModelPick = useStableCallback(() => applyThreadModelPick(routeThreadRef));
   const traitsInput = resolveComposerTraitsInput({
     provider: selectedProvider,
+    hostedModelCatalog: props.hostedModelCatalog,
     instanceId: selectedInstanceId,
     ...(routeKind === "server"
       ? { threadRef: routeThreadRef, onDraftModelOptionsChange: applyRouteThreadModelPick }

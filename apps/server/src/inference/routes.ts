@@ -8,6 +8,7 @@ import {
   type SettingsSecretValue,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
+import { formatModelSlugName } from "@t3tools/shared/model";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
@@ -36,6 +37,31 @@ export function inferencePath(method: string, rawUrl: string): string | null {
 
 export const isRetryableInferenceStatus = (status: number): boolean =>
   [401, 403, 429, 502, 503, 529].includes(status);
+
+export function inferenceRetryDelayMs(
+  retryAfter: string | undefined,
+  retryAfterMs: string | undefined,
+  now: number,
+) {
+  const numericDelay = (value: string | undefined, scale: number) => {
+    if (!value?.trim()) return undefined;
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount < 0) return undefined;
+    const delay = amount * scale;
+    return Number.isSafeInteger(Math.ceil(delay)) ? Math.ceil(delay) : undefined;
+  };
+  const millis = numericDelay(retryAfterMs, 1);
+  const seconds = retryAfter?.trim() ? Number(retryAfter) : Number.NaN;
+  const standard = Number.isFinite(seconds)
+    ? numericDelay(retryAfter, 1000)
+    : retryAfter
+      ? Date.parse(retryAfter) - now
+      : undefined;
+  return (
+    millis ??
+    (standard !== undefined && Number.isFinite(standard) && standard >= 0 ? standard : undefined)
+  );
+}
 
 export function inferenceTarget(method: string, rawUrl: string) {
   const linked = /^\/api\/inference\/linked\/([^/]+)\/([^/]+)(\/.*)$/.exec(rawUrl);
@@ -133,8 +159,9 @@ const ownedBy = (vendor: string, pattern: RegExp) => (model: ProxyModel) => {
   const owner = model.owned_by?.toLowerCase();
   return owner !== undefined && VENDORS.includes(owner) ? owner === vendor : pattern.test(model.id);
 };
+// Codex reports stream retries to the thread. Its inner HTTP retries can wait silently for minutes.
 const CODEX_PROVIDER = (baseUrl: string) =>
-  `model_providers.t3proxy={name="T3 inference",base_url="${baseUrl}/v1",env_key="T3_INFERENCE_KEY",wire_api="responses",supports_websockets=false,requires_openai_auth=false}`;
+  `model_providers.t3proxy={name="T3 inference",base_url="${baseUrl}/v1",env_key="T3_INFERENCE_KEY",wire_api="responses",request_max_retries=0,supports_websockets=false,requires_openai_auth=false}`;
 
 const configRecord = Schema.Record(Schema.String, Schema.Unknown);
 const isConfigRecord = Schema.is(configRecord);
@@ -366,5 +393,13 @@ export function withInferenceModelCatalog(
   // Codex and Claude ingest host discoveries through their custom model config.
   return models
     .filter((model) => hostedSlugs.has(model.slug))
-    .map((model) => (model.isCustom ? { ...model, isCustom: false } : model));
+    .map((model) =>
+      model.isCustom
+        ? {
+            ...model,
+            name: model.name === model.slug ? formatModelSlugName(model.slug) : model.name,
+            isCustom: false,
+          }
+        : model,
+    );
 }

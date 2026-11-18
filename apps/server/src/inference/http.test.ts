@@ -11,6 +11,7 @@ import * as InferenceHttp from "./http.ts";
 it("streams an authorized request with a host key, then denies the revoked consumer", async () => {
   let active = true;
   let throttled = false;
+  let unavailable = false;
   let closed = false;
   let upstreamCalls = 0;
   let linkedHost: string | undefined;
@@ -29,6 +30,17 @@ it("streams an authorized request with a host key, then denies the revoked consu
       signal.addEventListener("abort", () => {
         closed = true;
       });
+      if (unavailable)
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json(
+            { error: { code: "model_cooldown", message: "All credentials are cooling down." } },
+            {
+              status: 503,
+              headers: { "retry-after": "320" },
+            },
+          ),
+        );
       if (throttled)
         return HttpClientResponse.fromWeb(
           request,
@@ -83,7 +95,7 @@ it("streams an authorized request with a host key, then denies the revoked consu
                 : null,
             );
           },
-          hasFallback: () => Effect.succeed(false),
+          hasRoutePool: () => Effect.succeed(false),
           recordRouteOutcome: () => Effect.void,
         }),
       ),
@@ -134,6 +146,15 @@ it("streams an authorized request with a host key, then denies the revoked consu
     expect(limited.headers.get("retry-after")).toBe("60");
     expect(limited.headers.get("retry-after-ms")).toBe("1200000");
     expect(await limited.text()).toBe("quota");
+    unavailable = true;
+    const cooling = await handler(request("linked/codex/host/v1/messages?beta=true", "consumer"));
+    expect(cooling.headers.get("retry-after")).toBe("320");
+    expect(await cooling.json()).toEqual({
+      error: {
+        code: "model_cooldown",
+        message: "All credentials are cooling down. Retry after 320 seconds.",
+      },
+    });
     const health = await handler(
       new Request("http://t3.test/api/inference/linked/codex/host/health", {
         headers: { authorization: "Bearer consumer" },
@@ -158,7 +179,7 @@ it("streams an authorized request with a host key, then denies the revoked consu
         )
       ).status,
     ).toBe(403);
-    expect(upstreamCalls).toBe(4);
+    expect(upstreamCalls).toBe(5);
   } finally {
     await dispose();
   }
@@ -169,6 +190,7 @@ it("tries another authorized host for the same model after an upstream auth fail
   let recordedRetry: unknown;
   let primaryStatus = 403;
   let backupStatus = 200;
+  let available = true;
   const client = HttpClient.make((request) =>
     Effect.sync(() => {
       calls.push(request.url);
@@ -207,21 +229,25 @@ it("tries another authorized host for the same model after an upstream auth fail
         Layer.mock(InferenceProxy)({
           authorize: () => Effect.succeed({ baseUrl: "http://primary.test", key: "primary-key" }),
           routeCandidates: () =>
-            Effect.succeed([
-              {
-                baseUrl: "http://primary.test",
-                key: "primary-key",
-                models: ["claude-fable-5-2", "claude-alpha"],
-                hostId: EnvironmentId.make("primary"),
-              },
-              {
-                baseUrl: "http://backup.test",
-                key: "backup-key",
-                models: ["claude-fable-5-2", "claude-beta"],
-                hostId: EnvironmentId.make("backup"),
-              },
-            ]),
-          hasFallback: () => Effect.succeed(true),
+            Effect.succeed(
+              available
+                ? [
+                    {
+                      baseUrl: "http://primary.test",
+                      key: "primary-key",
+                      models: ["claude-fable-5-2", "claude-alpha"],
+                      hostId: EnvironmentId.make("primary"),
+                    },
+                    {
+                      baseUrl: "http://backup.test",
+                      key: "backup-key",
+                      models: ["claude-fable-5-2", "claude-beta"],
+                      hostId: EnvironmentId.make("backup"),
+                    },
+                  ]
+                : [],
+            ),
+          hasRoutePool: () => Effect.succeed(true),
           recordRouteOutcome: (input) =>
             Effect.sync(() => {
               if (input.status === 429) recordedRetry = input;
@@ -327,6 +353,13 @@ it("tries another authorized host for the same model after an upstream auth fail
     const invalid = await send();
     expect(invalid.status).toBe(400);
     expect(calls.slice(12)).toEqual(["http://backup.test/v1/messages"]);
+    available = false;
+    const unavailable = await send();
+    expect(unavailable.status).toBe(503);
+    expect(await unavailable.json()).toMatchObject({
+      error: { message: expect.stringContaining("claude-fable-5-2") },
+    });
+    expect(calls).toHaveLength(13);
   } finally {
     await dispose();
   }
@@ -356,7 +389,7 @@ it("streams an oversized chunked request once without losing its buffered prefix
               { baseUrl: "http://primary.test", key: "primary-key", models: ["claude-fable-5-2"] },
               { baseUrl: "http://backup.test", key: "backup-key", models: ["claude-fable-5-2"] },
             ]),
-          hasFallback: () => Effect.succeed(true),
+          hasRoutePool: () => Effect.succeed(true),
           recordRouteOutcome: () => Effect.void,
         }),
       ),

@@ -64,6 +64,8 @@ The host receives the model request, including its prompt and tool results.
 The agent runs tools and stores files and thread history on its executing environment.
 Choosing another host in Settings changes the same provider. Local inference is labeled **Claude** or **Codex**.
 Open the model picker or refresh provider status in Settings to update the model list.
+When every route serving a model reports a cooldown, the model stays visible as unavailable.
+You can choose another model or keep your selection until the host can serve it again.
 While a client is connected to the executing environment and other shared inference hosts,
 T3 discovers hosts that serve the same provider and saves them as fallback routes. If the
 selected host is unreachable, rejects authentication, or reaches a temporary limit, a new

@@ -55,6 +55,7 @@ export const InferenceDriver = Schema.Literals(INFERENCE_DRIVERS);
 export const InferenceRouteHealth = Schema.Struct({
   availableDrivers: Schema.Array(InferenceDriver),
   models: Schema.Array(Schema.String),
+  unavailableModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type InferenceRouteHealth = typeof InferenceRouteHealth.Type;
 

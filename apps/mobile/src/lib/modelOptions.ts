@@ -23,7 +23,10 @@ import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
-import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import {
+  resolveModelShortName,
+  unavailableModelReason,
+} from "@t3tools/client-runtime/provider-clients";
 import { resolveProvidersForCwd } from "@t3tools/client-runtime/providerSkills";
 
 export type ModelOption = {
@@ -224,12 +227,24 @@ export function isModelSelectionUnavailable(
   selection: ModelSelection | null | undefined,
   projectId: ProjectId | null,
 ): boolean {
+  const provider = config?.providers.find(
+    (candidate) => candidate.instanceId === selection?.instanceId,
+  );
+  return (
+    isProviderSelectionUnavailable(config, selection, provider, projectId) ||
+    (selection != null && unavailableModelReason(provider, selection.model) !== null)
+  );
+}
+
+function isProviderSelectionUnavailable(
+  config: T3ServerConfig | null | undefined,
+  selection: ModelSelection | null | undefined,
+  provider: T3ServerConfig["providers"][number] | undefined,
+  projectId: ProjectId | null,
+): boolean {
   if (!config || !selection) {
     return false;
   }
-  const provider = config.providers.find(
-    (candidate) => candidate.instanceId === selection.instanceId,
-  );
   if (isDisabledForProject(config, provider, selection.instanceId, projectId)) {
     return true;
   }
@@ -263,6 +278,8 @@ export function describeUnavailableModelSelection(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
   const driver = selectionDriver(config, selection.instanceId);
+  const modelReason = unavailableModelReason(provider, selection.model);
+  if (modelReason) return { title: "Model unavailable", detail: modelReason };
   if (isDriverDisallowed(config, driver)) {
     const label = providerDisplayLabel({
       driver: driver ?? selection.instanceId,
@@ -310,7 +327,7 @@ export function resolveSelectableModelSelection(
     isProviderEnabledForProject(config, provider, projectId) &&
     provider.installed &&
     provider.auth.status !== "unauthenticated" &&
-    !isModelSelectionUnavailable(config, selection, projectId)
+    !isProviderSelectionUnavailable(config, selection, provider, projectId)
     ? selection
     : null;
 }
@@ -455,7 +472,7 @@ export function buildModelOptions(
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
         isHidden: !model.isCustom && hiddenModels.has(model.slug),
         canHide: !model.isCustom,
-        ...(providerUnavailable ? { isUnavailable: true } : {}),
+        ...(providerUnavailable || model.isUnavailable ? { isUnavailable: true } : {}),
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         ...(updateRequired ? { providerUpdateRequired: updateRequired } : {}),

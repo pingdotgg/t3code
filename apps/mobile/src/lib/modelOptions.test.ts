@@ -427,6 +427,28 @@ describe("mobile model options", () => {
     expect(isModelSelectionUnavailable(config, disabled, null)).toBe(true);
     expect(isModelSelectionUnavailable(config, removed, null)).toBe(true);
     expect(resolveSelectableModelSelection(null, disabled, null)).toBe(disabled);
+    const cooling = {
+      ...config,
+      providers: config.providers.map((provider) => ({
+        ...provider,
+        models: [
+          {
+            slug: usable.model,
+            name: "GPT-5.6-Sol",
+            isUnavailable: true,
+            isCustom: false,
+            capabilities: null,
+          },
+        ],
+      })),
+    };
+    expect(isModelSelectionUnavailable(cooling, usable, null)).toBe(true);
+    expect(resolveSelectableModelSelection(cooling, usable, null)).toBe(usable);
+    expect(buildModelOptions(cooling, usable, undefined, null)[0]).toMatchObject({
+      selection: usable,
+      label: "GPT-5.6-Sol",
+      isUnavailable: true,
+    });
   });
 
   describe("Antigravity selections", () => {

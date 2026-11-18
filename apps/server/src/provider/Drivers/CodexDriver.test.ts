@@ -679,11 +679,17 @@ it.layer(layerTest)("CodexDriver", (it) => {
             ...CodexDriver.defaultConfig(),
             homePath,
             setupMode,
-            customModels: [model, model.slug],
+            customModels: [model, model.slug, "gpt-6.2-astra"],
           },
         });
         expect((yield* instance.snapshot.getSnapshot).models).toEqual([
           { ...model, isCustom: setupMode === "existing" },
+          {
+            slug: "gpt-6.2-astra",
+            name: setupMode === "inference" ? "GPT-6.2-Astra" : "gpt-6.2-astra",
+            capabilities: null,
+            isCustom: setupMode === "existing",
+          },
         ]);
       }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn)),
   );

@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 // @effect-diagnostics nodeBuiltinImport:off - prepares an isolated server and fake CLI binaries.
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -8,7 +9,7 @@ import * as Effect from "effect/Effect";
 
 import { APP_DIR } from "../e2e.config.ts";
 import { SECOND_HOME, startSecondServer } from "./second-server.ts";
-import { environmentId, runPromise, test, WEB } from "./t3.ts";
+import { environmentId, makeState, runPromise, test, WEB } from "./t3.ts";
 
 const fakeProxy = `#!/usr/bin/env node
 const { createServer } = require("node:http");
@@ -16,15 +17,23 @@ const { readFileSync } = require("node:fs");
 const config = JSON.parse(readFileSync(process.argv[process.argv.indexOf("-config") + 1], "utf8"));
 createServer((request, response) => {
   const { url, headers, method } = request;
-  const key = url === "/v0/management/auth-files"
+  const key = url.startsWith("/v0/management/")
     ? config.management["secret-key"]
     : config.access["api-keys"][0];
   let body;
   if (method === "GET" && headers.authorization === "Bearer " + key) {
+    const { models, coolingDown } = JSON.parse(readFileSync("./scenario-models.json", "utf8"));
     if (url === "/v0/management/auth-files")
-      body = { files: [{ name: "codex-fixture@example.invalid.json", provider: "codex", status: "active" }] };
+      body = { files: [{
+        name: "codex-fixture@example.invalid.json",
+        provider: "codex",
+        status: "active",
+        ...(coolingDown ? { cooldowns: [{ scope: "model", model_key: coolingDown, retry_at: "2099-01-01T00:00:00Z" }] } : {}),
+      }] };
+    else if (url.startsWith("/v0/management/auth-files/models?"))
+      body = { models: models.map((id) => ({ id })) };
     else if (url === "/v1/models")
-      body = { data: JSON.parse(readFileSync("./scenario-models.json", "utf8")).map((id) => ({ id, owned_by: "openai" })) };
+      body = { data: models.filter((id) => id !== coolingDown).map((id) => ({ id, owned_by: "openai" })) };
   }
   response.writeHead(body ? 200 : 404, { "content-type": "application/json" });
   response.end(JSON.stringify(body ?? {}));
@@ -89,7 +98,7 @@ async function prepare(home: string) {
   await NodeFSP.writeFile(NodePath.join(runtime, "cli-proxy-api"), fakeProxy, { mode: 0o755 });
   await NodeFSP.writeFile(codex, fakeCodex, { mode: 0o755 });
   await NodeFSP.writeFile(offlineModule, loopbackFetch);
-  await NodeFSP.writeFile(modelsFile, JSON.stringify([sol]));
+  await NodeFSP.writeFile(modelsFile, JSON.stringify({ models: [sol] }));
   const config: {
     enableProviderUpdateChecks: boolean;
     providerInstances: { codex: { config: { binaryPath: string } } };
@@ -108,7 +117,7 @@ async function prepare(home: string) {
 }
 
 test(
-  "The Codex switch connects to a hosted catalog and provider refresh adds newly advertised models",
+  "Hosted Codex models get display names and stay visible during a cooldown",
   WEB,
   async ({ t3, app, browser, screen }) => {
     await t3.project("demo");
@@ -116,6 +125,7 @@ test(
     try {
       const { host, token } = await server.ready;
       const machine = `machine=${encodeURIComponent(await runPromise(environmentId(host)))}`;
+      await makeState(SECOND_HOME).state.project("Hosted models");
       await t3.open("/settings/connections");
       await screen.getByRole("button", "Add environment").tap();
       const dialog = screen.getByRole("dialog");
@@ -139,12 +149,45 @@ test(
       await expect(details.getByText("Available", { exact: true })).toBeVisible();
       await expect(solRow).toBeVisible();
 
-      await NodeFSP.writeFile(modelsFile, JSON.stringify([sol, astra]));
-      await screen.getByRole("button", /refresh provider status|checked just now/i).tap();
+      const refresh = screen.getByRole("button", /refresh provider status|checked just now/i);
+      await NodeFSP.writeFile(modelsFile, JSON.stringify({ models: [sol, astra] }));
+      await refresh.tap();
       await expect(astraRow).toBeVisible();
       await expect(solRow).toBeVisible();
       await astraRow.scrollIntoView();
       await app.screenshot("hosted-models-after-refresh");
+
+      await app.open("/");
+      await screen.getByRole("button", "New thread", { exact: true }).tap();
+      await screen.getByRole("option", /Hosted models/).tap();
+      await expect(browser).toHaveURL(/\/draft\//);
+      const draft = await browser.evaluate(() => window.location.pathname);
+      const picker = browser.locator("[data-chat-provider-model-picker]");
+      const astraOption = screen.getByRole("option", /gpt-6\.2-astra/i);
+      const openPicker = async () => {
+        await picker.tap();
+        await screen.getByPlaceholder("Search models...").fill("6.2");
+      };
+      await openPicker();
+      await app.screenshot("hosted-models-in-composer");
+      await astraOption.tap();
+
+      const updateCatalog = async (coolingDown?: string) => {
+        await NodeFSP.writeFile(modelsFile, JSON.stringify({ models: [sol, astra], coolingDown }));
+        await app.open(`/settings/providers?${machine}&instanceId=codex`);
+        await refresh.tap();
+        await expect(refresh).toBeEnabled();
+        await app.open(draft);
+        await openPicker();
+      };
+      await updateCatalog(astra);
+      await app.screenshot("astra-during-cooldown");
+      await expect(astraOption).toBeDisabled();
+      await expect(picker).toHaveAttribute("aria-label", /GPT-6\.2-Astra.*Unavailable/);
+      await expect(screen.getByRole("option", /gpt-6\.2-sol/i)).toBeEnabled();
+      await updateCatalog();
+      await expect(screen.getByRole("option", /GPT-6\.2-Astra/)).toBeEnabled();
+      await expect(screen.getByRole("option", /GPT-6\.2-Sol/)).toBeEnabled();
     } finally {
       await server.stop();
     }

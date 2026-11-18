@@ -316,6 +316,48 @@ describe("instance-scoped model selection", () => {
       instanceId,
       model: "gpt-hosted-default",
     });
+    const cooling = {
+      ...entry!,
+      models: entry!.models.map((model) => ({ ...model, isUnavailable: model.isDefault })),
+    };
+    expect(getAppModelOptionsForInstance(settings, cooling)).toMatchObject([
+      { slug: "gpt-hosted-default", isUnavailable: true },
+      { slug: "gpt-hosted" },
+    ]);
+    expect(
+      resolveAppModelSelectionForInstance(
+        instanceId,
+        settings,
+        [{ ...entry!.snapshot, models: cooling.models }],
+        null,
+      ),
+    ).toBe("gpt-hosted");
+    const selected = createModelSelection(instanceId, "gpt-6.2-astra", [
+      { id: "reasoningEffort", value: "medium" },
+    ]);
+    const state = deriveEffectiveComposerModelState({
+      threadStarted: true,
+      draft: null,
+      providers,
+      selectedProvider: driver,
+      selectedInstanceId: instanceId,
+      threadModelSelection: selected,
+      projectModelSelection: null,
+      settings,
+    });
+    expect(state.selectedModel).toBe(selected.model);
+    expect(getAppModelOptionsForInstance(settings, entry!, state.selectedModel)).toContainEqual(
+      expect.objectContaining({ slug: selected.model, name: "GPT-6.2-Astra", isUnavailable: true }),
+    );
+    const dispatch = getComposerProviderState({
+      provider: driver,
+      model: state.selectedModel,
+      models: entry!.models,
+      hostedModelCatalog: true,
+      modelOptions: state.modelOptions?.[instanceId],
+      planModeEnabled: false,
+    });
+    expect(dispatch.modelOptionsForDispatch).toEqual(selected.options);
   });
 
   it("keeps custom models on the provider instance that declared them", () => {

@@ -92,7 +92,7 @@ import {
 import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import {
   deriveComposerSendState,
-  getAntigravitySendBlockReason,
+  getProviderModelSendBlockReason,
   resolveComposerInteractionMode,
   threadShellHasStarted,
 } from "../ChatView.logic";
@@ -958,6 +958,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProvider,
     selectedProviderModels,
     composerModelOptions,
+    hostedModelCatalog,
     selectedModel,
     composerProviderState,
   } = useComposerProviderModel({
@@ -1010,7 +1011,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? undefined
       : clampManagedRuntimeMode(managedPolicy, compatibleRuntimeMode, compatibleRuntimeModes);
 
-  const providerSendBlockReason = getAntigravitySendBlockReason(
+  const providerSendBlockReason = getProviderModelSendBlockReason(
     selectedProviderEntry?.snapshot,
     selectedModel,
   );
@@ -2657,6 +2658,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedInstanceId={selectedInstanceId}
       selectedModel={selectedModel}
       selectedProviderModels={selectedProviderModels}
+      hostedModelCatalog={hostedModelCatalog}
       composerModelOptions={composerModelOptions}
       reportedModelSelection={reportedModelSelection}
       promptUltrathink={promptUltrathink}

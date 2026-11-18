@@ -16,15 +16,22 @@ export function filterInferenceWorkspaceModels(
   snapshots: NonNullable<ServerProvider["workspaceSnapshots"]>,
 ): NonNullable<ServerProvider["workspaceSnapshots"]> {
   if (provider.driver !== "pi" && provider.driver !== "opencode") return snapshots;
-  const routedModels = new Set(
-    provider.models.filter((model) => model.slug.startsWith("t3proxy/")).map((model) => model.slug),
-  );
+  const routedModels = new Map(provider.models.map((model) => [model.slug, model]));
   const filtered = snapshots.map((snapshot) => {
     if (snapshot.models === undefined) return snapshot;
-    const models = snapshot.models.filter(
-      (model) => !model.slug.startsWith("t3proxy/") || routedModels.has(model.slug),
-    );
-    return models.length === snapshot.models.length ? snapshot : { ...snapshot, models };
+    const models = snapshot.models.flatMap((model) => {
+      if (!model.slug.startsWith("t3proxy/")) return [model];
+      const routed = routedModels.get(model.slug);
+      if (!routed) return [];
+      if (routed.isUnavailable === model.isUnavailable) return [model];
+      if (routed.isUnavailable) return [{ ...model, isUnavailable: true }];
+      const { isUnavailable: _unavailable, ...available } = model;
+      return [available];
+    });
+    return models.length === snapshot.models.length &&
+      models.every((model, i) => model === snapshot.models?.[i])
+      ? snapshot
+      : { ...snapshot, models };
   });
   return filtered.every((snapshot, index) => snapshot === snapshots[index]) ? snapshots : filtered;
 }
@@ -70,11 +77,13 @@ export const makeInferenceProviderHealth = Effect.fn("makeInferenceProviderHealt
         catalog.health.availableDrivers.some((driver) => driver === provider.driver)
           ? new Set(catalog.health.models)
           : new Set<string>();
-      const models = provider.models.filter((model) => {
-        if (!mixedCatalog) return servedModels.has(model.slug);
-        if (!model.slug.startsWith("t3proxy/")) return true;
-        const id = model.slug.slice("t3proxy/".length);
-        return route.inferenceModels.includes(id) && servedModels.has(id);
+      const unavailable = new Set("health" in catalog ? catalog.health.unavailableModels : []);
+      const models = provider.models.flatMap((model) => {
+        if (mixedCatalog && !model.slug.startsWith("t3proxy/")) return [model];
+        const id = mixedCatalog ? model.slug.slice("t3proxy/".length) : model.slug;
+        if (mixedCatalog && !route.inferenceModels.includes(id)) return [];
+        if (servedModels.has(id)) return [model];
+        return unavailable.has(id) ? [{ ...model, isUnavailable: true }] : [];
       });
       const problem =
         "problem" in catalog
@@ -103,15 +112,21 @@ export const makeInferenceProviderHealth = Effect.fn("makeInferenceProviderHealt
               message: problem,
             };
       }
-      return problem === undefined
-        ? { ...provider, models }
-        : {
-            ...provider,
-            availability: "unavailable" as const,
-            unavailableReason: problem,
-            status: "error" as const,
-            message: problem,
-          };
+      if (problem === undefined) return { ...provider, models };
+      if (models.some((model) => model.isUnavailable))
+        return {
+          ...provider,
+          models,
+          status: provider.status === "ready" ? ("warning" as const) : provider.status,
+          message: problem,
+        };
+      return {
+        ...provider,
+        availability: "unavailable" as const,
+        unavailableReason: problem,
+        status: "error" as const,
+        message: problem,
+      };
     },
     (effect, provider) =>
       effect.pipe(
