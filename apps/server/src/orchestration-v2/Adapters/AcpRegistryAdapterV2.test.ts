@@ -1997,8 +1997,8 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  // Copilot flattens MCP titles and reports kind "read" for MCP calls and glob; its native
-  // tool.execution_start event carries the real identity.
+  // Copilot flattens MCP titles and reports kind "read" for MCP calls and glob ("other" for rg);
+  // its native tool.execution_start event carries the real identity.
   it.effect.each(["glob", "rg"])("keeps Copilot's MCP and %s identity", (toolName) =>
     Effect.gen(function* () {
       const sessionId = "copilot-session";
