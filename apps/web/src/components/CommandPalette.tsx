@@ -1750,7 +1750,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:board",
     searchTerms: ["board", "kanban", "tasks", "status", "overview"],
-    title: "Open task board",
+    title: gt("Open task board"),
     icon: <KanbanIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/board" });

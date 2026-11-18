@@ -1,4 +1,4 @@
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ContextMenuSource, ScopedThreadRef } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -51,7 +51,12 @@ vi.mock("../../state/use-orchestration-command", () => ({
   useOrchestrationCommand: () => fixture.updateMetadata,
 }));
 
-type MenuCall = [ScopedThreadRef, { x: number; y: number }, ThreadContextMenuOptions | undefined];
+type MenuCall = [
+  ScopedThreadRef,
+  { x: number; y: number },
+  ContextMenuSource,
+  ThreadContextMenuOptions | undefined,
+];
 
 function SidebarMenuStub(props: { onMenu: (...args: MenuCall) => void }) {
   useProvideThreadContextMenu(props.onMenu);
@@ -90,7 +95,8 @@ describe("TaskBoardPage", () => {
       button: "right",
     });
     expect(onMenu).toHaveBeenCalledOnce();
-    const [threadRef, , options] = onMenu.mock.calls[0]!;
+    const [threadRef, , source, options] = onMenu.mock.calls[0]!;
+    expect(source).toBe("mouse");
     expect(threadRef).toEqual({ environmentId: "environment-one", threadId: "thread-done" });
 
     options?.onStartRename?.(threadRef, "Finished work");

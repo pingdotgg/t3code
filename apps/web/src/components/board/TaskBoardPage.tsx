@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import type { ContextMenuSource } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -81,7 +82,9 @@ const MOVE_KEYS: Partial<Record<string, BoardMoveDirection>> = {
 };
 const LAYOUT_STORAGE_KEY = "t3code:task-board:layout";
 const SavedLayoutSchema = Schema.NullOr(BoardLayoutSchema);
-const PANEL_LABELS = new Map(BOARD_PANELS.map((panel) => [panel.id, panel.label]));
+const PANEL_LABELS = new Map<BoardPanelId, string>(
+  BOARD_PANELS.map((panel) => [panel.id, panel.label]),
+);
 const RESIZE_KEY_STEP = 16;
 
 type DropTarget = { readonly panelId: BoardPanelId; readonly edge: BoardDropEdge };
@@ -189,6 +192,7 @@ const BoardPanelCards = memo(function BoardPanelCards(
     onShowMore: (panelId: BoardPanelId) => void;
   },
 ) {
+  const gt = useGT();
   const { items, limit } = props;
   return (
     // Horizontal wheel movement must chain to the board, so only the y axis is contained.
@@ -215,7 +219,7 @@ const BoardPanelCards = memo(function BoardPanelCards(
             onClick={() => props.onShowMore(props.panelId)}
             className="rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
           >
-            Show {Math.min(PAGE_SIZE, items.length - limit)} more
+            {gt("Show {count} more", { count: Math.min(PAGE_SIZE, items.length - limit) })}
           </button>
         ) : null}
       </div>
@@ -230,6 +234,7 @@ function BoardPanelHeader(props: {
   collapsed: boolean;
   onToggle: (panelId: BoardPanelId) => void;
 }) {
+  const gt = useGT();
   const { listeners, setNodeRef } = useDraggable({ id: props.panelId });
   const ToggleIcon = props.collapsed ? PanelLeftOpenIcon : PanelLeftCloseIcon;
   return (
@@ -245,7 +250,11 @@ function BoardPanelHeader(props: {
       <Button
         variant="ghost-muted"
         size="icon-micro"
-        aria-label={props.collapsed ? `Expand ${props.label}` : `Collapse ${props.label}`}
+        aria-label={
+          props.collapsed
+            ? gt("Expand {label}", { label: props.label })
+            : gt("Collapse {label}", { label: props.label })
+        }
         aria-expanded={!props.collapsed}
         aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
         onClick={() => props.onToggle(props.panelId)}
@@ -262,13 +271,14 @@ function BoardPanelRail(props: {
   count: number;
   onToggle: (panelId: BoardPanelId) => void;
 }) {
+  const gt = useGT();
   const { listeners, setNodeRef } = useDraggable({ id: props.panelId });
   return (
     <button
       ref={setNodeRef}
       {...listeners}
       type="button"
-      aria-label={`Expand ${props.label}`}
+      aria-label={gt("Expand {label}", { label: props.label })}
       aria-expanded={false}
       aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
       onClick={() => props.onToggle(props.panelId)}
@@ -364,6 +374,8 @@ function BoardPanelResizeHandle(props: {
   onResize: (weights: PanelWeights) => void;
   onReset: (panelId: BoardPanelId) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { upperId, lowerId, upperWeight, lowerWeight } = props;
   // The handle sits in the upper panel's frame; the lower frame is found in the same column.
   const measure = (handle: HTMLElement) => {
@@ -434,7 +446,10 @@ function BoardPanelResizeHandle(props: {
       {...handlers}
       role="separator"
       aria-orientation="horizontal"
-      aria-label={`Resize ${PANEL_LABELS.get(upperId)} and ${PANEL_LABELS.get(lowerId)}`}
+      aria-label={gt("Resize {upper} and {lower}", {
+        upper: m(PANEL_LABELS.get(upperId)!),
+        lower: m(PANEL_LABELS.get(lowerId)!),
+      })}
       aria-valuenow={Math.round((upperWeight * 100) / (upperWeight + lowerWeight))}
       aria-valuemin={0}
       aria-valuemax={100}
@@ -456,6 +471,8 @@ function BoardColumnResizeHandle(props: {
   width: number;
   onResize: (panelId: BoardPanelId, width: number | null) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { panelId, width } = props;
   // The width goes straight to the column while dragging and reaches state once, on release.
   const drag = useResizeDrag<HTMLDivElement>((event) => {
@@ -503,7 +520,7 @@ function BoardColumnResizeHandle(props: {
       {...handlers}
       role="separator"
       aria-orientation="vertical"
-      aria-label={`Resize ${PANEL_LABELS.get(panelId)} column`}
+      aria-label={gt("Resize {label} column", { label: m(PANEL_LABELS.get(panelId)!) })}
       aria-valuenow={width}
       aria-valuemin={BOARD_COLUMN_WIDTH.min}
       aria-valuemax={BOARD_COLUMN_WIDTH.max}
@@ -542,6 +559,8 @@ function findDropTarget(
 }
 
 export function TaskBoardPage() {
+  const gt = useGT();
+  const m = useMessages();
   const navigate = useNavigate();
   const threads = useVisibleThreadShells();
   const projects = useProjects();
@@ -590,7 +609,7 @@ export function TaskBoardPage() {
     const trimmed = title.trim();
     if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) return;
     if (trimmed.length === 0) {
-      toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
+      toastManager.add({ type: "warning", title: gt("Thread title cannot be empty") });
       return;
     }
     if (trimmed === thread.title) return;
@@ -603,8 +622,8 @@ export function TaskBoardPage() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to rename thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: gt("Failed to rename thread"),
+            description: error instanceof Error ? error.message : gt("An error occurred."),
           }),
         );
       }
@@ -680,14 +699,18 @@ export function TaskBoardPage() {
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         <WorkspacePageHeader electron={isElectron} className="border-b border-border">
-          <span className="text-sm font-medium text-foreground">Task board</span>
+          <span className="text-sm font-medium text-foreground">
+            <T>Task board</T>
+          </span>
         </WorkspacePageHeader>
         {threads.length === 0 ? (
           <Empty className="flex-1">
             <EmptyHeader>
-              <EmptyTitle>No threads yet</EmptyTitle>
+              <EmptyTitle>
+                <T>No threads yet</T>
+              </EmptyTitle>
               <EmptyDescription>
-                Threads from every project show up here by status.
+                <T>Threads from every project show up here by status.</T>
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -753,7 +776,7 @@ export function TaskBoardPage() {
                         >
                           <BoardPanel
                             panelId={panelId}
-                            label={PANEL_LABELS.get(panelId) ?? panelId}
+                            label={m(PANEL_LABELS.get(panelId)!)}
                             mode={mode}
                             items={groups[panelId]}
                             limit={shown[panelId] ?? PAGE_SIZE}
@@ -790,7 +813,7 @@ export function TaskBoardPage() {
             <DragOverlay dropAnimation={null}>
               {activeId === null ? null : (
                 <div className="w-48 cursor-grabbing rounded-lg border border-border bg-popover px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase shadow-lg">
-                  {PANEL_LABELS.get(activeId)} · {groups[activeId].length}
+                  {m(PANEL_LABELS.get(activeId)!)} · {groups[activeId].length}
                 </div>
               )}
             </DragOverlay>

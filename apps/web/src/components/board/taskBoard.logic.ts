@@ -1,3 +1,5 @@
+import { isListedThreadLineage } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import * as Schema from "effect/Schema";
 
 import {
@@ -7,11 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 
 import type { SidebarThreadSummary } from "../../types";
-import {
-  isSidebarHiddenThread,
-  resolveSidebarRowStatus,
-  type SidebarThreadStatus,
-} from "../Sidebar.logic";
+import { resolveSidebarRowStatus, type SidebarThreadStatus } from "../Sidebar.logic";
 
 export type BoardPanelId =
   | "attention"
@@ -22,15 +20,15 @@ export type BoardPanelId =
   | "snoozed"
   | "settled";
 
-export const BOARD_PANELS: ReadonlyArray<{ id: BoardPanelId; label: string }> = [
-  { id: "attention", label: "Needs you" },
-  { id: "working", label: "Working" },
-  { id: "failed", label: "Failed" },
-  { id: "waiting", label: "Waiting" },
-  { id: "done", label: "Done" },
-  { id: "snoozed", label: "Snoozed" },
-  { id: "settled", label: "Settled" },
-];
+export const BOARD_PANELS = [
+  { id: "attention", label: msg("Needs you") },
+  { id: "working", label: msg("Working") },
+  { id: "failed", label: msg("Failed") },
+  { id: "waiting", label: msg("Waiting") },
+  { id: "done", label: msg("Done") },
+  { id: "snoozed", label: msg("Snoozed") },
+  { id: "settled", label: msg("Settled") },
+] as const;
 
 export type BoardThread = Pick<
   SidebarThreadSummary,
@@ -98,7 +96,7 @@ export function groupThreadsByPanel<T extends BoardThread>(
     settled: [],
   };
   for (const thread of threads) {
-    if (thread.archivedAt !== null || isSidebarHiddenThread(thread)) continue;
+    if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) continue;
     groups[resolveBoardPanel(thread, now)].push(thread);
   }
   for (const panel of BOARD_PANELS) groups[panel.id].sort(compareBoardThreads);

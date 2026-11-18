@@ -322,7 +322,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           />
           <SidebarUtilityItem
             icon={<KanbanIcon />}
-            label="Task board"
+            label={gt("Task board")}
             isActive={isOnBoard}
             onClick={() => {
               closeMobileSidebar();
