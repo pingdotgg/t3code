@@ -170,14 +170,6 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const forceKillAfter = options.forceKillAfter ?? "5 seconds";
   const isWindows = yield* HostProcess.isWindows;
-  // T3 MCP credentials come from environmentForSession; inherited ones belong to whichever
-  // thread launched this server, so a terminal must never fall back to them. Windows treats
-  // variable names case-insensitively, so match the prefix regardless of case.
-  const inheritedEnvironment = Object.fromEntries(
-    Object.entries(options.environment ?? (yield* HostProcess.Environment)).filter(
-      ([name]) => !name.toUpperCase().startsWith("T3_ACP_MCP_"),
-    ),
-  );
   const creationPermit = yield* Semaphore.make(1);
   const terminals = new Map<string, ManagedAcpTerminal>();
   let nextTerminalNumber = 1;
@@ -240,6 +232,14 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
               `ACP terminal/create exceeded the limit of ${MAX_LIVE_TERMINALS} concurrent terminals.`,
             );
           }
+          // Thread credentials and identity must come from the requesting session.
+          const inheritedEnvironment = Object.fromEntries(
+            Object.entries(options.environment ?? (yield* HostProcess.Environment)).filter(
+              ([name]) =>
+                !name.toUpperCase().startsWith("T3_ACP_MCP_") &&
+                name.toUpperCase() !== "T3CODE_THREAD_ID",
+            ),
+          );
           const sessionEnvironment = options.environmentForSession?.(request.sessionId);
           const environment = mergeEnvironments(isWindows, [
             Object.entries(inheritedEnvironment),

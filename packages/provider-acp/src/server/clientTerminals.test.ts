@@ -99,32 +99,40 @@ describe("AcpClientTerminals", () => {
 
   it.live("resolves terminal environment from the requesting ACP session", () =>
     Effect.gen(function* () {
+      const inheritedEnvironment = yield* HostProcess.Environment;
       const terminals = yield* makeAcpClientTerminals({
         defaultCwd: process.cwd(),
         environmentForSession: (sessionId) =>
           sessionId === "unknown"
             ? undefined
-            : { T3_ACP_MCP_AUTHORIZATION: sessionId === "session-a" ? "token-a" : "token-b" },
+            : {
+                T3_ACP_MCP_AUTHORIZATION: sessionId === "session-a" ? "token-a" : "token-b",
+                T3CODE_THREAD_ID: sessionId,
+              },
       });
       yield* Effect.addFinalizer(() => terminals.disposeAll);
+      inheritedEnvironment.T3_TEST_INHERITED = "refreshed";
 
       for (const [sessionId, expected] of [
-        ["session-a", "token-a||kept|T3_TEST_OVERRIDE=request"],
-        ["session-b", "token-b||kept|T3_TEST_OVERRIDE=request"],
-        ["unknown", "||kept|T3_TEST_OVERRIDE=request"],
+        ["session-a", "token-a||session-a|refreshed|T3_TEST_OVERRIDE=request"],
+        ["session-b", "token-b||session-b|refreshed|T3_TEST_OVERRIDE=request"],
+        ["unknown", "|||refreshed|T3_TEST_OVERRIDE=inherited"],
       ] as const) {
         const created = yield* terminals.create({
           sessionId,
           command: process.execPath,
           args: [
             "-e",
-            "const env = process.env; process.stdout.write([env.T3_ACP_MCP_AUTHORIZATION ?? '', env.t3_Acp_Mcp_Endpoint ?? '', env.T3_TEST_INHERITED, ...Object.keys(env).filter((name) => name.toUpperCase() === 'T3_TEST_OVERRIDE').map((name) => name + '=' + env[name])].join('|'))",
+            "const env = process.env; process.stdout.write([env.T3_ACP_MCP_AUTHORIZATION ?? '', env.t3_Acp_Mcp_Endpoint ?? '', env.T3CODE_THREAD_ID ?? '', env.T3_TEST_INHERITED, ...Object.keys(env).filter((name) => name.toUpperCase() === 'T3_TEST_OVERRIDE').map((name) => name + '=' + env[name])].join('|'))",
           ],
-          env: [
-            { name: "T3_TEST_OVERRIDE", value: "first" },
-            { name: "t3_Test_Override", value: "second" },
-            { name: "T3_TEST_OVERRIDE", value: "request" },
-          ],
+          env:
+            sessionId === "unknown"
+              ? undefined
+              : [
+                  { name: "T3_TEST_OVERRIDE", value: "first" },
+                  { name: "t3_Test_Override", value: "second" },
+                  { name: "T3_TEST_OVERRIDE", value: "request" },
+                ],
         });
         yield* terminals.waitForExit({ sessionId, terminalId: created.terminalId });
         const output = yield* terminals.output({ sessionId, terminalId: created.terminalId });
@@ -135,6 +143,7 @@ describe("AcpClientTerminals", () => {
         ...process.env,
         T3_ACP_MCP_AUTHORIZATION: "launching-thread-token",
         t3_Acp_Mcp_Endpoint: "launching-thread-endpoint",
+        T3CODE_THREAD_ID: "launching-thread",
         T3_TEST_INHERITED: "kept",
         T3_TEST_OVERRIDE: "inherited",
       }),
