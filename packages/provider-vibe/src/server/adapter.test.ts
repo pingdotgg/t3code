@@ -10,7 +10,9 @@ import {
   RunAttemptId,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderThreadId,
   ThreadId,
+  type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -35,6 +37,7 @@ import { VibeSettings } from "../settings.ts";
 import { makeVibeAdapterV2 } from "./adapter.ts";
 import { withVibeAppServerClient } from "./appServerSupport.ts";
 import { makeVibeTextGeneration } from "./textGeneration.ts";
+import { checkVibeProviderStatus } from "./status.ts";
 
 const decodeSettings = Schema.decodeSync(VibeSettings);
 
@@ -148,6 +151,7 @@ const fakeVibeProcess = Effect.fn("fakeVibeProcess")(function* (
 /** Opens an adapter session against an in-memory vibe-app-server speaking line-delimited JSON-RPC. */
 const openFakeVibe = Effect.fn("openFakeVibe")(function* (
   reply?: (method: string, params: Record<string, unknown>) => FakeReply | undefined,
+  existingProviderThread?: OrchestrationV2ProviderThread,
 ) {
   const { spawner, send, responses, takeRequest } = yield* fakeVibeProcess(reply);
   const instanceId = ProviderInstanceId.make("vibe");
@@ -177,7 +181,9 @@ const openFakeVibe = Effect.fn("openFakeVibe")(function* (
     Effect.forkScoped({ startImmediately: true }),
   );
 
-  const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+  const providerThread =
+    existingProviderThread ??
+    (yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy }));
   const takeEvent = <T extends ProviderAdapter.ProviderAdapterV2Event["type"]>(type: T) =>
     Effect.gen(function* () {
       while (true) {
@@ -206,6 +212,102 @@ const millis = (value: DateTime.Utc | null) =>
   value === null ? null : DateTime.toEpochMillis(value);
 
 describe("Vibe adapter against an in-memory app-server", () => {
+  it.effect(
+    "keeps unavailable account data unknown and reports missing credentials for installed providers",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          for (const unauthorized of [false, true]) {
+            const { spawner } = yield* fakeVibeProcess((method) => {
+              if (unauthorized && method === "session/start")
+                return { error: { code: "unauthorized", message: "Missing MISTRAL_API_KEY" } };
+              if (method === "account/read")
+                return { result: { account: { status: "unavailable" } } };
+              return undefined;
+            });
+            const status = yield* checkVibeProviderStatus(
+              decodeSettings({ enabled: true }),
+              {},
+              process.cwd(),
+            ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+            expect(status.installed).toBe(true);
+            expect(status.auth.status).toBe(unauthorized ? "unauthenticated" : "unknown");
+            expect(status.status).toBe("warning");
+          }
+        }),
+      ),
+  );
+
+  it.effect("preserves the orchestrator's provider thread id on resume and streamed turns", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const {
+          runtime,
+          providerThread,
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          notify,
+          takeEvent,
+        } = yield* openFakeVibe((method) =>
+          method === "session/history/list" ? { result: { items: [] } } : undefined,
+        );
+        const id = ProviderThreadId.make("orchestrator-thread");
+        const resumed = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          existingProviderThread: { ...providerThread, id },
+        });
+        expect(resumed.id).toBe(id);
+        yield* notify("turn/started", { turn: { id: "stable-thread-turn" } });
+        expect((yield* takeEvent("provider_turn.updated")).providerTurn.providerThreadId).toBe(id);
+        let attached = false;
+        const restarted = yield* openFakeVibe((method) => {
+          if (method === "session/resume") attached = true;
+          if (method === "session/read")
+            return { result: { state: { session: { id: "native-session" } } } };
+          if (method === "session/history/list")
+            return {
+              result: {
+                items: [
+                  {
+                    id: "u1",
+                    type: "message",
+                    role: "user",
+                    turnId: "t1",
+                    content: [{ type: "text", text: "one" }],
+                  },
+                  {
+                    id: "u2",
+                    type: "message",
+                    role: "user",
+                    turnId: "t2",
+                    content: [{ type: "text", text: "two" }],
+                  },
+                ],
+              },
+            };
+          if (method === "session/rewind" && !attached)
+            return { error: { code: "conflict", message: "Session is not attached" } };
+          return undefined;
+        }, resumed);
+        const snapshot = yield* restarted.runtime.readThreadSnapshot({ providerThread: resumed });
+        const restored = yield* restarted.runtime.rollbackThread({
+          providerThread: resumed,
+          providerThreadTurns: snapshot.providerTurns,
+          target: {
+            type: "provider_turn",
+            providerTurn: snapshot.providerTurns[0]!,
+            appRunOrdinal: 1,
+            checkpointId: CheckpointId.make("restart-restore"),
+          },
+        });
+        expect(restored.providerTurns.map((turn) => turn.nativeTurnRef?.nativeId)).toEqual(["t1"]);
+      }).pipe(Effect.provide(layerTest)),
+    ),
+  );
+
   it.effect("declines a non-interactive callback while keeping the protocol reader open", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -567,6 +669,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
         });
         yield* runtime.startTurn(input(1));
         expect(yield* takeRequest("turn/start")).toMatchObject({
+          clientUserMessageId: "message-1",
           message: [
             { type: "text", text: "Fix this layout" },
             {
@@ -609,6 +712,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
         expect(yield* takeRequest("config/model/write")).toMatchObject({ reasoningEffort: "low" });
         const second = (yield* takeEvent("provider_turn.updated")).providerTurn;
         expect(second).toMatchObject({
+          ordinal: 3,
           nodeId: input(3).rootNodeId,
           runAttemptId: input(3).attemptId,
         });
@@ -623,6 +727,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
         );
         yield* runtime.steerTurn({ ...steer, providerTurnId: second.id });
         expect(yield* takeRequest("turn/steer")).toMatchObject({
+          clientUserMessageId: "message-3",
           expectedTurnId: "turn-2",
           message: [
             { type: "text", text: "Fix this layout" },
@@ -917,14 +1022,14 @@ describe("Vibe adapter against an in-memory app-server", () => {
           });
         }
 
-        const providerTurn = snapshot.providerTurns[1]!;
+        const providerTurn = snapshot.providerTurns[0]!;
         const rewoundSnapshot = yield* runtime.rollbackThread({
           providerThread,
           providerThreadTurns: snapshot.providerTurns,
           target: {
             type: "provider_turn",
             providerTurn,
-            appRunOrdinal: 2,
+            appRunOrdinal: 1,
             checkpointId: CheckpointId.make("rewind"),
           },
         });

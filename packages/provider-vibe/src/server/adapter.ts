@@ -220,6 +220,7 @@ interface RunIdentity {
   readonly runAttemptId: RunAttemptId;
   readonly rootNodeId: NodeId;
   readonly ordinal: number;
+  readonly providerTurnOrdinal: number;
 }
 
 interface AdoptionEvent {
@@ -502,8 +503,6 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         const turn = asRecord(record["turn"]);
         const nativeTurnId = str(turn?.["id"]);
         if (!nativeTurnId || !state.thread) return;
-        const ordinal = state.turnOrdinals.get(nativeTurnId) ?? state.turnOrdinals.size + 1;
-        state.turnOrdinals.set(nativeTurnId, ordinal);
         const providerTurnId = idAllocator.derive.providerTurn({
           driver: VIBE_PROVIDER,
           nativeTurnId,
@@ -511,6 +510,13 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         if (state.observedTurns.has(nativeTurnId)) return;
         const run = state.startingRun;
         state.startingRun = undefined;
+        let ordinal = run?.providerTurnOrdinal ?? state.turnOrdinals.get(nativeTurnId);
+        if (ordinal === undefined) {
+          ordinal = 1;
+          for (const assigned of state.turnOrdinals.values())
+            ordinal = Math.max(ordinal, assigned + 1);
+        }
+        state.turnOrdinals.set(nativeTurnId, ordinal);
         const providerTurn: OrchestrationV2ProviderTurn = {
           id: providerTurnId,
           providerThreadId: state.thread.id,
@@ -1010,11 +1016,13 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       );
       const createdAt = yield* DateTime.now;
       const thread: OrchestrationV2ProviderThread = {
-        id: idAllocator.derive.providerThread({
-          driver: VIBE_PROVIDER,
-          providerInstanceId: options.instanceId,
-          nativeThreadId,
-        }),
+        id:
+          ensureInput.existingProviderThread?.id ??
+          idAllocator.derive.providerThread({
+            driver: VIBE_PROVIDER,
+            providerInstanceId: options.instanceId,
+            nativeThreadId,
+          }),
         driver: VIBE_PROVIDER,
         providerInstanceId: options.instanceId,
         providerSessionId,
@@ -1207,10 +1215,12 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         runAttemptId: turnInput.attemptId,
         rootNodeId: turnInput.rootNodeId,
         ordinal: turnInput.runOrdinal,
+        providerTurnOrdinal: turnInput.providerTurnOrdinal,
       };
       const { turn } = yield* connection.client
         .turnStart({
           sessionId: nativeSessionId,
+          clientUserMessageId: turnInput.message.messageId,
           message: [{ type: "text", text: promptText }, ...images],
         })
         .pipe(
@@ -1253,6 +1263,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       yield* Effect.mapError(
         connection.client.turnSteer({
           sessionId: nativeSessionId,
+          clientUserMessageId: steerInput.message.messageId,
           expectedTurnId: activeTurn.nativeTurnId,
           message: [{ type: "text", text: steerInput.message.text }, ...images],
         }),
@@ -1438,7 +1449,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           nodeId: observed?.nodeId ?? providerThread.ownerNodeId ?? NodeId.make(`vibe-root-${id}`),
           runAttemptId: observed?.runAttemptId ?? null,
           nativeTurnRef: nativeRef(id),
-          ordinal: index + 1,
+          ordinal: observed?.ordinal ?? state.turnOrdinals.get(id) ?? index + 1,
           status:
             status === "in_progress"
               ? "running"
@@ -1504,7 +1515,6 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             checkpointId: rollbackInput.target.checkpointId,
           });
         }
-        // session/rewind takes a history entry id, not a turn id: resolve the input entry of the target turn.
         const targetTurnId = rollbackInput.target.providerTurn.nativeTurnRef?.nativeId;
         if (!targetTurnId) {
           return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
@@ -1513,36 +1523,60 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             checkpointId: rollbackInput.target.checkpointId,
           });
         }
-        // session/rewind takes a history entry id, not a turn id: resolve the input entry of the
-        // target turn across all history pages so older targets are found too.
+        if (connection.attachedSessionId !== nativeSessionId) {
+          yield* adoptThread({
+            threadId: input.threadId,
+            existingProviderThread: rollbackInput.providerThread,
+            modelSelection: input.modelSelection,
+            runtimePolicy: input.runtimePolicy,
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                  driver: VIBE_PROVIDER,
+                  providerThreadId: rollbackInput.providerThread.id,
+                  checkpointId: rollbackInput.target.checkpointId,
+                  cause,
+                }),
+            ),
+          );
+        }
         const historyEntries = yield* readAllHistoryEntries(nativeSessionId);
-        const anchor = historyEntries.findIndex(
+        const targetIndex = historyEntries.findIndex(
           (entry) => str(entry["turnId"]) === targetTurnId && str(entry["role"]) === "user",
         );
-        const entryId = str(historyEntries[anchor]?.["id"]);
-        if (entryId === undefined) {
+        if (targetIndex < 0) {
           return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
             driver: VIBE_PROVIDER,
             providerThreadId: rollbackInput.providerThread.id,
             checkpointId: rollbackInput.target.checkpointId,
           });
         }
-        const rewind = yield* Effect.mapError(
-          connection.client.request("session/rewind", {
-            sessionId: nativeSessionId,
-            entryId,
-            inplace: true,
-          }),
-          (cause) =>
-            new ProviderAdapter.ProviderAdapterRollbackThreadError({
-              driver: VIBE_PROVIDER,
-              providerThreadId: rollbackInput.providerThread.id,
-              checkpointId: rollbackInput.target.checkpointId,
-              cause,
-            }),
+        // Native rewind drops its anchor; T3 keeps the target turn, so anchor the next input.
+        const nextInput = historyEntries.findIndex(
+          (entry, index) =>
+            index > targetIndex &&
+            str(entry["role"]) === "user" &&
+            str(entry["turnId"]) !== targetTurnId,
         );
-        // Rewind removes its anchor. Use the retained prefix and returned state without
-        // another RPC, so an acknowledgement is enough to finish T3's checkpoint restore.
+        const anchor = nextInput < 0 ? historyEntries.length : nextInput;
+        const rewind =
+          nextInput < 0
+            ? undefined
+            : yield* Effect.mapError(
+                connection.client.request("session/rewind", {
+                  sessionId: nativeSessionId,
+                  entryId: str(historyEntries[anchor]?.["id"]),
+                  inplace: true,
+                }),
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                    driver: VIBE_PROVIDER,
+                    providerThreadId: rollbackInput.providerThread.id,
+                    checkpointId: rollbackInput.target.checkpointId,
+                    cause,
+                  }),
+              );
         const nativeState = decodeNativeSessionState(asRecord(rewind)?.["state"]);
         const retainedHistory = historyEntries.slice(0, anchor);
         const snapshot = yield* buildThreadSnapshot(

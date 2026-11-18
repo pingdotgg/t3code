@@ -271,11 +271,13 @@ export class VibeAppServerClient extends Context.Service<
     readonly turnStart: (input: {
       sessionId: string;
       message: ReadonlyArray<unknown>;
+      clientUserMessageId?: string | undefined;
     }) => Effect.Effect<{ readonly turn: PublicTurn }, VibeError.VibeAppServerError>;
     readonly turnSteer: (input: {
       sessionId: string;
       expectedTurnId: string;
       message: ReadonlyArray<unknown>;
+      clientUserMessageId?: string | undefined;
     }) => Effect.Effect<unknown, VibeError.VibeAppServerError>;
     readonly turnInterrupt: (input: {
       sessionId: string;
@@ -491,6 +493,9 @@ export const make = Effect.fn("@t3tools/vibe-app-server/VibeAppServerClient.make
         sessionId: input.sessionId,
         expectedTurnId: input.expectedTurnId,
         message: input.message,
+        ...(input.clientUserMessageId !== undefined
+          ? { clientUserMessageId: input.clientUserMessageId }
+          : {}),
       });
     }),
     turnInterrupt: Effect.fn("VibeAppServerClient.turnInterrupt")(function* (input) {
