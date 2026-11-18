@@ -71,13 +71,19 @@ export function rubberBandClampDerivative(
   return (c * d * d) / (c * diff + d) ** 2;
 }
 
-/** Legacy wheelDeltaY distinguishes discrete 120-unit notches from precise trackpad deltas;
+/** Legacy wheelDelta distinguishes discrete 120-unit notches from precise trackpad deltas;
  * ambiguous pixel events remain swipe gestures. */
 export function isDiscreteWheel(event: WheelEvent): boolean {
   if (event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) return true;
-  const legacy = (event as WheelEvent & { wheelDeltaY?: number }).wheelDeltaY;
+  const sideways = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+  const { wheelDeltaX, wheelDeltaY } = event as WheelEvent & {
+    wheelDeltaX?: number;
+    wheelDeltaY?: number;
+  };
+  const legacy = sideways ? wheelDeltaX : wheelDeltaY;
+  const delta = sideways ? event.deltaX : event.deltaY;
   if (typeof legacy !== "number" || legacy === 0 || legacy % 120 !== 0) return false;
-  return legacy !== -3 * event.deltaY && legacy !== -event.deltaY;
+  return legacy !== -3 * delta && legacy !== -delta;
 }
 
 /** Wheel deltas in px; a notch in lines or pages counts as one screenful step anyway. */
@@ -85,6 +91,65 @@ export function wheelDeltaPx(delta: number, event: WheelEvent): number {
   if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return delta * 40;
   if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return delta * 800;
   return delta;
+}
+
+const WHEEL_EASE_MS = 40;
+const wheelChases = new WeakMap<HTMLElement, { target: number; time: number; position: number }>();
+let reducedMotion: MediaQueryList | null = null;
+
+export function wheelScrollTarget(
+  position: number,
+  pending: number | undefined,
+  delta: number,
+  max: number,
+): number {
+  const base =
+    pending !== undefined && Math.sign(pending - position) === Math.sign(delta)
+      ? pending
+      : position;
+  return Math.min(Math.max(base + delta, 0), Math.max(0, max));
+}
+
+export function wheelChaseStep(position: number, target: number, elapsedMs: number): number {
+  const next = target + (position - target) * Math.exp(-elapsedMs / WHEEL_EASE_MS);
+  return Math.abs(target - next) < 0.5 ? target : next;
+}
+
+export function scrollLeftByWheel(element: HTMLElement, event: WheelEvent, delta: number): boolean {
+  const position = element.scrollLeft;
+  const max = element.scrollWidth - element.clientWidth;
+  reducedMotion ??= window.matchMedia("(prefers-reduced-motion: reduce)");
+  if (!isDiscreteWheel(event) || reducedMotion.matches) {
+    wheelChases.delete(element);
+    element.scrollLeft = position + delta;
+    return Math.min(Math.max(position + delta, 0), max) !== position;
+  }
+  const chase = wheelChases.get(element);
+  const target = wheelScrollTarget(position, chase?.target, delta, max);
+  if (chase) {
+    chase.target = target;
+    return true;
+  }
+  if (target === position) return false;
+  const state = { target, time: performance.now(), position };
+  wheelChases.set(element, state);
+  const step = (time: number) => {
+    if (wheelChases.get(element) !== state) return;
+    if (!element.isConnected) {
+      wheelChases.delete(element);
+      return;
+    }
+    state.target = Math.min(state.target, element.scrollWidth - element.clientWidth);
+    if (Math.abs(element.scrollLeft - state.position) > 1) state.position = element.scrollLeft;
+    const next = wheelChaseStep(state.position, state.target, Math.max(0, time - state.time));
+    state.time = Math.max(time, state.time);
+    state.position = next;
+    element.scrollLeft = next;
+    if (next === state.target) wheelChases.delete(element);
+    else requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  return true;
 }
 
 function scrollsSideways(element: Element): boolean {

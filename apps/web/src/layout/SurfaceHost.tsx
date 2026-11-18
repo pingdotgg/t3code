@@ -12,7 +12,12 @@ import { StatusDot } from "../components/ui/status-dot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn, isMacPlatform } from "../lib/utils";
-import { scrollTabStripFromRow, sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
+import {
+  scrollLeftByWheel,
+  scrollTabStripFromRow,
+  sidewaysWheelScrollsStrip,
+  wheelDeltaPx,
+} from "../motion/gesture";
 import { noteStripScroll, PaneMotionSnapshot, usePaneMotion } from "../motion/paneMotion";
 import {
   ChatPanelAnimationSuppressionProvider,
@@ -974,7 +979,7 @@ export function LayoutSurfaceHost({
       event.preventDefault();
       settleStripCamera();
       noteUserStripScroll();
-      scroller.scrollLeft += wheelDeltaPx(delta, event);
+      scrollLeftByWheel(scroller, event, wheelDeltaPx(delta, event));
     };
     root.parentElement?.append(chrome);
     const stop = observeResize([root, scroller, stage], update);
@@ -1008,7 +1013,7 @@ export function LayoutSurfaceHost({
       event.preventDefault();
       settleStripCamera();
       noteUserStripScroll();
-      scroller.scrollLeft += wheelDeltaPx(delta, event);
+      scrollLeftByWheel(scroller, event, wheelDeltaPx(delta, event));
     };
     const onWheel = (event: WheelEvent) => {
       if (held(event) && Math.abs(event.deltaX) > Math.abs(event.deltaY))
