@@ -1,3 +1,5 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { T, useGT, Var } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import {
   isAtomCommandInterrupted,
@@ -14,6 +16,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
 import { Linking, Pressable, ScrollView, TextInput, useWindowDimensions, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { m } from "../../i18n/messages";
 
 import type { MenuAction } from "@react-native-menu/menu";
 
@@ -36,13 +39,14 @@ import { CLAUDE_DRIVER } from "./claude-accounts";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 export function SettingsProviderAccountsRouteScreen() {
+  const gt = useGT();
   const environmentMenu = useSettingsEnvironmentMenu();
   const { selectedTargets } = useSettingsEnvironmentFilter();
   const permittedEnvironments = useEnvironmentsWithScope(selectedTargets, AuthProvidersManageScope);
   const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const insets = useSafeAreaInsets();
   return (
-    <SettingsScreen title="Providers" menus={[environmentMenu]}>
+    <SettingsScreen title={gt("Providers")} menus={[environmentMenu]}>
       <ScreenScrollView
         className="flex-1"
         contentInsetAdjustmentBehavior="automatic"
@@ -50,15 +54,22 @@ export function SettingsProviderAccountsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         {selectedTargets.length === 0 ? (
-          <Text className="text-foreground-muted">Select a connected environment.</Text>
+          <Text className="text-foreground-muted">
+            <T>Select a connected environment.</T>
+          </Text>
         ) : (
           selectedTargets.map((environment) => (
             <SettingsSection key={environment.environmentId} title={environment.label}>
               {!permittedEnvironments.has(environment.environmentId) ? (
                 <View className="gap-1 p-4">
-                  <Text className="text-base text-foreground">Limited permissions</Text>
+                  <Text className="text-base text-foreground">
+                    <T>Limited permissions</T>
+                  </Text>
                   <Text className="text-sm text-foreground-muted">
-                    {`This session can view ${environment.label}'s providers but can't change their settings.`}
+                    {gt(
+                      "This session can view {environment}''s providers but can't change their settings.",
+                      { environment: environment.label },
+                    )}
                   </Text>
                 </View>
               ) : (
@@ -103,7 +114,7 @@ function EnvironmentProviders({
       ))}
       {accounts.length === 0 ? (
         <Text className="p-4 text-foreground-muted">
-          Configure a provider with in-app sign-in in web or desktop Settings.
+          <T>Configure a provider with in-app sign-in in web or desktop Settings.</T>
         </Text>
       ) : null}
       {claudeAccounts.map((provider) => (
@@ -139,6 +150,7 @@ function ProviderAccount({
   readonly provider: ServerProvider;
   readonly divider: boolean;
 }) {
+  const gt = useGT();
   const environmentId = environment.environmentId;
   const instanceId = provider.instanceId;
   const target = { environmentId, input: { instanceId } };
@@ -149,6 +161,10 @@ function ProviderAccount({
   const complete = useAtomCommand(serverEnvironment.completeProviderAuth, options);
   const cancel = useAtomCommand(serverEnvironment.cancelProviderAuth, options);
   const logout = useAtomCommand(serverEnvironment.logoutProviderAuth, options);
+  const removeMethod = useAtomCommand(serverEnvironment.removeProviderAuthMethod, options);
+  const canRemoveMethod = useAtomValue(
+    serverEnvironment.removeProviderAuthMethod.permissionAtom(environmentId),
+  );
   // Matches ListRowLayout: large text stacks the action below instead of squeezing the status.
   const stacked = useWindowDimensions().fontScale >= 1.5;
   const [pending, setPending] = useState(false);
@@ -191,7 +207,11 @@ function ProviderAccount({
     if (result._tag === "Success") return true;
     if (!isAtomCommandInterrupted(result)) {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not update provider sign-in.");
+      setError(
+        failure instanceof Error
+          ? (errorDisplayMessage(failure, m) ?? failure.message)
+          : gt("Could not update provider sign-in."),
+      );
     }
     return false;
   }
@@ -243,34 +263,52 @@ function ProviderAccount({
     active || state?.phase === "failed" || state?.phase === "cancelled"
       ? state.message
       : !provider.enabled
-        ? "Turned off"
+        ? gt("Turned off")
         : signedIn
-          ? "Signed in"
+          ? gt("Signed in")
           : isDiscovering
-            ? "Discovering sign-in methods…"
+            ? gt("Discovering sign-in methods…")
             : needsExternalSetup
-              ? "No in-app sign-in advertised. Follow the provider's docs to finish setup."
+              ? gt("No in-app sign-in advertised. Follow the provider's docs to finish setup.")
               : !provider.installed
-                ? "Not installed"
+                ? gt("Not installed")
                 : usesCredentials
-                  ? "Connect to load models"
-                  : "Not signed in";
+                  ? gt("Connect to load models")
+                  : gt("Not signed in");
   // A provider with several sign-in methods picks one from a menu on the same control.
   const methodActions: MenuAction[] = methods.map((method) => ({
     id: `method:${method.id}`,
     title: method.name,
   }));
+  const removableMethods = methods.filter((method) => method.canRemove);
+  const removeActions: MenuAction[] = removableMethods.length
+    ? [
+        {
+          id: "remove",
+          title: gt("Remove incomplete connection"),
+          attributes: { disabled: disabled || active || !canRemoveMethod },
+          subactions: removableMethods.map((method) => ({
+            id: `remove:${method.id}`,
+            title: method.name,
+            attributes: { destructive: true, disabled: disabled || active || !canRemoveMethod },
+          })),
+        },
+      ]
+    : [];
   function startSignIn(methodId?: string) {
     void run(() => start(methodId ? { environmentId, input: { instanceId, methodId } } : target));
   }
   function signOut() {
     Dialog.alert(
-      "Sign out?",
-      `Running threads sharing this sign-in on ${environment.label} will stop. Thread history is kept.`,
+      gt("Sign out?"),
+      gt(
+        "Running threads sharing this sign-in on {environment} will stop. Thread history is kept.",
+        { environment: environment.label },
+      ),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: gt("Cancel"), style: "cancel" },
         {
-          text: "Sign out",
+          text: gt("Sign out"),
           style: "destructive",
           onPress: () => {
             void run(() => logout(target));
@@ -283,15 +321,21 @@ function ProviderAccount({
     if (id === "signOut") signOut();
     // iOS keeps a disabled submenu's children selectable, so sign-in guards here too.
     else if (signInDisabled) return;
-    else if (id.startsWith("method:")) startSignIn(id.slice("method:".length));
+    else if (id.startsWith("remove:")) {
+      if (active || !canRemoveMethod) return;
+      const methodId = id.slice("remove:".length);
+      if (!removableMethods.some((method) => method.id === methodId)) return;
+      void run(() => removeMethod({ environmentId, input: { instanceId, methodId } }));
+    } else if (id.startsWith("method:")) startSignIn(id.slice("method:".length));
     else if (id === "change") startSignIn();
   }
   const accountActions: MenuAction[] = [
+    ...removeActions,
     ...(canSignIn
       ? [
           {
             id: "change",
-            title: "Change account",
+            title: gt("Change account"),
             image: "person.crop.circle",
             attributes: { disabled: signInDisabled },
             ...(methodActions.length > 1
@@ -309,7 +353,7 @@ function ProviderAccount({
       ? [
           {
             id: "signOut",
-            title: "Sign out",
+            title: gt("Sign out"),
             image: "rectangle.portrait.and.arrow.right",
             attributes: { destructive: true, disabled: disabled || state === null },
           },
@@ -323,18 +367,18 @@ function ProviderAccount({
   ) : needsExternalSetup && provider.setup?.documentationUrl ? (
     <ControlPill
       variant="pill"
-      label="Docs"
+      label={gt("Docs")}
       onPress={() => {
         void Linking.openURL(provider.setup!.documentationUrl!).catch(() =>
-          setError("Could not open the provider docs."),
+          setError(gt("Could not open the provider docs.")),
         );
       }}
     />
   ) : active && state?.flowId ? (
     <ControlPill
       variant="pill"
-      label="Cancel"
-      accessibilityLabel={`Cancel ${name} sign-in`}
+      label={gt("Cancel")}
+      accessibilityLabel={gt("Cancel {provider} sign-in", { provider: name })}
       disabled={disabled}
       onPress={() => {
         void run(() => cancel({ environmentId, input: { instanceId, flowId: state.flowId! } }));
@@ -344,29 +388,40 @@ function ProviderAccount({
     <Menu
       accessible
       accessibilityRole="button"
-      accessibilityLabel={`${name} account options`}
+      accessibilityLabel={gt("{provider} account options", { provider: name })}
       title={name}
       actions={accountActions}
       onPressAction={({ nativeEvent }) => onMenuAction(nativeEvent.event)}
     >
-      <ControlPill icon="ellipsis" accessibilityLabel={`${name} account options`} />
+      <ControlPill
+        icon="ellipsis"
+        accessibilityLabel={gt("{provider} account options", { provider: name })}
+      />
     </Menu>
   ) : canSignIn && !signedIn && methodActions.length > 1 && !signInDisabled ? (
     <Menu
       accessible
       accessibilityRole="button"
-      accessibilityLabel={`Sign in to ${name}`}
-      title="Sign in with"
-      actions={methodActions}
+      accessibilityLabel={gt("Sign in to {provider}", { provider: name })}
+      title={gt("Sign in with")}
+      actions={[...methodActions, ...removeActions]}
       onPressAction={({ nativeEvent }) => onMenuAction(nativeEvent.event)}
     >
-      <ControlPill variant="primary" label="Sign in" accessibilityLabel={`Sign in to ${name}`} />
+      <ControlPill
+        variant="primary"
+        label={gt("Sign in")}
+        accessibilityLabel={gt("Sign in to {provider}", { provider: name })}
+      />
     </Menu>
   ) : canSignIn && !signedIn ? (
     <ControlPill
       variant="primary"
-      label={usesCredentials ? "Connect" : "Sign in"}
-      accessibilityLabel={usesCredentials ? `Connect to ${name}` : `Sign in to ${name}`}
+      label={usesCredentials ? gt("Connect") : gt("Sign in")}
+      accessibilityLabel={
+        usesCredentials
+          ? gt("Connect to {provider}", { provider: name })
+          : gt("Sign in to {provider}", { provider: name })
+      }
       disabled={signInDisabled}
       onPress={() => startSignIn()}
     />
@@ -392,7 +447,9 @@ function ProviderAccount({
         <View className="gap-2 px-4 pb-3">
           {interaction?.type === "deviceCode" ? (
             <Text selectable className="text-foreground">
-              Enter code {interaction.userCode} on the sign-in page.
+              <T>
+                Enter code <Var>{interaction.userCode}</Var> on the sign-in page.
+              </T>
             </Text>
           ) : null}
           {interaction?.type === "terminal" ? (
@@ -402,10 +459,10 @@ function ProviderAccount({
                   {interaction.output.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")}
                 </Text>
               </ScrollView>
-              {field("input", "Terminal response", true)}
+              {field("input", gt("Terminal response"), true)}
               <SettingsActionRow
                 icon="arrow.up"
-                label="Send response"
+                label={gt("Send response")}
                 disabled={disabled}
                 onPress={() => {
                   void send({ type: "terminal", data: `${values.input ?? ""}\r` }).then((sent) => {
@@ -422,7 +479,7 @@ function ProviderAccount({
               ))}
               <SettingsActionRow
                 icon="person.crop.circle"
-                label="Connect"
+                label={gt("Connect")}
                 disabled={disabled}
                 onPress={() => {
                   void send({ type: "credentials", values }).then((sent) => {
@@ -434,10 +491,10 @@ function ProviderAccount({
           ) : null}
           {showCallback ? (
             <>
-              {field("callback", "Final localhost URL", false)}
+              {field("callback", gt("Final localhost URL"), false)}
               <SettingsActionRow
                 icon="arrow.right"
-                label="Continue"
+                label={gt("Continue")}
                 disabled={disabled || !values.callback?.trim()}
                 onPress={() => {
                   if (!state?.flowId) return;
@@ -463,7 +520,7 @@ function ProviderAccount({
       {url ? (
         <SettingsActionRow
           icon="globe"
-          label="Open sign-in page"
+          label={gt("Open sign-in page")}
           disabled={disabled}
           onPress={() => {
             void (async () => {
@@ -474,7 +531,7 @@ function ProviderAccount({
               )
                 return;
               await Linking.openURL(url);
-            })().catch(() => setError("Could not open the sign-in page."));
+            })().catch(() => setError(gt("Could not open the sign-in page.")));
           }}
         />
       ) : null}
@@ -491,6 +548,7 @@ function ProviderAccountSummary({
   readonly status: string | null | undefined;
   readonly email: string | undefined;
 }) {
+  const gt = useGT();
   const [revealed, setRevealed] = useState(false);
   const content = (
     <>
@@ -517,7 +575,7 @@ function ProviderAccountSummary({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={[name, status, revealed ? email : null].filter(Boolean).join(", ")}
-      accessibilityHint={revealed ? "Hides the account email" : "Reveals the account email"}
+      accessibilityHint={revealed ? gt("Hides the account email") : gt("Reveals the account email")}
       onPress={() => setRevealed((value) => !value)}
       className="min-w-0 shrink grow gap-0.5"
     >

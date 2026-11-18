@@ -1,8 +1,15 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { SourceControlProviderKind } from "@t3tools/contracts";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
 const { parseAuth } = AzureDevOpsSourceControlProvider.discovery;
@@ -24,4 +31,150 @@ it("reads the signed-in Azure account and says when az is signed out", () => {
     "unauthenticated",
   );
   assert.strictEqual(parseAuth(processOutput("\n")).status, "unknown");
+});
+
+it.effect("names the remote's repository when reading the default branch", () => {
+  const run = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>(() =>
+    Effect.succeed(
+      processOutput(
+        JSON.stringify({
+          name: "My Repo",
+          webUrl: "https://dev.azure.com/acme/project/_git/My%20Repo",
+          remoteUrl: "https://dev.azure.com/acme/project/_git/My%20Repo",
+          sshUrl: "git@ssh.dev.azure.com:v3/acme/project/My%20Repo",
+          defaultBranch: "refs/heads/master",
+        }),
+      ),
+    ),
+  );
+  const support = Layer.mergeAll(
+    TestSourceControlHost.layer({ process: { run } }),
+    NodeServices.layer,
+  );
+  return Effect.gen(function* () {
+    const provider = yield* AzureDevOpsSourceControlProvider.make;
+    for (const [remoteUrl, repository, scoped] of [
+      ["https://acme@dev.azure.com/acme/project/_git/My%20Repo", "My Repo", true],
+      ["https://dev.azure.com/acme/project/_git/My%20Repo?view=x#readme", "My Repo", false],
+      ["https://acme.visualstudio.com/DefaultCollection/project/_git/My%20Repo/", "My Repo", false],
+      ["git@ssh.dev.azure.com:v3/acme/project/My%20Repo", "My Repo", true],
+      ["ssh://git@ssh.dev.azure.com/v3/acme/project/My%20Repo", "My Repo", true],
+      ["https://dev.azure.com/acme/project/_git/service.git", "service.git", true],
+      ["https://dev.azure.com/acme/project/_git/-repo", "-repo", true],
+      ["https://dev.azure.com/acme/project/_git/%40.env", null, false],
+    ] as const) {
+      run.mockClear();
+      const branch = yield* provider.getDefaultBranch({
+        cwd: "/repo",
+        context: {
+          provider: {
+            kind: SourceControlProviderKind.make("azure-devops"),
+            name: "Azure DevOps",
+            baseUrl: "https://dev.azure.com",
+          },
+          remoteName: "origin",
+          remoteUrl,
+        },
+      });
+      if (repository === null) {
+        assert.strictEqual(branch, null, remoteUrl);
+        assert.strictEqual(run.mock.calls.length, 0, remoteUrl);
+        continue;
+      }
+      assert.strictEqual(branch, "master", remoteUrl);
+      const args = [...(run.mock.calls.find(([input]) => input.command !== "git")?.[0].args ?? [])];
+      assert.include(args, `--repository=${repository}`, remoteUrl);
+      // The selected remote names the project, not the checkout's primary remote.
+      if (scoped) assert.include(args, "--project=project", remoteUrl);
+    }
+  }).pipe(Effect.provide(AzureDevOpsCli.layer.pipe(Layer.provideMerge(support))));
+});
+
+it.effect(
+  "looks up a branch's pull requests a full page at a time, past forks' same-named branches",
+  () =>
+    Effect.gen(function* () {
+      const provider = yield* AzureDevOpsSourceControlProvider.make;
+      assert.deepStrictEqual(
+        provider.headBranchProbe?.({
+          headSelectors: ["octocat:feature", "feature"],
+          state: "open",
+        }),
+        { headSelectors: ["feature"], limit: 100 },
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
+          TestSourceControlHost.layer(),
+        ),
+      ),
+    ),
+);
+
+it.effect.each([
+  [
+    "creates a missing branch from the fetched head",
+    [],
+    ["fetchRemoteBranch:upstream/feature/x->feature/x"],
+  ],
+  ["fetches without resetting an existing branch", ["feature/x"], ["fetchRemoteTrackingBranch"]],
+] as const)("checks a pull request out with git and %s", ([, localBranches, fetches]) => {
+  const calls: Array<string> = [];
+  return Effect.gen(function* () {
+    const provider = yield* AzureDevOpsSourceControlProvider.make;
+    yield* provider.checkoutChangeRequest({
+      cwd: "/repo",
+      reference: "42",
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("azure-devops"),
+          name: "Azure DevOps",
+          baseUrl: "https://dev.azure.com",
+        },
+        remoteName: "upstream",
+        remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+      },
+    });
+    assert.deepStrictEqual(calls, [...fetches, "switchRef:feature/x"]);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
+          getPullRequest: () =>
+            Effect.succeed({
+              number: 42,
+              title: "Change",
+              url: "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
+              baseRefName: "main",
+              headRefName: "feature/x",
+              state: "open",
+              isCrossRepository: false,
+              closedAt: null,
+              mergedAt: null,
+              updatedAt: Option.none(),
+            }),
+        }),
+        TestSourceControlHost.layer({
+          git: {
+            listLocalBranchNames: () => Effect.succeed([...localBranches]),
+            fetchRemoteBranch: (input) => {
+              calls.push(
+                `fetchRemoteBranch:${input.remoteName}/${input.remoteBranch}->${input.localBranch}`,
+              );
+              return Effect.void;
+            },
+            fetchRemoteTrackingBranch: () => {
+              calls.push("fetchRemoteTrackingBranch");
+              return Effect.void;
+            },
+            switchRef: (input) => {
+              calls.push(`switchRef:${input.refName}`);
+              return Effect.succeed({ refName: input.refName });
+            },
+          },
+        }),
+      ),
+    ),
+  );
 });
