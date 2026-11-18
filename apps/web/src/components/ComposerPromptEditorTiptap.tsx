@@ -15,6 +15,7 @@ import {
 } from "@tiptap/core";
 import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { useGT } from "gt-react";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
 import { isHistoryTransaction } from "@tiptap/pm/history";
 import {
@@ -90,6 +91,7 @@ import {
   markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
+  serializedMarkdownOffset,
   serializeSelection,
   skillChipReplacements,
   splitOrLiftListItem,
@@ -285,6 +287,7 @@ const ComposerMentionExtension = Node.create({
 });
 
 function ComposerMentionNodeView({ node }: NodeViewProps) {
+  const gt = useGT();
   const actions = use(ComposerContextActionsContext);
   const path = (node.attrs.path as string) ?? "";
   const nativeDrag = useNativeFileDrag(actions.environmentId, () =>
@@ -297,7 +300,7 @@ function ComposerMentionNodeView({ node }: NodeViewProps) {
       dir="ltr"
       render={<button type="button" />}
       onClick={() => actions.openMention(path)}
-      aria-label={`Preview ${path}`}
+      aria-label={gt("Preview {path}", { path })}
       contentEditable={false}
       spellCheck={false}
       data-composer-mention-chip="true"
@@ -1641,7 +1644,7 @@ function ComposerPromptEditorTiptapInner(
         },
       );
     }
-    selectMarkdownOffset(editor, normalizedExpandedCursor);
+    selectMarkdownOffset(editor, value, normalizedExpandedCursor);
     const map = serializeEditorDoc(editor.state.doc);
     if (isFocused) scrollTiptapCaretIntoView(editor);
     // A redraw later in this commit drops the editor's scroll offset, so reveal on the next frame.
@@ -1720,7 +1723,7 @@ function ComposerPromptEditorTiptapInner(
     const boundedCursor = clampEditorCursor(snapshotRef.current.value, nextCursor);
     const expandedCursor =
       exactExpandedCursor ?? expandEditorCursor(snapshotRef.current.value, boundedCursor);
-    selectMarkdownOffset(editor, expandedCursor);
+    selectMarkdownOffset(editor, snapshotRef.current.value, expandedCursor);
     scrollTiptapCaretIntoView(editor);
     if (boundedCursor === snapshotRef.current.cursor) return;
     snapshotRef.current = {
@@ -1948,10 +1951,13 @@ function insertMarkdownParagraphs(
 }
 
 /** Placing the caret can show Markdown markers, so place it again in the shown source. */
-function selectMarkdownOffset(editor: TiptapEditor, offset: number): void {
+function selectMarkdownOffset(editor: TiptapEditor, source: string, offset: number): void {
   for (let pass = 0; pass < 2; pass += 1) {
     const map = serializeEditorDoc(editor.state.doc);
-    const pos = flatToPm(map, markdownToFlat(map, offset));
+    const pos = flatToPm(
+      map,
+      markdownToFlat(map, serializedMarkdownOffset(source, map.value, offset)),
+    );
     const { selection } = editor.state;
     if (pass > 0 && selection.empty && selection.from === pos) return;
     editor.commands.setTextSelection(pos);

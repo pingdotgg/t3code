@@ -136,6 +136,9 @@ describe("highlighting edited fences", () => {
   it("highlights a gitignore fence with the ini grammar, as chat does", async () => {
     await mountFence("*.log\n!keep.log", () => THEME, 'gitignore title=".gitignore"');
 
-    expect(vi.mocked(getSyntaxHighlighterPromise)).toHaveBeenLastCalledWith("ini");
+    expect(vi.mocked(getSyntaxHighlighterPromise)).toHaveBeenLastCalledWith("ini", {
+      light: THEME,
+      dark: THEME,
+    });
   });
 });
