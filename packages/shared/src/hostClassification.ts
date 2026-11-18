@@ -14,15 +14,15 @@ const parseIpv4Address = (host: string): readonly number[] | null => {
 
 const parseIpv4MappedIpv6Address = (host: string): readonly number[] | null => {
   const normalized = normalizeHostname(host);
-  if (!normalized.startsWith("::ffff:")) return null;
-  const suffix = normalized.slice("::ffff:".length);
-  const dotted = parseIpv4Address(suffix);
-  if (dotted?.join(".") === suffix) return dotted;
-  const hextets = suffix.split(":");
-  if (hextets.length !== 2 || hextets.some((part) => !/^[\da-f]{1,4}$/u.test(part))) return null;
-  const high = Number.parseInt(hextets[0]!, 16);
-  const low = Number.parseInt(hextets[1]!, 16);
-  return [high >>> 8, high & 0xff, low >>> 8, low & 0xff];
+  // parseIpv6Address normalizes again; brackets left after this pass must not be stripped twice.
+  if (/[[\]]/u.test(normalized)) return null;
+  const tailStart = normalized.lastIndexOf(":") + 1;
+  const tail = normalized.slice(tailStart);
+  const dotted = parseIpv4Address(tail);
+  if (tail.includes(".") && dotted?.join(".") !== tail) return null;
+  const ipv6 = parseIpv6Address(dotted ? `${normalized.slice(0, tailStart)}0:0` : normalized);
+  if (!ipv6 || !ipv6PrefixMatches(ipv6, [0, 0, 0, 0, 0, 0xffff, 0, 0], 96)) return null;
+  return dotted ?? [ipv6[6]! >>> 8, ipv6[6]! & 0xff, ipv6[7]! >>> 8, ipv6[7]! & 0xff];
 };
 
 const parseIpv6Address = (host: string): readonly number[] | null => {

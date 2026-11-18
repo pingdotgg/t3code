@@ -116,6 +116,8 @@ describe("isLocalLoopbackHost", () => {
       "::ffff:127.0.0.1",
       new URL("http://[::ffff:127.0.0.1]:3773/").hostname,
       "::ffff:7fff:fffe",
+      "0:0:0:0:0:ffff:7f00:1",
+      "0:0:0:0:0:FFFF:127.0.0.1",
     ]) {
       expect(isLocalLoopbackHost(host), host).toBe(true);
     }
@@ -128,6 +130,8 @@ describe("isLocalLoopbackHost", () => {
       "::ffff:127.0x0.0.1",
       "::ffff:127.0.0.1e0",
       "::ffff:127.0.0.256",
+      "0:0:0:0:0:ffff:127..0.1",
+      "[[[::ffff:7f00:1]]]",
     ]) {
       expect(isLocalLoopbackHost(host), host).toBe(false);
     }
