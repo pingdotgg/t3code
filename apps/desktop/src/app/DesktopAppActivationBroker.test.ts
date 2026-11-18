@@ -68,6 +68,20 @@ describe("DesktopAppActivationBroker", () => {
     broker.close();
   });
 
+  it("settles a waitForRenderer request when dispatch throws", async () => {
+    const broker = new DesktopAppActivationBroker({ requestTimeoutMs: 1_000, activate: vi.fn() });
+    const response = broker.request(request, { waitForRenderer: true });
+    broker.registerRenderer(() => {
+      throw new Error("webContents was destroyed");
+    });
+    broker.clearRenderer();
+    const send = vi.fn();
+    broker.registerRenderer(send);
+    expect(send).not.toHaveBeenCalled();
+    await expect(response).resolves.toMatchObject({ ok: false, code: "renderer-unavailable" });
+    broker.close();
+  });
+
   it("never sends a canceled request that was queued behind another request", async () => {
     const send = vi.fn();
     const broker = new DesktopAppActivationBroker({ requestTimeoutMs: 1_000, activate: vi.fn() });

@@ -4,6 +4,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -48,7 +49,7 @@ describe("renderKdeServiceMenu", () => {
   });
 });
 
-describe("renderNautilusScript", () => {
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("renderNautilusScript", () => {
   const runScript = (input: {
     readonly args: ReadonlyArray<string>;
     readonly launcherName: string;
@@ -125,40 +126,44 @@ it.layer(NodeServices.layer)("DesktopLinuxFolderMenu.register", (it) => {
       yield* menu.register;
     });
 
-  it.effect("installs executable Dolphin and Nautilus entries that launch the AppImage", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const dataDir = yield* fileSystem.makeTempDirectoryScoped();
-      yield* registerIn(dataDir);
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "installs executable Dolphin and Nautilus entries that launch the AppImage",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const dataDir = yield* fileSystem.makeTempDirectoryScoped();
+        yield* registerIn(dataDir);
 
-      const servicePath = `${dataDir}/kio/servicemenus/com.t3tools.T3Code.OpenFolder.desktop`;
-      const scriptPath = `${dataDir}/nautilus/scripts/Open in T3 Code (Alpha)`;
-      assert.include(
-        yield* fileSystem.readFileString(servicePath),
-        'Exec="/opt/T3-Code.AppImage" --open-folder=%f',
-      );
-      assert.include(
-        yield* fileSystem.readFileString(servicePath),
-        `Icon=${dataDir}/icons/com.t3tools.T3Code.desktop.png`,
-      );
-      assert.include(yield* fileSystem.readFileString(scriptPath), "'/opt/T3-Code.AppImage'");
-      assert.equal(((yield* fileSystem.stat(servicePath)).mode & 0o777).toString(8), "755");
-      assert.equal(((yield* fileSystem.stat(scriptPath)).mode & 0o777).toString(8), "755");
-    }).pipe(Effect.scoped),
+        const servicePath = `${dataDir}/kio/servicemenus/com.t3tools.T3Code.OpenFolder.desktop`;
+        const scriptPath = `${dataDir}/nautilus/scripts/Open in T3 Code (Alpha)`;
+        assert.include(
+          yield* fileSystem.readFileString(servicePath),
+          'Exec="/opt/T3-Code.AppImage" --open-folder=%f',
+        );
+        assert.include(
+          yield* fileSystem.readFileString(servicePath),
+          `Icon=${dataDir}/icons/com.t3tools.T3Code.desktop.png`,
+        );
+        assert.include(yield* fileSystem.readFileString(scriptPath), "'/opt/T3-Code.AppImage'");
+        assert.equal(((yield* fileSystem.stat(servicePath)).mode & 0o777).toString(8), "755");
+        assert.equal(((yield* fileSystem.stat(scriptPath)).mode & 0o777).toString(8), "755");
+      }).pipe(Effect.scoped),
   );
 
-  it.effect("repairs a lost executable bit on an otherwise current entry", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const dataDir = yield* fileSystem.makeTempDirectoryScoped();
-      yield* registerIn(dataDir);
-      const servicePath = `${dataDir}/kio/servicemenus/com.t3tools.T3Code.OpenFolder.desktop`;
-      yield* fileSystem.chmod(servicePath, 0o644);
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "repairs a lost executable bit on an otherwise current entry",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const dataDir = yield* fileSystem.makeTempDirectoryScoped();
+        yield* registerIn(dataDir);
+        const servicePath = `${dataDir}/kio/servicemenus/com.t3tools.T3Code.OpenFolder.desktop`;
+        yield* fileSystem.chmod(servicePath, 0o644);
 
-      yield* registerIn(dataDir);
+        yield* registerIn(dataDir);
 
-      assert.equal(((yield* fileSystem.stat(servicePath)).mode & 0o777).toString(8), "755");
-    }).pipe(Effect.scoped),
+        assert.equal(((yield* fileSystem.stat(servicePath)).mode & 0o777).toString(8), "755");
+      }).pipe(Effect.scoped),
   );
 
   it.effect("writes nothing for unpackaged runs or other platforms", () =>

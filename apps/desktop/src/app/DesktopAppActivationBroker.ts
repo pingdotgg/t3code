@@ -120,11 +120,17 @@ export class DesktopAppActivationBroker {
       if (pending.dispatched) continue;
       try {
         pending.dispatched = true;
-        renderer(pending.request);
         pending.timeout ??= this.#startTimeout(pending.request.requestId);
+        renderer(pending.request);
       } catch {
-        pending.dispatched = false;
         this.#renderer = null;
+        this.#settle(
+          failure(
+            pending.request.requestId,
+            "renderer-unavailable",
+            "The T3 Code window could not receive the project request.",
+          ),
+        );
       }
       return;
     }

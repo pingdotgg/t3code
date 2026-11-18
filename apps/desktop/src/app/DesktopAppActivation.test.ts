@@ -14,6 +14,14 @@ import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppContr
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { make } from "./DesktopAppActivation.ts";
 import { afterEach, describe, expect } from "vite-plus/test";
 
 import { startDesktopAppControlServer } from "./DesktopAppActivation.ts";
@@ -164,3 +172,40 @@ describe("desktop app control server", () => {
     }),
   );
 });
+
+it.effect("rejects folder opening when the local environment is disabled", () =>
+  Effect.gen(function* () {
+    const errors: string[] = [];
+    const activation = yield* make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            stateDir: "/isolated/userdata",
+            platform: "linux",
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          Layer.mock(DesktopWindow.DesktopWindow, {
+            activate: Effect.die("unexpected activation"),
+          }),
+          Layer.succeed(
+            ElectronWindow.ElectronWindow,
+            {} as ElectronWindow.ElectronWindow["Service"],
+          ),
+          Layer.succeed(ElectronDialog.ElectronDialog, {
+            showErrorBox: (_title, message) =>
+              Effect.sync(() => {
+                errors.push(message);
+              }),
+          } as ElectronDialog.ElectronDialog["Service"]),
+          Layer.succeed(DesktopAppSettings.DesktopAppSettings, {
+            get: Effect.succeed({ localEnvironmentEnabled: false }),
+          } as DesktopAppSettings.DesktopAppSettings["Service"]),
+        ),
+      ),
+    );
+    yield* activation.openWorkspace("/workspace/project");
+    expect(errors).toEqual([
+      "Enable the local environment in Settings before opening a folder on this computer.",
+    ]);
+  }),
+);

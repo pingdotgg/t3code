@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 
 import type * as Electron from "electron";
 
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL } from "../ipc/channels.ts";
@@ -300,6 +301,7 @@ const { logWarning } = makeComponentLogger("desktop-app-activation");
 export const make = Effect.gen(function* () {
   const desktopEnvironment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const path = yield* Path.Path;
@@ -393,6 +395,13 @@ export const make = Effect.gen(function* () {
       return yield* Effect.sync(() => broker.complete(response));
     }),
     openWorkspace: Effect.fn("DesktopAppActivation.openWorkspace")(function* (workspaceRoot) {
+      if (!(yield* desktopSettings.get).localEnvironmentEnabled) {
+        yield* electronDialog.showErrorBox(
+          "Could not open folder",
+          "Enable the local environment in Settings before opening a folder on this computer.",
+        );
+        return;
+      }
       const response = yield* Effect.promise(() =>
         broker.request(
           {
