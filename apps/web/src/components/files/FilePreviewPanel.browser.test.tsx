@@ -505,11 +505,13 @@ describe("open file in preview browser", () => {
       truncated: false,
     };
     await using screen = await render(filePreview("page.html"));
-    const button = screen.getByRole("button", { name: "Open file in preview browser" });
+    const actions = screen.getByRole("button", { name: "More file actions" });
 
-    await userEvent.click(button);
+    await userEvent.click(actions);
+    await userEvent.click(screen.getByRole("menuitem", { name: "Open file in preview browser" }));
     await vi.waitFor(() => expect(state.openedBrowserUrls).toHaveLength(1));
-    await userEvent.click(button);
+    await userEvent.click(actions);
+    await userEvent.click(screen.getByRole("menuitem", { name: "Open file in preview browser" }));
     await vi.waitFor(() => expect(state.openedBrowserUrls).toHaveLength(2));
 
     expect(state.openedBrowserUrls[1], "the second click reused the first signed URL").not.toBe(
