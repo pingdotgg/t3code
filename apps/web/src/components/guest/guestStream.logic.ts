@@ -108,6 +108,7 @@ export function applyGuestStreamEvent(
       return {
         ...state,
         projection: mergeOlderHistoryIntoProjection(state.projection, event.page.items),
+        partial: event.page.hasMoreHistory ? state.partial : null,
         awaitingRowIds: withoutPlaced(
           state.awaitingRowIds,
           event.page.items.map((row) => row.item),
