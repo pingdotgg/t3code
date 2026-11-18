@@ -7,7 +7,6 @@ import { expect } from "e2e";
 import { T3_HOME } from "../e2e.config.ts";
 import { makeState, runPromise, test, WEB } from "./t3.ts";
 
-const FOREGROUND = "Started it in the background.";
 const COMPLETION = "The background command printed DONE.";
 const ACP = `
 import { unwatchFile, watchFile } from "node:fs";
@@ -33,7 +32,7 @@ for await (const line of createInterface({ input: process.stdin })) {
   } else if (method === "session/new") {
     respond(id, { sessionId });
   } else if (method === "session/prompt") {
-    chunk(${JSON.stringify(FOREGROUND)});
+    chunk("Started it in the background.");
     respond(id, { stopReason: "end_turn" });
     // Hermes sends the follow-up on the root session, without another prompt response.
     const gate = process.argv[2];
@@ -100,7 +99,10 @@ test(
           status: string;
           reply: string | null;
         };
-        if (result.status !== "completed" || !result.reply?.includes(FOREGROUND)) {
+        if (
+          result.status !== "completed" ||
+          !result.reply?.includes("Started it in the background.")
+        ) {
           throw new Error(
             `Hermes foreground turn did not complete: ${started.stdout} ${started.stderr}`,
           );
@@ -109,12 +111,10 @@ test(
       }
       if (threadId === undefined) throw new Error("Could not start the Hermes foreground turn.");
 
-      try {
-        await t3.open({ threadId });
-        await screen.getByText(FOREGROUND, { exact: true }).waitFor({ timeout: 60_000 });
-      } catch (cause) {
-        throw new Error("The browser did not reach the Hermes foreground reply.", { cause });
-      }
+      await t3.open({ threadId });
+      await screen
+        .getByText("Started it in the background.", { exact: true })
+        .waitFor({ timeout: 60_000 });
       await NodeFSP.writeFile(gate, "");
       try {
         await expect(screen.getByText(COMPLETION, { exact: true })).toBeVisible({
