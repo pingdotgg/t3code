@@ -308,6 +308,20 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   const active = strip.querySelector<HTMLElement>("[data-joined]")!;
   expect(joinOffset(strip)).toBe(tabOffset(strip, active.dataset.layoutPaneTab!));
 
+  const closed = strip.querySelector<HTMLElement>("[data-layout-pane-tab]")!;
+  const joinedAt = joinOffset(strip);
+  useLayoutStore.getState().closeTab(closed.dataset.layoutPaneTab!);
+  await vi.waitFor(() => expect(joinOffset(strip)).not.toBe(joinedAt));
+  expect(strip.scrollLeft).toBe(140);
+
+  const overflowEnd = strip.style.getPropertyValue("--strip-overflow-end");
+  strip.style.maxWidth = `${strip.offsetWidth - 40}px`;
+  await vi.waitFor(() =>
+    expect(strip.style.getPropertyValue("--strip-overflow-end")).not.toBe(overflowEnd),
+  );
+  expect(strip.scrollLeft).toBe(140);
+  strip.style.removeProperty("max-width");
+
   await userEvent.wheel(header.querySelector('button[aria-label="New tab"]')!, {
     delta: { x: -140 },
   });
