@@ -4361,21 +4361,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               toolCall.toolCallId,
             ),
           });
-          let recoveredPage =
-            mcpIdentity === undefined
-              ? context.recoveredHtmlRenders.get(toolCall.toolCallId)
-              : undefined;
-          if (mcpIdentity === undefined && recoveredPage === undefined && status === "completed") {
-            // Some agents (Droid in script mode) report T3 calls with no MCP name or _meta; only a
-            // page this thread published identifies the call.
-            const failed =
-              compactDynamicToolOutput(rawOutput)?.isError === true ||
-              compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
+          // Some agents (Droid in script mode) report T3 calls with no MCP name or _meta; only a
+          // page this thread published identifies the call. Reads and other known kinds keep their rows.
+          const unnamedRender =
+            mcpIdentity === undefined &&
+            (toolCall.kind ?? "other") === "other" &&
+            compactDynamicToolOutput(rawOutput)?.isError !== true &&
+            compactDynamicToolOutput(rawOutputRecord?.result)?.isError !== true;
+          let recoveredPage = unnamedRender
+            ? context.recoveredHtmlRenders.get(toolCall.toolCallId)
+            : undefined;
+          if (unnamedRender && recoveredPage === undefined && status === "completed") {
             const toolName = `t3-code.${HTML_RENDER_TOOL_NAME}`;
-            const reportedPage = failed
-              ? undefined
-              : (htmlRenderFromToolItem({ toolName, output: acpMcpToolCallOutput(rawOutput) }) ??
-                htmlRenderFromToolItem({ toolName, output: textFromUnknown(rawOutput) }));
+            const reportedPage =
+              htmlRenderFromToolItem({ toolName, output: acpMcpToolCallOutput(rawOutput) }) ??
+              htmlRenderFromToolItem({ toolName, output: textFromUnknown(rawOutput) });
             recoveredPage =
               reportedPage === undefined
                 ? undefined

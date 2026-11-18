@@ -88,6 +88,13 @@ describe("compactDynamicToolOutput", () => {
     expect(
       compactDynamicToolOutput([{ text: "{}" }, { text: JSON.stringify({ threadId: "second" }) }]),
     ).toBeUndefined();
+    // A text block that only looks like JSON keeps the first result data.
+    expect(
+      compactDynamicToolOutput([
+        { text: JSON.stringify({ text: "[INFO] done" }) },
+        { text: JSON.stringify({ threadId: "second" }) },
+      ]),
+    ).toBeUndefined();
     // A later block's plain { text } stays opaque instead of spending the parse budget again.
     expect(
       compactDynamicToolOutput([

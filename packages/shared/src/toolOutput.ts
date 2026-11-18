@@ -116,7 +116,8 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     Object.keys(value).length === 1 &&
     /^\s*[[{]/.test(value.text)
   ) {
-    return readResult(value.text, budget, depth + 1);
+    const nested = readResult(value.text, budget, depth + 1);
+    if (nested.data !== undefined || nested.failed || budget.exceeded) return nested;
   }
   return { data: value, failed };
 }

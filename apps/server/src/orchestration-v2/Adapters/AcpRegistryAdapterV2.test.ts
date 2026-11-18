@@ -2499,12 +2499,18 @@ describe("AcpRegistryAdapterV2", () => {
       const failedPage = { ...page, attachmentId: "thread-claude-lifecycle-failed-html" };
       const blockPage = { ...page, attachmentId: "thread-claude-lifecycle-block-html" };
       const resultText = (reference: typeof page) => JSON.stringify({ htmlRender: reference });
-      const droidCall = (toolCallId: string, completion: Record<string, unknown>) => [
+      const readPage = { ...page, attachmentId: "thread-claude-lifecycle-read-html" };
+      const laterFailedPage = { ...page, attachmentId: "thread-claude-lifecycle-later-html" };
+      const droidCall = (
+        toolCallId: string,
+        completion: Record<string, unknown>,
+        kind = "other",
+      ) => [
         update(CLAUDE_ROOT_SESSION, {
-          sessionUpdate: "tool_call",
+          sessionUpdate: "tool_call_update",
           toolCallId,
           title: "Tool",
-          kind: "other",
+          kind,
           status: "pending",
           rawInput: args,
         }),
@@ -2536,6 +2542,14 @@ describe("AcpRegistryAdapterV2", () => {
         ...droidCall("droid-content-block", {
           content: [{ type: "content", content: { type: "text", text: resultText(blockPage) } }],
         }),
+        ...droidCall("droid-read", { rawOutput: { text: resultText(readPage) } }, "read"),
+        ...droidCall("droid-later-failure", { rawOutput: { text: resultText(laterFailedPage) } }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "droid-later-failure",
+          status: "completed",
+          rawOutput: { result: { isError: true } },
+        }),
         claudeMarker("tools complete"),
         claudeFrames.idle("end_turn"),
         claudeFrames.closeRequest,
@@ -2543,7 +2557,7 @@ describe("AcpRegistryAdapterV2", () => {
       ]);
       const input = session.turnInput(1);
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      for (const published of [page, failedPage, blockPage]) {
+      for (const published of [page, failedPage, blockPage, readPage, laterFailedPage]) {
         yield* mcpSessions.recordHtmlRender(input.threadId, args, published);
       }
       yield* session.runtime.startTurn(input);
@@ -2569,10 +2583,15 @@ describe("AcpRegistryAdapterV2", () => {
           expected,
         );
       }
-      for (const nativeId of ["droid-unpublished", "droid-failed"]) {
+      for (const nativeId of [
+        "droid-unpublished",
+        "droid-failed",
+        "droid-read",
+        "droid-later-failure",
+      ]) {
         const generic = lastItem(nativeId);
         assert.equal(generic?.status, "completed");
-        assert.notEqual(generic?.toolName, "t3-code.html_render");
+        assert.notEqual(generic?.toolName, "t3-code.html_render", nativeId);
       }
     }).pipe(Effect.provide(layerTest)),
   );
