@@ -3275,7 +3275,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "on the computer that opened this page"]
+      "c": [
+        " ",
+        "on the computer that opened this page"
+      ]
     }
   ],
   "e0740b2e9ec8ebf7": [
@@ -3287,7 +3290,10 @@
     {
       "t": "span",
       "i": 2,
-      "c": [" ", "(whoever runs it gets this access)"]
+      "c": [
+        " ",
+        "(whoever runs it gets this access)"
+      ]
     }
   ],
   "c54cc9c75db9dc58": "Only approve a sign-in you just started.",
@@ -4994,8 +5000,11 @@
   "b7ca01d4c2180a8f": "Could not update",
   "3e69002016d7ddd5": "Manual update required",
   "c73eb5ceaa00bd00": "Update available for",
+  "29e1f301055d6f9b": "Updating {machines}. View machines",
+  "35dd908686de75f1": "Could not update {machines}. View machines",
+  "276b5460662f8cd1": "Manual update required for {machines}. View machines",
+  "1407a228c02c9b5a": "Update available for {machines}. View machines",
   "48e73d5550dfe874": "{manual, plural, one {{manual} needs a manual update} other {{manual} need a manual update}}",
-  "cf9b89ea918cb9e5": "{title} {machines}. View machines",
   "734f6df27eaf0eeb": "Ready to update to {version}",
   "964c60ef08c884df": "Reconnect this machine to update",
   "67e64400f1ccb983": "Retry",
@@ -7178,12 +7187,12 @@
   "850eda225c391def": "No reviews",
   "a2e277bce0740987": "Passing",
   "7074711ac6cc6f5c": "Failing",
-  "85528b75da09a199": "The review is approved.",
+  "4a783ee8c01305c1": "Review is approved.",
   "1ad8306c4150a65a": "Changes are requested.",
-  "83e1c50de1c2aba4": "A review is required.",
+  "2228029b76d08915": "Review is required.",
   "cbc94b00a02487ac": "There are no reviews.",
   "1ace47ee52998d3f": "Any state is shown.",
-  "083638fdcba63a40": "{state, select, closed {Only closed ones are shown.} other {Only merged ones are shown.}}",
+  "822b0240d41cadbb": "{state, select, closed {State is closed.} other {State is merged.}}",
   "5c8d3a01ca172ea2": "Only yours are shown.",
   "63b990389dffafef": "Review is requested from you.",
   "7ef5d0866c1c022c": "Author is {author}.",
@@ -10087,6 +10096,7 @@
   "6e824889a09c2f09": "Add it to an agent, e.g. claude mcp add --transport http t3 {url}",
   "69f1a5115bd716c8": "Could not copy MCP URL",
   "4112c1a7b3c1d029": "Restarting",
+  "2b91127dff4ad62f": "Version {version}",
   "543ef9fcaf8aa96f": "Switched off",
   "5173c50b0a60847c": "Update available: {serverVersion} → {clientVersion}",
   "987c5623ba70f390": "Routes",
