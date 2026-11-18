@@ -183,11 +183,6 @@ export const ModelWriteResult = Schema.Struct({
   failures: Schema.optional(Schema.Array(Schema.String)),
 });
 
-const TurnEnqueueResult = Schema.Struct({
-  queueItemId: Schema.String,
-  waits: Schema.optional(Schema.Boolean),
-});
-
 export interface VibeAppServerClientOptions {
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
@@ -271,10 +266,10 @@ export class VibeAppServerClient extends Context.Service<
       sessionId: string;
       reason?: string | undefined;
     }) => Effect.Effect<unknown, VibeError.VibeAppServerError>;
-    readonly sessionTurnEnqueue: (input: {
+    readonly turnStart: (input: {
       sessionId: string;
-      entries: ReadonlyArray<unknown>;
-    }) => Effect.Effect<typeof TurnEnqueueResult.Type, VibeError.VibeAppServerError>;
+      message: ReadonlyArray<unknown>;
+    }) => Effect.Effect<{ readonly turn: PublicTurn }, VibeError.VibeAppServerError>;
     readonly turnSteer: (input: {
       sessionId: string;
       expectedTurnId: string;
@@ -485,11 +480,8 @@ export const make = Effect.fn("@t3tools/vibe-app-server/VibeAppServerClient.make
         ...(input.reason !== undefined ? { reason: input.reason } : {}),
       });
     }),
-    sessionTurnEnqueue: Effect.fn("VibeAppServerClient.sessionTurnEnqueue")(function* (input) {
-      return yield* typed("session/turn/enqueue", TurnEnqueueResult, {
-        sessionId: input.sessionId,
-        entries: input.entries,
-      });
+    turnStart: Effect.fn("VibeAppServerClient.turnStart")(function* (input) {
+      return yield* typed("turn/start", Schema.Struct({ turn: PublicTurn }), input);
     }),
     turnSteer: Effect.fn("VibeAppServerClient.turnSteer")(function* (input) {
       return yield* requestRaw("turn/steer", {

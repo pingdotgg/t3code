@@ -17,6 +17,7 @@ const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "interrupted", "c
 const isTextGenerationError = Schema.is(TextGenerationError);
 
 interface HistoryEntryLike {
+  readonly turnId?: unknown;
   readonly role?: unknown;
   readonly type?: unknown;
   readonly content?: unknown;
@@ -37,11 +38,12 @@ function entryText(entry: HistoryEntryLike): string {
 const waitForTurnTerminal = Effect.fn("VibeTextGeneration.waitForTurnTerminal")(function* (
   client: VibeAppServerClient["Service"],
   sessionId: string,
+  turnId: string,
 ) {
   while (true) {
     const { state } = yield* client.sessionRead({ sessionId, history: null, turns: { limit: 1 } });
     const turn = state.turns?.at(-1);
-    if (turn !== undefined && TERMINAL_TURN_STATUSES.has(turn.status)) return turn;
+    if (turn?.id === turnId && TERMINAL_TURN_STATUSES.has(turn.status)) return turn;
     yield* Effect.sleep("500 millis");
   }
 });
@@ -80,11 +82,11 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
                 .sessionDelete(sessionId)
                 .pipe(Effect.interruptible, Effect.timeoutOption("2 seconds"), Effect.ignore),
             );
-            yield* client.sessionTurnEnqueue({
+            const { turn } = yield* client.turnStart({
               sessionId,
-              entries: [{ role: "user", content: [{ type: "text", text: prompt }] }],
+              message: [{ type: "text", text: prompt }],
             });
-            const terminalTurn = yield* waitForTurnTerminal(client, sessionId);
+            const terminalTurn = yield* waitForTurnTerminal(client, sessionId, turn.id);
             if (terminalTurn.status !== "completed") {
               return yield* new TextGenerationError({
                 operation,
@@ -96,7 +98,10 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
             // Only assistant messages are replies; the user's prompt must never be parsed as output.
             const reply = [...history.items]
               .reverse()
-              .filter((item) => (item as HistoryEntryLike).role === "assistant")
+              .filter((item) => {
+                const entry = item as HistoryEntryLike;
+                return entry.role === "assistant" && entry.turnId === turn.id;
+              })
               .map((item) => entryText(item as HistoryEntryLike))
               .find((text) => text.length > 0);
             return reply ?? "";

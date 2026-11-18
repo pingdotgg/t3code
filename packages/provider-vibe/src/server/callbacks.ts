@@ -12,7 +12,8 @@ const text = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim() ? value : undefined;
 
 export function vibeCallback(params: unknown) {
-  const callback = record(record(params)?.["callback"]);
+  const request = record(params);
+  const callback = record(request?.["callback"]);
   const callbackId = text(callback?.["callbackId"]);
   const detail = record(callback?.["detail"]);
   const kind = detail?.["kind"];
@@ -43,8 +44,12 @@ export function vibeCallback(params: unknown) {
     }
     if (questions.length === 0) return undefined;
   }
+  const sessionId = text(callback?.["sessionId"]) ?? text(request?.["sessionId"]);
+  const turnId = text(callback?.["turnId"]);
   return {
     callbackId,
+    ...(sessionId === undefined ? {} : { sessionId }),
+    ...(turnId === undefined ? {} : { turnId }),
     kind: kind === "user_input" ? ("user_input" as const) : ("permission" as const),
     questions,
   };

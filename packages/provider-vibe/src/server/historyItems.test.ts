@@ -70,7 +70,7 @@ describe("vibeHistoryTurnItem", () => {
           status: "completed",
           output: {
             occurrences: [
-              { startLine: 2, newStartLine: 2, oldText: "one", newText: "first" },
+              { startLine: 2, newStartLine: 2, oldText: "one\n", newText: "one" },
               { startLine: 8, newStartLine: 8, oldText: "two", newText: "second" },
             ],
           },
@@ -79,7 +79,8 @@ describe("vibeHistoryTurnItem", () => {
       {
         type: "file_change",
         fileName: "a.ts",
-        diffStr: "@@ -2,1 +2,1 @@\n-one\n+first\n@@ -8,1 +8,1 @@\n-two\n+second\n",
+        diffStr:
+          "@@ -2,1 +2,1 @@\n-one\n+one\n\\ No newline at end of file\n@@ -8,1 +8,1 @@\n-two\n+second\n",
       },
     ],
     [
@@ -99,6 +100,14 @@ describe("vibeHistoryTurnItem", () => {
         patterns: ["layout"],
         results: [{ snippet: "Results" }, { title: "Example", url: "https://example.com" }],
       },
+    ],
+    [
+      "failed web search",
+      effect(
+        { kind: "web_search", input: { query: "layout" } },
+        { status: "failed", error: { message: "Search unavailable" } },
+      ),
+      { type: "web_search", status: "failed", results: [{ snippet: "Search unavailable" }] },
     ],
     [
       "file write",

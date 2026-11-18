@@ -43,11 +43,15 @@ function recordedEditPatch(value: unknown): string | undefined {
       return undefined;
     const before = lines(oldText);
     const after = lines(newText);
+    const newlineChanged = oldText.endsWith("\n") !== newText.endsWith("\n");
+    const missingNewline = "\\ No newline at end of file";
     hunks.push(
       [
         `@@ -${startLine},${before.length} +${newStartLine},${after.length} @@`,
         ...before.map((line) => `-${line}`),
+        ...(newlineChanged && before.length > 0 && !oldText.endsWith("\n") ? [missingNewline] : []),
         ...after.map((line) => `+${line}`),
+        ...(newlineChanged && after.length > 0 && !newText.endsWith("\n") ? [missingNewline] : []),
       ].join("\n"),
     );
   }
@@ -206,6 +210,11 @@ export function vibeHistoryTurnItem(
           const title = str(record?.["title"]);
           if (url !== undefined) results.push({ url, ...(title === undefined ? {} : { title }) });
         }
+      }
+      if (status === "failed" && results.length === 0) {
+        const diagnostic = effectOutput(state);
+        if (diagnostic?.trim())
+          results.push({ snippet: diagnostic.slice(0, SEARCH_PREVIEW_MAX_CHARS) });
       }
       const query = str(input?.["query"]);
       return {
