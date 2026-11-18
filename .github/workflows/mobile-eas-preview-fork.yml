@@ -87,40 +87,20 @@ jobs:
           fetch-depth: 0
           # No sparse-checkout: see mobile-eas-preview.yml.
 
-      # The comment script comes from main, not from the PR.
+      # Scripts and actions come from main, not from the PR.
       - name: Checkout trusted scripts
         if: steps.expo-token.outputs.present == 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           path: .trusted
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
 
-      # The steps below run the PR's dependency and build scripts; they get no token.
-      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
-      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
-      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      # The steps below run dependency and build scripts; they get no token.
       - name: Drop checkout credentials
         if: steps.expo-token.outputs.present == 'true'
-        run: |
-          for dir in . .trusted; do
-            [ -e "$dir/.git" ] || continue
-            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
-              rm -f "$file"
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
-              echo "::error::checkout credentials are still configured in $dir"
-              exit 1
-            fi
-          done
-          rm -f "$RUNNER_TEMP"/git-credentials-*.config
-          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
-            echo "::error::a checkout credential file is still present"
-            exit 1
-          fi
+        uses: ./.trusted/.github/actions/drop-checkout-credentials
 
       # No caches: pull_request_target saves them under main's scope, where
       # trusted workflows with other secrets would restore what PR code wrote.
@@ -268,91 +248,37 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      # The comment script comes from main, not from the PR.
+      # Scripts and actions come from main, not from the PR.
       - name: Checkout trusted scripts
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           path: .trusted
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
 
-      # The steps below run the PR's dependency and build scripts; they get no token.
-      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
-      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
-      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      # The steps below run dependency and build scripts; they get no token.
       - name: Drop checkout credentials
-        run: |
-          for dir in . .trusted; do
-            [ -e "$dir/.git" ] || continue
-            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
-              rm -f "$file"
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
-              echo "::error::checkout credentials are still configured in $dir"
-              exit 1
-            fi
-          done
-          rm -f "$RUNNER_TEMP"/git-credentials-*.config
-          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
-            echo "::error::a checkout credential file is still present"
-            exit 1
-          fi
+        uses: ./.trusted/.github/actions/drop-checkout-credentials
 
-      - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      # Cold: no sticky disk or EAS cache that trusted builds would restore.
+      - name: Build
+        uses: ./.trusted/.github/actions/eas-local-build
         with:
-          node-version-file: package.json
-
-      - name: Enable corepack
-        run: |
-          npm install --global corepack@latest
-          corepack enable
-          pnpm --version
-
-      - name: Install mobile dependencies
-        run: pnpm install --frozen-lockfile --filter=@t3tools/mobile...
-
-      - name: Setup Java
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Setup EAS
-        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
-        with:
-          eas-version: latest
-          eas-cache: false
-          token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          packager: npm
-
-      - name: Pull preview environment variables
-        working-directory: apps/mobile
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-        run: |
-          eas env:pull preview --non-interactive
-          node --input-type=module <<'NODE'
-          import { appendFileSync, readFileSync } from "node:fs";
-          import { parseEnv } from "node:util";
-          const env = parseEnv(readFileSync(".env.local", "utf8"));
-          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
-          if (googleServicesFile) {
-            appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
-          }
-          NODE
+          platform: android
+          profile: preview:dev
+          environment: preview
+          expo-token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+          output: ${{ runner.temp }}/t3code-preview.apk
+          cache: "false"
 
       - id: build
-        name: Build and upload
+        name: Upload
         working-directory: apps/mobile
         shell: bash
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
-          eas build --local --platform android --profile preview:dev --non-interactive --output "$RUNNER_TEMP/t3code-preview.apk"
           eas upload --platform android --build-path "$RUNNER_TEMP/t3code-preview.apk" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
           link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
           if [ -z "$link" ]; then
@@ -384,112 +310,37 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      # The comment script comes from main, not from the PR.
+      # Scripts and actions come from main, not from the PR.
       - name: Checkout trusted scripts
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           path: .trusted
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/actions
 
-      # The steps below run the PR's dependency and build scripts; they get no token.
-      # checkout keeps it in a file under RUNNER_TEMP that .git/config includes, so both
-      # go. Asking checkout not to persist it fails here: that cleanup runs `git submodule
-      # foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules entry).
+      # The steps below run dependency and build scripts; they get no token.
       - name: Drop checkout credentials
-        run: |
-          for dir in . .trusted; do
-            [ -e "$dir/.git" ] || continue
-            git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
-              rm -f "$file"
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
-              git -C "$dir" config --local --unset-all "$key"
-            done
-            if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
-              echo "::error::checkout credentials are still configured in $dir"
-              exit 1
-            fi
-          done
-          rm -f "$RUNNER_TEMP"/git-credentials-*.config
-          if ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
-            echo "::error::a checkout credential file is still present"
-            exit 1
-          fi
+        uses: ./.trusted/.github/actions/drop-checkout-credentials
 
-      - name: Select Xcode 27.1
-        run: |
-          xcode=/Applications/Xcode_27.1.app
-          if [ ! -d "$xcode" ]; then
-            ls -d /Applications/Xcode*.app
-            echo "::error::Xcode 27.1 is not on this runner."
-            exit 1
-          fi
-          sudo xcode-select -s "$xcode/Contents/Developer"
-          xcodebuild -version
-          echo "- Xcode: \`$(basename "$xcode")\`" >> "$GITHUB_STEP_SUMMARY"
-
-      # EAS's credentials step fails to import the distribution certificate without it.
-      - name: Install Apple WWDR G3 intermediate
-        run: |
-          curl -fsSL -o "$RUNNER_TEMP/AppleWWDRCAG3.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
-          sudo security add-certificates -k /Library/Keychains/System.keychain "$RUNNER_TEMP/AppleWWDRCAG3.cer" || true
-          security find-certificate -c "Apple Worldwide Developer Relations" /Library/Keychains/System.keychain | grep -m1 labl
-
-      - name: Setup Node
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+      # Cold: no sticky disk or EAS cache that trusted builds would restore.
+      - name: Build
+        uses: ./.trusted/.github/actions/eas-local-build
         with:
-          node-version-file: package.json
-
-      - name: Enable corepack
-        run: |
-          npm install --global corepack@latest
-          corepack enable
-          pnpm --version
-
-      - name: Install mobile dependencies
-        run: pnpm install --frozen-lockfile --filter=@t3tools/mobile...
-
-      - name: Setup EAS
-        uses: expo/expo-github-action@c7b66a9c327a43a8fa7c0158e7f30d6040d2481e # v8.2.1
-        with:
-          eas-version: latest
-          eas-cache: false
-          token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          packager: npm
-
-      - name: Build tools
-        run: |
-          command -v pod || sudo gem install cocoapods --no-document
-          command -v fastlane || brew install fastlane
-          pod --version
-          fastlane --version | tail -1
-
-      - name: Pull preview environment variables
-        working-directory: apps/mobile
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-        run: |
-          eas env:pull preview --non-interactive
-          node --input-type=module <<'NODE'
-          import { appendFileSync, readFileSync } from "node:fs";
-          import { parseEnv } from "node:util";
-          const env = parseEnv(readFileSync(".env.local", "utf8"));
-          const googleServicesFile = env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE;
-          if (googleServicesFile) {
-            appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
-          }
-          NODE
+          platform: ios
+          profile: preview:dev
+          environment: preview
+          expo-token: ${{ secrets.EXPO_PREVIEW_TOKEN }}
+          output: ${{ runner.temp }}/t3code-preview.ipa
+          cache: "false"
 
       - id: build
-        name: Build and upload
+        name: Upload
         working-directory: apps/mobile
         shell: bash
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
-          export EAS_LOCAL_BUILD_WORKINGDIR="$RUNNER_TEMP/eas-build"
-          eas build --local --platform ios --profile preview:dev --non-interactive --output "$RUNNER_TEMP/t3code-preview.ipa"
           eas upload --platform ios --build-path "$RUNNER_TEMP/t3code-preview.ipa" --fingerprint "$FINGERPRINT" --non-interactive --json | tee "$RUNNER_TEMP/upload.json"
           link="$(sed -n '/^{/,$p' "$RUNNER_TEMP/upload.json" | jq -r '.url // empty')"
           if [ -z "$link" ]; then
