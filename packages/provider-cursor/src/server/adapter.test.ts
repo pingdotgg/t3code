@@ -761,6 +761,7 @@ describe("CursorAdapterV2", () => {
       const sentMessages: Array<string> = [];
       const rewoundAfter: Array<string> = [];
       let rewindFails = false;
+      let summarizesMidRun = false;
       let createdAgents = 0;
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
@@ -804,10 +805,14 @@ describe("CursorAdapterV2", () => {
                     )
                   : Effect.sync(() => void rewoundAfter.push(runId)),
               send: (input) =>
-                Effect.sync(() => {
+                Effect.gen(function* () {
                   sentMessages.push(
                     typeof input.message === "string" ? input.message : input.message.text,
                   );
+                  if (summarizesMidRun) {
+                    yield* input.onDelta!({ type: "summary-started" });
+                    yield* input.onDelta!({ type: "summary-completed" });
+                  }
                   const runId = `native-cursor-run-${sentMessages.length}`;
                   return {
                     agentId,
@@ -911,6 +916,14 @@ describe("CursorAdapterV2", () => {
         yield* send(),
         told(true, true),
         "compaction drops what the conversation was told",
+      );
+      summarizesMidRun = true;
+      yield* send();
+      summarizesMidRun = false;
+      assert.deepEqual(
+        yield* send(),
+        told(true, true),
+        "Cursor's own mid-run summary drops what the conversation was told",
       );
       yield* setDeviceAccess(false);
       assert.deepEqual(yield* send(), told(false, false));
