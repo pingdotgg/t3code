@@ -1,4 +1,5 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
 import { useRef, useState } from "react";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -14,6 +15,7 @@ type IssueEditParams = IssueParams & { readonly field: "title" | "body" };
 
 export function IssueEditScreen({ route }: StaticScreenProps<IssueEditParams>) {
   const params = route.params;
+  const gt = useGT();
   const navigation = useNavigation();
   const target = issueTarget(params);
   const detailQuery = useEnvironmentQuery(issueEnvironment.detail(target));
@@ -53,13 +55,13 @@ export function IssueEditScreen({ route }: StaticScreenProps<IssueEditParams>) {
   return (
     <PullRequestSheetContent
       busy={busy}
-      title={isTitle ? "Edit title" : "Edit description"}
+      title={isTitle ? gt("Edit title") : gt("Edit description")}
       subtitle={`${detail?.displayKey ?? params.issueKey} · ${params.scope}`}
       footer={
         <Button
           fullWidth
           tone="contrast"
-          label={busy ? "Saving…" : "Save"}
+          label={busy ? gt("Saving…") : gt("Save")}
           loading={busy}
           disabled={!allowed || unchanged || invalid || original === null}
           onPress={() => void save()}
@@ -70,8 +72,10 @@ export function IssueEditScreen({ route }: StaticScreenProps<IssueEditParams>) {
         multiline={!isTitle}
         editable={!busy && original !== null}
         autoFocus
-        accessibilityLabel={isTitle ? "Issue title" : "Issue description"}
-        placeholder={isTitle ? "Title" : "Write in Markdown…"}
+        accessibilityLabel={isTitle ? gt("Issue title") : gt("Issue description")}
+        placeholder={
+          isTitle ? gt("Title", { $context: "issue title field" }) : gt("Write in Markdown…")
+        }
         placeholderTextColorClassName="accent-foreground-muted"
         maxLength={isTitle ? 1024 : 65536}
         value={value}
@@ -87,7 +91,7 @@ export function IssueEditScreen({ route }: StaticScreenProps<IssueEditParams>) {
       />
       {detail && !allowed ? (
         <Text className="text-xs text-foreground-muted">
-          {access?.blocked ?? "You can't edit this issue."}
+          {access?.blocked ?? gt("You can't edit this issue.")}
         </Text>
       ) : null}
       {error || detailQuery.error ? (
