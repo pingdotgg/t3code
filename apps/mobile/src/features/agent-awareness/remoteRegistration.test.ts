@@ -611,6 +611,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       return new Promise<void>((resolve) => arrived.set(index, resolve));
     };
     const deviceBodies: Array<Promise<{ preferences: Record<string, unknown> }>> = [];
+    const relayCalls: Array<string> = [];
     const fetchMock = vi.fn((request: RequestInfo | URL, init?: RequestInit) => {
       const url = request instanceof Request ? request.url : String(request);
       if (url.endsWith("/v1/client/dpop-token")) {
@@ -624,7 +625,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           }),
         );
       }
+      if (url.includes("/v1/mobile/agent-activity")) relayCalls.push("widget snapshot");
       if (!url.endsWith("/v1/mobile/devices")) return Promise.resolve(Response.json({ ok: true }));
+      relayCalls.push(`device ${deviceBodies.length}`);
       deviceBodies.push(
         request instanceof Request
           ? request.clone().json()
@@ -680,6 +683,16 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       ]);
       expect(bodies[0]?.preferences.mutedEnvironmentIds).toBeUndefined();
       expect(bodies[3]?.preferences.mutedEnvironmentIds).toBeUndefined();
+      // The widget repaints only after the relay accepted a changed muted list.
+      expect(relayCalls).toEqual([
+        "widget snapshot",
+        "device 0",
+        "device 1",
+        "widget snapshot",
+        "device 2",
+        "device 3",
+        "widget snapshot",
+      ]);
       // Android's native setting follows the same preferences the relay received.
       expect(vi.mocked(configureAndroidAgentNotifications).mock.calls.at(-1)?.[2]).toBe(false);
     }).pipe(
@@ -1057,6 +1070,36 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }).pipe(Effect.provide(layerRelayTest));
     },
   );
+
+  it.effect("does not configure Android from a registration the account switched away from", () => {
+    vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+    vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+    let markLookup = () => {};
+    const lookupStarted = new Promise<void>((resolve) => {
+      markLookup = resolve;
+    });
+    let finishLookup = () => {};
+    const lookup = new Promise<{ type: "android"; data: string }>((resolve) => {
+      finishLookup = () => resolve({ type: "android", data: "fcm-token" });
+    });
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockImplementationOnce(() => {
+      markLookup();
+      return lookup;
+    });
+    return Effect.gen(function* () {
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-a"), "user-a");
+      const drain = yield* Effect.forkChild(runBackgroundOperations());
+      yield* Effect.promise(() => lookupStarted);
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-b"), "user-b");
+      vi.mocked(configureAndroidAgentNotifications).mockClear();
+      finishLookup();
+      yield* Fiber.join(drain);
+      yield* runBackgroundOperations();
+      // Only user-b's own registration configures it.
+      expect(configureAndroidAgentNotifications).toHaveBeenCalledOnce();
+    }).pipe(Effect.provide(layerRelayTest));
+  });
 
   describe("home-screen widget", () => {
     // These cover the widget path only, so keep the Live Activity from priming.

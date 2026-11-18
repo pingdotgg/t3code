@@ -103,6 +103,8 @@ let androidDeviceReplayedAt: number | null = null;
 let lastNativePushToken: string | null = null;
 let registeredWithPushToken = false;
 let mutedEnvironmentIds: ReadonlyArray<EnvironmentId> = [];
+// The muted list the relay last accepted for this account; null until its first registration.
+let relayMutedEnvironmentsKey: string | null = null;
 // Settings changes the relay accepted, kept until local storage catches up with them.
 let acceptedPreferenceOverride: Partial<Preferences> = {};
 let nativePushTokenRotations = 0;
@@ -227,6 +229,7 @@ export function setAgentAwarenessRelayTokenProvider(
     androidDeviceReplayedAt = null;
     deviceRegistrationGeneration++;
     acceptedPreferenceOverride = {};
+    relayMutedEnvironmentsKey = null;
     activeDeviceRegistration = null;
     pendingDeviceRegistration = null;
     registeredActivityPushTokens.clear();
@@ -273,6 +276,7 @@ export function releaseAgentAwarenessRelayTokenProvider(): void {
   relayTokenProviderIdentity = null;
   deviceRegistrationGeneration++;
   acceptedPreferenceOverride = {};
+  relayMutedEnvironmentsKey = null;
   activeDeviceRegistration = null;
   pendingDeviceRegistration = null;
   androidDeviceReplayedAt = null;
@@ -759,7 +763,10 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       : Constants.expoConfig?.ios?.bundleIdentifier?.trim();
   yield* deviceRegistrationSendLock.withPermit(
     Effect.suspend(() => {
+      // The account may have changed during the push-token lookup; keep its Android settings.
+      if (expectedGeneration !== deviceRegistrationGeneration) return Effect.void;
       const preferences = preferencesNow();
+      const sentMutedKey = mutedEnvironmentIds.join(",");
       // Configure Android with the same settings the relay gets, so the two cannot disagree.
       if (relayTokenProvider && relayTokenProviderIdentity) {
         configureAndroidAgentNotifications(
@@ -798,12 +805,21 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       ).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
-            if (input.preferencesOverride && expectedGeneration === deviceRegistrationGeneration) {
+            if (expectedGeneration !== deviceRegistrationGeneration) return;
+            if (input.preferencesOverride) {
               acceptedPreferenceOverride = {
                 ...acceptedPreferenceOverride,
                 ...input.preferencesOverride,
               };
             }
+            // The widget has no push path, so repaint it once the relay filters by the new list.
+            if (relayMutedEnvironmentsKey !== null && relayMutedEnvironmentsKey !== sentMutedKey) {
+              runRegistrationInBackground(
+                repaintWidgetFromSnapshot(expectedGeneration),
+                "agent activity widget repaint after environment toggle failed",
+              );
+            }
+            relayMutedEnvironmentsKey = sentMutedKey;
           }),
         ),
       );
@@ -934,6 +950,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   relayTokenProviderIdentity = null;
   deviceRegistrationGeneration++;
   acceptedPreferenceOverride = {};
+  relayMutedEnvironmentsKey = null;
   activeDeviceRegistration = null;
   pendingDeviceRegistration = null;
   registrationStatus = "unknown";
@@ -1067,6 +1084,29 @@ function scheduleActiveLiveActivityRegistrationRetry(): void {
   }, REMOTE_ACTIVITY_REGISTRATION_RETRY_MS);
 }
 
+const isCurrentWidgetAccount = (generation: number) =>
+  relayTokenProvider !== null && deviceRegistrationGeneration === generation;
+
+// Yields undefined once the account changed or a newer read started, so a stale
+// result is never shown or primed.
+const repaintWidgetFromSnapshot = Effect.fn("remoteRegistration.repaintWidgetFromSnapshot")(
+  function* (generation: number) {
+    // An obsolete refresh must not supersede the current account's read.
+    if (!canRegisterRemoteLiveActivities() || !isCurrentWidgetAccount(generation)) {
+      return undefined;
+    }
+    const read = ++widgetSnapshotReads;
+    const snapshot = yield* readAgentActivitySnapshot();
+    if (!isCurrentWidgetAccount(generation) || read !== widgetSnapshotReads) {
+      return undefined;
+    }
+    publishWidget(
+      snapshot ? { kind: "snapshot", aggregate: snapshot.aggregate } : { kind: "unavailable" },
+    );
+    return { snapshot, read };
+  },
+);
+
 export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
   "remoteRegistration.refreshActiveLiveActivityRemoteRegistration",
 )(function* (): Effect.fn.Return<void, never, ManagedRelay.ManagedRelayClient> {
@@ -1075,31 +1115,17 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
   }
 
   // The home-screen widget has no push path of its own, so every foreground
-  // refresh repaints it from one snapshot read. Yields undefined once the
-  // account changed or a newer read started, so a stale result is never
-  // shown or primed.
+  // refresh repaints it from one snapshot read.
   const generation = deviceRegistrationGeneration;
-  const isCurrentAccount = () =>
-    relayTokenProvider !== null && deviceRegistrationGeneration === generation;
   let read = 0;
-  const isNewestRead = () => isCurrentAccount() && read === widgetSnapshotReads;
-  const refreshWidget = Effect.gen(function* () {
-    // An obsolete refresh must not supersede the current account's read.
-    if (!isCurrentAccount()) {
-      return undefined;
-    }
-    read = ++widgetSnapshotReads;
-    const snapshot = yield* readAgentActivitySnapshot();
-    if (!isNewestRead()) {
-      return undefined;
-    }
-    if (snapshot) {
-      publishWidget({ kind: "snapshot", aggregate: snapshot.aggregate });
-    } else {
-      publishWidget({ kind: "unavailable" });
-    }
-    return { snapshot };
-  });
+  const isNewestRead = () => isCurrentWidgetAccount(generation) && read === widgetSnapshotReads;
+  const refreshWidget = repaintWidgetFromSnapshot(generation).pipe(
+    Effect.tap((result) =>
+      Effect.sync(() => {
+        if (result) read = result.read;
+      }),
+    ),
+  );
 
   dismissEndedLocalLiveActivities();
   let activities = yield* Effect.try({
