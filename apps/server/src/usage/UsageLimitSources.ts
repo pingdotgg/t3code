@@ -61,14 +61,21 @@ function keepLastGoodReadings(
   next: ReadonlyArray<UsageLimitSourceSnapshot>,
 ): ReadonlyArray<UsageLimitSourceSnapshot> {
   return next.map((source) => {
-    const before = previous.find((candidate) => candidate.id === source.id);
+    // Auth file names can be reused, so only the same hub and login may lend a reading.
+    const before = previous.find(
+      (candidate) => candidate.id === source.id && candidate.endpoint === source.endpoint,
+    );
     if (!before) return source;
     return {
       ...source,
       accounts: source.accounts.map((account) => {
         if (account.usageLimits.unavailable?.reason !== "probeFailed") return account;
         const last = before.accounts.find(
-          (candidate) => candidate.id === account.id && candidate.driver === account.driver,
+          (candidate) =>
+            candidate.id === account.id &&
+            candidate.driver === account.driver &&
+            candidate.email === account.email &&
+            candidate.workspaceId === account.workspaceId,
         );
         return last && !last.usageLimits.unavailable ? last : account;
       }),

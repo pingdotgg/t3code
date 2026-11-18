@@ -177,6 +177,7 @@ it.effect("reads a management key from its secret provider", () => {
 
 it.effect("keeps an account's last good reading when the hub's next read of it is refused", () => {
   let refused = true;
+  let workspace = "account-a";
   const readAccount = Effect.gen(function* () {
     const sources = yield* UsageLimitSources.make;
     return Effect.gen(function* () {
@@ -195,6 +196,9 @@ it.effect("keeps an account's last good reading when the hub's next read of it i
     expect(good?.unavailable).toBeUndefined();
     refused = true;
     expect(yield* read).toEqual(good);
+    // The same auth file now holds another login, whose reading is unknown.
+    workspace = "account-b";
+    expect(yield* read).toMatchObject({ windows: [], unavailable: { reason: "probeFailed" } });
   }).pipe(
     Effect.provide([
       ServerSettings.layerTest({
@@ -229,7 +233,7 @@ it.effect("keeps an account's last good reading when the hub's next read of it i
                       auth_index: "a",
                       provider: "codex",
                       email: "first@example.com",
-                      id_token: { chatgpt_account_id: "account-a" },
+                      id_token: { chatgpt_account_id: workspace },
                     },
                   ],
                 }),
