@@ -11131,9 +11131,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       { modelSelection: { ...modelSelection, model: "gpt-5.5" } },
       "Queued messages use different models.",
     ],
+    [
+      "a follow-up that owns a delegated task",
+      {},
+      "Follow-ups to a delegated task are sent on their own.",
+      undefined,
+      { delegatedTaskId: NodeId.make("node:runtime-layer-queued-merge-followup") },
+    ],
   ] as const)(
     "refuses to merge %s and leaves the queue as it was",
-    ([name, fields, cause, firstFields]) =>
+    ([name, fields, cause, firstFields, secondRun]) =>
       Effect.gen(function* () {
         const threadId = ThreadId.make(
           `runtime-layer-queued-merge-refused-${name.replace(/\W+/g, "-")}`,
@@ -11145,6 +11152,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const [first, second] = queued;
         assert.isDefined(first);
         assert.isDefined(second);
+        if (secondRun !== undefined) {
+          yield* (yield* EventSink.EventSinkV2).write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:second-run`),
+                type: "run.updated",
+                threadId,
+                runId: second.id,
+                occurredAt: yield* DateTime.now,
+                payload: { ...second, ...secondRun },
+              },
+            ],
+          });
+        }
         const before = yield* orchestrator.getThreadProjection(threadId);
 
         assert.deepInclude(yield* Effect.flip(merge("refused", [first.id, second.id])), {

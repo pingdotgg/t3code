@@ -457,6 +457,18 @@ describe("thread workflows", () => {
       each: null,
     },
     {
+      name: "a follow-up that owns a delegated task",
+      secondRun: { delegatedTaskId: "node:followup" },
+      asOne: "Follow-ups to a delegated task are sent on their own.",
+      each: null,
+    },
+    {
+      name: "a delegated task follow-up that keeps the combined message",
+      firstRun: { delegatedTaskId: "node:followup" },
+      asOne: null,
+      each: null,
+    },
+    {
       name: "another model",
       secondRun: { modelSelection: { ...selection, model: "gpt-5.5" } },
       asOne: "Queued messages use different models.",
@@ -505,6 +517,7 @@ describe("thread workflows", () => {
       readonly activeMessage?: Record<string, unknown>;
       readonly notificationPosition?: number;
       readonly second?: Record<string, unknown>;
+      readonly firstRun?: Record<string, unknown>;
       readonly secondRun?: Record<string, unknown>;
       readonly asOne: string | null;
       readonly each: string | null;
@@ -538,7 +551,7 @@ describe("thread workflows", () => {
             modelSelection: { ...selection, model: row.activeModel ?? selection.model },
             ordinal: 1,
           },
-          queued("first", 2),
+          queued("first", 2, row.firstRun),
           queued("second", 4, row.secondRun),
           ...(row.notificationPosition === undefined
             ? []

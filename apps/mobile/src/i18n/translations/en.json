@@ -1040,6 +1040,7 @@
   "9e6e028d7e67539d": "Commands are sent on their own.",
   "299eec49feab1c56": "A message that starts a fresh session is sent on its own.",
   "12536b26b5c60f7a": "Plan and continuation messages are sent on their own.",
+  "c03f8ddd0d2c10c4": "Follow-ups to a delegated task are sent on their own.",
   "110a96ee97261180": "Queued messages use different models.",
   "cb5f3a15bcfa6bb8": "Queued messages share an attachment.",
   "ebb9d93e29740cd2": "You can attach up to {max} files per message.",

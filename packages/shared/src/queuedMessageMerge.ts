@@ -25,6 +25,7 @@ export interface QueuedMessageMergePart {
     | "sourcePlanRef"
     | "restartContinuationOfRunId"
     | "usageLimitContinuationOfRunId"
+    | "delegatedTaskId"
   >;
   readonly message?:
     | Pick<
@@ -51,6 +52,7 @@ export type QueuedMessageMergeBlockedKind =
   | "command"
   | "freshContext"
   | "continuation"
+  | "delegatedFollowup"
   | "modelMismatch"
   | "sharedAttachment"
   | "tooManyAttachments"
@@ -117,6 +119,10 @@ function partBlocked(
     run.usageLimitContinuationOfRunId !== undefined
   ) {
     return blocked("continuation", "Plan and continuation messages are sent on their own.");
+  }
+  // Absorbed runs are cancelled, which would settle their task while its words still run in the first.
+  if (part !== first && run.delegatedTaskId !== undefined) {
+    return blocked("delegatedFollowup", "Follow-ups to a delegated task are sent on their own.");
   }
   if (!modelSelectionsEqual(run.modelSelection, first.run.modelSelection)) {
     return blocked("modelMismatch", "Queued messages use different models.");

@@ -1040,6 +1040,7 @@
   "9e6e028d7e67539d": "Kommandon skickas separat.",
   "299eec49feab1c56": "Ett meddelande som startar en ny session skickas separat.",
   "12536b26b5c60f7a": "Plan- och fortsättningsmeddelanden skickas separat.",
+  "c03f8ddd0d2c10c4": "Uppföljningar till en delegerad uppgift skickas separat.",
   "110a96ee97261180": "De köade meddelandena använder olika modeller.",
   "cb5f3a15bcfa6bb8": "De köade meddelandena delar en bilaga.",
   "ebb9d93e29740cd2": "Du kan bifoga upp till {max} filer per meddelande.",

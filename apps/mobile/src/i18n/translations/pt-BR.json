@@ -1040,6 +1040,7 @@
   "9e6e028d7e67539d": "Comandos são enviados separadamente.",
   "299eec49feab1c56": "Uma mensagem que inicia uma nova sessão é enviada separadamente.",
   "12536b26b5c60f7a": "Mensagens de plano e de continuação são enviadas separadamente.",
+  "c03f8ddd0d2c10c4": "Mensagens de acompanhamento de uma tarefa delegada são enviadas separadamente.",
   "110a96ee97261180": "As mensagens na fila usam modelos diferentes.",
   "cb5f3a15bcfa6bb8": "As mensagens na fila compartilham um anexo.",
   "ebb9d93e29740cd2": "Você pode anexar até {max} arquivos por mensagem.",

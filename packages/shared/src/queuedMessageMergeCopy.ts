@@ -15,6 +15,7 @@ const BLOCKED_REASON_COPY: Readonly<Record<QueuedMessageMergeBlockedKind, string
   command: msg("Commands are sent on their own."),
   freshContext: msg("A message that starts a fresh session is sent on its own."),
   continuation: msg("Plan and continuation messages are sent on their own."),
+  delegatedFollowup: msg("Follow-ups to a delegated task are sent on their own."),
   modelMismatch: msg("Queued messages use different models."),
   sharedAttachment: msg("Queued messages share an attachment."),
   tooManyAttachments: msg("You can attach up to {max} files per message.", {

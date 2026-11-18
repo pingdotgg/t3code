@@ -1040,6 +1040,7 @@
   "9e6e028d7e67539d": "Les commandes sont envoyées séparément.",
   "299eec49feab1c56": "Un message qui démarre une nouvelle session est envoyé séparément.",
   "12536b26b5c60f7a": "Les messages de plan et de continuation sont envoyés séparément.",
+  "c03f8ddd0d2c10c4": "Les relances d’une tâche déléguée sont envoyées séparément.",
   "110a96ee97261180": "Les messages en file d’attente utilisent des modèles différents.",
   "cb5f3a15bcfa6bb8": "Les messages en file d’attente partagent une pièce jointe.",
   "ebb9d93e29740cd2": "Vous pouvez joindre jusqu’à {max} fichiers par message.",

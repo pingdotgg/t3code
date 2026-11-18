@@ -1040,6 +1040,7 @@
   "9e6e028d7e67539d": "Befehle werden einzeln gesendet.",
   "299eec49feab1c56": "Eine Nachricht, die eine neue Sitzung startet, wird einzeln gesendet.",
   "12536b26b5c60f7a": "Plan- und Fortsetzungsnachrichten werden einzeln gesendet.",
+  "c03f8ddd0d2c10c4": "Folgenachrichten zu einer delegierten Aufgabe werden einzeln gesendet.",
   "110a96ee97261180": "Die eingereihten Nachrichten verwenden unterschiedliche Modelle.",
   "cb5f3a15bcfa6bb8": "Die eingereihten Nachrichten teilen sich einen Anhang.",
   "ebb9d93e29740cd2": "Du kannst bis zu {max} Dateien pro Nachricht anhängen.",

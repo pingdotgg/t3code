@@ -1040,6 +1040,7 @@
   "9e6e028d7e67539d": "Los comandos se envían por separado.",
   "299eec49feab1c56": "Un mensaje que inicia una sesión nueva se envía por separado.",
   "12536b26b5c60f7a": "Los mensajes de plan y de continuación se envían por separado.",
+  "c03f8ddd0d2c10c4": "Los seguimientos de una tarea delegada se envían por separado.",
   "110a96ee97261180": "Los mensajes en cola usan modelos distintos.",
   "cb5f3a15bcfa6bb8": "Los mensajes en cola comparten un adjunto.",
   "ebb9d93e29740cd2": "Puedes adjuntar hasta {max} archivos por mensaje.",
