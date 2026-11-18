@@ -1153,13 +1153,22 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       if (runningTurn) {
         yield* onNotification("turn/started", { sessionId: nativeThreadId, turn: runningTurn });
       }
-      for (const event of adoption.notifications) yield* event.replay;
+      let replayed = 0;
+      for (const event of adoption.notifications) {
+        yield* event.replay;
+        replayed++;
+      }
       const settledTurn = trackedTerminalTurn(nativeTurns);
       if (settledTurn) {
         yield* onNotification("turn/completed", { sessionId: nativeThreadId, turn: settledTurn });
+        // Settling the snapshot can suspend while the reader buffers more events.
+        for (; replayed < adoption.notifications.length; replayed++) {
+          yield* adoption.notifications[replayed]!.replay;
+        }
       }
       attached.attachedSessionId = nativeThreadId;
       attached.unreconciledSessionId = undefined;
+      state.adoptingThread = undefined;
       return state.thread ?? thread;
     });
 
@@ -1177,6 +1186,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             return Effect.gen(function* () {
               if (connection.attachedSessionId !== undefined) {
                 for (const event of adoption.notifications) yield* event.replay;
+                state.adoptingThread = undefined;
                 return;
               }
               const sessionId = connection.unreconciledSessionId;

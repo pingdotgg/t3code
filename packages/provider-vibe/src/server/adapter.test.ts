@@ -23,9 +23,11 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as FileSystem from "effect/FileSystem";
 import * as TestClock from "effect/testing/TestClock";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
@@ -436,6 +438,76 @@ describe("Vibe adapter against an in-memory app-server", () => {
           }
         }),
       ),
+  );
+
+  it.effect("publishes callbacks received while settling a resumed turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const session = { id: "native-session" };
+        const { runtime, providerThread, runtimePolicy, notify, send, responses, takeEvent } =
+          yield* openFakeVibe((method) => {
+            if (method === "session/resume") {
+              return {
+                result: {
+                  state: {
+                    session,
+                    turns: [{ id: "previous-turn", sessionId: session.id, status: "completed" }],
+                  },
+                },
+              };
+            }
+            if (method === "session/history/list") return { result: { items: [] } };
+            return undefined;
+          });
+        yield* notify("turn/started", { turn: { id: "previous-turn" } });
+        yield* takeEvent("provider_turn.updated");
+
+        const settling = yield* Deferred.make<void>();
+        const finish = yield* Deferred.make<void>();
+        const clock = yield* Clock.Clock;
+        let reads = 0;
+        const resume = yield* runtime.resumeThread({ providerThread, runtimePolicy }).pipe(
+          Effect.provideService(Clock.Clock, {
+            ...clock,
+            // The first timestamp is for the resumed thread, the second for its terminal turn.
+            currentTimeMillis: Effect.gen(function* () {
+              if (++reads === 2) {
+                yield* Deferred.succeed(settling, undefined);
+                yield* Deferred.await(finish);
+              }
+              return yield* clock.currentTimeMillis;
+            }),
+          }),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(settling);
+        yield* notify("turn/started", { turn: { id: "next-turn" } });
+        const sendApproval = (id: number, callbackId: string) =>
+          send({
+            jsonrpc: "2.0",
+            id,
+            method: "callback/call",
+            params: {
+              sessionId: session.id,
+              callback: { callbackId, turnId: "next-turn", detail: { kind: "approval" } },
+            },
+          });
+        yield* sendApproval(100, "during-resume");
+        expect((yield* Queue.take(responses))["result"]).toEqual({
+          callbackId: "during-resume",
+          accepted: true,
+        });
+        yield* Deferred.succeed(finish, undefined);
+        yield* Fiber.join(resume);
+
+        yield* notify("turn/started", { turn: { id: "next-turn" } });
+        yield* sendApproval(101, "after-resume");
+        yield* Queue.take(responses);
+        expect(
+          (yield* takeEvent("runtime_request.updated")).runtimeRequest.nativeRequestRef,
+        ).toMatchObject({ nativeId: "during-resume" });
+      }).pipe(Effect.provide(layerTest)),
+    ),
   );
 
   it.effect("publishes a question card, returns the answer, and resolves the card", () =>
