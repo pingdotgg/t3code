@@ -688,7 +688,7 @@ it.effect.each([
       ServerSettings.layerTest(
         {},
         scenario === "starting-scheduled-blocked"
-          ? { schemaVersion: 1, organization: "Example Corp", limits: { scheduledTasks: false } }
+          ? { organization: "Example Corp", lockedSettings: [], limits: { scheduledTasks: false } }
           : undefined,
       ),
     ),

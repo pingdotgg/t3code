@@ -6932,22 +6932,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       let scheduledOrigin = false;
       if (managedPolicy?.limits?.scheduledTasks === false) {
         const visited = new Set<RunId>();
+        const messageIds: Array<MessageId> = [];
         let ancestor = projection.runs.find((run) => run.id === continuationSourceId);
         while (ancestor !== undefined && !visited.has(ancestor.id)) {
           visited.add(ancestor.id);
-          if (
-            projection.messages.some(
-              (message) =>
-                message.id === ancestor?.userMessageId && message.scheduledTaskId !== undefined,
-            )
-          ) {
-            scheduledOrigin = true;
-            break;
-          }
+          messageIds.push(ancestor.userMessageId);
           const previousId: RunId | undefined =
             ancestor.restartContinuationOfRunId ?? ancestor.usageLimitContinuationOfRunId;
           ancestor = projection.runs.find((run) => run.id === previousId);
         }
+        const messages = yield* projectionStore
+          .getMessagesById(command.threadId, messageIds)
+          .pipe(mapDispatchError(command));
+        scheduledOrigin = [...messages.values()].some(
+          (message) => message.scheduledTaskId !== undefined,
+        );
       }
 
       if (scheduledOrigin) {

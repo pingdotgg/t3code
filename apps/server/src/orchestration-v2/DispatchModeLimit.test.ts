@@ -500,6 +500,7 @@ it.layer(layerWithCeiling)("runtime mode ceiling", (it) => {
             });
             let sourceId = original.id;
             if (chained) {
+              yield* TestClock.adjust("1 second");
               yield* orchestrator.dispatch(sendMessage(threadId, "intermediate:" + suffix));
               const intermediate = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
               yield* sink.write({
@@ -515,6 +516,34 @@ it.layer(layerWithCeiling)("runtime mode ceiling", (it) => {
                       status: "cancelled",
                       completedAt: occurredAt,
                       restartContinuationOfRunId: original.id,
+                    },
+                  },
+                ],
+              });
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make("compaction:" + suffix),
+                    type: "turn-item.updated",
+                    threadId,
+                    occurredAt: yield* DateTime.now,
+                    payload: {
+                      id: TurnItemId.make("compaction:" + suffix),
+                      type: "compaction",
+                      driver: ProviderDriverKind.make("codex"),
+                      threadId,
+                      runId: intermediate.id,
+                      nodeId: intermediate.rootNodeId,
+                      providerThreadId: null,
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 10,
+                      status: "completed",
+                      title: null,
+                      startedAt: intermediate.requestedAt,
+                      completedAt: intermediate.requestedAt,
+                      updatedAt: intermediate.requestedAt,
                     },
                   },
                 ],
