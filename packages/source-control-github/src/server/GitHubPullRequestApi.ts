@@ -339,7 +339,31 @@ const isGitHubServerError = (error: unknown): boolean =>
 const isMissingPullRef = ({ path, type }: GraphQLClientError.GraphQLError): boolean =>
   type === "NOT_FOUND" && path?.join(".") === "repository.pullRequest.baseRef.compare";
 
-const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
+type GraphQlPath = ReadonlyArray<string | number>;
+
+const isRequestedReviewerPath = (path: GraphQlPath): boolean =>
+  path.length === 6 &&
+  path[0] === "repository" &&
+  path[1] === "pullRequest" &&
+  path[2] === "reviewRequests" &&
+  path[3] === "nodes" &&
+  typeof path[4] === "number" &&
+  Number.isInteger(path[4]) &&
+  path[4] >= 0 &&
+  path[5] === "requestedReviewer";
+
+const isRequiredRulesPath = (path: GraphQlPath): boolean =>
+  path.length >= 4 &&
+  path[0] === "repository" &&
+  path[1] === "pullRequest" &&
+  path[2] === "baseRef" &&
+  (path[3] === "refUpdateRule" || path[3] === "rules");
+
+/** Some credentials, such as a GitHub App user token, are refused optional selections alone. */
+const isRefusedOnlyAt = (
+  error: unknown,
+  ...optional: ReadonlyArray<(path: GraphQlPath) => boolean>
+): boolean =>
   isGraphQlClientError(error) &&
   error.reason._tag === "ResponseError" &&
   error.reason.status === 200 &&
@@ -348,16 +372,7 @@ const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
     const { path, type } = graphQlError;
     return (
       isMissingPullRef(graphQlError) ||
-      (type === "FORBIDDEN" &&
-        path?.length === 6 &&
-        path[0] === "repository" &&
-        path[1] === "pullRequest" &&
-        path[2] === "reviewRequests" &&
-        path[3] === "nodes" &&
-        typeof path[4] === "number" &&
-        Number.isInteger(path[4]) &&
-        path[4] >= 0 &&
-        path[5] === "requestedReviewer")
+      (type === "FORBIDDEN" && path != null && optional.some((isOptional) => isOptional(path)))
     );
   });
 
@@ -1528,6 +1543,12 @@ export const make = Effect.gen(function* () {
     timeToLive: "10 minutes",
     lookup: (_key: string) => Effect.void,
   });
+  // Likewise a credential refused base branch rules, which only add pending required checks.
+  const refusedRequiredRules = yield* Cache.make({
+    capacity: 512,
+    timeToLive: "10 minutes",
+    lookup: (_key: string) => Effect.void,
+  });
   const readRequestedReviewers = Effect.fn("GitHubPullRequestApi.readRequestedReviewers")(
     function* <A, E, R>(
       input: { readonly host: string; readonly repository: string; readonly number: number },
@@ -1539,8 +1560,9 @@ export const make = Effect.gen(function* () {
       const key = `${fingerprint}\0${host}\0${input.repository.toLowerCase()}\0${input.number}`;
       if (yield* Cache.has(refusedReviewers, key)) return yield* read(0);
       return yield* read(wanted).pipe(
-        Effect.catchIf(isRefusedRequestedReviewersOnly, () =>
-          Cache.set(refusedReviewers, key, undefined).pipe(Effect.andThen(read(0))),
+        Effect.catchIf(
+          (error) => isRefusedOnlyAt(error, isRequestedReviewerPath),
+          () => Cache.set(refusedReviewers, key, undefined).pipe(Effect.andThen(read(0))),
         ),
       );
     },
@@ -1549,18 +1571,36 @@ export const make = Effect.gen(function* () {
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
     const operation = "getPullRequestDetail";
-    const read = (requestedReviewers: number) =>
-      client
-        .PullRequestCore({
-          owner,
-          name,
-          number: input.number,
-          headRef: `refs/pull/${input.number}/head`,
-          required: asksRequired(input.host),
-          requestedReviewers,
-          mergeQueue: input.host.toLowerCase() === "github.com",
-        })
-        .pipe(toleratingMissingPullRef(decodePullRequestCore));
+    const required = asksRequired(input.host);
+    const read = Effect.fn("GitHubPullRequestApi.readPullRequestCore")(function* (
+      requestedReviewers: number,
+    ) {
+      const core = (requiredRules: boolean) =>
+        client
+          .PullRequestCore({
+            owner,
+            name,
+            number: input.number,
+            headRef: `refs/pull/${input.number}/head`,
+            required,
+            requiredRules,
+            requestedReviewers,
+            mergeQueue: input.host.toLowerCase() === "github.com",
+          })
+          .pipe(toleratingMissingPullRef(decodePullRequestCore));
+      const host = normalizeHost(input.host);
+      const { fingerprint } = yield* api.credential(host);
+      const key = `${fingerprint}\0${host}\0${input.repository.toLowerCase()}`;
+      if (!required || (yield* Cache.has(refusedRequiredRules, key))) return yield* core(false);
+      return yield* core(true).pipe(
+        Effect.catchIf(
+          (error) =>
+            isRefusedOnlyAt(error, isRequestedReviewerPath, isRequiredRulesPath) &&
+            !isRefusedOnlyAt(error, isRequestedReviewerPath),
+          () => Cache.set(refusedRequiredRules, key, undefined).pipe(Effect.andThen(core(false))),
+        ),
+      );
+    });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
         readRequestedReviewers(input, 100, read).pipe(
@@ -1577,7 +1617,7 @@ export const make = Effect.gen(function* () {
                   ).pipe(
                     Effect.map((all) => ({
                       ...core,
-                      ...pullRequestChecksFromContexts(all.contexts),
+                      ...pullRequestChecksFromContexts(all.contexts, core.requiredCheckNames),
                       checksTruncated: all.truncated,
                     })),
                   ),

@@ -1035,13 +1035,28 @@ export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
   readonly checksTruncated: boolean;
+  readonly requiredCheckNames: ReadonlyArray<string>;
 }
 
+type CorePullRequest = NonNullable<
+  NonNullable<PullRequestCore.Result["repository"]>["pullRequest"]
+>;
+
 type CoreRequestedReviewer = NonNullable<
-  NonNullable<
-    NonNullable<NonNullable<PullRequestCore.Result["repository"]>["pullRequest"]>["reviewRequests"]
-  >["nodes"]
+  NonNullable<CorePullRequest["reviewRequests"]>["nodes"]
 >[number];
+
+function toRequiredCheckNames(baseRef: CorePullRequest["baseRef"]): ReadonlyArray<string> {
+  const names = [
+    ...(baseRef?.refUpdateRule?.requiredStatusCheckContexts ?? []),
+    ...nodesOf(baseRef?.rules).flatMap(({ parameters }) =>
+      parameters?.__typename === "RequiredStatusChecksParameters"
+        ? parameters.requiredStatusChecks.map((check) => check.context)
+        : [],
+    ),
+  ];
+  return [...new Set(names.flatMap((name) => trimmed(name) ?? []))];
+}
 
 export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullRequestCore | null {
   const repository = result.repository;
@@ -1049,6 +1064,9 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
   if (repository == null || pr == null) return null;
   const contexts = nodesOf(pr.commits)[0]?.commit.statusCheckRollup?.contexts;
   const removal = nodesOf(pr.mergeQueueRemovals).at(-1);
+  const statusCheckRollup = toCheckContexts(nodesOf(contexts));
+  // Rules are read as they are now, which says nothing of a pull request already settled.
+  const requiredCheckNames = pr.state === "OPEN" ? toRequiredCheckNames(pr.baseRef) : [];
   return {
     ...(removal === undefined || !("id" in removal)
       ? {}
@@ -1083,8 +1101,9 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
               ],
       ),
       labels: nodesOf(pr.labels),
-      statusCheckRollup: toCheckContexts(nodesOf(contexts)),
+      statusCheckRollup,
     }),
+    ...pullRequestChecksFromContexts(statusCheckRollup, requiredCheckNames),
     headRepositoryNameWithOwner: trimmed(pr.headRepository?.nameWithOwner),
     maintainerCanModify: pr.maintainerCanModify,
     canEditMaintainerEdits:
@@ -1115,6 +1134,7 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
             viewerCanUpdate: pr.viewerCanUpdateBranch,
           },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
+    requiredCheckNames,
   };
 }
 
@@ -1262,11 +1282,38 @@ export function toPullRequestCheckContextsPage(result: PullRequestCheckContexts.
   };
 }
 
-export function pullRequestChecksFromContexts(contexts: ReadonlyArray<GitHubCheckContext>): {
+/**
+ * A check the base branch requires is matched by exact name and appears on the head only once it
+ * starts (a job with `needs:`), so a required name no context carries yet is still pending. A head
+ * with no context at all stays empty, so a watch can still tell that no check ever reported.
+ */
+export function pullRequestChecksFromContexts(
+  contexts: ReadonlyArray<GitHubCheckContext>,
+  requiredCheckNames: ReadonlyArray<string>,
+): {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly checksState: PullRequestChecksState | null;
 } {
-  return { checks: toChecks(contexts), checksState: rollupChecksState(contexts) };
+  const checks = toChecks(contexts);
+  const checksState = rollupChecksState(contexts);
+  if (contexts.length === 0) return { checks, checksState };
+  // Raw names, since deduping prefixes same-named jobs of different workflows with the workflow. A
+  // context GitHub calls not required is another app's namesake of an app-bound requirement.
+  const started = new Set(
+    contexts.flatMap((c) =>
+      c.isRequired === false ? [] : [trimmed(c.name) ?? trimmed(c.context)],
+    ),
+  );
+  const missing = requiredCheckNames.flatMap((name) =>
+    started.has(name)
+      ? []
+      : [{ name, status: "pending", description: null, url: null, required: true } as const],
+  );
+  if (missing.length === 0) return { checks, checksState };
+  return {
+    checks: [...checks, ...missing],
+    checksState: checksState === "failing" ? "failing" : "pending",
+  };
 }
 
 export interface GitHubReviewThreadComments {
