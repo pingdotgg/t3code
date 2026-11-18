@@ -329,6 +329,11 @@ export const make = Effect.gen(function* () {
         WHERE id = ${id}
           AND revoked_at IS NULL
           AND consumed_at IS NULL
+          -- An approved request is answered; denying it now would leave the device trusted.
+          AND NOT (
+            requires_connect_approval = 1
+            AND proof_key_thumbprint IN (SELECT proof_key_thumbprint FROM auth_connect_devices)
+          )
         RETURNING id AS "id"
       `,
   });
