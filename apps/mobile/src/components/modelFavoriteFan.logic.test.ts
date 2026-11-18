@@ -55,6 +55,14 @@ describe("favorite model fan", () => {
     }
   });
 
+  it("keeps top-constrained targets selectable", () => {
+    const origin = { x: 164, y: 100 };
+    const { targets } = layoutFavoriteFan(origin, { left: 0, right: 328, top: 0 }, 1);
+    const target = targets[0]!;
+    expect(hitFavoriteFan(targets, origin, target.x, target.y)).toBe(0);
+    expect(hitFavoriteFan(targets, origin, origin.x, origin.y)).toBe(-1);
+  });
+
   it("cancels release over the control or far outside the fan", () => {
     const origin = { x: 164, y: 490 };
     const { targets } = layoutFavoriteFan(origin, { left: 0, right: 328, top: 0 }, 3);

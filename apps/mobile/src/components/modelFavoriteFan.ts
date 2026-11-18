@@ -30,7 +30,11 @@ export function layoutFavoriteFan(origin: Point, bounds: FanBounds, count: numbe
   const spread = ((count - 1) * Math.PI) / 5.5;
   const halfSpan = Math.sin(spread / 2) * radius + margin;
   const centerX = Math.min(Math.max(origin.x, bounds.left + halfSpan), bounds.right - halfSpan);
-  const centerY = Math.max(origin.y, bounds.top + radius + margin + 50);
+  const minimumCenterY = bounds.top + radius + margin + 50;
+  const centerY =
+    origin.y < minimumCenterY
+      ? Math.max(minimumCenterY, origin.y + radius + FAVORITE_FAN_TARGET_SIZE + 28)
+      : origin.y;
 
   const targets = Array.from({ length: count }, (_, index) => {
     const angle = count === 1 ? 0 : (index / (count - 1) - 0.5) * spread;

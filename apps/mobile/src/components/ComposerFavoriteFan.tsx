@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import * as Haptics from "expo-haptics";
 import { useEffectEvent, useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { Platform, View } from "react-native";
@@ -177,6 +178,7 @@ function FanContent(props: {
   readonly activeIndex: number;
   readonly position: { readonly layout: FanLayout; readonly offset: Point };
 }) {
+  const gt = useGT();
   const { layout, offset } = props.position;
   const progress = useSharedValue(0);
   const revealed = useRef(false);
@@ -201,7 +203,7 @@ function FanContent(props: {
         }}
       >
         <Text className="text-center text-sm font-t3-semibold text-foreground" numberOfLines={1}>
-          {active?.label ?? "Slide to a favorite"}
+          {active?.label ?? gt("Slide to a favorite")}
         </Text>
         {active ? (
           <Text className="text-center text-xs text-foreground-muted" numberOfLines={1}>
