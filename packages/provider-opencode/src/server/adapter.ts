@@ -1076,6 +1076,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(
           hasT3Mcp,
           mcpSession?.capabilities?.has("device") === true,
+          mcpSession?.capabilities?.has("computer") === true,
         );
         if (hasT3Mcp) {
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>

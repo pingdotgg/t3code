@@ -25,6 +25,7 @@ const workspaceFiles = [
   "infra/task-cache/package.json",
   "oxlint-plugin-t3code/package.json",
   "packages/client-runtime/package.json",
+  "packages/computer-helper/package.json",
   "packages/contracts/package.json",
   "packages/mcp-gateway/package.json",
   "packages/shared/package.json",

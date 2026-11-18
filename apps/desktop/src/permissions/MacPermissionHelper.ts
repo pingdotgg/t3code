@@ -19,6 +19,9 @@ const permissionGranted = (permission: MacPermission) => {
   return false;
 };
 
+/** Whether macOS has granted a permission to this app's own process; automation can only be asked per app. */
+export const macPermissionGranted = permissionGranted;
+
 function macAppBundlePath(executable: string): string | undefined {
   return /^(.+\.app)\/Contents\/MacOS\/[^/]+$/.exec(executable)?.[1];
 }

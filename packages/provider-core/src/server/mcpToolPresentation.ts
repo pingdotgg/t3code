@@ -1,5 +1,6 @@
 import type { ToolActivityIcon, ToolActivitySource } from "@t3tools/contracts";
 import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
+import { computerToolSource } from "@t3tools/shared/toolActivity";
 
 export function normalizeMcpText(value: unknown, maxLength = 160): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -39,6 +40,12 @@ export function mcpToolPresentation(input: {
   const server = normalizeMcpText(input.serverName ?? qualified?.[1] ?? input.serverDisplayName);
   const tool = normalizeMcpText(qualified?.[2] ?? input.toolName);
   if (server && tool && resolveT3McpToolDefinition(`${server}.${tool}`)) return {};
+  // Ada's own computer tools read as computer use, not as an integration's tool.
+  const computerSource = computerToolSource(
+    qualified?.[2] ?? (typeof input.toolName === "string" ? input.toolName : undefined),
+    server,
+  );
+  if (computerSource !== undefined) return { toolSource: computerSource };
   const title =
     normalizeMcpText(input.title) ??
     (server && tool ? normalizeMcpText(tool.replace(/[_-]+/gu, " ")) : undefined);

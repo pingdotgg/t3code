@@ -540,4 +540,22 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.removeListener(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
     },
   },
+  computerHost: {
+    prepare: (environmentId) =>
+      ipcRenderer.invoke(IpcChannels.COMPUTER_HOST_PREPARE_CHANNEL, environmentId),
+    sendFrame: (input) => ipcRenderer.invoke(IpcChannels.COMPUTER_HOST_FRAME_CHANNEL, input),
+    disconnect: (environmentId) =>
+      ipcRenderer.invoke(IpcChannels.COMPUTER_HOST_DISCONNECT_CHANNEL, environmentId),
+    answer: (answer) => ipcRenderer.invoke(IpcChannels.COMPUTER_HOST_ANSWER_CHANNEL, answer),
+    onCall: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, call: unknown) => {
+        if (typeof call !== "object" || call === null) return;
+        listener(call as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.COMPUTER_HOST_CALL_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.COMPUTER_HOST_CALL_CHANNEL, wrappedListener);
+    },
+  },
+  getComputerPermissions: () => ipcRenderer.invoke(IpcChannels.COMPUTER_PERMISSIONS_CHANNEL),
 } satisfies DesktopBridge);
