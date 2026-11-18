@@ -32,7 +32,7 @@ export function PullRequestCandidatePicker<T>({
   truncated,
   truncatedLabel,
   candidateKey,
-  pendingKey,
+  pendingKeys,
   onSelect,
   children,
 }: {
@@ -54,7 +54,7 @@ export function PullRequestCandidatePicker<T>({
   truncated: boolean;
   truncatedLabel: string;
   candidateKey: (candidate: T) => string;
-  pendingKey: string | null;
+  pendingKeys: ReadonlySet<string>;
   onSelect: (candidate: T) => void;
   children: (candidate: T, busy: boolean) => ReactNode;
 }) {
@@ -128,9 +128,9 @@ export function PullRequestCandidatePicker<T>({
                 hideIndicator
                 index={index}
                 value={keys[index]}
-                disabled={pendingKey !== null}
+                disabled={pendingKeys.size > 0}
               >
-                {children(candidate, keys[index] === pendingKey)}
+                {children(candidate, pendingKeys.has(keys[index]!))}
               </ComboboxItem>
             ))
           )}
