@@ -59,10 +59,7 @@ const isProviderError = Schema.is(PullRequestProviderError);
 const providerFailureReason = (cause: Cause.Cause<PullRequestService.PullRequestError>) =>
   Option.match(Cause.findErrorOption(cause), {
     onNone: () => null,
-    onSome: (error) =>
-      error._tag === "PullRequestOperationError" && isProviderError(error.cause)
-        ? error.cause.reason
-        : null,
+    onSome: (error) => (isProviderError(error.cause) ? error.cause.reason : null),
   });
 
 const logFailure =
@@ -217,6 +214,7 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.rebaseRequired === right.rebaseRequired &&
     left.mergeQueueRemovalId === right.mergeQueueRemovalId &&
     left.wakes === right.wakes &&
+    left.readBlocker === right.readBlocker &&
     left.awaitingBaseline === right.awaitingBaseline &&
     left.checksAwaitedSince === right.checksAwaitedSince &&
     left.checksPending === right.checksPending
@@ -616,25 +614,70 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     );
-    if (Exit.isFailure(detailRead)) {
-      if (Cause.hasInterruptsOnly(detailRead.cause))
-        return yield* Effect.failCause(detailRead.cause);
+    const activityAccessFailure =
+      Exit.isFailure(activityRead) &&
+      ["forbidden", "unauthenticated"].includes(providerFailureReason(activityRead.cause) ?? "");
+    const readFailure = Exit.isFailure(detailRead)
+      ? activityAccessFailure &&
+        providerFailureReason(detailRead.cause) === "failed" &&
+        Exit.isFailure(activityRead)
+        ? activityRead
+        : detailRead
+      : detailRead.value.state === "open" && activityAccessFailure && Exit.isFailure(activityRead)
+        ? activityRead
+        : null;
+    let newReadBlocker: string | undefined;
+    let blockerWake: ((target: WatchTarget) => Wake) | undefined;
+    if (readFailure !== null) {
+      if (Cause.hasInterruptsOnly(readFailure.cause))
+        return yield* Effect.failCause(readFailure.cause);
       lastReads.delete(group.key);
-      const reason = providerFailureReason(detailRead.cause);
+      const reason = providerFailureReason(readFailure.cause);
       if (reason === "rate-limited") return;
       // Transport and host failures can outlast the failure limit; keep the watch for recovery.
       if (reason === "failed") {
         readFailures.delete(group.key);
-        return yield* Effect.failCause(detailRead.cause);
+        return yield* Effect.failCause(readFailure.cause);
       }
       const failures = (readFailures.get(group.key) ?? 0) + 1;
       readFailures.set(group.key, failures);
-      if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
-        readFailures.delete(group.key);
+      if (reason === "forbidden" || reason === "unauthenticated") {
+        if (failures >= READ_FAILURE_LIMIT) {
+          const operation = readFailure === detailRead ? "detail" : "activity";
+          newReadBlocker = `${operation}:${reason}:${yield* random.uuidV4()}`;
+          const readBlocker = newReadBlocker;
+          blockerWake = (target) => ({
+            text: `T3 Code cannot read pull request #${target.link.number} (${target.link.url}): host ${operation} access is ${reason}. The watch remains active and will resume after access recovers. Report this blocker once; do not restart the watch or merge without check and review evidence.`,
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "failed",
+              summary: `#${target.link.number}: host access blocked, watching for recovery`,
+            },
+          });
+          if (Exit.isFailure(detailRead)) {
+            const wake = blockerWake;
+            yield* eachTarget(group, (target) =>
+              target.watch.readBlocker !== undefined
+                ? Effect.void
+                : hold({
+                    groupKey: group.key,
+                    target,
+                    next: { ...target.watch, readBlocker },
+                    wake: wake(target),
+                  }),
+            );
+          }
+        }
+      } else {
+        if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
+          readFailures.delete(group.key);
+        }
+        return yield* Effect.failCause(readFailure.cause);
       }
-      return yield* Effect.failCause(detailRead.cause);
+    } else {
+      readFailures.delete(group.key);
     }
-    readFailures.delete(group.key);
+    if (Exit.isFailure(detailRead)) return yield* Effect.failCause(detailRead.cause);
     const detail = detailRead.value;
     for (const target of group.targets) {
       const life = lifeOf(target);
@@ -697,7 +740,15 @@ export const make = Effect.gen(function* () {
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      const evaluated = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      // Check news must survive recovery; defer a new blocker notice to the next quiet pass.
+      const readBlocker =
+        target.watch.readBlocker ?? (evaluated.changes.length === 0 ? newReadBlocker : undefined);
+      const report =
+        remarks === null && readBlocker !== undefined
+          ? { ...evaluated, next: { ...evaluated.next, readBlocker } }
+          : evaluated;
+      const accessWake = target.watch.readBlocker === undefined ? blockerWake?.(target) : undefined;
       if (report.changes.length > 0) {
         const wake = {
           ...pullRequestWatchMessage({
@@ -722,6 +773,9 @@ export const make = Effect.gen(function* () {
               }
             : { groupKey: group.key, target, next: report.next, wake },
         );
+      }
+      if (accessWake !== undefined) {
+        return hold({ groupKey: group.key, target, next: report.next, wake: accessWake });
       }
       return watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next);
     });

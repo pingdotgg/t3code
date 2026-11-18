@@ -113,6 +113,7 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * none did. Null once either happened; absent on watches saved before it existed.
    */
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
+  readBlocker: Schema.optional(TrimmedNonEmptyString),
   /**
    * Whether the host was still running checks on the head at the last read. Only then does the
    * watch keep its thread waiting; absent on watches not read since it existed.

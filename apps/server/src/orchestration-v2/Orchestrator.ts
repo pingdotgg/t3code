@@ -1112,6 +1112,13 @@ function isStalePullRequestWatchStamp(
       candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, stamp),
   );
   if (link === undefined) return true;
+  if (stamp.readBlocker !== undefined) {
+    return (
+      link.watch === undefined ||
+      link.watch.readBlocker !== stamp.readBlocker ||
+      pullRequestSnapshotEndsWatch(link.snapshot, link.watch.startedAt)
+    );
+  }
   if (stamp.watchEnded === true) {
     // The final notice outlives its watch, but a replacement watch supersedes it.
     const latestWatch = link.watch ?? link.endedWatch;
@@ -3953,9 +3960,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       if (wake === undefined || outdated[0]) return;
       const { sections, ...wakeMessage } = wake;
-      const stamps = entries.map(({ entry, key }, index) => ({
+      const stamps = entries.map(({ entry, key, link }, index) => ({
         ...key,
         watchStartedAt: entry.startedAt,
+        ...(entry.watch?.readBlocker !== undefined && link?.watch?.readBlocker === undefined
+          ? { readBlocker: entry.watch.readBlocker }
+          : {}),
         headSha: entry.includesRemarks === true ? null : (entry.watch?.headSha ?? null),
         ...(entry.watch === null ? { watchEnded: true } : {}),
         ...(entries.length > 1 && sections?.[index] !== undefined
@@ -5101,6 +5111,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ...(existing.endedWatch?.checksPending === true && { checksPending: true }),
                     ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                       checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
+                    }),
+                    ...(existing.endedWatch?.readBlocker !== undefined && {
+                      readBlocker: existing.endedWatch.readBlocker,
                     }),
                     remarksThrough: startedAt,
                     remarkIds: [],
