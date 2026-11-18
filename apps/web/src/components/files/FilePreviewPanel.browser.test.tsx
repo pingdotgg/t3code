@@ -7,6 +7,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
+import { shouldTypeToFocusComposer } from "../chat/composerFocusRedirect";
 import {
   createWorkspaceFocusController,
   startWorkspaceFocus,
@@ -301,6 +302,21 @@ describe("rendered Markdown task saves", () => {
       await userEvent.keyboard("{Escape}");
       await expect.element(page.getByText("Read only", { exact: true })).not.toBeInTheDocument();
       await userEvent.keyboard("{Enter}");
+      await expect
+        .element(page.getByText("Read only", { exact: true }))
+        .toHaveTextContent("Read only");
+      await userEvent.keyboard("{Escape}");
+      await expect.element(page.getByText("Read only", { exact: true })).not.toBeInTheDocument();
+      const redirectTyping = (event: KeyboardEvent) => {
+        if (!shouldTypeToFocusComposer(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+      };
+      window.addEventListener("keydown", redirectTyping, true);
+      using _typing = {
+        [Symbol.dispose]: () => window.removeEventListener("keydown", redirectTyping, true),
+      };
+      await userEvent.keyboard(" ");
       await expect
         .element(page.getByText("Read only", { exact: true }))
         .toHaveTextContent("Read only");
