@@ -19,16 +19,10 @@ const COMMAND = `alchemy deploy --stage ${STAGE}`;
 
 type RowStatus = "pending" | "creating" | "created";
 
-export default function StackOutputsTerminal({
-  maxLines = 12,
-}: {
-  maxLines?: number;
-}) {
+export default function StackOutputsTerminal({ maxLines = 12 }: { maxLines?: number }) {
   const [cmd, setCmd] = useState("");
   const [caret, setCaret] = useState(false);
-  const [rows, setRows] = useState<
-    { id: string; type: string; status: RowStatus }[]
-  >([]);
+  const [rows, setRows] = useState<{ id: string; type: string; status: RowStatus }[]>([]);
   const [showOutputs, setShowOutputs] = useState(false);
   const cancelRef = useRef(false);
 
@@ -64,9 +58,7 @@ export default function StackOutputsTerminal({
         if (aborted()) return;
 
         await sleep(220);
-        setRows(
-          RESOURCES.map((r) => ({ ...r, status: "pending" as RowStatus })),
-        );
+        setRows(RESOURCES.map((r) => ({ ...r, status: "pending" as RowStatus })));
         await sleep(260);
 
         for (const r of RESOURCES) {
@@ -84,7 +76,7 @@ export default function StackOutputsTerminal({
       }
     };
 
-    run();
+    void run();
     return () => {
       cancelRef.current = true;
     };
@@ -95,12 +87,7 @@ export default function StackOutputsTerminal({
   const accent = "var(--alc-accent-bright)";
 
   return (
-    <TermChrome
-      title={`alchemy · ${STAGE}`}
-      badge="DEPLOY"
-      badgeColor={accent}
-      maxLines={maxLines}
-    >
+    <TermChrome title={`alchemy · ${STAGE}`} badge="DEPLOY" badgeColor={accent} maxLines={maxLines}>
       <Line>
         <span style={{ color: accent }}>$ </span>
         {cmd}
@@ -124,19 +111,9 @@ export default function StackOutputsTerminal({
                 >
                   {icon}
                 </span>
-                <span
-                  style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}
-                >
-                  {r.id}
-                </span>
-                <span style={{ color: "var(--alc-code-comment)" }}>
-                  {` (${r.type})`}
-                </span>
-                {inFlight && (
-                  <span style={{ color: accent, marginLeft: 6 }}>
-                    {r.status}
-                  </span>
-                )}
+                <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{r.id}</span>
+                <span style={{ color: "var(--alc-code-comment)" }}>{` (${r.type})`}</span>
+                {inFlight && <span style={{ color: accent, marginLeft: 6 }}>{r.status}</span>}
               </Line>
             );
           })}
@@ -148,9 +125,7 @@ export default function StackOutputsTerminal({
           <Line>
             <span style={{ color: accent }}>✓ </span>
             <span>deployed in </span>
-            <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
-              3.4s
-            </span>
+            <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>3.4s</span>
           </Line>
           <Line> </Line>
           <Line>

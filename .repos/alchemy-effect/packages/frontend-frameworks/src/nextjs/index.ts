@@ -22,12 +22,7 @@ export {
   type NextjsFrameworkOptions,
   type NextjsWorkerConfig,
 } from "./Nextjs.ts";
-export {
-  RunnerError,
-  runnerPath,
-  runOpenNextBuild,
-  type RunnerConfig,
-} from "./Runner.ts";
+export { RunnerError, runnerPath, runOpenNextBuild, type RunnerConfig } from "./Runner.ts";
 export * as DevServer from "./DevServer.ts";
 
 /**

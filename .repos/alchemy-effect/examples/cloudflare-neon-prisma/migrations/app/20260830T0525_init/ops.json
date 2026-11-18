@@ -33,9 +33,7 @@
       {
         "description": "ensure table \"Post\" does not exist",
         "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
-        "params": [
-          "\"public\".\"Post\""
-        ]
+        "params": ["\"public\".\"Post\""]
       }
     ],
     "execute": [
@@ -49,9 +47,7 @@
       {
         "description": "verify table \"Post\" exists",
         "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
-        "params": [
-          "\"public\".\"Post\""
-        ]
+        "params": ["\"public\".\"Post\""]
       }
     ]
   },
@@ -72,9 +68,7 @@
       {
         "description": "ensure table \"User\" does not exist",
         "sql": "SELECT (to_regclass($1)) IS NULL AS \"result\"",
-        "params": [
-          "\"public\".\"User\""
-        ]
+        "params": ["\"public\".\"User\""]
       }
     ],
     "execute": [
@@ -88,9 +82,7 @@
       {
         "description": "verify table \"User\" exists",
         "sql": "SELECT (to_regclass($1)) IS NOT NULL AS \"result\"",
-        "params": [
-          "\"public\".\"User\""
-        ]
+        "params": ["\"public\".\"User\""]
       }
     ]
   },
@@ -111,11 +103,7 @@
       {
         "description": "ensure constraint \"User_email_key\" does not exist",
         "sql": "SELECT NOT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
-        "params": [
-          "User_email_key",
-          "public",
-          "\"public\".\"User\""
-        ]
+        "params": ["User_email_key", "public", "\"public\".\"User\""]
       }
     ],
     "execute": [
@@ -128,11 +116,7 @@
       {
         "description": "verify constraint \"User_email_key\" exists",
         "sql": "SELECT EXISTS (SELECT 1 AS \"one\" FROM \"pg_constraint\" AS \"c\" INNER JOIN \"pg_namespace\" AS \"n\" ON \"n\".\"oid\" = \"c\".\"connamespace\" WHERE (\"c\".\"conname\" = $1 AND \"n\".\"nspname\" = $2 AND \"c\".\"conrelid\" = to_regclass($3))) AS \"result\"",
-        "params": [
-          "User_email_key",
-          "public",
-          "\"public\".\"User\""
-        ]
+        "params": ["User_email_key", "public", "\"public\".\"User\""]
       }
     ]
   }

@@ -95,7 +95,7 @@ Create `src/worker.ts` with an empty Construction phase:
 
 ```typescript
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export default Cloudflare.Worker(
@@ -114,14 +114,14 @@ an incoming request.
 
 ### 3a. Bind an R2 bucket for storage
 
-Tasks need durable storage. Declare an `Bucket` resource and bind
-it inside the constructor — `bind()` returns a typed handle whose `get` /
-`put` / `delete` / `list` methods we'll call from the handlers
-below.
+Tasks need durable storage. Declare a `Bucket` resource and bind
+it inside the constructor — `Cloudflare.R2.ReadWriteBucket(Tasks)`
+returns a typed handle whose `get` / `put` / `delete` / `list` methods
+we'll call from the handlers below.
 
 ```typescript
 // src/bucket.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Tasks = Cloudflare.R2.Bucket("Tasks");
 ```
@@ -162,12 +162,14 @@ is pure construction — it builds a value, it doesn't run the server.
 +   const handlersLayer = TaskRpcs.toLayer({
 +     getTask: ({ id }) =>
 +       Effect.gen(function* () {
-+         const object = yield* tasks.get(id);
++         const object = yield* tasks.get(id).pipe(Effect.orDie);
 +         if (!object) {
 +           return yield* Effect.fail(new TaskNotFound({ id }));
 +         }
-+         return Schema.decodeUnknownSync(Task)(JSON.parse(yield* object.text()));
-+       }).pipe(Effect.orDie),
++         return Schema.decodeUnknownSync(Task)(
++           JSON.parse(yield* object.text().pipe(Effect.orDie)),
++         );
++       }),
 +     createTask: ({ title }) =>
 +       Effect.gen(function* () {
 +         const task = new Task({
@@ -225,7 +227,7 @@ or `Etag.layer` — the RPC server handles message framing internally.
 
 ```typescript
 // src/worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -243,14 +245,14 @@ export default Cloudflare.Worker(
     const handlersLayer = TaskRpcs.toLayer({
       getTask: ({ id }) =>
         Effect.gen(function* () {
-          const object = yield* tasks.get(id);
+          const object = yield* tasks.get(id).pipe(Effect.orDie);
           if (!object) {
             return yield* Effect.fail(new TaskNotFound({ id }));
           }
           return Schema.decodeUnknownSync(Task)(
-            JSON.parse(yield* object.text()),
+            JSON.parse(yield* object.text().pipe(Effect.orDie)),
           );
-        }).pipe(Effect.orDie),
+        }),
       createTask: ({ title }) =>
         Effect.gen(function* () {
           const task = new Task({
@@ -283,7 +285,7 @@ export default Cloudflare.Worker(
 ```typescript
 // alchemy.run.ts
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import Worker from "./src/worker.ts";
 
@@ -410,7 +412,7 @@ takes the `RpcGroup` directly in props and removes the `{ fetch }`
 wrapper:
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { RpcSerialization, RpcServer } from "effect/rpc";
@@ -503,7 +505,7 @@ Return its handler Layer from the per-instance Effect:
 
 ```typescript
 // counter.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { CounterRpcs } from "./rpcs.ts";
 
@@ -594,7 +596,7 @@ forwards `/counters/alice` to `"alice"` and `/counters/bob` to `"bob"`:
 
 ```typescript
 // worker.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -639,7 +641,7 @@ Connect to the Worker's `/counters/alice` route and create the browser's
 Effect RPC client in a Layer. This client talks only to the `"alice"` object:
 
 ```typescript
-import * as RpcWebSocketClient from "alchemy/Cloudflare/RpcWebSocketClient";
+import * as RpcWebSocketClient from "@alchemy.run/cloudflare/Workers/RpcWebSocketClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -666,7 +668,7 @@ const program = Effect.gen(function* () {
 }).pipe(Effect.provide(CounterClientLive));
 ```
 
-The dedicated `alchemy/Cloudflare/RpcWebSocketClient` entrypoint imports only
+The dedicated `@alchemy.run/cloudflare/Workers/RpcWebSocketClient` entrypoint imports only
 Effect modules and is safe to bundle for browsers. The wrapper is optional;
 it composes Effect's RPC client, socket protocol, WebSocket, and JSON serializer.
 Client middleware remains an explicit Layer dependency. Its `socket`, `protocol`,
@@ -802,7 +804,7 @@ The DO's constructor returns `{ fetch }` produced by
 
 ```typescript
 // src/object.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -852,6 +854,15 @@ whole Worker — the R2-backed handlers are unchanged, the new
 
 ```typescript
 // src/worker.ts
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as HttpClient from "effect/http/HttpClient";
+import { RpcClient, RpcSerialization, RpcServer } from "effect/rpc";
+import { Tasks } from "./bucket.ts";
+import { InnerRpcs, TaskRpcs } from "./rpcs.ts";
+import TasksObject from "./object.ts";
+
 export default Cloudflare.Worker(
   "Worker",
   { main: import.meta.url },

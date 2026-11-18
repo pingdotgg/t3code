@@ -27,7 +27,7 @@ producers and consumers can reference the same handle:
 
 ```typescript
 // src/bus.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 
 export const Events = AWS.EventBridge.EventBus("Events", {});
 ```
@@ -45,7 +45,7 @@ attaches an `events:PutEvents` policy statement scoped to the bus ARN
 
 ```typescript
 // src/api.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Events } from "./bus.ts";
@@ -83,20 +83,20 @@ the binding over the EventBridge API.
 
 ## Consume events in a Lambda
 
-`consumeBusEvents` is the consumer-side mirror of
-`SQS.consumeQueueMessages`: pass the bus, an event pattern, and a
-handler that receives matching events as a typed `Stream`:
+`consumeBusEvents` subscribes a Lambda to a bus: pass the bus, an
+event pattern, and a handler that receives matching events as a typed
+`Stream`:
 
 ```typescript
 // src/worker.ts
-import * as AWS from "alchemy/AWS";
+import * as AWS from "@alchemy.run/aws";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { Events } from "./bus.ts";
 
 export default class Worker extends AWS.Lambda.Function<Worker>()(
   "OrdersWorker",
-  { main: import.meta.url },
+  { main: import.meta.url, functionUrl: false },
   Effect.gen(function* () {
     const bus = yield* Events;
 

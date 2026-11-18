@@ -2,6 +2,11 @@
   "name": "aws-website-nuxt",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/aws-website-nuxt"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -10,24 +15,20 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/aws": "workspace:*",
     "alchemy": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/aws": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@tailwindcss/vite": "catalog:",
     "@types/node": "catalog:node24",
-    "alchemy-test": "workspace:*",
     "nitropack": "catalog:",
     "nuxt": "catalog:",
     "tailwindcss": "catalog:",
     "typescript": "catalog:"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/aws-website-nuxt"
   }
 }

@@ -21,6 +21,10 @@ const SAFE_INTEGER_BOUNDS: Record<string, number> = {
   minimum: Number.MIN_SAFE_INTEGER,
 };
 
+// Gemini rejects function declarations whose enums hold anything but strings.
+const isNonStringEnum = (key: string, value: Json) =>
+  key === "enum" && Array.isArray(value) && value.some((item) => typeof item !== "string");
+
 const tagOf = (branch: JsonObject, key: string): Json => {
   const property = Predicate.isObject(branch.properties) ? branch.properties[key] : undefined;
   return Predicate.isObject(property) && Array.isArray(property.enum) && property.enum.length === 1
@@ -75,6 +79,7 @@ const compact = (schema: Json, optional: boolean): Json => {
   for (const [key, value] of Object.entries(schema)) {
     if (key === "additionalProperties" && value === true) continue;
     if (SAFE_INTEGER_BOUNDS[key] === value) continue;
+    if (isNonStringEnum(key, value)) continue;
     result[key] =
       key === "properties" && Predicate.isObject(value)
         ? Object.fromEntries(

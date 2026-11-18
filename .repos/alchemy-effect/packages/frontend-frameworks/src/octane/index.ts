@@ -1,3 +1,6 @@
+import type * as FileSystem from "effect/FileSystem";
+import type * as Layer from "effect/Layer";
+import type * as Path from "effect/Path";
 /**
  * `@alchemy.run/frontend-frameworks/octane` — OctaneJS integration implementing
  * framework-core's `Framework` service, with the deploy target passed as a
@@ -23,9 +26,6 @@
  * validation constants — lives behind `@alchemy.run/frontend-frameworks/octane/cloudflare`.
  */
 import type { Framework } from "../core/index.ts";
-import type * as FileSystem from "effect/FileSystem";
-import type * as Layer from "effect/Layer";
-import type * as Path from "effect/Path";
 import { layer, type OctaneOptions } from "./Octane.ts";
 
 export {

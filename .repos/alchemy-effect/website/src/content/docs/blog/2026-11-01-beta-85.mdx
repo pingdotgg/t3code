@@ -1,0 +1,1234 @@
+---
+title: 2.0.0-beta.85 - Effect 4.1, Domain Replay & DynamoDB State
+date: 2026-11-01T09:00:00Z
+category: release
+excerpt: Effect 4.1, Alchemy Domain deploys that backfill and rebuild views and projections, Domain models served over HTTP, MCP and the CLI, redesigned Cloud Run containers and keyless AWS↔GCP bindings, custom domains with any DNS provider, DynamoDB state, Alchemist, the @alchemy.run/test runner, and 95 bug fixes.
+---
+
+import BackfillFanout from "../../../components/blog/BackfillFanout.astro";
+import BoundedContext from "../../../components/blog/BoundedContext.astro";
+
+beta.85 is 249 pull requests from 39 contributors: 84 features and 95 bug
+fixes.
+
+It moves Alchemy to **Effect 4.1**. Alchemy Domain's deploys now **roll out
+every model change** by replaying history, and one Domain model can be served
+**over HTTP, MCP or the CLI**, so people and agents reach it however they
+prefer. GCP gets **redesigned Cloud Run services and containers** and **connects to AWS
+without keys**. Custom domains work with **any DNS provider**, the
+**Cloudflare state store** takes its Worker name, account and domain, **AWS
+state uses DynamoDB** and plans 270× faster, **Alchemist** exposes the whole CLI
+as a programmatic API, and Alchemy's test runner ships as
+**`@alchemy.run/test`**.
+
+:::danger
+**Upgrade the Cloudflare state store to v8, and don't go back**
+
+Your next `alchemy deploy` asks to upgrade the store (pass `--yes` in CI). After
+that, don't run an older Alchemy against it: you risk losing the encryption key,
+which nothing can recover. Upgrade every machine and CI job together
+([below](#cloudflare-state-store-v8)).
+:::
+
+:::caution
+**Breaking changes**
+
+- **Effect 4.1**: bump `effect` and `@effect/*` to `^4.1.0` ([below](#effect-41)).
+- **`Cloudflare.state({ name })` is `workerName`**, the store's full Worker name, and `--name` takes the Worker name too: `name: "team-a"` becomes `workerName: "alchemy-state-store-team-a"`, the same Worker and secrets ([below](#choose-the-worker-name)).
+- **`AWS.state()` uses DynamoDB**: run `alchemy state migrate`, or keep S3 with `AWS.state({ backend: "s3" })` ([below](#aws-state-now-uses-dynamodb-and-plans-270-faster)).
+- **Lambda event-source handlers take the Lambda event** instead of a `Stream`, and can return a partial batch response ([below](#lambda-aliases-streaming-and-partial-batch-failures)):
+
+  ```diff lang="typescript"
+  yield* AWS.SQS.consumeQueueMessages(
+  -  queue,
+  -  (records) =>
+  -    records.pipe(Stream.runForEach((record) => Effect.log(record.body))),
+  +  queue,
+  +  Effect.fn(function* (event) {
+  +    for (const record of event.Records) yield* Effect.log(record.body);
+  +  }),
+  );
+  ```
+
+- **`Test.make` moved to `@alchemy.run/test`**: `alchemy/Test/Alchemy` is now `@alchemy.run/test/Alchemy`, and the same for `Bun`, `Vitest`, `Core`, `Http` and `TestState` ([#2621](https://github.com/alchemy-run/alchemy/pull/2621)).
+- **GCP profiles**: the `env` method is gone, and `gcloud` profiles name a configuration; run `alchemy profile edit --reconfigure GCP` ([#2680](https://github.com/alchemy-run/alchemy/pull/2680)).
+- **`GCP.Run.Container` is now a resource**; the container-spec type it named is `GCP.Run.ContainerSpec` ([#2652](https://github.com/alchemy-run/alchemy/pull/2652)).
+- **Domain models are upgraded on the next deploy**: their Durable Object classes are renamed after their model, and their data moves with them ([below](#alchemy-upgrades-your-deployed-model)).
+- **The Durable Object Domain platform and workflow engine are factories**: `layerDurableObjects()` and `layerDurableObjectEngine()` ([#2601](https://github.com/alchemy-run/alchemy/pull/2601)).
+- **Domain clients**: `bank.WithdrawMoney(target, input, options)` ([#2561](https://github.com/alchemy-run/alchemy/pull/2561)); `watch` streams `{ state, cursor }` and `events` ends with `CaughtUp` ([#2579](https://github.com/alchemy-run/alchemy/pull/2579)); `Domain.Api` takes `{ model }` and `api.entries` is `api.serves` ([#2820](https://github.com/alchemy-run/alchemy/pull/2820)); `testClient` is `clientInProcess` ([#2550](https://github.com/alchemy-run/alchemy/pull/2550)).
+- **Domain stories**: `externalSystems` is `stub`, `expectCall` is `call`, `resolve` is `succeed`, every call needs a `call` step, and unasserted events fail the story ([how to update](#update-your-stories)).
+- **Domain checks**: a command's `target` must be its aggregate's `id` schema ([#2563](https://github.com/alchemy-run/alchemy/pull/2563)), and an adapter returning a value its schema rejects now dies ([#2548](https://github.com/alchemy-run/alchemy/pull/2548)).
+- **Cloudflare DNS**: `foundationDns: true` is `nameservers: { type: "cloudflare.advanced" }` ([#2501](https://github.com/alchemy-run/alchemy/pull/2501)).
+- **`Cloudflare.Access.Organization`** resets settings your stack doesn't declare ([#2291](https://github.com/alchemy-run/alchemy/pull/2291)).
+- **`GCP.SQL.Instance`**: `ipv4Enabled` is `ipConfiguration.ipv4Enabled`, `backupEnabled` is `backup.enabled` ([#2642](https://github.com/alchemy-run/alchemy/pull/2642)).
+- **GitHub**: `Ruleset` rules are top-level props ([#2582](https://github.com/alchemy-run/alchemy/pull/2582)), and errors and credentials come from the distilled GitHub SDK ([#2530](https://github.com/alchemy-run/alchemy/pull/2530)).
+- **Error fields named `name`** are renamed, mostly to `resourceName` ([#2689](https://github.com/alchemy-run/alchemy/pull/2689)).
+- **`--log-ansi` is removed**, and telemetry no longer exports log records ([#2765](https://github.com/alchemy-run/alchemy/pull/2765)).
+:::
+
+## Effect 4.1
+
+Alchemy now runs on Effect 4.1
+([#2754](https://github.com/alchemy-run/alchemy/pull/2754)):
+
+```sh
+bun add effect@^4.1.0 @effect/platform-node@^4.1.0
+```
+
+Effect 4.1 deletes `effect/Crypto`. Its `SecureRandom` and `Digest` services
+replace it, and the platform layer provides them, so `StackServices` changes
+with it:
+
+```diff lang="typescript"
+export type StackServices =
+  | FileSystem
+-  | Crypto
++  | Digest
++  | SecureRandom
+  | Path
+```
+
+Foldkit projects need `foldkit@^0.170` and `@foldkit/vite-plugin@^0.29`
+([#2790](https://github.com/alchemy-run/alchemy/pull/2790)).
+
+## Alchemy Domain
+
+Alchemy Domain shipped 30 features this release. Thanks
+[Taras Kornichuk](https://github.com/artile), who built most of them!
+
+### Deploys roll out every change to a model
+
+A Domain model's views and projections are derived from its events. Change
+the model, and the deploy brings every consumer up to date from the history,
+with no script to write
+([#2725](https://github.com/alchemy-run/alchemy/pull/2725),
+[#2875](https://github.com/alchemy-run/alchemy/pull/2875)):
+
+| You change | The deploy |
+| --- | --- |
+| add a view or projection | feeds it every past event, in the order it was recorded |
+| bump a view's `version` | recomputes it, and every view and projection that reads it |
+| bump a projection's `version` | runs it again over the whole history |
+| list a view as `lazy` | skips the backfill; each key fills itself on first read |
+| add a policy | acts on new events only, so the past is never acted on twice |
+| remove a view or projection | stops it |
+
+Adding a view is one line in the model:
+
+```typescript
+// deploy 1
+class Bank extends Domain.Model("Bank", { aggregates: [Account] }) {}
+
+// deploy 2: AccountSummary folds every earlier event
+class Bank extends Domain.Model("Bank", {
+  aggregates: [Account],
+  views: [AccountSummary],
+}) {}
+```
+
+Changing what a view computes is a version bump:
+
+```typescript
+export class AccountSummary extends Domain.View("AccountSummary", {
+  from: [Account],
+  key: Account,
+  state: Schema.Struct({ net: Schema.Number }),
+  initial: { net: 0 },
+  evolve: {
+    MoneyDeposited: (v, e) => ({ net: v.net + e.amount }),
+    // new: applied to every past withdrawal
+    MoneyWithdrawn: (v, e) => ({ net: v.net - e.amount }),
+  },
+  version: 1,
+}) {}
+```
+
+The deploy picks the cheapest correct strategy. A view keyed by the one
+aggregate it reads is rebuilt in place: each key re-reads its own
+aggregate's events the first time it's touched, so the deploy waits for
+nothing. Any other view, such as a total across every account, is rebuilt
+from the history in new storage, and the deploy waits and reports progress:
+
+```sh
+[DomainBackfillRun] Backfilling view:Deposits reading history 41% (1,690/4,096 subtrees, 410,211 instances) (48s) ...
+[DomainBackfillRun] Backfilled view:Deposits (112.4s)
+```
+
+Reads stay correct while new code rolls out, `history.complete` tells a
+screen when a view has caught up, and a deploy interrupted halfway picks up
+where it stopped.
+
+#### How it scales
+
+On Cloudflare the replay runs as Durable Objects, not on the deploying
+machine. Every aggregate instance lists itself in a directory on its first
+commit: a tree where each node holds up to 256 instances and splits into 16
+children when it fills. A backfill's root splits that directory into a few
+hundred subtrees and hands them to relays. A relay given more than six items
+splits them among six child relays. Six because a Cloudflare Worker
+invocation runs at most six outgoing calls at a time, so a seventh would only
+wait in line. The tree grows deeper instead of wider, about log₆ of the
+instance count: 6 levels for 10,000 instances, 8 for a million.
+
+<BackfillFanout />
+
+At the bottom, a view keyed by its aggregate reads its own instance's events
+and applies them. A view that many instances feed, like a timeline, gets a
+scanner per instance that pushes each key its share; once every scanner has
+pushed, each key applies its events in the order they were recorded. Every
+part of the run is a class only the new code has, so nothing starts on the
+old code while Cloudflare rolls the deploy out.
+
+We measured it on Cloudflare, rebuilding a view over accounts with 10
+deposits each:
+
+| Accounts | Events | The deploy waited |
+| ---: | ---: | ---: |
+| 10,000 | 100,000 | 13 s |
+| 100,000 | 1,000,000 | 58 s |
+| 1,000,000 | 10,000,000 | 8 min |
+
+Past about 100,000 accounts the limit isn't the tree but Cloudflare's cap on
+how fast one account can create and call Durable Objects. The run paces
+itself to that cap the way TCP does: it sends more while the account keeps
+up, halves when Cloudflare refuses calls, and resends the refused work. The
+million-account run held about 2,000 keys a second.
+
+Docs: [Consumers added later receive the history](/domain/model#consumers-added-later-receive-the-history) ·
+[Change a view: bump its version](/domain/model#change-a-view-bump-its-version) ·
+[Fill a view lazily](/domain/model#fill-a-view-lazily) ·
+[History at scale](/domain/backfill#width).
+
+### Alchemy upgrades your deployed model
+
+A Domain model is more than code: on Cloudflare it is a set of Durable
+Object classes holding every aggregate, view row and running saga. Changing
+how those classes are laid out would normally mean a hand-written migration
+and a careful cutover. In Alchemy it's part of the deploy.
+
+From this release, the deployed layout is versioned. Every Worker that hosts
+a model records the Domain version it was deployed with, and the Worker's
+reconciler upgrades older layouts on the next deploy, renaming classes in
+place in the same upload, so no data is copied or lost
+([#2560](https://github.com/alchemy-run/alchemy/pull/2560)). Future layout
+changes ship as new upgrade steps in Alchemy, and your deploy applies them.
+A Worker deployed by a newer Alchemy is never moved back: an older one
+refuses with `DomainVersionTooNew` before uploading anything.
+
+For the bank example, the first deploy with beta.85 changes the Worker like
+this:
+
+```diff lang="text"
+Worker
+-  tag    (none)
++  tag    alchemy:domain:v0
+-  class  AccountAggregate
++  class  Bank.AccountAggregate
+-  class  OpenAccountWorkflow
++  class  Bank.OpenAccountWorkflow
+```
+
+The renames ride in the same upload as the new code, as Cloudflare
+`renamed_classes` migrations, so every account and running saga keeps its
+storage and nothing is copied.
+
+This is what DDD buys you here. Because Alchemy knows the shape of your
+model (its aggregates, views and sagas), it can own the infrastructure under
+it, and evolve that infrastructure for you the same way it evolves a view.
+
+:::caution
+The first deploy with beta.85 upgrades every Worker that hosts a Domain
+model. Its Durable Object classes are renamed after their model, for example
+`AccountAggregate` becomes `Bank.AccountAggregate`, and their data moves with
+them.
+
+If two models in one Worker listed the same aggregate, they shared one class
+and its data before this release, and the deploy fails with
+`AmbiguousDomainLegacyData` until you pick the model that keeps it:
+
+```typescript
+export const BillingLive = Billing.layer(BillingHandlers, {
+  legacyData: true, // Billing keeps the shared data; Audit starts empty
+});
+```
+:::
+
+Each model now owns its data, so two models that list the same aggregate get
+separate instances, even in one Worker. And a model can keep all of it in a
+Cloudflare jurisdiction ([#2601](https://github.com/alchemy-run/alchemy/pull/2601)):
+
+```typescript
+Layer.provide(DomainCloudflare.layerDurableObjects({ jurisdiction: "eu" }));
+```
+
+A jurisdiction is part of an object's identity, so a model that already has
+data starts empty in its new jurisdiction, and its old objects stay where
+they were.
+
+Docs: [Upgrade without losing data](/domain/cloudflare#upgrade-without-losing-data) ·
+[Keep the model in a jurisdiction](/domain/cloudflare#keep-the-model-in-a-jurisdiction).
+
+### Serve a Domain model over HTTP, MCP or the CLI
+
+A `Domain.Api` names the parts of a model a client may reach
+([#2820](https://github.com/alchemy-run/alchemy/pull/2820)):
+
+```typescript
+export class BankApi extends Domain.Api("BankApi", {
+  model: Bank,
+  commands: ["DepositMoney", "WithdrawMoney"],
+  views: ["AccountSummary"],
+}) {}
+```
+
+<BoundedContext />
+
+The same Api can now be served to whoever needs it, through the same
+middleware and rejections, so an agent can do exactly what a signed-in
+client can and no more.
+
+As an HTTP JSON API with an OpenAPI document, with live reads as
+Server-Sent Events, for partners, scripts and browsers
+([#2587](https://github.com/alchemy-run/alchemy/pull/2587)):
+
+```typescript
+const BankHttp = DomainHttp.toHttpApi(BankApi);
+
+export const BankHttpLive = HttpApiBuilder.layer(BankHttp.api, {
+  openapiPath: "/openapi.json",
+}).pipe(Layer.provide(BankHttp.layer), Layer.provide(BankLive));
+```
+
+As an MCP server for agents, or as Effect AI tools for an agent inside your
+app ([#2586](https://github.com/alchemy-run/alchemy/pull/2586)):
+
+```typescript
+export const BankMcp = DomainAi.toMcp(BankApi).pipe(
+  Layer.provide(
+    McpServer.layerHttp({ name: "bank", version: "1.0.0", path: "/mcp" }),
+  ),
+  Layer.provide(BankLive),
+);
+```
+
+As a command-line tool, for people and agents in a terminal
+([#2588](https://github.com/alchemy-run/alchemy/pull/2588)):
+
+```sh
+$ bank deposit-money --target a-1 --amount 1000
+{ "reply": { "balance": 1000 }, "stream": "Account/a-1", "version": 1 }
+
+$ bank withdraw-money --target a-1 --amount 5000   # exit code 1
+{ "_tag": "InsufficientFunds", "balance": 1000, "requested": 5000 }
+```
+
+And as Foldkit commands and subscriptions for a web app
+([#2700](https://github.com/alchemy-run/alchemy/pull/2700)).
+
+Docs: [HTTP API](/domain/http-api) · [MCP](/domain/mcp) · [CLI](/domain/cli) ·
+[Foldkit](/domain/foldkit).
+
+### Stories run real adapters and show what went wrong
+
+A story tests a model as given, when, then. Stories now tell you exactly
+what failed. A failing story prints every step, marked passed, failed or not
+run, with the events committed so far
+([#2475](https://github.com/alchemy-run/alchemy/pull/2475)):
+
+```typescript
+yield* story(
+  Story.clock("2026-03-01T09:00:00Z"),
+  Story.given(c1, new Incremented({ by: 2, total: 2 })),
+  Story.when(c1, new Increment({ by: 3 })),
+  Story.then(c1, new Incremented({ by: 4, total: 6 })),
+  Story.replied({ total: 6 }),
+);
+```
+
+```text
+StoryFailure: Then: on Counter/c-1
+
+  ✓ 1 Clock      2026-03-01T09:00:00.000Z
+  ✓ 2 Given      Counter/c-1: Incremented { by: 2, total: 2 }
+  ✓ 3 When       Counter/c-1: Increment { by: 3 }
+  ✗ 4 Then       Counter/c-1: expected Incremented { by: 4, total: 6 }
+                              got      Incremented { by: 3, total: 5 }
+    5 Replied    { total: 6 }
+  events so far
+    Counter/c-1: Incremented → Incremented
+```
+
+A story also fails on any event a command or policy committed that no step
+asserts, on every stream, so a side effect can't slip past it
+([#2551](https://github.com/alchemy-run/alchemy/pull/2551)):
+
+```text
+StoryFailure: committed events no step asserts (assert them with then):
+  Counter/c-1: Capped (from step 4)
+```
+
+Steps type-check against the last command, so a rejection it can't return,
+or a reply it doesn't give, is a compile error instead of a failing run
+([#2559](https://github.com/alchemy-run/alchemy/pull/2559)):
+
+```typescript
+story(
+  Story.when(c1, new Increment({ by: 1 })),
+  Story.rejected(new NotAnOperator()),
+  // Type 'RejectedStep<NotAnOperator>' is not assignable to type
+  //   '"Increment does not reject with NotAnOperator"'.
+);
+```
+
+Time moves with `Story.advance`, and scheduled commands fire when they come
+due ([#2629](https://github.com/alchemy-run/alchemy/pull/2629)):
+
+```typescript
+story(
+  Story.when(c1, new Cap()),
+  Story.then(c1, new Capped()),
+  Story.advance("1 hour"),
+  Story.then(c1, new Reminded()), // the scheduled reminder fired
+);
+```
+
+Stories also changed how external systems are tested. Before, every
+external system a story listed was scripted, and nothing outside the model
+ran. Now you choose which systems to fake with `stub`, and the rest run for
+real through the adapter Layers you provide
+([#2477](https://github.com/alchemy-run/alchemy/pull/2477),
+[#2481](https://github.com/alchemy-run/alchemy/pull/2481)).
+
+Either way, every call is asserted. `Story.call` checks what the model sent,
+and the next step settles how the call ended. For a stubbed system, that
+step supplies the answer. For a real one, it checks the answer the adapter
+gave:
+
+```typescript
+// FraudCheck is stubbed: the story supplies its answer
+Story.call(FraudCheck.score, { accountId: account.id, amount: 60_000 }),
+Story.succeed(FraudCheck.score, { risk: 0.95 }),
+
+// Payments runs for real: the story checks what the adapter returned
+Story.call(Payments.refund, { settlementId: "st_1", amount: 500 }),
+Story.returned(Payments.refund, { refundId: "re_st_1" }),
+```
+
+| | Stubbed (`stub: [...]`) | Real (adapter Layer provided) |
+| --- | --- | --- |
+| what was sent | `Story.call` | `Story.call` |
+| success | `Story.succeed` supplies the value | `Story.returned` asserts the value |
+| declared error | `Story.fail` supplies it | `Story.failed` asserts it |
+| defect | `Story.die` supplies it | `Story.died` asserts it |
+
+A real call that no step asserts fails the story, so nothing an adapter does
+goes unchecked. Supplied answers are checked against the operation's schemas, like
+a real adapter's ([#2548](https://github.com/alchemy-run/alchemy/pull/2548)),
+and a story that leaves a system unstubbed requires its adapter Layer in its
+type:
+
+```typescript
+const story = Story.make(Bank, { layer: BankHandlers, stub: [FraudCheck] });
+
+it.effect("refunds through the real payments adapter", () =>
+  story(
+    Story.when(
+      account,
+      new RecordSettlement({ settlementId: "st_1", amount: 500 }),
+    ),
+    Story.then(
+      account,
+      new SettlementOnClosedAccount({ settlementId: "st_1", amount: 500 }),
+    ),
+    Story.call(Payments.refund, { settlementId: "st_1", amount: 500 }),
+    Story.returned(Payments.refund, { refundId: "re_st_1" }),
+  ).pipe(Effect.provide(StripePayments)), // required: Payments isn't stubbed
+);
+```
+
+#### Update your stories
+
+Rename the options and steps:
+
+```diff lang="typescript"
+const story = Story.make(Bank, {
+  layer: BankHandlers,
+-  externalSystems: [FraudCheck, Payments],
++  stub: [FraudCheck, Payments],
+});
+
+story(
+  Story.when(account, new WithdrawMoney({ amount: 60_000 })),
+-  Story.expectCall(FraudCheck.score, { amount: 60_000 }),
+-  Story.resolve(FraudCheck.score, { risk: 0.95 }),
++  Story.call(FraudCheck.score, { amount: 60_000 }),
++  Story.succeed(FraudCheck.score, { risk: 0.95 }),
+);
+```
+
+Then fix what the stricter checks now catch:
+
+- **Every call needs a `Story.call` step**, stubbed or real. Before, a bare `resolve` answered the only pending call; now each answer follows the `call` that checks what was sent.
+- **List every system you want faked in `stub`.** A system left out runs for real, and the story's type requires its adapter Layer.
+- **Assert every committed event.** A story fails on events no `then` asserts, including ones a policy writes on other instances. Add a `Story.then` for each.
+- **Answer with values the schema accepts.** A stubbed answer the operation's success schema rejects now fails the policy.
+- **Move the clock forward only.** A `Story.clock` earlier than the current time, or a string that isn't a time, now fails the story ([#2564](https://github.com/alchemy-run/alchemy/pull/2564)).
+- **Use `clientInProcess` for Api tests.** `CustomerApi.testClient` is now `CustomerApi.clientInProcess` ([#2550](https://github.com/alchemy-run/alchemy/pull/2550)).
+
+Docs: [Story](/domain/story) ·
+[Answer outside systems](/domain/testing-models#answer-outside-systems) ·
+[Assert real calls](/domain/testing-models#assert-real-calls).
+
+## GCP
+
+### Cloud Run services and containers, redesigned
+
+A Cloud Run service runs one or more containers in each instance. The first
+takes requests, and the rest run beside it on `localhost`. Cloud Run in
+Alchemy was rebuilt around that model. Any container can be an image or your
+own Effect program, and a container lists or binds the ones it needs
+([#2644](https://github.com/alchemy-run/alchemy/pull/2644),
+[#2652](https://github.com/alchemy-run/alchemy/pull/2652),
+[#2654](https://github.com/alchemy-run/alchemy/pull/2654),
+[#2657](https://github.com/alchemy-run/alchemy/pull/2657)).
+
+#### One container
+
+A service starts as a single image:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: GCP.providers(), state: GCP.state() },
+  Effect.gen(function* () {
+    const proxy = yield* GCP.Run.Service("Proxy", {
+      template: {
+        containers: [
+          {
+            image: "us-docker.pkg.dev/cloudrun/container/hello",
+            ports: [{ containerPort: 8080 }],
+          },
+        ],
+      },
+    });
+    return { url: proxy.uri };
+  }),
+);
+```
+
+#### Add a sidecar
+
+`GCP.Run.Container` declares a container as a resource. List it after the
+first one, and `dependsOn` holds the proxy back until the cache passes its
+startup probe:
+
+```diff lang="typescript"
+Effect.gen(function* () {
++  const cache = yield* GCP.Run.Container("Cache", {
++    image: "docker.io/library/redis:7-alpine",
++    port: 6379,
++    startupProbe: { tcpSocket: {} },
++  });
+  const proxy = yield* GCP.Run.Service("Proxy", {
+    template: {
+      containers: [
+        {
+          image: "us-docker.pkg.dev/cloudrun/container/hello",
+          ports: [{ containerPort: 8080 }],
++          dependsOn: [cache.name],
+        },
++        cache,
+      ],
+    },
+  });
+  return { url: proxy.uri };
+}),
+```
+
+A plain container spec works in the list too. Every container takes
+`startupProbe`, `livenessProbe` and `dependsOn`.
+
+#### Run your own program
+
+Give the service `main` and an Effect, and Alchemy bundles your program into
+the first container. An Effect service binds its sidecars instead of listing
+them. `bindPort` adds the Cache to the revision, makes the service wait for
+it, and returns its address:
+
+```typescript
+// src/api.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export const Cache = GCP.Run.Container("Cache", {
+  image: "docker.io/library/redis:7-alpine",
+  port: 6379,
+  startupProbe: { tcpSocket: {} },
+});
+
+export default class Api extends GCP.Run.Service<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const cache = yield* GCP.Run.bindPort(Cache, 6379);
+    // cache.url === "http://localhost:6379"
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+#### Run your own program in a sidecar
+
+A Container with `main` runs your Effect program in its own image. Its
+methods become a typed client for whoever binds it, called over `localhost`,
+streams included. A program Container binds sidecars of its own:
+
+```typescript
+// src/worker.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Cache } from "./api.ts";
+
+export default class Worker extends GCP.Run.Container<Worker>()(
+  "Worker",
+  {
+    main: import.meta.url,
+    port: 3000,
+    startupProbe: { httpGet: { path: "/health" } },
+  },
+  Effect.gen(function* () {
+    const cache = yield* GCP.Run.bindPort(Cache, 6379);
+    return {
+      greet: (name: string) => Effect.succeed(`hello ${name}`),
+      count: () => Stream.make(1, 2, 3),
+      fetch: Effect.succeed(HttpServerResponse.text("ok")),
+    };
+  }),
+) {}
+```
+
+The service binds the Worker with `bindContainer` and calls its methods:
+
+```diff lang="typescript"
+// src/api.ts
++import Worker from "./worker.ts";
+
+export default class Api extends GCP.Run.Service<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+-    const cache = yield* GCP.Run.bindPort(Cache, 6379);
++    const worker = yield* GCP.Run.bindContainer(Worker);
+    return {
+-      fetch: Effect.succeed(HttpServerResponse.text("hello")),
++      fetch: worker.greet("sam").pipe(Effect.map(HttpServerResponse.text)),
+    };
+  }),
+) {}
+```
+
+Bindings chain, so one revision now runs three containers and starts them in
+order:
+
+```text
+revision
+├── start Cache  → TCP :6379
+├── start Worker (dependsOn Cache)  → GET :3000/health
+├── start Api    (dependsOn Worker) → GET :8080/health
+└── Ready → traffic to Api
+```
+
+A service that runs an image lists its containers; a service or Container
+that runs your program binds them, which gives it a client and orders startup
+for it.
+
+Docs: [Sidecars](/gcp/compute/sidecars) · [Cloud Run](/gcp/compute/cloud-run).
+
+### Call private Cloud Run services
+
+`InvokeService` calls the methods of a private Cloud Run service, signed with
+the caller's ID token, with types taken from the service class
+([#2653](https://github.com/alchemy-run/alchemy/pull/2653)):
+
+```typescript
+export default class Quotes extends GCP.Run.Service<Quotes>()(
+  "Quotes",
+  { main: import.meta.url }, // the IAM invoker check stays on
+  Effect.gen(function* () {
+    return {
+      quote: (symbol: string) => Effect.succeed({ symbol, price: 42 }),
+      ticks: (symbol: string) => Stream.make(41, 42, 43),
+    };
+  }),
+) {}
+
+// in another service
+const quotes = yield* GCP.Run.InvokeService(Quotes);
+const { price } = yield* quotes.quote("GOOG");
+```
+
+Pass an Effect RPC `schema` or an HttpApi `api` to `InvokeService` or
+`bindContainer` for a client with typed errors, and serve it with
+`ServeRpc` or `ServeHttpApi`
+([#2654](https://github.com/alchemy-run/alchemy/pull/2654)):
+
+```typescript
+const tasks = yield* GCP.Run.InvokeService(TaskBackend, { schema: TaskRpcs });
+// Effect<Task, TaskNotFound | …>
+const task = yield* tasks.getTask({ id: "t1" });
+```
+
+A service that returns methods but turns off the invoker check fails to
+deploy, so RPC methods are never public by accident.
+
+Docs: [Call it from another service](/gcp/apis/effect-rpc#call-it-from-another-service) ·
+[Run it as a sidecar](/gcp/apis/effect-rpc#run-it-as-a-sidecar).
+
+### Connect AWS and GCP without keys
+
+A GCP binding on a Lambda, ECS task, EC2 instance or App Runner service no
+longer creates a service account key. The host's IAM role impersonates the
+service account through workload identity federation
+([#2648](https://github.com/alchemy-run/alchemy/pull/2648)). Your code
+doesn't change:
+
+```typescript
+export default Worker.make(
+  { main: import.meta.url, functionUrl: true },
+  Effect.gen(function* () {
+    const publish = yield* GCP.PubSub.Publish(yield* Events);
+    return {
+      fetch: publish({ body: { messages: [{ data: btoa("hello") }] } }).pipe(
+        Effect.as(HttpServerResponse.text("published")),
+      ),
+    };
+  }).pipe(Effect.provide(GCP.PubSub.PublishHttp)),
+);
+```
+
+```diff lang="text"
+WorkerServiceAccount         GCP.IAM.ServiceAccount
+-WorkerServiceAccountKey      GCP.IAM.ServiceAccountKey
++AwsWorkloadIdentityPool      GCP.IAM.WorkloadIdentityPool
++AwsWorkloadIdentityProvider  GCP.IAM.WorkloadIdentityProvider
++WorkerWorkloadIdentityUser   GCP.IAM.Member
+```
+
+The other direction works the same way: Cloud Run and Cloud Functions assume
+their AWS role with a Google ID token, with no IAM user or access key
+([#2645](https://github.com/alchemy-run/alchemy/pull/2645)).
+`WorkloadIdentityPool` and `WorkloadIdentityProvider` are resources too, for
+keyless CI from GitHub Actions or any OIDC issuer
+([#2130](https://github.com/alchemy-run/alchemy/pull/2130)).
+
+Docs: [GCP federated identity](/gcp/security/federated-identity) ·
+[AWS federated identity](/aws/security/federated-identity).
+
+### Migrations on Cloud SQL, AlloyDB and Spanner
+
+Every GCP SQL database applies `migrations` on deploy, like D1, Neon,
+PlanetScale, Turso, RDS and DSQL
+([#2651](https://github.com/alchemy-run/alchemy/pull/2651)):
+
+```typescript
+const db = yield* GCP.SQL.Database("App", {
+  instance: instance.instanceName,
+  migrations: "./migrations",
+  migrationsUser: user.userName,
+  migrationsPassword: password.text,
+});
+```
+
+Cloud SQL runs them over its data API by default, which needs no network
+route, or through the Cloud SQL connector. Spanner resumes a failed
+migration at the statement that failed. `GCP.SQL.Instance` can now be
+private-IP only, with SSL mode and backup retention in the stack
+([#2642](https://github.com/alchemy-run/alchemy/pull/2642)), and Pub/Sub
+subscriptions write straight into BigQuery
+([#2213](https://github.com/alchemy-run/alchemy/pull/2213)). Thanks
+[Lucas Duailibe](https://github.com/duailibe)!
+
+Docs: [Cloud SQL](/gcp/data/cloud-sql).
+
+### Sign in with gcloud
+
+A GCP profile signs in through a named gcloud configuration, the way an AWS
+profile uses `aws sso login`
+([#2635](https://github.com/alchemy-run/alchemy/pull/2635),
+[#2680](https://github.com/alchemy-run/alchemy/pull/2680)):
+
+```sh
+gcloud auth login --configuration=work
+alchemy profile edit --add GCP --method gcloud --set configuration=work
+```
+
+`alchemy profile edit --add GCP` lists your configurations, or creates one
+and opens the browser. Each run asks gcloud for a fresh token, and nothing is
+copied into the profile. Signed in as yourself, you can also create projects
+without an organization or folder
+([#2616](https://github.com/alchemy-run/alchemy/pull/2616)).
+
+Docs: [GCP credentials](/gcp/setup#credentials).
+
+## Custom domains with any DNS provider
+
+A custom domain's DNS no longer has to live with the platform that serves
+it. `domain.dns` names the DNS provider that holds the records, on every
+platform ([#1888](https://github.com/alchemy-run/alchemy/pull/1888)):
+
+```typescript
+yield* AWS.Lambda.Function("Api", {
+  main: "./src/handler.ts",
+  domain: {
+    name: "api.example.com",
+    dns: Cloudflare.DNS.Adapter(),
+  },
+});
+
+yield* Cloudflare.Worker("Web", {
+  main: "./src/web.ts",
+  domain: {
+    name: "app.example.com",
+    zoneId: saasZone.zoneId,
+    cnameTarget: fallback.origin,
+    dns: AWS.Route53.Adapter(),
+  },
+});
+
+yield* Fly.Website.Vite("Docs", {
+  domain: {
+    name: "docs.example.com",
+    dns: Hetzner.DNS.Adapter(),
+  },
+});
+```
+
+Alchemy publishes whatever the platform asks for: certificate validation
+records, ACME challenges, verification TXTs and aliases. Cloudflare, Route
+53 and Hetzner adapters ship today, and an adapter for another DNS provider
+is three functions. Thanks [Dan Myles](https://github.com/dan-myles) and
+[bjorntechTobbe](https://github.com/bjorntechTobbe)!
+
+Docs: [DNS adapters](/infrastructure-as-code/dns-adapters).
+
+## Cloudflare State Store v8
+
+The Cloudflare state store is now deployed with direct API calls instead of a
+stack, as state store v8, and you choose its Worker name, account and domain
+([#2385](https://github.com/alchemy-run/alchemy/pull/2385)).
+
+### Choose the Worker name
+
+`workerName` sets the store's Worker name. Without it, you get the same default
+store as before:
+
+```typescript
+state: Cloudflare.state({ workerName: "team-a-state" }),
+```
+
+It replaces `name`, which prefixed the Worker name with `alchemy-state-store-`.
+A store you named that way keeps its Worker and secrets when you pass the full
+name:
+
+```diff lang="typescript"
+Alchemy.Stack(
+  "MyApp",
+  {
+    providers: Cloudflare.providers(),
+-    state: Cloudflare.state({ name: "team-a" }),
++    state: Cloudflare.state({ workerName: "alchemy-state-store-team-a" }),
+  },
+  Effect.gen(function* () {}),
+);
+```
+
+`--name` takes the Worker name too:
+
+```sh
+alchemy state list --backend cloudflare --name alchemy-state-store-team-a
+```
+
+### Pin the account and serve it on your domain
+
+Pin the account so a login against another one can't read or deploy the store
+there, and serve it on a hostname in one of your zones for networks that can't
+reach `workers.dev`:
+
+```typescript
+state: Cloudflare.state({
+  accountId: "c8eeff0e...",
+  domain: "alchemy-state.example.com",
+}),
+```
+
+### Upgrade from v7
+
+Your next `alchemy deploy` asks to upgrade the store. In CI, pass `--yes`, or
+upgrade it ahead of time:
+
+```sh
+alchemy state bootstrap
+```
+
+The upgrade keeps the store's auth token, encryption key and state, and only
+ever creates a secret that's missing, so a deploy can't rotate the token or
+replace the key. A store that has lost its key isn't given a new one unless you
+confirm.
+
+:::danger
+The upgrade deletes the `CloudflareStateStore` stack that beta.84 and earlier
+use to manage the store. Don't run an older Alchemy against the store after
+upgrading: it can no longer manage it, and you risk losing the encryption key,
+which nothing can recover. Upgrade every machine and CI job that uses the store
+together.
+:::
+
+Docs: [Cloudflare state store](/state-store#cloudflare-state-store) ·
+[More than one store](/state-store#more-than-one-store-per-account).
+
+## AWS state now uses DynamoDB and plans 270× faster
+
+`AWS.state()` keeps state in one on-demand DynamoDB table per account and
+region, and a deploy loads the stage with one `Query`
+([#2683](https://github.com/alchemy-run/alchemy/pull/2683),
+[#2691](https://github.com/alchemy-run/alchemy/pull/2691)):
+
+| | S3 | DynamoDB |
+| --- | ---: | ---: |
+| plan, 250 resources | 21.6 s | 0.08 s |
+| unchanged redeploy, 1,000 resources | 195 s | 0.5 s |
+| destroy, 1,000 resources | 162 s | 12.5 s |
+
+Existing stages move with one command. Older Alchemy versions are fenced
+out of the S3 copy, and nothing in S3 is deleted:
+
+```sh
+$ alchemy state migrate
+my-app/prod: migrated (42 records)
+
+$ alchemy state migrate --rollback   # back to S3, before downgrading
+```
+
+Docs: [AWS state store](/state-store#aws-state-store) ·
+[Migrating from S3](/state-store#migrating-from-the-s3-store).
+
+## Alchemist: the Alchemy CLI as a programmatic API
+
+The `alchemy` CLI is now a thin layer over `alchemy/Alchemist`. Everything
+it does (plan, apply, drift, nuke, logs, state) is one call you can make from
+your own program, and every step is a typed event you can handle
+([#2765](https://github.com/alchemy-run/alchemy/pull/2765)):
+
+```typescript
+import * as Alchemist from "alchemy/Alchemist";
+
+const program = Effect.gen(function* () {
+  const plan = yield* Alchemist.plan({
+    stack: Stack,
+    operation: "deploy",
+    stage: "prod",
+  });
+  if (Alchemist.hasChanges(plan)) yield* Alchemist.apply(plan);
+
+  const scan = yield* Alchemist.Drift.scan({ stack: Stack, stage: "prod" });
+  if (Alchemist.Drift.hasDrift(scan)) yield* Alchemist.Drift.execute(scan);
+}).pipe(
+  Alchemist.onEvent((event) => Effect.log(event.type)),
+  Effect.provide(Alchemist.layer()),
+  Effect.scoped,
+);
+```
+
+Build your own CLI, a deploy bot or a CI step on the same API the `alchemy`
+command uses. Every run also writes one NDJSON log under `.alchemy/log/`,
+child processes and sidecars included. Thanks
+[Rahul Mishra](https://github.com/BlankParticle)!
+
+Docs: [CLI API](/cli/api).
+
+## @alchemy.run/test: a test runner for Effect
+
+Alchemy's own test runner is now on npm as `@alchemy.run/test`
+([#2452](https://github.com/alchemy-run/alchemy/pull/2452)). It is small
+and built only for Effect: tests are Effects, and every test file runs in
+one bun process, with files and tests in flight at once.
+
+```sh
+bun add -d @alchemy.run/test effect
+bunx alchemy-test
+```
+
+```typescript
+import { describe, expect, it } from "@alchemy.run/test";
+import * as Effect from "effect/Effect";
+
+const charge = (amount: number) => Effect.succeed(amount > 5000 ? 402 : 200);
+
+describe("Checkout", () => {
+  it.live("charges the card", () =>
+    Effect.gen(function* () {
+      yield* Effect.log("POST /charges { amount: 9000 }");
+      const status = yield* charge(9000);
+      if (status !== 200) {
+        yield* Effect.logError(`payment provider returned ${status}`);
+      }
+      expect(status).toBe(200);
+    }),
+  );
+});
+```
+
+It prints one line per test as it finishes, with a running count, so you can
+follow a long run as it goes. Each test's stdout and stderr are buffered on
+their own. A passing test's output stays quiet; a failing test prints its
+error and its output at once, in one piece, never interleaved with tests
+running beside it. The last line links one log file holding every test's
+output, passes included:
+
+```text
+running 4 tests from 1 files
+
+[1/4 ✓1 ✗0] ✓ test/Checkout.test.ts > Checkout > adds an item to the cart (1ms)
+[2/4 ✓2 ✗0] ✓ test/Checkout.test.ts > Checkout > applies a discount (151ms)
+[3/4 ✓2 ✗1] ✗ test/Checkout.test.ts > Checkout > charges the card (0ms)
+  AssertionError: expected 402 to be 200
+      at <anonymous> (test/Checkout.test.ts:21:42)
+--- captured output ---
+POST /charges { amount: 9000 }
+payment provider returned 402
+--- end output ---
+[4/4 ✓3 ✗1] ✓ test/Checkout.test.ts > Checkout > sends a receipt (82ms)
+
+Tests: 1 failed | 3 passed (1 files, 250ms)
+
+Full log: .alchemy/log/test/2026-11-02T19-02-29-pid37920.log (2.6 KB)
+```
+
+That last line is there for agents. An agent running the suite reads the
+log to see what happened in any test, without piping output to a file or
+running the tests again. When nothing finishes for 10 s, the runner lists
+the tests still running and how long each has taken, so a hang names
+itself.
+
+`--stage <name>` gives each git worktree its own stage, so agents in
+parallel worktrees test against one cloud account without colliding
+([#2613](https://github.com/alchemy-run/alchemy/pull/2613)). `Test.make`,
+which deploys a stack for a test file, lives in the same package and
+works with `bun test` and Vitest too.
+
+Docs: [Test harness](/testing/test-harness) ·
+[Worktrees](/environments/worktrees).
+
+## Lambda aliases, streaming and partial batch failures
+
+`alias` publishes a version on each deploy and routes every event source,
+URL and integration through it, so a rollback is one `update-alias` call
+([#2504](https://github.com/alchemy-run/alchemy/pull/2504)):
+
+```typescript
+export default class Api extends AWS.Lambda.Function<Api>()(
+  "Api",
+  { main: import.meta.url, alias: "live", functionUrl: true },
+  Effect.gen(function* () {
+    yield* AWS.SQS.consumeQueueMessages(jobs, processJob); // → api:live
+    return { fetch: handleHttp }; // URL on qualifier "live"
+  }),
+) {}
+```
+
+SQS, Kinesis and DynamoDB Streams handlers receive the Lambda event and can
+return its batch response, so only the failed records are retried
+([#2508](https://github.com/alchemy-run/alchemy/pull/2508)):
+
+```typescript
+yield* AWS.SQS.consumeQueueMessages(
+  queue,
+  Effect.fn(function* (event) {
+    const failed = yield* Effect.filter(event.Records, (record) =>
+      handle(record.body).pipe(
+        Effect.as(false),
+        Effect.catchCause(() => Effect.succeed(true)),
+      ),
+    );
+    return {
+      batchItemFailures: failed.map((r) => ({ itemIdentifier: r.messageId })),
+    };
+  }),
+);
+```
+
+A `RESPONSE_STREAM` Function URL streams an Effect response body instead of
+buffering it ([#2502](https://github.com/alchemy-run/alchemy/pull/2502)), and
+a handler that runs past its `timeout` is interrupted, so finalizers run and
+telemetry flushes before Lambda kills the sandbox
+([#2682](https://github.com/alchemy-run/alchemy/pull/2682)):
+
+```typescript
+timeout: Duration.seconds(30), // handler interrupted at 30 s
+timeoutMargin: Duration.seconds(2), // Lambda configured for 32 s
+```
+
+Docs: [Lambda](/aws/compute/lambda).
+
+## 95 bug fixes
+
+Most of this release is fixes, many found by new test suites rather than by
+users. About 900 provider failures that were a plain `Error` are now tagged
+errors you can catch ([#2711](https://github.com/alchemy-run/alchemy/pull/2711)),
+and ECR images hash only what `.dockerignore` keeps, so hashing a large repo
+dropped from 344 s to 8 s
+([#2351](https://github.com/alchemy-run/alchemy/pull/2351)).
+
+### One conformance suite for every workflow engine
+
+Every `WorkflowEngine` implementation now runs the same 28-case conformance
+suite: the Durable Object engine, Cloudflare Workflows and Lambda durable
+functions ([#2916](https://github.com/alchemy-run/alchemy/pull/2916)). The
+cases cover results, idempotent starts, durable sleeps, signals,
+compensations, defects, retries, interrupts and child workflows. The suite
+found 12 of the 15 engine bugs fixed in this release, including:
+
+- Sleeps ran later on every hop, because wake-ups inherited the Durable
+  Object alarm's retry backoff. Four one-second sleeps took over 45 s; they
+  now take about 4 s.
+- A repeated or late signal hung for three minutes, then died.
+- An interrupt sent right after start was dropped, or stopped the run without
+  running its compensations.
+- `Activity.retry` saw attempt 1 on every retry.
+- `Activity.raceAll` hung forever on the two engines that can't support it;
+  it now fails at once and points to the Durable Object engine.
+
+### Drift only reports real changes
+
+`alchemy drift` now sees every setting that Lambda, DynamoDB, S3, SQS,
+EventBridge, Step Functions, WAF, ELB, ECS and EC2 networking manage, so a
+change made in the console shows up
+([#2661](https://github.com/alchemy-run/alchemy/pull/2661),
+[#2705](https://github.com/alchemy-run/alchemy/pull/2705)). Untouched
+resources no longer show up as drifted
+([#2496](https://github.com/alchemy-run/alchemy/pull/2496),
+[#2169](https://github.com/alchemy-run/alchemy/pull/2169),
+[#2647](https://github.com/alchemy-run/alchemy/pull/2647)):
+
+```diff lang="sh"
+$ alchemy deploy && alchemy drift
+-[Api] drifted
+-[Db] drifted
++Plan: no changes
+```
+
+`--repair` recreates deleted resources in dependency order
+([#2495](https://github.com/alchemy-run/alchemy/pull/2495)), and EC2 creates
+are idempotent, so a retry never launches a second instance
+([#2598](https://github.com/alchemy-run/alchemy/pull/2598)). Thanks
+[DivMode](https://github.com/DivMode),
+[Gjermund Garaba](https://github.com/gjermundgaraba) and
+[Ahmed Hesham](https://github.com/ahmedhesham6)!
+
+### Deploys never take over a resource they don't own
+
+- A resource in a dependency cycle checks ownership before it's created, so
+  it can't overwrite a Worker or Lambda someone else owns
+  ([#2195](https://github.com/alchemy-run/alchemy/pull/2195),
+  [#2620](https://github.com/alchemy-run/alchemy/pull/2620)).
+- A replacement is refused before it touches anything when its new name
+  belongs to someone else ([#2200](https://github.com/alchemy-run/alchemy/pull/2200)).
+- Recovering an interrupted create never deletes a same-named resource by
+  guessing ([#2199](https://github.com/alchemy-run/alchemy/pull/2199),
+  [#2534](https://github.com/alchemy-run/alchemy/pull/2534)).
+- A ref to a resource in the same stack is a dependency, so destroy no longer
+  races it ([#2913](https://github.com/alchemy-run/alchemy/pull/2913)).
+- `alchemy destroy` plans from state without running your program, so a dev
+  stage tears down without cloud credentials
+  ([#2491](https://github.com/alchemy-run/alchemy/pull/2491)).
+
+Thanks [Nacho Vazquez](https://github.com/NachoVazquez)!
+
+### Cloudflare
+
+- A secret removed from a Worker's `env` is unbound instead of staying live
+  forever ([#2327](https://github.com/alchemy-run/alchemy/pull/2327)).
+- `forceDestroy` deletes an R2 bucket holding unfinished multipart uploads
+  ([#2537](https://github.com/alchemy-run/alchemy/pull/2537)).
+- A new container-backed Durable Object deploys in one pass, and a
+  local-only Container image works
+  ([#2342](https://github.com/alchemy-run/alchemy/pull/2342),
+  [#2922](https://github.com/alchemy-run/alchemy/pull/2922)).
+- Preview Workers keep `json` bindings and JWKs as written
+  ([#2127](https://github.com/alchemy-run/alchemy/pull/2127)), and two async
+  Workers can bind each other ([#2681](https://github.com/alchemy-run/alchemy/pull/2681)).
+- The login picker lists every account, not the first 20
+  ([#2902](https://github.com/alchemy-run/alchemy/pull/2902)), and a Secrets
+  Store with more than 20 secrets finds them
+  ([#2443](https://github.com/alchemy-run/alchemy/pull/2443)).
+
+Thanks [Patt O'Brien](https://github.com/pattobrien),
+[Drew Powers](https://github.com/drwpwrs),
+[Andoni Enriquez](https://github.com/andoni-enriquez) and
+[Harry Solovay](https://github.com/harrysolovay)!
+
+### Local dev
+
+- A Vite app with `publicDir: false` no longer serves files from your
+  machine through `ASSETS` ([#2615](https://github.com/alchemy-run/alchemy/pull/2615)),
+  and the Bun RPC sidecar listens on loopback only
+  ([#2845](https://github.com/alchemy-run/alchemy/pull/2845)).
+- Vite plugins and `server.proxy` keep their own WebSockets
+  ([#2516](https://github.com/alchemy-run/alchemy/pull/2516)), and large
+  responses behind a local reverse proxy aren't truncated
+  ([#2841](https://github.com/alchemy-run/alchemy/pull/2841)).
+- `alchemy dev` runs on NixOS with `dev.workerd` or `ALCHEMY_WORKERD_PATH`
+  ([#2791](https://github.com/alchemy-run/alchemy/pull/2791)), and Docker is
+  contacted only for Workers with containers
+  ([#2784](https://github.com/alchemy-run/alchemy/pull/2784)).
+- Concurrent processes on one OAuth profile no longer revoke it
+  ([#1923](https://github.com/alchemy-run/alchemy/pull/1923)).
+
+Thanks [Yanqi Zong](https://github.com/xiaoyu2er) and
+[0xMilkEnjoyer](https://github.com/birbprophet)!
+
+## Also in this release
+
+**Alchemy Domain**
+
+- `Aggregate.predict` runs a command's rules on the client, so a UI shows the outcome before the server answers ([#2568](https://github.com/alchemy-run/alchemy/pull/2568)), and `View.snapshot` returns state with the cursor to follow it live from ([#2567](https://github.com/alchemy-run/alchemy/pull/2567)). [Docs](/domain/optimistic-updates).
+- Views, projections and policies can be keyed by a Schema value instead of an aggregate ([#2554](https://github.com/alchemy-run/alchemy/pull/2554)), and a scheduled command can be cancelled with `unschedule` ([#2547](https://github.com/alchemy-run/alchemy/pull/2547)).
+- External system calls are checked against their schemas, and an operation can declare several errors ([#2548](https://github.com/alchemy-run/alchemy/pull/2548), [#2553](https://github.com/alchemy-run/alchemy/pull/2553)).
+
+**Cloudflare**
+
+- `codeUpdateStrategy` sets how running Durable Objects move onto new code ([#2863](https://github.com/alchemy-run/alchemy/pull/2863)). [Docs](/cloudflare/compute/code-updates).
+- Workers import any file through `rules` ([#2792](https://github.com/alchemy-run/alchemy/pull/2792)), and Flagship flags evaluate locally in `alchemy dev` ([#2746](https://github.com/alchemy-run/alchemy/pull/2746)).
+- `consumeNotifications` handles Cloudflare alerts in code, and Effect logs reach Workers Logs at their own level ([#2519](https://github.com/alchemy-run/alchemy/pull/2519)).
+- Workflows, Queues and R2 buckets take a `jurisdiction` ([#2734](https://github.com/alchemy-run/alchemy/pull/2734), [#2538](https://github.com/alchemy-run/alchemy/pull/2538), [#2758](https://github.com/alchemy-run/alchemy/pull/2758)), and Email Routing takes subdomains and subaddressing ([#2762](https://github.com/alchemy-run/alchemy/pull/2762)).
+
+**AWS**
+
+- Smaller runtime bundles: a Lambda ships 0.51 MB instead of 1.30 MB, minified with source maps ([#2492](https://github.com/alchemy-run/alchemy/pull/2492)).
+- `EventBridge.Endpoint` global endpoints, regional NAT gateways, and Auto Scaling by instance attributes ([#2507](https://github.com/alchemy-run/alchemy/pull/2507), [#2498](https://github.com/alchemy-run/alchemy/pull/2498), [#2817](https://github.com/alchemy-run/alchemy/pull/2817)).
+
+**Tooling**
+
+- Docker builds take args and BuildKit secrets, and `Docker.Container` takes hardening options ([#2225](https://github.com/alchemy-run/alchemy/pull/2225), [#2623](https://github.com/alchemy-run/alchemy/pull/2623)).
+- Drizzle 1.0 rc.5 asks rename-or-create questions during plan ([#2433](https://github.com/alchemy-run/alchemy/pull/2433)).
+- `Command.Dev` takes a `port` or waits for its URL ([#2750](https://github.com/alchemy-run/alchemy/pull/2750)). [Docs](/cli/dev).
+- A stack can declare its stages, so a misspelled stage is a type error ([#2131](https://github.com/alchemy-run/alchemy/pull/2131)).
+
+See the [CHANGELOG](https://github.com/alchemy-run/alchemy/blob/main/CHANGELOG.md#v200-beta85) for every other change, and thanks to everyone who contributed.
+
+## Where to go next
+
+- [Alchemy Domain](/domain) · [Backfill](/domain/backfill) · [HTTP API](/domain/http-api) · [MCP](/domain/mcp) · [CLI](/domain/cli)
+- [Cloud Run](/gcp/compute/cloud-run) · [Sidecars](/gcp/compute/sidecars) · [GCP federated identity](/gcp/security/federated-identity) · [GCP credentials](/gcp/setup#credentials)
+- [DNS adapters](/infrastructure-as-code/dns-adapters) · [State stores](/state-store) · [Lambda](/aws/compute/lambda) · [CLI API](/cli/api)
+- [Compare v2.0.0-beta.84 → v2.0.0-beta.85](https://github.com/alchemy-run/alchemy/compare/v2.0.0-beta.84...v2.0.0-beta.85)

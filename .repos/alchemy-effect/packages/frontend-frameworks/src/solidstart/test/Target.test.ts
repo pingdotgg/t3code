@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  makeAwsTarget,
-  NITRO_HANDLER_SPECIFIER,
-  NITRO_PRESET,
-} from "../aws.ts";
+import { makeAwsTarget, NITRO_HANDLER_SPECIFIER, NITRO_PRESET } from "../aws.ts";
 import type { NitroConfigSlice } from "../UserConfig.ts";
 
 describe("makeAwsTarget", () => {
