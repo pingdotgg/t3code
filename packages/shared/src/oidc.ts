@@ -253,11 +253,15 @@ async function requestTokens(
   });
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
+    const oauthError = typeof body.error === "string" ? body.error : undefined;
+    const description =
+      typeof body.error_description === "string" ? body.error_description.trim() : "";
+    const reason = [oauthError, description].filter(Boolean).join(": ");
     throw new OidcError({
       code: "token_request_failed",
-      message: `The token request failed with ${response.status}.`,
+      message: `The token request failed with ${response.status}${reason ? ` (${reason})` : ""}.`,
       status: response.status,
-      ...(typeof body.error === "string" ? { oauthError: body.error } : {}),
+      ...(oauthError ? { oauthError } : {}),
     });
   }
   if (typeof body.id_token !== "string") {

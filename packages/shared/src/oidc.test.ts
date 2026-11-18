@@ -170,6 +170,27 @@ describe("token requests", () => {
     });
   });
 
+  it("puts the provider's reason in a rejected token request's message", async () => {
+    const rejected = exchangeAuthorizationCode({
+      metadata,
+      clientId: "t3-code",
+      redirectUri: "https://app.example.com/oidc/callback",
+      code: "code-1",
+      verifier: "verifier-1",
+      nonce: "nonce-1",
+      fetch: async () =>
+        jsonResponse(
+          { error: "invalid_request", error_description: "AADSTS9002327: wrong client type" },
+          400,
+        ),
+    });
+    await expect(rejected).rejects.toMatchObject({
+      message:
+        "The token request failed with 400 (invalid_request: AADSTS9002327: wrong client type).",
+      oauthError: "invalid_request",
+    });
+  });
+
   it("keeps the current refresh token when the provider does not rotate it", async () => {
     const tokens = await refreshOidcTokens({
       metadata,

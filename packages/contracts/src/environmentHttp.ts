@@ -492,11 +492,12 @@ export const EnvironmentConnectReachability = Schema.Union([
 ]);
 export type EnvironmentConnectReachability = typeof EnvironmentConnectReachability.Type;
 
-/** "Tunnel connected · 4 connections · QUIC" for a healthy check. */
+/** "Tunnel connected · 4 connections · QUIC" for a healthy check; "Connected" for a relay channel. */
 export function formatConnectReachable(
   result: Extract<EnvironmentConnectReachability, { status: "reachable" }>,
 ): string {
   const count = result.readyConnections;
+  if (count === null && result.protocol === null) return "Connected";
   return [
     "Tunnel connected",
     ...(count === null ? [] : [`${count} connection${count === 1 ? "" : "s"}`]),

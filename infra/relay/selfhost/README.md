@@ -43,6 +43,19 @@ Run these from the repository root.
 
    Request the `offline_access` scope so sessions refresh without signing in again.
 
+   **Microsoft Entra ID.** Set `OIDC_ISSUER` to the tenant's v2.0 issuer,
+   `https://login.microsoftonline.com/<tenant-id>/v2.0`. The `/common` and `/organizations`
+   documents report a `{tenantid}` template, which the relay's exact issuer check rejects.
+   In the app registration:
+
+   - Register the web redirect URI under **Single-page application**. A **Web** URI cannot
+     redeem the code from the browser.
+   - Register the desktop, mobile and CLI URIs under **Mobile and desktop applications**.
+   - Set **Allow public client flows** to **Yes** for the CLI device flow. Without it the token
+     poll fails with `AADSTS7000218`.
+   - Entra limits refresh tokens issued to a single-page application to 24 hours, so web
+     sessions ask for a new sign-in daily.
+
 4. Start it:
 
    ```sh
@@ -122,6 +135,11 @@ refuses loopback, link-local and cloud metadata addresses. `private` also accept
 network addresses (LAN, Tailscale) for relays only your own network uses; `off` refuses all of
 them. Host names are checked as written, not resolved, so only point a relay you trust at names
 you control. A published address takes precedence over a relay channel.
+
+## Linking a host from a browser
+
+The browser app has no sign-in action in its "T3 Connect service" card. Link the host from its
+terminal instead with `t3 connect link --publish-only`, then restart T3 Code.
 
 ## Behind another reverse proxy
 
