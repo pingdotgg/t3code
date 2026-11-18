@@ -6,6 +6,7 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import type { Link, Root, RootContent } from "mdast";
 import {
+  chatMarkdownImageSources,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
@@ -951,4 +952,52 @@ it("links complete absolute paths in prose and skips shortened ones", () => {
   ]);
   expect(links(`[notes](${path}) and \`${path}\``)).toEqual([path]);
   expect(links(`\`\`\`\n${path}\n\`\`\``)).toEqual([]);
+});
+
+it("finds bare absolute media embeds with spaces while leaving code and other destinations alone", () => {
+  const mac = "/Users/test/Mobile Documents/iCloud~md~notes/cover photo.png";
+  const linux = "/mnt/c/Project (demo)/screen shot.webp";
+  const wrapped = "/work/Already wrapped.png";
+  const authored = [
+    `**Cover** ![Cover](${mac}) ![Screenshot](${linux})`,
+    `![Wrapped](<${wrapped}> "Title")`,
+    "",
+    `\`![Inline code](${mac})\``,
+    "",
+    "```md",
+    `![Fence](${mac})`,
+    "```",
+    "",
+    String.raw`\![Escaped](${linux})`,
+    "![Relative](some folder/image.png)",
+    "![Network](//example.test/a b.png)",
+    "![External](https://example.test/a b.png)",
+    "![Document](/work/a b.md)",
+    "![Partial](/work/a b.png",
+  ].join("\n");
+
+  expect(chatMarkdownImageSources(authored).map(decodeURI)).toEqual([mac, linux, wrapped]);
+});
+
+it("keeps authored offsets after repairing multiple media embeds", () => {
+  const markdown =
+    "![One](/tmp/one a.png)	![Two](/tmp/two b.png) [link](https://example.test)\n\nNext.";
+  const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
+  const [paragraph, next] = processor.parse(markdown).children;
+  if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
+
+  const sources = paragraph.children
+    .filter((node) => node.type === "image" || node.type === "link")
+    .map((node) => {
+      const { start, end } = node.position!;
+      expect(start.column).toBe(start.offset! + 1);
+      expect(end.column).toBe(end.offset! + 1);
+      return markdown.slice(start.offset, end.offset);
+    });
+  expect(sources).toEqual([
+    "![One](/tmp/one a.png)",
+    "![Two](/tmp/two b.png)",
+    "[link](https://example.test)",
+  ]);
+  expect(next?.position?.start).toEqual({ line: 3, column: 1, offset: markdown.indexOf("Next.") });
 });
