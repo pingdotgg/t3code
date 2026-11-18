@@ -5,15 +5,30 @@ import { ChromeTabs, chooseInstance, SCRIPTS as CHROME_SCRIPTS } from "./chromeT
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { chunks, DesktopBackend, jxaRunner, landed, macAccess, SCRIPTS } from "./desktop.ts";
+import {
+  chunks,
+  DesktopBackend,
+  jxa,
+  jxaRunner,
+  jxaSource,
+  landed,
+  macAccess,
+  SCRIPTS,
+} from "./desktop.ts";
 import { DockApps, SCRIPTS as DOCK_SCRIPTS } from "./dock.ts";
-import type { CommandRunner } from "./macControls.ts";
+import { type CommandRunner, SCRIPTS as MAC_CONTROL_SCRIPTS } from "./macControls.ts";
 import type { BrowserTab } from "./types.ts";
 
-type Call = { file: string; script: string; argv: string[] };
+/** `args` is the process's own argv, which a listing shows; `argv` is what the script's `run(argv)` receives. */
+type Call = { file: string; script: string; args: string[]; argv: string[] };
 
-/** Every script the backends run: the desktop, Chrome's tabs and the Dock. */
-const JXA_SCRIPTS = { desktop: SCRIPTS, chromeTabs: CHROME_SCRIPTS, dock: DOCK_SCRIPTS };
+/** Every JXA script the helper runs: the desktop, Chrome's tabs, the Dock and the fixed controls. */
+const JXA_SCRIPTS = {
+  desktop: SCRIPTS,
+  chromeTabs: CHROME_SCRIPTS,
+  dock: DOCK_SCRIPTS,
+  macControls: MAC_CONTROL_SCRIPTS,
+};
 
 // oxlint-disable-next-line t3code/no-global-process-runtime -- The helper is plain Node outside any Effect runtime.
 const isMac = process.platform === "darwin";
@@ -22,11 +37,12 @@ const isMac = process.platform === "darwin";
 function fakeRunner(respond: (call: Call) => string | Error) {
   const calls: Call[] = [];
   const runner: CommandRunner = {
-    async run(file, args) {
+    async run(file, args, options) {
       const call = {
         file,
         script: args[args.indexOf("-e") + 1] ?? "",
-        argv: args.slice(args.indexOf("--") + 1),
+        args,
+        argv: options?.input === undefined ? [] : (JSON.parse(options.input) as string[]),
       };
       calls.push(call);
       const result = respond(call);
@@ -101,6 +117,7 @@ describe("ChromeTabs", () => {
     const { runner, calls } = chromeRunner(() => '{"x":10,"y":20}');
     await new ChromeTabs(runner).activate(TAB);
     expect(calls[1]?.argv).toEqual(["502", TAB.title, "2", "click"]);
+    for (const call of calls) expect(call.args.join("\n")).not.toContain(TAB.title);
     expect(calls[1]?.script).not.toContain("Inbox");
   });
 
@@ -256,6 +273,8 @@ describe("DesktopBackend", () => {
     ]);
     // The value and text travel as argv on stdin, never spliced into the script source.
     expect(calls[0]?.script).not.toContain("Finder");
+    // Nor in osascript's own argv, which any process listing shows.
+    for (const call of calls) expect(call.args.join("\n")).not.toContain("Finder");
   });
 
   it("types in the background by setting the field value, and types with keys only when the pointer is allowed", async () => {
@@ -770,19 +789,23 @@ describe("macAccess", () => {
 
 describe("DockApps", () => {
   it("lists the Dock's apps, clicks an app's icon to bring it forward, and opens one that is not in the Dock", async () => {
-    const calls: Array<{ file: string; args: string[] }> = [];
+    const calls: Array<{ file: string; args: string[]; input?: string }> = [];
     const replies = ['["Finder","Google Chrome","T3 Agents"]', "clicked", "missing", ""];
     const dock = new DockApps({
-      run: async (file, args) => {
-        calls.push({ file, args });
+      run: async (file, args, options) => {
+        calls.push({
+          file,
+          args,
+          ...(options?.input === undefined ? {} : { input: options.input }),
+        });
         return replies.shift() ?? "";
       },
     });
     expect(await dock.list()).toEqual(["Finder", "Google Chrome", "T3 Agents"]);
     expect(await dock.activate("Google Chrome")).toBe("clicked");
-    // The app name reaches the script as an argument, never inside its source.
-    expect(calls[1]!.args.slice(-2)).toEqual(["Google Chrome", "act"]);
-    expect(calls[1]!.args[3]).not.toContain("Google Chrome");
+    // The app name reaches the script on stdin, never inside its source or osascript's argv.
+    expect(JSON.parse(calls[1]!.input ?? "[]")).toEqual(["Google Chrome", "act"]);
+    expect(calls[1]!.args.join("\n")).not.toContain("Google Chrome");
     expect(await dock.activate("Zed")).toBe("opened");
     expect(calls.at(-1)).toEqual({ file: "open", args: ["-a", "Zed"] });
     // No Apple Event: the Dock is read through accessibility and clicked with CGEvent, `open -a` is LaunchServices.
@@ -814,7 +837,8 @@ describe.runIf(isMac)("on macOS", () => {
       for (const [group, scripts] of Object.entries(JXA_SCRIPTS)) {
         for (const [name, script] of Object.entries(scripts)) {
           const file = NodePath.join(dir, `${group}-${name}.js`);
-          NodeFS.writeFileSync(file, script);
+          // As osascript runs it: wrapped to read its argv from stdin.
+          NodeFS.writeFileSync(file, jxaSource(script));
           await expect(
             jxaRunner.run("osacompile", [
               "-l",
@@ -830,6 +854,14 @@ describe.runIf(isMac)("on macOS", () => {
     } finally {
       NodeFS.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("hands a script its argv on stdin", async () => {
+    const text = 'on my way -- 10\' late, "ok"';
+    const echoed = await jxaRunner.run(
+      ...jxa("function run(argv) { return argv.join('|'); }", [text, "x"]),
+    );
+    expect(echoed.trim()).toBe(`${text}|x`);
   });
 
   it("reads the displays, the pointer and the grants for real", async () => {

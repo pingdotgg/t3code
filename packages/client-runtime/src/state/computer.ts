@@ -170,6 +170,23 @@ export function createComputerEnvironmentAtoms<R, E>(
   };
 }
 
+/**
+ * The strip's rows while `viewing` is on screen. That thread's taps sit above its own composer, so
+ * its row keeps Stop and drops the card; taps from every other thread stay in the strip.
+ */
+export function computerStripEntries(
+  activity: ReadonlyArray<ComputerActivityEntry>,
+  viewing: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null,
+): ReadonlyArray<ComputerActivityEntry> {
+  if (viewing === null) return activity;
+  const owns = (entry: ComputerActivityEntry) =>
+    entry.environmentId === viewing.environmentId &&
+    entry.task.threadId === viewing.threadId &&
+    entry.approvals.length > 0;
+  if (!activity.some(owns)) return activity;
+  return activity.map((entry) => (owns(entry) ? { ...entry, approvals: [] } : entry));
+}
+
 type ComputerEnvironmentAtoms = ReturnType<typeof createComputerEnvironmentAtoms>;
 
 /**

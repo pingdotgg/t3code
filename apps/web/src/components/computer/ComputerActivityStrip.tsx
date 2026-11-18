@@ -1,10 +1,12 @@
 import {
   type ComputerActivityEntry,
   computerLiveApprovals,
+  computerStripEntries,
   computerTaskLastStep,
   nextComputerApprovalDeadline,
 } from "@t3tools/client-runtime/state/computer";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { useParams } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
 import { MonitorIcon } from "lucide-react";
 import { useState } from "react";
@@ -12,6 +14,7 @@ import { useState } from "react";
 import { useNowAfter } from "../../hooks/useDeadline";
 import { tickTextContent } from "../../lib/tickTextContent";
 import { stopComputerTasks, useComputerActivity } from "../../state/computer";
+import { resolveThreadRouteRef } from "../../threadRoutes";
 import { InlineButton } from "../ui/button";
 import { ComputerApprovalCard } from "./ComputerApprovalCard";
 
@@ -80,11 +83,13 @@ function StripTask({ entry }: { readonly entry: ComputerActivityEntry }) {
 
 /**
  * Computer use anywhere, for every screen: each running task on any environment, the tap it
- * waits for, and Stop. It floats where the dictation pill does, so it never covers a composer or
- * a thread header, and it re-renders when a task's step changes, never on a timer of its own.
+ * waits for, and Stop. The open thread's own taps are above its composer instead. It floats where
+ * the dictation pill does, so it never covers a composer or a thread header, and it re-renders
+ * when a task's step changes, never on a timer of its own.
  */
 export function ComputerActivityStrip() {
-  const activity = useComputerActivity();
+  const viewing = useParams({ strict: false, select: resolveThreadRouteRef });
+  const activity = computerStripEntries(useComputerActivity(), viewing);
   if (activity.length === 0) return null;
   return (
     <div

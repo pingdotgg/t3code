@@ -29,7 +29,7 @@ the screen again after a tap and refuses to act if the control changed.
 macOS attaches Accessibility, Screen Recording and Automation grants to the
 app responsible for a process. The helper is forked with `process.execPath`
 and `ELECTRON_RUN_AS_NODE=1`, so the grants belong to Ada.app, or to the
-terminal that runs a standalone `t3`. Electron's `utilityProcess` and its
+terminal that runs a standalone `ada serve`. Electron's `utilityProcess` and its
 Helper executable do not carry the app's Accessibility grant. A child also
 keeps a hung `osascript` or a crash out of the main process, and its death
 ends the task.

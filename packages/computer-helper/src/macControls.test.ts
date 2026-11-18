@@ -10,7 +10,7 @@ import {
 } from "./macControls.ts";
 import type { CommandRunner, InstalledApp, MacControlsOptions } from "./macControls.ts";
 
-type Call = { file: string; args: string[] };
+type Call = { file: string; args: string[]; input?: string };
 
 const TREE: Record<string, string[]> = {
   "/Applications": ["Spotify.app", "Slack.app", "Utilities", ".DS_Store", "Google Chrome.app"],
@@ -28,10 +28,13 @@ function harness(
   const reads: string[] = [];
   let now = 0;
   const runner: CommandRunner = {
-    async run(file, args) {
-      calls.push({ file, args });
+    async run(file, args, options) {
+      calls.push({ file, args, ...(options?.input === undefined ? {} : { input: options.input }) });
       const lines = args.filter((_, index) => args[index - 1] === "-e");
-      const argv = args.slice(args.lastIndexOf("-e") + 2);
+      const argv =
+        options?.input === undefined
+          ? args.slice(args.lastIndexOf("-e") + 2)
+          : (JSON.parse(options.input) as string[]);
       const result = respond(lines.join("\n"), argv);
       if (result instanceof Error) throw result;
       return result;
@@ -103,32 +106,21 @@ describe("MacControls", () => {
     expect(calls).toEqual([]);
   });
 
-  it("quits through argv so the name never enters the script source", async () => {
-    const { controls, calls } = harness((script) =>
-      script.includes("is running") ? "true\n" : "",
-    );
+  it("quits with the name on stdin, never in the script source or osascript's argv", async () => {
+    const { controls, calls } = harness((script) => (script.includes("running()") ? "true\n" : ""));
     expect(await controls.run({ kind: "quit_app", app: "Google Chrome" })).toEqual({
       done: "Quit Google Chrome.",
     });
     const quit = calls[1]!;
     expect(quit.file).toBe("osascript");
-    expect(quit.args).toEqual([
-      "-e",
-      "on run argv",
-      "-e",
-      "tell application (item 1 of argv) to quit",
-      "-e",
-      "end run",
-      "Google Chrome",
-    ]);
-    expect(
-      calls.flatMap((call) => call.args.filter((_, i) => call.args[i - 1] === "-e")).join(),
-    ).not.toContain("Chrome");
+    expect(quit.args.join("\n")).toContain("quit()");
+    expect(JSON.parse(quit.input ?? "[]")).toEqual(["Google Chrome"]);
+    for (const call of calls) expect(call.args.join("\n")).not.toContain("Chrome");
   });
 
   it("reports an app that isn't running instead of quitting it", async () => {
     const { controls, calls } = harness((script) =>
-      script.includes("is running") ? "false\n" : "",
+      script.includes("running()") ? "false\n" : "",
     );
     expect(await controls.run({ kind: "quit_app", app: "Slack" })).toEqual({
       done: "Slack wasn't open.",
@@ -159,14 +151,14 @@ describe("MacControls", () => {
   });
 
   it("does not launch a player that isn't running for pause or volume", async () => {
-    const { controls, calls } = harness((script) => (script.includes("is running") ? "false" : ""));
+    const { controls, calls } = harness((script) => (script.includes("running()") ? "false" : ""));
     expect(await controls.run({ kind: "media", action: "pause", player: "Spotify" })).toEqual({
       done: "Spotify isn't playing.",
     });
     expect(await controls.run({ kind: "volume", action: "up", target: "Spotify" })).toEqual({
       done: "Spotify isn't playing.",
     });
-    expect(calls.every((call) => call.args.join(" ").includes("is running"))).toBe(true);
+    expect(calls.every((call) => call.args.join(" ").includes("running()"))).toBe(true);
   });
 
   it("is unavailable off macOS", async () => {
@@ -197,21 +189,28 @@ describe("MacControls", () => {
     );
   });
 
-  it("shows the task-start notice with its words only as argv", async () => {
+  it("shows the task-start notice with its words only on stdin", async () => {
     const calls: Call[] = [];
     const controls = new MacControls({
       platform: "darwin",
       runner: {
-        run: async (file, args) => {
-          calls.push({ file, args });
+        run: async (file, args, options) => {
+          calls.push({
+            file,
+            args,
+            ...(options?.input === undefined ? {} : { input: options.input }),
+          });
           return "ok";
         },
       },
     });
     await controls.notify("Ada", '--Jarvis is using your Mac: "search"');
     expect(calls[0]?.file).toBe("osascript");
-    expect(calls[0]?.args.slice(-3)).toEqual(["--", "Ada", 'Jarvis is using your Mac: "search"']);
-    expect(calls[0]?.args[3]).not.toContain("Jarvis");
+    expect(JSON.parse(calls[0]?.input ?? "[]")).toEqual([
+      "Ada",
+      '--Jarvis is using your Mac: "search"',
+    ]);
+    expect(calls[0]?.args.join("\n")).not.toContain("Jarvis");
   });
 
   it("brings an app forward by name without the Dock, and never passes a flag-like name", async () => {
@@ -243,7 +242,7 @@ describe("MacControls and macOS’s permission prompts", () => {
     const automation = { allowed: async (id: string) => (asked.push(id), false) };
     const { controls, calls } = harness(
       (script) =>
-        script.includes("is running")
+        script.includes("running()")
           ? "true\n"
           : script.includes("bundleIdentifier")
             ? "com.tinyspeck.slackmacgap\n"

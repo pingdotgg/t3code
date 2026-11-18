@@ -20,9 +20,9 @@ client, including the mobile app and browsers on Windows or Linux.
      environment use this computer** for each environment that may use it.
      It is off for every environment until you turn it on. The Mac is
      available only while Ada is open on it.
-   - **`npx t3` in a Mac terminal:** the server offers that Mac by itself.
+   - **`ada serve` in a Mac terminal:** the server offers that Mac by itself.
 3. Grant **Accessibility** in **System Settings → Privacy & Security** to Ada,
-   or to the terminal app that runs `t3`. **Screen Recording** lets it read
+   or to the terminal app that runs `ada serve`. **Screen Recording** lets it read
    windows accessibility cannot, and **Automation** lets it control apps. The
    settings page shows what is granted.
 
@@ -37,8 +37,10 @@ cannot approve steps. Pair it again to let it approve.
 A step that types, sends, buys, deletes or otherwise changes something waits
 on an approval card. The card shows the action, the exact text it will type,
 the app, window and address, the reason, the goal and a 60-second countdown.
-It appears in the thread that asked and in the strip at the top of every
-screen, and on the thread in the mobile app.
+It appears above the message box of the thread that asked, and in the strip
+at the top of every other screen. In the mobile app it appears on the thread.
+Approvals show only while Ada is open: there is no push notification for them,
+so keep a window or the mobile app open while a task runs.
 
 An approval covers that one step only. If the window changes before the step
 runs, it does not run. **Deny** ends the task, and so does letting the

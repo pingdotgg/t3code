@@ -11,7 +11,7 @@ import { ComputerApprovalCard } from "./ComputerApprovalCard";
 
 /**
  * The tap a task in this thread waits for, above its composer, so the person who started it sees
- * it where they are. The same approval is also in the global strip, for every other screen.
+ * it where they are. Only other screens show it in the global strip.
  */
 export function ThreadComputerApprovals({
   threadRef,

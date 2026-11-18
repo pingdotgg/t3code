@@ -15,7 +15,7 @@ import {
   string,
 } from "./validate.ts";
 import { execRunner } from "./runner.ts";
-import type { CommandRunner } from "./runner.ts";
+import type { CommandOptions, CommandRunner } from "./runner.ts";
 import { CONTROL_ROLES, NeedsPointer } from "./types.ts";
 import type {
   ActOptions,
@@ -43,12 +43,29 @@ export const jxaRunner: CommandRunner = execRunner({
   slow: "The Mac (osascript)",
 });
 
+const READ_STDIN_ARGV =
+  "JSON.parse(ObjC.unwrap($.NSString.alloc.initWithDataEncoding($.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile, $.NSUTF8StringEncoding)) || '[]')";
+
 /**
- * osascript argv for a JXA script whose `run(argv)` receives `argv`. The `--` stops osascript from
- * reading a user value that starts with a dash as one of its own flags.
+ * The source osascript runs for a JXA script whose `run(argv)` receives `argv`: the script's own
+ * `run` is called with the values read from stdin, so typed text, labels and URLs never sit in a
+ * process listing the way argv does.
  */
-export function jxa(script: string, argv: string[] = []): [string, string[]] {
-  return ["osascript", ["-l", "JavaScript", "-e", script, "--", ...argv]];
+export function jxaSource(script: string): string {
+  return `var adaRun = (function () {\n${script}\nreturn run;\n})();\nfunction run() { return adaRun(${READ_STDIN_ARGV}); }`;
+}
+
+/** The osascript call for `script` with `argv` on stdin; `options` adds a stop signal or a deadline. */
+export function jxa(
+  script: string,
+  argv: string[] = [],
+  options: Omit<CommandOptions, "input"> = {},
+): [string, string[], CommandOptions] {
+  return [
+    "osascript",
+    ["-l", "JavaScript", "-e", jxaSource(script)],
+    { ...options, input: JSON.stringify(argv) },
+  ];
 }
 
 /**
@@ -819,8 +836,7 @@ export class DesktopBackend implements ScreenBackend {
     let output: string;
     try {
       output = await this.runner.run(
-        ...jxa(OBSERVE_SCRIPT),
-        options.signal ? { signal: options.signal } : undefined,
+        ...jxa(OBSERVE_SCRIPT, [], options.signal ? { signal: options.signal } : {}),
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -956,7 +972,7 @@ export class DesktopBackend implements ScreenBackend {
 
   private async call(script: string, argv: string[], signal?: AbortSignal): Promise<string> {
     try {
-      return await this.runner.run(...jxa(script, argv), signal ? { signal } : undefined);
+      return await this.runner.run(...jxa(script, argv, signal ? { signal } : {}));
     } catch (error) {
       if (signal?.aborted) throw stopped(signal);
       throw explain(error instanceof Error ? error.message : String(error)) ?? error;
