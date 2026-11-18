@@ -65,7 +65,7 @@ export const settings = makeProviderSettingsSchema(
     apiToken: secret({
       title: "API token",
       description:
-        "Reaches every repository your Atlassian account can. Give it read and write access to repositories and pull requests, and read:user:bitbucket.",
+        "Reaches every repository your Atlassian account can. Give it read and write access to repositories and pull requests, plus read:user:bitbucket and read:workspace:bitbucket.",
     }),
   },
   { order: ["accessToken", "email", "apiToken"] },
@@ -124,14 +124,13 @@ export const definition = defineSourceControl({
     );
   },
   checkoutChangeRequestHost: () => null,
+  // Cloud also clones from `ssh.bitbucket.org` and `altssh.bitbucket.org`.
   recognizeRemote: ({ host, hostname }) =>
-    hostname === "bitbucket.org" || hostname.split(".").includes("bitbucket")
-      ? {
-          kind: KIND,
-          name: hostname === "bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted",
-          baseUrl: `https://${host}`,
-        }
-      : null,
+    hostname === "bitbucket.org" || hostname.endsWith(".bitbucket.org")
+      ? { kind: KIND, name: "Bitbucket", baseUrl: "https://bitbucket.org" }
+      : hostname.split(".").includes("bitbucket")
+        ? { kind: KIND, name: "Bitbucket Self-Hosted", baseUrl: `https://${host}` }
+        : null,
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
