@@ -8,12 +8,16 @@ const URL_NOT_LOCAL = /url\((?![ \t\n\f\r]*["']?(?:data:|#))/i;
 const URL_OR_STRING =
   /url\((?![ \t\n\f\r]*["'])[^)]*|url\([ \t\n\f\r]*("[^"\n\r\f]*"|'[^'\n\r\f]*')|"[^"\n\r\f]*"|'[^'\n\r\f]*'/gi;
 
-function fetchesByText(code: string): boolean {
-  const outsideStrings = code.replace(URL_OR_STRING, (token, urlString: string | undefined) => {
+/** The code with its strings removed, keeping `url(` where a quoted url() can load a file. */
+function withoutStrings(code: string): string {
+  return code.replace(URL_OR_STRING, (token, urlString: string | undefined) => {
     if (urlString !== undefined) return /^["'](?:data:|#)/i.test(urlString) ? "" : "url(";
     return token.startsWith('"') || token.startsWith("'") ? "" : token;
   });
-  return FETCHES_BY_STRING.test(outsideStrings) || URL_NOT_LOCAL.test(outsideStrings);
+}
+
+function fetchesOutsideStrings(code: string): boolean {
+  return FETCHES_BY_STRING.test(code) || URL_NOT_LOCAL.test(code);
 }
 
 /**
@@ -22,13 +26,13 @@ function fetchesByText(code: string): boolean {
  * so every value that still has a backslash is refused.
  */
 export function themeCssValueFetches(value: string): boolean {
-  return value.includes("\\") || fetchesByText(value);
+  return value.includes("\\") || fetchesOutsideStrings(withoutStrings(value));
 }
 
 /** A text check for early feedback. CSS escapes can dodge it; the client check is the guard. */
 export function themeCssLoadsRemoteFiles(css: string): boolean {
-  const code = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  return /@import/i.test(code) || fetchesByText(code);
+  const code = withoutStrings(css.replace(/\/\*[\s\S]*?\*\//g, ""));
+  return /@import/i.test(code) || fetchesOutsideStrings(code);
 }
 
 /**
@@ -79,7 +83,7 @@ export const THEME_GUIDE = [
   "",
   "CSS: `css` applies after the app's styles. Use `.dark` or `:root:not(.dark)` for one appearance.",
   "It cannot load files: no @import, no image-set(), and url() only with data: or #id.",
-  "A background image must be embedded as a data: address. `css` holds 50,000 characters, so keep the image near 30 KB.",
+  'For a background image, copy a JPEG, PNG, or WebP file of up to 16 MB to `<themesDir>/<themeId>.jpg` (or .png, .webp), beside the theme file. CSS shows it with `var(--theme-background-image)`, such as `[data-workspace-area="conversation"] { background: var(--theme-background-image) center / cover no-repeat; }`. Delete the file to remove it. Do not embed images in `css`: it holds 100,000 characters.',
   "The app's own rules can be more specific. If a rule has no effect, add !important.",
   "It cannot reach the terminal text, the file tree, or diff internals. Use color roles for those.",
   "Native scrollbars take `::-webkit-scrollbar` and `::-webkit-scrollbar-thumb`.",
@@ -89,5 +93,5 @@ export const THEME_GUIDE = [
   ...THEME_CSS_HOOKS.map((hook) => `- ${hook.selector}: ${hook.styles}`),
   "",
   "You cannot see the result. Make small changes, then ask the user how it looks.",
-  "To undo, set a built-in theme: t3-chat, grove, ocean, ember, or iris.",
+  "To undo, set `t3-code`, the stock T3 Code theme, or another built-in theme. An empty `current` means the stock theme or no environment theme.",
 ].join("\n");

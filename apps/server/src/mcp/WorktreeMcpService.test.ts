@@ -838,23 +838,25 @@ describe("t3_worktree_release", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "release-count-" });
-      const harness = makeHarness({
-        thread: { worktreePath, branch: "feature/done" },
-        gitDriver: {
-          execute: () =>
-            Effect.succeed({
-              exitCode: 0 as GitVcsDriver.ExecuteGitResult["exitCode"],
-              stdout: "",
-              stderr: "",
-              stdoutTruncated: false,
-              stderrTruncated: false,
-            }),
-        },
-      });
+      for (const exitCode of [0, 1]) {
+        const harness = makeHarness({
+          thread: { worktreePath, branch: "feature/done" },
+          gitDriver: {
+            execute: () =>
+              Effect.succeed({
+                exitCode: exitCode as GitVcsDriver.ExecuteGitResult["exitCode"],
+                stdout: "",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              }),
+          },
+        });
 
-      const exit = yield* Effect.exit(runRelease(harness));
-      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
-      expect(harness.dispatch).not.toHaveBeenCalled();
+        const exit = yield* Effect.exit(runRelease(harness));
+        expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
+        expect(harness.dispatch).not.toHaveBeenCalled();
+      }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

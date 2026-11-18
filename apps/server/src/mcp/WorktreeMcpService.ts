@@ -586,10 +586,11 @@ const make = Effect.gen(function* () {
         );
       }
       if (!force) {
-        yield* refuseUnpushed(
-          yield* countUnpushed(worktreePath, "HEAD", status.refName),
-          `Worktree '${worktreePath}'`,
-        );
+        const unpushed = yield* countUnpushed(worktreePath, "HEAD", status.refName);
+        if (unpushed === null) {
+          return yield* failure("operation_failed", "Unable to count unpushed commits for HEAD.");
+        }
+        yield* refuseUnpushed(unpushed, `Worktree '${worktreePath}'`);
       }
     }
 
