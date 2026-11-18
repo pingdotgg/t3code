@@ -3460,7 +3460,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       if (!target) return;
       switch (actionId) {
         case "copy-full-path":
-        case "copy-relative-path": {
+        case "copy-relative-path":
+        case "save": {
           const presentation = resolveMarkdownLinkPresentation(href);
           const path =
             presentation.kind === "file"
@@ -3476,29 +3477,28 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               props.workspaceRoot && !isAbsolutePath(found)
                 ? resolveWorkspaceFilePath(props.workspaceRoot, found)
                 : found;
-            const clipboardPath = fileChipClipboardPath(
-              {
-                ...target,
-                ...(target.fullPath ? { fullPath } : {}),
-                ...(target.relativePath
-                  ? {
-                      relativePath:
-                        resolveWorkspaceRelativeFilePath(props.workspaceRoot, fullPath) ??
-                        target.relativePath,
-                    }
-                  : {}),
-              },
-              actionId,
-            );
+            const resolvedTarget = {
+              ...target,
+              ...(target.fullPath ? { fullPath } : {}),
+              ...(target.relativePath
+                ? {
+                    relativePath:
+                      resolveWorkspaceRelativeFilePath(props.workspaceRoot, fullPath) ??
+                      target.relativePath,
+                  }
+                : {}),
+            };
+            if (actionId === "save") {
+              void shareFileChip(resolvedTarget);
+              return;
+            }
+            const clipboardPath = fileChipClipboardPath(resolvedTarget, actionId);
             if (clipboardPath !== undefined) copyTextWithHaptic(clipboardPath);
           });
           return;
         }
         case "open-file":
           onMarkdownLinkPress(href, false, reply);
-          return;
-        case "save":
-          void shareFileChip(target);
           return;
       }
     },

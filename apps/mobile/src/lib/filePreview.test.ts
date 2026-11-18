@@ -10,6 +10,7 @@ import {
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { useWorkspaceFileSave } from "../features/files/useWorkspaceFileSave";
 import { inlineFilePreviewKind, isPdfFile } from "./filePreview";
 import { ThreadInlineFilePreview } from "../features/threads/ThreadInlineFilePreview";
 import {
@@ -61,6 +62,9 @@ const audio = vi.hoisted(() => ({
   videoStatusListeners: new Set<(event: { status: string }) => void>(),
   videoEndListeners: new Set<() => void>(),
   videoRequestListeners: new Set<(event: { isPlaybackRequested: boolean }) => void>(),
+  shareFile: vi.fn<() => Promise<void>>(),
+  createUrl: vi.fn<() => Promise<{ _tag: "Success"; value: { relativeUrl: string } }>>(),
+  downloadFile: vi.fn<(...args: unknown[]) => Promise<void>>(),
   navigate: vi.fn(),
   query: vi.fn(),
 }));
@@ -190,7 +194,10 @@ vi.mock("../state/use-thread-selection", () => ({
 vi.mock("../state/presentation", () => ({
   useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
 }));
-vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
+vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => audio.createUrl }));
+vi.mock("./attachmentDownload", () => ({
+  downloadAndShareAttachment: (...args: unknown[]) => audio.downloadFile(...args),
+}));
 vi.mock("../state/use-atom-command", () => ({}));
 vi.mock("../state/v2-item-support", () => ({}));
 vi.mock("../native/SelectableMarkdownText", () => ({
@@ -282,7 +289,6 @@ vi.mock("./useUniwindTheme", () => ({
 vi.mock("./composerContextClipboard", () => ({}));
 vi.mock("./copyTextWithHaptic", () => ({}));
 vi.mock("./openExternalUrl", () => ({}));
-vi.mock("./attachmentDownload", () => ({}));
 vi.mock("./uuid", () => ({}));
 vi.mock("../features/threads/thread-context-divider", () => ({}));
 vi.mock("../features/threads/thread-handoff-row", () => ({ ThreadModelSwitchDivider: () => null }));
@@ -298,7 +304,9 @@ vi.mock("../features/layout/AdaptiveWorkspaceLayout", () => ({
   useWorkspacePaneState: () => ({ fileInspector: { supported: false } }),
 }));
 vi.mock("../features/threads/thread-workflow-opening", () => ({ useWorkflowOpening: () => null }));
-vi.mock("../features/threads/useFileChipShare", () => ({ useFileChipShare: () => vi.fn() }));
+vi.mock("../features/threads/useFileChipShare", () => ({
+  useFileChipShare: () => audio.shareFile,
+}));
 vi.mock("../features/threads/ThreadMarkdownImage", async () => {
   const { createContext } = await import("react");
   return { MarkdownImageAvailableWidthContext: createContext(390) };
@@ -390,6 +398,79 @@ describe("ThreadInlineFilePreview playback", () => {
       duration: 10,
       isBuffering: false,
     };
+  });
+
+  it("cancels a pending download when the viewer changes files", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const { useFileChipShare } = await vi.importActual<
+      typeof import("../features/threads/useFileChipShare")
+    >("../features/threads/useFileChipShare");
+    const pending = Promise.withResolvers<{ _tag: "Success"; value: { relativeUrl: string } }>();
+    const result = { _tag: "Success" as const, value: { relativeUrl: "/api/assets/file" } };
+    audio.createUrl.mockReturnValueOnce(pending.promise).mockResolvedValue(result);
+    audio.downloadFile.mockResolvedValue(undefined);
+    function Save({ path }: { path: string }) {
+      const share = useFileChipShare(
+        EnvironmentId.make("environment-1"),
+        ThreadId.make("thread-1"),
+        "save",
+        { filePath: path },
+      );
+      return createElement(
+        "button",
+        { onClick: () => void share({ fullPath: "/repo/" + path }) },
+        "save",
+      );
+    }
+    const container = document.createElement("div");
+    root = createRoot(container);
+    await act(async () => root?.render(createElement(Save, { path: "old.bin" })));
+    await act(async () => container.querySelector("button")!.click());
+    expect(audio.createUrl).toHaveBeenCalledTimes(1);
+    await act(async () => root?.render(createElement(Save, { path: "new.bin" })));
+    await act(async () => pending.resolve(result));
+    expect(audio.downloadFile).not.toHaveBeenCalled();
+    await act(async () => container.querySelector("button")!.click());
+    expect(audio.downloadFile).toHaveBeenCalledTimes(1);
+    expect(audio.downloadFile).toHaveBeenCalledWith(
+      expect.objectContaining({ attachment: expect.objectContaining({ name: "new.bin" }) }),
+    );
+  });
+
+  it("keeps a workspace save pending across repeat taps and allows retry", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const pending = Promise.withResolvers<void>();
+    audio.shareFile.mockReturnValueOnce(pending.promise).mockResolvedValue(undefined);
+    function Save() {
+      const { save, saving } = useWorkspaceFileSave({
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+        cwd: "/repo",
+        relativePath: "data.bin",
+      });
+      return createElement(
+        "button",
+        {
+          onClick: () => {
+            save();
+            save();
+          },
+        },
+        saving ? "preparing" : "save",
+      );
+    }
+    const container = document.createElement("div");
+    root = createRoot(container);
+    await act(async () => root?.render(createElement(Save)));
+    const button = container.querySelector("button")!;
+    await act(async () => button.click());
+    expect(audio.shareFile).toHaveBeenCalledTimes(1);
+    expect(button.textContent).toBe("preparing");
+    await act(async () => pending.resolve());
+    expect(button.textContent).toBe("save");
+    await act(async () => button.click());
+    expect(audio.shareFile).toHaveBeenCalledTimes(2);
+    expect(button.textContent).toBe("save");
   });
 
   it.each(

@@ -19,6 +19,7 @@ export function useFileChipShare(
   sourceIdentifier: string,
   options?: {
     readonly draftCwd?: string | null;
+    readonly filePath?: string | null;
     readonly failureTitle?: string;
   },
 ) {
@@ -30,8 +31,10 @@ export function useFileChipShare(
     reportFailure: false,
   });
   const requestRef = useRef<AbortController | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight file share download when the component unmounts
-  useEffect(() => () => requestRef.current?.abort(), []);
+  const draftCwd = options?.draftCwd;
+  const filePath = options?.filePath;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the download when its viewer target changes or unmounts
+  useEffect(() => () => requestRef.current?.abort(), [environmentId, threadId, draftCwd, filePath]);
 
   return (target: FileChipTarget): Promise<void> => {
     const source = fileChipShareSource(target, threadId, options?.draftCwd ?? null);
