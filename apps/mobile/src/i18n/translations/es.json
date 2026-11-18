@@ -1321,6 +1321,7 @@
   "732708950237004e": "Este cliente es más antiguo que el servidor de {environment}; su uso se excluye de los totales.",
   "9758c2ede06aa19b": "Hoy a las {hour}",
   "9102fd47fc686f0f": "Ayer a las {hour}",
+  "a645030d190791e2": "Hasta el {percent}% de tu límite semanal",
   "d9d3e9b17c602345": "Hasta el {percent}% de tu límite {limit}",
   "72777a9fb1f7f637": "General",
   "cb42b8946f737f0c": "Todo el uso de tu plan en este ciclo de facturación.",

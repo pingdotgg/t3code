@@ -29,14 +29,16 @@ export function usageShareSummary(
   resolve: MFunctionType = mFallback,
 ): string | null {
   const parent = share && windows.find((window) => window.id === share.ofWindowId);
-  return share && parent
-    ? resolve(
+  if (!share || !parent) return null;
+  const percent = Math.round(share.allowancePercent);
+  return parent.id === "seven_day"
+    ? resolve(msg("Up to {percent}% of your weekly limit", { percent }))
+    : resolve(
         msg("Up to {percent}% of your {limit} limit", {
-          percent: Math.round(share.allowancePercent),
+          percent,
           limit: parent.label.toLowerCase(),
         }),
-      )
-    : null;
+      );
 }
 
 const CURSOR_USAGE_WINDOW_COPY: Readonly<

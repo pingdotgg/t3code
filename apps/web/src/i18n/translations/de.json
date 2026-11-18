@@ -1324,6 +1324,7 @@
   "732708950237004e": "Dieser Client ist älter als der Server auf {environment}; seine Nutzung wird nicht in die Summen einbezogen.",
   "9758c2ede06aa19b": "heute {hour}",
   "9102fd47fc686f0f": "gestern {hour}",
+  "a645030d190791e2": "Bis zu {percent}% deines Wochenlimits",
   "d9d3e9b17c602345": "Bis zu {percent}% deines {limit}-Limits",
   "72777a9fb1f7f637": "Gesamt",
   "cb42b8946f737f0c": "Gesamte Nutzung deines Tarifs in diesem Abrechnungszeitraum.",

@@ -1324,6 +1324,7 @@
   "732708950237004e": "Ce client est plus ancien que le serveur de {environment} ; son utilisation est exclue des totaux.",
   "9758c2ede06aa19b": "{hour} aujourd’hui",
   "9102fd47fc686f0f": "{hour} hier",
+  "a645030d190791e2": "Jusqu’à {percent}% de votre limite hebdomadaire",
   "d9d3e9b17c602345": "Jusqu’à {percent}% de votre limite {limit}",
   "72777a9fb1f7f637": "Global",
   "cb42b8946f737f0c": "Toute l’utilisation de votre forfait sur ce cycle de facturation.",
