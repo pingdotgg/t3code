@@ -1530,6 +1530,7 @@ export function KeybindingCommandControl({ command }: { command: KeybindingComma
   const rows = catalogs[0]?.filter((row) => row.command === command);
   const row = rows?.[0];
   const simple =
+    scope?.environments.length === environments.length &&
     row &&
     rows.length === 1 &&
     catalogs.every((rows) => {
@@ -1538,7 +1539,7 @@ export function KeybindingCommandControl({ command }: { command: KeybindingComma
     });
   if (!scope) return null;
   return simple ? (
-    <div inert={!canWriteSettings}>
+    canWriteSettings ? (
       <InlineKeybindingEditor
         key={`${environments.map((environment) => environment.environmentId).join(",")}:${row.id}`}
         row={row}
@@ -1546,7 +1547,13 @@ export function KeybindingCommandControl({ command }: { command: KeybindingComma
         isSaving={savingCommand === command}
         onSave={saveKeybinding}
       />
-    </div>
+    ) : row.isUnassigned ? (
+      <span>
+        <T context="keyboard shortcut with no key assigned">Unassigned</T>
+      </span>
+    ) : (
+      <KeybindingPill value={row.key} />
+    )
   ) : (
     <Button
       size="sm"

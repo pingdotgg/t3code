@@ -1,4 +1,5 @@
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   type KeybindingRule,
   type ServerUpsertKeybindingInput,
@@ -26,22 +27,30 @@ vi.mock(import("../../state/session"), { spy: true });
 vi.mock(import("../../state/use-atom-command"), { spy: true });
 vi.mock(import("./SettingsScopeContext"), { spy: true });
 
+import { selectScopedSettingsEnvironments } from "./scopedSettings";
+import { resolveSettingsScope } from "./settingsScope";
+
 function setup(rules: readonly (readonly KeybindingRule[] | null)[] = [[]]) {
   const environments = rules.map((bindings, index) => ({
     environmentId: EnvironmentId.make(`dictation-${index}`),
     label: `Environment ${index}`,
+    connection: { phase: "connected" as const },
     serverConfig:
       bindings === null
         ? null
         : {
+            settings: DEFAULT_SERVER_SETTINGS,
             keybindings: compileResolvedKeybindingsConfig(bindings),
             keybindingsConfigPath: null,
             availableEditors: [],
           },
   }));
   const scope = {
-    environment: environments[0] ?? null,
-    connectedEnvironments: environments,
+    ...selectScopedSettingsEnvironments(
+      resolveSettingsScope({}, [], environments),
+      environments,
+      environments[0]?.environmentId ?? null,
+    ),
   } as unknown as NonNullable<ReturnType<typeof useOptionalSettingsScope>>;
   vi.mocked(useOptionalSettingsScope).mockReturnValue(scope);
   vi.mocked(useSettingsScope).mockReturnValue(scope);
@@ -156,7 +165,9 @@ it("blocks editing without settings permission and rechecks permission when savi
       <button>Recording mode</button>
     </Control>,
   );
-  expect(screen.container.querySelector("[inert]")).not.toBeNull();
+  expect(screen.container.querySelector("[inert]")).toBeNull();
+  await expect.element(screen.getByRole("button", { name: editName })).not.toBeInTheDocument();
+  await expect.element(screen.getByText("D", { exact: true })).toBeVisible();
   await expect.element(screen.getByRole("button", { name: "Recording mode" })).toBeEnabled();
   vi.mocked(useEnvironmentsWithScope).mockReturnValue(new Set([EnvironmentId.make("dictation-0")]));
   await screen.rerender(<Control key="allowed">{null}</Control>);
