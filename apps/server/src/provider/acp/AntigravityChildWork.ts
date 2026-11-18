@@ -15,7 +15,11 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
-import { boundAntigravityToolText, isCutAntigravityToolText } from "./AntigravityProtocol.ts";
+import {
+  boundAntigravityToolText,
+  isCutAntigravityToolText,
+  sanitizeAntigravityToolPayload,
+} from "./AntigravityProtocol.ts";
 
 // Field numbers from the runtime's trajectory protos (exa.cortex_pb).
 const STEP_METADATA = 5;
@@ -262,7 +266,7 @@ export const readAntigravityTaskIds = Effect.fn("readAntigravityTaskIds")(functi
                     call.args !== undefined &&
                     input !== undefined &&
                     Option.exists(decodeArgument(call.args), (args) =>
-                      NodeUtil.isDeepStrictEqual(args, input),
+                      NodeUtil.isDeepStrictEqual(sanitizeAntigravityToolPayload(args), input),
                     ),
                 );
           const match = matches?.length === 1 ? matches[0]?.id : undefined;
