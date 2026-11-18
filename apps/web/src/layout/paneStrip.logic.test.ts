@@ -303,11 +303,17 @@ describe("splitPaneStrip", () => {
       threadStateOf: (ref) => (ref.threadId === "w" ? "working" : "inbox"),
       hideSettled: false,
     });
-    const { before, after, activeColor } = splitPaneStrip(segments, "b");
-    expect({ before: before.map(label), after: after.map(label), activeColor }).toEqual({
+    const { before, after, activeColor, activeGroupId } = splitPaneStrip(segments, "b");
+    expect({
+      before: before.map(label),
+      after: after.map(label),
+      activeColor,
+      activeGroupId,
+    }).toEqual({
       before: ["[Working]", "w:blue", "a:-", "[g]"],
       after: ["c:grey", "d:-"],
       activeColor: "grey",
+      activeGroupId: "g",
     });
   });
 });

@@ -159,11 +159,17 @@ export type PaneStripItem =
 export function splitPaneStrip(
   segments: readonly PaneStripSegment[],
   activeTabId: string,
-): { before: PaneStripItem[]; after: PaneStripItem[]; activeColor: LayoutTabGroupColor | null } {
+): {
+  before: PaneStripItem[];
+  after: PaneStripItem[];
+  activeColor: LayoutTabGroupColor | null;
+  activeGroupId: string | null;
+} {
   const before: PaneStripItem[] = [];
   const after: PaneStripItem[] = [];
   let passedActive = false;
   let activeColor: LayoutTabGroupColor | null = null;
+  let activeGroupId: string | null = null;
   const place = (tab: LayoutTab, group: PaneTabGroupDefinition | null) => {
     if (tab.id !== activeTabId) {
       (passedActive ? after : before).push({ kind: "tab", tab, group });
@@ -171,6 +177,7 @@ export function splitPaneStrip(
     }
     passedActive = true;
     activeColor = group?.color ?? null;
+    activeGroupId = group?.id ?? null;
   };
   for (const segment of segments) {
     if (segment.kind === "tab") {
@@ -184,7 +191,7 @@ export function splitPaneStrip(
     });
     for (const tab of segment.tabs) place(tab, segment.group);
   }
-  return { before, after, activeColor };
+  return { before, after, activeColor, activeGroupId };
 }
 
 /** A drawn tab and the group it is drawn in, or a group's chip (`id` is then the group's). */

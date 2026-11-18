@@ -743,9 +743,15 @@ interface PaneSiblingTabs {
   before: readonly PaneStripItem[];
   after: readonly PaneStripItem[];
   activeColor: LayoutTabGroupColor | null;
+  activeGroupId: string | null;
 }
 
-const NO_SIBLING_TABS: PaneSiblingTabs = { before: [], after: [], activeColor: null };
+const NO_SIBLING_TABS: PaneSiblingTabs = {
+  before: [],
+  after: [],
+  activeColor: null,
+  activeGroupId: null,
+};
 
 /** The same for a pane and tab named outright, outside their pane's context. */
 export function usePaneSiblingTabs(
