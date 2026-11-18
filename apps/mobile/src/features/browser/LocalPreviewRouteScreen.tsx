@@ -14,7 +14,7 @@ import { isDuoDevice } from "../../lib/device-type";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { useEnvironments } from "../../state/environments";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { BrowserBar, useBarFollowsScroll } from "./BrowserBar";
+import { BrowserBar, useBarFollowsScroll, useBrowserBarHeight } from "./BrowserBar";
 import { loopbackUrlForDevice } from "./browserTabs";
 import { TunnelWebView, type TunnelNavigation, type TunnelWebViewRef } from "./TunnelWebView";
 
@@ -80,8 +80,11 @@ export function LocalPreviewScreen(props: {
   const canGoBack = page?.canGoBack ?? false;
   // Like Safari, full screen on iOS lays the bar over the page, which scrolls under it.
   const overlay = Platform.OS === "ios" && !onMaximize;
-  const [barHeight, setBarHeight] = useState(0);
   const compact = bar.compact && !failed;
+  // The page stays inset by the whole bar, so the bar shrinking never moves it, like Safari's.
+  const fullBarHeight = useBrowserBarHeight();
+  const [barHeight, setBarHeight] = useState(fullBarHeight);
+  if (!compact && fullBarHeight !== barHeight) setBarHeight(fullBarHeight);
   // Safari on the Duo hides the status band with its bar; other iPhones keep the clock.
   const duo = isDuoDevice(useDeviceType());
   const hideStatusBar = overlay && compact && duo;
@@ -102,6 +105,7 @@ export function LocalPreviewScreen(props: {
       onReload={retry}
       onSubmit={open}
       compact={compact}
+      compactHidesStatusBar={overlay && duo}
       onExpand={bar.expand}
       pageColor={pageColor}
     />
@@ -207,14 +211,7 @@ export function LocalPreviewScreen(props: {
             </View>
           </View>
         ) : null}
-        {overlay ? (
-          <View
-            className="absolute inset-x-0 top-0"
-            onLayout={(event) => setBarHeight(event.nativeEvent.layout.height)}
-          >
-            {browserBar}
-          </View>
-        ) : null}
+        {overlay ? <View className="absolute inset-x-0 top-0">{browserBar}</View> : null}
       </View>
     </SafeAreaView>
   );
