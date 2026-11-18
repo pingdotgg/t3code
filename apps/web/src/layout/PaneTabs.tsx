@@ -457,8 +457,12 @@ function markJoinedLabel(entry: PaneStrip): void {
 
 function stripBoxOf(strip: HTMLElement, tab: HTMLElement): { x: number; w: number } | null {
   const bounds = strip.getBoundingClientRect();
-  // Layout pixels, also while the overview scales the pane.
-  const scale = strip.offsetWidth > 0 ? bounds.width / strip.offsetWidth : 1;
+  // Layout pixels, also while the overview scales the pane. offsetWidth is rounded to a whole
+  // pixel, so a gap under 1px is that rounding, not a scale.
+  const scale =
+    strip.offsetWidth > 0 && Math.abs(bounds.width - strip.offsetWidth) >= 1
+      ? bounds.width / strip.offsetWidth
+      : 1;
   if (scale <= 0) return null;
   const rect = tab.getBoundingClientRect();
   return {
