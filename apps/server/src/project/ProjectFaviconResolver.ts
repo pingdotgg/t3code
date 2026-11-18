@@ -16,6 +16,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as T3ProjectFileLoader from "./T3ProjectFileLoader.ts";
 
 const FAVICON_CACHE_CAPACITY = 512;
+const ICON_SOURCE_SCAN_BYTES = 128 * 1024;
 const FAVICON_POSITIVE_CACHE_TTL = Duration.minutes(10);
 const FAVICON_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
@@ -72,9 +73,9 @@ const ICON_SOURCE_FILES = [
   "src/index.html",
 ] as const;
 
-// Anchor HTML at <link and scan brace-free metadata runs to avoid quadratic regex rescans.
-const LINK_ICON_HTML_RE =
-  /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i;
+const HTML_LINK_RE = /<link\b[^<>]*>/gi;
+const HTML_ICON_REL_RE = /\brel=["'](?:icon|shortcut icon)["']/i;
+const HTML_ICON_HREF_RE = /\bhref=["']([^"'?]+)/i;
 const ICON_REL_RE = /\brel\s*:\s*["'](?:icon|shortcut icon)["']/i;
 const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
 
@@ -116,8 +117,11 @@ export class ProjectFaviconResolver extends Context.Service<
 >()("t3/project/ProjectFaviconResolver") {}
 
 function extractIconHref(source: string): string | null {
-  const htmlMatch = source.match(LINK_ICON_HTML_RE);
-  if (htmlMatch?.[1]) return htmlMatch[1];
+  for (const [tag] of source.matchAll(HTML_LINK_RE)) {
+    if (!HTML_ICON_REL_RE.test(tag)) continue;
+    const hrefMatch = tag.match(HTML_ICON_HREF_RE);
+    if (hrefMatch?.[1]) return hrefMatch[1];
+  }
   for (const run of source.split("}")) {
     if (!ICON_REL_RE.test(run)) continue;
     const hrefMatch = run.match(ICON_HREF_RE);
@@ -213,7 +217,27 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-    const source = yield* optionOnNotFound(fileSystem.readFileString(sourcePath.absolutePath)).pipe(
+    const stats = yield* optionOnNotFound(fileSystem.stat(sourcePath.absolutePath)).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectFaviconResolutionError({
+            operation: "stat-candidate",
+            workspaceRoot: projectCwd,
+            relativePath: sourceFile,
+            absolutePath: sourcePath.absolutePath,
+            cause,
+          }),
+      ),
+    );
+    if (Option.isNone(stats) || stats.value.type !== "File") {
+      return null;
+    }
+    const source = yield* optionOnNotFound(
+      fileSystem.open(sourcePath.absolutePath, { flag: "r" }).pipe(
+        Effect.flatMap((file) => file.readAlloc(ICON_SOURCE_SCAN_BYTES)),
+        Effect.scoped,
+      ),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new ProjectFaviconResolutionError({
@@ -225,10 +249,10 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (Option.isNone(source)) {
+    if (Option.isNone(source) || Option.isNone(source.value)) {
       return null;
     }
-    const href = extractIconHref(source.value);
+    const href = extractIconHref(new TextDecoder().decode(source.value.value));
     if (!href) {
       return null;
     }
