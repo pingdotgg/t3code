@@ -416,7 +416,8 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const postComment = useAtomCommand(issueEnvironment.comment, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
   const [busy, setBusy] = useState<"comment" | "state" | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [olderCommentsFailed, setOlderCommentsFailed] = useState(false);
   const [composerHeight, setComposerHeight] = useState(0);
 
   const timeline = detail
@@ -442,10 +443,10 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   ) => {
     if (busy !== null) return false;
     setBusy(kind);
-    setError(null);
+    setMutationError(null);
     const failure = issueCommandError(await command());
     setBusy(null);
-    setError(failure);
+    setMutationError(failure);
     // The list beside this issue shows its state and comment count, and reads only when asked.
     if (failure === null) refreshIssueLists(target.environmentId);
     return failure === null;
@@ -453,10 +454,10 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const loadOlder = async () => {
     if (busy !== null) return;
     const failure = await pager.loadOlder(registry, (cursor) => {
-      setError(null);
+      setOlderCommentsFailed(false);
       return loadComments({ ...target, input: { ...target.input, cursor } });
     });
-    if (failure) setError(gt("Older comments could not be read."));
+    if (failure) setOlderCommentsFailed(true);
   };
   const submitComment = (body: string) =>
     access?.comment === true
@@ -587,9 +588,9 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                   onEditLabels={() => navigation.navigate("IssueLabels", identity)}
                   onEditAssignees={() => navigation.navigate("IssueAssignees", identity)}
                 />
-                {error || (detail && detailQuery.error) ? (
+                {mutationError || (detail && detailQuery.error) ? (
                   <Text selectable className="text-sm text-danger-foreground">
-                    {error ?? detailQuery.error}
+                    {mutationError ?? detailQuery.error}
                   </Text>
                 ) : null}
                 {!detail ? (
@@ -634,6 +635,11 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                           disabled={busy !== null || !canLoadOlder}
                           onPress={() => void loadOlder()}
                         />
+                      ) : null}
+                      {olderCommentsFailed ? (
+                        <Text selectable className="text-sm text-danger-foreground">
+                          <T>Older comments could not be read.</T>
+                        </Text>
                       ) : null}
                       {timeline.length === 0 ? (
                         <Text className="text-sm text-foreground-muted">
