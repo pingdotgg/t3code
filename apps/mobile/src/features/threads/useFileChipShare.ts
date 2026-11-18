@@ -30,17 +30,22 @@ export function useFileChipShare(
     refresh: true,
     reportFailure: false,
   });
-  const requestRef = useRef<AbortController | null>(null);
-  const draftCwd = options?.draftCwd;
-  const filePath = options?.filePath;
+  const requestRef = useRef<{ scope: string; controller: AbortController } | null>(null);
+  const scope = JSON.stringify([environmentId, threadId, options?.draftCwd, options?.filePath]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the download when its viewer target changes or unmounts
-  useEffect(() => () => requestRef.current?.abort(), [environmentId, threadId, draftCwd, filePath]);
+  useEffect(
+    () => () => {
+      const request = requestRef.current;
+      if (request?.scope === scope) request.controller.abort();
+    },
+    [scope],
+  );
 
   return (target: FileChipTarget): Promise<void> => {
     const source = fileChipShareSource(target, threadId, options?.draftCwd ?? null);
     if (!source || requestRef.current || environmentId === null) return Promise.resolve();
     const request = new AbortController();
-    requestRef.current = request;
+    requestRef.current = { scope, controller: request };
     return (async () => {
       if (httpBaseUrl === null) throw new Error(gt("Reconnect to the environment and try again."));
       const result = await createUrl({ environmentId, input: { resource: source.resource } });
@@ -65,7 +70,7 @@ export function useFileChipShare(
         }
       })
       .finally(() => {
-        if (requestRef.current === request) {
+        if (requestRef.current?.controller === request) {
           requestRef.current = null;
         }
       });
