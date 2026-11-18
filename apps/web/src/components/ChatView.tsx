@@ -3631,6 +3631,7 @@ export default function ChatView(props: ChatViewProps) {
             <ThreadFind onClose={focusComposerStable} />
             <div
               {...conversationArea}
+              data-draft-hero={isDraftHeroState ? "" : undefined}
               // The timeline reaches up under the pane header (index.css).
               className="relative flex min-h-0 flex-1 flex-col bg-background [--timeline-top-inset:var(--pane-header-overlap,0px)]"
               style={{ "--chat-composer-inset": `${composerTimelineInset}px` } as CSSProperties}
