@@ -146,6 +146,43 @@ it("returns streaming previews and final text from an isolated process", async (
   }
 });
 
+it("streams with the low-latency window only on a dedicated GPU", async () => {
+  for (const deviceType of ["gpu", "igpu", "cpu"]) {
+    const model = await loadNativeSpeechModel(
+      "unused.gguf",
+      new AbortController().signal,
+      `data:text/javascript,${encodeURIComponent(`
+        export const TranscribeModel = { load: async () => ({
+          capabilities: { supportsStreaming: true },
+          device: { deviceType: "${deviceType}" },
+          accepts: (family) => family.kind === "parakeet_buffered",
+          supports: () => false,
+          createSession: () => ({
+            dispose() {},
+            stream: async (opts) => ({
+              feed: async () => ({}),
+              finalize: async () => {},
+              text: { full: JSON.stringify(opts.family ?? null) },
+              reset() {},
+            }),
+          }),
+        }) };
+      `)}`,
+    );
+    try {
+      await model.begin({ timestamps: "none" }, false);
+      await model.feed(new Float32Array(512));
+      expect(JSON.parse(await model.finish())).toEqual(
+        deviceType === "gpu"
+          ? { kind: "parakeet_buffered", leftMs: 5600, chunkMs: 160, rightMs: 320 }
+          : null,
+      );
+    } finally {
+      await model.dispose();
+    }
+  }
+});
+
 it("kills a hung streaming feed without waiting for native cleanup", async () => {
   const controller = new AbortController();
   const model = await loadNativeSpeechModel(

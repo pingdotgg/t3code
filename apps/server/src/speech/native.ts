@@ -31,10 +31,13 @@ const newAudio = (filterSilence) => createSpeechAudio({
   frameSamples: 512, filterSilence, nativeStreaming,
   longForm: model.supports("long_form"), maxAudioMs: model.capabilities.maxAudioMs,
 });
+// Parakeet Unified (70, 2, 4): 0.48 s lookahead, too heavy for CPUs and iGPUs.
+const lowLatency = { kind: "parakeet_buffered", leftMs: 5600, chunkMs: 160, rightMs: 320 };
 const openAsr = async () => {
   if (nativeStreaming) {
     session = model.createSession();
-    stream = await session.stream(options);
+    stream = await session.stream(model.device?.deviceType === "gpu" && model.accepts(lowLatency)
+      ? { ...options, family: lowLatency } : options);
   }
 };
 const begin = async (message, live) => {
