@@ -46,7 +46,7 @@ export function applyVibeHistoryPatch(
     let cursor: unknown = result;
     for (const segment of segments.slice(0, -1)) {
       cursor =
-        typeof cursor === "object" && cursor !== null
+        typeof cursor === "object" && cursor !== null && Object.hasOwn(cursor, segment)
           ? (cursor as Record<string, unknown>)[segment]
           : undefined;
     }
@@ -64,12 +64,20 @@ export function applyVibeHistoryPatch(
       continue;
     }
     const record = cursor as Record<string, unknown>;
-    if (op["op"] === "remove") delete record[key];
-    else if (op["op"] === "append") {
-      const current = record[key];
-      record[key] =
-        `${typeof current === "string" ? current : ""}${typeof value === "string" ? value : ""}`;
-    } else record[key] = value;
+    if (op["op"] === "remove") {
+      delete record[key];
+    } else if (op["op"] === "append" || op["op"] === "add" || op["op"] === "replace") {
+      const current = Object.hasOwn(record, key) ? record[key] : undefined;
+      Object.defineProperty(record, key, {
+        value:
+          op["op"] === "append"
+            ? `${typeof current === "string" ? current : ""}${typeof value === "string" ? value : ""}`
+            : value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
   }
   return result;
 }
@@ -193,11 +201,17 @@ export function resolveVibeModelId(model: string | null | undefined): string {
 export function vibeAgentForRuntimeMode(
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode = "default",
-): { readonly agent: string; readonly autoApprove: boolean } {
-  if (interactionMode === "plan") return { agent: "plan", autoApprove: false };
+): {
+  readonly agent: string;
+  readonly autoApprove: boolean;
+  readonly enabledTools?: ReadonlyArray<string>;
+} {
+  if (interactionMode === "plan") {
+    return { agent: "ask", autoApprove: false, enabledTools: ["grep", "read_file"] };
+  }
   switch (runtimeMode) {
     case "approval-required":
-      return { agent: "default", autoApprove: false };
+      return { agent: "ask", autoApprove: false };
     case "auto-accept-edits":
     case "auto":
       return { agent: "accept-edits", autoApprove: false };
@@ -222,7 +236,6 @@ export const withVibeAppServerClient = Effect.fn("VibeAppServerSupport.withVibeA
       readonly cwd: string;
       readonly environment?: NodeJS.ProcessEnv | undefined;
       readonly clientInfo?: { readonly name: string; readonly version: string };
-      readonly logProtocol?: boolean;
     },
     use: (
       client: VibeAppServer.VibeAppServerClient["Service"],
@@ -255,12 +268,7 @@ export const withVibeAppServerClient = Effect.fn("VibeAppServerSupport.withVibeA
         ),
       );
     const client = Context.get(
-      yield* Layer.build(
-        VibeAppServer.layerChildProcess(
-          child,
-          input.logProtocol === true ? { logIncoming: true, logOutgoing: true } : {},
-        ),
-      ),
+      yield* Layer.build(VibeAppServer.layerChildProcess(child)),
       VibeAppServer.VibeAppServerClient,
     );
     const init = yield* client.initialize({

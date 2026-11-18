@@ -72,7 +72,7 @@ describe("buildVibeEnvironment", () => {
 describe("vibeAgentForRuntimeMode", () => {
   it("maps T3 runtime modes onto Vibe agents", () => {
     expect(vibeAgentForRuntimeMode("approval-required")).toEqual({
-      agent: "default",
+      agent: "ask",
       autoApprove: false,
     });
     expect(vibeAgentForRuntimeMode("auto-accept-edits")).toEqual({
@@ -85,8 +85,9 @@ describe("vibeAgentForRuntimeMode", () => {
       autoApprove: true,
     });
     expect(vibeAgentForRuntimeMode("approval-required", "plan")).toEqual({
-      agent: "plan",
+      agent: "ask",
       autoApprove: false,
+      enabledTools: ["grep", "read_file"],
     });
   });
 });
@@ -144,6 +145,13 @@ describe("applyVibeHistoryPatch", () => {
       content: [{ type: "text", text: "Let me check the DB for the UUID." }],
       updatedAt: 1,
     });
+  });
+
+  it("copies a patch field as own data without changing the entry prototype", () => {
+    const entry = applyVibeHistoryPatch({}, [{ op: "add", path: "/__proto__", value: "metadata" }]);
+    expect(Object.getPrototypeOf(entry)).toBe(Object.prototype);
+    expect(Object.hasOwn(entry, "__proto__")).toBe(true);
+    expect(entry["__proto__"]).toBe("metadata");
   });
 
   it("inserts into arrays for `add`, including the `-` end marker", () => {

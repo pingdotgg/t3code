@@ -4,6 +4,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as VibeError from "@t3tools/vibe-app-server/errors";
 
 import { TextGenerationError } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import type { VibeSettings } from "../settings.ts";
 
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
@@ -38,9 +39,9 @@ const waitForTurnTerminal = Effect.fn("VibeTextGeneration.waitForTurnTerminal")(
   sessionId: string,
 ) {
   while (true) {
-    const { items: turns } = yield* client.sessionTurnsList({ sessionId, limit: 20 });
-    const active = turns.find((turn) => !TERMINAL_TURN_STATUSES.has(turn.status));
-    if (active === undefined) return turns[0];
+    const { state } = yield* client.sessionRead({ sessionId, history: null, turns: { limit: 1 } });
+    const turn = state.turns?.at(-1);
+    if (turn !== undefined && TERMINAL_TURN_STATUSES.has(turn.status)) return turn;
     yield* Effect.sleep("500 millis");
   }
 });
@@ -58,29 +59,37 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
         { settings, cwd, environment, clientInfo: { name: "t3-code-vibe-text", version: "0.0.0" } },
         (client) =>
           Effect.gen(function* () {
+            const reasoningEffort = getModelSelectionStringOptionValue(modelSelection, "thinking");
             const started = yield* client.sessionStart({
               kind: "ephemeral",
               agentConfig: {
                 cwd,
                 headless: true,
+                agent: "ask",
+                autoApprove: false,
+                disabledTools: ["*"],
                 trustWorkspace: settings.trustWorkspace,
               },
-              ...(resolveVibeModelId(modelSelection.model) !== ""
-                ? { model: resolveVibeModelId(modelSelection.model) }
-                : {}),
+              model: resolveVibeModelId(modelSelection.model),
+              ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
               sessionOnly: true,
             });
             const sessionId = started.state.session.id;
+            yield* Effect.addFinalizer(() =>
+              client
+                .sessionDelete(sessionId)
+                .pipe(Effect.interruptible, Effect.timeoutOption("2 seconds"), Effect.ignore),
+            );
             yield* client.sessionTurnEnqueue({
               sessionId,
               entries: [{ role: "user", content: [{ type: "text", text: prompt }] }],
             });
             const terminalTurn = yield* waitForTurnTerminal(client, sessionId);
-            if (terminalTurn === undefined || terminalTurn.status !== "completed") {
+            if (terminalTurn.status !== "completed") {
               return yield* new TextGenerationError({
                 operation,
                 detail: "Vibe did not complete the text generation turn.",
-                cause: terminalTurn?.error,
+                cause: terminalTurn.error,
               });
             }
             const history = yield* client.sessionHistoryList({ sessionId, limit: 100 });
@@ -90,9 +99,8 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
               .filter((item) => (item as HistoryEntryLike).role === "assistant")
               .map((item) => entryText(item as HistoryEntryLike))
               .find((text) => text.length > 0);
-            yield* client.sessionDelete(sessionId).pipe(Effect.ignore);
             return reply ?? "";
-          }),
+          }).pipe(Effect.scoped),
       ).pipe(
         // Scope the client so the app-server process is killed when the request ends.
         Effect.scoped,

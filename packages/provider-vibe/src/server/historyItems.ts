@@ -1,4 +1,8 @@
-import type { OrchestrationV2TurnItem, OrchestrationV2TurnItemStatus } from "@t3tools/contracts";
+import type {
+  OrchestrationV2TurnItem,
+  OrchestrationV2TurnItemStatus,
+  OrchestrationV2WebSearchResult,
+} from "@t3tools/contracts";
 
 type HistoryItemBase = Omit<
   Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>,
@@ -18,6 +22,37 @@ const text = (value: unknown): string | undefined =>
 
 // Search output stays on the timeline wire, so keep it a preview.
 const SEARCH_PREVIEW_MAX_CHARS = 8_000;
+
+function recordedEditPatch(value: unknown): string | undefined {
+  if (!Array.isArray(value) || value.length < 2) return undefined;
+  const lines = (value: string) => (value === "" ? [] : value.replace(/\r?\n$/, "").split(/\r?\n/));
+  const hunks: string[] = [];
+  for (const occurrence of value as unknown[]) {
+    const entry = asRecord(occurrence);
+    const { startLine, newStartLine = startLine, oldText, newText } = entry ?? {};
+    if (
+      typeof startLine !== "number" ||
+      !Number.isSafeInteger(startLine) ||
+      startLine < 1 ||
+      typeof newStartLine !== "number" ||
+      !Number.isSafeInteger(newStartLine) ||
+      newStartLine < 1 ||
+      typeof oldText !== "string" ||
+      typeof newText !== "string"
+    )
+      return undefined;
+    const before = lines(oldText);
+    const after = lines(newText);
+    hunks.push(
+      [
+        `@@ -${startLine},${before.length} +${newStartLine},${after.length} @@`,
+        ...before.map((line) => `-${line}`),
+        ...after.map((line) => `+${line}`),
+      ].join("\n"),
+    );
+  }
+  return hunks.join("\n") + "\n";
+}
 
 const EFFECT_STATUS: Record<string, OrchestrationV2TurnItemStatus> = {
   pending: "pending",
@@ -102,14 +137,25 @@ export function vibeHistoryTurnItem(
     case "file_write": {
       const fileName = str(input?.["filePath"]);
       if (fileName === undefined) break;
+      const occurrences = outputRecord?.["occurrences"];
+      const diffStr = recordedEditPatch(occurrences);
+      if (diffStr !== undefined) return { ...common, type: "file_change", fileName, diffStr };
+      const singleOccurrence =
+        Array.isArray(occurrences) && occurrences.length === 1
+          ? asRecord(occurrences[0])
+          : undefined;
       const changes = Array.isArray(input?.["changes"]) ? input["changes"].map(asRecord) : [];
       const oldStr =
+        text(singleOccurrence?.["oldText"]) ??
+        text(outputRecord?.["oldString"]) ??
         text(input?.["oldString"]) ??
         (detail?.["kind"] === "file_write" ? text(outputRecord?.["previousContent"]) : undefined) ??
         (changes.length > 0
           ? changes.map((c) => text(c?.["oldString"]) ?? "").join("\n")
           : undefined);
       const newStr =
+        text(singleOccurrence?.["newText"]) ??
+        text(outputRecord?.["newString"]) ??
         text(input?.["newString"]) ??
         text(input?.["content"]) ??
         (changes.length > 0
@@ -148,15 +194,25 @@ export function vibeHistoryTurnItem(
       };
     }
     case "web_search": {
-      const output = effectOutput(state);
+      const answer = str(outputRecord?.["answer"]);
+      const sources = outputRecord?.["sources"];
+      const results: OrchestrationV2WebSearchResult[] = [];
+      if (answer !== undefined)
+        results.push({ snippet: answer.slice(0, SEARCH_PREVIEW_MAX_CHARS) });
+      if (Array.isArray(sources)) {
+        for (const source of sources as unknown[]) {
+          const record = asRecord(source);
+          const url = str(record?.["url"]);
+          const title = str(record?.["title"]);
+          if (url !== undefined) results.push({ url, ...(title === undefined ? {} : { title }) });
+        }
+      }
       const query = str(input?.["query"]);
       return {
         ...common,
         type: "web_search",
         ...(query === undefined ? {} : { patterns: [query] }),
-        ...(!output?.trim()
-          ? {}
-          : { results: [{ snippet: output.slice(0, SEARCH_PREVIEW_MAX_CHARS) }] }),
+        ...(results.length === 0 ? {} : { results }),
       };
     }
   }

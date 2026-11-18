@@ -53,12 +53,25 @@ export const PublicSession = Schema.Struct({
 });
 export type PublicSession = typeof PublicSession.Type;
 
+export const PublicTurn = Schema.Struct({
+  id: Schema.String,
+  sessionId: Schema.String,
+  status: Schema.String,
+  inputEntryId: Schema.optional(Schema.NullOr(Schema.String)),
+  startedAt: Schema.optional(Schema.Number),
+  completedAt: Schema.optional(Schema.NullOr(Schema.Number)),
+  error: Schema.optional(Schema.NullOr(Schema.Unknown)),
+  stopReason: Schema.optional(Schema.NullOr(Schema.String)),
+  queueItemId: Schema.optional(Schema.NullOr(Schema.String)),
+});
+export type PublicTurn = typeof PublicTurn.Type;
+
 export const PublicSessionState = Schema.Struct({
   format: Schema.optional(Schema.String),
   eventId: Schema.optional(Schema.Number),
   session: PublicSession,
   isQuiescent: Schema.optional(Schema.NullOr(Schema.Boolean)),
-  turns: Schema.optional(Schema.Array(Schema.Unknown)),
+  turns: Schema.optional(Schema.NullOr(Schema.Array(PublicTurn))),
   activeCallbacks: Schema.optional(Schema.Array(Schema.Unknown)),
   childSessions: Schema.optional(Schema.Array(Schema.Unknown)),
   backgroundProcesses: Schema.optional(Schema.Array(Schema.Unknown)),
@@ -81,19 +94,6 @@ export const SessionResumeResult = Schema.Struct({
   state: PublicSessionState,
 });
 export type SessionResumeResult = typeof SessionResumeResult.Type;
-
-export const PublicTurn = Schema.Struct({
-  id: Schema.String,
-  sessionId: Schema.String,
-  status: Schema.String,
-  inputEntryId: Schema.optional(Schema.NullOr(Schema.String)),
-  startedAt: Schema.optional(Schema.Number),
-  completedAt: Schema.optional(Schema.NullOr(Schema.Number)),
-  error: Schema.optional(Schema.NullOr(Schema.Unknown)),
-  stopReason: Schema.optional(Schema.NullOr(Schema.String)),
-  queueItemId: Schema.optional(Schema.NullOr(Schema.String)),
-});
-export type PublicTurn = typeof PublicTurn.Type;
 
 export const PageResult = Schema.Struct({
   items: Schema.Array(Schema.Unknown),
@@ -177,7 +177,13 @@ export const EventsReadResult = Schema.Struct({
   events: Schema.Array(Schema.Unknown),
 });
 
-export const TurnEnqueueResult = Schema.Struct({
+export const ModelWriteResult = Schema.Struct({
+  rejected: Schema.optional(Schema.Boolean),
+  reason: Schema.optional(Schema.NullOr(Schema.String)),
+  failures: Schema.optional(Schema.Array(Schema.String)),
+});
+
+const TurnEnqueueResult = Schema.Struct({
   queueItemId: Schema.String,
   waits: Schema.optional(Schema.Boolean),
 });
@@ -242,7 +248,7 @@ export class VibeAppServerClient extends Context.Service<
       modelAlias?: string | undefined;
       reasoningEffort?: string | undefined;
       sessionOnly?: boolean;
-    }) => Effect.Effect<unknown, VibeError.VibeAppServerError>;
+    }) => Effect.Effect<typeof ModelWriteResult.Type, VibeError.VibeAppServerError>;
     readonly sessionStart: (
       params: unknown,
     ) => Effect.Effect<SessionStartResult, VibeError.VibeAppServerError>;
@@ -444,7 +450,7 @@ export const make = Effect.fn("@t3tools/vibe-app-server/VibeAppServerClient.make
       return result.config;
     }),
     configModelWrite: Effect.fn("VibeAppServerClient.configModelWrite")(function* (input) {
-      return yield* requestRaw("config/model/write", {
+      return yield* typed("config/model/write", ModelWriteResult, {
         sessionId: input.sessionId,
         ...(input.modelAlias !== undefined ? { modelAlias: input.modelAlias } : {}),
         ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),

@@ -1,10 +1,10 @@
 import {
   NodeId,
   ProviderInstanceId,
-  ProviderTurnId,
   RunId,
   RunAttemptId,
   RuntimeRequestId,
+  type ChatAttachment,
   type ThreadId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2RuntimeRequest,
@@ -19,6 +19,7 @@ import type { VibeSettings } from "../settings.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -59,7 +60,7 @@ const VibeProviderCapabilitiesV2 = {
     supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
     supportsProviderSwitchingViaHandoff: false,
-    supportsRuntimeModeSwitchInSession: true,
+    supportsRuntimeModeSwitchInSession: false,
     pendingRequestsSurviveRestart: false,
   },
   threads: {
@@ -176,7 +177,10 @@ const asRecord = (value: unknown): Record<string, unknown> | undefined =>
 const str = (value: unknown): string | undefined =>
   typeof value === "string" && value.length > 0 ? value : undefined;
 
-const entryTime = (entry: Record<string, unknown>, key: "createdAt" | "updatedAt") => {
+const entryTime = (
+  entry: Record<string, unknown>,
+  key: "createdAt" | "updatedAt" | "startedAt" | "completedAt",
+) => {
   const millis = entry[key];
   return typeof millis === "number" ? utcFromMillis(millis) : null;
 };
@@ -204,26 +208,29 @@ export function vibeTurnFailure(error: unknown): ReturnType<typeof makeProviderF
   });
 }
 
+interface RunIdentity {
+  readonly runId: RunId;
+  readonly runAttemptId: RunAttemptId;
+  readonly rootNodeId: NodeId;
+  readonly ordinal: number;
+}
+
 interface AdapterState {
   session: OrchestrationV2ProviderSession;
   thread: OrchestrationV2ProviderThread | undefined;
   activeTurn:
     | {
-        readonly providerTurnId: ProviderTurnId;
+        readonly providerTurn: OrchestrationV2ProviderTurn;
         readonly nativeTurnId: string;
-        readonly startedAt: DateTime.Utc;
+        readonly run: RunIdentity | undefined;
+        readonly runOrdinal: number;
       }
     | undefined;
   turnOrdinals: Map<string, number>;
-  lastRunOrdinal: number;
-  /** The current run's identity, attached to every turn/message/item projection. */
-  currentRun:
-    | {
-        readonly runId: RunId;
-        readonly runAttemptId: RunAttemptId;
-        readonly rootNodeId: NodeId;
-      }
-    | undefined;
+  observedTurns: Map<string, OrchestrationV2ProviderTurn>;
+  pendingRuns: Map<string, RunIdentity>;
+  adoptingThread: Array<{ readonly method: string; readonly params: unknown }> | undefined;
+  planMode: boolean;
   /** History entries by native id, so `history/entryUpdated` patches can be applied. */
   entries: Map<string, Record<string, unknown>>;
   /** Assistant/reasoning entries last projected as streaming; finalized at turn end if Vibe never does. */
@@ -235,7 +242,7 @@ interface AdapterState {
     RuntimeRequestId,
     {
       readonly callbackId: string;
-      readonly kind: "permission" | "user_input";
+      readonly runtimeRequest: OrchestrationV2RuntimeRequest;
       readonly turnItem?: Extract<OrchestrationV2TurnItem, { type: "user_input_request" }>;
     }
   >;
@@ -261,7 +268,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
   const path = yield* Path.Path;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
 
-  const openSessionInner = Effect.fn("VibeAdapterV2.openSession")(function* (
+  const openSessionInner = Effect.fnUntraced(function* (
     input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
   ) {
     const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
@@ -325,10 +332,10 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
               nativeItemId,
             }),
             threadId,
-            runId: state.currentRun?.runId ?? null,
-            nodeId: state.currentRun?.rootNodeId ?? null,
+            runId: state.activeTurn?.run?.runId ?? null,
+            nodeId: state.activeTurn?.run?.rootNodeId ?? null,
             providerThreadId: state.thread.id,
-            providerTurnId: state.activeTurn?.providerTurnId ?? null,
+            providerTurnId: state.activeTurn?.providerTurn.id ?? null,
             nativeItemRef: nativeRef(nativeItemId),
             parentItemId: null,
             ordinal: 0,
@@ -364,8 +371,8 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         creationSource: "provider",
         id: messageId,
         threadId,
-        runId: state.currentRun?.runId ?? null,
-        nodeId: state.currentRun?.rootNodeId ?? null,
+        runId: state.activeTurn?.run?.runId ?? null,
+        nodeId: state.activeTurn?.run?.rootNodeId ?? null,
         role: "assistant",
         text,
         attachments: [],
@@ -376,10 +383,10 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       const item = {
         id: turnItemId,
         threadId,
-        runId: state.currentRun?.runId ?? null,
-        nodeId: state.currentRun?.rootNodeId ?? null,
+        runId: state.activeTurn?.run?.runId ?? null,
+        nodeId: state.activeTurn?.run?.rootNodeId ?? null,
         providerThreadId: state.thread.id,
-        providerTurnId: state.activeTurn?.providerTurnId ?? null,
+        providerTurnId: state.activeTurn?.providerTurn.id ?? null,
         nativeItemRef: nativeRef(nativeItemId),
         parentItemId: null,
         ordinal: 0,
@@ -420,8 +427,10 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       thread: undefined,
       activeTurn: undefined,
       turnOrdinals: new Map(),
-      lastRunOrdinal: 0,
-      currentRun: undefined,
+      observedTurns: new Map(),
+      pendingRuns: new Map(),
+      adoptingThread: undefined,
+      planMode: input.runtimePolicy.interactionMode === "plan",
       entries: new Map(),
       streamingEntries: new Set(),
       callbackByRequest: new Map(),
@@ -443,143 +452,157 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
     });
 
     // Translate app-server notifications into V2 projection events.
-    yield* client.handleUnknownServerNotification(
-      Effect.fn("VibeAdapterV2.onNotification")(function* (method: string, params: unknown) {
-        const record = asRecord(params) ?? {};
-        const notificationSessionId = str(record["sessionId"]);
-        const currentSessionId = sessionIdOf();
-        if (
-          notificationSessionId !== undefined &&
-          currentSessionId !== undefined &&
-          notificationSessionId !== currentSessionId
-        ) {
-          return;
+    const onNotification = Effect.fn("VibeAdapterV2.onNotification")(function* (
+      method: string,
+      params: unknown,
+    ) {
+      const record = asRecord(params) ?? {};
+      const notificationSessionId = str(record["sessionId"]);
+      const currentSessionId = sessionIdOf();
+      if (
+        notificationSessionId !== undefined &&
+        currentSessionId !== undefined &&
+        notificationSessionId !== currentSessionId
+      ) {
+        return;
+      }
+      if (method === "turn/started") {
+        const turn = asRecord(record["turn"]);
+        const nativeTurnId = str(turn?.["id"]);
+        if (!nativeTurnId || !state.thread) return;
+        const ordinal = state.turnOrdinals.get(nativeTurnId) ?? state.turnOrdinals.size + 1;
+        state.turnOrdinals.set(nativeTurnId, ordinal);
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: VIBE_PROVIDER,
+          nativeTurnId,
+        });
+        if (state.activeTurn?.nativeTurnId === nativeTurnId) return;
+        const entryId = str(turn?.["inputEntryId"]);
+        const run = entryId === undefined ? undefined : state.pendingRuns.get(entryId);
+        if (entryId !== undefined) state.pendingRuns.delete(entryId);
+        const providerTurn: OrchestrationV2ProviderTurn = {
+          id: providerTurnId,
+          providerThreadId: state.thread.id,
+          nodeId:
+            run?.rootNodeId ?? state.thread.ownerNodeId ?? NodeId.make(`vibe-root-${nativeTurnId}`),
+          runAttemptId: run?.runAttemptId ?? null,
+          nativeTurnRef: nativeRef(nativeTurnId),
+          ordinal,
+          status: "running",
+          startedAt: entryTime(turn ?? {}, "startedAt") ?? (yield* DateTime.now),
+          completedAt: null,
+        };
+        state.activeTurn = {
+          providerTurn,
+          nativeTurnId,
+          run,
+          runOrdinal: run?.ordinal ?? state.thread.lastRunOrdinal ?? 1,
+        };
+        state.observedTurns.set(nativeTurnId, providerTurn);
+        yield* emit({
+          type: "provider_turn.updated",
+          driver: VIBE_PROVIDER,
+          providerTurn,
+        });
+        return;
+      }
+      if (
+        method === "turn/completed" ||
+        method === "turn/interrupted" ||
+        method === "turn/failed"
+      ) {
+        const turn = asRecord(record["turn"]);
+        const nativeTurnId = str(turn?.["id"]);
+        if (!nativeTurnId || !state.activeTurn || !state.thread) return;
+        if (state.activeTurn.nativeTurnId !== nativeTurnId) return;
+        const { providerTurn, runOrdinal } = state.activeTurn;
+        const providerTurnId = providerTurn.id;
+        // Turn mode hides streaming text until a final snapshot, so never end a turn without one.
+        for (const entryId of state.streamingEntries) {
+          const entry = state.entries.get(entryId);
+          if (entry)
+            yield* projectHistoryEntry(
+              { ...entry, generationStatus: "completed" },
+              entryId,
+              input.threadId,
+            );
         }
-        if (method === "turn/started") {
-          const turn = asRecord(record["turn"]);
-          const nativeTurnId = str(turn?.["id"]);
-          if (!nativeTurnId || !state.thread) return;
-          const ordinal = state.turnOrdinals.get(nativeTurnId) ?? state.turnOrdinals.size + 1;
-          state.turnOrdinals.set(nativeTurnId, ordinal);
-          const providerTurnId = idAllocator.derive.providerTurn({
+        state.streamingEntries.clear();
+        const completedAt = yield* DateTime.now;
+        const status = str(turn?.["status"]) ?? method.replace("turn/", "");
+        // A user-cancelled turn is its own terminal status, not a failure.
+        const terminalStatus =
+          status === "failed"
+            ? "failed"
+            : status === "cancelled"
+              ? "cancelled"
+              : status === "interrupted"
+                ? "interrupted"
+                : "completed";
+        const completedTurn = {
+          ...providerTurn,
+          status: terminalStatus,
+          completedAt: entryTime(turn ?? {}, "completedAt") ?? completedAt,
+        } satisfies OrchestrationV2ProviderTurn;
+        state.observedTurns.set(nativeTurnId, completedTurn);
+        yield* emit({
+          type: "provider_turn.updated",
+          driver: VIBE_PROVIDER,
+          providerTurn: completedTurn,
+        });
+        const failure = terminalStatus === "failed" ? vibeTurnFailure(turn?.["error"]) : undefined;
+        if (failure === undefined) {
+          yield* emit({
+            type: "turn.terminal",
             driver: VIBE_PROVIDER,
-            nativeTurnId,
-          });
-          const startedAt = yield* DateTime.now;
-          state.activeTurn = { providerTurnId, nativeTurnId, startedAt };
-          const providerTurn: OrchestrationV2ProviderTurn = {
-            id: providerTurnId,
             providerThreadId: state.thread.id,
-            nodeId: state.currentRun?.rootNodeId ?? NodeId.make(`vibe-root-${nativeTurnId}`),
-            runAttemptId: state.currentRun?.runAttemptId ?? null,
-            nativeTurnRef: nativeRef(nativeTurnId),
-            ordinal,
-            status: "running",
-            startedAt,
-            completedAt: null,
-          };
-          yield* emit({
-            type: "provider_turn.updated",
-            driver: VIBE_PROVIDER,
-            providerTurn,
+            providerTurnId,
+            runOrdinal,
+            status: terminalStatus as "cancelled" | "completed" | "interrupted",
+            failure: null,
+            threadDisposition: "reusable",
           });
-          return;
-        }
-        if (
-          method === "turn/completed" ||
-          method === "turn/interrupted" ||
-          method === "turn/failed"
-        ) {
-          const turn = asRecord(record["turn"]);
-          const nativeTurnId = str(turn?.["id"]);
-          if (!nativeTurnId || !state.activeTurn || !state.thread) return;
-          if (state.activeTurn.nativeTurnId !== nativeTurnId) return;
-          const { providerTurnId, startedAt } = state.activeTurn;
-          // Turn mode hides streaming text until a final snapshot, so never end a turn without one.
-          for (const entryId of state.streamingEntries) {
-            const entry = state.entries.get(entryId);
-            if (entry)
-              yield* projectHistoryEntry(
-                { ...entry, generationStatus: "completed" },
-                entryId,
-                input.threadId,
-              );
-          }
-          state.streamingEntries.clear();
-          const completedAt = yield* DateTime.now;
-          const status = str(turn?.["status"]) ?? method.replace("turn/", "");
-          // A user-cancelled turn is its own terminal status, not a failure.
-          const terminalStatus =
-            status === "failed"
-              ? "failed"
-              : status === "cancelled"
-                ? "cancelled"
-                : status === "interrupted"
-                  ? "interrupted"
-                  : "completed";
+        } else {
           yield* emit({
-            type: "provider_turn.updated",
+            type: "turn.terminal",
             driver: VIBE_PROVIDER,
-            providerTurn: {
-              id: providerTurnId,
-              providerThreadId: state.thread.id,
-              nodeId: state.currentRun?.rootNodeId ?? NodeId.make(`vibe-root-${nativeTurnId}`),
-              runAttemptId: state.currentRun?.runAttemptId ?? null,
-              nativeTurnRef: nativeRef(nativeTurnId),
-              ordinal: state.turnOrdinals.get(nativeTurnId) ?? 1,
-              status: terminalStatus === "failed" ? "failed" : terminalStatus,
-              startedAt,
-              completedAt,
-            },
+            providerThreadId: state.thread.id,
+            providerTurnId,
+            runOrdinal,
+            failureItemOrdinal: 1,
+            status: "failed",
+            failure,
+            threadDisposition: "reusable",
           });
-          const failure =
-            terminalStatus === "failed" ? vibeTurnFailure(turn?.["error"]) : undefined;
-          if (failure === undefined) {
-            yield* emit({
-              type: "turn.terminal",
-              driver: VIBE_PROVIDER,
-              providerThreadId: state.thread.id,
-              providerTurnId,
-              runOrdinal: Math.max(1, state.lastRunOrdinal),
-              status: terminalStatus as "cancelled" | "completed" | "interrupted",
-              failure: null,
-              threadDisposition: "reusable",
-            });
-          } else {
-            yield* emit({
-              type: "turn.terminal",
-              driver: VIBE_PROVIDER,
-              providerThreadId: state.thread.id,
-              providerTurnId,
-              runOrdinal: Math.max(1, state.lastRunOrdinal),
-              failureItemOrdinal: 1,
-              status: "failed",
-              failure,
-              threadDisposition: "reusable",
-            });
-          }
-          state.activeTurn = undefined;
-          return;
         }
-        if (method === "history/entryAdded") {
-          const entry = asRecord(record["entry"]);
-          if (!entry || !state.thread) return;
-          const nativeItemId = str(entry["id"]) ?? `${method}:${yield* random.uuidV4()}`;
-          state.entries.set(nativeItemId, entry);
-          yield* projectHistoryEntry(entry, nativeItemId, input.threadId);
-          return;
-        }
-        if (method === "history/entryUpdated") {
-          // Updates carry `entryId` + a JSON patch, not the full entry: apply the patch to the stored entry.
-          const entryId = str(record["entryId"]);
-          const stored = entryId !== undefined ? state.entries.get(entryId) : undefined;
-          if (!entryId || !stored || !state.thread) return;
-          const patch = Array.isArray(record["patch"]) ? record["patch"] : [];
-          const patched = applyVibeHistoryPatch(stored, patch);
-          state.entries.set(entryId, patched);
-          yield* projectHistoryEntry(patched, entryId, input.threadId);
-          return;
-        }
+        state.activeTurn = undefined;
+        return;
+      }
+      if (method === "history/entryAdded") {
+        const entry = asRecord(record["entry"]);
+        if (!entry || !state.thread) return;
+        const nativeItemId = str(entry["id"]) ?? `${method}:${yield* random.uuidV4()}`;
+        state.entries.set(nativeItemId, entry);
+        yield* projectHistoryEntry(entry, nativeItemId, input.threadId);
+        return;
+      }
+      if (method === "history/entryUpdated") {
+        // Updates carry `entryId` + a JSON patch, not the full entry: apply the patch to the stored entry.
+        const entryId = str(record["entryId"]);
+        const stored = entryId !== undefined ? state.entries.get(entryId) : undefined;
+        if (!entryId || !stored || !state.thread) return;
+        const patch = Array.isArray(record["patch"]) ? record["patch"] : [];
+        const patched = applyVibeHistoryPatch(stored, patch);
+        state.entries.set(entryId, patched);
+        yield* projectHistoryEntry(patched, entryId, input.threadId);
+        return;
+      }
+    });
+    yield* client.handleUnknownServerNotification((method, params) =>
+      Effect.suspend(() => {
+        if (!state.adoptingThread) return onNotification(method, params);
+        state.adoptingThread.push({ method, params });
+        return Effect.void;
       }),
     );
 
@@ -599,6 +622,13 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         });
       // Advertised client tools get matching handlers: serve file read/write from the session checkout.
       if (method === "clientTool/readTextFile" || method === "clientTool/writeTextFile") {
+        if (state.planMode && method === "clientTool/writeTextFile") {
+          return yield* new VibeAppServerError.VibeAppServerRequestError({
+            method,
+            code: "permission_denied",
+            detail: "Vibe Plan mode cannot write files.",
+          });
+        }
         const record = asRecord(params) ?? {};
         const filePath = str(record["path"]);
         if (!filePath) {
@@ -698,7 +728,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         .runtimeRequest({
           driver: VIBE_PROVIDER,
           ...(state.activeTurn !== undefined
-            ? { providerTurnId: state.activeTurn.providerTurnId }
+            ? { providerTurnId: state.activeTurn.providerTurn.id }
             : {}),
           nativeRequestId: callbackId,
         })
@@ -712,10 +742,10 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
                 nativeItemId: callbackId,
               }),
               threadId: input.threadId,
-              runId: state.currentRun?.runId ?? null,
-              nodeId: state.currentRun?.rootNodeId ?? null,
+              runId: state.activeTurn?.run?.runId ?? null,
+              nodeId: state.activeTurn?.run?.rootNodeId ?? null,
               providerThreadId: state.thread?.id ?? null,
-              providerTurnId: state.activeTurn?.providerTurnId ?? null,
+              providerTurnId: state.activeTurn?.providerTurn.id ?? null,
               nativeItemRef: nativeRef(callbackId),
               parentItemId: null,
               ordinal: 0,
@@ -729,9 +759,20 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
               questions,
             }
           : undefined;
+      const runtimeRequest: OrchestrationV2RuntimeRequest = {
+        id: requestId,
+        nodeId: state.activeTurn?.run?.rootNodeId ?? NodeId.make(`vibe-request-${requestId}`),
+        providerTurnId: state.activeTurn?.providerTurn.id ?? null,
+        nativeRequestRef: nativeRef(callbackId),
+        kind,
+        status: "pending",
+        responseCapability: { type: "live", providerSessionId },
+        createdAt,
+        resolvedAt: null,
+      };
       state.callbackByRequest.set(requestId, {
         callbackId,
-        kind,
+        runtimeRequest,
         ...(turnItem ? { turnItem } : {}),
       });
       if (turnItem) yield* emit({ type: "turn_item.updated", driver: VIBE_PROVIDER, turnItem });
@@ -739,17 +780,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         type: "runtime_request.updated",
         driver: VIBE_PROVIDER,
         threadId: input.threadId,
-        runtimeRequest: {
-          id: requestId,
-          nodeId: state.currentRun?.rootNodeId ?? NodeId.make(`vibe-request-${requestId}`),
-          providerTurnId: state.activeTurn?.providerTurnId ?? null,
-          nativeRequestRef: nativeRef(callbackId),
-          kind,
-          status: "pending",
-          responseCapability: { type: "live", providerSessionId },
-          createdAt,
-          resolvedAt: null,
-        } satisfies OrchestrationV2RuntimeRequest,
+        runtimeRequest,
       });
       return { callbackId, accepted: true };
     });
@@ -777,12 +808,36 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       return pages.reverse().flat();
     });
 
-    const readNativeTurns = (sessionId: string) =>
-      readAllPages((cursor) => client.sessionTurnsList({ sessionId, limit: 500, cursor }));
+    const readAllHistoryEntries = Effect.fn("VibeAdapterV2.readAllHistoryEntries")(function* (
+      nativeSessionId: string,
+    ) {
+      const items = yield* readAllPages((cursor) =>
+        client.sessionHistoryList({ sessionId: nativeSessionId, limit: 500, cursor }),
+      );
+      return items.flatMap((item) => {
+        const entry = asRecord(item);
+        return entry ? [entry] : [];
+      });
+    });
 
-    const ensureThread: ProviderAdapter.ProviderAdapterV2SessionRuntime["ensureThread"] = Effect.fn(
-      "VibeAdapterV2.ensureThread",
-    )(function* (ensureInput) {
+    const retainedTurnIds = (
+      history: ReadonlyArray<Record<string, unknown>>,
+      turns: ReadonlyArray<VibeAppServer.PublicTurn>,
+    ) => {
+      const ids = new Set<string>();
+      for (const entry of history) {
+        const id = str(entry["turnId"]);
+        if (id) ids.add(id);
+      }
+      for (const turn of turns) ids.add(turn.id);
+      return [...ids];
+    };
+
+    const ensureNativeThread = Effect.fn("VibeAdapterV2.ensureThread")(function* (
+      ensureInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
+      bufferedNotifications: Array<{ readonly method: string; readonly params: unknown }>,
+    ) {
+      const planMode = ensureInput.runtimePolicy.interactionMode === "plan";
       const agent = vibeAgentForRuntimeMode(
         ensureInput.runtimePolicy.runtimeMode,
         ensureInput.runtimePolicy.interactionMode,
@@ -793,12 +848,11 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       // No `worktree`: T3 already owns the checkout, so Vibe runs in place at `cwd`. Vibe
       // rejects `worktree` on resume, and `existing` fails outside linked worktrees.
       const agentConfig = {
-        mcpServers: vibeMcpServers(mcpSession),
+        mcpServers: planMode ? [] : vibeMcpServers(mcpSession),
         cwd: threadCwd,
         headless: true,
         trustWorkspace: options.settings.trustWorkspace,
-        agent: agent.agent,
-        autoApprove: agent.autoApprove,
+        ...agent,
       };
       const started = nativeId
         ? yield* Effect.mapError(
@@ -828,8 +882,11 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
             protocolError,
           );
       const nativeThreadId = started.state.session.id;
-      const retainedTurns = nativeId ? yield* readNativeTurns(nativeThreadId) : [];
-      state.turnOrdinals = new Map(retainedTurns.map((turn, index) => [turn.id, index + 1]));
+      const retainedHistory = nativeId ? yield* readAllHistoryEntries(nativeThreadId) : [];
+      const nativeTurns = started.state.turns ?? [];
+      state.turnOrdinals = new Map(
+        retainedTurnIds(retainedHistory, nativeTurns).map((id, index) => [id, index + 1]),
+      );
       const createdAt = yield* DateTime.now;
       const thread: OrchestrationV2ProviderThread = {
         id: idAllocator.derive.providerThread({
@@ -841,24 +898,93 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         providerInstanceId: options.instanceId,
         providerSessionId,
         appThreadId: ensureInput.threadId,
-        ownerNodeId: null,
+        ownerNodeId: ensureInput.existingProviderThread?.ownerNodeId ?? null,
         nativeThreadRef: nativeRef(nativeThreadId),
         nativeConversationHeadRef: null,
         status: "idle",
-        firstRunOrdinal: null,
-        lastRunOrdinal: null,
+        firstRunOrdinal: ensureInput.existingProviderThread?.firstRunOrdinal ?? null,
+        lastRunOrdinal: ensureInput.existingProviderThread?.lastRunOrdinal ?? null,
         handoffIds: [],
         forkedFrom: null,
         createdAt,
         updatedAt: createdAt,
       };
       state.thread = thread;
+      state.planMode = planMode;
       yield* emit({
         type: "provider_thread.updated",
         driver: VIBE_PROVIDER,
         providerThread: thread,
       });
+      const runningTurn = nativeTurns.find((turn) => turn.status === "in_progress");
+      if (runningTurn) {
+        yield* onNotification("turn/started", { sessionId: nativeThreadId, turn: runningTurn });
+      }
+      for (const notification of bufferedNotifications) {
+        yield* onNotification(notification.method, notification.params);
+      }
       return thread;
+    });
+
+    const ensureThread: ProviderAdapter.ProviderAdapterV2SessionRuntime["ensureThread"] = (
+      ensureInput,
+    ) =>
+      Effect.suspend(() => {
+        const notifications: Array<{ readonly method: string; readonly params: unknown }> = [];
+        state.adoptingThread = notifications;
+        return ensureNativeThread(ensureInput, notifications).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              state.adoptingThread = undefined;
+            }),
+          ),
+        );
+      });
+
+    const turnInputLock = yield* Semaphore.make(1);
+
+    const attachmentBlocks = Effect.fn("VibeAdapterV2.attachmentBlocks")(function* (
+      attachments: ReadonlyArray<ChatAttachment>,
+      mode: "enqueue" | "steer",
+    ) {
+      return yield* Effect.forEach(attachments, (attachment) =>
+        Effect.gen(function* () {
+          const attachmentPath = host.resolveAttachmentPath(attachment);
+          if (attachment.type !== "image" || attachmentPath === null) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: VIBE_PROVIDER,
+              detail: "Vibe can only send readable image attachments.",
+              reason: "attachment_unreadable",
+            });
+          }
+          const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: VIBE_PROVIDER,
+                  detail: "Vibe could not read the attached image.",
+                  reason: "attachment_unreadable",
+                  cause,
+                }),
+            ),
+          );
+          const data = Buffer.from(bytes).toString("base64");
+          return mode === "enqueue"
+            ? {
+                type: "image",
+                uri: `data:${attachment.mimeType};base64,${data}`,
+                mediaType: attachment.mimeType,
+              }
+            : {
+                type: "image",
+                attachment: {
+                  source: { kind: "inline", data },
+                  alias: attachment.name,
+                  mimeType: attachment.mimeType,
+                },
+              };
+        }),
+      );
     });
 
     const startTurn: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"] = Effect.fn(
@@ -871,57 +997,85 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           detail: "No Mistral Vibe session owns this thread.",
         });
       }
-      state.lastRunOrdinal = turnInput.runOrdinal;
-      state.currentRun = {
-        runId: turnInput.runId,
-        runAttemptId: turnInput.attemptId,
-        rootNodeId: turnInput.rootNodeId,
-      };
-      // A rejected model write must not silently run the turn with the previous model.
+      if ((turnInput.runtimePolicy.interactionMode === "plan") !== state.planMode) {
+        if (state.activeTurn || state.pendingRuns.size > 0) {
+          return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: VIBE_PROVIDER,
+            detail: "Let the active Vibe turns finish before switching interaction mode.",
+          });
+        }
+        yield* client
+          .sessionStop({ sessionId: nativeSessionId })
+          .pipe(Effect.mapError(protocolError));
+        yield* ensureThread({
+          threadId: turnInput.threadId,
+          existingProviderThread: turnInput.providerThread,
+          runtimePolicy: turnInput.runtimePolicy,
+          modelSelection: turnInput.modelSelection,
+        });
+      }
+      const images = yield* attachmentBlocks(turnInput.message.attachments, "enqueue");
       const modelAlias = resolveVibeModelId(turnInput.modelSelection.model);
-      yield* client
+      const modelWriteRejected = (cause: unknown) =>
+        new ProviderAdapter.ProviderAdapterTurnStartError({
+          driver: VIBE_PROVIDER,
+          threadId: turnInput.threadId,
+          providerThreadId: turnInput.providerThread.id,
+          runId: turnInput.runId,
+          cause: vibeModelWriteError(modelAlias, cause),
+        });
+      const modelWrite = yield* client
         .configModelWrite({
           sessionId: nativeSessionId,
           modelAlias,
           reasoningEffort: getModelSelectionStringOptionValue(turnInput.modelSelection, "thinking"),
           sessionOnly: true,
         })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProviderAdapter.ProviderAdapterTurnStartError({
-                driver: VIBE_PROVIDER,
-                threadId: turnInput.threadId,
-                providerThreadId: turnInput.providerThread.id,
-                runId: turnInput.runId,
-                cause: vibeModelWriteError(modelAlias, cause),
-              }),
-          ),
-        );
+        .pipe(Effect.mapError(modelWriteRejected));
+      if (modelWrite.rejected || modelWrite.failures?.length) {
+        return yield* modelWriteRejected(modelWrite);
+      }
       const mcpSession = yield* mcpSessions.read(turnInput.threadId);
-      const hasDeviceTools = mcpSession?.capabilities?.has("device") === true;
+      const hasDeviceTools = !state.planMode && mcpSession?.capabilities?.has("device") === true;
       const promptText = t3OrchestrationPrompt({
         prompt: turnInput.message.text,
-        hasT3Mcp: mcpSession !== undefined,
+        hasT3Mcp: !state.planMode && mcpSession !== undefined,
         hasDeviceTools,
         orchestrationDelivered: state.instructionsDelivered.orchestration,
         deviceInstructionsDelivered: state.instructionsDelivered.device,
       });
-      yield* Effect.mapError(
-        client.sessionTurnEnqueue({
+      const entryId = yield* random.uuidV4();
+      state.pendingRuns.set(entryId, {
+        runId: turnInput.runId,
+        runAttemptId: turnInput.attemptId,
+        rootNodeId: turnInput.rootNodeId,
+        ordinal: turnInput.runOrdinal,
+      });
+      yield* client
+        .sessionTurnEnqueue({
           sessionId: nativeSessionId,
-          entries: [{ role: "user", content: [{ type: "text", text: promptText }] }],
-        }),
-        protocolError,
-      );
-      if (mcpSession !== undefined) {
+          entries: [
+            { entryId, role: "user", content: [{ type: "text", text: promptText }, ...images] },
+          ],
+        })
+        .pipe(
+          Effect.mapError(protocolError),
+          Effect.onExit((exit) =>
+            exit._tag === "Failure"
+              ? Effect.sync(() => {
+                  state.pendingRuns.delete(entryId);
+                })
+              : Effect.void,
+          ),
+        );
+      if (!state.planMode && mcpSession !== undefined) {
         state.instructionsDelivered = {
           orchestration: true,
           device: state.instructionsDelivered.device || hasDeviceTools,
         };
       }
       yield* updateThread({ status: "active" });
-    });
+    }, turnInputLock.withPermits(1));
 
     const steerTurn: ProviderAdapter.ProviderAdapterV2SessionRuntime["steerTurn"] = Effect.fn(
       "VibeAdapterV2.steerTurn",
@@ -933,28 +1087,46 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           providerThreadId: steerInput.providerThread.id,
         });
       }
+      const activeTurn = state.activeTurn;
+      if (activeTurn.providerTurn.id !== steerInput.providerTurnId) {
+        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+          driver: VIBE_PROVIDER,
+          detail: "The Vibe turn to steer is no longer active.",
+        });
+      }
+      const images = yield* attachmentBlocks(steerInput.message.attachments, "steer");
       yield* Effect.mapError(
         client.turnSteer({
           sessionId: nativeSessionId,
-          expectedTurnId: state.activeTurn.nativeTurnId,
-          message: [{ type: "text", text: steerInput.message.text }],
+          expectedTurnId: activeTurn.nativeTurnId,
+          message: [{ type: "text", text: steerInput.message.text }, ...images],
         }),
         protocolError,
       );
     });
 
     const interruptTurn: ProviderAdapter.ProviderAdapterV2SessionRuntime["interruptTurn"] =
-      Effect.fn("VibeAdapterV2.interruptTurn")(function* () {
+      Effect.fn("VibeAdapterV2.interruptTurn")(function* (interruptInput) {
         const nativeSessionId = sessionIdOf();
         if (!nativeSessionId) {
           return yield* new ProviderAdapter.ProviderAdapterSessionStoppedError({
             driver: VIBE_PROVIDER,
           });
         }
-        const nativeTurnId = state.activeTurn?.nativeTurnId;
-        if (nativeTurnId === undefined) return;
+        const activeTurn = state.activeTurn;
+        if (!activeTurn) return;
+        if (activeTurn.providerTurn.id !== interruptInput.providerTurnId) {
+          if (interruptInput.requestRuntimeRestart) return;
+          return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: VIBE_PROVIDER,
+            detail: "The Vibe turn to stop is no longer active.",
+          });
+        }
         yield* Effect.mapError(
-          client.turnInterrupt({ sessionId: nativeSessionId, expectedTurnId: nativeTurnId }),
+          client.turnInterrupt({
+            sessionId: nativeSessionId,
+            expectedTurnId: activeTurn.nativeTurnId,
+          }),
           protocolError,
         );
       });
@@ -969,8 +1141,14 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           });
         }
         const pending = state.callbackByRequest.get(responseInput.requestId);
-        const callbackId = pending?.callbackId ?? responseInput.requestId;
-        const requestKind = pending?.kind ?? "permission";
+        if (!pending) {
+          return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: VIBE_PROVIDER,
+            detail: "The Vibe runtime request is no longer pending.",
+          });
+        }
+        const { callbackId, runtimeRequest } = pending;
+        const requestKind = runtimeRequest.kind;
         // An answer-only response (no decision) on a user_input callback must still deliver the
         // answers; defaulting to cancel here would discard them.
         const decision =
@@ -979,7 +1157,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         const output =
           requestKind === "user_input"
             ? vibeQuestionResult(
-                pending?.turnItem?.questions ?? [],
+                pending.turnItem?.questions ?? [],
                 responseInput.answers ?? {},
                 decision === "cancel",
               )
@@ -1008,7 +1186,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         );
         state.callbackByRequest.delete(responseInput.requestId);
         const resolvedAt = yield* DateTime.now;
-        if (pending?.turnItem) {
+        if (pending.turnItem) {
           yield* emit({
             type: "turn_item.updated",
             driver: VIBE_PROVIDER,
@@ -1024,16 +1202,8 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           type: "runtime_request.updated",
           driver: VIBE_PROVIDER,
           runtimeRequest: {
-            id: responseInput.requestId,
-            nodeId:
-              state.currentRun?.rootNodeId ??
-              NodeId.make(`vibe-request-${responseInput.requestId}`),
-            providerTurnId: state.activeTurn?.providerTurnId ?? null,
-            nativeRequestRef: nativeRef(callbackId),
-            kind: requestKind,
+            ...runtimeRequest,
             status: "resolved",
-            responseCapability: { type: "live", providerSessionId },
-            createdAt: resolvedAt,
             resolvedAt,
             decision,
             ...(responseInput.answers ? { answers: responseInput.answers } : {}),
@@ -1041,77 +1211,114 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         });
       });
 
-    const readAllHistoryEntries = Effect.fn("VibeAdapterV2.readAllHistoryEntries")(function* (
-      nativeSessionId: string,
+    const readThreadSnapshot = Effect.fn("VibeAdapterV2.readThreadSnapshot")(function* (
+      snapshotInput: ProviderAdapter.ProviderAdapterV2ReadThreadSnapshotInput,
+      persistedTurns: ReadonlyArray<OrchestrationV2ProviderTurn> = [],
     ) {
-      const items = yield* readAllPages((cursor) =>
-        client.sessionHistoryList({ sessionId: nativeSessionId, limit: 500, cursor }),
-      );
-      return items.flatMap((item) => {
-        const entry = asRecord(item);
-        return entry ? [entry] : [];
-      });
-    });
-
-    const readThreadSnapshot: ProviderAdapter.ProviderAdapterV2SessionRuntime["readThreadSnapshot"] =
-      Effect.fn("VibeAdapterV2.readThreadSnapshot")(function* (snapshotInput) {
-        const nativeSessionId = snapshotInput.providerThread.nativeThreadRef?.nativeId;
-        if (!nativeSessionId) {
-          return yield* new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
-            driver: VIBE_PROVIDER,
-            providerThreadId: snapshotInput.providerThread.id,
-          });
-        }
-        const historyEntries = yield* readAllHistoryEntries(nativeSessionId);
-        const turns = yield* readNativeTurns(nativeSessionId);
-        const now = yield* DateTime.now;
-        const messages: OrchestrationV2ConversationMessage[] = [];
-        for (const entry of historyEntries) {
-          const role = entry["role"];
-          if (entry["type"] !== "message" || (role !== "user" && role !== "assistant")) continue;
-          const text =
-            role === "user" ? stripT3PromptInstructions(entryText(entry)) : entryText(entry);
-          if (!text) continue;
-          const nativeItemId = str(entry["id"]) ?? `entry-${messages.length}`;
-          const createdAt = entryTime(entry, "createdAt") ?? now;
-          messages.push({
-            createdBy: role === "user" ? "user" : "agent",
-            creationSource: "provider",
-            id: idAllocator.derive.messageFromProviderItem({
-              driver: VIBE_PROVIDER,
-              nativeItemId,
-            }),
-            threadId: input.threadId,
-            runId: null,
-            nodeId: null,
-            role,
-            text,
-            attachments: [],
-            streaming: false,
-            createdAt,
-            updatedAt: entryTime(entry, "updatedAt") ?? createdAt,
-          });
-        }
-        const providerTurns: OrchestrationV2ProviderTurn[] = turns.map((turn, index) => ({
-          id: idAllocator.derive.providerTurn({ driver: VIBE_PROVIDER, nativeTurnId: turn.id }),
+      const nativeSessionId = snapshotInput.providerThread.nativeThreadRef?.nativeId;
+      if (!nativeSessionId) {
+        return yield* new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
+          driver: VIBE_PROVIDER,
           providerThreadId: snapshotInput.providerThread.id,
-          nodeId: snapshotInput.providerThread.ownerNodeId ?? NodeId.make(`vibe-root-${turn.id}`),
-          runAttemptId: null,
-          nativeTurnRef: nativeRef(turn.id),
-          ordinal: index + 1,
-          status: (turn.status === "in_progress"
-            ? "running"
-            : turn.status) as OrchestrationV2ProviderTurn["status"],
-          startedAt: utcFromMillis(turn.startedAt),
-          completedAt: utcFromMillis(turn.completedAt),
-        }));
+        });
+      }
+      const historyEntries = yield* readAllHistoryEntries(nativeSessionId);
+      const { state: nativeState } = yield* client
+        .sessionRead({ sessionId: nativeSessionId, history: null, turns: { limit: 1 } })
+        .pipe(Effect.mapError(protocolError));
+      const now = yield* DateTime.now;
+      const messages: OrchestrationV2ConversationMessage[] = [];
+      for (const entry of historyEntries) {
+        const role = entry["role"];
+        if (entry["type"] !== "message" || (role !== "user" && role !== "assistant")) continue;
+        const text =
+          role === "user" ? stripT3PromptInstructions(entryText(entry)) : entryText(entry);
+        if (!text) continue;
+        const nativeItemId = str(entry["id"]) ?? `entry-${messages.length}`;
+        const createdAt = entryTime(entry, "createdAt") ?? now;
+        messages.push({
+          createdBy: role === "user" ? "user" : "agent",
+          creationSource: "provider",
+          id: idAllocator.derive.messageFromProviderItem({
+            driver: VIBE_PROVIDER,
+            nativeItemId,
+          }),
+          threadId: input.threadId,
+          runId: null,
+          nodeId: null,
+          role,
+          text,
+          attachments: [],
+          streaming: false,
+          createdAt,
+          updatedAt: entryTime(entry, "updatedAt") ?? createdAt,
+        });
+      }
+      // Vibe 3.1.2 exposes authoritative state for the latest turn. Older statuses
+      // come from T3's observations when available; history supplies their order.
+      const latestTurns = new Map((nativeState.turns ?? []).map((turn) => [turn.id, turn]));
+      const knownTurns = new Map(persistedTurns.map((turn) => [turn.id, turn]));
+      const historyTimes = new Map<
+        string,
+        { startedAt: DateTime.Utc | null; completedAt: DateTime.Utc | null }
+      >();
+      for (const entry of historyEntries) {
+        const id = str(entry["turnId"]);
+        if (!id) continue;
+        const previous = historyTimes.get(id);
+        historyTimes.set(id, {
+          startedAt: previous?.startedAt ?? entryTime(entry, "createdAt"),
+          completedAt: entryTime(entry, "updatedAt") ?? previous?.completedAt ?? null,
+        });
+      }
+      const providerTurns: OrchestrationV2ProviderTurn[] = retainedTurnIds(
+        historyEntries,
+        nativeState.turns ?? [],
+      ).map((id, index) => {
+        const providerTurnId = idAllocator.derive.providerTurn({
+          driver: VIBE_PROVIDER,
+          nativeTurnId: id,
+        });
+        const observed =
+          (nativeSessionId === sessionIdOf() ? state.observedTurns.get(id) : undefined) ??
+          knownTurns.get(providerTurnId);
+        const latest = latestTurns.get(id);
+        const status = latest?.status;
+        const times = historyTimes.get(id);
         return {
-          providerThread: snapshotInput.providerThread,
-          providerTurns,
-          messages,
-          runtimeRequests: [],
-        } satisfies ProviderAdapter.ProviderAdapterV2ThreadSnapshot;
+          id: providerTurnId,
+          providerThreadId: snapshotInput.providerThread.id,
+          nodeId:
+            observed?.nodeId ??
+            snapshotInput.providerThread.ownerNodeId ??
+            NodeId.make(`vibe-root-${id}`),
+          runAttemptId: observed?.runAttemptId ?? null,
+          nativeTurnRef: nativeRef(id),
+          ordinal: index + 1,
+          status:
+            status === "in_progress"
+              ? "running"
+              : status === "interrupted" ||
+                  status === "failed" ||
+                  status === "cancelled" ||
+                  status === "completed"
+                ? status
+                : (observed?.status ?? "completed"),
+          startedAt:
+            utcFromMillis(latest?.startedAt) ?? observed?.startedAt ?? times?.startedAt ?? null,
+          completedAt:
+            latest !== undefined
+              ? utcFromMillis(latest.completedAt)
+              : (observed?.completedAt ?? times?.completedAt ?? null),
+        };
       });
+      return {
+        providerThread: snapshotInput.providerThread,
+        providerTurns,
+        messages,
+        runtimeRequests: [],
+      } satisfies ProviderAdapter.ProviderAdapterV2ThreadSnapshot;
+    });
 
     const rollbackThread: ProviderAdapter.ProviderAdapterV2SessionRuntime["rollbackThread"] =
       Effect.fn("VibeAdapterV2.rollbackThread")(function* (rollbackInput) {
@@ -1154,7 +1361,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           });
         }
         yield* Effect.mapError(
-          client.request("session/rewind", { sessionId: nativeSessionId, entryId }),
+          client.request("session/rewind", { sessionId: nativeSessionId, entryId, inplace: true }),
           (cause) =>
             new ProviderAdapter.ProviderAdapterRollbackThreadError({
               driver: VIBE_PROVIDER,
@@ -1163,14 +1370,18 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
               cause,
             }),
         );
-        const snapshot = yield* readThreadSnapshot({
-          providerThread: rollbackInput.providerThread,
-        });
+        const snapshot = yield* readThreadSnapshot(
+          { providerThread: rollbackInput.providerThread },
+          rollbackInput.providerThreadTurns,
+        );
         if (nativeSessionId === sessionIdOf()) {
           state.turnOrdinals.clear();
           for (const turn of snapshot.providerTurns) {
             const nativeTurnId = turn.nativeTurnRef?.nativeId;
             if (nativeTurnId) state.turnOrdinals.set(nativeTurnId, turn.ordinal);
+          }
+          for (const nativeTurnId of state.observedTurns.keys()) {
+            if (!state.turnOrdinals.has(nativeTurnId)) state.observedTurns.delete(nativeTurnId);
           }
         }
         return snapshot;

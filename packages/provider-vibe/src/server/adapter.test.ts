@@ -1,10 +1,24 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CheckpointId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  ChatAttachmentId,
+  CheckpointId,
+  MessageId,
+  NodeId,
+  ProjectId,
+  RunId,
+  RunAttemptId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as FileSystem from "effect/FileSystem";
+import * as TestClock from "effect/testing/TestClock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -19,6 +33,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { VibeSettings } from "../settings.ts";
 import { makeVibeAdapterV2 } from "./adapter.ts";
 import { withVibeAppServerClient } from "./appServerSupport.ts";
+import { makeVibeTextGeneration } from "./textGeneration.ts";
 
 const decodeSettings = Schema.decodeSync(VibeSettings);
 
@@ -30,9 +45,10 @@ const layerTest = Layer.mergeAll(
   TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
 );
 
-type FakeReply =
+type FakeReply = (
   | { readonly result: unknown }
-  | { readonly error: { readonly code: string; readonly message: string } };
+  | { readonly error: { readonly code: string; readonly message: string } }
+) & { readonly notifications?: ReadonlyArray<{ method: string; params: unknown }> };
 
 const fakeVibeProcess = Effect.fn("fakeVibeProcess")(function* (
   reply: (method: string, params: Record<string, unknown>) => FakeReply | undefined = () =>
@@ -73,7 +89,11 @@ const fakeVibeProcess = Effect.fn("fakeVibeProcess")(function* (
               yield* Queue.offer(requests, { method, params });
               const custom = reply(method, params);
               if (custom !== undefined) {
-                yield* send({ jsonrpc: "2.0", id: message["id"], ...custom });
+                const { notifications, ...response } = custom;
+                for (const notification of notifications ?? []) {
+                  yield* send({ jsonrpc: "2.0", ...notification });
+                }
+                yield* send({ jsonrpc: "2.0", id: message["id"], ...response });
                 continue;
               }
               let result: unknown = {};
@@ -81,6 +101,7 @@ const fakeVibeProcess = Effect.fn("fakeVibeProcess")(function* (
                 result = { serverInfo: { name: "vibe-app-server", version: "3.1.0" } };
               if (method === "session/start" || method === "session/resume")
                 result = { state: { session: { id: "native-session", cwd: process.cwd() } } };
+              if (method === "session/turn/enqueue") result = { queueItemId: "queued" };
               yield* send({ jsonrpc: "2.0", id: message["id"], result });
             }
           }),
@@ -200,6 +221,73 @@ describe("Vibe adapter against an in-memory app-server", () => {
     ),
   );
 
+  it.effect(
+    "generates a branch name with tools disabled and deletes the session on success or failure",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          for (const failHistory of [false, true]) {
+            const { spawner, takeRequest } = yield* fakeVibeProcess((method) => {
+              if (method === "session/read") {
+                const session = { id: "native-session" };
+                return {
+                  result: {
+                    state: {
+                      session,
+                      turns: [{ id: "draft", sessionId: session.id, status: "completed" }],
+                    },
+                  },
+                };
+              }
+              if (method === "session/history/list") {
+                return failHistory
+                  ? { error: { code: "internal_error", message: "raw diagnostic" } }
+                  : {
+                      result: {
+                        items: [
+                          {
+                            type: "message",
+                            role: "assistant",
+                            content: [
+                              { type: "text", text: JSON.stringify({ branch: "fix-layout" }) },
+                            ],
+                          },
+                        ],
+                      },
+                    };
+              }
+              return undefined;
+            });
+            const generation = yield* makeVibeTextGeneration(decodeSettings({}), {}).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            );
+            const request = {
+              cwd: process.cwd(),
+              message: "Fix the layout",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("vibe"),
+                model: "mistral-large",
+                options: [{ id: "thinking", value: "high" }],
+              },
+            };
+            if (failHistory) {
+              const failure = yield* Effect.flip(generation.generateBranchName(request));
+              expect(failure.detail).toBe("Vibe app server request failed.");
+            } else {
+              expect((yield* generation.generateBranchName(request)).branch).toContain(
+                "fix-layout",
+              );
+            }
+            expect(yield* takeRequest("session/start")).toMatchObject({
+              agentConfig: { agent: "ask", autoApprove: false, disabledTools: ["*"] },
+              reasoningEffort: "high",
+            });
+            expect(yield* takeRequest("session/delete")).toEqual({ sessionId: "native-session" });
+          }
+        }),
+      ),
+  );
+
   it.effect("publishes a question card, returns the answer, and resolves the card", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -244,6 +332,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
         expect(card.turnItem.status).toBe("waiting");
         expect(card.turnItem.requestId).toBe(pending.runtimeRequest.id);
 
+        yield* TestClock.adjust("1 second");
         yield* runtime.respondToRuntimeRequest({
           requestId: pending.runtimeRequest.id,
           answers: { "question-0": "Yes" },
@@ -265,7 +354,12 @@ describe("Vibe adapter against an in-memory app-server", () => {
           turnItem: { id: card.turnItem.id, status: "completed" },
         });
         expect(yield* takeEvent("runtime_request.updated")).toMatchObject({
-          runtimeRequest: { id: pending.runtimeRequest.id, kind: "user_input", status: "resolved" },
+          runtimeRequest: {
+            id: pending.runtimeRequest.id,
+            kind: "user_input",
+            status: "resolved",
+            createdAt: pending.runtimeRequest.createdAt,
+          },
         });
         yield* vibe.notify("turn/started", { turn: { id: "native-turn" } });
         const started = yield* takeEvent("provider_turn.updated");
@@ -359,6 +453,135 @@ describe("Vibe adapter against an in-memory app-server", () => {
     ),
   );
 
+  it.effect("binds queued run identity to the native input and rejects stale controls", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let modelWrites = 0;
+        let enqueues = 0;
+        const vibe = yield* openFakeVibe((method) => {
+          if (method === "config/model/write" && ++modelWrites === 2) {
+            return { result: { failures: ["Model unavailable"] } };
+          }
+          if (method === "session/turn/enqueue") enqueues += 1;
+          return undefined;
+        });
+        const {
+          runtime,
+          providerThread,
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          notify,
+          takeEvent,
+          takeRequest,
+        } = vibe;
+        const now = yield* DateTime.now;
+        const host = yield* ProviderHost.ProviderHost;
+        const fs = yield* FileSystem.FileSystem;
+        const image = {
+          type: "image" as const,
+          id: ChatAttachmentId.make("screenshot"),
+          name: "layout.png",
+          mimeType: "image/png",
+          sizeBytes: 3,
+        };
+        yield* fs.writeFile(host.resolveAttachmentPath(image)!, new Uint8Array([1, 2, 3]));
+        const input = (ordinal: number): ProviderAdapter.ProviderAdapterV2TurnInput => ({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runOrdinal: ordinal,
+          providerTurnOrdinal: ordinal,
+          runId: RunId.make(`run-${ordinal}`),
+          attemptId: RunAttemptId.make(`attempt-${ordinal}`),
+          rootNodeId: NodeId.make(`root-${ordinal}`),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("project"),
+            title: "Vibe test",
+            createdBy: "user",
+            creationSource: "web",
+            providerInstanceId: providerThread.providerInstanceId,
+            modelSelection,
+            runtimeMode: runtimePolicy.runtimeMode,
+            interactionMode: runtimePolicy.interactionMode,
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make(`message-${ordinal}`),
+            text: "Fix this layout",
+            attachments: [image],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        });
+        const entry = (request: unknown) =>
+          (request as { entries: ReadonlyArray<{ entryId: string; content: unknown }> })
+            .entries[0]!;
+
+        yield* runtime.startTurn(input(1));
+        const firstEntry = entry(yield* takeRequest("session/turn/enqueue"));
+        expect(firstEntry.content).toEqual([
+          { type: "text", text: "Fix this layout" },
+          { type: "image", uri: "data:image/png;base64,AQID", mediaType: "image/png" },
+        ]);
+        yield* notify("turn/started", { turn: { id: "first", inputEntryId: firstEntry.entryId } });
+        const first = (yield* takeEvent("provider_turn.updated")).providerTurn;
+        const rejection = yield* Effect.flip(runtime.startTurn(input(2)));
+        expect(rejection._tag).toBe("ProviderAdapterTurnStartError");
+        expect(enqueues).toBe(1);
+        yield* runtime.startTurn(input(3));
+        const queued = entry(yield* takeRequest("session/turn/enqueue"));
+        yield* notify("turn/completed", { turn: { id: "first" } });
+        expect((yield* takeEvent("provider_turn.updated")).providerTurn).toMatchObject({
+          id: first.id,
+          nodeId: input(1).rootNodeId,
+          runAttemptId: input(1).attemptId,
+          status: "completed",
+        });
+        expect(yield* takeEvent("turn.terminal")).toMatchObject({ runOrdinal: 1 });
+        yield* notify("turn/started", { turn: { id: "second", inputEntryId: queued.entryId } });
+        const second = (yield* takeEvent("provider_turn.updated")).providerTurn;
+        expect(second).toMatchObject({
+          nodeId: input(3).rootNodeId,
+          runAttemptId: input(3).attemptId,
+        });
+        const stale = { providerThread, providerTurnId: first.id };
+        expect((yield* Effect.flip(runtime.interruptTurn(stale)))._tag).toBe(
+          "ProviderAdapterProtocolError",
+        );
+        yield* runtime.interruptTurn({ ...stale, requestRuntimeRestart: true });
+        const steer = { ...stale, threadId, runId: input(3).runId, message: input(3).message };
+        expect((yield* Effect.flip(runtime.steerTurn(steer)))._tag).toBe(
+          "ProviderAdapterProtocolError",
+        );
+        yield* runtime.steerTurn({ ...steer, providerTurnId: second.id });
+        expect(yield* takeRequest("turn/steer")).toMatchObject({
+          expectedTurnId: "second",
+          message: [
+            { type: "text", text: "Fix this layout" },
+            {
+              type: "image",
+              attachment: { source: { kind: "inline", data: "AQID" }, mimeType: "image/png" },
+            },
+          ],
+        });
+      }).pipe(Effect.provide(layerTest)),
+    ),
+  );
+
   it.effect("keeps snapshot and live turns in order across resume and rewind", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -402,22 +625,49 @@ describe("Vibe adapter against an in-memory app-server", () => {
               },
             },
           },
-          "session/turns/list": {
-            "": { result: { items: [turn("t2", 2000)], nextCursor: "t2" } },
-            t2: { result: { items: [turn("t1", 1000)], nextCursor: null } },
-          },
         };
+        const session = { id: "native-session" };
         let rewound = false;
+        let resuming = false;
         const vibe = yield* openFakeVibe((method, params) => {
+          if (method === "session/resume") {
+            resuming = true;
+            return { result: { state: { session } } };
+          }
           if (method === "session/rewind") {
+            expect(params).toEqual({ sessionId: "native-session", entryId: "u2", inplace: true });
             rewound = true;
             return { result: {} };
           }
-          if (rewound && method === "session/turns/list") {
-            return { result: { items: [turn("t1", 1000)], nextCursor: null } };
+          if (method === "session/read") {
+            return {
+              result: {
+                state: {
+                  session,
+                  turns: rewound
+                    ? [turn("t1", 1000)]
+                    : [{ ...turn("t2", 2000), status: "interrupted" }],
+                },
+              },
+            };
           }
           const cursor = (params["page"] as { cursor?: string } | undefined)?.cursor ?? "";
-          return pages[method]?.[cursor];
+          const history = pages[method];
+          if (!history) return undefined;
+          if (rewound) return history["u2"];
+          if (resuming && cursor === "") {
+            resuming = false;
+            return {
+              ...history[""]!,
+              notifications: [
+                {
+                  method: "turn/started",
+                  params: { sessionId: "native-session", turn: { id: "recovered" } },
+                },
+              ],
+            };
+          }
+          return history[cursor];
         });
 
         const {
@@ -439,10 +689,14 @@ describe("Vibe adapter against an in-memory app-server", () => {
           ["agent", "two", 2100],
         ]);
         expect(
-          snapshot.providerTurns.map((entry) => [entry.nativeTurnRef?.nativeId, entry.ordinal]),
+          snapshot.providerTurns.map((entry) => [
+            entry.nativeTurnRef?.nativeId,
+            entry.ordinal,
+            entry.status,
+          ]),
         ).toEqual([
-          ["t1", 1],
-          ["t2", 2],
+          ["t1", 1, "completed"],
+          ["t2", 2, "interrupted"],
         ]);
 
         yield* runtime.ensureThread({
@@ -451,12 +705,22 @@ describe("Vibe adapter against an in-memory app-server", () => {
           runtimePolicy,
           existingProviderThread: providerThread,
         });
-        for (const id of ["t2", "t3", "t3"]) {
-          yield* notify("turn/started", { turn: { id } });
-          expect((yield* takeEvent("provider_turn.updated")).providerTurn.ordinal).toBe(
-            id === "t2" ? 2 : 3,
-          );
-        }
+        const recovered = yield* takeEvent("provider_turn.updated");
+        expect(recovered.providerTurn).toMatchObject({
+          nativeTurnRef: { nativeId: "recovered" },
+          ordinal: 3,
+          status: "running",
+        });
+        yield* runtime.interruptTurn({ providerThread, providerTurnId: recovered.providerTurn.id });
+        expect(yield* vibe.takeRequest("turn/interrupt")).toMatchObject({
+          expectedTurnId: "recovered",
+        });
+        yield* notify("turn/started", { turn: { id: "recovered" } });
+        yield* notify("turn/interrupted", { turn: { id: "recovered" } });
+        expect((yield* takeEvent("provider_turn.updated")).providerTurn).toMatchObject({
+          ordinal: 3,
+          status: "interrupted",
+        });
 
         const providerTurn = snapshot.providerTurns[1]!;
         const rewoundSnapshot = yield* runtime.rollbackThread({
@@ -472,6 +736,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
         expect(rewoundSnapshot.providerTurns.map((entry) => entry.nativeTurnRef?.nativeId)).toEqual(
           ["t1"],
         );
+        expect(rewoundSnapshot.messages.map((entry) => entry.text)).toEqual(["first", "one"]);
         yield* notify("turn/started", { turn: { id: "t4" } });
         expect((yield* takeEvent("provider_turn.updated")).providerTurn.ordinal).toBe(2);
       }).pipe(Effect.provide(layerTest)),

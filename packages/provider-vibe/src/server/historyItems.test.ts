@@ -63,6 +63,44 @@ describe("vibeHistoryTurnItem", () => {
       { type: "file_change", fileName: "/repo/a.ts", oldStr: "x", newStr: "y" },
     ],
     [
+      "completed batch edit",
+      effect(
+        { kind: "file_edit", input: { filePath: "a.ts", changes: [] } },
+        {
+          status: "completed",
+          output: {
+            occurrences: [
+              { startLine: 2, newStartLine: 2, oldText: "one", newText: "first" },
+              { startLine: 8, newStartLine: 8, oldText: "two", newText: "second" },
+            ],
+          },
+        },
+      ),
+      {
+        type: "file_change",
+        fileName: "a.ts",
+        diffStr: "@@ -2,1 +2,1 @@\n-one\n+first\n@@ -8,1 +8,1 @@\n-two\n+second\n",
+      },
+    ],
+    [
+      "web search with sources",
+      effect(
+        { kind: "web_search", input: { query: "layout" } },
+        {
+          status: "completed",
+          output: {
+            answer: "Results",
+            sources: [{ title: "Example", url: "https://example.com" }],
+          },
+        },
+      ),
+      {
+        type: "web_search",
+        patterns: ["layout"],
+        results: [{ snippet: "Results" }, { title: "Example", url: "https://example.com" }],
+      },
+    ],
+    [
       "file write",
       effect(
         { kind: "file_write", toolName: "write", input: { filePath: "/repo/b.ts", content: "z" } },
