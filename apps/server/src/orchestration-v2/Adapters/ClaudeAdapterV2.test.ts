@@ -11055,14 +11055,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           close: (sdkMessages) => Queue.shutdown(sdkMessages),
         });
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const input = makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make(`claude-held-steer-${outcome}`),
-          text: "Keep orchestrating.",
-          attachments: [],
-        });
+        const appContext = [{ key: "mcp_app_item-1", text: "Created Jira issue PROJ-42" }];
+        const input = {
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`claude-held-steer-${outcome}`),
+            text: "Keep orchestrating.",
+            attachments: [],
+          }),
+          appContext,
+        };
         yield* harness.runtime.startTurn(input);
         const providerTurnId = idAllocator.derive.providerTurn({
           driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
@@ -11090,6 +11094,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             text: "Subagent finished.",
             attachments: [],
           },
+          appContext,
         });
         assert.lengthOf(harness.offeredMessages, 1);
 
@@ -11144,10 +11149,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.lengthOf(harness.offeredMessages, 2);
         assert.equal(harness.offeredMessages[1]?.priority, "now");
-        assert.include(
-          JSON.stringify(harness.offeredMessages[1]?.message.content),
-          "Subagent finished.",
-        );
+        const sent = JSON.stringify(harness.offeredMessages[1]?.message.content);
+        assert.include(sent, "Subagent finished.");
+        // The boundary drops the root prompt's note from history; a failed compaction keeps it.
+        (outcome === "boundary" ? assert.include : assert.notInclude)(sent, "PROJ-42");
       }).pipe(
         Effect.scoped,
         Effect.provide(
@@ -11161,7 +11166,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each(["newer steer", "query close"] as const)(
+  it.effect.each(["newer steer", "stop", "query close"] as const)(
     "releases held steers in order and leaves none unreleased: %s mid-release",
     (outcome) =>
       Effect.gen(function* () {
@@ -11170,9 +11175,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
         const sending = yield* Deferred.make<void>();
         const resume = yield* Deferred.make<void>();
+        const interrupting = yield* Deferred.make<void>();
+        const interrupted = yield* Deferred.make<void>();
         let closing = false;
         const harness = yield* makeWakeHarnessWithOptions({
           close: (sdkMessages) => Queue.shutdown(sdkMessages),
+          // Holds Stop between marking the turn interrupted and the CLI confirming it.
+          interrupt: Deferred.succeed(interrupting, undefined).pipe(
+            Effect.andThen(Deferred.await(interrupted)),
+          ),
           // Pauses A mid-offer, then interrupts B as a closing query would.
           offer: (message) => {
             const text = JSON.stringify(message.message.content);
@@ -11264,6 +11275,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               .slice(1)
               .map((message) => /Steer (\w)\./.exec(JSON.stringify(message.message.content))?.[1]),
             ["A", "B", "C"],
+          );
+          return;
+        }
+
+        if (outcome === "stop") {
+          const stopping = yield* harness.runtime
+            .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(interrupting);
+          yield* Deferred.succeed(resume, undefined);
+          yield* Fiber.join(releasing);
+          // B would reach the prompt queue after Stop and start a turn nobody asked for.
+          assert.lengthOf(harness.offeredMessages, 2);
+          yield* Deferred.succeed(interrupted, undefined);
+          yield* Fiber.join(stopping);
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+          assert.include(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "system_notice" &&
+              event.turnItem.title === "Steer not sent"
+                ? [event.turnItem.message]
+                : [],
+            )[0],
+            "Steer B.",
           );
           return;
         }

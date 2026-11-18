@@ -9250,18 +9250,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
 
         // Taking the next steer and clearing the flag happen together, so none is left behind.
-        const takeHeldSteer = (context: ActiveClaudeTurnContext) => {
-          const next = context.steersClosed ? undefined : context.heldSteers.shift();
-          context.releasingHeldSteers = next !== undefined;
-          return next;
-        };
+        // After Stop the rest stay held for finalization to cancel.
+        const takeHeldSteer = (context: ActiveClaudeTurnContext) =>
+          Ref.get(interruptedTurns).pipe(
+            Effect.map((interrupted) => {
+              const next =
+                context.steersClosed || interrupted.has(context.providerTurnId)
+                  ? undefined
+                  : context.heldSteers.shift();
+              context.releasingHeldSteers = next !== undefined;
+              return next;
+            }),
+          );
 
         const offerHeldSteers = Effect.fnUntraced(function* (context: ActiveClaudeTurnContext) {
           if (context.releasingHeldSteers) return;
           for (
-            let next = takeHeldSteer(context);
+            let next = yield* takeHeldSteer(context);
             next !== undefined;
-            next = takeHeldSteer(context)
+            next = yield* takeHeldSteer(context)
           ) {
             const { uuid, offer } = next;
             yield* offer.pipe(
@@ -13886,27 +13893,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
             );
-            // Notes this turn's prompt or an earlier steer already carried are not sent again.
-            const appContext = turnInput.appContext ?? [];
-            const seenAppContext =
-              currentTurn.appContextOffered ?? deliveredAppContext.get(existing.nativeThreadId);
-            const userMessage = withClaudeAppContext(
-              steerMessage,
-              appContext.filter((entry) => seenAppContext?.get(entry.key) !== entry.text),
-              pdfReservation,
-            );
-            // `offer` may call this twice; a second call must not restore notes compaction cleared.
-            let offerCommitted = false;
-            const commitOffer = () => {
-              if (offerCommitted) return;
-              offerCommitted = true;
-              pdfReservation.commit();
-              if (userMessage !== steerMessage) {
-                currentTurn.appContextOffered = new Map(
-                  appContext.map((entry) => [entry.key, entry.text]),
-                );
-              }
-            };
             yield* backgroundForegroundSubagents(existing, backgroundDeadline);
             if (liveSteerSelection !== undefined) {
               yield* applySelectionLive(existing, liveSteerSelection);
@@ -13925,11 +13911,35 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
               });
             }
-            const offer = Effect.uninterruptibleMask((restore) =>
-              restore(existing.query.offer(userMessage, commitOffer)).pipe(
-                Effect.tap(() => Effect.sync(commitOffer)),
-              ),
-            );
+            // Notes this turn's prompt or an earlier steer already carried are not sent again.
+            // A held steer checks when it is sent, since compaction forgets what was carried.
+            const appContext = turnInput.appContext ?? [];
+            const offer = Effect.suspend(() => {
+              const seenAppContext =
+                currentTurn.appContextOffered ?? deliveredAppContext.get(existing.nativeThreadId);
+              const userMessage = withClaudeAppContext(
+                steerMessage,
+                appContext.filter((entry) => seenAppContext?.get(entry.key) !== entry.text),
+                pdfReservation,
+              );
+              // `offer` may call this twice; a second call must not restore notes compaction cleared.
+              let offerCommitted = false;
+              const commitOffer = () => {
+                if (offerCommitted) return;
+                offerCommitted = true;
+                pdfReservation.commit();
+                if (userMessage !== steerMessage) {
+                  currentTurn.appContextOffered = new Map(
+                    appContext.map((entry) => [entry.key, entry.text]),
+                  );
+                }
+              };
+              return Effect.uninterruptibleMask((restore) =>
+                restore(existing.query.offer(userMessage, commitOffer)).pipe(
+                  Effect.tap(() => Effect.sync(commitOffer)),
+                ),
+              );
+            });
             // Register before offering: Claude can start the steer and end the turn before offer returns.
             const messageId = turnInput.message.messageId;
             currentTurn.steerUuids.add(steerUuid);
