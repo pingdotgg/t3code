@@ -712,9 +712,14 @@ console.log(JSON.stringify({ resolved, resolvedGit }));
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-empty-path-cwd-" });
+        // Real paths: the child's process.cwd() reports them, and anchored matches start with it.
+        const cwd = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-empty-path-cwd-" }),
+        );
         const listed = yield* fs.makeTempDirectoryScoped({ prefix: "t3-empty-path-listed-" });
-        const empty = yield* fs.makeTempDirectoryScoped({ prefix: "t3-empty-path-absent-" });
+        const empty = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-empty-path-absent-" }),
+        );
         const command = "t3-empty-path-cli";
         const inCwd = path.join(cwd, command);
         const inListed = path.join(listed, command);
@@ -737,6 +742,8 @@ console.log(JSON.stringify({ resolved, resolvedGit }));
           interior: { PATH: `${missing}::${missing}-2`, expected: inCwd },
           leadingBeforeListed: { PATH: `:${listed}`, expected: inCwd },
           listedBeforeTrailing: { PATH: `${listed}:`, expected: inListed },
+          dotBeforeEmpty: { PATH: `.:${missing}:`, expected: inCwd },
+          emptyBeforeDot: { PATH: `:.:${missing}`, expected: inCwd },
           entirelyEmpty: { PATH: "", expected: null },
           whitespaceOnly: { PATH: `${missing}: `, expected: null },
           quotedEmpty: { PATH: `${missing}:""`, expected: null },
@@ -829,6 +836,24 @@ console.log(JSON.stringify({ resolved, resolvedGit }));
             entries.map(([label, row]) => [label, { effect: row.expected, spawn: row.expected }]),
           ),
         );
+        // A match through an empty component comes back absolute, so callers can launch it from
+        // another cwd or through a wrapper; a literal "." keeps main's relative spelling.
+        for (const label of [
+          "leading",
+          "trailing",
+          "interior",
+          "leadingBeforeListed",
+          "afterMiss",
+          "cachedHit",
+          "beforeListed",
+          "cachedLocal",
+          "emptyBeforeDot",
+        ]) {
+          expect(resolved[label], label).toEqual({ effect: inCwd, spawn: inCwd });
+        }
+        for (const label of ["dot", "dotBeforeEmpty"]) {
+          expect(resolved[label], label).toEqual({ effect: command, spawn: command });
+        }
         expect(resolvedGit).toEqual(
           Object.fromEntries(
             gitEntries.map((row, index) => [

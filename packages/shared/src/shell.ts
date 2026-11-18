@@ -108,14 +108,19 @@ function resolveSpawnExecutableWithNode(
   const pathValue = readEnvPath(env) ?? "";
   for (const pathEntry of pathValue.split(pathDelimiterForPlatform(platform))) {
     // A raw empty component of a nonempty POSIX PATH is the current directory.
-    const normalizedPathEntry =
-      pathEntry === "" && pathValue !== "" && platform !== "win32"
-        ? "."
-        : normalizePathEntry(pathEntry, platform);
+    const emptyComponent = pathEntry === "" && pathValue !== "" && platform !== "win32";
+    const normalizedPathEntry = emptyComponent ? "." : normalizePathEntry(pathEntry, platform);
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
-      if (isExecutable(candidatePath)) return candidatePath;
+      if (!isExecutable(candidatePath)) continue;
+      if (!emptyComponent) return candidatePath;
+      // Anchored, because callers may launch it from another cwd or through a wrapper.
+      try {
+        return path.resolve(candidatePath);
+      } catch {
+        continue;
+      }
     }
   }
   return undefined;
@@ -714,6 +719,15 @@ const findOnPath = Effect.fnUntraced(function* (
   const pathEntries = pathEntriesForPlatform(pathValue, platform);
   const cwd = pathSearchCwd(pathValue, platform);
 
+  // A match through an empty component is anchored: callers may launch it from another cwd or
+  // through a wrapper. A literal "." keeps its relative spelling; the first of the two wins, as
+  // in the deduplicated walk.
+  const anchorsCwd =
+    typeof cwd === "string" &&
+    pathValue
+      .split(pathDelimiterForPlatform(platform))
+      .find((entry) => entry === "" || entry === ".") === "";
+
   const listings = yield* PathDirectoryListings;
   const matches: string[] = [];
   for (const pathEntry of pathEntries) {
@@ -729,8 +743,10 @@ const findOnPath = Effect.fnUntraced(function* (
       if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
-        matches.push(candidatePath);
-        if (isLast(candidatePath)) return matches;
+        const match =
+          anchorsCwd && pathEntry === "." ? path.join(directory, candidate) : candidatePath;
+        matches.push(match);
+        if (isLast(match)) return matches;
         break;
       }
     }
