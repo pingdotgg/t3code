@@ -881,14 +881,19 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
 
   it.effect("does not read Go usage for limits from other OpenCode providers", () =>
     Effect.gen(function* () {
+      let reads = 0;
       const ended = yield* endedBy(
         {
           type: "provider.rate-limit",
           message: "Rate limit exceeded: free-models-per-min.",
           status: 429,
         },
-        Effect.die("Go usage must not be read for a non-Go limit"),
+        Effect.sync(() => {
+          reads += 1;
+          return goUsage(100);
+        }),
       );
+      assert.equal(reads, 0);
       assert.deepEqual(ended?.failure, {
         class: "usage_limit",
         code: "provider.rate-limit",
@@ -917,12 +922,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const usage = yield* Deferred.make<ServerProviderUsageLimits>();
       const { runtime, thread } = yield* resumed(
         [
-          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-          promptAccepted,
+          ...backgroundLaunch(CHILD),
           failWith({ type: "provider.go-limit", message: goLimitMessage, status: 429 }),
-          out("session.interrupt", { sessionID: SESSION }),
+          out("session.interrupt", { sessionID: CHILD }),
           // Holds the interrupt reply until the usage read has finished.
           marker("interrupting"),
+          reply("session.interrupt", { interrupted: true }),
+          out("session.interrupt", { sessionID: SESSION }),
           reply("session.interrupt", { interrupted: false }),
         ],
         {
@@ -933,10 +939,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         },
       );
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      yield* runtime.startTurn(turnInput(thread));
+      yield* runtime.startTurn(withLineage(thread));
       yield* Deferred.await(reading);
       const stop = yield* runtime
-        .interruptTurn({ providerThread: thread, providerTurnId: yield* providerTurnId })
+        .interruptTurn({
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+          requestRuntimeRestart: true,
+        })
         .pipe(Effect.forkScoped);
       assert.isTrue(yield* Effect.promise(() => gate.waitForReached("interrupting")));
       yield* Deferred.succeed(usage, goUsage(100));

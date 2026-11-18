@@ -104,6 +104,7 @@ export function openCodeGoLimitResetAt(
   );
   let latest: string | null = null;
   for (const window of limits.windows) {
+    if (!GO_LIMIT_WINDOWS.some((go) => go.id === window.id)) continue;
     if (!named.has(window.id) && window.usedPercent < 100) continue;
     if (window.resetsAt === undefined) continue;
     if (latest === null || Date.parse(window.resetsAt) > Date.parse(latest)) {

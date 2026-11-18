@@ -288,11 +288,10 @@ const makeReplayAdapter = (
 ) =>
   Effect.gen(function* () {
     const server = yield* replayServer(transcript, options);
+    const readUsageLimits = options?.readUsageLimits;
     return yield* OpenCode2Adapter.make(
       ProviderInstanceId.make("opencode"),
-      options?.readUsageLimits === undefined
-        ? undefined
-        : { readUsageLimits: options.readUsageLimits },
+      readUsageLimits === undefined ? undefined : { readUsageLimits: () => readUsageLimits },
     ).pipe(Effect.provideService(OpenCode2Server.OpenCode2Server, server));
   });
 

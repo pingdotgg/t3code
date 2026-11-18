@@ -802,7 +802,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
   instanceId: ProviderInstanceId,
   options?: {
     /** OpenCode Go's usage windows, which carry the reset times its limit errors omit. */
-    readonly readUsageLimits?: Effect.Effect<ServerProviderUsageLimits>;
+    readonly readUsageLimits?: (directory: string) => Effect.Effect<ServerProviderUsageLimits>;
   },
 ) {
   const server = yield* OpenCode2Server.OpenCode2Server;
@@ -2985,7 +2985,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
               }),
             );
           yield* Effect.forkIn(
-            readUsageLimits.pipe(
+            readUsageLimits(directoryOf(turn.input.runtimePolicy.cwd)).pipe(
               Effect.timeout(USAGE_READ_TIMEOUT),
               Effect.exit,
               Effect.flatMap((exit) =>
@@ -5116,12 +5116,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           const state = threads.get(sessionId);
           if (state === undefined) return;
           const turn = state.active;
+          if (turn !== undefined && turn.providerTurn.id === interruptInput.providerTurnId) {
+            turn.interrupted = true;
+          }
           // User Stop must end background children and their report execution; steering leaves them running.
           if (interruptInput.requestRuntimeRestart === true) yield* stopBackground(state);
           if (turn === undefined || turn.providerTurn.id !== interruptInput.providerTurnId) {
             return;
           }
-          turn.interrupted = true;
           const reply = yield* client.session
             .interrupt({ sessionID: Session.ID.make(sessionId) })
             .pipe(

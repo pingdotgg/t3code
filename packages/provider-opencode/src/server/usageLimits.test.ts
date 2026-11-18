@@ -41,10 +41,19 @@ describe("openCodeGoLimitResetAt", () => {
 
   it("waits for every spent window, not only the one the error names", () => {
     expect(
-      openCodeGoLimitResetAt(
-        "OpenCode Go 5 hour usage limit reached.",
-        usage({ rolling: 100, weekly: 100, monthly: 30 }),
-      ),
+      openCodeGoLimitResetAt("OpenCode Go 5 hour usage limit reached.", {
+        ...usage({ rolling: 100, weekly: 100, monthly: 30 }),
+        windows: [
+          ...usage({ rolling: 100, weekly: 100, monthly: 30 }).windows,
+          {
+            id: "console_budget",
+            kind: "monthly",
+            label: "Other model",
+            usedPercent: 100,
+            resetsAt: MONTHLY_RESET,
+          },
+        ],
+      }),
     ).toBe(WEEKLY_RESET);
   });
 
