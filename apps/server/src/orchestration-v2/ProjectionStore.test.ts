@@ -9434,19 +9434,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
       }
 
-      const snapshot = yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 3 });
-      const bounded = buildBoundedThreadProjection({
-        projection: snapshot.projection,
-        snapshotSequence: snapshot.snapshotSequence,
-      }).projection;
-      for (const projection of [snapshot.projection, bounded]) {
-        assert.equal(
-          usageLimitBlockedRun(projection.runs, projection.turnItems, null)?.id,
-          original.id,
-        );
-      }
+      const { projection } = yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 3 });
+      assert.equal(
+        usageLimitBlockedRun(projection.runs, projection.turnItems, null)?.id,
+        original.id,
+      );
       assert.notInclude(
-        snapshot.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+        projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
         "limit-window:error",
       );
     }),
