@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
 import { makeGrokAcpAdapterFlavor } from "@t3tools/provider-grok/testing";
@@ -320,15 +321,19 @@ layer("CommandPolicyV2", (it) => {
     }),
   );
 
-  it.effect("forks a busy source through portable context", () =>
+  it.effect("forks a busy source natively only where the provider supports it", () =>
     Effect.gen(function* () {
       const policy = yield* CommandPolicy.CommandPolicyV2;
-      const decide = (sourceBusy: boolean) =>
+      const decide = (
+        provider: "codex" | "claudeAgent",
+        capabilities: OrchestrationV2ProviderCapabilities,
+        sourceBusy: boolean,
+      ) =>
         policy.decideForkExecution({
           commandId,
           threadId,
-          providerInstanceId: ProviderInstanceId.make("codex"),
-          capabilities: CodexProviderCapabilitiesV2,
+          providerInstanceId: ProviderInstanceId.make(provider),
+          capabilities,
           sameProvider: true,
           hasStrongNativeSource: true,
           sourceRunStatus: "completed",
@@ -336,8 +341,9 @@ layer("CommandPolicyV2", (it) => {
           sourceBusy,
         });
 
-      assert.equal(yield* decide(false), "native_fork");
-      assert.equal(yield* decide(true), "portable_context");
+      assert.equal(yield* decide("codex", CodexProviderCapabilitiesV2, false), "native_fork");
+      assert.equal(yield* decide("codex", CodexProviderCapabilitiesV2, true), "portable_context");
+      assert.equal(yield* decide("claudeAgent", ClaudeProviderCapabilitiesV2, true), "native_fork");
     }),
   );
 });
