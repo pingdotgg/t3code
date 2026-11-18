@@ -1967,7 +1967,7 @@ describe("UsageService", () => {
       const sources = yield* Fiber.join(wider);
       assert.deepStrictEqual(cursor.state.calls, [
         { sinceMs: input.retentionCutoffMs, untilMs: CURSOR_NOW },
-        { sinceMs: 0, untilMs: CURSOR_NOW },
+        { sinceMs: 0, untilMs: input.retentionCutoffMs },
       ]);
       assert.strictEqual(sources[0]?.status, "ok");
       assert.deepStrictEqual(
@@ -2118,16 +2118,14 @@ describe("UsageService", () => {
             environment: {},
             secretStore: {
               get: () =>
-                Effect.succeed(
-                  Option.some(
-                    new TextEncoder().encode(
-                      encodeUnknownJsonString({
-                        version: 1,
-                        backendUrl: "https://api2.cursor.sh",
-                        apiKey: "large-account-key",
-                        createdAtMs: 0,
-                      }),
-                    ),
+                Effect.succeedSome(
+                  new TextEncoder().encode(
+                    encodeUnknownJsonString({
+                      version: 1,
+                      backendUrl: "https://api2.cursor.sh",
+                      apiKey: "large-account-key",
+                      createdAtMs: 0,
+                    }),
                   ),
                 ),
             },
