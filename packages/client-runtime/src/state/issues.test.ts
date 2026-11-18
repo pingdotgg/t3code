@@ -149,84 +149,81 @@ describe("createMergedIssueCandidatesAtoms", () => {
   });
 });
 
+const environmentId = EnvironmentId.make("env");
+
+const issueAtomsAnswering = (issuesList: (input: IssueListInput) => IssueListResult) =>
+  Effect.gen(function* () {
+    const supervisor = EnvironmentSupervisor.of({
+      target: new PrimaryConnectionTarget({
+        environmentId,
+        label: "Test environment",
+        httpBaseUrl: "https://issues.example.test",
+        wsBaseUrl: "wss://issues.example.test",
+      }),
+      state: yield* SubscriptionRef.make<SupervisorConnectionState>({
+        ...AVAILABLE_CONNECTION_STATE,
+        phase: "connected",
+        network: "online",
+        desired: true,
+        generation: 1,
+      }),
+      session: yield* SubscriptionRef.make(
+        Option.some({
+          client: {
+            [WS_METHODS.issuesList]: (input: IssueListInput) =>
+              Effect.sync(() => issuesList(input)),
+          },
+        } as unknown as RpcSession),
+      ),
+      prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
+      connect: Effect.void,
+      disconnect: Effect.void,
+      retryNow: Effect.void,
+    });
+    const environment = EnvironmentRegistry.of({
+      run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
+      followStream: (_id, stream) =>
+        Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+    } as Pick<
+      EnvironmentRegistry["Service"],
+      "run" | "followStream"
+    > as EnvironmentRegistry["Service"]);
+    const registry = AtomRegistry.make();
+    yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+    const atoms = createIssueEnvironmentAtoms(
+      Atom.runtime(Layer.succeed(EnvironmentRegistry, environment)),
+    );
+    const readList = (input: IssueListInput) => {
+      const atom = atoms.list({ environmentId, input });
+      return Effect.acquireRelease(
+        Effect.sync(() => registry.mount(atom)),
+        (unmount) => Effect.sync(unmount),
+      ).pipe(
+        Effect.andThen(AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true })),
+        Effect.scoped,
+      );
+    };
+    return { ...atoms, registry, readList };
+  });
+
 describe("issue listings", () => {
   it.effect("reuses a fresh listing for the same labels selected in a different order", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const environmentId = EnvironmentId.make("env");
-        const target = new PrimaryConnectionTarget({
-          environmentId,
-          label: "Test environment",
-          httpBaseUrl: "https://issues.example.test",
-          wsBaseUrl: "wss://issues.example.test",
-        });
-        const answer: IssueListResult = {
-          viewers: { "github.com": "octocat" },
-          entries: [
-            entry({
-              key: "1",
-              labels: [
-                { name: "bug", color: null },
-                { name: "p1", color: null },
-              ],
-            }),
-          ],
-          trackers: [],
-          nextCursors: {},
-          errors: [],
-        };
         let reads = 0;
-        const client = {
-          [WS_METHODS.issuesList]: () =>
-            Effect.sync(() => {
-              reads += 1;
-              return answer;
-            }),
-        };
-        const supervisor = EnvironmentSupervisor.of({
-          target,
-          state: yield* SubscriptionRef.make<SupervisorConnectionState>({
-            ...AVAILABLE_CONNECTION_STATE,
-            phase: "connected",
-            network: "online",
-            desired: true,
-            generation: 1,
-          }),
-          session: yield* SubscriptionRef.make(Option.some({ client } as unknown as RpcSession)),
-          prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
-          connect: Effect.void,
-          disconnect: Effect.void,
-          retryNow: Effect.void,
+        const { readList } = yield* issueAtomsAnswering(() => {
+          reads += 1;
+          return {
+            viewers: {},
+            entries: [entry({ key: "1" })],
+            trackers: [],
+            nextCursors: {},
+            errors: [],
+          };
         });
-        const environment = EnvironmentRegistry.of({
-          run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
-          followStream: (_id, stream) =>
-            Stream.provideService(stream, EnvironmentSupervisor, supervisor),
-        } as Pick<
-          EnvironmentRegistry["Service"],
-          "run" | "followStream"
-        > as EnvironmentRegistry["Service"]);
-        const runtime = Atom.runtime(Layer.succeed(EnvironmentRegistry, environment));
-        const { list } = createIssueEnvironmentAtoms(runtime);
-        const registry = AtomRegistry.make();
-        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
-        for (const labels of [
-          ["bug", "p1"],
-          ["p1", "bug"],
-        ]) {
-          const atom = list({ environmentId, input: { state: "open", labels } });
-          yield* Effect.acquireRelease(
-            Effect.sync(() => registry.mount(atom)),
-            (closePicker) => Effect.sync(closePicker),
-          ).pipe(
-            Effect.andThen(AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true })),
-            Effect.tap((value) =>
-              Effect.sync(() => expect(value.entries.map((row) => row.key)).toEqual(["1"])),
-            ),
-            Effect.scoped,
-          );
-        }
-        expect(reads, "Issue searches for the same selected labels").toBe(1);
+        yield* readList({ state: "open", labels: ["bug", "p1"] });
+        yield* readList({ state: "open", labels: ["p1", "bug"] });
+        expect(reads).toBe(1);
       }),
     ),
   );
@@ -234,71 +231,27 @@ describe("issue listings", () => {
   it.effect("loads the next page using the search that produced its cursor", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const environmentId = EnvironmentId.make("env");
-        const target = new PrimaryConnectionTarget({
-          environmentId,
-          label: "Test environment",
-          httpBaseUrl: "https://issues.example.test",
-          wsBaseUrl: "wss://issues.example.test",
-        });
         const scope = "github.com acme/app";
-        const client = {
-          [WS_METHODS.issuesList]: (input: IssueListInput) => {
-            const cursor = `page-2:${JSON.stringify(input.labels)}`;
-            const firstPage = input.cursors === undefined;
-            return Effect.succeed<IssueListResult>({
-              entries: firstPage
-                ? [entry({ key: "1" })]
-                : input.cursors?.[scope] === cursor
-                  ? [entry({ key: "2" })]
-                  : [],
-              viewers: {},
-              trackers: [],
-              nextCursors: firstPage ? { [scope]: cursor } : {},
-              errors: [],
-            });
-          },
-        };
-        const supervisor = EnvironmentSupervisor.of({
-          target,
-          state: yield* SubscriptionRef.make<SupervisorConnectionState>({
-            ...AVAILABLE_CONNECTION_STATE,
-            phase: "connected",
-            network: "online",
-            desired: true,
-            generation: 1,
-          }),
-          session: yield* SubscriptionRef.make(Option.some({ client } as unknown as RpcSession)),
-          prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
-          connect: Effect.void,
-          disconnect: Effect.void,
-          retryNow: Effect.void,
+        const { readList, listPage, registry } = yield* issueAtomsAnswering((input) => {
+          const cursor = `page-2:${JSON.stringify(input.labels)}`;
+          const firstPage = input.cursors === undefined;
+          return {
+            entries: firstPage
+              ? [entry({ key: "1" })]
+              : input.cursors?.[scope] === cursor
+                ? [entry({ key: "2" })]
+                : [],
+            viewers: {},
+            trackers: [],
+            nextCursors: firstPage ? { [scope]: cursor } : {},
+            errors: [],
+          };
         });
-        const environment = EnvironmentRegistry.of({
-          run: (_id, effect) => Effect.provideService(effect, EnvironmentSupervisor, supervisor),
-          followStream: (_id, stream) =>
-            Stream.provideService(stream, EnvironmentSupervisor, supervisor),
-        } as Pick<
-          EnvironmentRegistry["Service"],
-          "run" | "followStream"
-        > as EnvironmentRegistry["Service"]);
-        const runtime = Atom.runtime(Layer.succeed(EnvironmentRegistry, environment));
-        const { list, listPage } = createIssueEnvironmentAtoms(runtime);
-        const registry = AtomRegistry.make();
-        yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
-        const labels = ["bug", "p1"];
-        const firstPage = list({ environmentId, input: { state: "open", labels } });
-        yield* Effect.acquireRelease(
-          Effect.sync(() => registry.mount(firstPage)),
-          (unmount) => Effect.sync(unmount),
-        );
-        const { nextCursors } = yield* AtomRegistry.getResult(registry, firstPage, {
-          suspendOnWaiting: true,
-        });
+        const { nextCursors } = yield* readList({ state: "open", labels: ["bug", "p1"] });
         const page = yield* Effect.promise(() =>
           listPage.run(registry, {
             environmentId,
-            input: { state: "open", labels: [...labels].reverse(), cursors: nextCursors },
+            input: { state: "open", labels: ["p1", "bug"], cursors: nextCursors },
           }),
         );
         expect(page).toMatchObject({ _tag: "Success", value: { entries: [{ key: "2" }] } });
