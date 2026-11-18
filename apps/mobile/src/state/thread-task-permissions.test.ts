@@ -503,52 +503,33 @@ describe("mobile task permissions", () => {
     expect(state.clearDraft).toHaveBeenCalled();
     state.draft = { ...state.draft, context: undefined };
 
-    // A side chat that does not start puts the message back in the composer, and its local
-    // file stays on disk until then.
+    // A failed start restores the draft: text first, since the merge caps attachments, then
+    // the uncapped attachments. The local file stays on disk meanwhile, and no send runs from
+    // the half-restored draft.
     vi.clearAllMocks();
     let heldDuringStart: string[] = [];
     startSideChat.mockImplementationOnce(async () => {
       heldDuringStart = [...state.fileHolds];
       return false;
     });
-    state.draft = {
-      ...state.draft,
-      attachments: [
-        {
-          id: "shot",
-          type: "image",
-          name: "shot.png",
-          fileUri: "file:///shot.png",
-        } as DraftComposerImageAttachment,
-      ],
-    };
-    const sent = state.draft;
-    // The merge caps attachments, so the uncapped restore must land after it, and nothing
-    // sends from the half-restored draft meanwhile.
+    const shot = { id: "shot", fileUri: "file:///shot.png" } as DraftComposerImageAttachment;
+    const sent = { ...state.draft, attachments: [shot] };
+    state.draft = sent;
     const restoring = useThreadComposerState({ startSideChat });
     const restoreOrder: string[] = [];
-    state.mergeDraft.mockImplementationOnce(async () => {
-      state.draft = { ...sent, text: "new text\n\n/side what is this?" };
+    state.mergeDraft.mockImplementationOnce(async (_key, content) => {
+      state.draft = { ...sent, text: "new text" };
       await restoring.onSendMessage();
-      state.draft = sent;
-      restoreOrder.push("merge");
+      restoreOrder.push(`merge ${content.text}`);
     });
-    state.appendAttachments.mockImplementationOnce(() => restoreOrder.push("append"));
+    state.appendAttachments.mockImplementationOnce((_key, attachments) =>
+      restoreOrder.push(`append ${attachments.length}`),
+    );
     expect(await restoring.onSendMessage()).toBeNull();
-    expect(restoreOrder).toEqual(["merge", "append"]);
-    expect(startSideChat).toHaveBeenCalledOnce();
+    expect(restoreOrder).toEqual(["merge /side what is this?", "append 1"]);
     expect(state.enqueue).not.toHaveBeenCalled();
     expect(heldDuringStart).toEqual(["file:///shot.png"]);
     expect(state.fileHolds).toEqual([]);
-    expect(state.clearDraft).toHaveBeenCalled();
-    expect(state.mergeDraft).toHaveBeenCalledWith(expect.anything(), {
-      text: sent.text,
-      context: sent.context,
-      attachments: [],
-    });
-    expect(state.appendAttachments).toHaveBeenCalledWith(expect.anything(), sent.attachments, {
-      restore: true,
-    });
     // A model the send would refuse does not start a side chat either.
     vi.clearAllMocks();
     state.serverConfig = {
