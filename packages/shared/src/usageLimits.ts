@@ -541,6 +541,37 @@ export function collectLimitPools(
   });
 }
 
+/**
+ * A custom endpoint that is a usage hub routes each turn to any of the hub's accounts, so the
+ * instance's own limits are the hub's accounts for its driver, pooled.
+ */
+export function endpointHubLimitPool(
+  environmentId: EnvironmentId,
+  provider: ServerProvider,
+  sources: UsageLimitSourceSnapshots,
+  now: number,
+): LimitPool | null {
+  const endpoint = provider.auth.endpoint;
+  if (!endpoint) return null;
+  // Both sides are server-canonical: the instance reports an origin, a hub its origin and path.
+  const hubs = sources.filter(
+    (source) => source.endpoint === endpoint || source.endpoint?.startsWith(`${endpoint}/`),
+  );
+  if (hubs.length === 0) return null;
+  const accounts = collectLimitAccounts(
+    new Map([
+      [
+        environmentId,
+        {
+          entry: { target: { label: "" } },
+          serverConfig: { providers: [], usageLimitSources: hubs },
+        },
+      ],
+    ]),
+  ).filter((account) => account.driver === provider.driver);
+  return collectLimitPools(accounts, now)[0] ?? null;
+}
+
 function accountSortName(account: LimitAccount): string {
   return (account.displayName ?? account.email ?? account.key).toLowerCase();
 }

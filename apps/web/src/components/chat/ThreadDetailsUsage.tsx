@@ -1,11 +1,13 @@
 import type {
+  EnvironmentId,
   ProviderInstanceId,
   ServerProvider,
-  ServerProviderUsageWindow,
   UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
+  displayLimitWindows,
+  endpointHubLimitPool,
   type LimitPace,
   paceOf,
   paceRemainingPercent,
@@ -33,6 +35,7 @@ const PACE_LABEL: Record<LimitPace, string> = {
 };
 
 export interface ThreadDetailsUsageInput {
+  readonly environmentId: EnvironmentId;
   readonly providerInstanceId: ProviderInstanceId | null;
   readonly providers: readonly ServerProvider[];
   readonly sources: UsageLimitSourceSnapshots;
@@ -43,6 +46,7 @@ type UsageTone = "error" | "warning" | null;
 
 /** The selected provider's limit windows. Each row reads as room left and opens the usage page. */
 export function ThreadDetailsUsage({
+  environmentId,
   providerInstanceId,
   providers,
   sources,
@@ -57,11 +61,14 @@ export function ThreadDetailsUsage({
       : null;
   // Only this instance's data: the report keeps one instance per login, and any other entry may be
   // a different login or workspace, so fall back to the instance's own snapshot.
+  const provider = providers.find((entry) => entry.instanceId === providerInstanceId);
   const limits =
     report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
-    providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
-  if (!limits) return null;
+    provider?.usageLimits;
+  if (!limits || !provider) return null;
   const notice = limitsNotice(limits, m);
+  const hubPool = notice ? endpointHubLimitPool(environmentId, provider, sources, now) : null;
+  const hubWindows = hubPool ? displayLimitWindows(hubPool) : [];
 
   return (
     <ThreadDetailsSection
@@ -70,7 +77,23 @@ export function ThreadDetailsUsage({
       showHeading={false}
     >
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        {notice ? (
+        {hubWindows.length > 0 ? (
+          hubWindows.map((window) => {
+            const reset = window.resets.find((entry) => entry.at > now);
+            return (
+              <LimitRow
+                key={window.id}
+                label={window.label}
+                left={window.remainingPercent}
+                pace={window.pace}
+                timeLeft={null}
+                resetsAt={reset ? new Date(reset.at).toISOString() : undefined}
+                restoresPercent={reset?.restoresPercent}
+                now={now}
+              />
+            );
+          })
+        ) : notice ? (
           <UsageRow
             label={gt("Limits", { $context: "usage limits row label" })}
             fill={null}
@@ -80,7 +103,17 @@ export function ThreadDetailsUsage({
             opensUsage
           />
         ) : (
-          limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
+          limits.windows.map((window) => (
+            <LimitRow
+              key={window.id}
+              label={window.label}
+              left={remainingPercent(window)}
+              pace={paceOf(window, now)}
+              timeLeft={paceRemainingPercent(window, now)}
+              resetsAt={window.resetsAt}
+              now={now}
+            />
+          ))
         )}
       </div>
     </ThreadDetailsSection>
@@ -155,22 +188,30 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
 }
 
 function LimitRow({
-  window,
+  label,
+  left,
+  pace,
+  timeLeft,
+  resetsAt: resetsAtIso,
+  restoresPercent,
   now,
 }: {
-  readonly window: ServerProviderUsageWindow;
+  readonly label: string;
+  readonly left: number;
+  readonly pace: LimitPace | null;
+  readonly timeLeft: number | null;
+  readonly resetsAt: string | undefined;
+  /** For a pooled window: the share of the pool its next reset restores. */
+  readonly restoresPercent?: number | undefined;
   readonly now: number;
 }) {
   const gt = useGT();
   const m = useMessages();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
-  const left = remainingPercent(window);
-  const pace = paceOf(window, now);
-  const timeLeft = paceRemainingPercent(window, now);
-  const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+  const resetsAt = resetsAtIso ? Date.parse(resetsAtIso) : Number.NaN;
   return (
     <UsageRow
-      label={window.label}
+      label={label}
       fill={left}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       tick={timeLeft}
@@ -179,20 +220,26 @@ function LimitRow({
       opensUsage
       tooltip={
         <>
-          <span className="text-foreground">
-            {gt("{label}: {left}% left", { label: window.label, left })}
-          </span>
-          {pace && timeLeft !== null ? (
+          <span className="text-foreground">{gt("{label}: {left}% left", { label, left })}</span>
+          {pace ? (
             <span className="text-muted-foreground">
-              {m(PACE_LABEL[pace])} · {gt("{timeLeft}% of the window left", { timeLeft })}
+              {m(PACE_LABEL[pace])}
+              {timeLeft !== null
+                ? ` · ${gt("{timeLeft}% of the window left", { timeLeft })}`
+                : null}
             </span>
           ) : null}
-          {window.resetsAt && resetsAt > now ? (
+          {resetsAtIso && resetsAt > now ? (
             <span className="text-muted-foreground">
               {gt("Resets in {duration} · {time}", {
                 duration: formatDuration(resetsAt - now, m),
-                time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
+                time: formatUpcomingTimestamp(resetsAtIso, timestampFormat, now, undefined, m),
               })}
+            </span>
+          ) : null}
+          {restoresPercent ? (
+            <span className="text-muted-foreground">
+              {gt("+{percent}% of pool", { percent: restoresPercent })}
             </span>
           ) : null}
         </>

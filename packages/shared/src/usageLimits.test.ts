@@ -19,6 +19,7 @@ import {
   collectExternalUsageLinks,
   collectLimitPools,
   elapsedShare,
+  endpointHubLimitPool,
   exhaustedUsageWindow,
   paceOf,
   paceRemainingPercent,
@@ -1373,6 +1374,64 @@ describe("pooled account columns", () => {
       now,
     );
     expect(keys(pool!)).toEqual([["b", "a"]]);
+  });
+});
+
+describe("endpointHubLimitPool", () => {
+  const environmentId = EnvironmentId.make("server");
+  const claude = ProviderDriverKind.make("claudeAgent");
+  const proxied = provider({
+    instanceId: ProviderInstanceId.make("claude_pool"),
+    driver: claude,
+    auth: { status: "authenticated", type: "customEndpoint", endpoint: "http://127.0.0.1:8317" },
+    usageLimits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [] },
+  });
+  const read = (usedPercent: number, resetsAt: string) => ({
+    checkedAt: "2026-09-03T11:00:00.000Z",
+    windows: [{ ...window, usedPercent, resetsAt }],
+  });
+  const hub = (endpoint: string) => ({
+    id: UsageLimitSourceId.make("hub"),
+    kind: "cliproxy" as const,
+    label: "CLIProxy",
+    endpoint,
+    checkedAt: "2026-09-03T11:00:00.000Z",
+    accounts: [
+      { id: "john.json", driver: claude, usageLimits: read(20, "2026-09-03T13:00:00.000Z") },
+      { id: "gmail.json", driver: claude, usageLimits: read(60, "2026-09-03T14:00:00.000Z") },
+      {
+        id: "codex.json",
+        driver: ProviderDriverKind.make("codex"),
+        usageLimits: read(100, "2026-09-03T13:00:00.000Z"),
+      },
+    ],
+  });
+
+  it("pools the driver's accounts of the hub the instance's endpoint points at", () => {
+    const pool = endpointHubLimitPool(environmentId, proxied, [hub("http://127.0.0.1:8317")], now);
+    expect(pool?.accounts.map((account) => account.displayName)).toEqual(["john", "gmail"]);
+    expect(pool?.windows.map((entry) => entry.remainingPercent)).toEqual([60]);
+    expect(pool?.windows[0]?.resets[0]?.restoresPercent).toBe(10);
+  });
+
+  it("matches a hub served below the endpoint's origin", () => {
+    expect(
+      endpointHubLimitPool(environmentId, proxied, [hub("http://127.0.0.1:8317/hub")], now),
+    ).not.toBeNull();
+  });
+
+  it("ignores hubs at other endpoints and instances without one", () => {
+    expect(
+      endpointHubLimitPool(environmentId, proxied, [hub("http://127.0.0.1:83170")], now),
+    ).toBeNull();
+    expect(
+      endpointHubLimitPool(
+        environmentId,
+        { ...proxied, auth: { status: "authenticated" } },
+        [hub("http://127.0.0.1:8317")],
+        now,
+      ),
+    ).toBeNull();
   });
 });
 
