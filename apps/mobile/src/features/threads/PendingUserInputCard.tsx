@@ -8,7 +8,7 @@ import {
   type TextDirection,
 } from "@t3tools/shared/textDirection";
 import { useNavigation } from "@react-navigation/native";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   useAnimatedStyle,
@@ -21,8 +21,14 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { cn } from "../../lib/cn";
+import {
+  SelectableMarkdownText,
+  type MarkdownImageSourceResolver,
+} from "../../native/SelectableMarkdownText";
+import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
+import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
-import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import {
@@ -81,6 +87,8 @@ function QuestionText(props: {
   readonly threadId: ThreadId;
   readonly workspaceRoot: string | null;
   readonly setDirection: TextDirection | undefined;
+  readonly resolveImageSource: MarkdownImageSourceResolver;
+  readonly onImagePress: (href: string) => void;
   readonly preserveSoftBreaks?: boolean;
 }) {
   const styles = useMarkdownPreviewStyles();
@@ -114,12 +122,29 @@ function QuestionText(props: {
         Platform.OS === "android" ? undefined : props.setDirection === "rtl" ? "right" : "left"
       }
       onLinkPress={openLink}
+      resolveImageSource={props.resolveImageSource}
+      onImagePress={props.onImagePress}
       preserveSoftBreaks={props.preserveSoftBreaks}
     />
   );
 }
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const resolveImageSource = useMarkdownImageSource({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot,
+  });
+  const [previewImage, setPreviewImage] = useState<FilePreviewSource | null>(null);
+  const openImagePreview = (href: string) => {
+    const media = resolveMarkdownMediaPreview(href, {
+      environmentId: props.environmentId,
+      threadId: props.threadId,
+      workspaceRoot: props.workspaceRoot,
+      imageEmbed: true,
+    });
+    if (media?.kind === "image") setPreviewImage(media.source);
+  };
   const questionCount = props.pendingUserInput.questions.length;
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
@@ -279,6 +304,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 threadId={props.threadId}
                 workspaceRoot={props.workspaceRoot}
                 setDirection={setDirection}
+                resolveImageSource={resolveImageSource}
+                onImagePress={openImagePreview}
                 preserveSoftBreaks
               />
               <View className="gap-2">
@@ -333,6 +360,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                             threadId={props.threadId}
                             workspaceRoot={props.workspaceRoot}
                             setDirection={setDirection}
+                            resolveImageSource={resolveImageSource}
+                            onImagePress={openImagePreview}
                             preserveSoftBreaks
                           />
                         </View>
@@ -387,6 +416,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       style={Platform.OS === "android" ? androidBoundsStyle : undefined}
     >
       {bar}
+      <FilePreviewModal source={previewImage} onRequestClose={() => setPreviewImage(null)} />
       <Animated.View
         pointerEvents={props.collapsed ? "none" : "box-none"}
         className="absolute inset-x-0 bottom-0 justify-end overflow-hidden"
