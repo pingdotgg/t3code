@@ -7,6 +7,7 @@ import {
   EnvironmentId,
   type FilesystemBrowseEntry,
   ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2ArchivedShellSnapshot,
   ThreadId,
   ProjectId,
   type ReviewDiffPreviewInput,
@@ -53,6 +54,7 @@ import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import { createFilesystemEnvironmentAtoms } from "./filesystem.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import type { EnvironmentShellState } from "./shell.ts";
+import { v2Now, v2Project, v2ThreadId, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
 import {
   createAtomCommandScheduler,
@@ -702,6 +704,42 @@ describe("environment query lifecycle", () => {
         }),
       );
       expect(yield* Queue.take(inputs)).toEqual(sent);
+    }),
+  );
+
+  // The server sizes a shared PTY to every attached viewer, so a lingering attach pins its grid.
+  it.effect("terminal attach detaches as soon as its last viewer leaves", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void);
+      const attached = yield* Deferred.make<void>();
+      const detached = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.terminalAttach]: () =>
+          Stream.fromEffect(Deferred.succeed(attached, undefined)).pipe(
+            Stream.drain,
+            Stream.concat(Stream.never),
+            Stream.ensuring(Deferred.succeed(detached, undefined)),
+          ),
+      } as unknown as RpcSession.RpcSession["client"];
+      yield* SubscriptionRef.set(
+        harness.supervisorSession,
+        Option.some({ ...QUERY_RPC_SESSION, client }),
+      );
+      const atoms = createTerminalEnvironmentAtoms(harness.runtime);
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const unsubscribe = registry.subscribe(
+        atoms.attach({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadId: "thread-1", terminalId: "terminal-1", cwd: "/tmp/project" },
+        }),
+        () => {},
+        { immediate: true },
+      );
+      yield* Deferred.await(attached);
+
+      unsubscribe();
+      yield* Deferred.await(detached);
     }),
   );
 
@@ -1361,6 +1399,58 @@ describe("environment query lifecycle", () => {
       yield* Deferred.succeed(afterDelete, {});
       expect(yield* readEnvironmentQuery(registry, atom)).toEqual({});
       expect(settled).toEqual([{ fork: "Fork" }, {}]);
+    }),
+  );
+
+  it.effect("re-reads an open archive when a thread leaves the shell", () =>
+    Effect.gen(function* () {
+      const requests =
+        yield* Queue.unbounded<Deferred.Deferred<OrchestrationV2ArchivedShellSnapshot>>();
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+        rpcSession: {
+          client: {
+            [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: () =>
+              Effect.gen(function* () {
+                const answer = yield* Deferred.make<OrchestrationV2ArchivedShellSnapshot>();
+                yield* Queue.offer(requests, answer);
+                return yield* Deferred.await(answer);
+              }),
+          },
+        } as unknown as RpcSession.RpcSession,
+      });
+      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+        removedAt: new Map(),
+      }).pipe(Atom.keepAlive);
+      const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+        EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+      >;
+      const atom = createOrchestrationEnvironmentAtoms(runtime, {
+        shellState: () => shellState,
+      }).archivedShellSnapshot({ environmentId: QUERY_ENVIRONMENT.environmentId, input: {} });
+      const page = (threads: OrchestrationV2ArchivedShellSnapshot["threads"]) => ({
+        schemaVersion: 1,
+        snapshotSequence: 1,
+        projects: [v2Project],
+        threads,
+      });
+      const registry = yield* mountEnvironmentQuery(atom);
+      const archivedIds = Effect.map(readEnvironmentQuery(registry, atom), (snapshot) =>
+        snapshot.threads.map((thread) => thread.id),
+      );
+      yield* Deferred.succeed(yield* Queue.take(requests), page([]));
+      expect(yield* archivedIds).toEqual([]);
+
+      // Another client archives the thread, then deletes it from the archive.
+      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 2]]) });
+      expect(registry.get(atom).waiting).toBe(true);
+      yield* Deferred.succeed(
+        yield* Queue.take(requests),
+        page([{ ...v2ThreadShell, archivedAt: v2Now }]),
+      );
+      expect(yield* archivedIds).toEqual([v2ThreadId]);
+      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 3]]) });
+      yield* Deferred.succeed(yield* Queue.take(requests), page([]));
+      expect(yield* archivedIds).toEqual([]);
     }),
   );
 });

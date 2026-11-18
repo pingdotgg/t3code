@@ -97,6 +97,10 @@ export function isLiveSubagentTurnItem(item: OrchestrationV2TurnItem): boolean {
   return item.type === "subagent" && isOrchestrationV2WorkActive(item.status);
 }
 
+export function waitingOnSubagentsLabel(count: number): string {
+  return count === 1 ? "Waiting on a subagent" : `Waiting on ${count} subagents`;
+}
+
 export interface SubagentWorkflowGroup {
   readonly workflow: RuntimeSubagent;
   readonly phases: ReadonlyArray<{
@@ -321,7 +325,9 @@ export function deriveWorkflowGroups(
 }
 
 // Workflow scripts open with their `meta` export, after any leading comments.
-const WORKFLOW_SCRIPT_START = /^\s*(?:(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/)\s*)*export\s+const\s+meta\b/;
+// Each comment has one way to match, so a prompt of `////` divider lines cannot backtrack.
+const WORKFLOW_SCRIPT_START =
+  /^\s*(?:(?:\/\/[^\r\n\u2028\u2029]*(?:[\r\n\u2028\u2029]|$)|\/\*(?:[^*]|\*(?!\/))*\*\/)\s*)*export\s+const\s+meta\b/;
 
 /**
  * Whether a user message is the script a provider-native workflow runs. Servers mark every

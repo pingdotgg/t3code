@@ -204,6 +204,35 @@ describe("DesktopLinuxUrlHandler", () => {
     assert.include(entry, "Icon=/home/al ice/icons/T3\\\\x.png");
   });
 
+  it.each([
+    { from: "T3-Code-0.1.8-x86_64.AppImage", to: "T3-Code-x86_64.AppImage", restored: true },
+    {
+      from: "T3-Code-0.1.9-nightly.20261110.4449-arm64.AppImage",
+      to: "T3-Code-Nightly-arm64.AppImage",
+      restored: true,
+    },
+    { from: "T3-Code-0.1.8-x86_64.AppImage", to: "T3-Code-0.1.9-x86_64.AppImage", restored: false },
+    { from: "t3code.AppImage", to: "T3-Code-x86_64.AppImage", restored: false },
+    { from: "T3-Code-x86_64.AppImage", to: "T3-Code-x86_64.AppImage", restored: false },
+    { from: "../T3-Code-0.1.8-x86_64.AppImage", to: "T3-Code-x86_64.AppImage", restored: false },
+  ])("finds the launch path an update from $from to $to removed", ({ from, to, restored }) => {
+    for (const dir of ["/home/alice/Applications", '/home/al ice/My "100%" $Apps\\x']) {
+      const previous = dir + "/" + from;
+      const previousEntry = DesktopLinuxUrlHandler.renderUrlHandlerDesktopEntry({
+        displayName: "T3 Code (Beta)",
+        execTarget: previous,
+        scheme: "t3code",
+      });
+      assert.equal(
+        DesktopLinuxUrlHandler.replacedVersionedAppImagePath({
+          previousEntry,
+          appImagePath: dir + "/" + to,
+        }),
+        restored ? previous : null,
+      );
+    }
+  });
+
   it.effect(
     "writes the handler entry, refreshes the MIME cache, and claims the scheme default",
     () => {
