@@ -462,6 +462,14 @@ const issueAt = (key: string, createdAt: string) =>
     commentCount: 0,
   });
 /** A tracker that lists what the test put in it and remembers what was said. */
+// The real trackers read the server's own tables, which do not decode under the engine's BigInts.
+const asTheServerReads = <A>(answer: () => A) =>
+  Effect.flatMap(SqlClient.SafeIntegers, (bigInts) =>
+    bigInts
+      ? Effect.fail(new WorkflowForgeError({ reason: "called with the engine's BigInts on" }))
+      : Effect.sync(answer),
+  );
+
 const fakeForge = () => {
   const open: Array<Issue> = [];
   const asked: Array<Parameters<WorkflowForge["Service"]["issues"]["list"]>[0]> = [];
@@ -482,17 +490,17 @@ const fakeForge = () => {
       pullRequests: {
         ...unavailable.pullRequests,
         // Only what a wait looks at; the rest of a pull request is the host's business.
-        read: () => Effect.sync(() => structuredClone(pullRequest) as never),
+        read: () => asTheServerReads(() => structuredClone(pullRequest) as never),
       },
       issues: {
         ...unavailable.issues,
         list: (query) =>
-          Effect.sync(() => {
+          asTheServerReads(() => {
             asked.push(query);
             return open;
           }),
         comment: (issue, body) =>
-          Effect.sync(
+          asTheServerReads(
             () => void comments.push(`${"key" in issue ? issue.key : issue.url}: ${body}`),
           ),
       },

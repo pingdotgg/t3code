@@ -72,7 +72,27 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const store = yield* WorkflowStore.WorkflowStore;
   const keyValues = yield* KeyValues;
   const link = yield* EngineLink;
-  const forge = Option.getOrElse(yield* Effect.serviceOption(WorkflowForge), () => unavailable);
+  const trackers = Option.getOrElse(yield* Effect.serviceOption(WorkflowForge), () => unavailable);
+  // The engine reads its own tables as BigInts. The rest of the server's queries must not.
+  const plain =
+    <Args extends ReadonlyArray<unknown>, A, E>(call: (...args: Args) => Effect.Effect<A, E>) =>
+    (...args: Args) =>
+      call(...args).pipe(Effect.provideService(SqlClient.SafeIntegers, false));
+  const forge = WorkflowForge.of({
+    issues: {
+      list: plain(trackers.issues.list),
+      read: plain(trackers.issues.read),
+      comment: plain(trackers.issues.comment),
+      setState: plain(trackers.issues.setState),
+      create: plain(trackers.issues.create),
+    },
+    pullRequests: {
+      list: plain(trackers.pullRequests.list),
+      read: plain(trackers.pullRequests.read),
+      comment: plain(trackers.pullRequests.comment),
+      act: plain(trackers.pullRequests.act),
+    },
+  });
   const scope = yield* Scope.Scope;
   const agents = yield* WorkflowAgents;
   const random = yield* SecureRandom.SecureRandom;
