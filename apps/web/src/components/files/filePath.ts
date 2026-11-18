@@ -16,7 +16,9 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
   const windowsPath = isWindowsAbsolutePath(relativePath);
   const separator = windowsPath ? "\\" : "/";
   // `\` is a legal filename character outside Windows paths.
-  const parts = relativePath.split(windowsPath ? /[\\/]/ : "/").filter(Boolean);
+  // The server reads `~\` as home; the rest keeps the usual relative-path spelling.
+  const homePath = relativePath.startsWith("~\\") ? `~/${relativePath.slice(2)}` : relativePath;
+  const parts = homePath.split(windowsPath ? /[\\/]/ : "/").filter(Boolean);
   const root = relativePath.startsWith("\\\\") ? "\\\\" : relativePath.startsWith("/") ? "/" : "";
   return [
     ...(hostPath ? [] : [{ label: projectName, path: "", kind: "project" as const }]),
