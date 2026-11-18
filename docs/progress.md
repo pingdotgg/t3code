@@ -100,9 +100,16 @@
 - Setup repo: `fallbackModelSelection` (Grok) is cleared by `apply-auto-settings.py`; the health check warns while it is set.
 - Numbers: AutoFailoverService 8/8; ProviderTurnStartService 65/69, the same 4 failures as before the change (Windows-only git/startup tests); server typecheck 0 errors.
 
+## 2026-11-18: Auto High runs Opus 5.5 at Extra High, not Fable
+
+- What: `AUTO_CANDIDATES.high` now starts with `claude-opus-5-5` at the `xhigh` effort level ("Extra High", one step above High), and Fable 5.2 is gone from the high chain. The Antigravity Opus, Codex Sol/Astra/Luna, Grok and Gemini fallbacks keep their `high` effort. `impliedAutoLevel` (the failover path for hand-picked threads) no longer reads Fable as a high model, since Fable now only sits in the medium chain.
+- Why: Tomáš's Claude accounts have no Fable access yet, so Auto High routed to a model that was never usable there and fell through to Opus at plain High. He asked for Auto High to mean Opus at a higher effort.
+- Numbers: autoModel 14/14, AutoFailoverService 8/8, claudeModelOptions 7/7. Effort levels the catalog offers for Opus 5.5: low, medium, high, xhigh, max, ultracode, ultrathink; `max` is one step above `xhigh` if he wants the ceiling.
+- Next: ship on the PC fork build, then hub and hub2.
+
 ## 2026-11-18: Fork synced onto upstream `373ec12be6`
 
-- What: the 18 fork commits from `1f698f01d9..bd33ae897c` were rebased onto upstream main `373ec12be6` (300 upstream commits newer). `origin/main` is recorded as an ancestor with an `-s ours` merge, as in the previous sync, so the PR merges without a force-push.
+- What: the 18 fork commits from `1f698f01d9..bd33ae897c` were rebased onto upstream main `373ec12be6` (300 upstream commits newer). #10 (Auto High on Opus at Extra High), merged to fork main during the sync, comes in through a normal merge. `origin/main` is recorded as an ancestor with an `-s ours` merge, as in the previous sync, so the PR merges without a force-push.
 - Why: the fork was 300 commits behind upstream two days after the last sync.
 - Conflicts: 3 sites in 2 files, all from upstream translating the whole app (#37893): `ProviderModelPicker.tsx` (fork's Auto trigger label vs upstream's `gt()` labels) and `UsageLimitsPooled.tsx` (imports moved to `usageLimitsCopy.ts`). Kept upstream's translated strings and the fork's Auto and pooled-view behavior.
 - Adapted to upstream: reset advice (`suggestResetCredit`) moved from `usageLimits.ts` to `usageLimitsCopy.ts`, where upstream now keeps `formatDuration` and other client copy. The fork's pooled view, chart, reset advice and Subscriptions heading wrap their copy in `<T>`/`gt()` (upstream's `no-untranslated-copy` lint), and the web catalogs gained those 17 keys.

@@ -78,7 +78,7 @@ describe("autoFailoverPlan", () => {
       instanceId: "grok",
       model: "auto-medium",
     });
-    expect(plan(picked("claude-fable-5-2"))?.command.modelSelection?.model).toBe("auto-high");
+    expect(plan(picked("gpt-6.1-sol"))?.command.modelSelection?.model).toBe("auto-high");
     expect(plan(picked("claude-haiku-5-5"))?.command.modelSelection?.model).toBe("auto-low");
     // A delegated thread keeps the model its parent chose.
     const delegated = {
