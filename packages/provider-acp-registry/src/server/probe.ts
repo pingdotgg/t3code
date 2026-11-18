@@ -35,6 +35,7 @@ import {
   flattenSelectChoices,
 } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
+import { isMistralVibeAgent } from "./mistralVibeAcp.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const MAX_AUTH_METHODS = 32;
@@ -214,6 +215,8 @@ export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
   modelState?: EffectAcpSchema.SessionModelState | null,
+  // Modes that are permission levels follow T3's access mode instead of a picker.
+  { sessionModesFollowPolicy = false }: { readonly sessionModesFollowPolicy?: boolean } = {},
 ): AcpRegistryLiveConfiguration {
   const modelOption = findModelConfigOption(configOptions);
   const currentModelId =
@@ -242,7 +245,14 @@ export function normalizeAcpRegistryLiveConfiguration(
     );
     return reasoningEffort === undefined ? model : { ...model, reasoningEffort };
   });
-  const descriptors = acpProviderOptionDescriptors({ configOptions, modeState });
+  const descriptors = acpProviderOptionDescriptors(
+    sessionModesFollowPolicy
+      ? {
+          configOptions: configOptions.filter((option) => option.category !== "mode"),
+          modeState: undefined,
+        }
+      : { configOptions, modeState },
+  );
   const modelOptionIds = new Set(
     configOptions
       .filter((option) => option.category === "thought_level" || option.category === "model_config")
@@ -545,6 +555,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         (yield* Ref.get(configOptionsRef)) ?? (yield* runtime.getConfigOptions),
         (yield* runtime.getModeState) ?? parseSessionModeState(started.sessionSetupResult),
         started.sessionSetupResult.models,
+        { sessionModesFollowPolicy: isMistralVibeAgent(input.settings) },
       );
 
       return {

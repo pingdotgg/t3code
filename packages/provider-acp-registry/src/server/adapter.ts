@@ -11,6 +11,12 @@ import {
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
 import { makeKimiPromptOutcomeWatch } from "./kimiAcp.ts";
+import {
+  isMistralVibeAgent,
+  MISTRAL_VIBE_MODE_OPTION_ID,
+  mistralVibePermissionDisposition,
+  mistralVibeSessionMode,
+} from "./mistralVibeAcp.ts";
 import { extractOmpElicitationForm } from "./ompAcp.ts";
 import { extractOpenCodeElicitationForm } from "./opencodeAcp.ts";
 import {
@@ -192,6 +198,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
   const isDevin = registryAgentId === "devin";
+  const isMistralVibe = isMistralVibeAgent(options.settings);
   const isOmp =
     options.settings.source === "local" &&
     /^omp(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
@@ -258,8 +265,14 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.
     ...(registryAgentId === "glm-acp-agent" ? { reportsPerTurnPromptUsage: true } : {}),
     ...(watchKimiPromptOutcome === undefined ? {} : { watchPromptOutcome: watchKimiPromptOutcome }),
-    ...(registryAgentId === "mistral-vibe"
-      ? { registerExtensions: registerMistralVibeAcpExtensions }
+    ...(isMistralVibe
+      ? {
+          registerExtensions: registerMistralVibeAcpExtensions,
+          ownedModelOptionIds: [MISTRAL_VIBE_MODE_OPTION_ID],
+          lockSessionModeToPolicy: true,
+          sessionModeForPolicy: mistralVibeSessionMode,
+          permissionDisposition: mistralVibePermissionDisposition,
+        }
       : {}),
     ...(isClaude
       ? {
@@ -330,7 +343,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           onSessionConfigurationUpdate: (configOptions, modeState, modelState) =>
             runtimeCoordinator.publishLiveConfiguration(
               options.instanceId,
-              normalizeAcpRegistryLiveConfiguration(configOptions, modeState, modelState),
+              normalizeAcpRegistryLiveConfiguration(configOptions, modeState, modelState, {
+                sessionModesFollowPolicy: isMistralVibe,
+              }),
             ),
           onUrlElicitation: ({ elicitationId, url, message }) => {
             const normalizedUrl = normalizeAcpRegistryWebUrl(url);

@@ -448,6 +448,7 @@ export interface AcpAdapterV2Flavor {
   readonly lockSessionModeToPolicy?: true;
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+    advertisedModeIds: ReadonlyArray<string>,
   ) => string | undefined;
   /**
    * Native select-option values to apply for a runtime policy (e.g. Kiro's
@@ -484,6 +485,7 @@ export interface AcpAdapterV2Flavor {
   readonly permissionDisposition?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
     request: EffectAcpSchema.RequestPermissionRequest,
+    currentModeId?: string,
   ) => AcpPermissionDisposition;
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
@@ -6899,10 +6901,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 flavor.answerablePermissionOptions === undefined
                   ? params
                   : { ...params, options: flavor.answerablePermissionOptions(params) };
+              const currentModeId = (yield* targetRuntime.getModeState)?.currentModeId;
               const dispositionFor = (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
-              ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
+              ) =>
+                flavor.permissionDisposition === undefined
+                  ? acpPermissionDisposition(policy, request)
+                  : flavor.permissionDisposition(policy, request, currentModeId);
               if (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") {
                 if (!(yield* awaitRequestTurn(handlerGeneration)))
                   return { outcome: { outcome: "cancelled" } } as const;
@@ -7812,7 +7818,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (!advertisedValues.includes(selection.value)) continue;
             yield* runtime.setConfigOption(selection.id, selection.value);
           }
-          const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
+          const policyMode = flavor.sessionModeForPolicy?.(
+            runtimePolicy,
+            (yield* runtime.getModeState)?.availableModes.map((mode) => mode.id) ?? [],
+          );
           const modeLocked = flavor.lockSessionModeToPolicy && policyMode !== undefined;
           if (policyMode !== undefined) {
             yield* runtime.setMode(policyMode);

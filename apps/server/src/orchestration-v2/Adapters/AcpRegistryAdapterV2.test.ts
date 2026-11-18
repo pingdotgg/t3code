@@ -10,6 +10,7 @@ import {
   RunId,
   type ModelSelection,
   ProviderInstanceId,
+  type RuntimeMode,
   ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -493,6 +494,7 @@ describe("AcpRegistryAdapterV2", () => {
       readonly storedOptions?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
       readonly failsConfiguration?: boolean;
       readonly liveConfiguration?: AcpRegistryLiveConfiguration;
+      readonly runtimeMode?: RuntimeMode;
     }) {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       // Scope release gives the replay agent at most a second to exit, so the status
@@ -572,7 +574,7 @@ describe("AcpRegistryAdapterV2", () => {
       );
       const threadId = ThreadId.make("thread-acp-registry-stored-picks");
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "approval-required",
+        runtimeMode: input.runtimeMode ?? "approval-required",
         interactionMode: "default",
         cwd: replayDir,
       });
@@ -684,6 +686,69 @@ describe("AcpRegistryAdapterV2", () => {
         ],
         storedModePick: "auto",
       }).pipe(Effect.provide(layerTest)),
+    );
+
+    // Mistral Vibe 3.1.1's modes are permission levels, so T3's access mode chooses one.
+    const vibeModes = ["ask", "accept-edits", "smart-approve", "auto-approve"];
+    const vibeMode = (currentValue: string, modes: ReadonlyArray<string>) => ({
+      id: "mode",
+      name: "Session Mode",
+      category: "mode",
+      type: "select",
+      currentValue,
+      options: modes.map((value) => ({ value, name: value })),
+    });
+    const vibeThinking = {
+      id: "thinking",
+      name: "Thinking",
+      category: "thinking",
+      type: "select",
+      currentValue: "high",
+      options: ["off", "high"].map((value) => ({ value, name: value })),
+    };
+    it.effect.each([
+      { runtimeMode: "approval-required", modes: vibeModes, written: "ask" },
+      { runtimeMode: "auto-accept-edits", modes: vibeModes, written: undefined },
+      { runtimeMode: "auto", modes: vibeModes, written: "smart-approve" },
+      { runtimeMode: "full-access", modes: vibeModes, written: "auto-approve" },
+      // Vibe hides Smart Approve behind a rollout and Auto Approve behind its YOLO switch.
+      { runtimeMode: "auto", modes: ["ask", "accept-edits"], written: "ask" },
+      { runtimeMode: "full-access", modes: ["ask", "accept-edits"], written: undefined },
+    ] as const)(
+      "puts Mistral Vibe under $runtimeMode in mode $written of $modes",
+      ({ runtimeMode, modes, written }) =>
+        Effect.gen(function* () {
+          const { configurations } = yield* openWithStoredPicks({
+            agentId: "mistral-vibe",
+            runtimeMode,
+            setup: {
+              modes: {
+                currentModeId: "accept-edits",
+                availableModes: modes.map((id) => ({ id, name: id })),
+              },
+              configOptions: [vibeMode("accept-edits", modes), vibeThinking],
+            },
+            // A pick stored before T3 owned Vibe's mode must not widen access.
+            storedOptions: [{ id: "mode", value: "auto-approve" }],
+            pickFrames:
+              written === undefined
+                ? []
+                : [
+                    outbound("session/set_config_option", {
+                      sessionId: "agent-session",
+                      configId: "mode",
+                      value: written,
+                    }),
+                    answer("session/set_config_option", {
+                      configOptions: [vibeMode(written, modes), vibeThinking],
+                    }),
+                  ],
+          });
+          assert.deepEqual(
+            configurations[0]?.configOptions.map((descriptor) => descriptor.id),
+            ["thinking"],
+          );
+        }).pipe(Effect.provide(layerTest)),
     );
 
     const modelOption = (id: string, currentValue: string, grouped = false) => ({
