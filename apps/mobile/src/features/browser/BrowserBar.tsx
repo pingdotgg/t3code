@@ -1,6 +1,7 @@
 import { BlurView } from "expo-blur";
 import { GlassView, isGlassEffectAPIAvailable } from "expo-glass-effect";
-import { useState, type ReactNode } from "react";
+import { useNavigation } from "@react-navigation/native";
+import { use, useEffect, useState, type ReactNode } from "react";
 import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
 import Animated, {
   interpolate,
@@ -16,14 +17,13 @@ import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText } from "../../components/ui/AppText";
 import { deriveSharedTopBand } from "../../lib/reserved-regions";
 import { isDarkThemeColor, themeColorWithAlpha } from "../../lib/mobileTheme";
-import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
+import { useBarInset } from "../../components/ui/useBarInset";
+import { WorkspaceColumnMetricsContext } from "../../native/v5-workspace-context";
+import { isDuoDevice } from "../../lib/device-type";
+import { useDeviceType, useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
-/**
- * Safari's bar: frosted and tinted by the page (`pageColor`), with round controls and a centered
- * host. `compact`, while the page scrolls down, shrinks it to a small host pill that expands it.
- */
-export function BrowserBar(props: {
+type BrowserBarProps = {
   readonly url: string;
   readonly editable: boolean;
   readonly canGoBack: boolean;
@@ -31,25 +31,98 @@ export function BrowserBar(props: {
   readonly onBack: () => void;
   readonly onReload: () => void;
   readonly onSubmit: (value: string) => void;
+  /** In the inspector pane, opens the page full screen. */
+  readonly onMaximize?: () => void;
   readonly trailing?: ReactNode;
-  readonly compact?: boolean;
-  readonly onExpand?: () => void;
-  /** The screen hides the status bar while compact, so the pill can sit at the very top. */
-  readonly compactHidesStatusBar?: boolean;
   /** The page's theme or background color; the app's sheet color until the page reports one. */
   readonly pageColor?: string | null;
+};
+
+/**
+ * Every browser surface: full screen or in the inspector pane, a page on this device or a
+ * stream. The bar shrinks while the page scrolls down, like Safari's, and on the Duo the full
+ * screen bar takes the status bar with it. A page that can scroll under the bar gets it laid
+ * over itself on iOS, inset by `topInset`; a stream keeps the bar above it.
+ */
+export function BrowserChrome(props: {
+  readonly bar: BrowserBarProps;
+  readonly scrollsUnderBar: boolean;
+  readonly inPane?: boolean;
+  /** Keeps the whole bar showing, such as over an error. */
+  readonly holdExpanded?: boolean;
+  readonly children: (page: {
+    readonly topInset: number;
+    readonly onScrollDirection: (direction: "up" | "down") => void;
+  }) => ReactNode;
 }) {
+  const [scrolledDown, setScrolledDown] = useState(false);
+  const compact = scrolledDown && !props.holdExpanded;
+  const overlay = Platform.OS === "ios" && props.scrollsUnderBar;
+  const duo = isDuoDevice(useDeviceType());
+  const hidesStatusBar = !props.inPane && duo;
+  const navigation = useNavigation();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the status bar is a native screen option
+  useEffect(() => {
+    if (!hidesStatusBar) return;
+    navigation.setOptions({ statusBarHidden: compact, statusBarAnimation: "fade" });
+  }, [navigation, hidesStatusBar, compact]);
+  // The page stays inset by the whole bar, so the bar shrinking never moves it, like Safari's.
+  const fullBarHeight = useBrowserBarLayout(props.inPane === true).height;
+  const [barHeight, setBarHeight] = useState(fullBarHeight);
+  if (!compact && fullBarHeight !== barHeight) setBarHeight(fullBarHeight);
+
+  const bar = (
+    <BrowserBar
+      {...props.bar}
+      compact={compact}
+      onExpand={() => setScrolledDown(false)}
+      compactHidesStatusBar={hidesStatusBar}
+      inPane={props.inPane === true}
+    />
+  );
+  const page = props.children({
+    topInset: overlay ? barHeight : 0,
+    onScrollDirection: (direction) => setScrolledDown(direction === "down"),
+  });
+  if (!overlay) {
+    return (
+      <>
+        {bar}
+        <View className="flex-1">{page}</View>
+      </>
+    );
+  }
+  return (
+    <View className="flex-1">
+      {page}
+      <View className="absolute inset-x-0 top-0">{bar}</View>
+    </View>
+  );
+}
+
+/**
+ * Safari's bar: frosted and tinted by the page (`pageColor`), with round controls and a centered
+ * host. `compact`, while the page scrolls down, shrinks it to a small host pill that expands it.
+ */
+function BrowserBar(
+  props: BrowserBarProps & {
+    readonly compact: boolean;
+    readonly onExpand: () => void;
+    /** The screen hides the status bar while compact, so the pill can sit at the very top. */
+    readonly compactHidesStatusBar: boolean;
+    readonly inPane: boolean;
+  },
+) {
   const [draft, setDraft] = useState<string | null>(null);
-  const band = deriveSharedTopBand(useNativeColumnLayoutMetrics());
-  const safeTop = useSafeAreaInsets().top;
+  const layout = useBrowserBarLayout(props.inPane);
   const reduceMotion = useReducedMotion();
   const { themeVariables } = useAppearancePreferences();
   const surface = props.pageColor || themeVariables["--color-sheet-solid"];
   const ink: Ink = isDarkThemeColor(surface) ? "light" : "dark";
   const inkColor = ink === "light" ? "#ffffff" : "#000000";
-  const compact = Boolean(props.compact) && draft === null;
-  const expandedHeight = useBrowserBarHeight();
-  const pillTop = props.compactHidesStatusBar ? 0 : safeTop;
+  const compact = props.compact && draft === null;
+  const expandedHeight = layout.height;
+  const pillTop = props.compactHidesStatusBar ? 0 : layout.statusTop;
   const compactHeight = pillTop + PILL_ROW_HEIGHT;
   // One bar whose height follows the scroll, so nothing under it jumps between two layouts.
   const progress = useDerivedValue(() =>
@@ -86,14 +159,13 @@ export function BrowserBar(props: {
       />
       <Animated.View
         pointerEvents={compact ? "none" : "auto"}
-        // Below the top safe area, or beside the status where it covers only one end of the band.
         style={[
           {
             position: "absolute",
-            top: band ? 0 : safeTop,
-            left: band?.left ?? 0,
-            right: band?.right ?? 0,
-            height: band ? band.height : EXPANDED_ROW_HEIGHT,
+            top: layout.rowTop,
+            left: layout.left,
+            right: layout.right,
+            height: layout.rowHeight,
             justifyContent: "center",
           },
           controlsStyle,
@@ -101,9 +173,9 @@ export function BrowserBar(props: {
       >
         <View
           className={
-            band
+            layout.narrow
               ? "flex-row items-center gap-1.5 px-2"
-              : "flex-row items-center gap-2 px-3 pb-2 pt-1"
+              : "flex-row items-center gap-2 px-3"
           }
         >
           <RoundButton icon="xmark" label="Close browser" ink={ink} onPress={props.onClose} />
@@ -156,6 +228,14 @@ export function BrowserBar(props: {
             </Glass>
           </View>
           {props.trailing}
+          {props.onMaximize ? (
+            <RoundButton
+              icon="arrow.up.left.and.arrow.down.right"
+              label="Maximize page"
+              ink={ink}
+              onPress={props.onMaximize}
+            />
+          ) : null}
         </View>
       </Animated.View>
       <Animated.View
@@ -197,13 +277,55 @@ export function BrowserBar(props: {
 }
 
 const EXPANDED_ROW_HEIGHT = 56;
+// UIKit's navigation bar in a workspace column, whose controls sit in its top 48pt.
+const NAVIGATION_BAR_HEIGHT = 58;
+const NAVIGATION_BAR_CONTROLS_HEIGHT = 48;
 const PILL_ROW_HEIGHT = 40;
 
-/** The whole bar's height, which a page under it insets its content by. */
-export function useBrowserBarHeight() {
+/**
+ * Where the whole bar's controls go. Full screen: below the top safe area, or beside the status
+ * where it covers only one end of that band. In the inspector pane: centered in the height of
+ * the headers beside it. `height` is what a page under the bar insets its content by.
+ */
+function useBrowserBarLayout(inPane: boolean) {
   const band = deriveSharedTopBand(useNativeColumnLayoutMetrics());
   const safeTop = useSafeAreaInsets().top;
-  return band ? band.height : safeTop + EXPANDED_ROW_HEIGHT;
+  // The pane draws no native bar of its own, so it lines up with the bars its neighbors draw.
+  const columns = use(WorkspaceColumnMetricsContext);
+  const barInset = useBarInset();
+  const columnTops = [...(columns?.byColumn.values() ?? [])].map((metrics) => metrics.safeArea.top);
+  const paneHeight = Math.max(barInset, ...columnTops);
+  if (inPane) {
+    return {
+      rowTop: Math.max(0, paneHeight - NAVIGATION_BAR_HEIGHT),
+      rowHeight: NAVIGATION_BAR_CONTROLS_HEIGHT,
+      left: 0,
+      right: 0,
+      narrow: false,
+      statusTop: 0,
+      height: paneHeight,
+    };
+  }
+  if (band) {
+    return {
+      rowTop: 0,
+      rowHeight: band.height,
+      left: band.left,
+      right: band.right,
+      narrow: true,
+      statusTop: safeTop,
+      height: band.height,
+    };
+  }
+  return {
+    rowTop: safeTop,
+    rowHeight: EXPANDED_ROW_HEIGHT,
+    left: 0,
+    right: 0,
+    narrow: false,
+    statusTop: safeTop,
+    height: safeTop + EXPANDED_ROW_HEIGHT,
+  };
 }
 
 type Ink = "light" | "dark";
@@ -257,19 +379,6 @@ function Glass(props: {
       {props.children}
     </View>
   );
-}
-
-/** Safari's bar: compact while the page scrolls down, whole again when it scrolls back up. */
-export function useBarFollowsScroll() {
-  const [compact, setCompact] = useState(false);
-  const show = (next: boolean) => {
-    if (next !== compact) setCompact(next);
-  };
-  return {
-    compact,
-    follow: (direction: "up" | "down") => show(direction === "down"),
-    expand: () => show(false),
-  };
 }
 
 function hostOf(value: string): string {
