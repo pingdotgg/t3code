@@ -3372,6 +3372,7 @@ export const layerWsRpc = (
         [WS_METHODS.computerHostDecide]: (input) => computer.hostDecide(input),
         [WS_METHODS.computerHostAuthorize]: (input) => computer.hostAuthorize(input),
         [WS_METHODS.computerHostEvent]: (input) => computer.hostEvent(input),
+        [WS_METHODS.computerHostAccess]: (input) => computer.hostAccess(input),
         [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
