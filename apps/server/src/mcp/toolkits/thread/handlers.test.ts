@@ -328,6 +328,125 @@ it.effect("sets and clears a goal with its loop paused, starting no work", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect(
+  "refuses text an unrelated thread puts into another thread when the owner blocks it",
+  () => {
+    const callerId = ThreadId.make("thread:mcp-thread-controls-outsider");
+    const blocked = {
+      code: "thread_not_sendable",
+      message: "The owner has blocked messages from other threads",
+    };
+    return Effect.gen(function* () {
+      const toolkit = yield* ThreadToolkit;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      yield* createThread;
+      yield* createThreadOn(callerId);
+      // Tools that write to another thread need a caller with a live run.
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("mcp-thread-controls:outsider:start"),
+        threadId: callerId,
+        messageId: MessageId.make("message:mcp-thread-controls-outsider"),
+        text: "Work",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("mcp-thread-controls:outsider:goal"),
+        threadId,
+        goal: "The owner's goal",
+        goalLoopState: "paused",
+      });
+
+      expect(
+        yield* last(toolkit.handle("t3_thread_goal", { threadId, goal: "An outsider's goal" })),
+      ).toMatchObject(blocked);
+      expect(
+        yield* last(
+          toolkit.handle("t3_thread_goal_loop", {
+            threadId,
+            action: "resume",
+            expectedState: "paused",
+          }),
+        ),
+      ).toMatchObject(blocked);
+      expect(
+        yield* last(
+          toolkit.handle("t3_queue", {
+            threadId,
+            action: "edit",
+            queuedRunId: RunId.make("run:any-queued"),
+            text: "Do something else",
+          }),
+        ),
+      ).toMatchObject(blocked);
+
+      const target = yield* readThread;
+      expect(target.thread.goal).toBe("The owner's goal");
+      expect(target.thread.goalLoop?.state).toBe("paused");
+      expect(target.runs).toHaveLength(0);
+      expect(
+        target.turnItems.flatMap((item) =>
+          item.type === "notification" ? [[item.summary, item.detail]] : [],
+        ),
+      ).toEqual([
+        [
+          "T3 Code blocked a goal from Thread controls (other threads are blocked in Settings)",
+          "An outsider's goal",
+        ],
+        [
+          "T3 Code blocked a goal loop change (resume) from Thread controls (other threads are blocked in Settings)",
+          undefined,
+        ],
+        [
+          "T3 Code blocked an edit to a queued message from Thread controls (other threads are blocked in Settings)",
+          "Do something else",
+        ],
+      ]);
+      // Its own thread is never an outsider.
+      expect(
+        yield* last(toolkit.handle("t3_thread_goal", { threadId: callerId, goal: "My own goal" })),
+      ).toHaveProperty("sequence");
+    }).pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ThreadHandlers.layer).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              ThreadManagement.layer.pipe(
+                Layer.provide(ServerSettings.layerTest({ agentMessagePolicy: "block" })),
+                Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+                Layer.provideMerge(layerOrchestrator),
+              ),
+              ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+              NodeCrypto.layer,
+              layerDatabase,
+            ),
+          ),
+          Layer.provideMerge(
+            Layer.succeed(McpInvocationContext.McpInvocationContext, {
+              environmentId: EnvironmentId.make("environment"),
+              requestNamespace: `provider-session:${callerId}`,
+              thread: {
+                threadId: callerId,
+                providerSessionId: `provider-session:${callerId}`,
+                providerInstanceId: instanceId,
+              },
+              client: undefined,
+              issuedAt: 0,
+              capabilities: new Set(["orchestration" as const]),
+            }),
+          ),
+          Layer.provideMerge(layerDiffStub),
+          Layer.provideMerge(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        ),
+      ),
+    );
+  },
+);
+
 it.effect("refuses to start work that does not match the expected run", () =>
   Effect.gen(function* () {
     const toolkit = yield* ThreadToolkit;

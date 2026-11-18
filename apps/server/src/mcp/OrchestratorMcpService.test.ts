@@ -33,6 +33,7 @@ import {
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
+  ServerSettingsError,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
@@ -81,6 +82,10 @@ import * as DelegationPolicy from "./DelegationPolicy.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
+import {
+  AGENT_MESSAGES_BLOCKED,
+  makeRefuseBlockedSender,
+} from "../orchestration-v2/AgentMessagePolicy.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore.ts";
@@ -3336,8 +3341,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 Effect.result,
                 Effect.map(
                   (result) =>
-                    result._tag === "Failure" &&
-                    result.failure.message === OrchestratorMcpService.AGENT_MESSAGES_BLOCKED,
+                    result._tag === "Failure" && result.failure.message === AGENT_MESSAGES_BLOCKED,
                 ),
               );
           const notices = (threadId: ThreadId) =>
@@ -3391,12 +3395,90 @@ describe("OrchestratorMcpService provider resolution", () => {
             },
           ]);
 
+          // The same text again is the same row; long text is cut at 2,000 characters.
+          assert.isTrue(yield* blocked(from(unrelated), root, "Stop what you are doing"));
+          assert.lengthOf(yield* notices(root), 2);
+          assert.isTrue(yield* blocked(from(unrelated), root, "x".repeat(2_100)));
+          const long = (yield* notices(root))[2]?.detail ?? "";
+          assert.isTrue(long.endsWith("\n[100 more characters not shown]"));
+          assert.lengthOf(long, 2_000 + "\n[100 more characters not shown]".length);
+
+          // A task delegated from another machine: that machine's parent thread is inside its tree.
+          const remoteTask = ThreadId.make("thread:policy-remote-task");
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "agent",
+            creationSource: "mcp",
+            commandId: CommandId.make("policy:remote-task:create"),
+            threadId: remoteTask,
+            projectId: policyProjectId,
+            title: "Policy remote task",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            linkOrigin: { sessionId: "linked", label: "Other machine", access: "full-access" },
+            delegatedFrom: linked.client!.senderThread!,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "mcp",
+            commandId: CommandId.make("policy:remote-task:start"),
+            threadId: remoteTask,
+            messageId: MessageId.make("policy:remote-task:message"),
+            text: "Work",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          });
+          const remoteTaskChild = yield* delegate(remoteTask, "remote-task-child");
+          const otherLinked: McpInvocationScope = {
+            ...linked,
+            client: {
+              ...linked.client!,
+              senderThread: {
+                ...linked.client!.senderThread!,
+                threadId: ThreadId.make("thread:remote-stranger"),
+              },
+            },
+          };
+          assert.isFalse(yield* blocked(linked, remoteTask));
+          assert.isFalse(yield* blocked(linked, remoteTaskChild));
+          assert.isTrue(yield* blocked(otherLinked, remoteTask));
+          assert.isTrue(yield* blocked(otherLinked, remoteTaskChild));
+
           yield* settings.updateSettings({ agentMessagePolicy: "allow" });
           assert.isFalse(yield* blocked(from(unrelated), root));
           assert.isFalse(yield* blocked(linked, root));
-          assert.lengthOf(yield* notices(root), 2);
+          assert.lengthOf(yield* notices(root), 3);
         }).pipe(Effect.provide(layerTest));
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("refuses, and does not allow, when the message policy cannot be read", () =>
+    Effect.gen(function* () {
+      const refuse = makeRefuseBlockedSender({
+        threads: {
+          getThreadShell: () => Effect.die("The policy is read before any thread."),
+          dispatch: () => Effect.die("Nothing is recorded when the policy is unknown."),
+        },
+        settings: {
+          getSettings: Effect.fail(
+            new ServerSettingsError({
+              settingsPath: "/synthetic/settings.json",
+              operation: "read-file",
+              cause: "unreadable",
+            }),
+          ),
+        },
+      });
+      const error = yield* refuse(
+        { threadId: ThreadId.make("thread:policy-sender") },
+        { threadId: ThreadId.make("thread:policy-target"), attempted: "a message", text: "hello" },
+      ).pipe(Effect.flip);
+      assert.equal(error._tag, "AgentMessagePolicyUnavailableError");
+    }),
   );
 
   it.effect.each(["local", "remote"] as const)(

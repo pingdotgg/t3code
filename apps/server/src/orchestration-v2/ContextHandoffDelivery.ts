@@ -49,10 +49,10 @@ export const withInlineContext = (context: string, userText: string): string =>
 const NOTIFICATION_DETAIL_LIMIT = 20_000;
 
 /** Caps text shown in a turn item, which travels over the websocket, and says how much was cut. */
-export const capNotificationDetail = (text: string): string =>
-  text.length <= NOTIFICATION_DETAIL_LIMIT
+export const capNotificationDetail = (text: string, limit = NOTIFICATION_DETAIL_LIMIT): string =>
+  text.length <= limit
     ? text
-    : `${text.slice(0, NOTIFICATION_DETAIL_LIMIT)}\n[${(text.length - NOTIFICATION_DETAIL_LIMIT).toLocaleString("en-US")} more characters not shown]`;
+    : `${text.slice(0, limit)}\n[${(text.length - limit).toLocaleString("en-US")} more characters not shown]`;
 
 /** The notification that shows the user what T3 Code added to a turn; undefined when it added nothing. */
 export const turnAddedContextNotification = (

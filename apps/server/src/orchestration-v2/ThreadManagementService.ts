@@ -70,6 +70,11 @@ import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimi
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  AGENT_MESSAGES_BLOCKED,
+  type AgentMessageSender,
+  makeRefuseBlockedSender,
+} from "./AgentMessagePolicy.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
@@ -153,6 +158,8 @@ export interface ThreadManagementSendInput {
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
   readonly linkedSender?: OrchestrationV2LinkedSender;
+  /** A linked environment's client is sending, whether or not it named a thread. */
+  readonly linkedCaller?: { readonly sessionId: string; readonly label: string };
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
@@ -257,6 +264,31 @@ export class ThreadManagementThreadArchivedError extends Schema.TaggedError<Thre
 ) {
   override get message(): string {
     return `Thread ${this.threadId} is archived and cannot receive messages.`;
+  }
+}
+
+/** The owner's `block` policy refused text from a thread outside the target's delegation tree. */
+export class ThreadManagementSenderBlockedError extends Schema.TaggedError<ThreadManagementSenderBlockedError>()(
+  "ThreadManagementSenderBlockedError",
+  {
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return AGENT_MESSAGES_BLOCKED;
+  }
+}
+
+/** The owner's message policy could not be read or applied, so nothing was sent. */
+export class ThreadManagementPolicyUnavailableError extends Schema.TaggedError<ThreadManagementPolicyUnavailableError>()(
+  "ThreadManagementPolicyUnavailableError",
+  {
+    threadId: ThreadId,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.detail;
   }
 }
 
@@ -374,6 +406,8 @@ export const ThreadManagementError = Schema.Union([
   ThreadManagementThreadNotFoundError,
   ThreadManagementRunNotFoundError,
   ThreadManagementThreadArchivedError,
+  ThreadManagementSenderBlockedError,
+  ThreadManagementPolicyUnavailableError,
   ThreadManagementNoSteerableRunError,
   ThreadManagementThreadNotInterruptibleError,
   ThreadManagementProjectionLoadError,
@@ -474,6 +508,14 @@ export interface ThreadManagementServiceShape {
   }) => Effect.Effect<boolean>;
   /** Receipt replays start no work; skip enablement checks with the same command id so settings cannot reject accepted retries. */
   readonly hasReceipt: (commandId: CommandId) => Effect.Effect<boolean>;
+  /** Under the owner's `block` policy, refuses and records text an agent puts into a thread outside its delegation tree. */
+  readonly refuseBlockedSender: (
+    sender: AgentMessageSender | undefined,
+    input: { readonly threadId: ThreadId; readonly attempted: string; readonly text: string },
+  ) => Effect.Effect<
+    void,
+    ThreadManagementSenderBlockedError | ThreadManagementPolicyUnavailableError
+  >;
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
@@ -892,6 +934,28 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const applyMessagePolicy = makeRefuseBlockedSender({
+    threads: {
+      getThreadShell: orchestrator.getThreadShell,
+      dispatch: (command) => dispatch(command),
+    },
+    settings: serverSettings,
+  });
+  const refuseBlockedSender: ThreadManagementServiceShape["refuseBlockedSender"] = (
+    sender,
+    input,
+  ) =>
+    applyMessagePolicy(sender, input).pipe(
+      Effect.mapError((error) =>
+        error._tag === "AgentMessageBlockedError"
+          ? new ThreadManagementSenderBlockedError({ threadId: input.threadId })
+          : new ThreadManagementPolicyUnavailableError({
+              threadId: input.threadId,
+              detail: error.message,
+            }),
+      ),
+    );
+
   const sendToThread: ThreadManagementServiceShape["sendToThread"] = Effect.fn(
     "ThreadManagementService.sendToThread",
   )(function* (input) {
@@ -901,6 +965,19 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
       });
     }
+    // Every agent send comes through here, so this is where the owner's policy is applied.
+    yield* refuseBlockedSender(
+      input.senderThreadId !== undefined
+        ? { threadId: input.senderThreadId }
+        : input.linkedCaller !== undefined
+          ? { linked: { ...input.linkedCaller, from: input.linkedSender } }
+          : undefined,
+      {
+        threadId: input.threadId,
+        attempted: input.attachments.length > 0 ? "a message with attachments" : "a message",
+        text: input.text,
+      },
+    );
     const steerableRun = latestSteerableRun(target);
     // A fresh send never joins a running turn, so it needs none to steer or restart.
     const mode =
@@ -1801,6 +1878,7 @@ const make = Effect.gen(function* () {
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,
+    refuseBlockedSender,
     waitForThread,
     settleAfterRun,
     settleThread,

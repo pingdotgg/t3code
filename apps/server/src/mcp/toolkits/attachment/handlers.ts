@@ -89,7 +89,7 @@ export const layer = McpToolAccess.toLayer(
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {
-            const { caller, projection } = yield* readThread(input.threadId, ["messages"]);
+            const { caller, scope, projection } = yield* readThread(input.threadId, ["messages"]);
             if (projection.thread.archivedAt !== null)
               return yield* new OrchestratorMcpFailure({
                 code: "invalid_request",
@@ -107,6 +107,14 @@ export const layer = McpToolAccess.toLayer(
               commandId,
               messageId,
               ...(caller === undefined ? {} : { senderThreadId: caller.id }),
+              ...(caller === undefined && scope.client?.linked === true
+                ? {
+                    linkedCaller: { sessionId: scope.client.sessionId, label: scope.client.label },
+                    ...(scope.client.senderThread === undefined
+                      ? {}
+                      : { linkedSender: scope.client.senderThread }),
+                  }
+                : {}),
               text: input.message ?? "",
               attachments,
               mode: "auto",

@@ -14,6 +14,8 @@ import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { topOfPinnedRunOrderKey } from "@t3tools/shared/pinOrderKey";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { threadManagementFailure } from "../../OrchestratorMcpService.ts";
+import { agentMessageSenderOf } from "../../../orchestration-v2/AgentMessagePolicy.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
   assertTargetWithinLimits,
@@ -173,6 +175,19 @@ const readConfiguration = Effect.fn("mcp.readThreadConfiguration")(function* (
     goalLoop: thread.goalLoop ?? null,
   };
 });
+/** Applies the owner's block policy before an agent puts text into a thread it names. */
+const refuseBlocked = Effect.fn("mcp.refuseBlockedThreadWrite")(function* (
+  threadId: ThreadId | undefined,
+  attempted: string,
+  text: string,
+) {
+  // No thread named means the caller's own.
+  if (threadId === undefined) return;
+  const { scope, threads } = yield* readCaller();
+  yield* threads
+    .refuseBlockedSender(agentMessageSenderOf(scope), { threadId, attempted, text })
+    .pipe(Effect.mapError(threadManagementFailure));
+});
 const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
@@ -271,6 +286,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           if (input.action === "merge_back") {
             const targetThreadId = yield* required(input.targetThreadId, "targetThreadId");
             yield* readThread(targetThreadId);
+            yield* refuseBlocked(
+              targetThreadId,
+              "a merge back",
+              `From thread ${projection.thread.id}.`,
+            );
             const result = yield* threads
               .dispatch({
                 type: "thread.merge_back",
@@ -327,6 +347,18 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           threadId: input.threadId,
           requestId,
         });
+        if (input.action !== "dismiss") {
+          yield* refuseBlocked(
+            input.threadId,
+            "an answer to a question",
+            Object.entries(input.answers ?? {})
+              .map(
+                ([question, answer]) =>
+                  `${question}: ${typeof answer === "string" ? answer : Array.isArray(answer) ? answer.join(", ") : "(structured answer)"}`,
+              )
+              .join("\n"),
+          );
+        }
         const result = yield* threads
           .dispatch(
             input.action === "dismiss"
@@ -458,12 +490,16 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   // An idle loop is driven by GoalLoopService, so a goal set here seeds its loop paused.
   t3_thread_goal: writesThread((input) =>
-    dispatch(input.threadId, (common) => ({
-      ...common,
-      type: "thread.metadata.update",
-      goal: input.goal,
-      ...(input.goal === null ? {} : { goalLoopState: "paused" as const }),
-    })),
+    refuseBlocked(input.threadId, "a goal", input.goal ?? "").pipe(
+      Effect.andThen(
+        dispatch(input.threadId, (common) => ({
+          ...common,
+          type: "thread.metadata.update",
+          goal: input.goal,
+          ...(input.goal === null ? {} : { goalLoopState: "paused" as const }),
+        })),
+      ),
+    ),
   ),
   // ponytail: expected state is checked before dispatch, not under the thread lock (dispatch
   // takes that lock and it is not reentrant). A guard field on the client loop command would
@@ -477,6 +513,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       const state = thread.goalLoop?.state ?? "idle";
       if (state !== input.expectedState)
         return yield* refuse(`The goal loop is ${state}, not ${input.expectedState}.`);
+      yield* refuseBlocked(
+        input.threadId,
+        `a goal loop change (${input.action})`,
+        input.reason ?? "",
+      );
       return yield* dispatch(thread.id, (common) => ({
         ...common,
         type: "thread.goal.loop",
@@ -575,6 +616,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         switch (input.action) {
           case "edit": {
             const text = yield* required(input.text, "text");
+            yield* refuseBlocked(input.threadId, "an edit to a queued message", text);
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
               type: "queued-run.edit",
