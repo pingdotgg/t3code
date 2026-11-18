@@ -82,6 +82,7 @@ import {
   PlugIcon,
   SquarePenIcon,
   TextSearchIcon,
+  KeyRoundIcon,
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
@@ -1417,6 +1418,20 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: "preview.find",
       run: async () => {
         dispatchPreviewAction("find");
+      },
+    });
+  }
+
+  if (activeThreadPreviewOpen) {
+    actionItems.push({
+      kind: "action",
+      value: "fill-browser-login",
+      title: gt("Fill a login in browser"),
+      searchTerms: ["login", "password", "1password", "sign in", "2fa", "code", "browser"],
+      icon: <KeyRoundIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "preview.logins",
+      run: async () => {
+        dispatchPreviewAction("logins");
       },
     });
   }

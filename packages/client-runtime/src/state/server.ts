@@ -1902,6 +1902,14 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:check-secret-source",
       tag: WS_METHODS.serverCheckSecretSource,
     }),
+    listBrowserLoginVaults: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:list-browser-login-vaults",
+      tag: WS_METHODS.browserLoginsListVaults,
+    }),
+    checkBrowserLogins: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:check-browser-logins",
+      tag: WS_METHODS.browserLoginsCheck,
+    }),
     listTextGeneratorModels: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:list-text-generator-models",
       tag: WS_METHODS.serverListTextGeneratorModels,

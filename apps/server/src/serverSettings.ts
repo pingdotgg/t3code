@@ -56,7 +56,10 @@ import {
 } from "@t3tools/shared/serverSettings";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
-import { secretProviderDefinitions } from "./secrets/secretProviderDefinitions.ts";
+import {
+  BUILT_IN_SECRET_PROVIDER_DRIVER_LIST,
+  secretProviderDefinitions,
+} from "./secrets/secretProviderDefinitions.ts";
 import {
   readSecretFieldValues,
   sourceControlHostSecretName,
@@ -229,6 +232,34 @@ function ensureSecretProviderWritesAllowed(
     }
   }
   return Effect.void;
+}
+
+const loginProviderKinds = new Set<string>(
+  BUILT_IN_SECRET_PROVIDER_DRIVER_LIST.flatMap((driver) =>
+    driver.logins === undefined ? [] : [driver.kind],
+  ),
+);
+
+// Browser logins may name only a saved secret provider whose kind can list logins.
+function ensureBrowserLoginsWriteAllowed(
+  next: ServerSettings,
+  patch: ServerSettingsPatch,
+  settingsPath: string,
+): Effect.Effect<ServerSettings, ServerSettingsError> {
+  const browserLogins = patch.browserLogins;
+  if (browserLogins === undefined || browserLogins === null) return Effect.succeed(next);
+  const provider = Object.hasOwn(next.secretProviders, browserLogins.provider)
+    ? next.secretProviders[browserLogins.provider]
+    : undefined;
+  return provider !== undefined && loginProviderKinds.has(provider.kind)
+    ? Effect.succeed(next)
+    : Effect.fail(
+        new ServerSettingsError({
+          settingsPath,
+          operation: "write-browser-logins",
+          cause: new Error(`Secret provider ${browserLogins.provider} cannot fill browser logins.`),
+        }),
+      );
 }
 
 function ensureProviderInstanceMutationAllowed(
@@ -1378,7 +1409,13 @@ const make = Effect.gen(function* () {
     updateSettings: (patch) =>
       updateAndPersistSettings(patch, (current) =>
         ensureSecretProviderWritesAllowed(patch, settingsPath).pipe(
-          Effect.as(applyServerSettingsPatch(current, patch)),
+          Effect.andThen(() =>
+            ensureBrowserLoginsWriteAllowed(
+              applyServerSettingsPatch(current, patch),
+              patch,
+              settingsPath,
+            ),
+          ),
         ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>

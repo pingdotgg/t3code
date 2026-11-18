@@ -76,6 +76,19 @@ export function createPreviewEnvironmentAtoms<R, E>(
       label: "environment-data:preview:stop-local-server",
       tag: WS_METHODS.previewStopLocalServer,
     }),
+    listLogins: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:list-logins",
+      tag: WS_METHODS.browserLoginsListForTab,
+      concurrency: {
+        mode: "latest",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.threadId, input.tabId]),
+      },
+    }),
+    fillLogin: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:fill-login",
+      tag: WS_METHODS.browserLoginsFillForTab,
+    }),
     reportStatus: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:report-status",
       tag: WS_METHODS.previewReportStatus,

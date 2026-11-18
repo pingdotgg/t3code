@@ -42,6 +42,26 @@ naming the secret provider. Unlock 1Password on the server's machine, then selec
 **Settings → Providers**. T3 Code never replaces a saved credential it cannot read with another
 login.
 
+## Fill logins in the browser
+
+T3 Code can fill Login items from one 1Password vault into pages in the in-app browser, for you and
+for agents. Agents see each login's title, URLs, and which fields it has. The fill tools never
+return the username, password, or one-time code, and snapshots hide them. A page can still show
+your username on its own, for example on a sign-in step, and an agent that runs scripts in the page
+can read any field. A password fills only into a password field, and a login fills only on a page
+whose origin exactly matches one of its URLs: https, or http on `localhost`. Fields in a frame from
+another origin are never filled, and a fill never submits the form.
+
+To turn it on, add a secret provider, then in **Settings → Secrets** turn on **Fill browser logins**
+and choose the provider and vault. Select **Check** to see how many logins the vault holds. Agents
+can use every login in the vault, so use one that holds only the logins you want them to use. With
+1Password Connect, `op` cannot list vaults, so type the vault's name.
+
+On a page that can take a login, the browser toolbar shows a key. Select it, or press `Mod+Alt+L`
+with the browser focused, then **Fill login** to fill the username and password, or **Fill code** to
+fill the one-time code. While an agent controls the tab, take control first. The fill runs on the
+server's machine, where 1Password is, so it works for tabs on remote environments too.
+
 ## Remove a secret provider
 
 When you remove a secret provider in **Settings → Secrets**, T3 Code lists the fields that read

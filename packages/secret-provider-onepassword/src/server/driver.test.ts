@@ -8,12 +8,16 @@ import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import * as NodeFS from "node:fs";
+
+import type { SecretProviderLoginsError } from "@t3tools/secret-provider-core/server/driver";
 
 import { OnePasswordAccount } from "../shared/definition.ts";
 import { driver } from "./driver.ts";
@@ -178,5 +182,142 @@ describe("1Password driver", () => {
 
       assert.isAtMost(yield* Fiber.join(reading), 45_000);
     }).pipe(Effect.provide(Layer.merge(op.layer, templateFile)));
+  });
+});
+
+const SENTINEL = "SENTINEL-do-not-leak";
+const loginItem = {
+  id: "abc123",
+  title: "Acme",
+  version: 2,
+  vault: { id: "vault1", name: "Agents" },
+  category: "LOGIN",
+  additional_information: SENTINEL,
+  urls: [{ label: "website", primary: true, href: "https://acme.test/login" }],
+  fields: [
+    { id: "username", type: "STRING", purpose: "USERNAME", label: "email", value: SENTINEL },
+    {
+      id: "password",
+      type: "CONCEALED",
+      purpose: "PASSWORD",
+      label: "new-password",
+      value: SENTINEL,
+    },
+    { id: "notesPlain", type: "STRING", purpose: "NOTES", label: "notesPlain", value: SENTINEL },
+    {
+      id: "TOTP_x1",
+      section: { id: "Section_1" },
+      type: "OTP",
+      label: "one-time password",
+      value: SENTINEL,
+      totp: SENTINEL,
+      reference: `op://Agents/Acme/Section_1/${SENTINEL}`,
+    },
+  ],
+};
+
+describe("1Password driver logins", () => {
+  const logins = driver.logins!;
+
+  it.effect("lists only allowlisted login metadata from one vault", () => {
+    const op = fakeOp(() => ({
+      stdout: JSON.stringify([
+        { ...loginItem, fields: undefined },
+        { ...loginItem, id: "note1", category: "SECURE_NOTE" },
+      ]),
+    }));
+    return Effect.gen(function* () {
+      const listed = yield* logins.list({ account }, "vault1");
+      assert.deepStrictEqual(listed, [
+        { id: "abc123", title: "Acme", urls: ["https://acme.test/login"] },
+      ]);
+      assert.notInclude(JSON.stringify(listed), SENTINEL);
+      assert.deepStrictEqual(op.invocations, [
+        [
+          "--cache=false",
+          "item",
+          "list",
+          "--account=my.1password.com",
+          "--vault=vault1",
+          "--categories=Login",
+          "--format=json",
+        ],
+      ]);
+    }).pipe(Effect.provide(op.layer));
+  });
+
+  it.effect("finds fillable fields by purpose and type, as id references, without values", () => {
+    const op = fakeOp(() => ({ stdout: JSON.stringify(loginItem) }));
+    return Effect.gen(function* () {
+      const detail = yield* logins.get({ account }, "vault1", "abc123");
+      assert.deepStrictEqual(detail, {
+        id: "abc123",
+        title: "Acme",
+        urls: ["https://acme.test/login"],
+        fields: {
+          username: "op://vault1/abc123/username",
+          password: "op://vault1/abc123/password",
+          otp: "op://vault1/abc123/TOTP_x1?attribute=otp",
+        },
+      });
+      assert.notInclude(JSON.stringify(detail), SENTINEL);
+      assert.deepStrictEqual(op.invocations[0]?.slice(1, 4), ["item", "get", "abc123"]);
+    }).pipe(Effect.provide(op.layer));
+  });
+
+  it.effect("maps op failures to reasons and never asks for an id that is not one", () => {
+    const answers: Record<string, OpResult> = {
+      vault: { code: 1, stderr: '[ERROR] "nope" isn\'t a vault in this account.' },
+      item: { code: 1, stderr: '[ERROR] "zzz" isn\'t an item in the "vault1" vault.' },
+      locked: { code: 1, stderr: "[ERROR] error initializing client: authorization timeout" },
+      garbled: { stdout: `not json ${SENTINEL}` },
+    };
+    let answer: OpResult = {};
+    const op = fakeOp(() => answer);
+    const reasonOf = <A, R>(effect: Effect.Effect<A, SecretProviderLoginsError, R>) =>
+      Effect.flip(effect).pipe(Effect.map((error) => error.reason));
+    return Effect.gen(function* () {
+      answer = answers.vault!;
+      assert.strictEqual(yield* reasonOf(logins.list({ account }, "nope")), "vaultNotFound");
+      answer = answers.item!;
+      assert.strictEqual(yield* reasonOf(logins.get({ account }, "vault1", "zzz")), "itemNotFound");
+      answer = answers.locked!;
+      assert.strictEqual(yield* reasonOf(logins.list({ account }, "vault1")), "unavailable");
+      answer = answers.garbled!;
+      assert.strictEqual(yield* reasonOf(logins.list({ account }, "vault1")), "unavailable");
+      const calls = op.invocations.length;
+      assert.strictEqual(
+        yield* reasonOf(logins.get({ account }, "vault1", "--reveal")),
+        "itemNotFound",
+      );
+      assert.strictEqual(op.invocations.length, calls);
+    }).pipe(Effect.provide(op.layer));
+  });
+
+  it.effect("lists vault names and ids, and none through 1Password Connect", () => {
+    const op = fakeOp(() => ({
+      stdout: JSON.stringify([
+        { id: "vault1", name: "Agents", content_version: 3, items: SENTINEL },
+      ]),
+    }));
+    const env = (vars: Record<string, string>) =>
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: vars })));
+    return Effect.gen(function* () {
+      assert.deepStrictEqual(
+        yield* logins.vaults({ account }).pipe(env({})),
+        Option.some([{ id: "vault1", name: "Agents" }]),
+      );
+      assert.deepStrictEqual(op.invocations[0]?.slice(1), [
+        "vault",
+        "list",
+        "--account=my.1password.com",
+        "--format=json",
+      ]);
+      assert.deepStrictEqual(
+        yield* logins.vaults({ account }).pipe(env({ OP_CONNECT_HOST: "https://c" })),
+        Option.none(),
+      );
+      assert.strictEqual(op.invocations.length, 1);
+    }).pipe(Effect.provide(op.layer));
   });
 });

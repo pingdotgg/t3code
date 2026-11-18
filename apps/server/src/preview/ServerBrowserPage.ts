@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - Playwright callbacks run outside the Effect runtime.
 
 import {
+  BrowserLoginError,
+  type BrowserLoginField,
   type BrowserRecordingFrameRate,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type PreviewAutomationClickInput,
@@ -22,9 +24,17 @@ import {
 } from "@t3tools/contracts";
 import { constVoid } from "effect/Function";
 import * as Schema from "effect/Schema";
-import type { CDPSession, ConsoleMessage, Frame, Locator, Page } from "playwright-core";
+import type {
+  CDPSession,
+  ConsoleMessage,
+  ElementHandle,
+  Frame,
+  Locator,
+  Page,
+} from "playwright-core";
 import * as NodeCrypto from "node:crypto";
 import * as NodeUtil from "node:util";
+import { detectLoginFields } from "./loginFields.ts";
 import { BrowserControlInterrupted } from "./SessionControl.ts";
 
 const isBrowserControlInterrupted = Schema.is(BrowserControlInterrupted);
@@ -49,10 +59,18 @@ export class ServerBrowserOperationError extends Schema.TaggedError<ServerBrowse
 
 const isServerBrowserOperationError = Schema.is(ServerBrowserOperationError);
 
+const isBrowserLoginError = Schema.is(BrowserLoginError);
+
 export const toOperationError = (
   cause: unknown,
   timeoutMs?: number,
 ): ServerBrowserOperationError => {
+  if (isBrowserLoginError(cause))
+    return new ServerBrowserOperationError({
+      tag: cause._tag,
+      message: cause.message,
+      detail: { reason: cause.reason },
+    });
   if (isBrowserControlInterrupted(cause))
     return new ServerBrowserOperationError({
       tag: "PreviewAutomationControlInterruptedError",
@@ -434,7 +452,11 @@ const dottedPattern = (values: ReadonlyArray<string>) => {
           ? JSON.stringify(char).slice(1, -1)
           : `\\x${char.charCodeAt(0).toString(16).padStart(2, "0")}`,
       );
-      const forms = [value, json, quoted].flatMap((form) => [form, form.replaceAll("'", "''")]);
+      // A value can reach a URL or form body encoded, as in a GET form or a login_hint.
+      const encoded = encodeURIComponent(value);
+      const forms = [value, json, quoted, encoded, encoded.replaceAll("%20", "+")].flatMap(
+        (form) => [form, form.replaceAll("'", "''")],
+      );
       return [...new Set(forms)].map((form) => ({ form, word: value.length < 4 }));
     })
     // Longest first, so a form inside another never leaves the rest showing.
@@ -735,7 +757,10 @@ const capture = async (
   // A value that changed meanwhile may be in the tree under neither reading.
   if (after.some((values, i) => values && JSON.stringify(values) !== JSON.stringify(before[i])))
     throw pageChanged();
-  const dotted = dottedPattern(after.flatMap((values) => values ?? []));
+  const dotted = dottedPattern([
+    ...after.flatMap((values) => values ?? []),
+    ...(filledLoginValues.get(input.page) ?? []),
+  ]);
   // Unread frames can expose values only if their content appears in the tree.
   const unread = readers.flatMap((reader, i) => (after[i] ? [] : reader.frames));
   const filled = /^\s*- iframe (?:\[active\] )?\[ref=(\S+?)\].*:$/gm;
@@ -763,12 +788,13 @@ const capture = async (
     });
   return {
     ...page,
-    url: withoutDataPayload(page.url),
+    title: mask(page.title),
+    url: mask(withoutDataPayload(page.url)),
     // Mask text before truncating so a value crossing the cut cannot leak its prefix.
     visibleText: mask(page.visibleText).slice(0, MAX_VISIBLE_TEXT_LENGTH),
     accessibilityTree,
-    consoleEntries: [...input.consoleEntries],
-    networkEntries: [...input.networkEntries],
+    consoleEntries: input.consoleEntries.map((entry) => ({ ...entry, text: mask(entry.text) })),
+    networkEntries: input.networkEntries.map((entry) => ({ ...entry, url: mask(entry.url) })),
     actionTimeline: [...input.actionTimeline],
     // Reports the size the PNG path would have shrunk to.
     screenshot: metadataOnly
@@ -988,6 +1014,154 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     await page.keyboard.press("Delete");
   }
   await page.keyboard.insertText(input.text);
+};
+
+const LOGIN_TARGET_TIMEOUT_MS = 10_000;
+const LOGIN_FILL_TIMEOUT_MS = 5_000;
+
+const originOf = (url: string) => URL.parse(url)?.origin ?? "null";
+
+/** Snapshots and status hide these wherever they appear, as they do password values. */
+const filledLoginValues = new WeakMap<Page, Set<string>>();
+
+/** Hides a page's filled login values in text read from it, such as its title or URL. */
+export const withoutFilledLogins = (page: Page, text: string) => {
+  const values = filledLoginValues.get(page);
+  const pattern = values && values.size > 0 ? dottedPattern([...values]) : undefined;
+  return pattern ? text.replace(pattern, MASKED_VALUE) : text;
+};
+
+/**
+ * Fills one element with the secret `read` returns for the page's origin. The page must keep that
+ * origin, and the element's frame and every frame above it must share it, before and after the read.
+ */
+export const fillLogin = async (
+  page: Page,
+  target: string | ElementHandle,
+  field: BrowserLoginField,
+  read: (origin: string) => Promise<string>,
+): Promise<void> => {
+  const origin = originOf(page.url());
+  const element =
+    typeof target === "string"
+      ? await targetLocator(page, { locator: target })!.elementHandle({
+          timeout: LOGIN_TARGET_TIMEOUT_MS,
+        })
+      : target;
+  try {
+    const assertSameOrigin = async () => {
+      if (originOf(page.url()) !== origin)
+        throw new BrowserLoginError({ reason: "originMismatch" });
+      let frame = await element.ownerFrame().catch(() => null);
+      if (frame === null) throw new BrowserLoginError({ reason: "fillFailed" });
+      for (; frame !== null; frame = frame.parentFrame()) {
+        if (originOf(frame.url()) !== origin)
+          throw new BrowserLoginError({ reason: "crossOriginFrame" });
+      }
+    };
+    await assertSameOrigin();
+    const value = await read(origin);
+    await assertSameOrigin();
+    // A password only ever goes into a password input, checked as late as possible.
+    if (field === "password" && !(await isPasswordInput(element)))
+      throw new BrowserLoginError({ reason: "notPasswordField" });
+    // Dots before the value lands, so no screenshot, recording, or stream frame shows it.
+    if (field !== "password") await showAsDots(element);
+    filledLoginValues.set(page, (filledLoginValues.get(page) ?? new Set()).add(value));
+    // Playwright's call log quotes the filled value, so its error never leaves here.
+    await element.fill(value, { timeout: LOGIN_FILL_TIMEOUT_MS }).catch(() => {
+      throw new BrowserLoginError({ reason: "fillFailed" });
+    });
+  } finally {
+    if (typeof target === "string") await element.dispose().catch(constVoid);
+  }
+};
+
+const showAsDots = (element: ElementHandle) =>
+  element
+    .evaluate((node) =>
+      (
+        node as unknown as { style: { setProperty: (n: string, v: string, p: string) => void } }
+      ).style.setProperty("-webkit-text-security", "disc", "important"),
+    )
+    .catch(() => {
+      throw new BrowserLoginError({ reason: "fillFailed" });
+    });
+
+const isPasswordInput = (element: ElementHandle) =>
+  element
+    .evaluate(
+      (node) =>
+        (node as unknown as { localName: string; type: string }).localName === "input" &&
+        (node as unknown as { type: string }).type === "password",
+    )
+    .catch(() => false);
+
+/**
+ * Finds the page's own login fields and fills each through `fillLogin`. A field missing from the
+ * page or the login is reported, not filled. Never submits; never returns or throws a value.
+ */
+export const fillLoginFields = async (
+  page: Page,
+  fields: ReadonlyArray<BrowserLoginField>,
+  read: (field: BrowserLoginField, origin: string) => Promise<string>,
+): Promise<{ filled: Array<BrowserLoginField>; missing: Array<BrowserLoginField> }> => {
+  // Pinned first and read from the same handles, so inputs a page adds can't shift indexes.
+  const handles = await page.locator("input").elementHandles();
+  // Runs in the page, which has the DOM types this module does not.
+  const candidates = await page.evaluate(
+    (elements) =>
+      elements.map((element) => {
+        const input = element as unknown as {
+          type: string;
+          inputMode: string;
+          maxLength: number;
+          disabled: boolean;
+          readOnly: boolean;
+          getAttribute: (name: string) => string | null;
+          getClientRects: () => ArrayLike<unknown>;
+        };
+        const style = (
+          globalThis as unknown as { getComputedStyle: (e: unknown) => { visibility: string } }
+        ).getComputedStyle(input);
+        return {
+          type: input.type.toLowerCase(),
+          autocomplete: input.getAttribute("autocomplete") ?? "",
+          inputMode: input.inputMode,
+          maxLength: input.maxLength,
+          usable:
+            !input.disabled &&
+            !input.readOnly &&
+            style.visibility !== "hidden" &&
+            input.getClientRects().length > 0,
+        };
+      }),
+    handles,
+  );
+  const found = detectLoginFields(candidates);
+  const filled: Array<BrowserLoginField> = [];
+  const missing: Array<BrowserLoginField> = [];
+  try {
+    for (const field of fields) {
+      const index = found[field];
+      const handle = index === undefined ? undefined : handles[index];
+      if (handle === undefined) {
+        missing.push(field);
+        continue;
+      }
+      try {
+        await fillLogin(page, handle, field, (origin) => read(field, origin));
+        filled.push(field);
+      } catch (cause) {
+        if (!isBrowserLoginError(cause)) throw new BrowserLoginError({ reason: "fillFailed" });
+        if (cause.reason !== "fieldMissing") throw cause;
+        missing.push(field);
+      }
+    }
+  } finally {
+    await Promise.all(handles.map((handle) => handle.dispose().catch(constVoid)));
+  }
+  return { filled, missing };
 };
 
 export const hover = async (

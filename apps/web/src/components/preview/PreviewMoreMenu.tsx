@@ -40,6 +40,7 @@ export interface PreviewMoreMenuActions {
   readonly openDevTools?: () => void;
   readonly toggleNativePictureInPicture?: () => void;
   readonly find?: () => void;
+  readonly logins?: () => void;
 }
 
 interface Props {
@@ -52,6 +53,7 @@ interface Props {
   nativePictureInPicture: boolean;
   profileName: string | undefined;
   findShortcutLabel?: string | null;
+  loginsShortcutLabel?: string | null;
   move?: { readonly label: string; readonly onMove: () => void };
 }
 
@@ -92,6 +94,7 @@ export function PreviewMoreMenu({
   nativePictureInPicture,
   profileName,
   findShortcutLabel,
+  loginsShortcutLabel,
   move,
 }: Props) {
   const gt = useGT();
@@ -106,6 +109,12 @@ export function PreviewMoreMenu({
           <MenuItem onClick={actions.find} disabled={disabled}>
             <T>Find on page</T>
             {findShortcutLabel ? <MenuShortcut>{findShortcutLabel}</MenuShortcut> : null}
+          </MenuItem>
+        ) : null}
+        {actions.logins ? (
+          <MenuItem onClick={actions.logins} disabled={disabled}>
+            <T>Fill a login</T>
+            {loginsShortcutLabel ? <MenuShortcut>{loginsShortcutLabel}</MenuShortcut> : null}
           </MenuItem>
         ) : null}
         <MenuItem onClick={actions.hardReload} disabled={disabled}>

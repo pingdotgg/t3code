@@ -155,6 +155,10 @@ describe("command permissions", () => {
   it.effect.each([
     { method: WS_METHODS.serverRunStorageCleanup, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.serverReclaimDatabaseSpace, scope: AuthEnvironmentMaintainScope },
+    { method: WS_METHODS.browserLoginsListForTab, scope: AuthPreviewOperateScope },
+    { method: WS_METHODS.browserLoginsFillForTab, scope: AuthPreviewOperateScope },
+    { method: WS_METHODS.browserLoginsListVaults, scope: AuthProvidersManageScope },
+    { method: WS_METHODS.browserLoginsCheck, scope: AuthProvidersManageScope },
   ])("requires the destination $scope grant for $method", ({ method, scope }) =>
     Effect.gen(function* () {
       const registry = yield* setup;

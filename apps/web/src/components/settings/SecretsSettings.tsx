@@ -1,7 +1,11 @@
 import type { EnvironmentId, SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { BrowserLoginError } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { PlusIcon } from "lucide-react";
-import { useState } from "react";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { useEffect, useEffectEvent, useState } from "react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import type { EnvironmentPresentation } from "../../state/environments";
@@ -17,6 +21,11 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
+import { serverEnvironment } from "../../state/server";
+import { BROWSER_LOGIN_REASON_TEXT } from "../preview/PreviewLoginsButton.logic";
 import { SecretProviderDialog } from "./SecretProviderDialog";
 import { classifySecretProvider } from "./SecretProviderDialog.logic";
 import { secretProviderUses } from "./SecretsSettings.logic";
@@ -198,6 +207,15 @@ function EnvironmentSecretProviders({
           {...(editing === undefined ? {} : { existing: editing })}
         />
       ) : null}
+      {environment.serverConfig?.environment.capabilities.browserLogins === true ? (
+        <BrowserLoginsSection
+          environmentId={environmentId}
+          providers={entries.flatMap(([id, config]) =>
+            LOGIN_PROVIDER_KINDS.has(config.kind) ? [{ id, label: config.label }] : [],
+          )}
+          readOnly={readOnly}
+        />
+      ) : null}
     </>
   );
 }
@@ -283,5 +301,219 @@ function SecretProviderUses({
         ))}
       </ul>
     </>
+  );
+}
+
+const isBrowserLoginError = Schema.is(BrowserLoginError);
+
+// Kinds whose server driver can list logins; the server checks this again when saving.
+const LOGIN_PROVIDER_KINDS = new Set<string>(["one_password"]);
+
+function BrowserLoginsSection({
+  environmentId,
+  providers,
+  readOnly,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly providers: ReadonlyArray<{ readonly id: SecretProviderId; readonly label: string }>;
+  readonly readOnly: boolean;
+}) {
+  const gt = useGT();
+  const messages = useMessages();
+  const setting = useSearchableSetting();
+  const saved = useEnvironmentSettings(environmentId, (settings) => settings.browserLogins);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const listVaults = useAtomCommand(serverEnvironment.listBrowserLoginVaults, {
+    reportFailure: false,
+  });
+  const checkLogins = useAtomCommand(serverEnvironment.checkBrowserLogins, {
+    reportFailure: false,
+  });
+  const [draft, setDraft] = useState<{
+    readonly provider: SecretProviderId | null;
+    readonly vault: string;
+  } | null>(null);
+  const [vaults, setVaults] = useState<{
+    readonly provider: SecretProviderId;
+    readonly names: ReadonlyArray<string> | null;
+  } | null>(null);
+  // The check's result, as a `msg()` string or a count, resolved where it renders.
+  const [check, setCheck] = useState<
+    | { readonly kind: "checking" }
+    | { readonly kind: "found"; readonly logins: number }
+    | { readonly kind: "error"; readonly message: string }
+    | null
+  >(null);
+  const enabled = saved !== undefined || draft !== null;
+  const provider = draft?.provider ?? saved?.provider ?? providers[0]?.id ?? null;
+  const vault = draft?.vault ?? saved?.vault ?? "";
+  const vaultNames = vaults?.provider === provider ? vaults.names : undefined;
+
+  const loadVaults = async (id: SecretProviderId) => {
+    const result = await listVaults({ environmentId, input: { provider: id } });
+    setVaults({
+      provider: id,
+      names:
+        result._tag === "Success" && result.value.vaults !== null
+          ? result.value.vaults.map((entry) => entry.name)
+          : null,
+    });
+  };
+  const loadProviderVaults = useEffectEvent((id: SecretProviderId) => void loadVaults(id));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- lists the chosen provider's vault names from the server
+  useEffect(() => {
+    if (!enabled || readOnly || provider === null) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- State changes only after the response arrives.
+    loadProviderVaults(provider);
+  }, [enabled, provider, readOnly]);
+
+  const save = (next: { readonly provider: SecretProviderId; readonly vault: string }) => {
+    setCheck(null);
+    if (next.vault.trim() === "") {
+      setDraft(next);
+      return;
+    }
+    setDraft(null);
+    updateSettings({ browserLogins: { provider: next.provider, vault: next.vault.trim() } });
+  };
+
+  const runCheck = async () => {
+    if (provider === null || vault.trim() === "") return;
+    setCheck({ kind: "checking" });
+    const result = await checkLogins({
+      environmentId,
+      input: { provider, vault: vault.trim() },
+    });
+    if (result._tag === "Success") {
+      setCheck({ kind: "found", logins: result.value.logins });
+      return;
+    }
+    const error = squashAtomCommandFailure(result);
+    setCheck({
+      kind: "error",
+      message: isBrowserLoginError(error)
+        ? BROWSER_LOGIN_REASON_TEXT[error.reason]
+        : msg("Couldn't read the vault."),
+    });
+  };
+
+  const checkText =
+    check === null
+      ? undefined
+      : check.kind === "checking"
+        ? gt("Checking…")
+        : check.kind === "found"
+          ? gt("{count, plural, =1 {1 login found} other {{count} logins found}}", {
+              count: check.logins,
+            })
+          : messages(check.message);
+
+  return (
+    <SettingsSection {...setting("browser-logins")}>
+      <SettingsRow
+        title={gt("Fill browser logins")}
+        description={gt(
+          "Fill logins from one vault into pages in the in-app browser. Agents can use every login in it. Use a vault made for this.",
+        )}
+        control={
+          <Switch
+            checked={enabled}
+            disabled={readOnly || (!enabled && providers.length === 0)}
+            onCheckedChange={(checked) => {
+              setCheck(null);
+              if (checked) {
+                setDraft({ provider, vault: "" });
+                return;
+              }
+              setDraft(null);
+              if (saved !== undefined) updateSettings({ browserLogins: null });
+            }}
+            aria-label={gt("Fill browser logins")}
+          />
+        }
+      />
+      {!enabled && providers.length === 0 ? (
+        <p className="px-4 pb-3 text-xs text-muted-foreground">
+          <T>Add a 1Password provider above to fill logins from it.</T>
+        </p>
+      ) : null}
+      {enabled && provider !== null ? (
+        <>
+          <SettingsRow
+            title={gt("Secret provider")}
+            control={
+              <Select
+                value={provider}
+                disabled={readOnly}
+                onValueChange={(value) => {
+                  if (value === null) return;
+                  save({ provider: value as SecretProviderId, vault: "" });
+                }}
+              >
+                <SelectTrigger aria-label={gt("Secret provider for browser logins")} size="xs">
+                  <SelectValue>
+                    {providers.find((entry) => entry.id === provider)?.label ?? provider}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {providers.map((entry) => (
+                    <SelectItem key={entry.id} value={entry.id}>
+                      {entry.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title={gt("Vault", { $context: "a 1Password vault, the noun" })}
+            description={checkText}
+            control={
+              <div className="flex items-center gap-1">
+                {vaultNames ? (
+                  <Select
+                    value={vault}
+                    disabled={readOnly}
+                    onValueChange={(value) => {
+                      if (value === null) return;
+                      save({ provider, vault: value });
+                    }}
+                  >
+                    <SelectTrigger aria-label={gt("Vault for browser logins")} size="xs">
+                      <SelectValue>{vault === "" ? gt("Choose a vault") : vault}</SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {vaultNames.map((name) => (
+                        <SelectItem key={name} value={name}>
+                          {name}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
+                ) : (
+                  <Input
+                    size="sm"
+                    value={vault}
+                    disabled={readOnly}
+                    placeholder={gt("Vault name")}
+                    aria-label={gt("Vault for browser logins")}
+                    onChange={(event) => setDraft({ provider, vault: event.target.value })}
+                    onBlur={() => save({ provider, vault })}
+                  />
+                )}
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={readOnly || vault.trim() === ""}
+                  onClick={() => void runCheck()}
+                >
+                  <T>Check</T>
+                </Button>
+              </div>
+            }
+          />
+        </>
+      ) : null}
+    </SettingsSection>
   );
 }

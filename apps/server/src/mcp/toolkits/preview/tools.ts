@@ -1,4 +1,5 @@
 import {
+  BrowserLoginsList,
   BrowserNavigationTarget,
   OrchestratorMcpFailure,
   ToolActivityIcon,
@@ -168,7 +169,7 @@ export const PreviewSnapshotTool = safeBrowserTool(
 const PreviewActTool = browserTool(
   Tool.make("preview_act", {
     description:
-      "Act on the chosen tab. Target with `locator='aria-ref=<ref>'` from `preview_snapshot`; `x` and `y` go together. `timeoutMs` defaults to 15000. click: `button`, `clickCount` 1 to 3. type: literal `text`, `clear=true` replaces it. hover: shows menus or tooltips. select: `values` in one native <select>, by value or label; for a custom dropdown, click it open, then click the option. drag: `source` onto `target`. upload: absolute `paths` answer the file picker `preview_status` reports, [] cancels it, or a `locator` sets an <input type=file>. press: one `key`, such as 'Enter', with `modifiers`, to the focused element; click a field first to focus it. scroll: the tab, or one container with a locator; positive `deltaY` scrolls down, positive `deltaX` right.",
+      "Act on the chosen tab. Target with `locator='aria-ref=<ref>'` from `preview_snapshot`; `x` and `y` go together. `timeoutMs` defaults to 15000. click: `button`, `clickCount` 1 to 3. type: literal `text`, `clear=true` replaces it. hover: shows menus or tooltips. select: `values` in one native <select>, by value or label; for a custom dropdown, click it open, then click the option. drag: `source` onto `target`. upload: absolute `paths` answer the file picker `preview_status` reports, [] cancels it, or a `locator` sets an <input type=file>. press: one `key`, such as 'Enter', with `modifiers`, to the focused element; click a field first to focus it. scroll: the tab, or one container with a locator; positive `deltaY` scrolls down, positive `deltaX` right. fillLogin: fill one `field` ('username', 'password', 'otp') of login `itemId` from `preview_logins` into the field at `locator`; the value is never shown to you. Fill the otp last, right before submitting.",
     parameters: PreviewAutomationActInput,
     success: Schema.Union([
       Schema.Struct({ ...PreviewAutomationSelectResult.fields, ...presentationFields }),
@@ -177,6 +178,17 @@ const PreviewActTool = browserTool(
     failure: PreviewToolFailure,
     dependencies,
   }).annotate(Tool.Title, "Act in preview page"),
+);
+
+const PreviewLoginsTool = readonlyBrowserTool(
+  Tool.make("preview_logins", {
+    description:
+      "List the saved logins the user allows for the chosen tab's page: id, title, URLs, and which fields can be filled. Never returns usernames, passwords, or codes. Fill one with `preview_act` action `fillLogin`. Use only when the user asked you to sign in.",
+    parameters: PreviewAutomationTabTargetInput,
+    success: Schema.Struct({ ...BrowserLoginsList.fields, ...presentationFields }),
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "List browser logins"),
 );
 
 /** Wrap non-objects: MCP requires object structuredContent, and Claude Code rejects invalid results entirely. */
@@ -239,6 +251,7 @@ export const PreviewToolkit = Toolkit.make(
   PreviewSetAppearanceTool,
   PreviewSnapshotTool,
   PreviewActTool,
+  PreviewLoginsTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
   PreviewRecordingStartTool,
@@ -253,6 +266,7 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewResizeTool,
   PreviewSetAppearanceTool,
   PreviewActTool,
+  PreviewLoginsTool,
   PreviewEvaluateTool,
   PreviewWaitForTool,
   PreviewRecordingStartTool,

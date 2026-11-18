@@ -1449,6 +1449,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     secretsFeatureOnly: true,
   },
   {
+    id: "browser-logins",
+    title: msg("Fill browser logins"),
+    to: "/settings/secrets",
+    searchTerms: [msg("1password vault login password sign in browser autofill 2fa agents")],
+    secretsFeatureOnly: true,
+  },
+  {
     id: "archive",
     title: msg("Archived threads"),
     to: "/settings/archived",

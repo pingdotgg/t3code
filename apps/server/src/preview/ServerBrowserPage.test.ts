@@ -394,6 +394,188 @@ describe("server browser element refs", () => {
     expect(await inner.inputValue()).toBe("");
   });
 
+  describe("login fills", () => {
+    const SECRET = "SENTINEL-login-secret";
+    const serve = async (pages: Record<string, string>) => {
+      await page.route("**/*", (route) => {
+        const url = new URL(route.request().url());
+        const body = pages[url.origin + url.pathname];
+        return body === undefined
+          ? route.abort()
+          : route.fulfill({ contentType: "text/html", body });
+      });
+    };
+    const refusal = (promise: Promise<unknown>) =>
+      promise.then(() => expect.unreachable(), ServerBrowserPage.toOperationError);
+
+    it("fills a same-origin field, including one in a same-origin frame", async () => {
+      await serve({
+        "https://acme.test/": `<input aria-label="Email"><iframe src="https://acme.test/frame"></iframe>`,
+        "https://acme.test/frame": `<input aria-label="Code">`,
+      });
+      await page.goto("https://acme.test/");
+      await page.frameLocator("iframe").getByRole("textbox").waitFor();
+      const origins: Array<string> = [];
+      const read = async (origin: string) => {
+        origins.push(origin);
+        return SECRET;
+      };
+      await ServerBrowserPage.fillLogin(page, 'internal:label="Email"', "username", read);
+      await ServerBrowserPage.fillLogin(
+        page,
+        "iframe >> internal:control=enter-frame >> input",
+        "otp",
+        read,
+      );
+      expect(await page.getByLabel("Email").inputValue()).toBe(SECRET);
+      expect(await page.frameLocator("iframe").getByRole("textbox").inputValue()).toBe(SECRET);
+      expect(origins).toEqual(["https://acme.test", "https://acme.test"]);
+      expect(
+        await page.evaluate(
+          `getComputedStyle(document.querySelector("input")).getPropertyValue("-webkit-text-security")`,
+        ),
+      ).toBe("disc");
+      await page.evaluate(`document.title = "Signed in as ${SECRET}"`);
+      const timestamp = "1970-01-01T00:00:00.000Z";
+      const result = await ServerBrowserPage.snapshot({
+        page,
+        cdp,
+        renderScale: 1,
+        consoleEntries: [{ level: "log", text: `user=${SECRET}`, timestamp }],
+        networkEntries: [
+          {
+            url: `https://acme.test/?u=${SECRET}`,
+            method: "GET",
+            status: 200,
+            failed: false,
+            timestamp,
+          },
+        ],
+        actionTimeline: [],
+      });
+      expect(JSON.stringify({ ...result, screenshot: undefined })).not.toContain(SECRET);
+      const encoded = "ada@acme.test p&ss";
+      await ServerBrowserPage.fillLogin(
+        page,
+        'internal:label="Email"',
+        "username",
+        async () => encoded,
+      );
+      for (const text of [
+        encodeURIComponent(encoded),
+        encodeURIComponent(encoded).replaceAll("%20", "+"),
+      ])
+        expect(
+          ServerBrowserPage.withoutFilledLogins(page, `https://acme.test/?u=${text}`),
+        ).not.toContain(text);
+      expect(String(result.accessibilityTree)).toMatch(/textbox "Email" [^\n]*: •+$/m);
+    });
+
+    it("refuses a field in a cross-origin frame without reading the secret", async () => {
+      await serve({
+        "https://acme.test/": `<iframe src="https://evil.test/"></iframe>`,
+        "https://evil.test/": `<input aria-label="Password">`,
+      });
+      await page.goto("https://acme.test/");
+      await page.frameLocator("iframe").getByRole("textbox").waitFor();
+      const read = vi.fn(async () => SECRET);
+      const error = await refusal(
+        ServerBrowserPage.fillLogin(
+          page,
+          "iframe >> internal:control=enter-frame >> input",
+          "password",
+          read,
+        ),
+      );
+      expect(error.detail).toEqual({ reason: "crossOriginFrame" });
+      expect(read).not.toHaveBeenCalled();
+      expect(await page.frameLocator("iframe").getByRole("textbox").inputValue()).toBe("");
+    });
+
+    it("does not fill when the page changes origin while the secret is read", async () => {
+      await serve({
+        "https://acme.test/": `<input aria-label="Password">`,
+        "https://evil.test/": `<input aria-label="Password">`,
+      });
+      await page.goto("https://acme.test/");
+      const error = await refusal(
+        ServerBrowserPage.fillLogin(page, "input", "password", async () => {
+          await page.goto("https://evil.test/");
+          return SECRET;
+        }),
+      );
+      expect(error.detail).toEqual({ reason: "originMismatch" });
+      expect(await page.locator("input").inputValue()).toBe("");
+      expect(JSON.stringify(error)).not.toContain(SECRET);
+    });
+
+    it("fills the login fields it finds, reports the rest, and never submits", async () => {
+      await serve({
+        "https://acme.test/": `<form action="/submitted">
+          <input type="email" aria-label="Email"><input type="password" aria-label="Password">
+          <button>Sign in</button></form>`,
+      });
+      await page.goto("https://acme.test/");
+      const values = { username: "SENTINEL-user", password: SECRET, otp: "SENTINEL-otp" };
+      const result = await ServerBrowserPage.fillLoginFields(
+        page,
+        ["username", "password", "otp"],
+        async (field) => values[field],
+      );
+      expect(result).toEqual({ filled: ["username", "password"], missing: ["otp"] });
+      expect(JSON.stringify(result)).not.toMatch(/SENTINEL/);
+      expect(await page.getByLabel("Email").inputValue()).toBe("SENTINEL-user");
+      expect(await page.getByLabel("Password").inputValue()).toBe(SECRET);
+      expect(page.url()).toBe("https://acme.test/");
+
+      const failed = await ServerBrowserPage.fillLoginFields(page, ["password"], async () => {
+        throw new Error(`op printed ${SECRET}`);
+      }).then(() => expect.unreachable(), ServerBrowserPage.toOperationError);
+      expect(failed.detail).toEqual({ reason: "fillFailed" });
+      expect(`${failed.message} ${JSON.stringify(failed)}`).not.toContain(SECRET);
+    });
+
+    it("never puts a password into a text field, even when the page adds one mid-fill", async () => {
+      await serve({
+        "https://acme.test/": `
+          <input id="u" type="email" aria-label="Email"><input id="p" type="password" aria-label="Password">
+          <script>
+            u.addEventListener("input", () => {
+              if (document.getElementById("hint")) return;
+              const hint = Object.assign(document.createElement("input"), { id: "hint", type: "text" });
+              p.before(hint);
+            });
+          </script>`,
+      });
+      await page.goto("https://acme.test/");
+      const result = await ServerBrowserPage.fillLoginFields(
+        page,
+        ["username", "password"],
+        async (field) => (field === "password" ? SECRET : "ada@acme.test"),
+      );
+      expect(result).toEqual({ filled: ["username", "password"], missing: [] });
+      expect(await page.locator("#hint").inputValue()).toBe("");
+      expect(await page.locator("#p").inputValue()).toBe(SECRET);
+      const refused = await refusal(
+        ServerBrowserPage.fillLogin(page, "#hint", "password", async () => SECRET),
+      );
+      expect(refused.detail).toEqual({ reason: "notPasswordField" });
+      expect(await page.locator("#hint").inputValue()).toBe("");
+    });
+
+    it("reports a failed fill without the value Playwright logs", async () => {
+      await serve({
+        "https://acme.test/": `<input type="password" aria-label="Password" disabled>`,
+      });
+      await page.goto("https://acme.test/");
+      const error = await refusal(
+        ServerBrowserPage.fillLogin(page, "input", "password", async () => SECRET),
+      );
+      expect(error.detail).toEqual({ reason: "fillFailed" });
+      expect(`${error.message} ${JSON.stringify(error)}`).not.toContain(SECRET);
+    });
+  });
+
   it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
     await page.setContent(`
       <table><tr><td>password:</td><td><input id="pw" type="password" aria-label="Password"></td></tr></table>

@@ -1,11 +1,19 @@
+import type { BrowserLoginField } from "@t3tools/contracts";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
-import { defineSecretProviderDriver } from "@t3tools/secret-provider-core/server/driver";
+import {
+  defineSecretProviderDriver,
+  SecretProviderLoginsError,
+  type SecretProviderLogin,
+  type SecretProviderLoginDetail,
+} from "@t3tools/secret-provider-core/server/driver";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { ChildProcess } from "effect/process";
 
 import { definition, type OnePasswordAccount } from "../shared/definition.ts";
@@ -88,9 +96,171 @@ const recover = <A, E extends { readonly _tag: string }, R>(
     ),
   );
 
+// Only these keys are decoded; every field `value`, `totp`, and `additional_information` is dropped.
+const OpLoginSummary = Schema.Struct({
+  id: Schema.String,
+  title: Schema.String,
+  category: Schema.String,
+  urls: Schema.optional(Schema.Array(Schema.Struct({ href: Schema.String }))),
+});
+const OpLoginItem = Schema.Struct({
+  ...OpLoginSummary.fields,
+  vault: Schema.Struct({ id: Schema.String }),
+  fields: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: Schema.String,
+        type: Schema.optional(Schema.String),
+        purpose: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+});
+// A parse error can quote the output, so it is never logged or returned.
+const decodeLoginList = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(OpLoginSummary)),
+);
+const decodeLoginItem = Schema.decodeUnknownOption(Schema.fromJsonString(OpLoginItem));
+const decodeVaults = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String }))),
+);
+const ITEM_ID = /^[A-Za-z0-9]{1,64}$/;
+
+const summaryOf = (item: typeof OpLoginSummary.Type): SecretProviderLogin => ({
+  id: item.id,
+  title: item.title,
+  urls: (item.urls ?? []).map((url) => url.href),
+});
+
+/** Reads only which fields exist, by purpose and type; a label can say anything. */
+const loginDetail = (output: string): SecretProviderLoginDetail | undefined => {
+  const decoded = decodeLoginItem(output);
+  if (Option.isNone(decoded) || decoded.value.category !== "LOGIN") return undefined;
+  const item = decoded.value;
+  const reference = (fieldId: string, query = "") => {
+    const candidate = `op://${item.vault.id}/${item.id}/${fieldId}${query}`;
+    return definition.isReference(candidate) ? candidate : undefined;
+  };
+  const itemFields = item.fields ?? [];
+  const username = itemFields.find((field) => field.purpose === "USERNAME");
+  const password = itemFields.find((field) => field.purpose === "PASSWORD");
+  const otp = itemFields.find((field) => field.type === "OTP");
+  const fields: Partial<Record<BrowserLoginField, string>> = {};
+  const usernameReference = username && reference(username.id);
+  const passwordReference = password && reference(password.id);
+  const otpReference = otp && reference(otp.id, "?attribute=otp");
+  if (usernameReference) fields.username = usernameReference;
+  if (passwordReference) fields.password = passwordReference;
+  if (otpReference) fields.otp = otpReference;
+  return { ...summaryOf(item), fields };
+};
+
+const loginSummaries = (output: string): ReadonlyArray<SecretProviderLogin> | undefined => {
+  const decoded = decodeLoginList(output);
+  return Option.isNone(decoded)
+    ? undefined
+    : decoded.value.filter((item) => item.category === "LOGIN").map(summaryOf);
+};
+
+const loginsFailure = (
+  stage: "vault list" | "item list" | "item get",
+  result: { code: number; stderr: string },
+) =>
+  Effect.logWarning("Could not list logins from 1Password", {
+    stage,
+    exitCode: result.code,
+  }).pipe(
+    Effect.andThen(
+      Effect.fail(
+        new SecretProviderLoginsError({
+          reason: /isn't a vault/.test(result.stderr)
+            ? "vaultNotFound"
+            : /isn't an item/.test(result.stderr)
+              ? "itemNotFound"
+              : "unavailable",
+        }),
+      ),
+    ),
+  );
+
+const runForLogins = (args: ReadonlyArray<string>) =>
+  runOnePassword(args).pipe(
+    Effect.timeoutOption(READ_TIMEOUT),
+    Effect.catch((error) =>
+      Effect.logWarning("Could not run 1Password", { stage: args[0], error: error._tag }).pipe(
+        Effect.as(Option.none()),
+      ),
+    ),
+    Effect.flatMap(Effect.fromOption),
+    Effect.mapError(() => new SecretProviderLoginsError({ reason: "unavailable" })),
+  );
+
+const listVaults = Effect.fn("OnePasswordDriver.listVaults")(function* (
+  account: OnePasswordAccount,
+) {
+  // `op` uses 1Password Connect when this is set, and through Connect it cannot list vaults.
+  const connectHost = yield* Config.String("OP_CONNECT_HOST").pipe(
+    Config.option,
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+  if (Option.isSome(connectHost) && connectHost.value.trim() !== "") return Option.none();
+  const result = yield* runForLogins(["vault", "list", `--account=${account}`, "--format=json"]);
+  if (result.code !== 0) return yield* loginsFailure("vault list", result);
+  const vaults = decodeVaults(result.stdout);
+  if (Option.isNone(vaults)) return yield* loginsFailure("vault list", { code: 0, stderr: "" });
+  return Option.some(vaults.value.map(({ id, name }) => ({ id, name })));
+});
+
+const listLogins = Effect.fn("OnePasswordDriver.listLogins")(function* (
+  account: OnePasswordAccount,
+  vault: string,
+) {
+  const result = yield* runForLogins([
+    "item",
+    "list",
+    `--account=${account}`,
+    `--vault=${vault}`,
+    "--categories=Login",
+    "--format=json",
+  ]);
+  if (result.code !== 0) return yield* loginsFailure("item list", result);
+  const logins = loginSummaries(result.stdout);
+  if (logins === undefined) return yield* loginsFailure("item list", { code: 0, stderr: "" });
+  return logins;
+});
+
+const getLogin = Effect.fn("OnePasswordDriver.getLogin")(function* (
+  account: OnePasswordAccount,
+  vault: string,
+  itemId: string,
+) {
+  if (!ITEM_ID.test(itemId)) {
+    return yield* new SecretProviderLoginsError({ reason: "itemNotFound" });
+  }
+  const result = yield* runForLogins([
+    "item",
+    "get",
+    itemId,
+    `--account=${account}`,
+    `--vault=${vault}`,
+    "--format=json",
+  ]);
+  if (result.code !== 0) return yield* loginsFailure("item get", result);
+  const login = loginDetail(result.stdout);
+  if (login === undefined || login.id !== itemId) {
+    return yield* new SecretProviderLoginsError({ reason: "itemNotFound" });
+  }
+  return login;
+});
+
 export const driver = defineSecretProviderDriver({
   kind: definition.kind,
   definition,
+  logins: {
+    vaults: ({ account }) => listVaults(account),
+    list: ({ account }, vault) => listLogins(account, vault),
+    get: ({ account }, vault, itemId) => getLogin(account, vault, itemId),
+  },
   read: Effect.fn("OnePasswordDriver.read")(function* ({ account }, references) {
     // One deadline covers the batch and the fallback; a reference not read by then is unreadable.
     const values: Array<string | undefined> = references.map(() => undefined);

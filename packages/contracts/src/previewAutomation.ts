@@ -11,6 +11,7 @@ import {
 } from "./preview.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
+import { BrowserLoginError, BrowserLoginField, BrowserLoginItemId } from "./browserLogins.ts";
 
 const BoundedUrl = Schema.String.check(Schema.isTrimmed())
   .check(Schema.isNonEmpty())
@@ -51,6 +52,8 @@ export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   "hover",
   "select",
   "drag",
+  "listLogins",
+  "fillLogin",
 ] as const;
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_SERVER_OPERATIONS);
 export type PreviewAutomationOperation = typeof PreviewAutomationOperation.Type;
@@ -425,6 +428,17 @@ export const PreviewAutomationScrollInput = Schema.Struct({
 );
 export type PreviewAutomationScrollInput = typeof PreviewAutomationScrollInput.Type;
 
+export const PreviewAutomationFillLoginInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  itemId: BrowserLoginItemId,
+  field: BrowserLoginField,
+  locator: Locator,
+});
+export type PreviewAutomationFillLoginInput = typeof PreviewAutomationFillLoginInput.Type;
+
+/** A locked password manager can take this long to answer. */
+export const BROWSER_LOGIN_TIMEOUT_MS = 60_000;
+
 /** Strict input for each `preview_act` action. */
 export const PreviewAutomationActInputs = {
   click: PreviewAutomationClickInput,
@@ -435,6 +449,7 @@ export const PreviewAutomationActInputs = {
   upload: PreviewAutomationUploadInput,
   press: PreviewAutomationPressInput,
   scroll: PreviewAutomationScrollInput,
+  fillLogin: PreviewAutomationFillLoginInput,
 } as const;
 export type PreviewAutomationAction = keyof typeof PreviewAutomationActInputs;
 
@@ -449,6 +464,7 @@ export const PreviewAutomationActInput = Schema.Struct({
     "upload",
     "press",
     "scroll",
+    "fillLogin",
   ]),
   ...PreviewAutomationTabTargetFields,
   locator: Schema.optional(Locator),
@@ -468,6 +484,8 @@ export const PreviewAutomationActInput = Schema.Struct({
   deltaX: Schema.optional(Schema.Finite),
   deltaY: Schema.optional(Schema.Finite),
   timeoutMs: Schema.optional(Schema.Int),
+  itemId: Schema.optional(Schema.String),
+  field: Schema.optional(BrowserLoginField),
 });
 export type PreviewAutomationActInput = typeof PreviewAutomationActInput.Type;
 
@@ -1033,6 +1051,7 @@ export const PreviewAutomationError = Schema.Union([
   PreviewAutomationRequestQueueClosedError,
   PreviewAutomationRemoteUnavailableError,
   PreviewAutomationMalformedResponseError,
+  BrowserLoginError,
 ]);
 export type PreviewAutomationError = typeof PreviewAutomationError.Type;
 
