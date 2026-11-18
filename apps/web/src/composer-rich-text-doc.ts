@@ -1090,11 +1090,16 @@ export function buildTiptapContent(
       openQuote.content.push(entry.quote.inline);
       continue;
     }
-    // The serializer separates a quote from the prose after it with one blank line; it is not an empty paragraph.
-    const quoteSeparator =
-      openQuote !== null && isProseLine(entry, true) && isProseLine(entries[entryIndex + 1], false);
+    // The serializer separates a quote or list from the prose after it with one blank line; it is not an empty paragraph.
+    const blockSeparator =
+      (openQuote !== null || rootLists.length > 0) &&
+      isProseLine(entry, true) &&
+      isProseLine(entries[entryIndex + 1], false);
     flushQuote();
-    if (quoteSeparator) continue;
+    if (blockSeparator) {
+      flushLists();
+      continue;
+    }
     if ("code" in entry) {
       flushLists();
       blocks.push(entry.code);
@@ -1239,10 +1244,10 @@ function horizontalRuleSource(block: ProseMirrorNode): string {
   return typeof source === "string" && source ? source : "---";
 }
 
-// A blank line keeps prose out of a quote (lazy continuation) and a dash rule from
+// A blank line keeps prose out of a quote or list (lazy continuation) and a dash rule from
 // underlining the line above into a setext heading; an empty paragraph already separates them.
 function needsBlankLineBetween(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
-  if (previous.type.name === "blockquote") {
+  if (previous.type.name === "blockquote" || LIST_NODE_NAMES.has(previous.type.name)) {
     return block.type.name === "paragraph" && block.content.size > 0;
   }
   return (
