@@ -144,7 +144,10 @@ const makeLayer = (
           );
         }
         if (input.tool === "t3_thread_list") {
-          const threads = macBookThreads.map((thread) => ({
+          // A chat launched from a linked machine carries `delegatedFrom`, which the real list
+          // leaves out unless subagents are asked for.
+          const listed = input.arguments.includeSubagents === false ? [] : macBookThreads;
+          const threads = listed.map((thread) => ({
             threadId: thread.id,
             parentThreadId: options.legacyPeer === true ? null : thread.parentThreadId,
             ...(options.legacyPeer === true

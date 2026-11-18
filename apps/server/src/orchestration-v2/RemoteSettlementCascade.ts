@@ -181,7 +181,8 @@ export const make = Effect.gen(function* () {
           tool: "t3_thread_list",
           arguments: {
             allProjects: true,
-            includeSubagents: false,
+            // Chats launched from here carry `delegatedFrom` there, which only this lists.
+            includeSubagents: true,
             ...(request.action === "unsettle" ? { settled: true } : {}),
             cursor,
             limit: LINK_PAGE,
