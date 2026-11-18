@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { T, useGT } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
 import { Button } from "./ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "./ui/input-group";
@@ -33,6 +34,7 @@ function formatFindCount(index: number, total: number): string {
 
 export function FindBar(props: FindBarProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const gt = useGT();
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses and selects the input DOM node when the bar opens or a find shortcut fires
   useEffect(() => {
@@ -51,8 +53,8 @@ export function FindBar(props: FindBarProps) {
   if (hasQuery) {
     label = props.counting ? "1/…" : formatFindCount(props.activeIndex, props.matchCount);
   }
-  if (props.status === "loading") label = "Searching…";
-  if (props.status === "error") label = "Search failed";
+  if (props.status === "loading") label = gt("Searching…");
+  if (props.status === "error") label = gt("Search failed");
   const [storedAnnouncement, setAnnouncement] = useState<FindAnnouncement | null>(null);
   const announcement = nextFindAnnouncement(storedAnnouncement, {
     navigationId: props.navigationId,
@@ -118,13 +120,13 @@ export function FindBar(props: FindBarProps) {
           </span>
           {props.status === "error" ? (
             <Button size="xs" variant="ghost" onClick={props.onRetry}>
-              Retry
+              <T>Retry</T>
             </Button>
           ) : null}
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Previous match"
+            aria-label={gt("Previous match")}
             disabled={navigationDisabled}
             onClick={props.onPrevious}
           >
@@ -133,13 +135,18 @@ export function FindBar(props: FindBarProps) {
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Next match"
+            aria-label={gt("Next match")}
             disabled={navigationDisabled}
             onClick={props.onNext}
           >
             <ChevronDownIcon />
           </Button>
-          <Button size="icon-xs" variant="ghost" aria-label="Close find" onClick={props.onClose}>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={gt("Close find")}
+            onClick={props.onClose}
+          >
             <XIcon />
           </Button>
         </InputGroupAddon>
