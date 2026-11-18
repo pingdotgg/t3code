@@ -1,3 +1,5 @@
+import { vcsActionLabelText } from "@t3tools/client-runtime/state/vcs";
+import { useMessages } from "gt-react-native";
 import { useMemo } from "react";
 
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
@@ -10,7 +12,8 @@ import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 
 export function useSelectedThreadGitState() {
-  const { selectedThread, selectedThreadProject } = useThreadSelection();
+  const messages = useMessages();
+  const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
 
   const selectedThreadGitTarget = {
@@ -29,7 +32,7 @@ export function useSelectedThreadGitState() {
 
   const selectedThreadBranchTarget = {
     environmentId: selectedThread?.environmentId ?? null,
-    cwd: selectedThreadProject?.workspaceRoot ?? null,
+    cwd: selectedThreadCwd,
     query: null,
   };
   const selectedThreadBranchState = useBranches(selectedThreadBranchTarget);
@@ -42,7 +45,7 @@ export function useSelectedThreadGitState() {
   );
 
   return {
-    gitOperationLabel: gitActionState.currentLabel,
+    gitOperationLabel: vcsActionLabelText(gitActionState, messages),
     sourceControlDiscovery,
     selectedThreadBranches,
     selectedThreadBranchesLoading: selectedThreadBranchState.isPending,

@@ -1,8 +1,8 @@
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
-import * as Stream from "effect/Stream";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Stream from "effect/Stream";
 import { API_PORT, Data } from "./shared.ts";
 
 /**
@@ -37,9 +37,7 @@ export default class Api extends Fly.Service<Api>()(
         const text =
           obj.Body === undefined
             ? ""
-            : yield* Stream.mkString(Stream.decodeText(obj.Body)).pipe(
-                Effect.orDie,
-              );
+            : yield* Stream.mkString(Stream.decodeText(obj.Body)).pipe(Effect.orDie);
         return yield* HttpServerResponse.json({
           ok: text === "hello-from-tigris",
           text,

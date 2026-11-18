@@ -1,5 +1,5 @@
-import * as Neon from "alchemy/Neon";
-import * as SQL from "alchemy/SQL/Postgres";
+import * as Neon from "@alchemy.run/neon";
+import * as SQL from "@alchemy.run/sql/Postgres";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { resources } from "./resources.ts";
@@ -21,7 +21,5 @@ export default class Events extends Neon.Function<Events>()(
           VALUES (${event.invocationId}) ON CONFLICT DO NOTHING`;
       }),
     );
-  }).pipe(
-    Effect.provide(Layer.mergeAll(Neon.ConnectHttp, Neon.CronEventSourceHttp)),
-  ),
+  }).pipe(Effect.provide(Layer.mergeAll(Neon.ConnectHttp, Neon.CronEventSourceHttp))),
 ) {}

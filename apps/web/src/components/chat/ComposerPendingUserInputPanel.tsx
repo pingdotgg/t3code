@@ -1,4 +1,6 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
+import { markdownProseDirection, textDirection } from "~/textDirection";
+import { useGT } from "gt-react";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -9,6 +11,7 @@ import { CheckboxMark } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Kbd } from "../ui/kbd";
 import { cn } from "~/lib/utils";
+import { isInSideChatPane } from "~/lib/sideChatPane";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
 
@@ -81,6 +84,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
 }) {
+  const gt = useGT();
   // Message-mode requests remain answerable after their provider turn ends.
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
@@ -151,12 +155,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
+      if (isInSideChatPane(target)) return;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
         return;
       }
       if (
         target instanceof HTMLElement &&
-        target.closest('[contenteditable]:not([contenteditable="false"])')
+        target.closest(
+          'select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [aria-modal="true"], [role="menu"], [role="combobox"], [data-slot$="popup"]',
+        )
       ) {
         return;
       }
@@ -177,8 +184,20 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     return null;
   }
 
+  const promptDirection = markdownProseDirection(
+    prompt.questions
+      .flatMap((question) => [
+        question.header,
+        question.question,
+        ...question.options.flatMap((option) => [option.label, option.description ?? ""]),
+      ])
+      .join(" "),
+  );
+  const questionTextAlign = promptDirection === "rtl" ? "text-right" : "text-left";
+
   return (
     <Collapsible
+      dir={promptDirection}
       open={!isCollapsed}
       onOpenChange={(open) => {
         setCollapsedQuestionId(open ? null : activeQuestion.id);
@@ -187,17 +206,27 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       <CollapsibleTrigger
         render={<ComposerBanner.Row render={<button type="button" />} />}
         title={
-          isCollapsed ? "Show the question and its options" : "Hide the question and its options"
+          isCollapsed
+            ? gt("Show the question and its options")
+            : gt("Hide the question and its options")
         }
         data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
-        className="px-4 pt-1.5"
+        className="px-4 py-1.5"
       >
         <ComposerBanner.Content>
-          <span className="shrink-0 text-muted-foreground">{activeQuestion.header}</span>
+          <span
+            className={cn("min-w-0 truncate text-muted-foreground", isCollapsed && "max-w-1/2")}
+            dir={textDirection(activeQuestion.header)}
+          >
+            {activeQuestion.header}
+          </span>
           {isCollapsed ? (
             <>
               <ComposerBanner.Separator />
-              <span className="min-w-0 flex-1 truncate text-secondary-label">
+              <span
+                className={cn("min-w-0 flex-1 truncate text-secondary-label", questionTextAlign)}
+                dir={markdownProseDirection(activeQuestion.question)}
+              >
                 {activeQuestion.question}
               </span>
             </>
@@ -213,8 +242,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           {prompt.dismissible ? (
             <ComposerBanner.Dismiss
               render={<span role="button" tabIndex={0} />}
-              aria-label="Dismiss question without answering"
-              title="Dismiss question without answering"
+              aria-label={gt("Dismiss question without answering")}
+              title={gt("Dismiss question without answering")}
               disabled={isResponding}
               data-pending-user-input-dismiss
               onClick={(event) => {
@@ -239,7 +268,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               text={activeQuestion.question}
               cwd={cwd}
               threadRef={threadRef}
-              className="pt-2 text-foreground/85"
+              lineBreaks
+              className={cn("pt-0.5 text-foreground/85", questionTextAlign)}
             />
             {/* Rows span the header row's width so the radios align with the question text and the shortcut column sits under the dismiss button. */}
             <div className="-ms-2 mt-1.5 sm:-ms-1.5">
@@ -251,7 +281,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const isSelected =
                   isOptimisticallySelected || draftSelectedOptions?.[index] === true;
                 const className = cn(
-                  "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 text-left sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
+                  questionTextAlign,
+                  "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
                   isSelected ? "text-foreground" : "text-foreground/70 hover:bg-muted/30",
                   (disabled || isResponding) && "opacity-50 cursor-not-allowed",
                   !disabled && !isResponding && "cursor-pointer",
@@ -261,15 +292,22 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   <>
                     <span className="pointer-events-none flex h-5 shrink-0 items-center">
                       {activeQuestion.multiSelect ? (
-                        <CheckboxMark checked={isSelected} />
+                        <CheckboxMark checked={isSelected} variant="contrast" />
                       ) : (
                         <OptionRadio checked={isSelected} />
                       )}
                     </span>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">{option.label}</span>
+                      <span className="text-sm font-medium" dir={textDirection(option.label)}>
+                        {option.label}
+                      </span>
                       {option.description && option.description !== option.label ? (
-                        <span className="text-secondary-label text-2xs">{option.description}</span>
+                        <span
+                          className="text-secondary-label text-2xs"
+                          dir={textDirection(option.description)}
+                        >
+                          {option.description}
+                        </span>
                       ) : null}
                     </div>
                     {index < 9 ? (
@@ -279,19 +317,30 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     ) : null}
                   </>
                 );
+                // The preview sits outside the button: it can hold links, and a click on a single-select option advances.
                 return (
-                  <button
-                    key={`${activeQuestion.id}:${optionValue}`}
-                    type="button"
-                    aria-pressed={isSelected}
-                    disabled={disabled || isResponding}
-                    onClick={() => {
-                      handleOptionSelection(activeQuestion.id, optionValue);
-                    }}
-                    className={className}
-                  >
-                    {content}
-                  </button>
+                  <div key={`${activeQuestion.id}:${optionValue}`}>
+                    <button
+                      type="button"
+                      aria-pressed={isSelected}
+                      disabled={disabled || isResponding}
+                      onClick={() => {
+                        handleOptionSelection(activeQuestion.id, optionValue);
+                      }}
+                      className={className}
+                    >
+                      {content}
+                    </button>
+                    {option.preview ? (
+                      <ChatMarkdown
+                        text={option.preview}
+                        cwd={cwd}
+                        threadRef={threadRef}
+                        lineBreaks
+                        className="ps-9 pe-2 pb-1.5 text-xs text-foreground/70 sm:ps-8"
+                      />
+                    ) : null}
+                  </div>
                 );
               })}
             </div>
@@ -309,7 +358,7 @@ function OptionRadio({ checked }: { checked: boolean }) {
     <span
       aria-hidden
       className={cn(
-        "relative inline-flex size-4.5 shrink-0 items-center justify-center rounded-full border border-input bg-background not-dark:bg-clip-padding sm:size-4 dark:bg-input/32",
+        "relative inline-flex size-4.5 shrink-0 items-center justify-center rounded-full border border-foreground/55 bg-background not-dark:bg-clip-padding sm:size-4 dark:bg-input/32",
         checked ? "shadow-none" : "shadow-xs/5",
       )}
     >

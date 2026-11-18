@@ -230,9 +230,7 @@ internal class TerminalCanvasView(context: Context) : View(context) {
         if (text.isNotEmpty() && flags and FLAG_INVISIBLE == 0) {
           configureTextPaint(flags, currentFrame.cellForegrounds[index])
           canvas.drawText(text, left, top + baselineOffsetPx, paint)
-          if (flags and FLAG_OVERLINE != 0) {
-            canvas.drawRect(left, top + 1f, right, top + max(2f, density), paint)
-          }
+          drawOverline(canvas, flags, left, top, right)
         }
       }
     }
@@ -331,11 +329,19 @@ internal class TerminalCanvasView(context: Context) : View(context) {
         canvas.drawRect(left, top, right, bottom, paint)
         val index = currentFrame.cursorY * currentFrame.cols + currentFrame.cursorX
         val text = currentFrame.cellText[index]
-        if (text.isNotEmpty()) {
-          configureTextPaint(currentFrame.cellFlags[index], currentFrame.background)
+        val flags = currentFrame.cellFlags[index]
+        if (text.isNotEmpty() && flags and FLAG_INVISIBLE == 0) {
+          configureTextPaint(flags, currentFrame.background)
           canvas.drawText(text, left, top + baselineOffsetPx, paint)
+          drawOverline(canvas, flags, left, top, right)
         }
       }
+    }
+  }
+
+  private fun drawOverline(canvas: Canvas, flags: Int, left: Float, top: Float, right: Float) {
+    if (flags and FLAG_OVERLINE != 0) {
+      canvas.drawRect(left, top + 1f, right, top + max(2f, density), paint)
     }
   }
 

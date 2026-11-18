@@ -1,9 +1,12 @@
+import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
 import { makeThreadFixture } from "../test-fixtures";
 import {
+  newThreadNoProjectIndex,
   buildNestedSearchItems,
+  resolveCommandPaletteProject,
   buildThreadActionItems,
   buildLinkedThreadActionItems,
   filterPinnedBrowseEntries,
@@ -664,11 +667,13 @@ describe("buildThreadActionItems", () => {
     ]);
   });
 
-  it("hides subagent threads but keeps forks", () => {
+  it("hides subagent threads and tasks shown under their parent but keeps forks", () => {
     const parentId = ThreadId.make("parent");
+    const delegatedId = ThreadId.make("delegated");
     const items = buildThreadActionItems({
       threads: [
         makeThread({ id: parentId, title: "Parent" }),
+        makeThread({ id: delegatedId, title: "Delegated task" }),
         makeThread({
           id: ThreadId.make("subagent"),
           title: "Subagent",
@@ -688,6 +693,9 @@ describe("buildThreadActionItems", () => {
           },
         }),
       ],
+      delegatedUnderParent: new Set([
+        threadKey({ environmentId: LOCAL_ENVIRONMENT_ID, threadId: delegatedId }),
+      ]),
       projectByKey: new Map(),
       icon: null,
       runThread: async () => undefined,
@@ -793,6 +801,26 @@ describe("filterPinnedBrowseEntries", () => {
       visibleEntries: windowsEntries,
       exactEntry: windowsEntries[0],
     });
+    const decomposed = { name: "De\u0301veloppement", fullPath: "/Users/me/De\u0301veloppement" };
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: [decomposed],
+        filterQuery: "D\u00e9veloppement",
+        pinnedDirectoryName: "repo",
+        caseSensitive: true,
+      }).exactEntry,
+    ).toBe(decomposed);
+    expect(
+      filterPinnedBrowseEntries({
+        browseEntries: [
+          { name: "\u212B", fullPath: "/home/me/\u212B" },
+          { name: "A\u030A", fullPath: "/home/me/A\u030A" },
+        ],
+        filterQuery: "\u00C5",
+        pinnedDirectoryName: "repo",
+        caseSensitive: true,
+      }).exactEntry,
+    ).toBeNull();
   });
 });
 
@@ -916,5 +944,46 @@ describe("returning from file and content search", () => {
     expect(closed).toEqual({ open: false, mode: "files", openIntent: null, session: 0 });
     expect(reduceCommandPaletteUiState(closed, { _tag: "BackToCommand" })).toEqual(closed);
     expect(reduceCommandPaletteUiState(closed, { _tag: "SetOpen", open: true })).toEqual(root);
+  });
+});
+
+it("resolves project metadata and browse roots within the active environment", () => {
+  const local = { title: "Local project", workspaceRoot: "/local/repo" };
+  const remote = { title: "Remote project", workspaceRoot: "/remote/repo" };
+  const projects = new Map([
+    ["local:shared-project", local],
+    ["remote:shared-project", remote],
+  ]);
+  expect(
+    resolveCommandPaletteProject(projects, EnvironmentId.make("local"), PROJECT_ID),
+  ).toBeUndefined();
+  const sharedId = ProjectId.make("shared-project");
+  expect(resolveCommandPaletteProject(projects, EnvironmentId.make("local"), sharedId)).toBe(local);
+  expect(resolveCommandPaletteProject(projects, EnvironmentId.make("remote"), sharedId)).toBe(
+    remote,
+  );
+  expect(resolveCommandPaletteProject(projects, null, sharedId)).toBeUndefined();
+  expect(resolveCommandPaletteProject(projects, EnvironmentId.make("local"), null)).toBeUndefined();
+});
+
+describe("newThreadNoProjectIndex", () => {
+  const entry = (pinned = false, isPreferred = false, isScratch = false) => ({
+    pinned,
+    isPreferred,
+    isScratch,
+  });
+
+  it("goes after the pinned projects and the first unpinned one", () => {
+    expect(newThreadNoProjectIndex([entry(false, true), entry(true), entry(true), entry()])).toBe(
+      3,
+    );
+    expect(newThreadNoProjectIndex([entry(false, true), entry(), entry(false, false, true)])).toBe(
+      1,
+    );
+  });
+
+  it("keeps a pinned or current scratch project in its own place", () => {
+    expect(newThreadNoProjectIndex([entry(false, true, true), entry()])).toBe(0);
+    expect(newThreadNoProjectIndex([entry(true), entry(true, false, true), entry()])).toBe(1);
   });
 });

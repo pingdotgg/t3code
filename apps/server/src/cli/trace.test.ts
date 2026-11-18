@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
 
-import { makeTraceSpanSummary } from "./trace.ts";
+import { formatTraceSummary, makeTraceSpanSummary } from "./trace.ts";
 
 const MINUTE_MS = 60_000;
 
@@ -61,4 +61,14 @@ it("reads failures and interrupts of browser spans from their OTLP status", () =
 
   const [render] = summarizer.finish().spans;
   assert.deepStrictEqual([render?.count, render?.interrupted, render?.failures], [4, 2, 1]);
+});
+
+it("prints durations that round up to a second in seconds", () => {
+  const summarizer = makeTraceSpanSummary();
+  [span("rpc", 999.4, MINUTE_MS), span("rpc", 999.6, 2 * MINUTE_MS)].forEach(summarizer.addLine);
+
+  const row = formatTraceSummary(summarizer.finish(), 25)
+    .split("\n")
+    .find((line) => line.startsWith("rpc"));
+  assert.deepStrictEqual(row?.trim().split(/\s+/).slice(3, 6), ["999ms", "1s", "1s"]);
 });

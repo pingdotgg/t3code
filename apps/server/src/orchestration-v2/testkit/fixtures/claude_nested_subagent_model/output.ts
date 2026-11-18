@@ -56,4 +56,16 @@ export function assertClaudeNestedSubagentModelOutput(
   const nestedChild = result.projections.get(nested.childThreadId);
   assert.isDefined(nestedChild);
   assert.equal(nestedChild.thread.modelSelection.model, SUBAGENT_MODEL);
+
+  // The result counts only the root; the process ledger adds both subagents' work once.
+  assert.lengthOf(projection.providerTurns, 1);
+  assert.deepInclude(projection.providerTurns[0]?.turnTokenUsage, {
+    usageStatus: "complete",
+    hasSubagents: true,
+    inputTokens: 74_167,
+    outputTokens: 236,
+    reasoningTokens: 30,
+    models: ["claude-sonnet-4-6"],
+    otherUsage: { inputTokens: 87_409, outputTokens: 335 },
+  });
 }

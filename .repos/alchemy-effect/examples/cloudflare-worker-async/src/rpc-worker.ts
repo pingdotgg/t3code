@@ -1,16 +1,16 @@
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcSchema from "effect/rpc/RpcSchema";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as RpcServer from "effect/rpc/RpcServer";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 export const API = RpcGroup.make(
   Rpc.make("Ping", {
@@ -28,8 +28,7 @@ const httpEffect = RpcServer.toHttpEffect(API).pipe(
     Layer.mergeAll(
       API.toLayer({
         Ping: () => Effect.succeed("pong"),
-        Stream: ({ upto }) =>
-          Stream.fromIterable(Array.from({ length: upto }, (_, i) => i)),
+        Stream: ({ upto }) => Stream.fromIterable(Array.from({ length: upto }, (_, i) => i)),
       }),
       RpcSerialization.layerNdjson,
     ),

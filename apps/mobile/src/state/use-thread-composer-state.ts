@@ -1,19 +1,31 @@
 import { useComposerAttachmentActions } from "./use-composer-attachment-actions";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import * as Effect from "effect/Effect";
 import * as Dialog from "../components/ui/Dialog";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "./session";
 import { useAtomValue } from "@effect/atom-react";
+import { compactBeforeSendTokens } from "@t3tools/client-runtime/state/context-window";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
+  announcedRun,
+  isDetailBehindShell,
+} from "@t3tools/client-runtime/state/thread-activity-announcement";
+import {
+  canResumeThread,
   deriveProviderSubagentStatus,
+  deriveProviderExtensionStatuses,
+  deriveResumableRunId,
+  deriveLatestThreadRun,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
   deriveThreadRuntime,
   threadRuntimeHasInterruptibleRun,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   CommandId,
@@ -22,8 +34,8 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type EnvironmentId,
   type ModelSelection,
-  type ProviderInteractionMode,
-  type ServerProvider,
+  type RuntimeMode,
+  type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
 
@@ -34,31 +46,36 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
+import { useNowMinuteMs } from "../lib/clock";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
 import {
   describeUnavailableModelSelection,
   isModelSelectionUnavailable,
 } from "../lib/modelOptions";
-import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed, createThreadFeedCache } from "../lib/threadActivity";
-import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import {
-  appendPendingThreadMessages,
+  acknowledgedThreadMessagesAtom,
+  pruneCaughtUpAcknowledgedThreadMessages,
+} from "./acknowledged-thread-messages";
+import {
+  appendAcceptedThreadMessages,
   selectPendingAcknowledgedMessages,
 } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
-import { appAtomRegistry } from "../state/atom-registry";
+import { appAtomRegistry } from "./atom-registry";
 import { pendingThreadCreationMessage } from "./pending-thread-creation";
 import {
   composerAttachmentUploadBlockReason,
   composerAttachmentUploadsAtom,
-} from "../state/composer-attachment-uploads";
+  uploadComposerAttachmentShared,
+} from "./composer-attachment-uploads";
 import {
   appendComposerDraftAttachments,
   insertComposerDraftContext,
@@ -66,15 +83,19 @@ import {
   clearComposerDraftContent,
   composerContextImportsAtom,
   getComposerDraftSnapshot,
+  isFreshSessionPending,
   mergeComposerDraftContent,
   removeComposerDraftAttachment,
   scheduleUnusedComposerAttachmentCleanup,
   setComposerDraftText,
-  updateComposerDraftSettings,
+  setFreshSessionPending,
   useComposerDraft,
   useComposerDraftSettings,
 } from "./use-composer-drafts";
+import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import { orchestrationV2WorktreePending } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
+  compactionBlocksSteering,
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -94,21 +115,34 @@ import {
   startQueuedRunEditSave,
   useQueuedRunEdit,
 } from "./queued-run-edit";
-import { setPendingConnectionError } from "../state/use-remote-environment-registry";
+import { msg, useLocale, useMessages } from "gt-react-native";
+import { m } from "../i18n/messages";
+import { setPendingConnectionError } from "./use-remote-environment-registry";
 import { clearThreadComposerError, setThreadComposerError } from "./thread-composer-error";
 import {
   useSelectedThreadProjection,
   useSelectedThreadVisibleTurnItems,
-} from "../state/use-thread-detail";
-import { useThreadSelection } from "../state/use-thread-selection";
+} from "./use-thread-detail";
+import { useThreadSelection } from "./use-thread-selection";
 import { enqueueThreadOutboxMessage } from "./thread-outbox";
-import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
+import { dispatchingQueuedMessageIdsAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
 
 const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make<null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-workflow:empty"),
 );
+// Threads whose next send keeps the full history instead of compacting first.
+const fullHistoryThreadKeysAtom = Atom.make<Readonly<Record<string, true>>>({}).pipe(
+  Atom.keepAlive,
+);
+
+function setKeepFullHistory(threadKey: string, keep: boolean) {
+  const { [threadKey]: kept, ...rest } = appAtomRegistry.get(fullHistoryThreadKeysAtom);
+  if ((kept === true) === keep) return;
+  appAtomRegistry.set(fullHistoryThreadKeysAtom, keep ? { ...rest, [threadKey]: true } : rest);
+}
+
 const EMPTY_CHECKPOINT_SUMMARIES_ATOM = Atom.make<ReadonlyArray<ThreadCheckpointSummary>>([]);
 const EMPTY_THREAD_SEQUENCE_ATOM = Atom.make(0);
 
@@ -126,7 +160,10 @@ export function appendReviewCommentToDraft(input: {
       reidentifyComposerContext(upgraded.text, upgraded.records, uuidv4),
     )
   ) {
-    Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+    Dialog.alert(
+      m(msg("Too many context items")),
+      m(msg("Remove some context from the draft and try again.")),
+    );
     return;
   }
   if (input.attachments && input.attachments.length > 0) {
@@ -135,7 +172,12 @@ export function appendReviewCommentToDraft(input: {
     });
     if (rejectedCount > 0) {
       setPendingConnectionError(
-        `${rejectedCount} comment attachment${rejectedCount === 1 ? " was" : "s were"} not added. Messages can contain at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+        m(
+          msg(
+            "{count, plural, one {{count} comment attachment was not added. Messages can contain at most {max} attachments.} other {{count} comment attachments were not added. Messages can contain at most {max} attachments.}}",
+            { count: rejectedCount, max: PROVIDER_SEND_TURN_MAX_ATTACHMENTS },
+          ),
+        ),
       );
     }
   }
@@ -163,37 +205,32 @@ export function useThreadDraftForThread(input: {
 
   return {
     draftMessage: draft.text,
+    draftContext: draft.context,
     draftAttachments: draft.attachments,
   };
 }
 
-/** A provider without the interaction-mode toggle runs in the default mode. */
-export function updateThreadDraftModelSelection(
-  threadKey: string,
-  value: ModelSelection,
-  providers: ReadonlyArray<ServerProvider>,
-): void {
-  const provider = providers.find((candidate) => candidate.instanceId === value.instanceId);
-  updateComposerDraftSettings(threadKey, {
-    modelSelection: value,
-    ...(provider?.showInteractionModeToggle === false
-      ? { interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE }
-      : {}),
-  });
-}
-
-export function useThreadComposerState() {
+export function useThreadComposerState(input: {
+  /** Forks the thread into a side chat that gets `prompt`; resolves false when it did not start. */
+  readonly startSideChat: (
+    source: ScopedThreadRef,
+    prompt: string,
+    settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
+  ) => Promise<boolean>;
+}) {
   const {
     selectedThread: selectedThreadShell,
     selectedThreadCreation,
     selectedThreadDetailRef,
     selectedEnvironmentRuntime,
   } = useThreadSelection();
+  const resolve = useMessages();
+  const locale = useLocale();
   const selectedThreadProjection = useSelectedThreadProjection();
   const selectedThreadVisibleTurnItems = useSelectedThreadVisibleTurnItems();
   const acknowledgedMessages = useAtomValue(acknowledgedThreadMessagesAtom);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
-  const dispatchingQueuedMessageId = useAtomValue(dispatchingQueuedMessageIdAtom);
+  const dispatchingQueuedMessageIds = useAtomValue(dispatchingQueuedMessageIdsAtom);
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
   >({});
@@ -206,6 +243,7 @@ export function useThreadComposerState() {
   });
   const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);
   const savingQueuedEditRef = useRef(false);
+  const startingSideChatRef = useRef(false);
 
   const selectedThreadKey = selectedThreadShell
     ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
@@ -215,6 +253,10 @@ export function useThreadComposerState() {
         (message) => message.creation === undefined,
       )
     : [];
+  // The thread sends one message at a time, the head of its queue.
+  const dispatchingQueuedMessageId =
+    selectedThreadQueuedMessages.find((message) => dispatchingQueuedMessageIds[message.messageId])
+      ?.messageId ?? null;
   const feedbackSubmissions = selectedThreadKey
     ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? [])
     : [];
@@ -233,6 +275,14 @@ export function useThreadComposerState() {
       ? EMPTY_THREAD_SEQUENCE_ATOM
       : environmentThreadDetails.sequenceAtom(selectedThreadDetailRef),
   );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prunes the app-wide acknowledged atom when the mounted thread catches up
+  useEffect(() => {
+    if (selectedThreadKey === null || acknowledgedMessages.length === 0) return;
+    pruneCaughtUpAcknowledgedThreadMessages(selectedThreadKey, {
+      sequence: selectedThreadSequence,
+      messages: selectedThreadMessages,
+    });
+  }, [acknowledgedMessages, selectedThreadKey, selectedThreadSequence, selectedThreadMessages]);
   const checkpointSummaries = useAtomValue(
     selectedThreadDetailRef === null
       ? EMPTY_CHECKPOINT_SUMMARIES_ATOM
@@ -256,6 +306,8 @@ export function useThreadComposerState() {
       nodes: selectedThreadNodes,
       checkpointSummaries,
       cache: feedCache,
+      resolve,
+      locale,
     });
     const pendingAcknowledgments = selectPendingAcknowledgedMessages(acknowledgedMessages, {
       threadKey: selectedThreadKey,
@@ -263,9 +315,10 @@ export function useThreadComposerState() {
       sequence: selectedThreadSequence,
       projectedMessages: selectedThreadMessages,
     });
-    if (pendingAcknowledgments.length === 0) return feed;
-    return appendPendingThreadMessages(feed, feed, pendingAcknowledgments).map((entry) =>
-      entry.pendingMessage ? { ...entry, acknowledged: true } : entry,
+    return appendAcceptedThreadMessages(
+      feed,
+      pendingAcknowledgments,
+      pendingCreation.length > 0 ? pendingCreationMessage : null,
     );
   })();
 
@@ -298,15 +351,8 @@ export function useThreadComposerState() {
     serverConfig?.providers ?? [],
   );
   const runtimeMode = selectedDraft.runtimeMode ?? selectedThread?.runtimeMode ?? null;
-  const selectedProvider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
-    (provider) => provider.instanceId === modelSelection?.instanceId,
-  );
-  const interactionMode = selectedThread
-    ? resolveProviderInteractionMode(
-        selectedProvider,
-        selectedDraft.interactionMode ?? selectedThread.interactionMode,
-      )
-    : null;
+  // Plan mode is not offered to users; every send runs in build mode.
+  const interactionMode = selectedThread ? DEFAULT_PROVIDER_INTERACTION_MODE : null;
   const canSwitchThreadProvider = threadAllowsProviderSwitch({
     thread: selectedThreadShell,
     projection: selectedThreadProjection?.projection,
@@ -317,8 +363,20 @@ export function useThreadComposerState() {
   const selectedThreadActivityRun = selectedThreadProjection
     ? deriveThreadActivityRun(selectedThreadProjection.projection)
     : (selectedThreadShell?.latestRun ?? null);
+  const selectedThreadAnnouncedRun = announcedRun(
+    selectedThreadActivityRun,
+    selectedThreadProjection?.projection.runs ?? [],
+  );
+  const selectedThreadDetailBehindShell = isDetailBehindShell(
+    selectedThreadProjection ? deriveLatestThreadRun(selectedThreadProjection.projection) : null,
+    selectedThreadShell?.latestRun ?? null,
+  );
 
-  const isCompacting = (() => {
+  const activeRunId =
+    selectedThreadRuntime?.activeRunId && threadRuntimeIsActive(selectedThreadRuntime)
+      ? selectedThreadRuntime.activeRunId
+      : null;
+  const compactCommandIsActive = (() => {
     const queuedCompact = selectedThreadQueuedMessages.some(
       (message) =>
         message.messageId === dispatchingQueuedMessageId &&
@@ -326,16 +384,7 @@ export function useThreadComposerState() {
         message.attachments.length === 0,
     );
     if (queuedCompact) return true;
-    const activeRunId = selectedThreadRuntime?.activeRunId;
-    if (!activeRunId || !threadRuntimeIsActive(selectedThreadRuntime)) return false;
-    if (
-      selectedThreadVisibleTurnItems.some(
-        ({ item }) =>
-          item.runId === activeRunId && item.type === "compaction" && item.status === "running",
-      )
-    ) {
-      return true;
-    }
+    if (!activeRunId) return false;
     const compactMessage = selectedThreadVisibleTurnItems.findLast(
       ({ item }) =>
         item.runId === activeRunId &&
@@ -354,11 +403,30 @@ export function useThreadComposerState() {
           item.status === "cancelled"),
     );
   })();
-  // A compacting turn cannot take steering input, so follow-ups queue meanwhile.
-  const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true && !isCompacting;
+  const compactionRunning =
+    activeRunId !== null &&
+    selectedThreadVisibleTurnItems.some(
+      ({ item }) =>
+        item.runId === activeRunId && item.type === "compaction" && item.status === "running",
+    );
+  const isCompacting = compactCommandIsActive || compactionRunning;
+  const compactionBlocksSteer = compactionBlocksSteering({
+    compactCommandIsActive,
+    compactionRunning,
+    steersDuringCompaction: threadSteersDuringCompaction(selectedThreadProjection?.projection),
+    run: selectedThreadProjection?.projection.runs.find((run) => run.id === activeRunId),
+    messages: selectedThreadMessages,
+  });
+  const canSteerActiveTurn = queueWorkflow?.canPromoteToSteer === true && !compactionBlocksSteer;
   // A stop or a restart holds the queue, completion wakes included, until it
   // is resumed; the queue sheet lists only the user's own messages.
   const queueHeld = queueWorkflow?.isHeld === true;
+  const resumableRunId = selectedThreadProjection
+    ? deriveResumableRunId(selectedThreadProjection.projection, selectedThreadRuntime)
+    : null;
+  const canResume = selectedThreadProjection
+    ? canResumeThread(selectedThreadProjection.projection, resumableRunId, queueHeld)
+    : queueHeld;
 
   const runlessWorkStartedAt = selectedThreadProjection
     ? deriveRunlessWorkStartedAt(selectedThreadProjection.projection)
@@ -381,6 +449,34 @@ export function useThreadComposerState() {
     : null;
 
   const activeThreadBusy = threadRuntimeIsActive(selectedThreadRuntime);
+  const resumeCompactionTokens = (selection: ModelSelection | null, text: string, now: string) =>
+    selectedEnvironmentRuntime?.connectionState === "connected" &&
+    selectedThreadProjection !== null &&
+    serverConfig != null &&
+    selection !== null
+      ? compactBeforeSendTokens({
+          projection: selectedThreadProjection.projection,
+          visibleTurnItems: selectedThreadVisibleTurnItems,
+          selection,
+          providers: serverConfig.providers,
+          settings: serverConfig.settings,
+          text,
+          threadIdle:
+            !activeThreadBusy &&
+            !runlessWorkActive &&
+            !isCompacting &&
+            selectedThreadQueuedMessages.length === 0,
+          now,
+        })
+      : null;
+  const nowMinuteMs = useNowMinuteMs();
+  const compactTokens =
+    selectedDraft.freshContext === true
+      ? null
+      : resumeCompactionTokens(modelSelection, "", new Date(nowMinuteMs).toISOString());
+  const fullHistoryThreadKeys = useAtomValue(fullHistoryThreadKeysAtom);
+  const keepFullHistory =
+    selectedThreadKey !== null && fullHistoryThreadKeys[selectedThreadKey] === true;
   const interruptibleRunId = threadRuntimeHasInterruptibleRun(selectedThreadRuntime)
     ? (selectedThreadRuntime?.activeRunId ?? null)
     : null;
@@ -403,8 +499,12 @@ export function useThreadComposerState() {
     if (edit === null) return;
     const draft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, edit.runId));
     const text = draft.text.trim();
-    if (text.length === 0) {
-      Dialog.alert("Add a message", "A queued message cannot be left empty.");
+    if (
+      text.length === 0 &&
+      edit.existingAttachments.length === 0 &&
+      draft.attachments.length === 0
+    ) {
+      Dialog.alert(m(msg("Add a message")), m(msg("A queued message cannot be left empty.")));
       return;
     }
     if (
@@ -412,8 +512,25 @@ export function useThreadComposerState() {
       PROVIDER_SEND_TURN_MAX_ATTACHMENTS
     ) {
       Dialog.alert(
-        "Too many attachments",
-        `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+        m(msg("Too many attachments")),
+        m(
+          msg("Remove attachments until there are at most {max}.", {
+            max: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          }),
+        ),
+      );
+      return;
+    }
+    // A queued message stays in its thread, so saving `/side` would send it to main.
+    if (parseSideChatCommand(text)) {
+      Dialog.alert(
+        m(msg("Queued message not updated")),
+        m(
+          msg("A queued message can't move to a side chat. Remove {side} or {btw} to save it.", {
+            side: "/side",
+            btw: "/btw",
+          }),
+        ),
       );
       return;
     }
@@ -423,11 +540,15 @@ export function useThreadComposerState() {
     setIsSavingQueuedEdit(true);
     const capabilities = selectedEnvironmentRuntime?.serverConfig?.environment.capabilities;
     const prepared = await settlePromise(() =>
-      prepareTurnAttachments({
-        environmentId: thread.environmentId,
-        attachments: draft.attachments,
-        supportsImageUploads: capabilities !== undefined,
-      }),
+      Effect.runPromise(
+        prepareTurnAttachments({
+          environmentId: thread.environmentId,
+          attachments: draft.attachments,
+          supportsImageUploads: capabilities !== undefined,
+          uploadAttachment: (attachment) =>
+            uploadComposerAttachmentShared(thread.environmentId, attachment),
+        }),
+      ),
     );
     if (AsyncResult.isFailure(prepared)) {
       savingQueuedEditRef.current = false;
@@ -435,8 +556,8 @@ export function useThreadComposerState() {
       finishSave(false);
       const error = squashAtomCommandFailure(prepared);
       Dialog.alert(
-        "Could not save the queued message",
-        error instanceof Error ? error.message : "Your edit is still in the composer.",
+        m(msg("Could not save the queued message")),
+        errorDisplayMessage(error, m) ?? m(msg("Your edit is still in the composer.")),
       );
       return;
     }
@@ -457,7 +578,7 @@ export function useThreadComposerState() {
       input: {
         threadId: thread.id,
         runId: edit.runId,
-        text,
+        text: restoreAttachmentOnlyBootstrapPrompt(text, payload.attachments.length > 0),
         edit: {
           messageId: edit.messageId,
           attachments: payload.attachments,
@@ -471,8 +592,8 @@ export function useThreadComposerState() {
       // The run left the queue during the save; its exit already told the composer what happened.
       if (!finishSave(false)) return;
       Dialog.alert(
-        "Could not save the queued message",
-        "It may have already started. Your edit is still in the composer.",
+        m(msg("Could not save the queued message")),
+        m(msg("It may have already started. Your edit is still in the composer.")),
       );
       return;
     }
@@ -491,6 +612,7 @@ export function useThreadComposerState() {
       text: string,
       hasAttachmentsOrContext: boolean,
     ) => Promise<boolean | "responded">,
+    onWillEnqueue?: () => void,
   ) => {
     if (
       selectedThreadShell &&
@@ -531,33 +653,97 @@ export function useThreadComposerState() {
     if (text.length === 0 && attachments.length === 0) {
       return null;
     }
-    // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject indefinitely.
-    if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-      Dialog.alert(
-        "Too many attachments",
-        `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
-      );
-      return null;
-    }
-
-    const contextBlockReason = composerContextSendBlockReason(draft.context);
-    if (contextBlockReason) {
-      Dialog.alert("Too much context", contextBlockReason);
-      return null;
-    }
-
     const modelSelection = draft.modelSelection ?? thread.modelSelection;
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
-    if (
+    const modelUnavailable =
       selectedEnvironmentRuntime?.connectionState === "connected" &&
-      isModelSelectionUnavailable(serverConfig, modelSelection, thread.projectId)
-    ) {
+      isModelSelectionUnavailable(serverConfig, modelSelection, thread.projectId);
+    const alertModelUnavailable = () => {
       const { title, detail } = describeUnavailableModelSelection(
         serverConfig,
         modelSelection,
         thread.projectId,
       );
       Dialog.alert(title, detail);
+    };
+    // A redirect's text answers its approval, so `/side` there is that text, not the command.
+    const sideChatCommand = beforeDispatch === undefined ? parseSideChatCommand(text) : null;
+    if (sideChatCommand) {
+      if (sideChatUnavailableReason !== null) {
+        Dialog.alert(m(msg("Side chat not started")), sideChatUnavailableReason);
+      } else if (attachments.length > 0 || (draft.context?.records.length ?? 0) > 0) {
+        Dialog.alert(
+          m(msg("Side chats take text only")),
+          m(msg("Remove the attachments and context, then send it again.")),
+        );
+      } else if (sideChatCommand.prompt.length === 0) {
+        Dialog.alert(
+          m(msg("Ask a side question")),
+          m(msg("Type the question after {command}, then send it.", { command: "/side" })),
+        );
+      } else if (modelUnavailable) {
+        alertModelUnavailable();
+      } else if (!startingSideChatRef.current) {
+        startingSideChatRef.current = true;
+        const started = await input
+          .startSideChat(
+            { environmentId: thread.environmentId, threadId: thread.id },
+            sideChatCommand.prompt,
+            {
+              runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+              modelSelection,
+            },
+          )
+          .finally(() => {
+            startingSideChatRef.current = false;
+          });
+        // Clear only what was sent; the draft may have changed while the side chat started.
+        const current = getComposerDraftSnapshot(threadKey);
+        if (
+          started &&
+          current.text === draft.text &&
+          current.attachments.length === 0 &&
+          (current.context?.records.length ?? 0) === 0
+        ) {
+          clearComposerDraftContent(threadKey);
+        }
+      }
+      return null;
+    }
+    // A redirect's text answers its approval, so /clear there is that text, not the command.
+    if (
+      beforeDispatch === undefined &&
+      selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.freshContext === true &&
+      thread.latestRun != null &&
+      attachments.length === 0 &&
+      draft.context === undefined &&
+      isClearComposerCommand(text)
+    ) {
+      setFreshSessionPending(threadKey, true);
+      clearComposerDraftContent(threadKey);
+      return null;
+    }
+    // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject indefinitely.
+    if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+      Dialog.alert(
+        m(msg("Too many attachments")),
+        m(
+          msg("Remove attachments until there are at most {max}.", {
+            max: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          }),
+        ),
+      );
+      return null;
+    }
+
+    const contextBlockReason = composerContextSendBlockReason(draft.context);
+    if (contextBlockReason) {
+      Dialog.alert(m(msg("Too much context")), contextBlockReason);
+      return null;
+    }
+
+    if (modelUnavailable) {
+      alertModelUnavailable();
       return null;
     }
     const provider = serverConfig?.providers.find(
@@ -571,35 +757,41 @@ export function useThreadComposerState() {
       if (!readEnvironmentScope(selectedThreadShell.environmentId, AuthOrchestrationOperateScope))
         return null;
       if (thread.activeProviderThreadId === null) {
-        Dialog.alert("Start a Codex thread first", "Send a message before you submit feedback.");
+        Dialog.alert(
+          m(msg("Start a {provider} thread first", { provider: "Codex" })),
+          m(msg("Send a message before you submit feedback.")),
+        );
         return null;
       }
       const metadata = makeQueuedMessageMetadata();
-      await submitCodexFeedback({
-        submission: {
-          id: MessageId.make(metadata.messageId),
-          command: text,
-          createdAt: metadata.createdAt,
+      await submitCodexFeedback(
+        {
+          submission: {
+            id: MessageId.make(metadata.messageId),
+            command: text,
+            createdAt: metadata.createdAt,
+          },
+          clearDraft: () => clearComposerDraftContent(threadKey),
+          onUpdate: (submission) => {
+            setFeedbackSubmissionsByThreadKey((current) => {
+              const existing = current[threadKey] ?? [];
+              const found = existing.some((entry) => entry.id === submission.id);
+              return {
+                ...current,
+                [threadKey]: found
+                  ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
+                  : [...existing, submission],
+              };
+            });
+          },
+          upload: () =>
+            uploadThreadFeedback({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, ...feedbackCommand },
+            }),
         },
-        clearDraft: () => clearComposerDraftContent(threadKey),
-        onUpdate: (submission) => {
-          setFeedbackSubmissionsByThreadKey((current) => {
-            const existing = current[threadKey] ?? [];
-            const found = existing.some((entry) => entry.id === submission.id);
-            return {
-              ...current,
-              [threadKey]: found
-                ? existing.map((entry) => (entry.id === submission.id ? submission : entry))
-                : [...existing, submission],
-            };
-          });
-        },
-        upload: () =>
-          uploadThreadFeedback({
-            environmentId: thread.environmentId,
-            input: { threadId: thread.id, ...feedbackCommand },
-          }),
-      });
+        m,
+      );
       return null;
     }
 
@@ -649,8 +841,19 @@ export function useThreadComposerState() {
           ? "queue"
           : "auto";
 
+    // A redirect belongs to the approval it answers; the armed session waits for the next message.
+    const freshContext = beforeDispatch === undefined && isFreshSessionPending(threadKey);
     const metadata = makeQueuedMessageMetadata();
+    // A fresh session drops the context a compaction would summarize. Only a send the notice
+    // announced compacts, since the notice's minute clock can trail the exact deadline.
+    const compactBeforeSend =
+      compactTokens !== null &&
+      !freshContext &&
+      followUpDispatchMode === null &&
+      appAtomRegistry.get(fullHistoryThreadKeysAtom)[threadKey] !== true &&
+      resumeCompactionTokens(modelSelection, text, metadata.createdAt) !== null;
     const messageId = MessageId.make(metadata.messageId);
+    onWillEnqueue?.();
     clearThreadComposerError(threadKey);
     const enqueuePromise = enqueueThreadOutboxMessage({
       environmentId: selectedThreadShell.environmentId,
@@ -662,16 +865,22 @@ export function useThreadComposerState() {
       context: draft.context,
       modelSelection,
       runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-      interactionMode: resolveProviderInteractionMode(
-        provider,
-        draft.interactionMode ?? thread.interactionMode,
-      ),
-      ...(followUpDispatchMode === null ? {} : { dispatchMode: followUpDispatchMode }),
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      ...(compactBeforeSend
+        ? { compactBeforeSend, dispatchMode: "queue" as const }
+        : followUpDispatchMode === null
+          ? {}
+          : { dispatchMode: followUpDispatchMode }),
+      ...(freshContext ? { freshContext: true } : {}),
       createdAt: metadata.createdAt,
     });
     clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
+    if (freshContext) setFreshSessionPending(threadKey, false);
     enqueuePromise.then(
-      () => scheduleUnusedComposerAttachmentCleanup(attachments),
+      () => {
+        setKeepFullHistory(threadKey, false);
+        scheduleUnusedComposerAttachmentCleanup(attachments);
+      },
       (error: unknown) => {
         // Restore with uncapped append; capped merge could drop attachments added during the failed write.
         void mergeComposerDraftContent(threadKey, {
@@ -679,15 +888,48 @@ export function useThreadComposerState() {
           context: draft.context,
           attachments: [],
         });
-        appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
+        appendComposerDraftAttachments(threadKey, attachments, { restore: true });
+        if (freshContext) setFreshSessionPending(threadKey, true);
         setThreadComposerError(
           threadKey,
-          error instanceof Error ? error.message : "Failed to save the queued message.",
+          errorDisplayMessage(error, m) ?? m(msg("Failed to save the queued message.")),
         );
       },
     );
     return messageId;
   };
+
+  // Side chats do not nest or start from subagents, and need a server that forks them.
+  const sideChatUnavailableReason = (() => {
+    const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+    if (selectedThreadShell?.lineage.sideChat === true)
+      return resolve(msg("Side chats cannot start side chats."));
+    if (selectedThreadShell?.lineage.relationshipToParent === "subagent") {
+      return resolve(msg("Subagent threads cannot start side chats."));
+    }
+    if (!selectedThreadShell || !serverConfig) {
+      return resolve(msg("Side chats are not ready yet. Try again in a moment."));
+    }
+    if (serverConfig.environment.capabilities.sideChats !== true) {
+      return resolve(
+        msg("Update this environment's {product} server to use side chats.", {
+          product: "T3 Code",
+        }),
+      );
+    }
+    if (selectedThreadCreation !== null) {
+      return resolve(msg("Side chats start after the first message."));
+    }
+    if (
+      orchestrationV2WorktreePending(
+        selectedThreadShell.worktreePath ?? null,
+        selectedThreadProjection?.projection.runs ?? [],
+      )
+    ) {
+      return resolve(msg("Available once the thread's worktree is set up."));
+    }
+    return null;
+  })();
 
   const onChangeDraftMessage = (value: string) => {
     if (!selectedThreadShell) {
@@ -713,36 +955,37 @@ export function useThreadComposerState() {
     removeComposerDraftAttachment(threadKey, imageId);
   };
 
-  const onUpdateInteractionMode = (value: ProviderInteractionMode) => {
-    if (!selectedThreadKey) {
-      return;
-    }
-    const modelSelection =
-      getComposerDraftSnapshot(selectedThreadKey).modelSelection ?? selectedThread?.modelSelection;
-    const provider = selectedEnvironmentRuntime?.serverConfig?.providers.find(
-      (candidate) => candidate.instanceId === modelSelection?.instanceId,
-    );
-    updateComposerDraftSettings(selectedThreadKey, {
-      interactionMode: resolveProviderInteractionMode(provider, value),
-    });
-  };
-
   return {
     feedbackSubmissions,
     dismissFeedback,
     selectedThreadFeed,
     selectedThreadActivityRun,
+    selectedThreadAnnouncedRun,
+    selectedThreadDetailBehindShell,
     selectedThreadQueueCount,
     selectedThreadQueuedMessages,
     dispatchingQueuedMessageId,
     activeWorkStartedAt,
     runlessWorkActive,
+    extensionStatuses: deriveProviderExtensionStatuses(
+      selectedThreadProjection?.projection ?? null,
+    ),
     providerSubagentStatus,
     isCompacting,
+    compactBeforeSend:
+      compactTokens === null || selectedThreadKey === null
+        ? null
+        : {
+            tokens: compactTokens,
+            keepFullHistory,
+            toggleKeepFullHistory: () => setKeepFullHistory(selectedThreadKey, !keepFullHistory),
+          },
     composerDraftKey,
     followUpBehavior,
     canSteerActiveTurn,
     queueHeld,
+    resumableRunId,
+    canResume,
     queuedRunEdit,
     isSavingQueuedEdit,
     cancelQueuedRunEdit,
@@ -761,6 +1004,6 @@ export function useThreadComposerState() {
     onNativePasteText,
     onRemoveDraftImage,
     onSendMessage,
-    onUpdateInteractionMode,
+    sideChatUnavailableReason,
   };
 }

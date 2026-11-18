@@ -13,6 +13,11 @@ declare global {
 
 let activeClient: ReturnType<typeof createDeviceStreamClient> | null = null;
 
+// The WebView has no catalogs: status details leave marked, and React Native resolves them.
+const keepMarked = ((message: string) => message) as NonNullable<
+  Parameters<typeof createDeviceStreamClient>[3]
+>;
+
 export function stop() {
   activeClient?.stop();
   activeClient = null;
@@ -48,10 +53,7 @@ export function start(configuration: DeviceStreamConfiguration) {
   });
   const frame = document.createElement("div");
   frame.setAttribute("role", "application");
-  frame.setAttribute(
-    "aria-label",
-    platform === "ios" ? "iOS Simulator screen" : "Android Emulator screen",
-  );
+  frame.setAttribute("aria-label", configuration.labels.screen);
   frame.tabIndex = 0;
   Object.assign(frame.style, {
     position: "relative",
@@ -68,7 +70,7 @@ export function start(configuration: DeviceStreamConfiguration) {
   image.style.display = "none";
   const inputStatus = document.createElement("div");
   inputStatus.setAttribute("role", "status");
-  inputStatus.textContent = "Reconnecting device controls...";
+  inputStatus.textContent = configuration.labels.reconnectingControls;
   Object.assign(inputStatus.style, {
     position: "fixed",
     bottom: "12px",
@@ -131,7 +133,7 @@ export function start(configuration: DeviceStreamConfiguration) {
     if (activeClient === client) post({ type: "unauthorized" });
   };
   const client = createDeviceStreamClient(
-    { ...configuration, preferMjpeg: platform === "ios" },
+    configuration,
     canvas,
     {
       onStatus: reportStatus,
@@ -151,6 +153,7 @@ export function start(configuration: DeviceStreamConfiguration) {
         post({ type: "input", connected });
       },
     },
+    keepMarked,
   );
   activeClient = client;
   client.setMjpegImage(image);

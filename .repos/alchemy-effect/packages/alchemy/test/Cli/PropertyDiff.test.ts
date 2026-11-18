@@ -1,21 +1,18 @@
+import { describe, expect, test } from "@alchemy.run/test";
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
 import {
   formatDeclaredPropertyYaml,
   formatDriftPropertyYaml,
   formatYamlLines,
 } from "@/Cli/PropertyDiff.ts";
 import * as Output from "@/Output.ts";
-import { describe, expect, test } from "alchemy-test";
-import * as Effect from "effect/Effect";
-import * as Redacted from "effect/Redacted";
 
 describe("YAML property display", { tags: ["unit", "local"] }, () => {
   test("preserves nested create properties", () => {
     expect(
-      formatDeclaredPropertyYaml(
-        {},
-        { config: { ports: [80, 443], region: "iad" } },
-        "create",
-      )?.lines,
+      formatDeclaredPropertyYaml({}, { config: { ports: [80, 443], region: "iad" } }, "create")
+        ?.lines,
     ).toEqual([
       "properties:",
       "  config:",
@@ -55,19 +52,14 @@ describe("YAML property display", { tags: ["unit", "local"] }, () => {
         { id: "same", config: { enabled: true, retries: 2 } },
         { id: "same", config: { enabled: true, retries: 5 } },
       ).lines,
-    ).toEqual([
-      "config:",
-      "  enabled: true",
-      "-   retries: 2",
-      "+   retries: 5",
-      "id: same",
-    ]);
+    ).toEqual(["config:", "  enabled: true", "-   retries: 2", "+   retries: 5", "id: same"]);
   });
 
   test("identifies resources missing from the cloud", () => {
-    expect(
-      formatDriftPropertyYaml({ id: "expected" }, undefined, true).lines,
-    ).toEqual(["- id: expected", "+ (missing)"]);
+    expect(formatDriftPropertyYaml({ id: "expected" }, undefined, true).lines).toEqual([
+      "- id: expected",
+      "+ (missing)",
+    ]);
   });
 
   test("never evaluates or reveals deferred and secret values", () => {

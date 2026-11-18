@@ -7,7 +7,7 @@
 // A dependency change also gets the unused-patch install check below. CI still
 // runs the full test suites and the jobs listed in the summary.
 //
-//   vp run check:changed                  compare against the merge base with origin/main
+//   vp run check:changed                  compare against the closest merge base with any remote main
 //   vp run check:changed <ref>            compare against the merge base with <ref>
 //   vp run check:changed --concurrency 1  run the steps one at a time
 //
@@ -39,6 +39,7 @@ import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { decide, readWorkspace } from "../.github/scripts/ci-changes.cjs";
+import { vitePlusCommand } from "./check-changed-command.ts";
 
 const GiB = 1024 ** 3;
 
@@ -107,7 +108,14 @@ const CacheEntry = Schema.fromJsonString(
 const decodeCacheEntry = Schema.decodeEffect(CacheEntry);
 const encodeCacheEntry = Schema.encodeEffect(CacheEntry);
 const decodeRootPackageJson = Schema.decodeEffect(
-  Schema.fromJsonString(Schema.Struct({ scripts: Schema.Struct({ "knip:check": Schema.String }) })),
+  Schema.fromJsonString(
+    Schema.Struct({
+      scripts: Schema.Struct({
+        "knip:check:files": Schema.String,
+        "knip:check:exports": Schema.String,
+      }),
+    }),
+  ),
 );
 
 const collectBytes = (stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>) =>
@@ -142,8 +150,88 @@ export const git = Effect.fn("checkChanged.git")(function* (
 export const gitLines = (cwd: string, args: ReadonlyArray<string>) =>
   git(cwd, args).pipe(Effect.map((stdout) => stdout.toString().split("\n").filter(Boolean)));
 
-const CODE = /\.[cm]?[jt]sx?$/;
+// Ignored files that checks read: generated sources, declarations, and env files.
+const checkInput = /(^|\/)\.(generated|astro)\/|\.d\.ts$|(^|\/)\.env[^/]*$/;
+const inNodeModules = /(^|\/)node_modules\//;
+
+// Pathspecs don't stop git from walking an ignored directory, and on Windows it follows pnpm's
+// junctions in node_modules until MAX_PATH. `--directory` lists one without entering it.
+export const ignoredCheckInputs = Effect.fn("checkChanged.ignoredCheckInputs")(function* (
+  root: string,
+) {
+  const list = (args: ReadonlyArray<string>) =>
+    git(root, ["ls-files", "-z", ...args]).pipe(
+      Effect.map((stdout) => stdout.toString().split("\0").filter(Boolean)),
+    );
+  const ignored = ["--others", "--ignored", "--exclude-standard"];
+  // `--directory` hides a directory where the index has a file; `-k` lists those.
+  const [listed, replaced] = yield* Effect.all(
+    [list([...ignored, "--directory"]), list(["-k", "--directory"])],
+    { concurrency: 2 },
+  );
+  const entries = [...new Set([...listed, ...replaced])].sort();
+  // git lists an untracked directory whose contents are all ignored together with them;
+  // listing it again would walk its node_modules.
+  const directories = entries.filter(
+    (entry, index) =>
+      entry.endsWith("/") && !inNodeModules.test(entry) && !entries[index + 1]?.startsWith(entry),
+  );
+  const files = entries.filter((entry) => !entry.endsWith("/"));
+  // Calls fit Windows' 32,767-character command line: 16 covers `:(literal)`, quotes, a space.
+  // `.git/` matches nothing; it stops git starting its walk inside a nested repository.
+  const longest = directories.reduce((max, dir) => Math.max(max, dir.length), 0);
+  const size = Math.max(1, Math.floor(30_000 / (longest + 16)));
+  for (let start = 0; start < directories.length; start += size) {
+    const batch = directories.slice(start, start + size).map((dir) => `:(literal)${dir}`);
+    files.push(...(yield* list([...ignored, "--", ":(literal).git/", ...batch])));
+  }
+  // A nested repository is listed by its directory, as the old pathspecs listed it.
+  return files
+    .filter((file) => !inNodeModules.test(file) && (file.endsWith("/") || checkInput.test(file)))
+    .sort();
+});
+
+export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function* (
+  root: string,
+  explicitRef: Option.Option<string>,
+) {
+  const candidates = Option.isSome(explicitRef)
+    ? [{ ref: explicitRef.value, rev: explicitRef.value }]
+    : (yield* gitLines(root, ["remote"])).map((name) => ({
+        ref: name + "/main",
+        rev: "refs/remotes/" + name + "/main",
+      }));
+  let closest: { ref: string; base: string; ahead: number } | undefined;
+  for (const { ref, rev } of candidates) {
+    const base = yield* git(root, ["merge-base", "HEAD", rev]).pipe(
+      Effect.map((stdout) => stdout.toString().trim()),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (!base) continue;
+    const ahead = Number((yield* git(root, ["rev-list", "--count", base + "..HEAD"])).toString());
+    if (!closest || ahead < closest.ahead) closest = { ref, base, ahead };
+  }
+  if (!closest) {
+    const tried = candidates.map(({ ref }) => ref).join(", ") || "a remote main";
+    return yield* Effect.fail(
+      "check:changed: no merge base with " + tried + ". Run git fetch or pass a ref.",
+    );
+  }
+  return closest;
+});
+
+// CI's lint and knip also read Astro components' frontmatter.
+const CODE = /\.(?:[cm]?[jt]sx?|astro)$/;
 const TEST = /\.test\.[cm]?[jt]sx?$/;
+// CI runs the .github/scripts tests with `node --test`; vitest passes a failing node:test file.
+const NODE_TEST = /^\.github[/\\]scripts[/\\]/;
+export const splitTests = (tests: Iterable<string>) => {
+  const all = [...tests];
+  return {
+    vitestTests: all.filter((file) => !NODE_TEST.test(file)),
+    nodeTests: all.filter((file) => NODE_TEST.test(file)),
+  };
+};
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // A flag wins over its environment variable; either must be a positive integer.
@@ -161,8 +249,14 @@ const override = Effect.fn("checkChanged.override")(function* (
   return value;
 });
 
+// Tests that read a doc; a changed doc has no test beside it to select them.
+export const docReaderTests = (files: ReadonlyArray<string>) =>
+  files.includes("docs/user/t3-connect-troubleshooting.md")
+    ? ["apps/server/src/cloud/ConnectReachability.test.ts"]
+    : [];
+
 const checkChanged = Effect.fn("checkChanged")(function* (input: {
-  readonly ref: string;
+  readonly ref: Option.Option<string>;
   readonly concurrency: Option.Option<number>;
   readonly timeout: Option.Option<number>;
 }) {
@@ -190,23 +284,17 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
 
   const lines = (...args: Array<string>) => gitLines(root, args);
 
-  const base = yield* git(root, ["merge-base", "HEAD", input.ref]).pipe(
-    Effect.map((stdout) => stdout.toString().trim()),
-    Effect.mapError(
-      () =>
-        `check:changed: no merge base with ${input.ref}. Run \`git fetch origin\` or pass a ref.`,
-    ),
-  );
+  const { ref, base } = yield* comparisonBase(root, input.ref);
   // --no-renames lists a rename as its old and new path, as CI does.
   const changedFiles = lines("diff", "--name-only", "--no-renames", base, "--");
   const untrackedFiles = lines("ls-files", "--others", "--exclude-standard");
   const files = [...new Set([...(yield* changedFiles), ...(yield* untrackedFiles)])].sort();
 
   if (files.length === 0) {
-    yield* Console.log(`check:changed: no changes since ${base.slice(0, 12)}.`);
+    yield* Console.log(`check:changed: no changes since ${base.slice(0, 12)} (${ref}).`);
     return true;
   }
-  yield* Console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)}`);
+  yield* Console.log(`check:changed: ${files.length} files since ${base.slice(0, 12)} (${ref})`);
 
   // Ignored generated sources, declarations, env files, and install state affect check results.
   // Include them in the key, but skip large ignored folders that no check reads.
@@ -227,18 +315,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
         "--",
       ]),
     );
-    const ignored = yield* lines(
-      "ls-files",
-      "--others",
-      "--ignored",
-      "--exclude-standard",
-      "--",
-      ":(glob)**/.generated/**",
-      ":(glob)**/.astro/**",
-      ":(glob)**/*.d.ts",
-      ":(glob)**/.env*",
-      ":(exclude,glob)**/node_modules/**",
-    );
+    const ignored = yield* ignoredCheckInputs(root);
     for (const file of [
       // Raw bytes of changed files too: .gitattributes normalizes line endings in
       // the diff, but the formatter reads the file as it is on disk.
@@ -286,8 +363,10 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       if (entry.startsWith(prefix) && TEST.test(entry)) tests.add(path.join(dir, entry));
     }
   }
+  for (const test of docReaderTests(files)) tests.add(test);
   // It reads files other than the ones beside it, so no changed file selects it.
   if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
+  const { vitestTests, nodeTests } = splitTests(tests);
 
   // React Compiler coverage compiles every client source file, so run only the
   // changed files' cases, in one extra step: a -t filter in the main test step
@@ -328,14 +407,16 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   const runKnip = files.some(
     (file) => CODE.test(file) || path.basename(file) === "package.json" || file === "knip.jsonc",
   );
-  // CI runs knip:check as one script of `knip ... && knip ...` passes. The passes
+  // CI runs knip:check as a task that depends on one script per pass. The passes
   // do not depend on each other, so they run side by side here.
   const rootPackage = yield* fs
     .readFileString(inRoot("package.json"))
     .pipe(Effect.flatMap(decodeRootPackageJson), Effect.orDie);
-  const knipCheck = rootPackage.scripts["knip:check"];
   const knipPasses: Array<Array<string>> = [];
-  for (const command of knipCheck.split(" && ")) {
+  for (const command of [
+    rootPackage.scripts["knip:check:files"],
+    rootPackage.scripts["knip:check:exports"],
+  ]) {
     const [bin, ...args] = command.trim().split(/\s+/);
     if (bin !== "knip" || /["'$\\|;&<>]/.test(command)) {
       return yield* Effect.fail(`check:changed cannot split knip:check: ${command}`);
@@ -360,8 +441,14 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   const vp = (args: ReadonlyArray<string>, cwd = root) =>
     Effect.scoped(
       Effect.gen(function* () {
+        const [command, commandArgs] = vitePlusCommand(args, platform);
         const handle = yield* spawner.spawn(
-          ChildProcess.make("vp", args, { cwd, env, extendEnv: true, forceKillAfter: "5 seconds" }),
+          ChildProcess.make(command, commandArgs, {
+            cwd,
+            env,
+            extendEnv: true,
+            forceKillAfter: "5 seconds",
+          }),
         );
         const [output, exitCode] = yield* Effect.all(
           [Stream.mkString(Stream.decodeText(handle.all)), handle.exitCode],
@@ -409,9 +496,11 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   ).pipe(Effect.catch((error) => Effect.succeed({ ok: false, output: error.message })));
 
   // CI's Lint job checks that generated GraphQL operations match their sources.
-  const graphql = ["apps/server", "packages/source-control-github"].filter((dir) =>
-    files.some((file) => file.startsWith(`${dir}/`)),
-  );
+  const graphql = [
+    "apps/server",
+    "packages/issue-tracker-linear",
+    "packages/source-control-github",
+  ].filter((dir) => files.some((file) => file.startsWith(`${dir}/`)));
   const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
   const typecheckWorkers = Math.min(concurrency, affected.length);
   const command = (name: string, args: ReadonlyArray<string>) => ({ name, run: vp(args) });
@@ -422,7 +511,9 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...(present.length > 0
       ? [command("format", ["fmt", "--check", "--no-error-on-unmatched-pattern", ...present])]
       : []),
-    ...(code.length > 0 ? [command("lint", ["lint", ...code])] : []),
+    ...(code.length > 0
+      ? [command("lint", ["lint", "--no-error-on-unmatched-pattern", ...code])]
+      : []),
     ...(runKnip
       ? knipPasses.map((args, index) => command(`knip ${index + 1}/${knipPasses.length}`, args))
       : []),
@@ -432,7 +523,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...(affected.length > 0
       ? [
           {
-            // `tsc --noEmit` writes nothing another package reads, so dependency order
+            // `effect-tsgo tsrs --noEmit` writes nothing another package reads, so dependency order
             // only made dependents wait: --parallel cut a contracts change from 13 s to 9 s.
             ...command(`typecheck (${affected.length} packages)`, [
               "run",
@@ -448,17 +539,27 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
         ]
       : []),
     // From the repo root, the root vite.config.ts hands each file to its package's config.
-    ...(tests.size > 0
+    ...(vitestTests.length > 0
       ? [
           {
-            ...command(`test (${tests.size} files)`, [
+            ...command(`test (${vitestTests.length} files)`, [
               "test",
               "run",
               "--passWithNoTests",
-              ...tests,
+              ...vitestTests,
             ]),
             serial: true,
           },
+        ]
+      : []),
+    ...(nodeTests.length > 0
+      ? [
+          command(`node --test (${nodeTests.length} files)`, [
+            "exec",
+            "node",
+            "--test",
+            ...nodeTests,
+          ]),
         ]
       : []),
     ...(compilerApps.length > 0
@@ -521,7 +622,7 @@ export const checkChangedCommand = Command.make(
   {
     ref: Argument.String("ref").pipe(
       Argument.withDescription("Compare against the merge base with this ref."),
-      Argument.withDefault("origin/main"),
+      Argument.optional,
     ),
     concurrency: Flag.Int("concurrency").pipe(
       Flag.withDescription(

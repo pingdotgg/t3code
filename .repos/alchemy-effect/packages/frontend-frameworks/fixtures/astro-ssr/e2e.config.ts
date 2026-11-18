@@ -1,7 +1,7 @@
-import * as Astro from "@alchemy.run/frontend-frameworks/astro";
-import cloudflare from "@alchemy.run/frontend-frameworks/astro/cloudflare";
 import { Assets, Text } from "@alchemy.run/cloudflare-runtime/core/bindings";
 import * as Options from "@alchemy.run/cloudflare-test-tools/e2e/Options";
+import * as Astro from "@alchemy.run/frontend-frameworks/astro";
+import cloudflare from "@alchemy.run/frontend-frameworks/astro/cloudflare";
 
 export const FIXTURE_VALUE = "hello-from-astro-ssr-binding";
 
@@ -15,10 +15,7 @@ export default Options.make({
         compatibilityFlags: ["nodejs_compat"],
         worker: {
           name: "fixtures-astro-ssr",
-          bindings: [
-            Assets.local("ASSETS"),
-            Text.local("FIXTURE_VALUE", FIXTURE_VALUE),
-          ],
+          bindings: [Assets.local("ASSETS"), Text.local("FIXTURE_VALUE", FIXTURE_VALUE)],
           assets: {
             htmlHandling: "auto-trailing-slash",
             notFoundHandling: "none",

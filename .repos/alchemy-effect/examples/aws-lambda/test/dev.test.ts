@@ -18,37 +18,31 @@
  * the notification publish ride the local Subscription.
  */
 import { afterAll, expect, test } from "bun:test";
-import { DevCli, fetchOk } from "alchemy-test/DevCli";
-import { spawnSync } from "node:child_process";
 import * as path from "node:path";
+import { DevCli, fetchOk } from "@alchemy.run/test/DevCli";
 
 const root = path.resolve(import.meta.dirname, "..");
 const STAGE = "dev-cli-test";
 const cli = new DevCli({ root, stage: STAGE });
 
-// The whole suite needs docker (floci runs as a container).
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
-
 afterAll(async () => {
   await cli.stop();
-  if (!process.env.NO_DESTROY && dockerAvailable) {
+  if (!process.env.NO_DESTROY) {
     cli.destroy();
   }
 }, 180_000);
 
-test.skipIf(!dockerAvailable)(
+test(
   "alchemy dev applies the mixed local/live Job stack and serves jobs",
   async () => {
     cli.start();
 
     // The first dev deploy may pull the floci image and provision the
     // local data plane before printing stack outputs.
-    const url = await cli.pollUntil(
-      "url in stack outputs",
-      () => cli.outputUrl("url"),
-      { tries: 300, delayMs: 1000 },
-    );
+    const url = await cli.pollUntil("url in stack outputs", () => cli.outputUrl("url"), {
+      tries: 300,
+      delayMs: 1000,
+    });
 
     // Dev identity: the function URL is served locally, not by AWS
     // (e.g. http://<id>.lambda-url.us-east-1.localhost:<port>/). The port
@@ -80,9 +74,10 @@ test.skipIf(!dockerAvailable)(
     expect(created.jobId).toBeString();
 
     // Read it back through the local DynamoDB storage.
-    const job = (await (
-      await fetchOk(new URL(`/?jobId=${created.jobId}`, api))
-    ).json()) as { id: string; content: string };
+    const job = (await (await fetchOk(new URL(`/?jobId=${created.jobId}`, api))).json()) as {
+      id: string;
+      content: string;
+    };
     expect(job.id).toBe(created.jobId);
     expect(job.content).toBe(content);
   },
