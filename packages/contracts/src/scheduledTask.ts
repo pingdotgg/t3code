@@ -1,3 +1,5 @@
+import * as Cron from "effect/Cron";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import {
@@ -72,6 +74,42 @@ const ScheduledTaskOnceSchedule = Schema.Struct({
     ),
   ),
 });
+
+/**
+ * Parses a five-field cron expression: minute, hour, day of month, month, weekday.
+ * A seconds field is refused, so a task never runs more than once a minute. With
+ * no time zone, the expression is read in the host's local time.
+ */
+export function parseScheduledTaskCron(
+  expression: string,
+  timeZone?: Parameters<typeof Cron.parse>[1],
+): Result.Result<Cron.Cron, string> {
+  const fields = expression.trim().split(/\s+/);
+  if (fields.length !== 5)
+    return Result.fail("Use five fields: minute, hour, day of month, month, weekday.");
+  const parsed = Cron.parse(fields.join(" "), timeZone);
+  if (Result.isFailure(parsed)) return Result.fail(parsed.failure.message);
+  try {
+    // Dates like Feb 30 never occur, so the task could never run.
+    Cron.next(parsed.success, 0);
+  } catch {
+    return Result.fail("This expression never matches a real date.");
+  }
+  return Result.succeed(parsed.success);
+}
+
+/** Why a cron expression cannot be saved, or null when it can. */
+export function scheduledTaskCronError(expression: string): string | null {
+  const parsed = parseScheduledTaskCron(expression);
+  return Result.isFailure(parsed) ? parsed.failure : null;
+}
+
+const ScheduledTaskCronSchedule = Schema.Struct({
+  type: Schema.Literal("cron"),
+  expression: TrimmedNonEmptyString.check(
+    Schema.makeFilter((value) => scheduledTaskCronError(value) ?? true),
+  ).annotate({ description: "Five fields, such as '*/30 9-17 * * 1-5'." }),
+}).annotate({ description: "Cron in the environment's time zone." });
 
 const ScheduledTaskWebhookSignatureFields = {
   header: TrimmedNonEmptyString.annotate({
@@ -195,6 +233,7 @@ export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskIntervalSchedule,
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
+  ScheduledTaskCronSchedule,
   ScheduledTaskWebhookSchedule,
 ]);
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
@@ -210,6 +249,7 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   }),
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskOnceSchedule,
+  ScheduledTaskCronSchedule,
   ScheduledTaskUpsertWebhookSchedule,
 ]);
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;

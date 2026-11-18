@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import {
   MIN_SCHEDULED_TASK_INTERVAL_MS,
+  scheduledTaskCronError,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
@@ -37,6 +38,30 @@ describe("ScheduledTaskSchedule", () => {
     ]) {
       expect(() => decodeUpsertSchedule({ type: "once", runAt })).toThrow();
     }
+  });
+
+  it("accepts five-field cron and says why it refuses other expressions", () => {
+    expect(decodeUpsertSchedule({ type: "cron", expression: " */30 9-17 * * MON-FRI " })).toEqual({
+      type: "cron",
+      expression: "*/30 9-17 * * MON-FRI",
+    });
+    expect(decodeSchedule({ type: "cron", expression: "0 9 29 2 *" })).toEqual({
+      type: "cron",
+      expression: "0 9 29 2 *",
+    });
+    const reason = scheduledTaskCronError;
+    // A seconds field would let a task run every second.
+    expect(reason("* * * * * *")).toMatch(/five fields/);
+    expect(reason("0 9 * *")).toMatch(/five fields/);
+    expect(reason("@daily")).toMatch(/five fields/);
+    expect(reason("61 * * * *")).toMatch(/between 0 and 59/);
+    expect(reason("0 0 30 2 *")).toMatch(/never matches/);
+    expect(() => decodeUpsertSchedule({ type: "cron", expression: "0 0 31 4 *" })).toThrow(
+      /never matches/,
+    );
+    expect(() => decodeSchedule({ type: "cron", expression: "* * * * * *" })).toThrow(
+      /five fields/,
+    );
   });
 });
 
