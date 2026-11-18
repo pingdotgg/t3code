@@ -171,6 +171,13 @@ export const make = Effect.gen(function* () {
   // from the last search, not the last refresh.
   const lastSearchedAt = new Map<string, number>();
   const indexIdleMillis = Duration.toMillis(WorkspaceSearchIndex.WORKSPACE_INDEX_IDLE_TTL);
+  const markSearched = (indexKey: string, now: number) => {
+    // A record older than the timeout counts the same as none, so it can go.
+    for (const [key, searchedAt] of lastSearchedAt) {
+      if (now - searchedAt >= indexIdleMillis) lastSearchedAt.delete(key);
+    }
+    lastSearchedAt.set(indexKey, now);
+  };
 
   const refresh: WorkspaceEntries["Service"]["refresh"] = Effect.fn("WorkspaceEntries.refresh")(
     function* (cwd) {
@@ -272,7 +279,7 @@ export const make = Effect.gen(function* () {
         trimLeadingPattern: /^[@./]+/,
       });
       const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths");
-      lastSearchedAt.set(indexKey, yield* Clock.currentTimeMillis);
+      markSearched(indexKey, yield* Clock.currentTimeMillis);
       const result = yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
@@ -366,7 +373,7 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
     const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "content");
-    lastSearchedAt.set(indexKey, yield* Clock.currentTimeMillis);
+    markSearched(indexKey, yield* Clock.currentTimeMillis);
     return yield* Effect.gen(function* () {
       const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
       return yield* searchIndex.searchContents(input);
@@ -546,7 +553,7 @@ export const make = Effect.gen(function* () {
         };
       }
       const indexKey = WorkspaceSearchIndex.workspaceSearchIndexKey(normalizedCwd, "paths");
-      lastSearchedAt.set(indexKey, yield* Clock.currentTimeMillis);
+      markSearched(indexKey, yield* Clock.currentTimeMillis);
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
         return yield* searchIndex.list();
