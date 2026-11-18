@@ -11,6 +11,7 @@ import {
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
 import * as Path from "effect/Path";
@@ -88,7 +89,7 @@ export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErr
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   {
-    // Desktop owns discovery, including on cache misses; the backend receives updates over fd4.
+    // True once a matching cache or finished discovery prepared PATH; false keeps server hydration.
     readonly installIntoProcess: Effect.Effect<boolean>;
     readonly awaitDiscovery: Effect.Effect<boolean>;
     /** Whether the user's own login shell, not a fallback, gave the PATH a new terminal gets. */
@@ -749,12 +750,16 @@ export const make = Effect.gen(function* () {
     ),
     Effect.onExit(() => Deferred.succeed(settledDiscovery, undefined)),
   );
-  const installIntoProcess = yield* Effect.cached(
+  const applyCache = yield* Effect.cached(
     Effect.gen(function* () {
       const cache = yield* fileSystem
         .readFileString(cachePath)
-        .pipe(Effect.flatMap(decodeCache), Effect.option);
-      if (Option.isSome(cache) && cache.value.key === key) {
+        .pipe(
+          Effect.flatMap(decodeCache),
+          Effect.option,
+          Effect.map(Option.filter((entry) => entry.key === key)),
+        );
+      if (Option.isSome(cache)) {
         const cached = Object.fromEntries(
           CACHED_ENV_NAMES.flatMap((name) => {
             const value = cache.value.environment[name];
@@ -780,7 +785,7 @@ export const make = Effect.gen(function* () {
         );
       }
       yield* Effect.forkIn(refresh, scope);
-      return true;
+      return Option.isSome(cache);
     }).pipe(Effect.withSpan("desktop.shellEnvironment.installIntoProcess")),
   );
   const updates = Stream.unwrap(
@@ -792,6 +797,20 @@ export const make = Effect.gen(function* () {
         Stream.fromSubscription(subscription),
       );
     }),
+  );
+  const installIntoProcess = applyCache.pipe(
+    Effect.flatMap((cacheApplied) =>
+      cacheApplied
+        ? Effect.succeed(true)
+        : Deferred.poll(discovered).pipe(
+            Effect.flatMap(Effect.transposeOption),
+            Effect.exit,
+            Effect.map(
+              (exit) =>
+                Exit.isSuccess(exit) && Option.exists(exit.value, ({ prepared }) => prepared),
+            ),
+          ),
+    ),
   );
   return DesktopShellEnvironment.of({
     installIntoProcess,
