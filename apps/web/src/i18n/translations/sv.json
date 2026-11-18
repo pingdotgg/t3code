@@ -3026,10 +3026,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "på datorn som öppnade den här sidan"
-      ]
+      "c": [" ", "på datorn som öppnade den här sidan"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3041,10 +3038,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· den som kör den får den här åtkomsten"
-      ]
+      "c": [" ", "· den som kör den får den här åtkomsten"]
     }
   ],
   "c54cc9c75db9dc58": "Godkänn bara en inloggning som du själv precis har startat.",
@@ -11986,7 +11980,7 @@
   "2cddd6095abc734a": "7 dagar",
   "53493056306708cf": "30 dagar",
   "c719359d18d37ad3": "90 dagar",
-  "ef5278f9768195da": "All time",
+  "ef5278f9768195da": "Hela perioden",
   "8367779e149f723b": "Begäran till den primära miljön misslyckades under {operation} (HTTP {status}).",
   "c5cd027743a2b5a6": "Ogiltig parkopplingstoken. Kontrollera token och försök igen.",
   "0e4b49c8203aae81": "Tidsgränsen överskreds i väntan på en autentiserad session efter uppstart.",

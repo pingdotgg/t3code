@@ -3026,10 +3026,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "sur l’ordinateur qui a ouvert cette page"
-      ]
+      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3041,10 +3038,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quiconque l’exécute obtient cet accès"
-      ]
+      "c": [" ", "· quiconque l’exécute obtient cet accès"]
     }
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",
@@ -11978,7 +11972,7 @@
   "2cddd6095abc734a": "7 jours",
   "53493056306708cf": "30 jours",
   "c719359d18d37ad3": "90 jours",
-  "ef5278f9768195da": "All time",
+  "ef5278f9768195da": "Toute la période",
   "8367779e149f723b": "La requête vers l’environnement principal a échoué pendant {operation} (HTTP {status}).",
   "c5cd027743a2b5a6": "Jeton d’appairage non valide. Vérifiez le jeton et réessayez.",
   "0e4b49c8203aae81": "Délai dépassé en attendant la session authentifiée après l’amorçage.",
