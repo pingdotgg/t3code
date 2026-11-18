@@ -962,9 +962,8 @@ export const make = Effect.gen(function* () {
           yield* Effect.logInfo("agent activity publishing disabled by T3 Connect configuration");
           break;
         case "enabled":
-          yield* Effect.logInfo("agent activity publishing enabled", {
-            relayUrl: relayConfig?.url,
-          });
+          // No relayUrl: a relay address change only applies once the link reconciles, after this line.
+          yield* Effect.logInfo("agent activity publishing enabled");
           break;
       }
       yield* forkParked(

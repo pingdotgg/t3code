@@ -149,6 +149,13 @@ the public HTTPS address. The relay builds no URLs from request headers, so `X-F
 values are ignored. `OIDC_ISSUER` must equal the issuer your provider reports
 publicly, including any path prefix your proxy adds.
 
+## What the relay stores
+
+While a thread runs, the server publishes its activity so a phone can show it. The relay keeps,
+per active thread, the project title, thread title, model name, phase, a short status headline
+and detail line, and a deep link (`relay_agent_activity_rows.state_json`). It does not store
+message content.
+
 ## What this host does not do
 
 - **Managed tunnels.** Cloudflare-managed endpoints are not available; use a relay channel or
