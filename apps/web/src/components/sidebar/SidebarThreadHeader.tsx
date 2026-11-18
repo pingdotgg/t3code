@@ -1,6 +1,6 @@
 import { SidebarProjectSortOrder } from "@t3tools/contracts/settings";
 import * as Schema from "effect/Schema";
-import { msg, useMessages } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 import { ArrowDownUpIcon, FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   type ComponentProps,
@@ -72,12 +72,13 @@ export function SidebarThreadHeader({
   activeSearchResultIndex,
   onClearSearch,
 }: SidebarThreadHeaderProps) {
+  const gt = useGT();
   const resultsVisible = isSearching && searchResultCount > 0;
   // Shrinking results can remove the active option; never leave aria-activedescendant pointing at it.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
   const newThreadLabel = newThreadShortcutLabel
-    ? `New thread (${newThreadShortcutLabel})`
-    : "New thread";
+    ? gt("New thread ({shortcut})", { shortcut: newThreadShortcutLabel })
+    : gt("New thread");
 
   return (
     <div className="flex items-center gap-1">
@@ -90,8 +91,8 @@ export function SidebarThreadHeader({
           value={searchQuery}
           onChange={(event) => onSearchQueryChange(event.currentTarget.value)}
           onKeyDown={onSearchKeyDown}
-          placeholder="Search"
-          aria-label="Search threads"
+          placeholder={gt("Search", { $context: "search field placeholder" })}
+          aria-label={gt("Search threads")}
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={resultsVisible}
@@ -109,7 +110,7 @@ export function SidebarThreadHeader({
             size="icon-micro"
             variant="ghost-muted"
             className="shrink-0"
-            aria-label="Clear thread search"
+            aria-label={gt("Clear thread search")}
             onClick={() => {
               onClearSearch();
               searchInputRef.current?.focus();
@@ -124,20 +125,23 @@ export function SidebarThreadHeader({
           <>
             {projectScope}
             <SidebarViewMenu />
-            <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
+            <SidebarHeaderIconButton label={gt("Add project")} onClick={onNewProject}>
               <FolderPlusIcon />
             </SidebarHeaderIconButton>
           </>
         ) : null}
         <SidebarHeaderIconButton
-          label="New thread"
+          label={gt("New thread")}
           tooltip={
             showNewThreadInProjectHint ? (
               <span className="flex flex-col gap-0.5">
                 <span>{newThreadLabel}</span>
                 <span className="text-muted-foreground">
-                  New thread in current project: Shift+click
-                  {newThreadInProjectShortcutLabel ? ` (${newThreadInProjectShortcutLabel})` : ""}
+                  {newThreadInProjectShortcutLabel
+                    ? gt("New thread in current project: Shift+click ({shortcut})", {
+                        shortcut: newThreadInProjectShortcutLabel,
+                      })
+                    : gt("New thread in current project: Shift+click")}
                 </span>
               </span>
             ) : (
@@ -155,6 +159,7 @@ export function SidebarThreadHeader({
 }
 
 function SidebarViewMenu() {
+  const gt = useGT();
   const m = useMessages();
   const groupByProject = useClientSettings((settings) => settings.boringSidebarEnabled);
   const projectSortOrder = useClientSettings((settings) => settings.sidebarProjectSortOrder);
@@ -163,7 +168,7 @@ function SidebarViewMenu() {
 
   return (
     <Menu>
-      <MenuTrigger render={<SidebarHeaderIconButton label="View options" />}>
+      <MenuTrigger render={<SidebarHeaderIconButton label={gt("View options")} />}>
         <ArrowDownUpIcon className="size-4" />
       </MenuTrigger>
       {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
@@ -175,7 +180,7 @@ function SidebarViewMenu() {
             void updateClientSettings({ boringSidebarEnabled: checked })
           }
         >
-          Group by project
+          {gt("Group by project")}
         </MenuCheckboxItem>
         {groupByProject ? (
           <MenuCheckboxItem
@@ -185,7 +190,7 @@ function SidebarViewMenu() {
               void updateClientSettings({ boringSidebarMultilineRows: checked })
             }
           >
-            Two-line rows
+            {gt("Two-line rows")}
           </MenuCheckboxItem>
         ) : (
           <MenuCheckboxItem
@@ -195,12 +200,12 @@ function SidebarViewMenu() {
               void updateClientSettings({ sidebarWorkingShelfEnabled: checked })
             }
           >
-            Working section
+            {gt("Working section")}
           </MenuCheckboxItem>
         )}
         <MenuSeparator />
         <MenuGroup>
-          <MenuGroupLabel>Sort projects</MenuGroupLabel>
+          <MenuGroupLabel>{gt("Sort projects")}</MenuGroupLabel>
           <MenuRadioGroup
             value={projectSortOrder}
             onValueChange={(value) => {

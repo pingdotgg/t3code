@@ -1,6 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { parseDiffFilePaths, parseDiffFileRevisions } from "./diffFileRevisions.ts";
+import {
+  diffFileSection,
+  parseDiffFilePaths,
+  parseDiffFileRevisions,
+} from "./diffFileRevisions.ts";
 
 function patchOf(...lines: ReadonlyArray<string>): string {
   return `${lines.join("\n")}\n`;
@@ -255,5 +259,21 @@ describe("parseDiffFilePaths", () => {
       { oldPath: "gone.md", newPath: null },
       { oldPath: "tab\tname", newPath: "moved.ts" },
     ]);
+  });
+});
+
+describe("diffFileSection", () => {
+  it("picks a file by where it ends up, so a swapped rename is not read as its partner", () => {
+    const aToB = patchOf("diff --git a/a.ts b/b.ts", "rename from a.ts", "rename to b.ts");
+    const bToA = patchOf("diff --git a/b.ts b/a.ts", "rename from b.ts", "rename to a.ts");
+    const gone = patchOf(
+      "diff --git a/gone.ts b/gone.ts",
+      "deleted file mode 100644",
+      "--- a/gone.ts",
+      "+++ /dev/null",
+    );
+    const patch = `${aToB}${bToA}${gone}`;
+    assert.strictEqual(diffFileSection(patch, "a.ts"), bToA);
+    assert.strictEqual(diffFileSection(patch, "gone.ts"), gone);
   });
 });
