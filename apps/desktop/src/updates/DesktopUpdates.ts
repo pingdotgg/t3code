@@ -425,20 +425,6 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  // Without a release floor, a build on another track than its saved one never offers anything.
-  const noOfferState = (state: DesktopUpdateState, checkedAt: string) =>
-    Effect.map(Ref.get(releaseFloorRef), (floor) => {
-      const buildChannel = desktopUpdateChannelOf(environment.appVersion);
-      return Option.isNone(floor) && buildChannel !== state.channel
-        ? reduceDesktopUpdateStateOnCheckFailure(
-            state,
-            trackMismatchMessage(buildChannel, state.channel),
-            checkedAt,
-            { buildChannel },
-          )
-        : reduceDesktopUpdateStateOnNoUpdate(state, checkedAt);
-    });
-
   const stateChanges = yield* PubSub.sliding<DesktopUpdateState>(16);
   // Serialize writes and publishes against subscription so snapshots cannot overlap the first change.
   const stateMutex = yield* Semaphore.make(1);
@@ -516,6 +502,26 @@ export const make = Effect.gen(function* () {
           `${policy.message ?? "Nightly updates are turned off on this machine."} Switch to the stable channel to keep getting updates.`,
         )
       : Option.none();
+
+  // Without a release floor, a build on another track than its saved one never offers anything.
+  // A track the policy blocks is never named as the one to switch to.
+  const noOfferState = (state: DesktopUpdateState, checkedAt: string) =>
+    Effect.map(Ref.get(releaseFloorRef), (floor) => {
+      const buildChannel = desktopUpdateChannelOf(environment.appVersion);
+      if (Option.isSome(floor) || buildChannel === state.channel) {
+        return reduceDesktopUpdateStateOnNoUpdate(state, checkedAt);
+      }
+      const blocked = channelBlockedReason(buildChannel);
+      if (Option.isSome(blocked)) {
+        return reduceDesktopUpdateStateOnCheckFailure(state, blocked.value, checkedAt);
+      }
+      return reduceDesktopUpdateStateOnCheckFailure(
+        state,
+        trackMismatchMessage(buildChannel, state.channel),
+        checkedAt,
+        { buildChannel },
+      );
+    });
 
   const resolveStateDisabledReason = (channel: DesktopUpdateChannel) =>
     resolveDisabledReason.pipe(Effect.map(Option.orElse(() => channelBlockedReason(channel))));
