@@ -68,6 +68,24 @@ describe("createCodeViewScrollRestore", () => {
     expect(shrunk.scrolls).toEqual([{ type: "position", position: 1500 }]);
   });
 
+  it("lets a reader who scrolls while more files load keep their own position", () => {
+    const first = viewer(10_000);
+    mount("thread-e", first).onScroll(4000, first.instance);
+
+    const loading = viewer(700);
+    const restore = mount("thread-e", loading, false, () => {});
+    restore.cancel();
+    restore.onScroll(150, loading.instance);
+    loading.instance.scrollHeight = 10_000;
+    restore.update("thread-e", true, null);
+    restore.flush();
+    expect(loading.scrolls).toEqual([]);
+
+    const again = viewer(10_000);
+    mount("thread-e", again);
+    expect(again.scrolls).toEqual([{ type: "position", position: 182 }]);
+  });
+
   it("forgets a position that a reveal or collapsing every file replaced", () => {
     const first = viewer(10_000);
     const restore = mount("thread-d", first);

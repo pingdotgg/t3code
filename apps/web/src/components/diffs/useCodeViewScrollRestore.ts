@@ -57,6 +57,10 @@ export function createCodeViewScrollRestore() {
       if (source !== viewer || pending !== null || scopeKey === null) return;
       scrollTopByScopeKey.set(scopeKey, scrollTop);
     },
+    /** The reader scrolled before the saved position was reached; their scroll wins. */
+    cancel() {
+      pending = null;
+    },
     /** Something else positions the viewer, such as a file reveal or collapsing every file. */
     discard() {
       pending = null;

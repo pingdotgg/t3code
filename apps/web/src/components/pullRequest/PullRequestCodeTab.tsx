@@ -1009,6 +1009,7 @@ function PullRequestCodeTab({
   const scrolledByReader = useRef(false);
   const followReader = () => {
     scrolledByReader.current = true;
+    codeViewScroll.cancel();
     codeViewReveal.cancel();
   };
   const attachCodeView = useStableCallback(
