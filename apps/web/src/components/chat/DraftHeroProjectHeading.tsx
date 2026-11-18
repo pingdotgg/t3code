@@ -1,6 +1,9 @@
+import { useGT } from "gt-react";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { observeResize } from "~/lib/observeResize";
+
+const PROJECT_SLOT = "\uE000";
 
 export function DraftHeroProjectHeading({
   children,
@@ -9,6 +12,14 @@ export function DraftHeroProjectHeading({
   children: ReactNode;
   projectName: string;
 }) {
+  const gt = useGT();
+  // One sentence for translators; the layout places the project picker at the placeholder.
+  // The flex gap stands in for the space before it; the suffix keeps its own leading space.
+  const [before = "", after = ""] = gt("What should we build in {project}?", {
+    project: PROJECT_SLOT,
+  }).split(PROJECT_SLOT);
+  const buildIn = before.trim();
+  const buildInSuffix = after.trimEnd();
   const containerRef = useRef<HTMLDivElement>(null);
   const inlineRef = useRef<HTMLSpanElement>(null);
   const [fitsInline, setFitsInline] = useState(false);
@@ -39,22 +50,24 @@ export function DraftHeroProjectHeading({
           ref={inlineRef}
           className="flex w-max items-baseline gap-2 whitespace-nowrap font-normal text-3xl tracking-tight"
         >
-          <span>What should we build in</span>
+          <span>{buildIn}</span>
           <span>
-            <span className="font-medium">{projectName}</span>?
+            <span className="font-medium">{projectName}</span>
+            {buildInSuffix}
           </span>
         </span>
       </span>
       <h1 className="flex w-full flex-col items-center justify-center gap-2 text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl lg:group-data-[inline=true]/draft-hero:flex-row">
         <span className="max-w-full lg:group-data-[inline=true]/draft-hero:shrink-0 [@media(max-height:28rem)]:sr-only">
-          What should we build
-          <span className="lg:group-data-[inline=true]/draft-hero:hidden">?</span>
-          <span className="hidden lg:group-data-[inline=true]/draft-hero:inline"> in</span>
+          <span className="lg:group-data-[inline=true]/draft-hero:hidden">
+            {gt("What should we build?")}
+          </span>
+          <span className="hidden lg:group-data-[inline=true]/draft-hero:inline">{buildIn}</span>
         </span>
         <span className="flex min-w-0 max-w-full items-baseline justify-center text-base tracking-normal lg:group-data-[inline=true]/draft-hero:text-3xl lg:group-data-[inline=true]/draft-hero:tracking-tight">
           <span className="min-w-0">{children}</span>
-          <span className="hidden shrink-0 lg:group-data-[inline=true]/draft-hero:inline [@media(max-height:28rem)]:hidden!">
-            ?
+          <span className="hidden shrink-0 whitespace-pre lg:group-data-[inline=true]/draft-hero:inline [@media(max-height:28rem)]:hidden!">
+            {buildInSuffix}
           </span>
         </span>
       </h1>
