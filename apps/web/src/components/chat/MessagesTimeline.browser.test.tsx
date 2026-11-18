@@ -681,20 +681,22 @@ describe("MessagesTimeline messages", () => {
     const viewport = props.listRef.current!.getScrollableNode()!;
     await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
     const start = viewport.scrollTop;
-    const reached: Array<[trusted: boolean, fromMinimap: boolean]> = [];
-    const record = (event: WheelEvent) =>
-      reached.push([
-        event.isTrusted,
-        event.target instanceof Element &&
-          event.target.closest('[data-testid="timeline-minimap"]') !== null,
-      ]);
+    const reached: WheelEvent[] = [];
+    const record = (event: WheelEvent) => reached.push(event);
     viewport.addEventListener("wheel", record);
     using _listener = { [Symbol.dispose]: () => viewport.removeEventListener("wheel", record) };
 
     await userEvent.wheel(screen.button(/^Jump to message/), { delta: { y: -100 } });
 
     await vi.waitFor(() => expect(viewport.scrollTop).toBeLessThan(start));
-    expect(reached).toEqual([[true, true]]);
+    expect(
+      reached.map((event) => [
+        event.isTrusted,
+        event.target instanceof Element &&
+          event.target.closest('[data-testid="timeline-minimap"]') !== null,
+        event.defaultPrevented,
+      ]),
+    ).toEqual([[true, true, false]]);
   });
 
   it("enables the minimap's next turn button on a thread restored above its bottom", async () => {

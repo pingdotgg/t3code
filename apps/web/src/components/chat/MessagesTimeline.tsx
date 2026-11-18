@@ -1054,7 +1054,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setMinimapHasPersistentGutter((current) =>
       current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
     );
-    setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
+    const scrollNode = listRef.current?.getScrollableNode();
+    const scrollbarGutter = scrollNode ? (scrollNode.offsetWidth - scrollNode.clientWidth) / 2 : 0;
+    setMinimapHitStripWidth(
+      resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth, scrollbarGutter),
+    );
   };
   // Rows added, removed or rewrapped (chat width) change the content size,
   // which moves the scroll position, the overflow, and the content lane width.

@@ -10,6 +10,7 @@ import {
   resolveTimelineMinimapNavigationInteractive,
   resolveTimelineMinimapTopPercent,
   TIMELINE_MINIMAP_MIN_ITEMS,
+  TIMELINE_MINIMAP_SHIFT_CSS,
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -103,7 +104,7 @@ export function TimelineMinimap({
   const minimap = (
     <div
       className={cn(
-        "group/minimap pointer-events-none timeline-minimap-frame absolute bottom-0 h-[100cqh] w-18",
+        "group/minimap pointer-events-none timeline-minimap-frame absolute bottom-0 h-[100cqh] w-18 overflow-clip",
         hasPersistentGutter
           ? "opacity-100"
           : "hidden opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 [@media(pointer:fine)]:block",
@@ -111,7 +112,10 @@ export function TimelineMinimap({
       data-testid="timeline-minimap"
       data-persistent-gutter={hasPersistentGutter ? "true" : "false"}
     >
-      <div className="relative h-full w-full select-none">
+      <div
+        className="relative h-full w-full select-none"
+        style={{ left: TIMELINE_MINIMAP_SHIFT_CSS }}
+      >
         <div
           className={cn(
             "absolute top-1/2 left-3 -translate-y-1/2",
@@ -242,13 +246,19 @@ export function TimelineMinimap({
       )}
       {activeItem ? (
         // Display-only: it overlaps the message column, and the strip keeps tracking beneath it.
-        <div className="pointer-events-none absolute inset-y-0 left-3 z-40">
+        <div
+          className={cn(
+            "pointer-events-none absolute inset-y-0 z-40 select-none",
+            !hasPersistentGutter && "transition-opacity duration-150 starting:opacity-0",
+          )}
+          style={{ left: TIMELINE_MINIMAP_SHIFT_CSS }}
+        >
           <div
             className="absolute top-1/2 -translate-y-1/2"
             style={{ height: resolveTimelineMinimapHeightStyle(items.length) }}
           >
             <span
-              className="pointer-events-none absolute left-8 w-80 -translate-y-1/2"
+              className="pointer-events-none absolute left-11 w-80 -translate-y-1/2"
               style={{ top: `${activeTopPercent}%` }}
             >
               <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
