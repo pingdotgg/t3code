@@ -333,6 +333,11 @@ export function applyOrchestrationV2ProjectionEvent(
         ...projection,
         thread: applyOrchestrationV2ThreadVisit(projection.thread, event.payload),
       };
+    // The board is read through getThreadBoard; its counters reach clients on the shell.
+    case "board.topic-updated":
+    case "board.topic-removed":
+    case "thread.board-visit-recorded":
+      return projection;
     case "run.created":
     case "run.updated": {
       const next = { ...base, runs: upsertEntity(base.runs, event.payload) };

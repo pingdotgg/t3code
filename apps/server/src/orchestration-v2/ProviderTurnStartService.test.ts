@@ -20,6 +20,7 @@ import {
   RunId,
   ThreadId,
   ProjectId,
+  type OrchestrationV2BoardTopic,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   OrchestrationV2DomainEvent,
@@ -657,6 +658,7 @@ function makeLocalCommandHarness(input: {
       groupOrderKey: "a",
     });
   }
+  let boardTopics: ReadonlyArray<OrchestrationV2BoardTopic> = [];
   const parentThreadId = ThreadId.make("side-chat-parent");
   const parentRunId = RunId.make("side-chat-parent-run");
   const parentProviderThread = {
@@ -1328,6 +1330,8 @@ function makeLocalCommandHarness(input: {
                 .filter((shell) => shell.groupParentThreadId === parentId)
                 .map((shell) => shell.id),
             ),
+          listBoardTopics: (leadId) =>
+            Effect.succeed(boardTopics.filter((topic) => topic.leadThreadId === leadId)),
           getTurnStartHistory: () =>
             startsTurns
               ? Effect.succeed([])
@@ -1380,6 +1384,23 @@ function makeLocalCommandHarness(input: {
     },
     updateGroupShell: (id: ThreadId, patch: Partial<OrchestrationV2ThreadShell>) =>
       groupShell(id, groupShells.get(id)!.title, { ...groupShells.get(id), ...patch }),
+    writeBoardTopic: (id: string, title: string, editor: ThreadId, updatedAt: string) => {
+      const topic: OrchestrationV2BoardTopic = {
+        id,
+        leadThreadId: groupLeadId,
+        title,
+        text: "",
+        authorThreadId: editor,
+        lastEditorThreadId: editor,
+        editCount: 1,
+        orderKey: id,
+        createdAt: updatedAt,
+        updatedAt,
+      };
+      boardTopics = [...boardTopics.filter((existing) => existing.id !== id), topic].toSorted(
+        (a, b) => (a.orderKey < b.orderKey ? -1 : 1),
+      );
+    },
     resolveRuntimePolicy,
     createWorktree,
     open,
@@ -2300,6 +2321,80 @@ effectIt.effect("prepends the group summary once and again only after the group 
       withInlineContext(workerGroupSummary("working"), "Next step"),
       "Next step",
       withInlineContext(workerGroupSummary("failed"), "Next step"),
+    ]);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+const workerBoardSummary = (updates: string) =>
+  workerGroupSummary("working").replace(
+    "\nMessages",
+    `\nBoard updates: ${updates}\nRead the board with t3_thread_board.\nMessages`,
+  );
+
+effectIt.effect(
+  "lists board topics another member changed since this thread's last summary",
+  () => {
+    const harness = makeLocalCommandHarness({ text: "Next step", group: "worker" });
+    const other = ThreadId.make("group-worker");
+    const lead = ThreadId.make("group-lead");
+    return Effect.gen(function* () {
+      const start = restartingRun(harness, yield* ProviderTurnStart.ProviderTurnStartServiceV2);
+
+      harness.writeBoardTopic("a-plan", "Plan", lead, "2026-11-18T10:00:00.000Z");
+      yield* start();
+      harness.writeBoardTopic("b-api", "API", other, "2026-11-18T10:05:00.000Z");
+      harness.writeBoardTopic("a-plan", "Plan", lead, "2026-11-18T10:06:00.000Z");
+      yield* start();
+      yield* start();
+      for (const [index, minute] of ["10", "11", "12", "13", "14", "15"].entries()) {
+        harness.writeBoardTopic(
+          `c-${index}`,
+          `Note ${index}`,
+          other,
+          `2026-11-18T11:${minute}:00.000Z`,
+        );
+      }
+      yield* start();
+      // The sixth change did not fit, so the next turn still lists it.
+      yield* start();
+
+      expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
+        withInlineContext(workerGroupSummary("working"), "Next step"),
+        withInlineContext(workerBoardSummary('"Plan" by Lead; "API" by Other'), "Next step"),
+        "Next step",
+        withInlineContext(
+          workerBoardSummary(
+            '"Note 5" by Other; "Note 4" by Other; "Note 3" by Other; "Note 2" by Other; "Note 1" by Other',
+          ),
+          "Next step",
+        ),
+        withInlineContext(workerBoardSummary('"Note 0" by Other'), "Next step"),
+      ]);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+effectIt.effect("leaves out the thread's own board edits", () => {
+  const harness = makeLocalCommandHarness({ text: "Next step", group: "worker" });
+  return Effect.gen(function* () {
+    const start = restartingRun(harness, yield* ProviderTurnStart.ProviderTurnStartServiceV2);
+    const self = harness.projection().thread.id;
+
+    yield* start();
+    harness.writeBoardTopic("a-mine", "Mine", self, "2026-11-18T10:05:00.000Z");
+    yield* start();
+    harness.writeBoardTopic(
+      "a-mine",
+      "Mine",
+      ThreadId.make("group-worker"),
+      "2026-11-18T10:10:00.000Z",
+    );
+    yield* start();
+
+    expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
+      withInlineContext(workerGroupSummary("working"), "Next step"),
+      "Next step",
+      withInlineContext(workerBoardSummary('"Mine" by Other'), "Next step"),
     ]);
   }).pipe(Effect.provide(harness.layer));
 });

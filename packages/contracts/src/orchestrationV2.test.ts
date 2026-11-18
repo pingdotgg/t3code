@@ -6,6 +6,8 @@ import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
   OrchestrationV2CheckpointFileSummary,
+  OrchestrationV2Command,
+  OrchestrationV2DomainEventJson,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -455,6 +457,75 @@ describe("orchestration V2 contracts", () => {
     expect(runtimeThread.pendingBackgroundTasks).toEqual([]);
     expect(runtimeThread.contextUsage).toBeNull();
     expect(runtimeThread.nativeMetadata).toBeNull();
+  });
+
+  it("round-trips a board topic event and the board commands", () => {
+    const topic = {
+      id: "topic-1",
+      leadThreadId: "thread-lead",
+      title: "API shape",
+      text: "Use cursor pagination.",
+      authorThreadId: "thread-worker",
+      lastEditorThreadId: "thread-lead",
+      editCount: 2,
+      orderKey: "a0",
+      createdAt: "2026-11-18T10:00:00.000Z",
+      updatedAt: "2026-11-18T10:05:00.000Z",
+    };
+    const base = {
+      id: "event-1",
+      threadId: "thread-lead",
+      occurredAt: "2026-11-18T10:05:00.000Z",
+    };
+    const wireEvents = [
+      { ...base, type: "board.topic-updated", payload: topic },
+      { ...base, type: "board.topic-removed", payload: { topicId: "topic-1" } },
+      {
+        ...base,
+        type: "thread.board-visit-recorded",
+        payload: { boardViewedAt: "2026-11-18T10:06:00.000Z" },
+      },
+    ];
+    const decodeEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEventJson);
+    const encodeEvent = Schema.encodeSync(OrchestrationV2DomainEventJson);
+    for (const wire of wireEvents) {
+      expect(encodeEvent(decodeEvent(wire))).toEqual(wire);
+    }
+
+    const commands = [
+      {
+        type: "thread.board.write",
+        commandId: "command-1",
+        threadId: "thread-worker",
+        title: "API shape",
+        text: "Use cursor pagination.",
+      },
+      {
+        type: "thread.board.remove",
+        commandId: "command-2",
+        threadId: "thread-lead",
+        topicId: "topic-1",
+      },
+      {
+        type: "thread.board.claim",
+        commandId: "command-3",
+        threadId: "thread-worker",
+        topicId: "topic-1",
+      },
+      {
+        type: "thread.board.visit",
+        commandId: "command-4",
+        threadId: "thread-lead",
+        viewedAt: "2026-11-18T10:06:00.000Z",
+      },
+    ];
+    const commandCodec = Schema.toCodecJson(OrchestrationV2Command);
+    const decodeCommand = Schema.decodeUnknownSync(commandCodec);
+    const encodeCommand = Schema.encodeSync(commandCodec);
+    for (const command of commands) {
+      expect(encodeCommand(decodeCommand(command))).toEqual(command);
+    }
+    expect(() => decodeCommand({ ...commands[0], title: "x".repeat(201) })).toThrow();
   });
 });
 

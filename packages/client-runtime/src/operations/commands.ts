@@ -147,6 +147,10 @@ export interface VisitThreadInput extends ThreadCommandInput {
   readonly searchQuery?: string;
 }
 
+export interface VisitBoardInput extends ThreadCommandInput {
+  readonly viewedAt: string;
+}
+
 export type MarkThreadUnreadInput = ThreadCommandInput;
 
 export interface UpdateThreadMetadataInput extends ThreadCommandInput {
@@ -712,6 +716,17 @@ export const visitThread = Effect.fn("EnvironmentCommands.visitThread")(function
     visitedAt: input.visitedAt,
     ...(input.opened ? { opened: true } : {}),
     ...(input.searchQuery ? { searchQuery: input.searchQuery } : {}),
+  });
+});
+
+export const visitBoard = Effect.fn("EnvironmentCommands.visitBoard")(function* (
+  input: VisitBoardInput,
+) {
+  return yield* dispatch({
+    type: "thread.board.visit",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    viewedAt: input.viewedAt,
   });
 });
 

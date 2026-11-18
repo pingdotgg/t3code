@@ -225,6 +225,7 @@ it.effect(
           getThreadTitles: () => Effect.die("unused getThreadTitles"),
           getThreadLinkMetadata: () => Effect.die("unused getThreadLinkMetadata"),
           listGroupMemberThreadIds: () => Effect.succeed([]),
+          listBoardTopics: () => Effect.die("unused listBoardTopics"),
           findGuestShareThreadId: () => Effect.die("unused findGuestShareThreadId"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),

@@ -63,6 +63,7 @@ import {
   unsettleThread,
   unsnoozeThread,
   updateThreadMetadata,
+  visitBoard,
   visitThread,
   watchThreadPullRequest,
 } from "../operations/commands.ts";
@@ -274,6 +275,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     visit: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:visit",
       execute: visitThread,
+      scheduler,
+      concurrency,
+    }),
+    visitBoard: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:visit-board",
+      execute: visitBoard,
       scheduler,
       concurrency,
     }),

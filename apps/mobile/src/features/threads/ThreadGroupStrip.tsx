@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { boardHasUpdates } from "@t3tools/client-runtime/state/thread-board";
 import { resolveThreadGroupFor } from "@t3tools/client-runtime/state/thread-groups";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useRef } from "react";
@@ -11,7 +12,7 @@ import { steadyNavigationThreadShellsAtom } from "../../state/threads";
 import { resolveThreadListV2Status, type ThreadListV2Status } from "./threadListV2";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
-function statusDotClass(status: ThreadListV2Status) {
+export function statusDotClass(status: ThreadListV2Status) {
   switch (status) {
     case "approval":
     case "input":
@@ -33,12 +34,14 @@ function statusDotClass(status: ThreadListV2Status) {
 export function ThreadGroupStrip(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly onOpenBoard: () => void;
 }) {
   const shells = useAtomValue(steadyNavigationThreadShellsAtom);
   const openLinkedThread = useOpenLinkedThread();
   const scrollRef = useRef<ScrollViewInstance>(null);
   const group = resolveThreadGroupFor(shells, props.environmentId, props.threadId);
   if (group === null) return null;
+  const hasBoardUpdates = boardHasUpdates(group.parent);
   const members = [
     { shell: group.parent, lead: true },
     ...group.workers.map((shell) => ({ shell, lead: false })),
@@ -100,6 +103,17 @@ export function ThreadGroupStrip(props: {
           })}
         </View>
       </ScrollView>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Board${hasBoardUpdates ? ", has updates" : ""}`}
+        className="mr-4 shrink-0 flex-row items-center gap-1.5 rounded-full bg-subtle px-2.5 py-1"
+        onPress={props.onOpenBoard}
+      >
+        <Text className="text-xs text-foreground">Board</Text>
+        {hasBoardUpdates ? (
+          <View className="h-1.5 w-1.5 rounded-full bg-adaptive-sky-600-400" />
+        ) : null}
+      </Pressable>
     </View>
   );
 }

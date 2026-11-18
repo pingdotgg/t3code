@@ -32,17 +32,51 @@ const worker2: GroupSummaryMember = {
 };
 
 it("renders the lead first and marks the caller", () => {
-  expect(groupTurnSummary({ self: worker2.threadId, lead, workers: [worker1, worker2] }).text)
-    .toBe(`T3 group "Ship groups" (you are a worker):
+  expect(
+    groupTurnSummary({
+      self: worker2.threadId,
+      lead,
+      workers: [worker1, worker2],
+      boardChanges: [],
+    }).text,
+  ).toBe(`T3 group "Ship groups" (you are a worker):
 - Ship groups (lead): working
 - Server side: working
 - Mobile side (you): needs input, settled
 Messages between group members are queued until the receiver's turn ends; read details with t3_thread_read.`);
   expect(
-    groupTurnSummary({ self: lead.threadId, lead, workers: [worker1] })
+    groupTurnSummary({ self: lead.threadId, lead, workers: [worker1], boardChanges: [] })
       .text.split("\n")
       .slice(0, 2),
   ).toEqual([`T3 group "Ship groups" (you are the lead):`, "- Ship groups (lead, you): working"]);
+});
+
+it("lists board changes after the members and fingerprints them", () => {
+  const change = (topicId: string, updatedAt: string, title: string, editorTitle: string) => ({
+    topicId,
+    updatedAt,
+    title,
+    editorTitle,
+  });
+  const summary = (boardChanges: Parameters<typeof groupTurnSummary>[0]["boardChanges"]) =>
+    groupTurnSummary({ self: worker1.threadId, lead, workers: [worker1], boardChanges });
+  const changes = [
+    change("api", "2026-11-18T12:00:00.000Z", "API shape", "Ship groups"),
+    change("risks", "2026-11-18T11:00:00.000Z", "Risks", "Mobile side"),
+  ];
+
+  expect(summary(changes).text).toBe(`T3 group "Ship groups" (you are a worker):
+- Ship groups (lead): working
+- Server side (you): working
+Board updates: "API shape" by Ship groups; "Risks" by Mobile side
+Read the board with t3_thread_board.
+Messages between group members are queued until the receiver's turn ends; read details with t3_thread_read.`);
+  expect(summary([]).text).not.toContain("Board updates");
+  expect(summary([]).text).not.toContain("t3_thread_board");
+  expect(summary(changes).fingerprint).not.toBe(summary([]).fingerprint);
+  expect(
+    summary([{ ...changes[0]!, updatedAt: "2026-11-18T12:30:00.000Z" }, changes[1]!]).fingerprint,
+  ).not.toBe(summary(changes).fingerprint);
 });
 
 it("keeps the fingerprint stable when only timestamps change", () => {
@@ -64,6 +98,7 @@ it("keeps the fingerprint stable when only timestamps change", () => {
       self: worker1.threadId,
       lead,
       workers: [groupSummaryMember(shell(stamp), nowMs)],
+      boardChanges: [],
     }).fingerprint;
 
   expect(groupSummaryMember(shell("2026-11-18T10:00:00Z"), nowMs).snoozed).toBe(true);
@@ -73,6 +108,7 @@ it("keeps the fingerprint stable when only timestamps change", () => {
       self: worker1.threadId,
       lead,
       workers: [{ ...groupSummaryMember(shell("2026-11-18T10:00:00Z"), nowMs), state: "failed" }],
+      boardChanges: [],
     }).fingerprint,
   ).not.toBe(fingerprint("2026-11-18T10:00:00Z"));
 });

@@ -54,6 +54,7 @@ interface RightPanelActionsInput {
   readonly canMaximizeRightPanel: boolean;
   readonly rightPanelMaximized: boolean;
   readonly supportsPullRequests: boolean;
+  readonly boardSurfaceAvailable: boolean;
   readonly pullRequestsSurfaceAvailable: boolean;
   readonly gitCwd: string | null;
   readonly activeProjectCwd: string | null;
@@ -87,6 +88,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     canMaximizeRightPanel,
     rightPanelMaximized,
     supportsPullRequests,
+    boardSurfaceAvailable,
     pullRequestsSurfaceAvailable,
     gitCwd,
     activeProjectCwd,
@@ -148,6 +150,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
   };
   const addPullRequestsSurfaceStable = useStableCallback(addPullRequestsSurface);
+  const addBoardSurface = () => {
+    if (!activeThreadRef || !boardSurfaceAvailable) return;
+    useRightPanelStore.getState().open(activeThreadRef, "board");
+  };
+  const addBoardSurfaceStable = useStableCallback(addBoardSurface);
   const addDeviceSurface = () => {
     if (!activeThreadRef) return;
     if (!deviceState.onboardingCompleted || deviceState.hostStatus === "disabled") {
@@ -325,6 +332,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   return {
     shortcuts,
     activateRightPanelSurfaceStable,
+    addBoardSurfaceStable,
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
     addFilesSurfaceStable,

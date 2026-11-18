@@ -548,6 +548,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
   groupParentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   groupOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   groupLaunchedByThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  boardTopicCount: Schema.optional(NonNegativeInt),
+  boardUpdatedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  boardViewedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
@@ -595,6 +598,24 @@ export function applyOrchestrationV2ThreadVisit<Thread extends OrchestrationV2Ap
     ...(visit.opens === undefined ? {} : { opens: visit.opens }),
   };
 }
+
+export const OrchestrationV2BoardTopic = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  leadThreadId: ThreadId,
+  title: TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  text: Schema.String.check(Schema.isMaxLength(20000)),
+  authorThreadId: ThreadId,
+  lastEditorThreadId: ThreadId,
+  editCount: NonNegativeInt,
+  orderKey: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type OrchestrationV2BoardTopic = typeof OrchestrationV2BoardTopic.Type;
+
+const OrchestrationV2BoardTopicRemoved = Schema.Struct({ topicId: TrimmedNonEmptyString });
+
+const OrchestrationV2BoardVisit = Schema.Struct({ boardViewedAt: IsoDateTime });
 
 /** A thread another agent drives: a local subagent or a task delegated from a linked environment. */
 export const isDelegatedAppThread = (
@@ -2067,6 +2088,21 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("board.topic-updated"),
+    payload: OrchestrationV2BoardTopic,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("board.topic-removed"),
+    payload: OrchestrationV2BoardTopicRemoved,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.board-visit-recorded"),
+    payload: OrchestrationV2BoardVisit,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("run.created"),
     payload: OrchestrationV2Run,
   }),
@@ -2309,6 +2345,9 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   groupParentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   groupOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   groupLaunchedByThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  boardTopicCount: Schema.optional(NonNegativeInt),
+  boardUpdatedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  boardViewedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
@@ -3023,6 +3062,21 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("board.topic-updated"),
+    payload: OrchestrationV2BoardTopic,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("board.topic-removed"),
+    payload: OrchestrationV2BoardTopicRemoved,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.board-visit-recorded"),
+    payload: OrchestrationV2BoardVisit,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("run.created"),
     payload: OrchestrationV2RunJson,
   }),
@@ -3313,6 +3367,31 @@ export const OrchestrationV2Command = Schema.Union([
     // Older servers ignore both fields and only move the read watermark.
     opened: Schema.optional(Schema.Boolean),
     searchQuery: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.board.write"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    title: OrchestrationV2BoardTopic.fields.title,
+    text: OrchestrationV2BoardTopic.fields.text,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.board.remove"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    topicId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.board.claim"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    topicId: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.board.visit"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    viewedAt: IsoDateTime,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.mark-unread"),
@@ -3913,6 +3992,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadFamily: "orchestration.getThreadFamily",
   getThreadTitles: "orchestration.getThreadTitles",
   getThreadLinkMetadata: "orchestration.getThreadLinkMetadata",
+  getThreadBoard: "orchestration.getThreadBoard",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
@@ -4600,6 +4680,16 @@ export const OrchestrationV2RpcSchemas = {
   getThreadLinkMetadata: {
     input: OrchestrationV2GetThreadTitlesInput,
     output: Schema.Record(ThreadId, OrchestrationV2ThreadLinkMetadata),
+  },
+  getThreadBoard: {
+    input: Schema.Struct({ threadId: ThreadId }),
+    output: Schema.Struct({
+      leadThreadId: Schema.NullOr(ThreadId),
+      viewedAt: Schema.NullOr(IsoDateTime),
+      topics: Schema.Array(
+        Schema.Struct({ ...OrchestrationV2BoardTopic.fields, authorInGroup: Schema.Boolean }),
+      ),
+    }),
   },
   getWorktreeThreadIds: {
     input: OrchestrationV2GetWorktreeThreadIdsInput,

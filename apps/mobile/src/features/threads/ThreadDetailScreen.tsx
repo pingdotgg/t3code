@@ -1711,6 +1711,12 @@ function ThreadDetailBody(
                       <ThreadGroupStrip
                         environmentId={props.environmentId}
                         threadId={props.selectedThread.id}
+                        onOpenBoard={() =>
+                          navigation.navigate("ThreadBoard", {
+                            environmentId: props.environmentId,
+                            threadId: props.selectedThread.id,
+                          })
+                        }
                       />
                     )}
                     {props.draftMode ? null : (

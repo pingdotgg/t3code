@@ -202,7 +202,12 @@ export const layer: Layer.Layer<
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
-    const deliveredGroupFingerprints = yield* Ref.make(new Map<string, string>());
+    const deliveredGroupSummaries = yield* Ref.make(
+      new Map<
+        string,
+        { readonly fingerprint: string; readonly boardSeen: ReadonlyMap<string, string> }
+      >(),
+    );
 
     const loadGroupTurnSummary = Effect.fn("ProviderTurnStartService.loadGroupTurnSummary")(
       function* (threadId: ThreadId) {
@@ -216,25 +221,72 @@ export const layer: Layer.Layer<
           shell !== null && shell.archivedAt === null && shell.deletedAt === null;
         if (!live(lead)) return undefined;
         const workerIds = yield* projectionStore.listGroupMemberThreadIds(leadId);
-        const workers = (yield* Effect.forEach(workerIds, (id) =>
+        const memberShells = yield* Effect.forEach(workerIds, (id) =>
           id === self.id ? Effect.succeed(self) : projectionStore.getThreadShell(id),
-        ))
-          .filter(live)
-          .sort((a, b) => {
-            const aKey = a.groupOrderKey ?? "";
-            const bKey = b.groupOrderKey ?? "";
-            if (aKey !== bKey) return aKey < bKey ? -1 : 1;
-            return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-          });
+        );
+        const workers = memberShells.filter(live).sort((a, b) => {
+          const aKey = a.groupOrderKey ?? "";
+          const bKey = b.groupOrderKey ?? "";
+          if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+          return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+        });
         if (workers.length === 0) return undefined;
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-        const summary = groupTurnSummary({
+        const members = {
           self: threadId,
           lead: groupSummaryMember(lead, nowMs),
           workers: workers.map((worker) => groupSummaryMember(worker, nowMs)),
-        });
-        const delivered = (yield* Ref.get(deliveredGroupFingerprints)).get(threadId);
-        return delivered === summary.fingerprint ? undefined : summary;
+        };
+        const delivered = (yield* Ref.get(deliveredGroupSummaries)).get(threadId);
+        const topics = yield* projectionStore.listBoardTopics(leadId);
+        const changed = topics
+          .filter((topic) => {
+            if (delivered === undefined || topic.lastEditorThreadId === threadId) return false;
+            const seen = delivered.boardSeen.get(topic.id);
+            return seen === undefined || Date.parse(topic.updatedAt) > Date.parse(seen);
+          })
+          .toSorted((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+          .slice(0, 5);
+        const titles = new Map(
+          [lead, ...memberShells].flatMap((shell) =>
+            shell === null ? [] : [[shell.id, shell.title]],
+          ),
+        );
+        const boardChanges = yield* Effect.forEach(changed, (topic) =>
+          Effect.map(
+            titles.has(topic.lastEditorThreadId)
+              ? Effect.succeed(titles.get(topic.lastEditorThreadId))
+              : Effect.map(
+                  projectionStore.getThreadShell(topic.lastEditorThreadId),
+                  (shell) => shell?.title,
+                ),
+            (editorTitle) => ({
+              topicId: topic.id,
+              updatedAt: topic.updatedAt,
+              title: topic.title,
+              editorTitle: editorTitle ?? topic.lastEditorThreadId,
+            }),
+          ),
+        );
+        const summary = groupTurnSummary({ ...members, boardChanges });
+        if (delivered?.fingerprint === summary.fingerprint) return undefined;
+        return {
+          text: summary.text,
+          delivered: {
+            // Once accepted, the listed changes are known, so an unchanged next turn matches this.
+            fingerprint: groupTurnSummary({ ...members, boardChanges: [] }).fingerprint,
+            // Changes past the listed few stay unseen, so a later turn lists them.
+            boardSeen: new Map(
+              topics.flatMap((topic) => {
+                if (changed.includes(topic) || delivered === undefined) {
+                  return [[topic.id, topic.updatedAt] as const];
+                }
+                const seen = delivered.boardSeen.get(topic.id);
+                return seen === undefined ? [] : [[topic.id, seen] as const];
+              }),
+            ),
+          },
+        };
       },
       Effect.catchCause((cause) =>
         Effect.logWarning("Failed to load the group summary for a turn", {
@@ -1837,8 +1889,8 @@ export const layer: Layer.Layer<
               ...(groupContext === "" || groupSummary === undefined
                 ? []
                 : [
-                    Ref.update(deliveredGroupFingerprints, (delivered) =>
-                      new Map(delivered).set(projection.thread.id, groupSummary.fingerprint),
+                    Ref.update(deliveredGroupSummaries, (delivered) =>
+                      new Map(delivered).set(projection.thread.id, groupSummary.delivered),
                     ),
                   ]),
               ...(sideChatContext === "" || sideChatHandoff === undefined || nativeThreadId == null

@@ -194,6 +194,9 @@ export interface EnvironmentThreadShell {
   readonly groupParentThreadId?: ThreadId | null;
   readonly groupOrderKey?: string | null;
   readonly groupLaunchedByThreadId?: ThreadId | null;
+  readonly boardTopicCount?: number;
+  readonly boardUpdatedAt?: string | null;
+  readonly boardViewedAt?: string | null;
   readonly activeOrderKey: string | null;
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
@@ -358,6 +361,9 @@ export function presentThreadShell(
     groupParentThreadId: thread.groupParentThreadId ?? null,
     groupOrderKey: thread.groupOrderKey ?? null,
     groupLaunchedByThreadId: thread.groupLaunchedByThreadId ?? null,
+    boardTopicCount: thread.boardTopicCount ?? 0,
+    boardUpdatedAt: thread.boardUpdatedAt ?? null,
+    boardViewedAt: thread.boardViewedAt ?? null,
     activeOrderKey: thread.activeOrderKey ?? null,
     ...(thread.lastVisitedAt === undefined
       ? {}

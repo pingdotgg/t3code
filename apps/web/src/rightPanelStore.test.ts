@@ -57,6 +57,24 @@ describe("rightPanelStore", () => {
     );
   });
 
+  it("opens the board as a singleton and brings it back after closing", async () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "board");
+    store.open(refA, "board");
+    const surfaces = () =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces;
+    expect(surfaces()).toEqual([{ id: "board", kind: "board" }]);
+    store.closeSurface(refA, "board");
+    expect(surfaces()).toEqual([]);
+    await reopenClosedView(useClosedViewStore.getState().entries[0]!, {
+      workspaceAvailable: true,
+      openPreview: () => {
+        throw new Error("A board tab must not create a browser session");
+      },
+    });
+    expect(surfaces()).toEqual([{ id: "board", kind: "board" }]);
+  });
+
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
     const pr = pullRequestSurface({

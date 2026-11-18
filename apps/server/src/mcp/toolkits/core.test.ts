@@ -1656,8 +1656,8 @@ const groupHarness = Effect.gen(function* () {
       creationSource: "web",
       ...(lead === undefined ? {} : { groupParentThreadId: id(lead) }),
     });
-  const organize = (caller: string, args: Record<string, unknown>) =>
-    server.callTool({ name: "t3_thread_organize", arguments: args }).pipe(
+  const callAs = (name: string) => (caller: string, args: Record<string, unknown>) =>
+    server.callTool({ name, arguments: args }).pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, {
         ...scope,
         thread: {
@@ -1675,7 +1675,12 @@ const groupHarness = Effect.gen(function* () {
   yield* create("lead");
   yield* create("w1", "lead");
   yield* create("x");
-  return { id, organize, leadOf };
+  return {
+    id,
+    organize: callAs("t3_thread_organize"),
+    board: callAs("t3_thread_board"),
+    leadOf,
+  };
 });
 
 it.effect("attaches a thread to a worker caller's lead", () =>
@@ -1714,5 +1719,96 @@ it.effect("lets a worker detach itself", () =>
     const result = yield* organize("w1", { action: "detach" });
     expect(result.isError).toBe(false);
     expect(yield* leadOf("w1")).toBeNull();
+  }).pipe(Effect.provide(layerGroupToolkit)),
+);
+
+it.effect("writes and updates a board topic through t3_thread_board", () =>
+  Effect.gen(function* () {
+    const { id, board } = yield* groupHarness;
+    const first = yield* board("w1", { action: "write", title: "Status", text: "Started." });
+    expect(first.structuredContent).toMatchObject({
+      title: "Status",
+      text: "Started.",
+      authorThreadId: id("w1"),
+      authorInGroup: true,
+      editCount: 1,
+    });
+    const second = yield* board("w1", { action: "write", title: "status", text: "Done." });
+    expect(second.structuredContent).toMatchObject({
+      id: (first.structuredContent as { id: string }).id,
+      title: "status",
+      text: "Done.",
+      lastEditorThreadId: id("w1"),
+      editCount: 2,
+    });
+    const read = yield* board("lead", { action: "read" });
+    expect(read.structuredContent).toMatchObject({
+      leadThreadId: id("lead"),
+      topics: [{ title: "status", text: "Done.", authorThreadId: id("w1") }],
+    });
+    expect((read.structuredContent as { topics: unknown[] }).topics).toHaveLength(1);
+  }).pipe(Effect.provide(layerGroupToolkit)),
+);
+
+it.effect("refuses to edit another member's topic with capability_denied", () =>
+  Effect.gen(function* () {
+    const { board } = yield* groupHarness;
+    const written = yield* board("w1", { action: "write", title: "Status", text: "Mine." });
+    const topicId = (written.structuredContent as { id: string }).id;
+    expect(
+      declaredFailure(yield* board("lead", { action: "write", title: "Status", text: "Ours." })),
+    ).toEqual({
+      _tag: "OrchestratorMcpFailure",
+      code: "capability_denied",
+      message: 'Topic "Status" belongs to w1; send it a message instead.',
+    });
+    expect(declaredFailure(yield* board("lead", { action: "remove", topicId }))).toMatchObject({
+      code: "capability_denied",
+      message: "Only the topic's author can remove it.",
+    });
+    expect(yield* board("lead", { action: "read" })).toMatchObject({
+      structuredContent: { topics: [{ text: "Mine." }] },
+    });
+  }).pipe(Effect.provide(layerGroupToolkit)),
+);
+
+it.effect("lets the lead claim a frozen topic", () =>
+  Effect.gen(function* () {
+    const { id, organize, board } = yield* groupHarness;
+    const written = yield* board("w1", { action: "write", title: "Status", text: "Halfway." });
+    const topicId = (written.structuredContent as { id: string }).id;
+    yield* organize("lead", { action: "attach", threadId: id("x") });
+    yield* organize("w1", { action: "detach" });
+    expect(declaredFailure(yield* board("x", { action: "claim", topicId }))).toMatchObject({
+      code: "capability_denied",
+      message: "Only the group lead can claim a topic whose author left the group.",
+    });
+    expect(yield* board("lead", { action: "read" })).toMatchObject({
+      structuredContent: { topics: [{ id: topicId, authorInGroup: false }] },
+    });
+    const claimed = yield* board("lead", { action: "claim", topicId });
+    expect(claimed.structuredContent).toMatchObject({
+      id: topicId,
+      text: "Halfway.",
+      authorThreadId: id("lead"),
+      authorInGroup: true,
+    });
+    const edited = yield* board("lead", { action: "write", title: "Status", text: "Taken over." });
+    expect(edited.isError).toBe(false);
+    expect(yield* board("lead", { action: "remove", topicId })).toMatchObject({
+      structuredContent: { removed: true },
+    });
+  }).pipe(Effect.provide(layerGroupToolkit)),
+);
+
+it.effect("tells an ungrouped caller it has no board", () =>
+  Effect.gen(function* () {
+    const { board } = yield* groupHarness;
+    for (const args of [{ action: "read" }, { action: "write", title: "Status", text: "Alone." }]) {
+      expect(declaredFailure(yield* board("x", args))).toMatchObject({
+        code: "invalid_request",
+        message: "This thread is not in a group.",
+      });
+    }
   }).pipe(Effect.provide(layerGroupToolkit)),
 );

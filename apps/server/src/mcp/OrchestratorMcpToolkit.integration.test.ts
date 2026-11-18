@@ -840,6 +840,22 @@ describe("orchestrator MCP toolkit", () => {
             { threadId: attachedThreadId, role: "worker" },
           ],
         });
+
+        const posted = yield* invoke("t3_thread_board", {
+          action: "write",
+          title: "Plan",
+          text: "Delegated work is done.",
+        });
+        expect(posted.structuredContent).toMatchObject({
+          title: "Plan",
+          authorThreadId: parentThreadId,
+          editCount: 1,
+        });
+        const board = yield* invoke("t3_thread_board", { action: "read" });
+        expect(board.structuredContent).toMatchObject({
+          leadThreadId: parentThreadId,
+          topics: [{ title: "Plan", text: "Delegated work is done.", authorInGroup: true }],
+        });
       }).pipe(Effect.provide(layerTest));
     }),
   );

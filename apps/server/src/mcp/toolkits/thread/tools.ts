@@ -15,6 +15,7 @@ import {
   IsoDateTime,
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
+  OrchestrationV2BoardTopic,
   ThreadId,
   RunId,
   NonNegativeInt,
@@ -23,7 +24,7 @@ import {
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -66,6 +67,42 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   .annotate(Tool.Title, "Organize a thread")
   .annotate(Tool.Strict, true)
   .annotate(Tool.Destructive, true);
+
+const boardTopic = Schema.Struct({
+  id: OrchestrationV2BoardTopic.fields.id,
+  title: OrchestrationV2BoardTopic.fields.title,
+  text: OrchestrationV2BoardTopic.fields.text,
+  authorThreadId: ThreadId,
+  authorInGroup: Schema.Boolean,
+  lastEditorThreadId: ThreadId,
+  editCount: NonNegativeInt,
+  updatedAt: OrchestrationV2BoardTopic.fields.updatedAt,
+});
+const ThreadBoardTool = Tool.make("t3_thread_board", {
+  description:
+    "Read or write your group's board: one topic per title, current state not a log. Only a topic's author edits or removes it; the lead may remove or claim a topic whose author left.",
+  parameters: Schema.Struct({
+    action: Schema.Literals(["read", "write", "remove", "claim"]),
+    title: Schema.optional(OrchestrationV2BoardTopic.fields.title),
+    text: Schema.optional(OrchestrationV2BoardTopic.fields.text),
+    topicId: Schema.optional(OrchestrationV2BoardTopic.fields.id),
+  }),
+  success: Schema.Union([
+    Schema.Struct({ leadThreadId: ThreadId, topics: Schema.Array(boardTopic) }),
+    boardTopic,
+    Schema.Struct({ removed: Schema.Literal(true) }),
+  ]),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    SecureRandom.SecureRandom,
+  ],
+})
+  .annotate(Tool.Title, "Group board")
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const commandTool = {
   success: OrchestrationV2DispatchCommandResult,
@@ -249,6 +286,7 @@ export const ThreadToolkit = Toolkit.make(
   ThreadConfigureTool,
   ThreadTransferTool,
   ThreadOrganizeTool,
+  ThreadBoardTool,
   PendingRequestTool,
   QueueTool,
 );

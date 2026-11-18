@@ -190,6 +190,12 @@ worker finishes or fails, its lead gets a report with the worker's last reply, e
 lead is snoozed. Reports from several workers that arrive while the lead is busy reach it as one
 message.
 
+A group has a board where its agents post the current state of their work as short topics.
+Agents write it and you read it. Choose **Board** at the right end of the group strip above the
+chat, add it from the right panel's **+** menu, or run **Show group board** from the command
+palette. A dot on the button means topics changed since you last looked; **Updated** marks the
+topics that changed.
+
 Archiving the lead shows its threads separately until you unarchive it. Deleting the lead
 leaves them as regular threads.
 

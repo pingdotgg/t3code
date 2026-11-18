@@ -209,6 +209,34 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.thread.groupOrderKey).toBe("n");
   });
 
+  it.each([
+    {
+      type: "board.topic-updated",
+      payload: {
+        id: "topic-1",
+        leadThreadId: threadId,
+        title: "API shape",
+        text: "Use cursor pagination.",
+        authorThreadId: threadId,
+        lastEditorThreadId: threadId,
+        editCount: 0,
+        orderKey: "a0",
+        createdAt: "2026-06-20T00:00:00.000Z",
+        updatedAt: "2026-06-20T00:00:00.000Z",
+      },
+    },
+    { type: "board.topic-removed", payload: { topicId: "topic-1" } },
+    { type: "thread.board-visit-recorded", payload: { boardViewedAt: "2026-06-20T00:00:00.000Z" } },
+  ])("$type leaves the projection unchanged", (event) => {
+    const next = applyOrchestrationV2ProjectionEvent(emptyProjection, {
+      id: `event-${event.type}`,
+      threadId,
+      occurredAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+      ...event,
+    } as OrchestrationV2DomainEvent);
+    expect(next).toBe(emptyProjection);
+  });
+
   it("preserves visible row identity when run updates do not change membership", () => {
     const item = commandItem("item-stable");
     const visibleTurnItems = [

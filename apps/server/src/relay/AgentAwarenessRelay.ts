@@ -122,6 +122,9 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.tags-updated":
     case "thread.visited":
     case "thread.visit-recorded":
+    case "board.topic-updated":
+    case "board.topic-removed":
+    case "thread.board-visit-recorded":
     case "thread.marked-unread":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":

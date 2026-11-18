@@ -53,6 +53,7 @@ import {
   idleCompactionOf,
   isQueuedProviderThreadPlaceholder,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
+  OrchestrationV2BoardTopic,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
   OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
   OrchestrationV2ContextHandoffJson as OrchestrationV2ContextHandoffJsonSchema,
@@ -623,6 +624,10 @@ export interface ProjectionStoreV2Shape {
   readonly listGroupMemberThreadIds: (
     parentThreadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+  /** The lead's board topics in board order. */
+  readonly listBoardTopics: (
+    leadThreadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2BoardTopic>, ProjectionStoreV2Error>;
   /** The thread whose current guest share has this id. Scans thread rows; only redeem uses it. */
   readonly findGuestShareThreadId: (
     shareId: GuestShareId,
@@ -978,6 +983,10 @@ export function applyToProjection(
         ...projection,
         thread: applyOrchestrationV2ThreadVisit(projection.thread, event.payload),
       };
+    case "board.topic-updated":
+    case "board.topic-removed":
+    case "thread.board-visit-recorded":
+      return projection;
     case "run.created":
     case "run.updated":
       return withLocalVisibleTurnItems({
@@ -1220,6 +1229,17 @@ const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema
 const matchesNothing = (...filters: ReadonlyArray<ReadonlyArray<unknown> | undefined>) =>
   filters.some((values) => values?.length === 0);
 
+export const boardTopicTitleKey = (title: string) => title.trim().toLowerCase();
+
+// Only a lead carries board fields, so other shells stay as small as before.
+const boardShellFields = (
+  thread: Pick<OrchestrationV2AppThread, "boardTopicCount" | "boardUpdatedAt" | "boardViewedAt">,
+) => ({
+  ...(thread.boardTopicCount === undefined ? {} : { boardTopicCount: thread.boardTopicCount }),
+  ...(thread.boardUpdatedAt == null ? {} : { boardUpdatedAt: thread.boardUpdatedAt }),
+  ...(thread.boardViewedAt == null ? {} : { boardViewedAt: thread.boardViewedAt }),
+});
+
 const encodeThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
 );
@@ -1273,6 +1293,9 @@ const encodeContextHandoffPayload = Schema.encodeEffect(
 );
 const encodeContextTransferPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
+);
+const encodeBoardTopicPayload = Schema.encodeEffect(
+  Schema.fromJsonString(OrchestrationV2BoardTopic),
 );
 
 const PullRequestThread = OrchestrationV2AppThreadJsonSchema.mapFields(
@@ -1357,6 +1380,9 @@ const decodeContextHandoffPayload = Schema.decodeUnknownEffect(
 );
 const decodeContextTransferPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
+);
+const decodeBoardTopicPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2BoardTopic),
 );
 
 const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
@@ -1884,6 +1910,7 @@ export function threadShellFromProjection(
     groupParentThreadId: projection.thread.groupParentThreadId ?? null,
     groupOrderKey: projection.thread.groupOrderKey ?? null,
     groupLaunchedByThreadId: projection.thread.groupLaunchedByThreadId ?? null,
+    ...boardShellFields(projection.thread),
     ...(projection.thread.tags?.length ? { tags: projection.thread.tags } : {}),
     lastVisitedAt: projection.thread.lastVisitedAt,
     opens: projection.thread.opens ?? null,
@@ -2191,6 +2218,7 @@ function shellFromState(input: {
     groupParentThreadId: input.state.thread.groupParentThreadId ?? null,
     groupOrderKey: input.state.thread.groupOrderKey ?? null,
     groupLaunchedByThreadId: input.state.thread.groupLaunchedByThreadId ?? null,
+    ...boardShellFields(input.state.thread),
     ...(input.state.thread.tags?.length ? { tags: input.state.thread.tags } : {}),
     lastVisitedAt: input.state.thread.lastVisitedAt,
     opens: input.state.thread.opens ?? null,
@@ -2293,6 +2321,50 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       END
     `;
 
+    // The board fold owns these fields. A thread event built from a read taken before a concurrent
+    // board write would otherwise roll the lead's counters back.
+    const keepBoardSummary = sql`
+      CASE
+        WHEN json_type(orchestration_v2_projection_threads.payload_json, '$.boardTopicCount') IS NULL
+        THEN excluded.payload_json
+        ELSE json_set(
+          excluded.payload_json,
+          '$.boardTopicCount',
+          json_extract(orchestration_v2_projection_threads.payload_json, '$.boardTopicCount'),
+          '$.boardUpdatedAt',
+          json_extract(orchestration_v2_projection_threads.payload_json, '$.boardUpdatedAt'),
+          '$.boardViewedAt',
+          json_extract(orchestration_v2_projection_threads.payload_json, '$.boardViewedAt')
+        )
+      END
+    `;
+
+    // Writes all three fields together, so a lead with any board field has them all.
+    const updateBoardSummary = (
+      leadThreadId: ThreadId,
+      change: { readonly updatedAt?: string; readonly viewedAt?: string },
+    ) => sql`
+      UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(
+        payload_json,
+        '$.boardTopicCount',
+        (
+          SELECT COUNT(*) FROM orchestration_v2_projection_board_topics
+          WHERE lead_thread_id = ${leadThreadId}
+        ),
+        '$.boardUpdatedAt',
+        COALESCE(${change.updatedAt ?? null}, json_extract(payload_json, '$.boardUpdatedAt')),
+        '$.boardViewedAt',
+        -- Forward only: two members can record visits concurrently. ISO strings sort by time.
+        COALESCE(
+          MAX(${change.viewedAt ?? null}, json_extract(payload_json, '$.boardViewedAt')),
+          ${change.viewedAt ?? null},
+          json_extract(payload_json, '$.boardViewedAt')
+        )
+      )
+      WHERE thread_id = ${leadThreadId}
+    `;
+
     type TimelineIndexItem = Pick<
       OrchestrationV2TurnItem,
       "id" | "threadId" | "runId" | "nodeId" | "parentItemId" | "type" | "status" | "ordinal"
@@ -2356,6 +2428,52 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               });
               break;
             }
+            case "board.topic-updated": {
+              const topic = event.payload;
+              const payloadJson = yield* encodeBoardTopicPayload(topic);
+              yield* sql`
+              INSERT INTO orchestration_v2_projection_board_topics (
+                topic_id,
+                lead_thread_id,
+                title_key,
+                order_key,
+                updated_at,
+                payload_json
+              )
+              VALUES (
+                ${topic.id},
+                ${topic.leadThreadId},
+                ${boardTopicTitleKey(topic.title)},
+                ${topic.orderKey},
+                ${topic.updatedAt},
+                ${payloadJson}
+              )
+              ON CONFLICT(topic_id)
+              DO UPDATE SET
+                lead_thread_id = excluded.lead_thread_id,
+                title_key = excluded.title_key,
+                order_key = excluded.order_key,
+                updated_at = excluded.updated_at,
+                payload_json = excluded.payload_json
+            `;
+              yield* updateBoardSummary(topic.leadThreadId, { updatedAt: topic.updatedAt });
+              break;
+            }
+            case "board.topic-removed": {
+              yield* sql`
+              DELETE FROM orchestration_v2_projection_board_topics
+              WHERE topic_id = ${event.payload.topicId} AND lead_thread_id = ${event.threadId}
+            `;
+              yield* updateBoardSummary(event.threadId, {
+                updatedAt: yield* encodeThreadUpdatedAt(event.occurredAt),
+              });
+              break;
+            }
+            case "thread.board-visit-recorded":
+              yield* updateBoardSummary(event.threadId, {
+                viewedAt: event.payload.boardViewedAt,
+              });
+              break;
             case "thread.created":
             case "thread.archived":
             case "thread.unarchived":
@@ -2428,8 +2546,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 archived_at = excluded.archived_at,
                 deleted_at = excluded.deleted_at,
-                payload_json = excluded.payload_json
+                payload_json = ${keepBoardSummary}
             `;
+              // A lead's board goes with it.
+              if (event.type === "thread.deleted") {
+                yield* sql`
+                DELETE FROM orchestration_v2_projection_board_topics
+                WHERE lead_thread_id = ${event.payload.id}
+              `;
+              }
               break;
             }
             case "run.created":
@@ -3198,6 +3323,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.tags-updated" &&
             event.type !== "thread.visited" &&
             event.type !== "thread.visit-recorded" &&
+            event.type !== "board.topic-updated" &&
+            event.type !== "board.topic-removed" &&
+            event.type !== "thread.board-visit-recorded" &&
             event.type !== "thread.marked-unread" &&
             event.type !== "thread.metadata-updated" &&
             event.type !== "thread.pull-request-synced" &&
@@ -9187,6 +9315,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       Effect.mapError(shellSnapshotReadError),
     );
 
+    const listBoardTopics = Effect.fn("ProjectionStore.listBoardTopics")(
+      function* (leadThreadId: ThreadId) {
+        const rows = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json
+        FROM orchestration_v2_projection_board_topics
+        WHERE lead_thread_id = ${leadThreadId}
+        ORDER BY order_key, topic_id
+      `;
+        return yield* Effect.forEach(rows, (row) => decodeBoardTopicPayload(row.payload_json));
+      },
+      (effect, leadThreadId) =>
+        effect.pipe(
+          Effect.mapError(
+            (cause) => new ProjectionStoreReadError({ threadId: leadThreadId, cause }),
+          ),
+        ),
+    );
+
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(
       "ProjectionStore.listOlderSettledThreads",
     )(function* ({ before, projectIds, limit }) {
@@ -9341,6 +9487,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),
       getThreadShell: readOnReader(getThreadShell),
       listGroupMemberThreadIds: readOnReader(listGroupMemberThreadIds),
+      listBoardTopics: readOnReader(listBoardTopics),
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),

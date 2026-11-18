@@ -441,6 +441,15 @@ omitted, from its group, and only the thread itself or its lead may do it;
 anyone else gets `capability_denied`. Both pass the same mode and link checks as
 other thread changes.
 
+### `t3_thread_board`
+
+The calling thread reads or writes its group's board, which lives on the lead.
+A caller in no group gets `invalid_request`; an outside client cannot use it.
+`write` keeps one topic per title, compared case-insensitively, and updates that
+topic in place. Only a topic's author edits or removes it. When the author leaves
+the group the topic freezes, and only the lead may `remove` it or `claim` it as
+its own. The server's refusals come back as `capability_denied` with its reason.
+
 ### `t3_thread_send`
 
 Sends a message to any ordinary or delegated thread in the environment:

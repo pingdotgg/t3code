@@ -21,6 +21,7 @@ import {
   unavailable,
 } from "../../threadAccess.ts";
 import type * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import { boardTopicTitleKey } from "../../../orchestration-v2/ProjectionStore.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -102,6 +103,60 @@ const required = <A>(value: A | undefined, name: string) =>
         }),
       )
     : Effect.succeed(value);
+const boardRefusal = (error: Parameters<typeof dispatchFailure>[0]) =>
+  (error._tag === "OrchestratorDispatchError" ||
+    error._tag === "OrchestratorCommandRejectedError") &&
+  typeof error.cause === "string" &&
+  error.cause.length > 0
+    ? new OrchestratorMcpFailure({
+        code: "capability_denied",
+        message: dispatchFailure(error).message,
+      })
+    : dispatchFailure(error);
+
+const readBoard = Effect.fn("mcp.readBoard")(function* () {
+  yield* McpInvocationContext.requireThreadScope(
+    yield* McpInvocationContext.McpInvocationContext,
+    "The group board",
+  );
+  const { threads, caller } = yield* readCaller();
+  const board =
+    caller === undefined
+      ? null
+      : yield* threads.getThreadBoard({ threadId: caller.id }).pipe(Effect.mapError(unavailable));
+  if (caller === undefined || board?.leadThreadId == null)
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: "This thread is not in a group.",
+    });
+  return {
+    threads,
+    caller,
+    leadThreadId: board.leadThreadId,
+    topics: board.topics.map(
+      ({
+        id,
+        title,
+        text,
+        authorThreadId,
+        authorInGroup,
+        lastEditorThreadId,
+        editCount,
+        updatedAt,
+      }) => ({
+        id,
+        title,
+        text,
+        authorThreadId,
+        authorInGroup,
+        lastEditorThreadId,
+        editCount,
+        updatedAt,
+      }),
+    ),
+  };
+});
+
 const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
@@ -356,6 +411,38 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               runId,
             }));
         }
+      }),
+    ),
+  ),
+  t3_thread_board: McpToolAccess.either(
+    (input) => input.action === "read",
+    McpToolAccess.readsAsCaller(() =>
+      readBoard().pipe(Effect.map(({ leadThreadId, topics }) => ({ leadThreadId, topics }))),
+    ),
+    McpToolAccess.actsAsCaller((input) =>
+      Effect.gen(function* () {
+        const { threads, caller } = yield* readBoard();
+        const common = { commandId: yield* newCommandId(), threadId: caller.id };
+        let command: OrchestrationV2Command;
+        let matches: (topic: { id: string; title: string }) => boolean;
+        if (input.action === "write") {
+          const title = yield* required(input.title, "title");
+          const text = yield* required(input.text, "text");
+          command = { ...common, type: "thread.board.write", title, text };
+          matches = (topic) => boardTopicTitleKey(topic.title) === boardTopicTitleKey(title);
+        } else {
+          const topicId = yield* required(input.topicId, "topicId");
+          command = {
+            ...common,
+            type: input.action === "claim" ? "thread.board.claim" : "thread.board.remove",
+            topicId,
+          };
+          matches = (topic) => topic.id === topicId;
+        }
+        yield* threads.dispatch(command).pipe(Effect.mapError(boardRefusal));
+        if (input.action === "remove") return { removed: true as const };
+        const { topics } = yield* readBoard();
+        return topics.find(matches) ?? (yield* unavailable());
       }),
     ),
   ),
