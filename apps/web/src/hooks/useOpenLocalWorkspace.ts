@@ -81,7 +81,7 @@ export function useOpenLocalWorkspace() {
       waitForProject: async (projectRef) => {
         await waitForProject(projectRef);
       },
-      openThread: async (projectRef) => {
+      openThread: (projectRef) => {
         const project = readProjects().find(
           (candidate) =>
             candidate.environmentId === projectRef.environmentId &&
@@ -94,8 +94,7 @@ export function useOpenLocalWorkspace() {
             input: { projectId: projectRef.projectId, archived: false },
           }).then((result) => reportProjectFailure(m(msg("Failed to unarchive project")), result));
         }
-        // Home opens a draft in the first project on its own; when it wins the race, ours retries into it.
-        return (await openThread(projectRef)) ?? openThread(projectRef);
+        return openThread(projectRef);
       },
     });
 
