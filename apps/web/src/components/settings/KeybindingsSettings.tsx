@@ -1061,9 +1061,7 @@ function KeybindingSettingsRow(props: KeybindingRowProps & { activate: boolean }
   const { row, anchorId, allRows, isSaving, onReset, onUnassign, onRemove } = props;
   const active = props.activate || focused;
   const label = commandLabel(row.command, m);
-  const unassignedLabel = (
-    <T context="keyboard shortcut with no key assigned">Unassigned</T>
-  );
+  const unassignedLabel = <T context="keyboard shortcut with no key assigned">Unassigned</T>;
   const title = active ? (
     <KeybindingRowTitle row={row} />
   ) : (

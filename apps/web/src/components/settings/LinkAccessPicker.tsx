@@ -48,7 +48,9 @@ export function LinkAccessPicker({
                     <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
                     {m(label)}
                   </span>
-                  <span className="text-meta leading-4 text-muted-foreground">{m(description)}</span>
+                  <span className="text-meta leading-4 text-muted-foreground">
+                    {m(description)}
+                  </span>
                 </span>
               </SelectItem>
             );

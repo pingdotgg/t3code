@@ -2319,7 +2319,9 @@ export function ThreadsSettingsPanel() {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="turn">{messages(RESPONSE_STREAMING_MODE_LABELS.turn)}</SelectItem>
+                  <SelectItem value="turn">
+                    {messages(RESPONSE_STREAMING_MODE_LABELS.turn)}
+                  </SelectItem>
                   <SelectItem value="paragraph">
                     {messages(RESPONSE_STREAMING_MODE_LABELS.paragraph)}
                   </SelectItem>

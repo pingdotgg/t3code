@@ -2280,11 +2280,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
       {loading ? <WorkHistorySkeleton /> : null}
       {row.ending === "stopped" ? (
         <p className="px-1 pt-2 text-body text-muted-foreground">
-          {row.diff ? (
-            <T>Stopped by you. Changes so far are kept.</T>
-          ) : (
-            <T>Stopped by you.</T>
-          )}
+          {row.diff ? <T>Stopped by you. Changes so far are kept.</T> : <T>Stopped by you.</T>}
         </p>
       ) : row.ending === "limited" && row.resetAt ? (
         <TurnFoldRetryNotice

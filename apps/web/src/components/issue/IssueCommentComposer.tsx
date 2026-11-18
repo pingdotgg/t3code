@@ -104,17 +104,17 @@ export function IssueCommentComposer({
                   type="submit"
                   className={cn(COMPOSER_PILL_BUTTON_CLASS_NAME, "w-8")}
                   disabled={submitDisabled}
-                aria-label={
-                  submitting
-                    ? gt("Posting comment")
-                    : gt("Comment", { $context: "verb, posts the comment" })
-                }
-              >
-                {submitting ? (
-                  <Spinner size="sm" aria-hidden />
-                ) : (
-                  <ArrowUpIcon aria-hidden className="size-4" />
-                )}
+                  aria-label={
+                    submitting
+                      ? gt("Posting comment")
+                      : gt("Comment", { $context: "verb, posts the comment" })
+                  }
+                >
+                  {submitting ? (
+                    <Spinner size="sm" aria-hidden />
+                  ) : (
+                    <ArrowUpIcon aria-hidden className="size-4" />
+                  )}
                 </button>
               </ComposerSendPill>
             </div>

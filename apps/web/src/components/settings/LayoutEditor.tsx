@@ -856,7 +856,9 @@ function PanePopoverBody({
         </ToggleGroup>
       </PopoverSection>
       {canLayoutTemplatePaneSpan(template, path) ? (
-        <PopoverSection label={gt("Spans", { $context: "layout editor section, how far a pane reaches" })}>
+        <PopoverSection
+          label={gt("Spans", { $context: "layout editor section, how far a pane reaches" })}
+        >
           <ToggleGroup
             aria-label={gt("Pane span")}
             variant="segmented"

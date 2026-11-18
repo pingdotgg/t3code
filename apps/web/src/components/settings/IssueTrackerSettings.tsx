@@ -142,9 +142,7 @@ function TrackerRow({
                 )}
               />
             </span>
-            <span className="truncate text-label text-foreground">
-              {tracker.displayName}
-            </span>
+            <span className="truncate text-label text-foreground">{tracker.displayName}</span>
             {tracker.connected && tracker.account === null ? (
               <Badge variant="error" size="sm">
                 <T>Credential rejected</T>

@@ -773,14 +773,19 @@ function UsageOverview({
               <Tooltip>
                 <TooltipTrigger render={<span tabIndex={0} />}>
                   <span className={figureClass(loadingPartial)}>
-                    {gt("{count, plural, one {{formatted} sessions} other {{formatted} sessions}}", {
-                      count: merged.sessions,
-                      formatted: formatCount(merged.sessions, locale),
-                    })}
+                    {gt(
+                      "{count, plural, one {{formatted} sessions} other {{formatted} sessions}}",
+                      {
+                        count: merged.sessions,
+                        formatted: formatCount(merged.sessions, locale),
+                      },
+                    )}
                   </span>
                 </TooltipTrigger>
                 <TooltipPopup>
-                  {metric === "cost" ? gt("API cost estimate") : gt("Sessions with processed tokens")}
+                  {metric === "cost"
+                    ? gt("API cost estimate")
+                    : gt("Sessions with processed tokens")}
                 </TooltipPopup>
               </Tooltip>
               {metric === "cost" && merged.costQuality.unpricedShare > 0 && (
@@ -1446,8 +1451,6 @@ function UsageNotice({
     </Empty>
   );
 }
-
-
 
 function UsageProviderFilter({
   hiddenProviders,

@@ -1288,7 +1288,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         </TooltipPopup>
       </Tooltip>
     ) : (
-      <PinIcon aria-label={gt("Pinned")} role="img" className="size-3 shrink-0 text-dim-foreground" />
+      <PinIcon
+        aria-label={gt("Pinned")}
+        role="img"
+        className="size-3 shrink-0 text-dim-foreground"
+      />
     )
   ) : null;
 

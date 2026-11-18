@@ -194,9 +194,9 @@ export function BranchPicker({
             />
             <TooltipPopup side="top" className="max-w-72 whitespace-normal">
               <T>
-                Uses the latest commit of the base branch’s tracked remote branch, even if its
-                name differs. Otherwise uses the same-named branch on origin. Uses your local
-                branch if that remote branch is missing.
+                Uses the latest commit of the base branch’s tracked remote branch, even if its name
+                differs. Otherwise uses the same-named branch on origin. Uses your local branch if
+                that remote branch is missing.
               </T>
             </TooltipPopup>
           </Tooltip>
@@ -281,7 +281,11 @@ export function BranchPickerRefItem({
     refName.lastCommitAt === undefined ? null : new Date(refName.lastCommitAt * 1000).toISOString(),
   );
   const age =
-    relative.status === "relative" ? (relative.suffix === null ? gt("now", { $context: "relative time" }) : relative.value) : null;
+    relative.status === "relative"
+      ? relative.suffix === null
+        ? gt("now", { $context: "relative time" })
+        : relative.value
+      : null;
   const RefIcon = refName.isRemote ? CloudIcon : GitBranchIcon;
   return (
     <div>

@@ -1478,7 +1478,11 @@ export function VoiceSettingsPanel() {
                   void updateClientSettings({ voiceShortcutMode: value as VoiceShortcutMode });
               }}
             >
-              <SelectTrigger variant="well" size="compact" aria-label={gt("Dictation shortcut mode")}>
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                aria-label={gt("Dictation shortcut mode")}
+              >
                 <SelectValue>
                   {messages(SHORTCUT_MODES[settings.voiceShortcutMode].label)}
                 </SelectValue>
@@ -1799,7 +1803,11 @@ export function VoiceSettingsPanel() {
                     });
                 }}
               >
-                <SelectTrigger variant="well" size="compact" aria-label={gt("Cleanup instructions")}>
+                <SelectTrigger
+                  variant="well"
+                  size="compact"
+                  aria-label={gt("Cleanup instructions")}
+                >
                   <SelectValue>
                     {settings.speechPostProcessingPrompt.mode === "custom"
                       ? gt("Custom")

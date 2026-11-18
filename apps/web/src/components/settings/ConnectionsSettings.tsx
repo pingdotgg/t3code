@@ -1315,7 +1315,9 @@ function ConnectionsSettingsContent({
                       <TooltipTrigger render={<span tabIndex={0} />}>
                         {primaryServerConfig?.environment.serverVersion ?? gt("Loading…")}
                       </TooltipTrigger>
-                      <TooltipPopup>{primaryEnvironment?.displayUrl ?? gt("Loading…")}</TooltipPopup>
+                      <TooltipPopup>
+                        {primaryEnvironment?.displayUrl ?? gt("Loading…")}
+                      </TooltipPopup>
                     </Tooltip>
                   )
                 }

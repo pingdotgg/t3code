@@ -76,7 +76,8 @@ export function ConfirmDialogHost() {
       : resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message, m);
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
   const focusConfirm = state.status !== "idle" && state.initialFocus === "confirm";
-  const confirmLabel = (state.status === "idle" ? undefined : state.confirmLabel) ?? m(msg("Confirm"));
+  const confirmLabel =
+    (state.status === "idle" ? undefined : state.confirmLabel) ?? m(msg("Confirm"));
   // A destructive "Delete ..." action carries the trash icon.
   const showDeleteIcon = confirmVariant === "destructive" && /^delete\b/i.test(confirmLabel);
   const onCancel = () => respondToConfirmDialog(false);

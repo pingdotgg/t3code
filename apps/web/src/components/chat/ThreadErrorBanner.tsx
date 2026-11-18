@@ -78,23 +78,26 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
  * exact diagnostics open in the notice's details popover. Retry sends the failed
  * run's prompt again when the thread can run.
  */
-export function threadErrorBannerItem({
-  bannerKey,
-  error,
-  errorClass,
-  errorCode,
-  onDismiss,
-  onRetry,
-  retrying = false,
-}: {
-  bannerKey: string | null;
-  error: string | null;
-  errorClass?: OrchestrationV2ProviderFailureClass | null;
-  errorCode?: string | null;
-  onDismiss?: () => void;
-  onRetry?: (() => void) | null;
-  retrying?: boolean;
-}, resolve: MessageResolver = m): ComposerBannerStackItem | null {
+export function threadErrorBannerItem(
+  {
+    bannerKey,
+    error,
+    errorClass,
+    errorCode,
+    onDismiss,
+    onRetry,
+    retrying = false,
+  }: {
+    bannerKey: string | null;
+    error: string | null;
+    errorClass?: OrchestrationV2ProviderFailureClass | null;
+    errorCode?: string | null;
+    onDismiss?: () => void;
+    onRetry?: (() => void) | null;
+    retrying?: boolean;
+  },
+  resolve: MessageResolver = m,
+): ComposerBannerStackItem | null {
   if (!error || bannerKey === null) return null;
   const message = getThreadErrorBannerMessage(error);
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
@@ -103,9 +106,7 @@ export function threadErrorBannerItem({
     id: `thread-error:${bannerKey}`,
     variant: errorClass === "usage_limit" || chatGptLimit ? "warning" : "error",
     icon: chatGptLimit ? <OpenAI aria-hidden="true" /> : <CircleAlertIcon />,
-    title: chatGptLimit
-      ? resolve(msg("ChatGPT usage limit reached"))
-      : resolve(msg("Run failed")),
+    title: chatGptLimit ? resolve(msg("ChatGPT usage limit reached")) : resolve(msg("Run failed")),
     description: workspaceLimit
       ? resolve(
           msg(
@@ -127,9 +128,7 @@ export function threadErrorBannerItem({
       <ChatGptUsageButton variant="secondary" size="xs" />
     ) : onRetry ? (
       <Button size="xs" variant="default" disabled={retrying} onClick={onRetry}>
-        {retrying
-          ? resolve(msg("Retrying..."))
-          : resolve(msg("Retry"))}
+        {retrying ? resolve(msg("Retrying...")) : resolve(msg("Retry"))}
       </Button>
     ) : undefined,
     dismissLabel: resolve(msg("Dismiss error")),

@@ -2753,10 +2753,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ),
             {
               variant: "destructive",
-              title: gt("{count, plural, one {Delete {count} thread?} other {Delete {count} threads?}}", {
+              title: gt(
+                "{count, plural, one {Delete {count} thread?} other {Delete {count} threads?}}",
+                {
+                  count,
+                },
+              ),
+              confirmLabel: gt("{count, plural, =1 {Delete thread} other {Delete threads}}", {
                 count,
               }),
-              confirmLabel: gt("{count, plural, =1 {Delete thread} other {Delete threads}}", { count }),
             },
           ),
         );
@@ -3120,7 +3125,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             if (confirmThreadDelete) {
               const confirmed = await settlePromise(() =>
                 api.dialogs.confirm(
-                  gt("This deletes \"{title}\" and its chat history. You can't undo this.", {
+                  gt('This deletes "{title}" and its chat history. You can\'t undo this.', {
                     title: thread.title,
                   }),
                   {

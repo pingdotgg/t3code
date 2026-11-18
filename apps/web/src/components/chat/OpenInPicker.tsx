@@ -424,7 +424,11 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   if (isPanel) {
     return (
-      <div className="flex shrink-0 items-center pe-1" role="group" aria-label={gt("Open in editor")}>
+      <div
+        className="flex shrink-0 items-center pe-1"
+        role="group"
+        aria-label={gt("Open in editor")}
+      >
         <Tooltip>
           <TooltipTrigger
             render={

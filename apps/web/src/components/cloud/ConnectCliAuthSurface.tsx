@@ -120,11 +120,15 @@ export function ConnectCliAuthorizeSurface() {
           {"t3 connect login"}
         </ConnectCliRequestRow>
         {request.device ? (
-          <ConnectCliRequestRow label={gt("Device", { $context: "the device requesting CLI login" })}>
+          <ConnectCliRequestRow
+            label={gt("Device", { $context: "the device requesting CLI login" })}
+          >
             {request.device}
           </ConnectCliRequestRow>
         ) : null}
-        <ConnectCliRequestRow label={gt("Code", { $context: "authorization code shown in the terminal" })}>
+        <ConnectCliRequestRow
+          label={gt("Code", { $context: "authorization code shown in the terminal" })}
+        >
           {connectAuthorizeRequestCode(request.state)}
         </ConnectCliRequestRow>
       </dl>

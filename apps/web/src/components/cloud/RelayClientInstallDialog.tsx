@@ -97,7 +97,9 @@ function RelayClientInstallChecklist({ view }: { readonly view: RelayClientInsta
                 aria-live={state === "active" ? "polite" : undefined}
                 className={`min-w-0 flex-1 truncate ${state === "pending" ? "text-dim-foreground" : "text-foreground"}`}
               >
-                {m((state === "active" ? step.activeLabels?.[view.stage] : undefined) ?? step.label)}
+                {m(
+                  (state === "active" ? step.activeLabels?.[view.stage] : undefined) ?? step.label,
+                )}
               </span>
               {meta ? (
                 <span className="shrink-0 font-mono text-meta text-dim-foreground">{meta}</span>

@@ -1475,8 +1475,8 @@ export const layer: Layer.Layer<
             session.hasPendingBackgroundWorkForThread?.(resumed.success, {
               includeSubagents: true,
             }) ??
-              session.hasPendingBackgroundWork ??
-              Effect.succeed(false)
+            session.hasPendingBackgroundWork ??
+            Effect.succeed(false)
           );
           if (hasPendingWork) {
             return yield* loadFromProvider(

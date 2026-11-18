@@ -55,7 +55,9 @@ function BreakdownRow({ label, additions, deletions }: DiffTotals & { label: str
       <span className="text-right text-diff-addition-foreground">
         +{formatDiffCount(additions)}
       </span>
-      <span className="text-right text-diff-deletion-foreground">-{formatDiffCount(deletions)}</span>
+      <span className="text-right text-diff-deletion-foreground">
+        -{formatDiffCount(deletions)}
+      </span>
     </>
   );
 }

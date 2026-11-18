@@ -176,7 +176,12 @@ export function snapShotCaptureHelperStatus(
         needsSetup: true,
       };
     if (helper?.status === "error")
-      return { tone: "error", label: resolve(msg("Error", { $context: "capture helper status" })), description: helper.message, needsSetup: true };
+      return {
+        tone: "error",
+        label: resolve(msg("Error", { $context: "capture helper status" })),
+        description: helper.message,
+        needsSetup: true,
+      };
     return {
       tone: "warning",
       label: resolve(msg("Not installed")),

@@ -172,11 +172,7 @@ export function LayoutOnboarding() {
               {(
                 [
                   ["tabs", gt("Everything is a tab"), gt("Chat, terminal, diff, browser.")],
-                  [
-                    "split",
-                    gt("Drag to split"),
-                    gt("Drop a tab on an edge to put it beside."),
-                  ],
+                  ["split", gt("Drag to split"), gt("Drop a tab on an edge to put it beside.")],
                   [
                     "overview",
                     gt("Scroll and zoom out"),

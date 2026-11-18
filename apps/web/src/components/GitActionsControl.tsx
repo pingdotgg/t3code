@@ -1239,7 +1239,9 @@ export default function GitActionsControl({
                 <TooltipTrigger
                   render={
                     <MenuTrigger
-                      render={<ThreadDetailsControl part="icon" aria-label={gt("Git action options")} />}
+                      render={
+                        <ThreadDetailsControl part="icon" aria-label={gt("Git action options")} />
+                      }
                     />
                   }
                 >
@@ -1354,7 +1356,9 @@ export default function GitActionsControl({
             >
               <MenuTrigger
                 disabled={isGitActionRunning || !hasGitMenuContent}
-                render={<ThreadDetailsControl part="choice" aria-label={gt("Git action options")} />}
+                render={
+                  <ThreadDetailsControl part="choice" aria-label={gt("Git action options")} />
+                }
               >
                 <SourceControlIcon />
                 <MenuItemLabel>
@@ -1417,7 +1421,10 @@ export default function GitActionsControl({
               <TooltipPopup key={JSON.stringify(changesBreakdown)} side="bottom">
                 <ChangeBreakdownGrid
                   breakdown={changesBreakdown}
-                  total={{ additions: changesTotals.insertions, deletions: changesTotals.deletions }}
+                  total={{
+                    additions: changesTotals.insertions,
+                    deletions: changesTotals.deletions,
+                  }}
                 />
               </TooltipPopup>
             ) : null}

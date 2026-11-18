@@ -140,7 +140,9 @@ const STATUS_PILL_BY_KIND: Record<
   },
   // Runtime "idle": the agent stopped with background tasks still open.
   waiting: {
-    label: msg("Monitoring", { $context: "thread status, agent stopped with background tasks open" }),
+    label: msg("Monitoring", {
+      $context: "thread status, agent stopped with background tasks open",
+    }),
     symbol: "eye",
     textClassName: "text-adaptive-blue-600-400",
     tintClassName: "accent-adaptive-blue-600-400",

@@ -719,7 +719,9 @@ function ProcessTable({
                           {gt("Read {bytes}", { bytes: formatRate(process.ioReadBytesPerSecond) })}
                         </div>
                         <div>
-                          {gt("Write {bytes}", { bytes: formatRate(process.ioWriteBytesPerSecond) })}
+                          {gt("Write {bytes}", {
+                            bytes: formatRate(process.ioWriteBytesPerSecond),
+                          })}
                         </div>
                         <div>
                           {gt("Read total {bytes}", { bytes: formatBytes(process.ioReadBytes) })}
@@ -844,7 +846,9 @@ function HistoryProcessTable({
                     tooltip={
                       <div className="space-y-0.5">
                         <div>{gt("Read {bytes}", { bytes: formatBytes(process.ioReadBytes) })}</div>
-                        <div>{gt("Write {bytes}", { bytes: formatBytes(process.ioWriteBytes) })}</div>
+                        <div>
+                          {gt("Write {bytes}", { bytes: formatBytes(process.ioWriteBytes) })}
+                        </div>
                       </div>
                     }
                   />
@@ -965,9 +969,8 @@ function ResourceTelemetryDiagnosticsBody({
     (snapshot.health.native.status === "unavailable" ||
       snapshot.health.native.status === "stopped") &&
     snapshot.processes.length === 0
-      ? Option.getOrElse(
-          snapshot.health.native.lastError,
-          () => gt("The native process monitor is unavailable."),
+      ? Option.getOrElse(snapshot.health.native.lastError, () =>
+          gt("The native process monitor is unavailable."),
         )
       : null;
   const measured = nativeUnavailableReason === null ? snapshot?.groups.allT3 : undefined;

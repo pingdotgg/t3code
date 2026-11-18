@@ -218,7 +218,10 @@ export default function ProjectScriptsControl({
       <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4" />
       <MenuItemLabel>{fileScript.name}</MenuItemLabel>
       <MenuShortcut>
-        <DownloadIcon className="size-3.5" aria-label={gt("Import", { $context: "verb, import an action from t3.json" })} />
+        <DownloadIcon
+          className="size-3.5"
+          aria-label={gt("Import", { $context: "verb, import an action from t3.json" })}
+        />
       </MenuShortcut>
     </MenuItem>
   ));
@@ -254,7 +257,10 @@ export default function ProjectScriptsControl({
             <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4" />
             <MenuItemLabel>{fileScript.name}</MenuItemLabel>
             <MenuShortcut>
-              <DownloadIcon className="size-3.5" aria-label={gt("Import", { $context: "verb, import an action from t3.json" })} />
+              <DownloadIcon
+                className="size-3.5"
+                aria-label={gt("Import", { $context: "verb, import an action from t3.json" })}
+              />
             </MenuShortcut>
           </MenuItem>
         ))}
@@ -278,9 +284,7 @@ export default function ProjectScriptsControl({
               onClick={() => onRunScript?.(script)}
             >
               <ScriptIcon icon={script.icon} className="size-4" />
-              <MenuItemLabel>
-                {projectScriptMenuLabel(script, messages)}
-              </MenuItemLabel>
+              <MenuItemLabel>{projectScriptMenuLabel(script, messages)}</MenuItemLabel>
               <span className="relative ms-auto flex h-6 min-w-6 items-center justify-end ps-4">
                 {shortcutLabel ? (
                   // The key caps yield their slot to the edit pencil on hover.
@@ -426,8 +430,8 @@ export default function ProjectScriptsControl({
             >
               <PlusIcon className="size-4" />
               <MenuItemLabel>
-              <T>Add project action…</T>
-            </MenuItemLabel>
+                <T>Add project action…</T>
+              </MenuItemLabel>
             </MenuItem>
           )}
         </>
@@ -452,8 +456,8 @@ export default function ProjectScriptsControl({
             <ThreadDetailsControl className="flex-1" onClick={openAddDialog}>
               <SquareTerminalIcon />
               <MenuItemLabel>
-              <T>Add project action…</T>
-            </MenuItemLabel>
+                <T>Add project action…</T>
+              </MenuItemLabel>
             </ThreadDetailsControl>
           )}
           {supportsStop && runningScriptServer?.pid != null ? (

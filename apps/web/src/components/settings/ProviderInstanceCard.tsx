@@ -1103,7 +1103,9 @@ export function ProviderInstanceCard({
             />
           }
         />
-        <TooltipPopup side="top">{updateProgress ? gt("Updating") : versionAdvisoryLabel}</TooltipPopup>
+        <TooltipPopup side="top">
+          {updateProgress ? gt("Updating") : versionAdvisoryLabel}
+        </TooltipPopup>
       </Tooltip>
       <PopoverPopup side="bottom" align="end" width="md" aria-label={versionAdvisory.title}>
         <div className="grid min-w-0 gap-3">

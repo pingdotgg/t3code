@@ -22,11 +22,7 @@ import { failedToolIconClassName } from "./TimelineToolActivityIcon";
 import { formatWorkingTimer } from "./TimelineWorkGroupRows.logic";
 import { WORK_LOG_OUTPUT_CLASS_NAME, WorkLogDetails, WorkLogRow } from "./WorkLog";
 
-function elapsed(
-  startedAt: string | null,
-  endMs: number,
-  resolve: MessageResolver,
-): string | null {
+function elapsed(startedAt: string | null, endMs: number, resolve: MessageResolver): string | null {
   if (!startedAt) return null;
   const ms = endMs - Date.parse(startedAt);
   return Number.isFinite(ms) ? formatDuration(Math.max(0, ms), resolve) : null;

@@ -119,9 +119,7 @@ const MAX_RETENTION_DAYS = 3650;
 const DEFAULT_RETENTION_DAYS = 8;
 
 function formatRetentionDays(days: number, resolve: MessageResolver = m): string {
-  return resolve(
-    msg("{days, plural, one {After {days} day} other {After {days} days}}", { days }),
-  );
+  return resolve(msg("{days, plural, one {After {days} day} other {After {days} days}}", { days }));
 }
 
 /**

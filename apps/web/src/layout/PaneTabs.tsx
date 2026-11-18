@@ -816,9 +816,7 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
         target: "thread link",
         unavailableMessage: msg("Clipboard API is unavailable while copying link."),
         failureMessage: msg("Failed to copy link to the clipboard."),
-      }).catch(() =>
-        toastManager.add({ type: "error", title: m(msg("Could not copy the link")) }),
-      );
+      }).catch(() => toastManager.add({ type: "error", title: m(msg("Could not copy the link")) }));
       return;
     }
     case "layout:close-tab":

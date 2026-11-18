@@ -269,13 +269,9 @@ function CustomSnoozeDialog() {
                             }}
                           >
                             <NumberFieldGroup>
-                              <NumberFieldDecrement
-                                aria-label={messages(field.decrementLabel)}
-                              />
+                              <NumberFieldDecrement aria-label={messages(field.decrementLabel)} />
                               <NumberFieldInput aria-label={messages(field.label)} />
-                              <NumberFieldIncrement
-                                aria-label={messages(field.incrementLabel)}
-                              />
+                              <NumberFieldIncrement aria-label={messages(field.incrementLabel)} />
                             </NumberFieldGroup>
                             <label
                               htmlFor={`${id}-${field.key}`}

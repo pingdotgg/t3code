@@ -804,7 +804,10 @@ function FilterMenu<Value extends string>({
   if (!current) return null;
   return (
     <Menu>
-      <MenuTrigger aria-label={`${label}: ${current.label}`} render={<Button variant="secondary" />}>
+      <MenuTrigger
+        aria-label={`${label}: ${current.label}`}
+        render={<Button variant="secondary" />}
+      >
         <PullRequestFilterOptionIcon option={current} />
         <span className="truncate">{current.label}</span>
       </MenuTrigger>

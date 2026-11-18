@@ -388,7 +388,8 @@ export function CloudEnvironmentConnectRows({
                 ? gt("Relay offline")
                 : availability === "checking"
                   ? gt("Checking relay status…")
-                  : (errorDisplayMessage(Option.getOrNull(error), m) ?? gt("Relay status unavailable"));
+                  : (errorDisplayMessage(Option.getOrNull(error), m) ??
+                    gt("Relay status unavailable"));
     if (selection) {
       return (
         <label

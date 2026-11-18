@@ -319,10 +319,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             >
               {activeQuestion.question}
             </span>
+          ) : providerLabel ? (
+            gt("{provider} needs an answer", { provider: providerLabel })
           ) : (
-            providerLabel
-              ? gt("{provider} needs an answer", { provider: providerLabel })
-              : gt("The agent needs an answer")
+            gt("The agent needs an answer")
           )
         }
         trailing={

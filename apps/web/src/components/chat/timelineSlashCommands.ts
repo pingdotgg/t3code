@@ -60,7 +60,12 @@ const present = (icon: LucideIcon, running: string, done: string, failed: string
 const COMMANDS = new Map<string, Presentation>([
   [
     "compact",
-    present(Minimize2Icon, msg("Compacting the conversation"), msg("Compacted", { $context: "slash command row, the conversation was compacted" }), msg("Couldn't compact")),
+    present(
+      Minimize2Icon,
+      msg("Compacting the conversation"),
+      msg("Compacted", { $context: "slash command row, the conversation was compacted" }),
+      msg("Couldn't compact"),
+    ),
   ],
   [
     "clear",
@@ -71,8 +76,19 @@ const COMMANDS = new Map<string, Presentation>([
       msg("Couldn't clear the context"),
     ),
   ],
-  ["goal", present(TargetIcon, msg("Setting the goal"), msg("Goal set", { $context: "slash command row" }), msg("Couldn't set the goal"))],
-  ["feedback", present(SendIcon, msg("Sending feedback"), msg("Sent feedback"), msg("Couldn't send feedback"))],
+  [
+    "goal",
+    present(
+      TargetIcon,
+      msg("Setting the goal"),
+      msg("Goal set", { $context: "slash command row" }),
+      msg("Couldn't set the goal"),
+    ),
+  ],
+  [
+    "feedback",
+    present(SendIcon, msg("Sending feedback"), msg("Sent feedback"), msg("Couldn't send feedback")),
+  ],
   [
     "init",
     present(
@@ -82,27 +98,114 @@ const COMMANDS = new Map<string, Presentation>([
       msg("Couldn't write instructions"),
     ),
   ],
-  ["review", present(ScanSearchIcon, msg("Reviewing", { $context: "slash command row, a review is running" }), msg("Review", { $context: "slash command row, a finished review" }), msg("Couldn't review", { $context: "slash command row, a review failed" }))],
-  ["code-review", present(ScanSearchIcon, msg("Reviewing code"), msg("Code review", { $context: "slash command row, a finished code review" }), msg("Couldn't review", { $context: "slash command row, a review failed" }))],
+  [
+    "review",
+    present(
+      ScanSearchIcon,
+      msg("Reviewing", { $context: "slash command row, a review is running" }),
+      msg("Review", { $context: "slash command row, a finished review" }),
+      msg("Couldn't review", { $context: "slash command row, a review failed" }),
+    ),
+  ],
+  [
+    "code-review",
+    present(
+      ScanSearchIcon,
+      msg("Reviewing code"),
+      msg("Code review", { $context: "slash command row, a finished code review" }),
+      msg("Couldn't review", { $context: "slash command row, a review failed" }),
+    ),
+  ],
   [
     "security-review",
-    present(ShieldCheckIcon, msg("Reviewing security"), msg("Security review", { $context: "slash command row, a finished security review" }), msg("Couldn't review", { $context: "slash command row, a review failed" })),
+    present(
+      ShieldCheckIcon,
+      msg("Reviewing security"),
+      msg("Security review", { $context: "slash command row, a finished security review" }),
+      msg("Couldn't review", { $context: "slash command row, a review failed" }),
+    ),
   ],
-  ["context", present(GaugeIcon, msg("Checking context"), msg("Context", { $context: "slash command row, the context window report" }), msg("Couldn't check context"))],
-  ["usage", present(ChartColumnIcon, msg("Checking usage"), msg("Usage", { $context: "slash command row, the usage report" }), msg("Couldn't check usage"))],
-  ["mcp", present(PlugIcon, msg("Checking MCP servers"), msg("MCP servers", { $context: "slash command row, the MCP server report" }), msg("Couldn't check MCP servers"))],
+  [
+    "context",
+    present(
+      GaugeIcon,
+      msg("Checking context"),
+      msg("Context", { $context: "slash command row, the context window report" }),
+      msg("Couldn't check context"),
+    ),
+  ],
+  [
+    "usage",
+    present(
+      ChartColumnIcon,
+      msg("Checking usage"),
+      msg("Usage", { $context: "slash command row, the usage report" }),
+      msg("Couldn't check usage"),
+    ),
+  ],
+  [
+    "mcp",
+    present(
+      PlugIcon,
+      msg("Checking MCP servers"),
+      msg("MCP servers", { $context: "slash command row, the MCP server report" }),
+      msg("Couldn't check MCP servers"),
+    ),
+  ],
 ]);
 
 /** `/goal` with one of these words controls the goal instead of setting it. */
 const GOAL_CONTROLS = new Map<string, Presentation>([
-  ["", present(TargetIcon, msg("Checking the goal"), msg("Checked the goal"), msg("Couldn't check the goal"))],
-  ["pause", present(CirclePauseIcon, msg("Pausing the goal"), msg("Goal paused"), msg("Couldn't pause the goal"))],
-  ["resume", present(TargetIcon, msg("Resuming the goal"), msg("Goal resumed"), msg("Couldn't resume the goal"))],
-  ["clear", present(TargetIcon, msg("Clearing the goal"), msg("Goal cleared"), msg("Couldn't clear the goal"))],
+  [
+    "",
+    present(
+      TargetIcon,
+      msg("Checking the goal"),
+      msg("Checked the goal"),
+      msg("Couldn't check the goal"),
+    ),
+  ],
+  [
+    "pause",
+    present(
+      CirclePauseIcon,
+      msg("Pausing the goal"),
+      msg("Goal paused"),
+      msg("Couldn't pause the goal"),
+    ),
+  ],
+  [
+    "resume",
+    present(
+      TargetIcon,
+      msg("Resuming the goal"),
+      msg("Goal resumed"),
+      msg("Couldn't resume the goal"),
+    ),
+  ],
+  [
+    "clear",
+    present(
+      TargetIcon,
+      msg("Clearing the goal"),
+      msg("Goal cleared"),
+      msg("Couldn't clear the goal"),
+    ),
+  ],
 ]);
 
-const SKILL = present(BoxIcon, msg("Using skill", { $context: "slash command row, a skill is running" }), msg("Used skill", { $context: "slash command row, a skill finished" }), msg("Couldn't use skill"));
-const FALLBACK = present(TerminalIcon, msg("Running", { $context: "slash command row, a command is running" }), msg("Ran", { $context: "slash command row, a command finished" }), msg("Couldn't run", { $context: "slash command row, a command failed" }));
+const SKILL = present(
+  BoxIcon,
+  msg("Using skill", { $context: "slash command row, a skill is running" }),
+  msg("Used skill", { $context: "slash command row, a skill finished" }),
+  msg("Couldn't use skill"),
+);
+const FALLBACK = present(
+  TerminalIcon,
+  msg("Running", { $context: "slash command row, a command is running" }),
+  msg("Ran", { $context: "slash command row, a command finished" }),
+  msg("Couldn't run", { $context: "slash command row, a command failed" }),
+);
 
 // The name stops at `/`, so a path such as `/usr/bin/foo` never matches.
 const COMMAND_MESSAGE = /^([/$])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?:\s+([\s\S]*))?$/;

@@ -53,9 +53,7 @@ export function NoProjectsHero() {
               <T>Add a project to start</T>
             </h1>
             <div role="list" aria-label={gt("Projects")} className="flex flex-col gap-0.5">
-              <DraftProjectGroupLabel>
-                {gt("No projects yet")}
-              </DraftProjectGroupLabel>
+              <DraftProjectGroupLabel>{gt("No projects yet")}</DraftProjectGroupLabel>
               <DraftProjectRow
                 icon={<FolderPlusIcon className="size-4 shrink-0 text-foreground" />}
                 label={gt("Add project…")}

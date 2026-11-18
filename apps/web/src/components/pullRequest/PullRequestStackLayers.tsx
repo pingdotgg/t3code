@@ -69,7 +69,8 @@ export function PullRequestStackLayers({
               <RefreshCwIcon aria-hidden className="size-4 shrink-0" />
               <span>
                 <T>
-                  Synced <Var>
+                  Synced{" "}
+                  <Var>
                     <RelativeTime timestamp={new Date(syncedAt).toISOString()} />
                   </Var>
                 </T>

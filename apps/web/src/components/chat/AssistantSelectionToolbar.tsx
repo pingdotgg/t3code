@@ -265,7 +265,9 @@ export function AssistantSelectionToolbar({
           variant="ghost"
           size="xs"
           disabled={tooLong}
-          aria-label={tooLong ? gt("Selection is too long to cite") : gt("Cite selection in composer")}
+          aria-label={
+            tooLong ? gt("Selection is too long to cite") : gt("Cite selection in composer")
+          }
           aria-keyshortcuts={citeShortcut ?? undefined}
           onClick={cite}
         >

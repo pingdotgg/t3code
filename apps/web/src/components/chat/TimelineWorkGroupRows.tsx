@@ -1319,9 +1319,7 @@ function CollapsedWorkingWindow({
               />
             </div>
           ))}
-          {showThinking ? (
-            <LiveActivityRow label={gt("Thinking")} iconName="brain" active />
-          ) : null}
+          {showThinking ? <LiveActivityRow label={gt("Thinking")} iconName="brain" active /> : null}
         </div>
       </ScrollArea>
       {!following ? (
@@ -1471,12 +1469,11 @@ export function SlashCommandTimelineRow({ command }: { command: TimelineSlashCom
   const ctx = use(TimelineRowCtx);
   const { activeTurnStartedAt } = use(TimelineRowActivityCtx);
   const messages = useMessages();
-  const { icon: Icon, verb, target } = presentSlashCommand(
-    command,
-    command.state,
-    command.result,
-    messages,
-  );
+  const {
+    icon: Icon,
+    verb,
+    target,
+  } = presentSlashCommand(command, command.state, command.result, messages);
   const skill = command.skill ? ctx.skills.find((entry) => entry.name === command.name) : undefined;
   const compacting = command.name === "compact" && !command.skill && command.state === "running";
   return (

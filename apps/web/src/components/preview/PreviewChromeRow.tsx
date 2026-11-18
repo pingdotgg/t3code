@@ -277,7 +277,11 @@ export function PreviewChromeRow({
             </TooltipTrigger>
             <TooltipPopup>
               <span className="flex flex-col gap-0.5">
-                <span>{recording ? gt("Stop recording") : gt("Screenshot", { $context: "button, captures the page" })}</span>
+                <span>
+                  {recording
+                    ? gt("Stop recording")
+                    : gt("Screenshot", { $context: "button, captures the page" })}
+                </span>
                 {!recording ? (
                   <span>
                     <T>Shift-click to record</T>

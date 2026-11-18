@@ -280,9 +280,7 @@ function NewTabLauncherBody({
         aria-label={gt("New tab")}
         className="flex w-full max-w-110 flex-col gap-0.5 py-6"
       >
-        <DraftProjectGroupLabel>
-          {gt("Start a thread in")}
-        </DraftProjectGroupLabel>
+        <DraftProjectGroupLabel>{gt("Start a thread in")}</DraftProjectGroupLabel>
         <ProjectPickerRows
           model={model}
           groupLabels={false}

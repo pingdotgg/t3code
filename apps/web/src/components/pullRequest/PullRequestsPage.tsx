@@ -139,7 +139,6 @@ import {
   type PullRequestHostRead,
 } from "./pullRequestProjectAssignment.logic";
 
-
 function getShortcutContext() {
   return {
     terminalFocus: isTerminalFocused(),
@@ -1291,22 +1290,25 @@ export function PullRequestsPage() {
   // Said in the empty list, so a list narrowed to nothing names what narrowed it.
   const hostFilterEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostFilterEntry = hostFilterEntries.find((entry) => entry.host === search.host);
-  const filterSummary = describePullRequestListFilters({
-    state: search.state,
-    involvement: search.involvement,
-    filters: menuFilters,
-    hostLabel:
-      search.host === undefined
-        ? undefined
-        : hostFilterEntry
-          ? pullRequestHostLabel(hostFilterEntries, hostFilterEntry)
-          : search.host,
-    serverLabel:
-      capableEnvironments.length > 1 && scopedEnvironmentId !== null
-        ? environmentLabels.get(scopedEnvironmentId)
-        : undefined,
-    projectLabel: scopedProject?.title,
-  }, resolve);
+  const filterSummary = describePullRequestListFilters(
+    {
+      state: search.state,
+      involvement: search.involvement,
+      filters: menuFilters,
+      hostLabel:
+        search.host === undefined
+          ? undefined
+          : hostFilterEntry
+            ? pullRequestHostLabel(hostFilterEntries, hostFilterEntry)
+            : search.host,
+      serverLabel:
+        capableEnvironments.length > 1 && scopedEnvironmentId !== null
+          ? environmentLabels.get(scopedEnvironmentId)
+          : undefined,
+      projectLabel: scopedProject?.title,
+    },
+    resolve,
+  );
   const clearListFilters = () =>
     updateListScope({
       state: "open",

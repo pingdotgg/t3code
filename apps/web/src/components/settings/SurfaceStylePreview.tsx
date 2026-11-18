@@ -28,7 +28,11 @@ export function SurfaceStylePicker({
   const gt = useGT();
   const m = useMessages();
   return (
-    <div aria-label={gt("Style", { $context: "surface style picker" })} className="grid w-full grid-cols-2 gap-3 sm:grid-cols-3" role="group">
+    <div
+      aria-label={gt("Style", { $context: "surface style picker" })}
+      className="grid w-full grid-cols-2 gap-3 sm:grid-cols-3"
+      role="group"
+    >
       {SURFACE_STYLES.map((style) => {
         const isActive = style === value;
         return (

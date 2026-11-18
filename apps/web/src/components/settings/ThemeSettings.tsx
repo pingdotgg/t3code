@@ -1103,9 +1103,7 @@ export function ThemeLibrary({
     <div className="space-y-7">
       <div className="space-y-2.5">
         <div className="flex min-h-6 flex-wrap items-center justify-between gap-3">
-          <h3 className="text-title text-dim-foreground">
-            {setting("color-scheme").title}
-          </h3>
+          <h3 className="text-title text-dim-foreground">{setting("color-scheme").title}</h3>
           {/* The ghost button hangs by its 8px inline inset so its text ends on the card edge. */}
           <div className="-me-2 flex">{restoreAction}</div>
         </div>

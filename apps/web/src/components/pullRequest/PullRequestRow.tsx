@@ -183,7 +183,8 @@ export function pullRequestRowStatus(entry: EnvironmentPullRequestEntry, prefix 
     );
   }
   if (entry.checksState === "pending") return checks(<T>Checks running</T>);
-  if (entry.reviewDecision === "review-required") return (
+  if (entry.reviewDecision === "review-required")
+    return (
       <span>
         {prefix}
         <T>Review required</T>

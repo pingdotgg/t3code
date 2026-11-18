@@ -183,7 +183,9 @@ export function NoProjectsComposer({
           isSendBusy={false}
           canResume={false}
           sendDisabledReason={
-            onStartWithoutProject === null ? (startUnavailableReason ?? gt("Add a project first")) : null
+            onStartWithoutProject === null
+              ? (startUnavailableReason ?? gt("Add a project first"))
+              : null
           }
           isPreparingWorktree={false}
           bannerItems={[]}

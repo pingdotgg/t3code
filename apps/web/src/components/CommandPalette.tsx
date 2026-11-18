@@ -1723,7 +1723,8 @@ function OpenCommandPaletteDialog(props: {
   }
 
   // The side pane's tabs and the terminal, beside the focused chat.
-  const openBesideItem = activeThread || activeDraftThread ? buildOpenBesidePaletteItem(messages) : null;
+  const openBesideItem =
+    activeThread || activeDraftThread ? buildOpenBesidePaletteItem(messages) : null;
   if (openBesideItem) actionItems.push(openBesideItem);
   // The index shows the layout too once there is a project.
   if (activeThread || activeDraftThread || (pathname === "/" && projects.length > 0)) {

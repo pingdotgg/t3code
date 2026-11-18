@@ -208,10 +208,9 @@ export function SettingOverrideCount({ count }: { count: number }) {
   if (count === 0) return null;
   return (
     <Badge variant="secondary">
-      {gt(
-        "{count, plural, one {{count} project override} other {{count} project overrides}}",
-        { count },
-      )}
+      {gt("{count, plural, one {{count} project override} other {{count} project overrides}}", {
+        count,
+      })}
     </Badge>
   );
 }
@@ -255,10 +254,9 @@ export function SettingInheritance({
   const hasMultipleEnvironments = new Set(targets.map((target) => target.environmentId)).size > 1;
   const overrideCount =
     overridingProjects.length > 0
-      ? gt(
-          "{count, plural, one {{count} project override} other {{count} project overrides}}",
-          { count: overridingProjects.length },
-        )
+      ? gt("{count, plural, one {{count} project override} other {{count} project overrides}}", {
+          count: overridingProjects.length,
+        })
       : null;
   const chains = targets.flatMap((target) => {
     const environment = environments.find(

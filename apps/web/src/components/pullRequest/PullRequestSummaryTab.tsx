@@ -588,9 +588,7 @@ export function PullRequestSummaryTab({
     if (revealUrl === undefined || !root) return;
     let target: HTMLElement | null | undefined;
     if (location?.kind === "checks") {
-      target = root.querySelector<HTMLElement>(
-        '[data-pull-request-summary-section="checks"]',
-      );
+      target = root.querySelector<HTMLElement>('[data-pull-request-summary-section="checks"]');
     } else if (location?.kind === "timeline") {
       target = root.querySelector<HTMLElement>("[data-pr-link-target=true]");
     } else if (location?.kind === "summary") {
@@ -939,10 +937,10 @@ export function PullRequestSummaryTab({
       <span className="flex flex-col items-end gap-0.5">
         {[
           changeRequestCount > 0
-            ? gt(
-                "{count, plural, one {{count} change request} other {{count} change requests}}",
-                { count: changeRequestCount, $context: "reviews that requested changes" },
-              )
+            ? gt("{count, plural, one {{count} change request} other {{count} change requests}}", {
+                count: changeRequestCount,
+                $context: "reviews that requested changes",
+              })
             : null,
           unresolvedCount > 0
             ? gt("{count, plural, one {{count} unresolved} other {{count} unresolved}}", {

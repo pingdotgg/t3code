@@ -46,8 +46,7 @@ export async function installDesktopUpdate(
       stackedThreadToast({
         type: "error",
         title: m(msg("Could not confirm update")),
-        description:
-          error instanceof Error ? error.message : m(msg("Update confirmation failed.")),
+        description: error instanceof Error ? error.message : m(msg("Update confirmation failed.")),
       }),
     );
     return;

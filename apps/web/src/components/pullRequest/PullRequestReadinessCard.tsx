@@ -224,7 +224,9 @@ export function PullRequestReadinessCard({
     (check) =>
       check.status === "success" || check.status === "skipped" || check.status === "neutral",
   ).length;
-  const checksPresentation = checksState ? pullRequestChecksStatePresentation(checksState, messages) : null;
+  const checksPresentation = checksState
+    ? pullRequestChecksStatePresentation(checksState, messages)
+    : null;
   const checksIcon =
     checksState === "pending" ? (
       <PullRequestCheckStatusIcon status="pending" />

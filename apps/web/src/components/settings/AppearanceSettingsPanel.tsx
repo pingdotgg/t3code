@@ -167,7 +167,12 @@ export function AppearanceSettingsPanel() {
         </div>
       </SettingsSection>
 
-      <SettingsSection id="appearance-style" title={gt("Style", { $context: "settings section, surface style" })} variant="plain" hideTitle>
+      <SettingsSection
+        id="appearance-style"
+        title={gt("Style", { $context: "settings section, surface style" })}
+        variant="plain"
+        hideTitle
+      >
         <SettingsSearchTarget className="space-y-2.5" id={searchableSetting("surface-style").id}>
           <div className="flex min-h-7 items-center">
             <h3 className="text-title text-dim-foreground">

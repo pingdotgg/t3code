@@ -531,9 +531,7 @@ function ResourceHistoryProcessNameCell({
           <TooltipTrigger render={<RowDetail>{gt("PID {pid}", { pid: process.pid })}</RowDetail>} />
           <TooltipPopup side="top" variant="code">
             <span className="grid gap-1">
-              <span>
-                {gt("Now {percent}%", { percent: process.currentCpuPercent.toFixed(1) })}
-              </span>
+              <span>{gt("Now {percent}%", { percent: process.currentCpuPercent.toFixed(1) })}</span>
               <span>{process.command}</span>
             </span>
           </TooltipPopup>

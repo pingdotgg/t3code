@@ -21,7 +21,9 @@ export function PreviewLocalServerCard({ server, onOpen }: Props) {
       <span aria-hidden className="size-[7px] shrink-0 rounded-full bg-success" />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate font-mono text-body text-foreground">{address}</span>
-        <span className="truncate text-caption text-dim-foreground">{describeServer(server, m)}</span>
+        <span className="truncate text-caption text-dim-foreground">
+          {describeServer(server, m)}
+        </span>
       </div>
       <Button
         type="button"

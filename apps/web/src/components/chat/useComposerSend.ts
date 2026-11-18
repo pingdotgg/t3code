@@ -1698,7 +1698,10 @@ export function useComposerSend(input: ComposerSendInput) {
     );
     if (!isAtomCommandInterrupted(startResult)) {
       const error = squashAtomCommandFailure(startResult);
-      setThreadError(threadIdForSend, error instanceof Error ? error.message : m(msg("Retry failed.")));
+      setThreadError(
+        threadIdForSend,
+        error instanceof Error ? error.message : m(msg("Retry failed.")),
+      );
     }
   }
 

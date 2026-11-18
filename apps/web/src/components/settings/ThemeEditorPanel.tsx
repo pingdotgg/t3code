@@ -1389,11 +1389,15 @@ export function ThemeEditorPanel({
               }
             />
             <TooltipPopup data-theme-editor-panel="">
-              {isInspecting ? gt("Cancel and clear the selection") : gt("Pick a color from the app")}
+              {isInspecting
+                ? gt("Cancel and clear the selection")
+                : gt("Pick a color from the app")}
             </TooltipPopup>
           </Tooltip>
           <Button
-            aria-label={isMinimized ? gt("Expand the theme editor") : gt("Minimize the theme editor")}
+            aria-label={
+              isMinimized ? gt("Expand the theme editor") : gt("Minimize the theme editor")
+            }
             size="icon-xs"
             variant="ghost"
             onClick={() => setIsMinimized(!isMinimized)}
@@ -1484,7 +1488,9 @@ export function ThemeEditorPanel({
                 ) : mergeTarget ? (
                   <>
                     <PlusIcon />
-                    {activeAppearance === "light" ? gt("Add light palette") : gt("Add dark palette")}
+                    {activeAppearance === "light"
+                      ? gt("Add light palette")
+                      : gt("Add dark palette")}
                   </>
                 ) : (
                   <>

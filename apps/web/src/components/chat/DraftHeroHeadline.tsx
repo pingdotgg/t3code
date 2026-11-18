@@ -247,9 +247,11 @@ export function ProjectPickerRows({
       ) : null}
       {model.recentEntries.length > 0 ? (
         <>
-          {groupLabels ? <DraftProjectGroupLabel>
+          {groupLabels ? (
+            <DraftProjectGroupLabel>
               {gt("Recent", { $context: "recently used projects" })}
-            </DraftProjectGroupLabel> : null}
+            </DraftProjectGroupLabel>
+          ) : null}
           {model.recentEntries.map(renderProjectRow)}
         </>
       ) : null}

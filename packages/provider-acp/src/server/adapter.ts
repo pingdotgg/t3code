@@ -8268,7 +8268,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           yield* (
             options.testHooks?.onDeferredFinalizeScheduled?.(ACP_DEFERRED_FINALIZE_DEBOUNCE) ??
-              Effect.void
+            Effect.void
           );
         });
 

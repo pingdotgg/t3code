@@ -61,7 +61,9 @@ const waitForRelayClientInstallCancel = Effect.callback<never, CloudEnvironmentL
     const unsubscribe = onRelayClientInstallCancel(() => {
       resume(
         Effect.fail(
-          new CloudEnvironmentLinkError({ message: m(msg("Relay client installation was cancelled.")) }),
+          new CloudEnvironmentLinkError({
+            message: m(msg("Relay client installation was cancelled.")),
+          }),
         ),
       );
     });

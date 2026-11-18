@@ -2706,19 +2706,22 @@ export function ChatComposer(props: ChatComposerProps) {
                 }),
           },
         ];
-  const promptLengthItem = composerPromptLengthBannerItem({
-    message:
-      providerInputSubmissionError ??
-      composerSubmissionError ??
-      (promptLengthDismissed ? null : promptLengthMessage),
-    prompt,
-    onStash: () => void stashCurrentPromptStable(),
-    onDismiss: () => {
-      setProviderInputSubmissionError(null);
-      setComposerSubmissionError(null);
-      setPromptLengthDismissed(true);
+  const promptLengthItem = composerPromptLengthBannerItem(
+    {
+      message:
+        providerInputSubmissionError ??
+        composerSubmissionError ??
+        (promptLengthDismissed ? null : promptLengthMessage),
+      prompt,
+      onStash: () => void stashCurrentPromptStable(),
+      onDismiss: () => {
+        setProviderInputSubmissionError(null);
+        setComposerSubmissionError(null);
+        setPromptLengthDismissed(true);
+      },
     },
-  }, m);
+    m,
+  );
   const bannerStackItems = [...(promptLengthItem ? [promptLengthItem] : []), ...bannerItems];
   const shelfItems =
     pendingUserInputs.length > 0
@@ -3734,7 +3737,9 @@ export function ChatComposer(props: ChatComposerProps) {
                           voiceInputActive ? !canInterrupt : collapsedComposerPrimaryActionDisabled
                         }
                         aria-label={
-                          voiceInputActive ? gt("Stop generation") : collapsedComposerPrimaryActionLabel
+                          voiceInputActive
+                            ? gt("Stop generation")
+                            : collapsedComposerPrimaryActionLabel
                         }
                         onPointerDown={(event) => event.preventDefault()}
                         onClick={(event) => {

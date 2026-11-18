@@ -1466,9 +1466,8 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
     ...reviews.map((node) => node.author),
     ...requestedReviewers,
     ...latestReviews.map((node) => node.author),
-    ...nodesOf(pullRequest.reviewRequestEvents).flatMap(
-      (node): ReadonlyArray<ActorFields | null> =>
-        "createdAt" in node ? [node.actor, node.requestedReviewer] : [],
+    ...nodesOf(pullRequest.reviewRequestEvents).flatMap((node): ReadonlyArray<ActorFields | null> =>
+      "createdAt" in node ? [node.actor, node.requestedReviewer] : [],
     ),
     ...page.authors,
   ]);

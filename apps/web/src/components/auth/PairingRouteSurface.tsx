@@ -325,8 +325,8 @@ export function HostedPairingRouteSurface() {
       {status === "error" && canRetry ? (
         <StandaloneCardNote>
           <T>
-            Verify the backend is reachable from this browser, supports CORS for hosted clients,
-            and is served over HTTPS when opening this page from HTTPS.
+            Verify the backend is reachable from this browser, supports CORS for hosted clients, and
+            is served over HTTPS when opening this page from HTTPS.
           </T>
         </StandaloneCardNote>
       ) : null}

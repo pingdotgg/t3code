@@ -432,7 +432,9 @@ export function QueuedRunsControl({
                           {workflow?.canSendNow ? (
                             <T>Send now</T>
                           ) : (
-                            gt("Steer", { $context: "verb, steers the running turn with this message" })
+                            gt("Steer", {
+                              $context: "verb, steers the running turn with this message",
+                            })
                           )}
                         </Button>
                       </TooltipTrigger>

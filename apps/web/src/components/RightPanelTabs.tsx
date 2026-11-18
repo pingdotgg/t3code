@@ -595,7 +595,9 @@ function RightPanelTab(
                   type="button"
                   className="cursor-pointer flex size-4 shrink-0 items-center justify-center rounded-kbd hover:surface-ghost-hover"
                   aria-label={
-                    audio === "muted" ? gt("Unmute {title}", { title }) : gt("Mute {title}", { title })
+                    audio === "muted"
+                      ? gt("Unmute {title}", { title })
+                      : gt("Mute {title}", { title })
                   }
                   onClick={(event) => {
                     event.stopPropagation();
@@ -772,7 +774,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     surfaces: {
       browser: {
         available: props.browserAvailable,
-        disabledReason: props.browserUnavailableReason ?? messages(SURFACE_DISABLED_REASONS.browser),
+        disabledReason:
+          props.browserUnavailableReason ?? messages(SURFACE_DISABLED_REASONS.browser),
         onClick: props.onAddBrowser,
       },
       terminal: {
@@ -809,7 +812,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         ? {
             "side-chat": {
               available: props.sideChatAvailable === true && !props.sideChatDisabledReason,
-              disabledReason: props.sideChatDisabledReason ?? messages(SURFACE_DISABLED_REASONS.sideChat),
+              disabledReason:
+                props.sideChatDisabledReason ?? messages(SURFACE_DISABLED_REASONS.sideChat),
               onClick: props.onAddSideChat,
             },
           }

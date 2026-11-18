@@ -106,7 +106,9 @@ function LicenseNoticeRow({
                 >
                   {entry.version}
                 </TooltipTrigger>
-                <TooltipPopup side="top">{formatLicenseBundles(entry.bundles, messages)}</TooltipPopup>
+                <TooltipPopup side="top">
+                  {formatLicenseBundles(entry.bundles, messages)}
+                </TooltipPopup>
               </Tooltip>
             </span>
             <Badge
@@ -208,7 +210,11 @@ export function OpenSourceLicensesPanel() {
   return (
     <SettingsPageContainer>
       <SettingsToolbar>
-        <SettingsSearchField value={query} onChange={setQuery} placeholder={gt("Search licenses")} />
+        <SettingsSearchField
+          value={query}
+          onChange={setQuery}
+          placeholder={gt("Search licenses")}
+        />
       </SettingsToolbar>
       <ProjectSourceSection />
       <SettingsSection title={gt("Third-party notices")}>

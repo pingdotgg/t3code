@@ -144,7 +144,9 @@ export function DiffViewControls({
           <TooltipTrigger
             render={
               <Toggle
-                aria-label={diffLayout === "split" ? gt("Stacked diff view") : gt("Split diff view")}
+                aria-label={
+                  diffLayout === "split" ? gt("Stacked diff view") : gt("Split diff view")
+                }
                 variant="ghost"
                 size="sm"
                 pressed={diffLayout === "split"}
@@ -164,7 +166,9 @@ export function DiffViewControls({
           <TooltipTrigger
             render={
               <Toggle
-                aria-label={wordWrap ? gt("Disable diff line wrapping") : gt("Enable diff line wrapping")}
+                aria-label={
+                  wordWrap ? gt("Disable diff line wrapping") : gt("Enable diff line wrapping")
+                }
                 variant="ghost"
                 size="sm"
                 pressed={wordWrap}

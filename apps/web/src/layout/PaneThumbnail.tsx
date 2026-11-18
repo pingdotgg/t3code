@@ -374,7 +374,7 @@ function ThumbnailPickerRows({
   scratchSelected: boolean;
 }) {
   const gt = useGT();
-  const projectRow =({ group, targetProject }: ProjectPickerEntry) => (
+  const projectRow = ({ group, targetProject }: ProjectPickerEntry) => (
     <DraftProjectRow
       key={group.projectKey}
       selected={group.projectKey === selectedProjectKey}

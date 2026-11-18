@@ -349,7 +349,9 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
                 ) : (
                   <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
                 )}
-                <span className="shrink-0">{resolveCurrentWorkspaceLabel(activeWorktreePath, m)}</span>
+                <span className="shrink-0">
+                  {resolveCurrentWorkspaceLabel(activeWorktreePath, m)}
+                </span>
                 <StartTruncatedPath
                   path={activeWorktreePath ?? workspaceRoot}
                   className="min-w-0 flex-1 pe-2 text-meta text-dim-foreground"
@@ -1329,7 +1331,9 @@ export const BranchToolbar = memo(function BranchToolbar({
                   onEnvModeChange={onEnvModeChange}
                   noProject={isScratchProject(activeProject, scratchWorkspaceRoot)}
                   previousWorktreeLabel={
-                    previousWorktreeSeed ? resolvePreviousWorktreeLabel(previousWorktreeSeed, m) : null
+                    previousWorktreeSeed
+                      ? resolvePreviousWorktreeLabel(previousWorktreeSeed, m)
+                      : null
                   }
                   previousWorktreeBranch={previousWorktreeSeed?.branch ?? null}
                   onUsePreviousWorktree={onUsePreviousWorktree}

@@ -171,9 +171,7 @@ export function useSpeechUnavailableReason(speech: {
   if (!canCapture || speech.available) return null;
   const where = destination.label;
   if (destination.prepared) {
-    return speech.status?.supported === false
-      ? speech.status.reason
-      : gt("Checking voice input.");
+    return speech.status?.supported === false ? speech.status.reason : gt("Checking voice input.");
   }
   if (!hydrated) return gt("Loading voice settings.");
   if (!grant) return gt("Voice input is off. Turn it on in Settings > Voice.");

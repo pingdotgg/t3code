@@ -715,7 +715,6 @@ function ProjectDetail({
               </div>
             }
           />
-
         </SettingsSection>
         {checkoutChoices}
         <ProjectActionsSettings />

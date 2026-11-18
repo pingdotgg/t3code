@@ -97,19 +97,22 @@ export function useChatBannerLane(input: {
     resolve: messages,
   });
   if (providerItem) items.push(providerItem);
-  const errorItem = threadErrorBannerItem({
-    bannerKey: threadErrorBannerKey,
-    error: threadError,
-    errorClass: threadErrorClass,
-    errorCode: threadErrorCode,
-    onRetry,
-    retrying,
-    onDismiss: () => {
-      if (threadId !== null) setThreadError(threadId, null);
-      dismissThreadErrorBannerForSession(threadErrorBannerKey);
-      setThreadErrorBannerDismissTick((tick) => tick + 1);
+  const errorItem = threadErrorBannerItem(
+    {
+      bannerKey: threadErrorBannerKey,
+      error: threadError,
+      errorClass: threadErrorClass,
+      errorCode: threadErrorCode,
+      onRetry,
+      retrying,
+      onDismiss: () => {
+        if (threadId !== null) setThreadError(threadId, null);
+        dismissThreadErrorBannerForSession(threadErrorBannerKey);
+        setThreadErrorBannerDismissTick((tick) => tick + 1);
+      },
     },
-  }, messages);
+    messages,
+  );
   if (errorItem) items.push(errorItem);
   if (lowLimitVisible && lowLimitSignal !== null) {
     items.push(

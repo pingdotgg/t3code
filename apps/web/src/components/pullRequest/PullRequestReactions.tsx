@@ -102,9 +102,7 @@ export function ReactionBar({
       {canReact ? (
         <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
           <PopoverTrigger
-            render={
-              <Button size="icon-xs-pill" variant="pill" aria-label={gt("Add a reaction")} />
-            }
+            render={<Button size="icon-xs-pill" variant="pill" aria-label={gt("Add a reaction")} />}
           >
             <SmilePlusIcon aria-hidden className="size-3.5" />
           </PopoverTrigger>

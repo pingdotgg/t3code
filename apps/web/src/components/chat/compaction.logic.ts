@@ -106,9 +106,21 @@ export function contextWindowSegments(
   const reasoning = Math.min(output, usage.reasoningOutputTokens ?? 0);
   const reported = [
     { label: resolve(msg("Cached input")), tokens: cached, color: "bg-black/80 dark:bg-white/80" },
-    { label: resolve(msg("New input")), tokens: input - cached, color: "bg-black/50 dark:bg-white/50" },
-    { label: resolve(msg("Output", { $context: "output tokens" })), tokens: output - reasoning, color: "bg-black/32 dark:bg-white/32" },
-    { label: resolve(msg("Reasoning", { $context: "reasoning tokens" })), tokens: reasoning, color: "bg-black/20 dark:bg-white/20" },
+    {
+      label: resolve(msg("New input")),
+      tokens: input - cached,
+      color: "bg-black/50 dark:bg-white/50",
+    },
+    {
+      label: resolve(msg("Output", { $context: "output tokens" })),
+      tokens: output - reasoning,
+      color: "bg-black/32 dark:bg-white/32",
+    },
+    {
+      label: resolve(msg("Reasoning", { $context: "reasoning tokens" })),
+      tokens: reasoning,
+      color: "bg-black/20 dark:bg-white/20",
+    },
   ];
   let remaining = usage.usedTokens;
   const segments = reported.flatMap((segment) => {

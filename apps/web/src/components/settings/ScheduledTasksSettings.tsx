@@ -794,7 +794,10 @@ function ScheduledTaskEnvironmentSection({
             })}
           />
         ) : tasksQuery.error ? (
-          <SettingsRow title={gt("Could not load scheduled tasks")} description={tasksQuery.error} />
+          <SettingsRow
+            title={gt("Could not load scheduled tasks")}
+            description={tasksQuery.error}
+          />
         ) : !tasks ? (
           <SettingsLoadingRows label={gt("Loading scheduled tasks")} count={2} />
         ) : (

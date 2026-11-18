@@ -119,7 +119,9 @@ export function PullRequestCheckoutMenuItems({
         <GitBranchIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
         <span className="flex min-w-0 flex-col">
           <span>
-            {handoff === "checkout:worktree" ? gt("Checking out...") : gt("Check out in a worktree")}
+            {handoff === "checkout:worktree"
+              ? gt("Checking out...")
+              : gt("Check out in a worktree")}
           </span>
           <span className="text-meta text-muted-foreground">
             <T>Its own folder and thread. Nothing you have open moves.</T>

@@ -368,9 +368,7 @@ function ComposerReviewCommentDetails({ comment }: { comment: ReviewCommentConte
         <div className="truncate text-xs font-medium text-foreground">{comment.filePath}</div>
         <div className="text-secondary-label text-2xs">
           <span className="block">{reviewCommentRangeText(comment.rangeLabel, messages)}</span>
-          <span className="block">
-            {reviewCommentSectionText(comment.sectionTitle, messages)}
-          </span>
+          <span className="block">{reviewCommentSectionText(comment.sectionTitle, messages)}</span>
         </div>
       </div>
       {comment.text.trim() ? <ChatMarkdown text={comment.text.trim()} cwd={undefined} /> : null}

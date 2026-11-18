@@ -614,11 +614,7 @@ export default function FileBrowserPanel({
   const trimmedQuery = query.trim();
   const surfaceState =
     directoryEntries.length === 0 && error && !isPending ? (
-      <FileSurfaceFailure
-        title={gt("Can't list files")}
-        message={error}
-        onRetry={handleRefresh}
-      />
+      <FileSurfaceFailure title={gt("Can't list files")} message={error} onRetry={handleRefresh} />
     ) : ready && directoryEntries.length === 0 && !isPending && !trimmedQuery ? (
       <FileSurfaceState
         icon={<FolderOpen />}

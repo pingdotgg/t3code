@@ -68,7 +68,10 @@ function endpointStatus(
   resolve: MessageResolver = m,
 ) {
   if (url === "") {
-    return { label: resolve(msg("Off", { $context: "export disabled" })), tone: "neutral" } as const;
+    return {
+      label: resolve(msg("Off", { $context: "export disabled" })),
+      tone: "neutral",
+    } as const;
   }
   if (check?.url !== url) return { label: resolve(msg("Not checked")), tone: "neutral" } as const;
   const { result } = check;

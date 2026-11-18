@@ -206,7 +206,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
           />
         ) : (
           <span className="text-body text-muted-foreground">
-            {mixedModel ? gt("Mixed", { $context: "values differ across targets" }) : gt("No providers available")}
+            {mixedModel
+              ? gt("Mixed", { $context: "values differ across targets" })
+              : gt("No providers available")}
           </span>
         )
       }

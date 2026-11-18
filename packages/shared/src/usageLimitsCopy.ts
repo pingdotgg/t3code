@@ -224,5 +224,7 @@ export function formatRunsOutIn(
   const runOut = projectRunOut(window, now);
   if (runOut === null) return null;
   if (runOut < MINUTE) return resolve(msg("runs out now"));
-  return resolve(msg("runs out in about {duration}", { duration: formatDuration(runOut, resolve) }));
+  return resolve(
+    msg("runs out in about {duration}", { duration: formatDuration(runOut, resolve) }),
+  );
 }

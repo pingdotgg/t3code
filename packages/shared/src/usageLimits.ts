@@ -878,7 +878,6 @@ export function projectRunOut(window: ServerProviderUsageWindow, now: number): n
   return runOut < resetsAt - now ? runOut : null;
 }
 
-
 export interface TightestLimit {
   readonly account: LimitAccount;
   readonly window: ServerProviderUsageWindow;

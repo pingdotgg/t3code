@@ -674,7 +674,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       icon={<CheckCircle2Icon />}
       label={
         settledAt
-          ? gt("Settled {time}", { time: formatRelativeTimeLabel(settledAt, statusNowMs, messages) })
+          ? gt("Settled {time}", {
+              time: formatRelativeTimeLabel(settledAt, statusNowMs, messages),
+            })
           : gt("Settled", { $context: "thread status" })
       }
       clockMinute={nowMinute}

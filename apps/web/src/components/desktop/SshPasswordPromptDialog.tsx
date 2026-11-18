@@ -175,11 +175,7 @@ function ActiveSshPasswordPrompt({
       <DialogPopup className="max-w-100" initialFocus={inputRef} showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>
-            {isPasswordPrompt ? (
-              <T>SSH Password Required</T>
-            ) : (
-              <T>SSH verification required</T>
-            )}
+            {isPasswordPrompt ? <T>SSH Password Required</T> : <T>SSH verification required</T>}
           </DialogTitle>
           <DialogDescription>
             {isPasswordPrompt ? (

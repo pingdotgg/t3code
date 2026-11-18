@@ -512,7 +512,10 @@ export function SnapShotSettings() {
       </SettingsSection>
       {webOnly ||
       (settings.snapShotEnabled && captureAvailable && unavailableMessage === undefined) ? (
-        <SettingsSection id="snap-shot-feedback" title={gt("Feedback", { $context: "settings section" })}>
+        <SettingsSection
+          id="snap-shot-feedback"
+          title={gt("Feedback", { $context: "settings section" })}
+        >
           <SettingsUnavailableGroup unavailable={webOnly}>
             <SettingsRow
               {...setting("snap-shot-sound")}
@@ -573,7 +576,10 @@ export function SnapShotSettings() {
         </SettingsSection>
       ) : null}
       {settings.snapShotEnabled && captureHelper && unavailableMessage === undefined ? (
-        <SettingsSection id="snap-shot-advanced" title={gt("Advanced", { $context: "settings section" })}>
+        <SettingsSection
+          id="snap-shot-advanced"
+          title={gt("Advanced", { $context: "settings section" })}
+        >
           <SettingsRow
             title={gt("Capture helper")}
             description={captureHelper.description}

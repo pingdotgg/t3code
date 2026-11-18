@@ -663,9 +663,7 @@ export function IssueDetailPanel({
       >
         <div className="px-4 pb-1">
           <PullRequestDetailTitleRow className="h-7 gap-1 text-body sm:text-meta">
-            <span className="min-w-0 truncate text-muted-foreground">
-              {detail.scope}
-            </span>
+            <span className="min-w-0 truncate text-muted-foreground">{detail.scope}</span>
             <InlineButton
               className={cn("shrink-0", currentState.toneClassName)}
               aria-label={gt("Open {issue} on {provider}", {
@@ -737,9 +735,7 @@ export function IssueDetailPanel({
             </form>
           ) : (
             <PullRequestDetailTitleRow className="group mt-1 gap-1">
-              <h2 className="min-w-0 flex-1 text-label">
-                {detail.title}
-              </h2>
+              <h2 className="min-w-0 flex-1 text-label">{detail.title}</h2>
               {canEdit ? (
                 <PullRequestEditButton
                   aria-label={gt("Edit title")}

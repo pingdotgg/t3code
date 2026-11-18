@@ -54,7 +54,9 @@ export function SettingsTabNotch({
             <span className={LAYOUT_TAB_ICON_CLASS}>{icon}</span>
             {children}
           </div>
-          {tabId !== null ? <LayoutTabCloseButton tabId={tabId} title={title ?? gt("Settings")} /> : null}
+          {tabId !== null ? (
+            <LayoutTabCloseButton tabId={tabId} title={title ?? gt("Settings")} />
+          ) : null}
         </span>
         {siblingTabs.after.map((tab) => (
           <LayoutPaneTab key={tab.id} tab={tab} />

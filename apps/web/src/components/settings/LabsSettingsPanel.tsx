@@ -28,7 +28,10 @@ export function LabsSettingsPanel() {
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
       </SettingsSection>
-      <SettingsSection id="redesign" title={gt("Redesign", { $context: "settings section, labs features of the redesign" })}>
+      <SettingsSection
+        id="redesign"
+        title={gt("Redesign", { $context: "settings section, labs features of the redesign" })}
+      >
         <ScrollingWorkspacesRow />
         <TurnWorkFoldRow />
       </SettingsSection>

@@ -273,7 +273,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/worktrees",
     scope: "project-defaults",
     searchTerms: [
-      msg("disk storage automatic delete deleted archived threads old inactive merged settled unchanged worktrees retention days project inherit off custom local changes kept branches thread history commits default branch"),
+      msg(
+        "disk storage automatic delete deleted archived threads old inactive merged settled unchanged worktrees retention days project inherit off custom local changes kept branches thread history commits default branch",
+      ),
     ],
   },
   {
@@ -289,7 +291,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/maintenance",
     scope: "environment-defaults",
     searchTerms: [
-      msg("disk storage delete old browser artifacts screenshots captures rotated logs cleanup retention recordings traces days capture links"),
+      msg(
+        "disk storage delete old browser artifacts screenshots captures rotated logs cleanup retention recordings traces days capture links",
+      ),
     ],
   },
   {
@@ -347,7 +351,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "layout-side-pane-placement",
     title: msg("Side pane"),
     to: "/settings/layout",
-    searchTerms: [msg("side pane placement diff files browser pull request beside the chat new column")],
+    searchTerms: [
+      msg("side pane placement diff files browser pull request beside the chat new column"),
+    ],
   },
   {
     id: "layout-side-pane-opens-on",
@@ -365,7 +371,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "layout-when-no-room",
     title: msg("When it doesn't fit"),
     to: "/settings/layout",
-    searchTerms: [msg("no room shrink then scroll always shrink always scroll strip columns width")],
+    searchTerms: [
+      msg("no room shrink then scroll always shrink always scroll strip columns width"),
+    ],
     scrollingWorkspacesOnly: true,
   },
   {
@@ -388,7 +396,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "theme",
     title: msg("Themes"),
     to: "/settings/appearance",
-    searchTerms: [msg("appearance colors palette custom import export download t3 code classic old")],
+    searchTerms: [
+      msg("appearance colors palette custom import export download t3 code classic old"),
+    ],
     targetId: "appearance",
   },
   {
@@ -445,7 +455,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Style"),
     to: "/settings/appearance",
     searchTerms: [
-      msg("surface buttons composer finish standard flat soft gloss glossy accent outline aqua gradient rim"),
+      msg(
+        "surface buttons composer finish standard flat soft gloss glossy accent outline aqua gradient rim",
+      ),
     ],
   },
   {
@@ -536,7 +548,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Snooze until limits reset"),
     to: "/settings/threads",
     searchTerms: [
-      msg("usage quota rate limit reset wake recover continue reported reset time combine auto-resume wake"),
+      msg(
+        "usage quota rate limit reset wake recover continue reported reset time combine auto-resume wake",
+      ),
     ],
   },
   {
@@ -544,7 +558,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Resume after usage limits"),
     to: "/settings/threads",
     searchTerms: [
-      msg("usage quota rate limit reset recover continue reported reset time cancel scheduled continuation"),
+      msg(
+        "usage quota rate limit reset recover continue reported reset time cancel scheduled continuation",
+      ),
     ],
   },
   {
@@ -558,7 +574,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Scrolling workspaces"),
     to: "/settings/labs",
     searchTerms: [
-      msg("beta labs redesign niri strip scroll sideways workspaces overview layout tour swipe panes shrink"),
+      msg(
+        "beta labs redesign niri strip scroll sideways workspaces overview layout tour swipe panes shrink",
+      ),
     ],
   },
   {
@@ -580,7 +598,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Fold each turn's work"),
     to: "/settings/labs",
     searchTerms: [
-      msg("beta labs redesign working section window fold collapse turn tool calls open worked for wake-ups timeline"),
+      msg(
+        "beta labs redesign working section window fold collapse turn tool calls open worked for wake-ups timeline",
+      ),
     ],
   },
   {
@@ -850,7 +870,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Default diff file state"),
     to: "/settings/diffs",
     searchTerms: [
-      msg("collapsed expanded collapse expand files pull request pr code tab pull request code tab opening"),
+      msg(
+        "collapsed expanded collapse expand files pull request pr code tab pull request code tab opening",
+      ),
     ],
   },
   {
@@ -864,7 +886,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Open pull requests and changes panels proactively"),
     to: "/settings/diffs",
     searchTerms: [
-      msg("proactive automatically open diff pull request pr right panel agent completion working tree diff 3 files 50 lines"),
+      msg(
+        "proactive automatically open diff pull request pr right panel agent completion working tree diff 3 files 50 lines",
+      ),
     ],
   },
   {
@@ -906,7 +930,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/maintenance",
     scope: "project-defaults",
     searchTerms: [
-      msg("resume running active interrupted work restart reboot machine crash desktop update automatically machine restart selected environments update older servers"),
+      msg(
+        "resume running active interrupted work restart reboot machine crash desktop update automatically machine restart selected environments update older servers",
+      ),
     ],
   },
   {
@@ -1001,7 +1027,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     scope: "project-defaults",
     searchTerms: [
-      msg("generated thread titles source control content default provider connected devices provider source control override"),
+      msg(
+        "generated thread titles source control content default provider connected devices provider source control override",
+      ),
     ],
   },
   {
@@ -1168,7 +1196,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/browser",
     scope: "project-defaults",
     searchTerms: [
-      msg("allow disable enable open drive preview tools sessions project override next session start"),
+      msg(
+        "allow disable enable open drive preview tools sessions project override next session start",
+      ),
     ],
   },
   {
@@ -1258,7 +1288,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Open links in"),
     to: "/settings/browser",
     searchTerms: [
-      msg("links default browser in-app browser external open hold cmd ctrl click default browser either way"),
+      msg(
+        "links default browser in-app browser external open hold cmd ctrl click default browser either way",
+      ),
     ],
   },
   {
@@ -1289,7 +1321,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/source-control",
     scope: "project-defaults",
     searchTerms: [
-      msg("auto pull default branch current checkout fast forward upstream no local changes or commits"),
+      msg(
+        "auto pull default branch current checkout fast forward upstream no local changes or commits",
+      ),
     ],
   },
   {
@@ -1369,7 +1403,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Source control writer model"),
     to: "/settings/source-control",
     searchTerms: [
-      msg("override generated commit change request pr titles descriptions branch bookmark source control text branch bookmark names"),
+      msg(
+        "override generated commit change request pr titles descriptions branch bookmark source control text branch bookmark names",
+      ),
     ],
     environmentOnly: true,
     scope: "project-defaults",

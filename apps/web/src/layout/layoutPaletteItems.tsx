@@ -79,7 +79,13 @@ export function buildOpenBesidePaletteItem(
     title: resolve(msg("Open beside…")),
     icon: <PanelRightIcon className={ITEM_ICON_CLASS} />,
     addonIcon: <PanelRightIcon className={ADDON_ICON_CLASS} />,
-    groups: [{ value: "open-beside", label: resolve(msg("Open beside", { $context: "verb, opens a panel next to the chat" })), items }],
+    groups: [
+      {
+        value: "open-beside",
+        label: resolve(msg("Open beside", { $context: "verb, opens a panel next to the chat" })),
+        items,
+      },
+    ],
   };
 }
 
@@ -143,7 +149,11 @@ const LAYOUT_ENTRIES: ReadonlyArray<{
     icon: RulerIcon,
     searchTerms: ["resize"],
   },
-  { command: "layout.centerColumn", title: msg("Center column", { $context: "verb, scrolls the focused column to the middle" }), icon: MoveHorizontalIcon },
+  {
+    command: "layout.centerColumn",
+    title: msg("Center column", { $context: "verb, scrolls the focused column to the middle" }),
+    icon: MoveHorizontalIcon,
+  },
   {
     command: "layout.pullLeft",
     title: msg("Pull pane into the left column"),
@@ -218,7 +228,12 @@ export function buildLayoutPaletteItems(
   ).map((entry): CommandPaletteActionItem => ({
     kind: "action",
     value: `action:${entry.command}`,
-    searchTerms: [resolve(entry.title).toLowerCase(), "layout", "pane", ...(entry.searchTerms ?? [])],
+    searchTerms: [
+      resolve(entry.title).toLowerCase(),
+      "layout",
+      "pane",
+      ...(entry.searchTerms ?? []),
+    ],
     title: resolve(entry.title),
     icon: <entry.icon className={ITEM_ICON_CLASS} />,
     shortcutCommand: entry.command,
@@ -232,7 +247,13 @@ export function buildLayoutPaletteItems(
       title: resolve(msg("Layout…")),
       icon: <LayoutGridIcon className={ITEM_ICON_CLASS} />,
       addonIcon: <LayoutGridIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "layout", label: resolve(msg("Layout", { $context: "group of pane and column commands" })), items }],
+      groups: [
+        {
+          value: "layout",
+          label: resolve(msg("Layout", { $context: "group of pane and column commands" })),
+          items,
+        },
+      ],
     },
     {
       kind: "action",

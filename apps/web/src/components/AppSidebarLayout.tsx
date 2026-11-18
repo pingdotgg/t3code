@@ -497,8 +497,16 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
 }
 
 const NAVIGATION_HISTORY_BUTTONS = {
-  back: { label: msg("Back", { $context: "browser navigation" }), command: "navigation.back", Icon: ArrowLeftIcon },
-  forward: { label: msg("Forward", { $context: "browser navigation" }), command: "navigation.forward", Icon: ArrowRightIcon },
+  back: {
+    label: msg("Back", { $context: "browser navigation" }),
+    command: "navigation.back",
+    Icon: ArrowLeftIcon,
+  },
+  forward: {
+    label: msg("Forward", { $context: "browser navigation" }),
+    command: "navigation.forward",
+    Icon: ArrowRightIcon,
+  },
 } as const;
 
 // Next to the sidebar toggle on the chrome row (pen fiPPG, iZJUf). On the web

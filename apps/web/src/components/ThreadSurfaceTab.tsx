@@ -639,9 +639,7 @@ function ThreadGoneState({ threadless, onClose }: { threadless: boolean; onClose
         <EmptyMedia variant="icon">
           <Unlink2Icon />
         </EmptyMedia>
-        <EmptyTitle>
-          {threadless ? gt("Its project is gone") : gt("Its thread is gone")}
-        </EmptyTitle>
+        <EmptyTitle>{threadless ? gt("Its project is gone") : gt("Its thread is gone")}</EmptyTitle>
         <EmptyDescription>
           {threadless
             ? gt("The project this was opened in no longer exists.")

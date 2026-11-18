@@ -102,7 +102,10 @@ export function AppRouteModalClose() {
     <Tooltip>
       <TooltipTrigger
         render={
-          <DialogClose aria-label={gt("Close")} render={<Button size="icon-sm" variant="ghost" />} />
+          <DialogClose
+            aria-label={gt("Close")}
+            render={<Button size="icon-sm" variant="ghost" />}
+          />
         }
       >
         <XIcon />
