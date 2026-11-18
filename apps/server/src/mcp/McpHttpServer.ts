@@ -1219,6 +1219,17 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
     ),
   ).pipe(
     Layer.provide(
+      McpServer.visibility(({ method, target }) =>
+        Effect.map(
+          Effect.serviceOption(McpInvocationContext.McpInvocationContext),
+          (scope) =>
+            method !== "tools/list" ||
+            Option.getOrUndefined(scope)?.client?.access !== "read-only" ||
+            McpToolAccess.HandlersLayer.isReadable(handlers, target),
+        ),
+      ).layer,
+    ),
+    Layer.provide(
       provideRegistrationServices<
         Exclude<Tool.Requirements<Tools[keyof Tools]>, McpInvocationContext.McpInvocationContext>
       >().layer,

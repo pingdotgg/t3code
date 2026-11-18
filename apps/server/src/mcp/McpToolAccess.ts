@@ -49,6 +49,7 @@ let declare: <P, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
   remote: RemoteCheck<P> | undefined,
   forwarded?: Forwarded<P, A, E, R>,
+  readable?: boolean,
 ) => Declaration<(params: P) => Effect.Effect<A, E, R>>;
 
 /**
@@ -81,10 +82,12 @@ let checkedHandler: CheckedHandler;
 
 let handlersLayer: <Tools extends Record<string, Tool.Any>, EX, RX>(
   layer: Layer.Layer<Tool.HandlersFor<Tools>, EX, RX>,
+  readableTools: ReadonlySet<string>,
 ) => HandlersLayer<Tools, EX, RX>;
 
 /** t3code/no-raw-mcp-registration confines Effect's unchecked registration API to McpHttpServer. */
 export class Declaration<out Handler> {
+  readonly readable: boolean;
   readonly #handle: Handler;
   readonly #remote: RemoteCheck<never> | undefined;
   readonly #forwarded: Forwarded<never, unknown, unknown, unknown> | undefined;
@@ -93,19 +96,22 @@ export class Declaration<out Handler> {
     handle: Handler,
     remote: RemoteCheck<never> | undefined,
     forwarded: Forwarded<never, unknown, unknown, unknown> | undefined,
+    readable: boolean,
   ) {
     refuseOutsideConstruction(token);
     this.#handle = handle;
     this.#remote = remote;
     this.#forwarded = forwarded;
+    this.readable = readable;
   }
   static {
-    declare = (handle, remote, forwarded) =>
+    declare = (handle, remote, forwarded, readable = false) =>
       new Declaration(
         builtHere,
         handle,
         remote,
         forwarded as Forwarded<never, unknown, unknown, unknown> | undefined,
+        readable,
       );
     checkedHandler = Struct.lambda<CheckedHandler>((declaration) => declaration.#handle);
     remoteCheckOf = (declaration) => declaration.#remote;
@@ -145,10 +151,17 @@ export const reads = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>)
   declare(
     (params: P) => handle(params),
     () => Effect.void,
+    undefined,
+    true,
   );
 
 export const readsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
-  declare((params: P) => requireThreadCaller.pipe(Effect.flatMap(() => handle(params))), undefined);
+  declare(
+    (params: P) => requireThreadCaller.pipe(Effect.flatMap(() => handle(params))),
+    undefined,
+    undefined,
+    true,
+  );
 
 export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare(
@@ -301,6 +314,8 @@ export const either = <P, A, E, R, A2, E2, R2>(
           message: "This action acts as the calling thread, which is here. Omit environmentId.",
         }),
       ),
+    undefined,
+    first.readable || second.readable,
   );
 };
 
@@ -316,6 +331,7 @@ export const afterForwarding = <P, A, E, R, E2, R2>(
     checkedHandler(declaration) as (params: P) => Effect.Effect<A, E | E2, R | R2>,
     remoteCheckOf(declaration) as RemoteCheck<P> | undefined,
     forwarded,
+    declaration.readable,
   );
 
 const fullAccessRequired =
@@ -367,20 +383,29 @@ export type Handlers<Tools extends Record<string, Tool.Any>> = Declarations<
 
 export class HandlersLayer<Tools extends Record<string, Tool.Any>, EX = never, RX = never> {
   readonly #layer: Layer.Layer<Tool.HandlersFor<Tools>, EX, RX>;
+  readonly #readableTools: ReadonlySet<string>;
   private constructor(
     token: typeof builtHere,
     layer: Layer.Layer<Tool.HandlersFor<Tools>, EX, RX>,
+    readableTools: ReadonlySet<string>,
   ) {
     refuseOutsideConstruction(token);
     this.#layer = layer;
+    this.#readableTools = readableTools;
   }
   static {
-    handlersLayer = (layer) => new HandlersLayer(builtHere, layer);
+    handlersLayer = (layer, readableTools) => new HandlersLayer(builtHere, layer, readableTools);
   }
   static layer<Tools extends Record<string, Tool.Any>, EX, RX>(
     handlers: HandlersLayer<Tools, EX, RX>,
   ) {
     return handlers.#layer;
+  }
+  static isReadable<Tools extends Record<string, Tool.Any>, EX, RX>(
+    handlers: HandlersLayer<Tools, EX, RX>,
+    name: string,
+  ) {
+    return handlers.#readableTools.has(name);
   }
 }
 
@@ -465,12 +490,19 @@ export const toLayer = <Tools extends Record<string, Tool.Any>, EX = never, RX =
   toolkit: Toolkit.Toolkit<Tools>,
   build: Handlers<Tools> | Effect.Effect<Handlers<Tools>, EX, RX>,
 ): HandlersLayer<Tools, EX, Exclude<RX, Scope.Scope>> => {
+  const readableTools = new Set<string>();
   // Checked as soon as they are given, so a forged declaration fails here.
-  const withDeclarations = (declarations: Handlers<Tools>) =>
-    routed(toolkit, declarations, checkedHandlers(declarations));
+  const withDeclarations = (declarations: Handlers<Tools>) => {
+    const checked = checkedHandlers(declarations);
+    for (const [name, declaration] of Object.entries<Declaration<unknown>>(declarations)) {
+      if (declaration.readable) readableTools.add(name);
+    }
+    return routed(toolkit, declarations, checked);
+  };
   return handlersLayer(
     toolkit.toLayer(
       Effect.isEffect(build) ? Effect.flatMap(build, withDeclarations) : withDeclarations(build),
     ),
+    readableTools,
   );
 };

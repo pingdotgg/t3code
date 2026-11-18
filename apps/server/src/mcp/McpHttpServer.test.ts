@@ -1978,12 +1978,18 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         ["deferringToken", scopeFor("deferringToken")],
         ["otherToken", scopeFor("otherToken")],
       ]);
+      const parameters = Schema.Struct({ write: Schema.optional(Schema.Boolean) });
       const tool = (name: string, description: string) =>
         Tool.make(name, {
           description,
+          parameters,
           success: Schema.Struct({}),
           failure: OrchestratorMcpFailure,
           failureMode: "return",
+          dependencies: [
+            McpInvocationContext.McpInvocationContext,
+            ThreadManagementService.ThreadManagementService,
+          ],
         });
       const OptionalToolkit = Toolkit.make(
         tool("delegate_task", "Delegates a task."),
@@ -1991,14 +1997,15 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         tool("schedule_task", "Schedules a task."),
       );
       const reads = McpToolAccess.reads(() => Effect.succeed({}));
+      const writes = McpToolAccess.writes((_input: typeof parameters.Type) => Effect.succeed({}));
       const serverLayer = McpHttpServer.layerMcpTransport(
         Layer.mergeAll(
           McpHttpServer.toolkitRegistration(
             OptionalToolkit,
             McpToolAccess.toLayer(OptionalToolkit, {
-              delegate_task: reads,
+              delegate_task: writes,
               preview_open: reads,
-              schedule_task: reads,
+              schedule_task: McpToolAccess.either((input) => input.write === true, writes, reads),
             }),
           ),
           McpHttpServer.layerToolSearch,
@@ -2006,6 +2013,23 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.succeed(McpHttpServer.McpClientAuthenticator, {
+            authenticate: (request) =>
+              Effect.succeed(
+                request.headers.authorization === "Bearer read.only"
+                  ? {
+                      environmentId,
+                      requestNamespace: "client:read-only",
+                      thread: undefined,
+                      client: { sessionId: "read-only", label: "Reader", access: "read-only" },
+                      capabilities: new Set(["orchestration"]),
+                      issuedAt: 1,
+                    }
+                  : undefined,
+              ),
+          }),
+        ),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(scopes.get(token)),
@@ -2073,6 +2097,13 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       const other = yield* session("otherToken", false);
       expect(yield* deferring.listed).toEqual(["delegate_task", "tool_search"]);
       expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      const readOnly = yield* session("read.only", false);
+      expect(yield* readOnly.listed).toEqual(["preview_open", "schedule_task"]);
+      expect((yield* readOnly.call("schedule_task", {})).structuredContent).toEqual({});
+      expect(yield* readOnly.call("schedule_task", { write: true })).toMatchObject({
+        isError: true,
+      });
+      expect(yield* readOnly.call("delegate_task", {})).toMatchObject({ isError: true });
       // Unlisted tools stay callable.
       expect((yield* deferring.call("schedule_task", {})).structuredContent).toEqual({});
 
