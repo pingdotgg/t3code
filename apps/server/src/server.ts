@@ -125,6 +125,7 @@ import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.t
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
+import * as ClaudeRequestForwarder from "./provider/ClaudeRequestForwarder.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ResetCreditAutoRedeem from "./usage/ResetCreditAutoRedeem.ts";
@@ -790,6 +791,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // service up optionally when each instance is created, so it has to be a
   // dependency of the registry, not a consumer of it.
   Layer.provideMerge(layerOptimizer),
+  // Below the instance registry for the same reason: Claude adapters look it up when created.
+  Layer.provideMerge(ClaudeRequestForwarder.layer),
   // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
   // reference, so the runtime layer shares it.
   Layer.provideMerge(ProviderInstallationGate.layer),

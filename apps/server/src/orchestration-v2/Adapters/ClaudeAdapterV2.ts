@@ -132,6 +132,7 @@ import {
   type ProviderRequestKind,
   type ProviderUserInputAnswers,
   type ProviderThreadId,
+  type RequestRewriteRule,
   type RunId,
   type ThreadId,
   resolveIdleCompaction,
@@ -159,6 +160,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -186,6 +188,7 @@ import * as ServerConfig from "../../config.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as ClaudeRequestForwarder from "../../provider/ClaudeRequestForwarder.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -2207,6 +2210,8 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
+  /** Routes the session's model requests through the request-rules forwarder. */
+  readonly requestForwarderUrl?: string;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
   const {
@@ -2312,6 +2317,17 @@ export function makeClaudeQueryOptions(input: {
             ? {}
             : { env: { ...effectiveQuerySettings?.env, ...additionEnv } }),
         };
+  // Flag settings outrank a base URL the user's settings file sets, and keep its apiKeyHelper.
+  const querySettingsWithForwarder =
+    input.requestForwarderUrl === undefined || typeof querySettingsWithAdditions === "string"
+      ? querySettingsWithAdditions
+      : {
+          ...querySettingsWithAdditions,
+          env: {
+            ...querySettingsWithAdditions?.env,
+            ANTHROPIC_BASE_URL: input.requestForwarderUrl,
+          },
+        };
   const t3Instructions = input.t3AgentInstructions !== false;
   const deviceInstructions =
     t3Instructions && input.mcpServers !== undefined && input.deviceToolsAvailable === true;
@@ -2360,16 +2376,16 @@ export function makeClaudeQueryOptions(input: {
       ? {
           thinking: { type: "adaptive" as const, display: "summarized" as const },
           settings:
-            typeof querySettingsWithAdditions === "string"
-              ? querySettingsWithAdditions
+            typeof querySettingsWithForwarder === "string"
+              ? querySettingsWithForwarder
               : {
-                  ...querySettingsWithAdditions,
+                  ...querySettingsWithForwarder,
                   showThinkingSummaries: true,
                 },
         }
-      : querySettingsWithAdditions === undefined
+      : querySettingsWithForwarder === undefined
         ? {}
-        : { settings: querySettingsWithAdditions }),
+        : { settings: querySettingsWithForwarder }),
     // An empty list hides every skill from the model and makes the Skill tool refuse them.
     ...(additions?.claudeSkillList === false ? { skills: [] } : {}),
     ...(input.onUserDialog === undefined ? {} : { onUserDialog: input.onUserDialog }),
@@ -5653,6 +5669,10 @@ export interface ClaudeAdapterV2Options {
   readonly t3AgentInstructions?: Effect.Effect<boolean>;
   /** Reads the Claude Code addition switches when a query opens; all on when omitted. */
   readonly claudeAdditions?: Effect.Effect<ClaudeAdditionSwitches | undefined>;
+  /** With rules, a query opened while one is enabled sends its model requests through this. */
+  readonly requestForwarder?: ClaudeRequestForwarder.ClaudeRequestForwarder["Service"];
+  /** Read when a query opens and for every forwarded request. */
+  readonly requestRewriteRules?: Effect.Effect<ReadonlyArray<RequestRewriteRule>>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   /**
    * Called with the requested cwd on a process's first init message, after its synchronous
@@ -6106,6 +6126,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             systemPrompt: string | undefined;
           }
         >();
+        // Opened by the first query that starts while a request rule is enabled; ends with the session.
+        let forwarderRoute: ClaudeRequestForwarder.ClaudeForwarderRoute | undefined;
+        const requestForwarderUrl = Effect.fn("ClaudeAdapterV2.requestForwarderUrl")(function* (
+          cwd: string | null,
+          launchArgSettings: ClaudeSdkSettings | undefined,
+        ) {
+          const forwarder = adapterOptions.requestForwarder;
+          const rules = adapterOptions.requestRewriteRules;
+          if (forwarder === undefined || rules === undefined) return undefined;
+          if (!(yield* rules).some((rule) => rule.enabled)) return undefined;
+          const upstream =
+            (yield* resolveClaudeEnv(cwd, launchArgSettings, "ANTHROPIC_BASE_URL")) ??
+            optimizerAttachments?.headroom?.environment.ANTHROPIC_BASE_URL;
+          if (forwarderRoute !== undefined) {
+            yield* forwarderRoute.setUpstream(upstream);
+            return forwarderRoute.baseUrl;
+          }
+          forwarderRoute = yield* forwarder
+            .openRoute({
+              threadId: input.threadId,
+              upstream,
+              rules,
+              onRewrite: () => Effect.void,
+              onFailure: () => Effect.void,
+            })
+            .pipe(Scope.provide(sessionScope));
+          return forwarderRoute.baseUrl;
+        });
         const subagentStopOutcomes = new Map<
           string,
           Deferred.Deferred<ProviderAdapter.ProviderAdapterV2SubagentOutcome>
@@ -13145,6 +13193,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const additions = yield* adapterOptions.claudeAdditions ?? Effect.undefined;
+          const forwarderUrl = yield* requestForwarderUrl(
+            turnInput.runtimePolicy.cwd,
+            launchArgSettings,
+          );
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
@@ -13195,6 +13247,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
+            ...(forwarderUrl === undefined ? {} : { requestForwarderUrl: forwarderUrl }),
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
@@ -14969,6 +15022,10 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       SessionOptimizerAttachments.SessionOptimizerAttachments,
     );
     const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
+    const requestForwarder = yield* Effect.serviceOption(
+      ClaudeRequestForwarder.ClaudeRequestForwarder,
+    );
+    const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
     const baseEnvironment = yield* mergeClaudeProcessEnvironment(
       config,
       environment,
@@ -14994,6 +15051,18 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       continuationRequests,
       ...(Option.isSome(sessionOptimizers) ? { sessionOptimizers: sessionOptimizers.value } : {}),
       installationGate,
+      ...(Option.isSome(requestForwarder) ? { requestForwarder: requestForwarder.value } : {}),
+      // Stored settings, so a failing secret store never turns the owner's rules off.
+      ...(Option.isSome(serverSettings)
+        ? {
+            requestRewriteRules: (
+              serverSettings.value.getStoredSettings ?? serverSettings.value.getSettings
+            ).pipe(
+              Effect.map((settings) => settings.requestRewriteRules),
+              Effect.orElseSucceed((): ReadonlyArray<RequestRewriteRule> => []),
+            ),
+          }
+        : {}),
       ...hooks,
     });
   },

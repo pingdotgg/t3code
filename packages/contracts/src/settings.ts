@@ -1642,6 +1642,10 @@ export const ServerSettings = Schema.Struct({
   claudeSkillList: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   claudeContextLists: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   claudeHooks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Owner-written edits to each model request of Claude sessions opened while one is enabled. */
+  requestRewriteRules: Schema.Array(RequestRewriteRule).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   backgroundActivity: BackgroundActivitySettings,
 
   automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
@@ -2103,6 +2107,7 @@ export const ServerSettingsPatch = Schema.Struct({
   claudeSkillList: Schema.optionalKey(Schema.Boolean),
   claudeContextLists: Schema.optionalKey(Schema.Boolean),
   claudeHooks: Schema.optionalKey(Schema.Boolean),
+  requestRewriteRules: Schema.optionalKey(Schema.Array(RequestRewriteRule)),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),

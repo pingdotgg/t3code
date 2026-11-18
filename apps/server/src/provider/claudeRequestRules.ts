@@ -39,7 +39,7 @@ const textOf = (block: unknown): string | undefined =>
     ? block.text
     : undefined;
 
-const isClaudeMessagesRequest = (method: string, path: string): boolean =>
+export const isClaudeMessagesRequest = (method: string, path: string): boolean =>
   method === "POST" && new URL(path, "http://localhost").pathname === "/v1/messages";
 
 /** A short excerpt of each side, starting just before the first character that differs. */

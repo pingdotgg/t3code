@@ -26,6 +26,7 @@ import type {
   TaskUpdateOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as ClaudeRequestForwarder from "../../provider/ClaudeRequestForwarder.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
@@ -3623,6 +3624,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly offer?: (message: SDKUserMessage) => Effect.Effect<void>;
     readonly promptSuggestions?: boolean;
     readonly routeModelCatalog?: ClaudeAdapterV2.ClaudeAdapterV2Options["routeModelCatalog"];
+    readonly requestForwarder?: ClaudeAdapterV2.ClaudeAdapterV2Options["requestForwarder"];
+    readonly requestRewriteRules?: ClaudeAdapterV2.ClaudeAdapterV2Options["requestRewriteRules"];
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3689,6 +3692,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         idAllocator,
         ...(options?.onSessionInit ? { onSessionInit: options.onSessionInit } : {}),
         ...(options?.routeModelCatalog ? { routeModelCatalog: options.routeModelCatalog } : {}),
+        ...(options?.requestForwarder ? { requestForwarder: options.requestForwarder } : {}),
+        ...(options?.requestRewriteRules
+          ? { requestRewriteRules: options.requestRewriteRules }
+          : {}),
         continuationRequests: {
           offer: (request) =>
             Effect.sync(() => {
@@ -5403,6 +5410,83 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             resolveSettings.mock.calls[0]?.[0]?.cwd,
             resolveSettings.mock.calls[1]?.[0]?.cwd,
           );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
+          ),
+        ),
+    );
+
+    it.effect(
+      "routes a session through the rules forwarder only when it opens with a rule on",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-forwarder-",
+          });
+          yield* fileSystem.writeFileString(
+            path.join(home, "settings.json"),
+            '{"env":{"ANTHROPIC_BASE_URL":"https://gateway.example/anthropic"}}',
+          );
+          const upstreams: Array<string | undefined> = [];
+          const requestForwarder = ClaudeRequestForwarder.ClaudeRequestForwarder.of({
+            openRoute: (input) =>
+              Effect.sync(() => {
+                upstreams.push(input.upstream);
+                return { baseUrl: "http://127.0.0.1:1/s/token", setUpstream: () => Effect.void };
+              }),
+          });
+          const openedSettings = (enabled: boolean | undefined) =>
+            Effect.scoped(
+              Effect.gen(function* () {
+                const harness = yield* makeWakeHarnessWithOptions({
+                  settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: home },
+                  requestForwarder,
+                  ...(enabled === undefined
+                    ? {}
+                    : {
+                        requestRewriteRules: Effect.succeed([
+                          {
+                            id: "rule",
+                            name: "Rule",
+                            enabled,
+                            action: "remove" as const,
+                            target: "reminders" as const,
+                            pattern: "x",
+                          },
+                        ]),
+                      }),
+                });
+                yield* harness.runtime.startTurn(
+                  makeClaudeTestTurnInput({
+                    threadId: harness.threadId,
+                    providerThread: harness.providerThread,
+                    now: yield* DateTime.now,
+                    attemptId: RunAttemptId.make("attempt-forwarder"),
+                    text: "Run git status.",
+                    attachments: [],
+                  }),
+                );
+                return harness.getOpenedOptions()?.settings;
+              }),
+            );
+          const withoutRules = yield* openedSettings(undefined);
+          assert.deepEqual(yield* openedSettings(false), withoutRules);
+          assert.deepEqual(upstreams, []);
+          const routed = yield* openedSettings(true);
+          assert.deepEqual(routed, {
+            ...(typeof withoutRules === "object" ? withoutRules : {}),
+            env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:1/s/token" },
+          });
+          // The forwarder sends on to the base URL the user's settings chose.
+          assert.deepEqual(upstreams, ["https://gateway.example/anthropic"]);
         }).pipe(
           Effect.provide(
             Layer.mergeAll(
