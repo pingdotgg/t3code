@@ -89,22 +89,26 @@ function BoringSidebarMultilineRow() {
 }
 
 function KeepRunningInTrayRow() {
+  const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
     <SettingsRow
       {...searchableSetting("keep-running-in-tray")}
       description={
-        "Closing the window keeps T3 Code running in the system tray, so agents and remote connections keep working. Open or quit it from the tray icon." +
-        (navigator.platform.toLowerCase().includes("linux")
-          ? " Linux requires system tray support. If no icon appears, launch T3 Code again to restore the window."
-          : "")
+        navigator.platform.toLowerCase().includes("linux")
+          ? gt(
+              "Closing the window keeps T3 Code running in the system tray, so agents and remote connections keep working. Open or quit it from the tray icon. Linux requires system tray support. If no icon appears, launch T3 Code again to restore the window.",
+            )
+          : gt(
+              "Closing the window keeps T3 Code running in the system tray, so agents and remote connections keep working. Open or quit it from the tray icon.",
+            )
       }
       control={
         <Switch
           checked={settings.keepRunningInTray}
           onCheckedChange={(checked) => updateSettings({ keepRunningInTray: Boolean(checked) })}
-          aria-label="Keep running in tray"
+          aria-label={gt("Keep running in tray")}
         />
       }
     />

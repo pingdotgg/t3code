@@ -682,9 +682,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "keep-running-in-tray",
-    title: "Keep running in tray",
+    title: msg("Keep running in tray"),
     to: "/settings/labs",
-    searchTerms: ["beta system tray background close window minimize hide server agents remote"],
+    searchTerms: [
+      msg("beta system tray background close window minimize hide server agents remote"),
+    ],
     desktopOnly: true,
     nonMacOnly: true,
   },
