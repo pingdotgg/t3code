@@ -1360,11 +1360,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [gt, handleMenuAction, snoozePresetActions, swipeActions.secondary, thread.title],
   );
   const swipePrimaryAction = hideSettleAction ? secondaryAction : primaryAction;
-  const swipeAccessibilityHint = !canOperateThread || swipePrimaryAction === null
-    ? gt("Opens the thread")
-    : hideSettleAction ? gt("Opens the thread. Swipe left to snooze.") : secondaryAction === null
-      ? primaryAction.swipeHint
-      : primaryAction.swipeSnoozeHint;
+  const swipeAccessibilityHint =
+    !canOperateThread || swipePrimaryAction === null
+      ? gt("Opens the thread")
+      : hideSettleAction
+        ? gt("Opens the thread. Swipe left to snooze.")
+        : secondaryAction === null
+          ? primaryAction.swipeHint
+          : primaryAction.swipeSnoozeHint;
 
   const titleTextInset = props.project ? projectIconSize + 8 : 0;
   const cardContent = (
