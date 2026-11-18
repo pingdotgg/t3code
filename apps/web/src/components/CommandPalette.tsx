@@ -73,6 +73,7 @@ import {
   LinkIcon,
   ListTodoIcon,
   MessageSquareIcon,
+  MonitorOffIcon,
   PaletteIcon,
   RotateCcwIcon,
   SettingsIcon,
@@ -265,6 +266,7 @@ import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { settingsForThisPlatform, SETTINGS_SECTION_LABELS } from "./settings/settingsSearch";
+import { stopAllComputerTasks, useComputerActivity } from "../state/computer";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
@@ -481,6 +483,7 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const { environments } = useEnvironments();
+  const computerActivity = useComputerActivity();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
@@ -1384,6 +1387,27 @@ function OpenCommandPaletteDialog(props: {
       shortcutCommand: "preview.find",
       run: async () => {
         dispatchPreviewAction("find");
+      },
+    });
+  }
+
+  if (computerActivity.length > 0) {
+    actionItems.push({
+      kind: "action",
+      value: "stop-computer-use",
+      title: "Stop computer use",
+      searchTerms: ["computer", "stop", "cancel", "screen", "control", "mouse", "keyboard"],
+      icon: <MonitorOffIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "computer.stop",
+      run: async () => {
+        const failures = await stopAllComputerTasks();
+        if (failures.length > 0) {
+          toastManager.add({
+            type: "error",
+            title: "Could not stop computer use",
+            description: failures[0],
+          });
+        }
       },
     });
   }

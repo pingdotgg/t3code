@@ -38,6 +38,7 @@ import {
   usePanelNavigationSuppression,
 } from "../panelAnimations";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
+import { ComputerActivityStrip } from "./computer/ComputerActivityStrip";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
@@ -66,6 +67,8 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
+import { stopAllComputerTasks } from "../state/computer";
+import { toastManager } from "./ui/toast";
 import { resolveThreadRouteRef } from "../threadRoutes";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
@@ -228,6 +231,24 @@ const MODIFIER_KEYS = new Set(["Alt", "Control", "Meta", "Shift"]);
 // hold must survive whatever that re-renders.
 let heldUndoKey: string | null = null;
 
+// Stops every computer task from any screen, for the `computer.stop` command. It has no default
+// key: a Mac corner stop and the strip's Stop are the everyday ways.
+function registerComputerStopCommand(): () => void {
+  return registerCommands({
+    "computer.stop": (event) => {
+      event.preventDefault();
+      void stopAllComputerTasks().then((failures) => {
+        if (failures.length === 0) return;
+        toastManager.add({
+          type: "error",
+          title: "Could not stop computer use",
+          description: failures[0],
+        });
+      });
+    },
+  });
+}
+
 // Undoes the thread actions in the sidebar's notice. Settings and Usage own
 // mod+z while open. Captured so mod+z reaches it before the composer's own
 // undo handler consumes the key.
@@ -303,6 +324,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
     registerThreadUndoCommands(router, readSidebarVisible),
     registerNavigationHistoryCommands(router),
     registerWorkspaceFocusCommands(router),
+    registerComputerStopCommand(),
     registerPullRequestsEscapeCommand(router),
     registerMenuAction("open-settings", () => {
       if (!/^\/settings(\/|$)/.test(router.state.location.pathname))
@@ -514,6 +536,7 @@ export function AppSidebarLayout({
         ) : null}
         {children}
         <BackgroundThreadAnnouncer />
+        <ComputerActivityStrip />
         {!isOnAgents && <SidebarControl showSidebar={showSidebar} />}
         {isElectron ? <HistorySwipeNavigation /> : null}
       </SidebarProvider>

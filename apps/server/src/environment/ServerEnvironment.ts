@@ -244,6 +244,7 @@ export const make = Effect.gen(function* () {
       agentGateway: true,
       otlpEndpointCheck: true,
       secretSourceCheck: true,
+      computerUse: true,
       projectWorktreeCleanup: true,
       settledWorktreeCleanup: true,
       worktreesDirectory: true,

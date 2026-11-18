@@ -1,0 +1,108 @@
+import {
+  computerPendingApprovals,
+  computerTaskLastStep,
+} from "@t3tools/client-runtime/state/computer";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import * as DateTime from "effect/DateTime";
+import { MonitorIcon } from "lucide-react";
+import { useState } from "react";
+
+import { useNowAfter } from "../../hooks/useDeadline";
+import { tickTextContent } from "../../lib/tickTextContent";
+import {
+  type ComputerActivityEntry,
+  nextComputerDeadline,
+  stopComputerTasks,
+  useComputerActivity,
+  useComputerSnapshot,
+} from "../../state/computer";
+import { InlineButton } from "../ui/button";
+import { ComputerApprovalCard } from "./ComputerApprovalCard";
+
+/** One environment's running task: its last step, the tap it waits for, and Stop. */
+function StripTask({ entry }: { readonly entry: ComputerActivityEntry }) {
+  const { snapshot } = useComputerSnapshot(entry.environmentId);
+  // Re-reads the clock once, when the approval this snapshot holds lapses.
+  const nowMs = useNowAfter(nextComputerDeadline(snapshot));
+  const [stopping, setStopping] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { task } = entry;
+  const approval = computerPendingApprovals(snapshot, nowMs).find(
+    (candidate) => candidate.binding.taskId === task.taskId,
+  );
+  const lastStep = computerTaskLastStep(task);
+  const startedAtMs = DateTime.toEpochMillis(task.startedAt);
+
+  const stop = async () => {
+    if (stopping) return;
+    setStopping(true);
+    setError(null);
+    setError(await stopComputerTasks({ environmentId: entry.environmentId, taskId: task.taskId }));
+    setStopping(false);
+  };
+
+  return (
+    <div
+      data-computer-strip-task=""
+      role="group"
+      aria-label={`Computer use on ${entry.environmentLabel}`}
+      className="flex min-w-0 flex-col gap-1 border-b border-border/40 py-1.5 last:border-b-0"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <MonitorIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate">
+          <span className="font-medium">{task.goal}</span>
+          <span className="text-muted-foreground"> · {entry.environmentLabel}</span>
+          {lastStep === null ? null : <span className="text-muted-foreground"> · {lastStep}</span>}
+        </span>
+        {task.approvalsMode === "skip" ? (
+          <span className="shrink-0 text-muted-foreground">approvals off</span>
+        ) : null}
+        <span
+          ref={tickTextContent(
+            (clockMs) => formatDuration(Math.max(0, clockMs - startedAtMs)),
+            true,
+          )}
+          className="shrink-0 text-muted-foreground tabular-nums"
+        />
+        <InlineButton tone="muted" disabled={stopping} onClick={() => void stop()}>
+          {stopping ? "Stopping..." : "Stop"}
+        </InlineButton>
+      </div>
+      {approval === undefined ? null : (
+        <ComputerApprovalCard
+          environmentId={entry.environmentId}
+          environmentLabel={entry.environmentLabel}
+          approval={approval}
+        />
+      )}
+      {error === null ? null : (
+        <p role="alert" className="text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Computer use anywhere, for every screen: each running task on any environment, the tap it
+ * waits for, and Stop. It floats where the dictation pill does, so it never covers a composer or
+ * a thread header, and it re-renders when a task's step changes, never on a timer of its own.
+ */
+export function ComputerActivityStrip() {
+  const activity = useComputerActivity();
+  if (activity.length === 0) return null;
+  return (
+    <div
+      data-computer-activity-strip=""
+      className="pointer-events-none fixed inset-x-0 top-[calc(var(--workspace-topbar-height)+0.5rem)] z-40 flex justify-center px-4"
+    >
+      <div className="pointer-events-auto flex max-h-[70dvh] w-full max-w-2xl flex-col overflow-auto rounded-xl border border-border/60 bg-popover/95 px-3 py-1.5 text-xs shadow-lg/5 backdrop-blur">
+        {activity.map((entry) => (
+          <StripTask key={`${entry.environmentId}:${entry.task.taskId}`} entry={entry} />
+        ))}
+      </div>
+    </div>
+  );
+}
