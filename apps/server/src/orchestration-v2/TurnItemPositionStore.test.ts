@@ -48,11 +48,32 @@ it.effect("reuses an item's position without attempting another allocation inser
         runId: RunId.make("run:moved"),
         runOrdinal: 2,
       }),
-      first,
+      2_000_001,
     );
     assert.equal(
       yield* positions.allocate({ ...input, threadId: ThreadId.make("thread:other") }),
       1,
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("places a run-start item ahead of the run's items, then appends once taken", () =>
+  Effect.gen(function* () {
+    const positions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const threadId = ThreadId.make("thread:run-start");
+    const allocate = (id: string, placement?: "run_start") =>
+      positions.allocate({
+        threadId,
+        turnItemId: TurnItemId.make(id),
+        runId: RunId.make("run:2"),
+        runOrdinal: 2,
+        ...(placement === undefined ? {} : { placement }),
+      });
+    const message = yield* allocate("item:message");
+    const recovery = yield* allocate("item:recovery", "run_start");
+    assert.isBelow(recovery, message);
+    assert.isAbove(recovery, 1_999_999);
+    assert.equal(yield* allocate("item:retry-recovery", "run_start"), message + 1);
+    assert.equal(yield* allocate("item:reply"), message + 2);
   }).pipe(Effect.provide(layerTest)),
 );
