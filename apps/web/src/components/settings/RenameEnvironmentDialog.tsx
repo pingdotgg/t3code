@@ -3,7 +3,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { T, useGT } from "gt-react";
 
 import { environmentCatalog } from "~/connection/catalog";
@@ -26,11 +26,11 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 function RenameEnvironmentForm({
   environmentId,
   label: currentLabel,
-  onDone,
+  onSaveStart,
 }: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly onDone: () => void;
+  readonly onSaveStart: () => () => void;
 }) {
   const gt = useGT();
   const [label, setLabel] = useState(currentLabel);
@@ -40,6 +40,7 @@ function RenameEnvironmentForm({
 
   const save = async () => {
     if (!canSave) return;
+    const onDone = onSaveStart();
     setSaving(true);
     const result = await setEnvironmentLabel({ environmentId, label });
     setSaving(false);
@@ -81,6 +82,7 @@ function RenameEnvironmentForm({
             value={label}
             onChange={(event) => setLabel(event.target.value)}
             disabled={saving}
+            required
             autoFocus
           />
         </div>
@@ -108,13 +110,24 @@ export function RenameEnvironmentDialog({
   readonly environmentId: EnvironmentId;
   readonly label: string;
 }) {
+  const openingRef = useRef(0);
+  const handleOpenChange = (nextOpen: boolean) => {
+    openingRef.current += 1;
+    onOpenChange(nextOpen);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogPopup className="max-w-md">
         <RenameEnvironmentForm
           environmentId={environmentId}
           label={label}
-          onDone={() => onOpenChange(false)}
+          onSaveStart={() => {
+            const opening = openingRef.current;
+            return () => {
+              if (openingRef.current === opening) handleOpenChange(false);
+            };
+          }}
         />
       </DialogPopup>
     </Dialog>
