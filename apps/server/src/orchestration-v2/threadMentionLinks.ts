@@ -17,9 +17,9 @@ export const insertThreadMentions = (sql: SqlClient.SqlClient, row: "new" | "mes
   INSERT OR IGNORE INTO orchestration_v2_thread_mentions (
     message_id, source_thread_id, target_environment_id, target_thread_id
   )
-  SELECT ${row}.message_id, ${row}.thread_id, ${chipField("environmentId")}, ${chipField("threadId")}
+  SELECT DISTINCT ${row}.message_id, ${row}.thread_id, ${chipField("environmentId")}, ${chipField("threadId")}
   FROM ${row === "messages" ? "orchestration_v2_projection_messages AS messages, " : ""}
-    json_each(${row}.payload_json, '$.context.records') AS record
+    json_each(CASE WHEN json_valid(${row}.payload_json) THEN ${row}.payload_json END, '$.context.records') AS record
   WHERE ${chipField("kind")} = 'thread'
     AND ${chipField("environmentId")} IS NOT NULL
     AND ${chipField("threadId")} IS NOT NULL
@@ -41,7 +41,8 @@ export const createThreadMentionTriggers = Effect.fn("ThreadMentionLinks.createT
       WHEN old.thread_id IS NOT new.thread_id
         OR (new.streaming = 0
           AND (old.streaming = 1
-            OR json_extract(old.payload_json, '$.context') IS NOT json_extract(new.payload_json, '$.context')))
+            OR json_extract(CASE WHEN json_valid(old.payload_json) THEN old.payload_json END, '$.context')
+              IS NOT json_extract(CASE WHEN json_valid(new.payload_json) THEN new.payload_json END, '$.context')))
       BEGIN
         DELETE FROM orchestration_v2_thread_mentions WHERE message_id = old.message_id;
         ${insertThreadMentions(sql, "new")}
@@ -97,6 +98,7 @@ export const listThreadMentionLinks = Effect.fn("ThreadMentionLinks.list")(funct
       ON messages.message_id = link.message_id
     LEFT JOIN orchestration_v2_projection_runs AS runs ON runs.run_id = messages.run_id
     WHERE runs.status IS NOT 'rolled_back'
+      AND NOT (runs.status IS 'cancelled' AND json_extract(runs.payload_json, '$.startedAt') IS NULL)
       AND ${sql.literal(visibleThread("other_thread", "link.other_id"))}
       AND ${sql.literal(visibleThread("own_thread", "link.own_id"))}
     ORDER BY "threadId", direction
