@@ -1,15 +1,18 @@
 import type { OrchestrationV2Run, OrchestrationV2RunStatus, RunId } from "@t3tools/contracts";
 import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type ThreadActivityStatus = "working" | "approval" | "input" | "idle";
 
 /** Background threads say these too, so a status sounds the same wherever it's heard. */
 export const THREAD_STATUS_TEXT = {
-  approval: "Needs approval",
-  input: "Needs your input",
-  done: "Done",
-  failed: "Failed",
-  stopped: "Stopped",
+  working: msg("Working"),
+  approval: msg("Needs approval"),
+  input: msg("Needs your input"),
+  done: msg("Done"),
+  failed: msg("Failed"),
+  stopped: msg("Stopped"),
 } as const;
 
 export interface ThreadActivitySnapshot {
@@ -46,15 +49,18 @@ const STARTING_RUN_STATUSES: ReadonlySet<OrchestrationV2RunStatus | null> = new 
   "starting",
 ]);
 
-export function runOutcomeText(status: OrchestrationV2RunStatus | null): string | null {
+export function runOutcomeText(
+  status: OrchestrationV2RunStatus | null,
+  resolve: MFunctionType = mFallback,
+): string | null {
   switch (status) {
     case "completed":
-      return THREAD_STATUS_TEXT.done;
+      return resolve(THREAD_STATUS_TEXT.done);
     case "failed":
-      return THREAD_STATUS_TEXT.failed;
+      return resolve(THREAD_STATUS_TEXT.failed);
     case "interrupted":
     case "cancelled":
-      return THREAD_STATUS_TEXT.stopped;
+      return resolve(THREAD_STATUS_TEXT.stopped);
     default:
       return null;
   }
@@ -99,6 +105,7 @@ export function announcedRun(
 export function nextThreadAnnouncement(
   previous: ThreadAnnouncementMemory | null,
   next: ThreadActivitySnapshot,
+  resolve: MFunctionType = mFallback,
 ): { readonly memory: ThreadAnnouncementMemory; readonly announcement: string | null } {
   const idle = next.status === "idle";
   // A run still starting up while the thread looks idle (a queued message,
@@ -138,19 +145,19 @@ export function nextThreadAnnouncement(
       next.status === "approval"
         ? previous.snapshot.status === "approval" && previous.snapshot.requestId === next.requestId
           ? null
-          : THREAD_STATUS_TEXT.approval
+          : resolve(THREAD_STATUS_TEXT.approval)
         : next.status === "input"
           ? previous.snapshot.status === "input" && previous.snapshot.requestId === next.requestId
             ? null
-            : THREAD_STATUS_TEXT.input
+            : resolve(THREAD_STATUS_TEXT.input)
           : turnStarted
-            ? "Working"
+            ? resolve(THREAD_STATUS_TEXT.working)
             : null;
     return { memory: { ...memory, turnRunId: nextTurnRunId }, announcement };
   }
 
   // Work can stop a moment before the run settles; the ending waits for the run.
-  const outcome = runOutcomeText(next.runStatus);
+  const outcome = runOutcomeText(next.runStatus, resolve);
   if (turnRunId === null) {
     // A run that settled unseen is history too, or the next failed send would claim it.
     const settledRunId = outcome === null ? previous.settledRunId : next.runId;
