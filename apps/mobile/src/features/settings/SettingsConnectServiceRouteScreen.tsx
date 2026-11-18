@@ -3,6 +3,7 @@ import {
   type SelfHostedRelay,
 } from "@t3tools/client-runtime/relay/self-hosted";
 import { reloadAppAsync } from "expo";
+import { useGT } from "gt-react-native";
 import { useState } from "react";
 import { ScrollView, TextInput, View } from "react-native";
 
@@ -22,6 +23,7 @@ async function switchTo(relay: SelfHostedRelay | null) {
 
 /** Chooses between the build's T3 Connect and a relay the user runs themselves. */
 export function SettingsConnectServiceRouteScreen() {
+  const gt = useGT();
   const current = readSelfHostedRelay();
   const [selfHosted, setSelfHosted] = useState(current !== null);
   const [address, setAddress] = useState(current?.relayUrl ?? "");
@@ -34,18 +36,18 @@ export function SettingsConnectServiceRouteScreen() {
     try {
       await switchTo(await next());
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not reach the relay.");
+      setError(cause instanceof Error ? cause.message : gt("Could not reach the relay."));
       setBusy(false);
     }
   };
 
   return (
-    <SettingsScreen title="T3 Connect service">
+    <SettingsScreen title={gt("T3 Connect service")}>
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="gap-6 px-5 pt-4">
         <SettingsSection>
           <ListChoiceRow
-            label="T3 Connect"
-            description="Links your devices through T3's relay."
+            label={gt("T3 Connect")}
+            description={gt("Links your devices through T3's relay.")}
             selected={!selfHosted}
             disabled={busy}
             onPress={() => {
@@ -54,8 +56,8 @@ export function SettingsConnectServiceRouteScreen() {
             }}
           />
           <ListChoiceRow
-            label="Self-hosted relay"
-            description="Your own relay and sign-in provider."
+            label={gt("Self-hosted relay")}
+            description={gt("Your own relay and sign-in provider.")}
             selected={selfHosted}
             separated
             disabled={busy}
@@ -65,7 +67,7 @@ export function SettingsConnectServiceRouteScreen() {
         {selfHosted ? (
           <View className="gap-2">
             <TextInput
-              accessibilityLabel="Relay address"
+              accessibilityLabel={gt("Relay address")}
               className="rounded-lg border border-border-subtle px-3 py-2 text-base text-foreground"
               placeholderTextColorClassName="accent-foreground-muted"
               placeholder="relay.example.com"
@@ -78,8 +80,12 @@ export function SettingsConnectServiceRouteScreen() {
             />
             <Text textRole="footnote" className="text-foreground-muted">
               {current
-                ? `Using ${current.relayUrl}. Sign-in details are read from the relay.`
-                : "Sign-in details are read from the relay. Signing in starts over after the switch."}
+                ? gt("Using {relay}. Sign-in details are read from the relay.", {
+                    relay: current.relayUrl,
+                  })
+                : gt(
+                    "Sign-in details are read from the relay. Signing in starts over after the switch.",
+                  )}
             </Text>
             {error ? (
               <Text accessibilityRole="alert" className="text-danger-foreground">
@@ -89,7 +95,7 @@ export function SettingsConnectServiceRouteScreen() {
             <View className="flex-row justify-end">
               <ControlPill
                 variant="primary"
-                label={busy ? "Checking…" : current ? "Update" : "Use relay"}
+                label={busy ? gt("Checking…") : current ? gt("Update") : gt("Use relay")}
                 disabled={busy || address.trim() === ""}
                 onPress={() => void run(() => discoverSelfHostedRelay(address))}
               />
@@ -99,14 +105,15 @@ export function SettingsConnectServiceRouteScreen() {
           <View className="flex-row justify-end">
             <ControlPill
               variant="primary"
-              label="Use T3 Connect"
+              label={gt("Use T3 Connect")}
               disabled={busy}
               onPress={() =>
                 Dialog.confirm({
-                  title: "Switch back to T3 Connect?",
-                  message:
+                  title: gt("Switch back to T3 Connect?"),
+                  message: gt(
                     "Sign-in starts over, and environments linked to your relay stay there until you link them again.",
-                  confirmText: "Switch",
+                  ),
+                  confirmText: gt("Switch"),
                   onConfirm: () => void run(async () => null),
                 })
               }

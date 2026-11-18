@@ -1,8 +1,10 @@
 import type { OidcController } from "@t3tools/client-runtime/relay";
+import { msg, useGT } from "gt-react";
 import { type ReactNode, useEffect, useState, useSyncExternalStore } from "react";
 
 import { CloudAuthProvider, type CloudAuth } from "../../cloud/cloudAuth";
 import { createManagedRelayAccountService } from "../../cloud/managedAuth";
+import { m } from "../../i18n/messages";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import {
   getBrowserOidcController,
@@ -20,8 +22,9 @@ const accountService = createManagedRelayAccountService<OidcController>(
 function reportSignInFailure(cause: unknown) {
   toastManager.add({
     type: "error",
-    title: "Could not start sign-in",
-    description: cause instanceof Error ? cause.message : "The identity provider did not respond.",
+    title: m(msg("Could not start sign-in")),
+    description:
+      cause instanceof Error ? cause.message : m(msg("The identity provider did not respond.")),
   });
 }
 
@@ -34,6 +37,7 @@ function ConfiguredOidcShell({
 }) {
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   const [accountOpen, setAccountOpen] = useState(false);
+  const gt = useGT();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the OIDC controller to the managed relay account service for the provider's lifetime
   useEffect(() => accountService.attach(controller), [controller]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- another tab signs in, refreshes, or signs out through shared storage
@@ -71,7 +75,7 @@ function ConfiguredOidcShell({
       {/* This shell wraps the app root, so the page needs the app's atom registry itself. */}
       <AppAtomRegistryProvider>
         <Dialog open={accountOpen} onOpenChange={setAccountOpen}>
-          <DialogPopup className="sm:max-w-2xl" aria-label="T3 Connect account">
+          <DialogPopup className="sm:max-w-2xl" aria-label={gt("T3 Connect account")}>
             <DialogPanel>
               <T3ConnectUserProfilePage />
             </DialogPanel>

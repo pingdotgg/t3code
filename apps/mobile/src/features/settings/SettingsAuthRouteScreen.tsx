@@ -5,6 +5,7 @@ import {
   UserProfileView,
 } from "@clerk/expo/native-components";
 import { useNavigation } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
 import { useEffect, useState } from "react";
 import { View } from "react-native";
 
@@ -42,6 +43,7 @@ export function SettingsAuthRouteScreen() {
 /** An OpenID Connect provider hosts no profile view, so this screen signs in and out and lists linked environments. */
 function OidcSettingsAuthRouteScreen() {
   const { isSignedIn, accountLabel, signOut } = useCloudAuth();
+  const gt = useGT();
   const [busy, setBusy] = useState(false);
 
   const signIn = async () => {
@@ -53,21 +55,21 @@ function OidcSettingsAuthRouteScreen() {
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not sign in",
-        error instanceof Error ? error.message : "The identity provider did not respond.",
+        gt("Could not sign in"),
+        error instanceof Error ? error.message : gt("The identity provider did not respond."),
       );
     }
   };
 
   return (
-    <SettingsScreen title="T3 Account">
+    <SettingsScreen title={gt("T3 Account")}>
       {isSignedIn ? (
         <View className="flex-1">
           <View className="px-5 pt-4">
             <SettingsSection>
               <SettingsRow
                 icon="arrow.right.circle"
-                label="Sign out"
+                label={gt("Sign out")}
                 value={accountLabel ?? undefined}
                 onPress={() => void signOut()}
               />
@@ -80,7 +82,7 @@ function OidcSettingsAuthRouteScreen() {
           <SettingsSection>
             <SettingsRow
               icon="person.crop.circle"
-              label={busy ? "Opening sign-in…" : "Sign in"}
+              label={busy ? gt("Opening sign-in…") : gt("Sign in")}
               disabled={busy}
               onPress={() => void signIn()}
             />
