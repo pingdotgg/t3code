@@ -235,7 +235,9 @@ export function normalizeAcpRegistryLiveConfiguration(
     currentModelId === undefined
       ? null
       : (boundedOpaqueValue(currentModelId, MAX_ID_LENGTH) ?? null);
-  const effortOption = configOptions.find(isAcpThoughtLevelOption);
+  const effortOption =
+    configOptions.find((option) => option.category === "thought_level") ??
+    configOptions.find(isAcpThoughtLevelOption);
   const models = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
     const reasoningEffort = advertisedReasoningEffort(
       effortOption,
