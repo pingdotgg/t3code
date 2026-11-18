@@ -288,6 +288,7 @@ import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
 import {
   countPreparingComposerImages,
   usePreparingComposerImages,
+  useSubmitAfterPreparingImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
@@ -1919,6 +1920,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     attachmentBlockReason,
     environmentUnavailable: environmentUnavailable !== null,
   });
+  const submitAfterPreparingImages = useSubmitAfterPreparingImages(
+    attachmentTargetKey,
+    submissionBlocked,
+  );
   // The pending Submit button follows the answer's own blockers, matching submitComposer.
   const primaryActionSendDisabledReason =
     (activePendingProgress ? attachmentBlockReason : sendDisabledReason) ??
@@ -2197,16 +2202,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       event?.preventDefault();
       return false;
     }
-    // A send while a pasted image is still compressing would strand that image:
-    // the turn snapshot wouldn't include it, and it would surface in the *next*
-    // draft instead.
-    if (activeThreadId && countPreparingComposerImages(attachmentTargetKey) > 0) {
+    // Sending now would leave a still-compressing image out of the turn, so wait for it.
+    if (
+      activeThreadId &&
+      submitAfterPreparingImages(() => submitComposerRef.current(dispatchMode, submissionIntent))
+    ) {
       event?.preventDefault();
-      toastManager.add({
-        type: "info",
-        title: gt("Still compressing a pasted image."),
-        description: gt("Send again once its thumbnail appears."),
-      });
       return false;
     }
     if (pendingDraftWork.has(attachmentTargetKey)) {
@@ -2844,7 +2845,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       (!pastedContext &&
         activeThreadId &&
         files.length > 0 &&
-        shouldHandleComposerAttachmentPaste({ files, plainText }))
+        shouldHandleComposerAttachmentPaste({ files, plainText, bypassAutoAttachment }))
     ) {
       event.preventDefault();
       event.stopPropagation();

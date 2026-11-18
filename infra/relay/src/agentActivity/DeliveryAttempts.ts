@@ -62,7 +62,7 @@ export class DeliveryAttempts extends Context.Service<
     readonly completeSourceJob: (
       input: DeliveryAttemptCompletionInput,
     ) => Effect.Effect<void, DeliveryAttemptRecordPersistenceError>;
-    /** Delete attempts untouched for the retention period; returns how many were removed. */
+    /** Delete attempts claimed before the retention period; returns how many were removed. */
     readonly pruneExpired: Effect.Effect<number, DeliveryAttemptRecordPersistenceError>;
   }
 >()("t3code-relay/agentActivity/DeliveryAttempts") {}
@@ -195,11 +195,10 @@ const make = Effect.gen(function* () {
     }),
     completeSourceJob: Effect.fn("relay.delivery_attempts.complete_source_job")(function* (input) {
       yield* Effect.annotateCurrentSpan({ "relay.delivery.job_id": input.sourceJobId });
-      const completedAt = DateTime.formatIso(yield* DateTime.now);
+      // Only unindexed columns change, so with the table's fillfactor headroom this stays a HOT update.
       yield* db
         .update(relayDeliveryAttempts)
         .set({
-          createdAt: completedAt,
           apnsStatus: input.apnsStatus ?? null,
           apnsReason: input.apnsReason ?? null,
           apnsId: input.apnsId ?? null,

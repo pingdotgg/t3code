@@ -733,11 +733,12 @@ function pendingThreadTitleGenerationEffect(
 
 // Clients seed a new thread with its first message, and empty threads start as "New thread" or
 // an agent's placeholder. Any other title on a thread without messages was chosen on purpose.
-// Forks and side chats are titled from their source history instead.
+// A fork or side chat starts with a title its first message replaces, so only a rename keeps it.
 function hasTitleSetBeforeFirstMessage(
   thread: OrchestrationV2AppThread,
   titleSeed: string | undefined,
 ): boolean {
+  if (thread.titleRenamed === true) return true;
   const title = thread.title.trim();
   return (
     thread.forkedFrom === null &&
@@ -2721,6 +2722,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const deliveryProviderThread = canResumeAcrossInstances
         ? {
             ...queuedProviderThread,
+            status: activeProviderThread.status,
             nativeThreadRef: activeProviderThread.nativeThreadRef,
             nativeConversationHeadRef: activeProviderThread.nativeConversationHeadRef,
             nativeMetadata: activeProviderThread.nativeMetadata,
@@ -2912,7 +2914,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const providerThread: OrchestrationV2ProviderThread = {
         ...deliveryProviderThread,
         providerSessionId,
-        status: "not_loaded",
+        status: deliveryProviderThread.status === "error" ? "error" : "not_loaded",
         firstRunOrdinal: queuedProviderThread.firstRunOrdinal ?? ordinal,
         lastRunOrdinal: ordinal,
         handoffIds: appendContextHandoffId(
@@ -4831,7 +4833,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   };
           return {
             ...thread,
-            ...(command.title === undefined ? {} : { title: command.title }),
+            ...(command.title === undefined ? {} : { title: command.title, titleRenamed: true }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&
             limitRecovery?.snooze === true &&
@@ -5158,7 +5160,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return thread.titleRegeneration?.requestId === command.requestId
             ? {
                 ...thread,
-                ...(command.title === undefined ? {} : { title: command.title }),
+                ...(command.title === undefined
+                  ? {}
+                  : { title: command.title, titleRenamed: false }),
                 ...(command.outcome === undefined
                   ? {}
                   : {
@@ -8091,8 +8095,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       const legacyImportHandoff = shouldPrepareLegacyImportHandoff({
         hasNativeHistory:
-          activeProviderThread?.driver === "acpRegistry" &&
-          activeProviderThread.nativeThreadRef !== null,
+          activeProviderThread !== undefined && activeProviderThread.nativeThreadRef !== null,
         historyOrigin: projection.thread.historyOrigin,
         hasCompletedRun: latestCompletedRun !== undefined,
         legacyImportItemCount: legacyImportItems.length,
@@ -8802,6 +8805,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const legacyImportRecoveryHandoff =
       isProviderSwitch &&
       !canResumeAcrossInstances &&
+      ensuredProviderThread.nativeThreadRef === null &&
       latestCompletedRun === undefined &&
       legacyImportItems.length > 0
         ? yield* contextHandoffService
@@ -8817,7 +8821,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : null;
     const providerThread: OrchestrationV2ProviderThread = {
       ...ensuredProviderThread,
-      status: "active",
+      status: ensuredProviderThread.status === "error" ? "error" : "active",
       firstRunOrdinal: ensuredProviderThread.firstRunOrdinal ?? ordinal,
       lastRunOrdinal: ordinal,
       handoffIds: [
