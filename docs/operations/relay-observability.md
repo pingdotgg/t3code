@@ -30,11 +30,13 @@ Worker receives only its scoped ingest token. Mobile and relay clients use their
 provisioned scoped ingest tokens.
 
 The Worker emits Effect's built-in HTTP server spans plus endpoint and database child spans.
-Effect's OpenTelemetry exporter stores semantic HTTP attributes below the `attributes.` prefix.
-For example:
+Its spans carry the service name `t3code-relay`, which separates them from the mobile and
+relay-client spans in the same dataset. Effect's OpenTelemetry exporter stores semantic HTTP
+attributes below the `attributes.` prefix. For example:
 
 ```apl
 ['t3-code-relay-traces-prod']
+| where ['service.name'] == 't3code-relay'
 | extend endpoint = column_ifexists('attributes.http.route', ''),
     customAttributes = column_ifexists('attributes.custom', dynamic({}))
 | project _time, name, trace_id, duration,
