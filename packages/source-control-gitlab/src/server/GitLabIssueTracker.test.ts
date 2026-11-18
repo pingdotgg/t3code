@@ -144,7 +144,15 @@ describe("GitLabIssueTracker", () => {
       const awardCursors: unknown[] = [];
       const api = yield* tracker((args, input) => {
         hosts.add(input.host);
-        if (args[1] === "graphql") awardCursors.push(JSON.parse(input.stdin!).variables.cursor);
+        if (args[1] === "graphql") {
+          const request = JSON.parse(input.stdin!);
+          // gitlab.com's schema has no `Issue.awardEmoji`; glab exits 1 on such a query.
+          const issueFields = /issue\(iid: \$iid\) \{([\s\S]*?)notes\(/.exec(request.query)?.[1];
+          if (issueFields?.includes("awardEmoji")) {
+            throw new Error("Field 'awardEmoji' doesn't exist on type 'Issue'");
+          }
+          awardCursors.push(request.variables.cursor);
+        }
         return answer(args[1]!);
       });
       const target = { cwd: "/w", host: "gitlab.example.com", scope: "acme/web", key: "42" };
