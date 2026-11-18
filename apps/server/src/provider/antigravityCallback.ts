@@ -24,10 +24,9 @@ export const validateAntigravityCallbackUrl = Effect.fn("validateAntigravityCall
       try: () => new URL(callbackUrl),
       catch: () => invalid("Paste the complete redirect URL from the Google sign-in page."),
     });
+    // The pending redirect is already limited to the loopback listener or Antigravity's code page.
     const expected = new URL(pending.redirectUri);
     if (
-      callback.protocol !== "http:" ||
-      callback.hostname !== "127.0.0.1" ||
       callback.origin !== expected.origin ||
       callback.pathname !== expected.pathname ||
       callback.username !== "" ||

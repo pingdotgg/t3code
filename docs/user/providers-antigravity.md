@@ -28,6 +28,10 @@ field in the client where you started sign-in, then choose
 hostname. Only that T3 Code sign-in session can finish the attempt. If it expires,
 retry sign-in and use the new link.
 
+If the environment has no display, such as a headless server, Google opens an
+Antigravity page that shows a code instead. Paste that code into the code field
+and choose **Connect**.
+
 The return URL contains a temporary sign-in code. Paste it only into the setup
 field. A successful callback page alone does not confirm account access; wait for
 T3 Code's confirmation.

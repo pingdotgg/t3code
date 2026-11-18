@@ -18,6 +18,28 @@ it.effect("accepts the exact owned Google callback and an explicit Google denial
   }),
 );
 
+it.effect("accepts the Antigravity code page for a terminal sign-in and nothing else", () =>
+  Effect.gen(function* () {
+    const terminal = {
+      redirectUri: "https://antigravity.google/oauth-callback",
+      state: "owned-state",
+    };
+    const callback = "https://antigravity.google/oauth-callback?state=owned-state&code=x";
+    const parsed = yield* validateAntigravityCallbackUrl(instanceId, terminal, callback);
+    assert.equal(parsed.toString(), callback);
+    for (const other of [
+      "http://antigravity.google/oauth-callback?state=owned-state&code=x",
+      "https://example.com/oauth-callback?state=owned-state&code=x",
+      "http://127.0.0.1:51234/?state=owned-state&code=x",
+    ]) {
+      const result = yield* validateAntigravityCallbackUrl(instanceId, terminal, other).pipe(
+        Effect.exit,
+      );
+      assert.isTrue(Exit.isFailure(result), other);
+    }
+  }),
+);
+
 it.effect("rejects different targets, credentials, fragments, and duplicate OAuth fields", () =>
   Effect.gen(function* () {
     const callbacks = [

@@ -27,6 +27,8 @@ const otherOwner = "t3-auth-session-other";
 const authorizationUrl =
   "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2F&state=test-state";
 const callbackUrl = "http://127.0.0.1:51234/?state=test-state&code=test-code";
+const terminalAuthorizationUrl =
+  "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=terminal-state";
 
 const initialized = {
   protocolVersion: 1,
@@ -60,6 +62,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     readonly supportsLogout?: boolean;
     readonly beforeInitialize?: Effect.Effect<void>;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
+    readonly noBrowser?: boolean;
   } = {},
 ) {
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
@@ -71,6 +74,8 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     | ((url: string) => Effect.Effect<void, AcpErrors.AcpError>)
     | undefined;
   let forwarded = 0;
+  const submitted: string[] = [];
+  const loginSubmitted = yield* Deferred.make<void>();
   let catalog = ["previous-account-model"];
   const auth = yield* makeAntigravityAuth({
     instanceId,
@@ -101,6 +106,14 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
               yield* initialize;
               events.push("authenticate");
               yield* Deferred.succeed(authenticateCalled, undefined);
+              if (options.noBrowser && input.onAuthorizationUrl) {
+                return yield* new AcpErrors.AcpRequestError({
+                  code: -32603,
+                  errorMessage:
+                    "No browser is available here (no graphical display is available to open a browser).",
+                  method: "authenticate",
+                });
+              }
               if (options.interactive !== false && input.onAuthorizationUrl) {
                 for (const url of options.authorizationUrls ?? [authorizationUrl]) {
                   yield* input.onAuthorizationUrl(url);
@@ -132,6 +145,20 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
       Effect.sync(() => {
         forwarded += 1;
       }),
+    terminalLogin: ({ onAuthorizationUrl }) =>
+      Effect.gen(function* () {
+        events.push("login-open");
+        yield* Effect.addFinalizer(() => Effect.sync(() => events.push("login-close")));
+        yield* onAuthorizationUrl(terminalAuthorizationUrl);
+        return {
+          submit: (response: string) =>
+            Effect.sync(() => submitted.push(response)).pipe(
+              Effect.andThen(Deferred.succeed(loginSubmitted, undefined)),
+              Effect.asVoid,
+            ),
+          completed: Deferred.await(loginSubmitted),
+        };
+      }),
   });
   return {
     auth,
@@ -142,6 +169,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     events,
     catalog: () => catalog,
     forwarded: () => forwarded,
+    submitted: () => submitted,
     receiveAuthorizationUrl: (url: string) =>
       Effect.suspend(() =>
         receiveAuthorizationUrl
@@ -167,6 +195,50 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
       yield* Deferred.succeed(harness.authenticated, undefined);
       yield* Deferred.succeed(harness.discovered, undefined);
       yield* phase(harness.auth, "succeeded");
+    }),
+  );
+
+  it.effect("signs in through the CLI's terminal login when the agent cannot open a browser", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ noBrowser: true });
+      const state = yield* harness.auth.controller.start(owner);
+      const waiting = yield* phase(harness.auth, "waiting");
+      assert.equal(waiting.authorizationUrl, terminalAuthorizationUrl);
+      assert.equal(waiting.interaction?.type, "credentials");
+
+      const respond = (code: string) =>
+        harness.auth.controller.respond!(owner, {
+          instanceId,
+          flowId: state.flowId!,
+          interactionId: state.flowId!,
+          response: { type: "credentials", values: { code } },
+        });
+      for (const invalid of [callbackUrl, "two words", ""]) {
+        assert.isTrue(Exit.isFailure(yield* respond(invalid).pipe(Effect.exit)), invalid);
+      }
+      const verifying = yield* respond("4/0Ab-terminal_code");
+      assert.equal(verifying.phase, "verifying");
+      assert.deepEqual(harness.submitted(), ["4/0Ab-terminal_code"]);
+      assert.equal(harness.forwarded(), 0);
+
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      yield* phase(harness.auth, "succeeded");
+      assert.deepEqual(harness.catalog(), ["gemini-test"]);
+      assert.deepEqual(harness.events, [
+        "process-open",
+        "initialize",
+        "authenticate",
+        "process-close",
+        "login-open",
+        "login-close",
+        "process-open",
+        "initialize",
+        "authenticate",
+        "session-new",
+        "catalog-published",
+        "process-close",
+      ]);
     }),
   );
 

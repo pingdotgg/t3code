@@ -270,6 +270,25 @@ describe("Antigravity authorization URL", () => {
         }
       }),
   );
+
+  it.effect("accepts the CLI's terminal sign-in link only when it returns to Antigravity", () =>
+    Effect.gen(function* () {
+      const terminalUrl =
+        "https://accounts.google.com/o/oauth2/auth?access_type=offline&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&state=terminal-state";
+      const parsed = yield* parseAntigravityAuthorizationUrl(terminalUrl, "terminal");
+      expect(parsed.redirectUri).toBe("https://antigravity.google/oauth-callback");
+      expect(parsed.state).toBe("terminal-state");
+      for (const [url, source] of [
+        [terminalUrl, "browser"],
+        [authorizationUrl, "terminal"],
+        [terminalUrl.replace("antigravity.google", "example.com"), "terminal"],
+        [terminalUrl.replace("%2Foauth-callback", "%2Fother"), "terminal"],
+      ] as const) {
+        const result = yield* parseAntigravityAuthorizationUrl(url, source).pipe(Effect.result);
+        expect(Result.isFailure(result)).toBe(true);
+      }
+    }),
+  );
 });
 
 describe("Antigravity sign-in errors", () => {

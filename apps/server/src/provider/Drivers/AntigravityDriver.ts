@@ -21,6 +21,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 import * as AcpErrors from "effect-acp/errors";
@@ -30,7 +31,11 @@ import {
   isAntigravityTextGenerationAvailable,
   makeAntigravityTextGeneration,
 } from "../../textGeneration/AntigravityTextGeneration.ts";
-import { makeAntigravityAuth, type AntigravityAuth } from "../AntigravityAuth.ts";
+import {
+  makeAntigravityAuth,
+  type AntigravityAuth,
+  type AntigravityAuthOptions,
+} from "../AntigravityAuth.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import * as AntigravityUsage from "./AntigravityUsage.ts";
 import {
@@ -197,13 +202,7 @@ export const AntigravityDriver: ProviderDriver<
         Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
       );
 
-    const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
-      input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
-    ): Effect.fn.Return<
-      AcpSessionRuntime.AcpSessionRuntime["Service"],
-      AcpErrors.AcpError | ProviderSetupError,
-      Scope.Scope
-    > {
+    const prepareLaunch = Effect.fn("AntigravityDriver.prepareLaunch")(function* (cwd: string) {
       if (authConfigIssue !== null) {
         return yield* new ProviderSetupError({
           instanceId,
@@ -267,19 +266,33 @@ export const AntigravityDriver: ProviderDriver<
               ),
             ),
       );
+      return {
+        executable,
+        spawn: buildAntigravityAcpSpawnInput({
+          installation: executable,
+          profile,
+          cwd,
+          baseEnv: processEnvironment,
+          auth,
+          runtimeTempDirectory,
+        }),
+      };
+    });
+
+    const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
+      input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+    ): Effect.fn.Return<
+      AcpSessionRuntime.AcpSessionRuntime["Service"],
+      AcpErrors.AcpError | ProviderSetupError,
+      Scope.Scope
+    > {
+      const { executable, spawn } = yield* prepareLaunch(input.cwd);
       const runtime = yield* makeAntigravityAcpRuntime({
         ...input,
         runtimeVersion: executable.version,
         authMethod: auth.authMethod,
         childProcessSpawner: spawner,
-        spawn: buildAntigravityAcpSpawnInput({
-          installation: executable,
-          profile,
-          cwd: input.cwd,
-          baseEnv: processEnvironment,
-          auth,
-          runtimeTempDirectory,
-        }),
+        spawn,
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {
         ...runtime,
@@ -343,6 +356,61 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
+    const terminalLogin: NonNullable<AntigravityAuthOptions["terminalLogin"]> = Effect.fn(
+      "AntigravityDriver.terminalLogin",
+    )(function* ({ onAuthorizationUrl }) {
+      const loginError = (detail: string) =>
+        new ProviderSetupError({ instanceId, operation: "start", detail });
+      const failed = loginError("Google sign-in failed. Start sign-in again.");
+      const cwd = yield* fileSystem
+        .makeTempDirectoryScoped({ prefix: "t3-antigravity-login-" })
+        .pipe(
+          Effect.mapError(() => loginError("Could not create an Antigravity setup workspace.")),
+        );
+      const { executable, spawn } = yield* prepareLaunch(cwd);
+      if (executable.harnessPath !== null) {
+        return yield* loginError(
+          "This Antigravity version cannot sign in without a browser. Update the provider.",
+        );
+      }
+      const child = yield* spawner
+        .spawn(
+          ChildProcess.make(spawn.command, [...spawn.args, "--login"], {
+            cwd,
+            env: spawn.env,
+            extendEnv: false,
+            shell: false,
+          }),
+        )
+        .pipe(Effect.mapError(() => loginError("Could not start Antigravity sign-in.")));
+      return {
+        submit: (response) =>
+          Stream.run(Stream.encodeText(Stream.make(`${response}\n`)), child.stdin).pipe(
+            Effect.mapError(() => failed),
+          ),
+        // It prints the Google link on its own line, then reads the pasted address from stdin.
+        completed: Effect.all(
+          [
+            child.stdout.pipe(
+              Stream.decodeText(),
+              Stream.splitLines,
+              Stream.map((line) => line.trim()),
+              Stream.filter((line) => line.startsWith("https://accounts.google.com/")),
+              Stream.mapError(() => failed),
+              Stream.runForEach(onAuthorizationUrl),
+            ),
+            Stream.runDrain(child.stderr).pipe(Effect.mapError(() => failed)),
+            child.exitCode.pipe(Effect.mapError(() => failed)),
+          ],
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.flatMap(([, , exitCode]) =>
+            Number(exitCode) === 0 ? Effect.void : Effect.fail(failed),
+          ),
+        ),
+      };
+    });
+
     const publishCatalog = Effect.fn("AntigravityDriver.publishCatalog")(function* (
       started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
       runtime: Pick<
@@ -382,6 +450,7 @@ export const AntigravityDriver: ProviderDriver<
           Effect.andThen(publishCatalog(started, runtime)),
         ),
       onSignedOut: Effect.suspend(() => provider.onSignedOut),
+      ...(auth.authMethod === "oauth-personal" ? { terminalLogin } : {}),
       usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
     });
 

@@ -28,6 +28,8 @@ export const ANTIGRAVITY_AUTH_STDOUT_PREFIX =
 export const ANTIGRAVITY_AUTH_BROWSER_MARKER = "__T3_ANTIGRAVITY_AUTH_URL__";
 export const ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE =
   "Sign in to Antigravity in Settings before you continue.";
+/** Where Google sends `agy acp --login`, the CLI 1.5.x sign-in for hosts without a display. */
+const ANTIGRAVITY_TERMINAL_LOGIN_REDIRECT_URI = "https://antigravity.google/oauth-callback";
 
 const maxAuthorizationUrlLength = 16_384;
 const maxBrowserHelperLineLength =
@@ -161,6 +163,15 @@ export interface AntigravityAuthorizationUrl {
 
 function authSupportError(detail: string) {
   return new AcpErrors.AcpTransportError({ detail, cause: undefined });
+}
+
+/** CLI 1.5.x `authenticate` refuses Google sign-in on a host without a display. */
+export function isAntigravityNoBrowserError(error: unknown): boolean {
+  return (
+    isAcpRequestError(error) &&
+    error.code === -32603 &&
+    error.errorMessage.startsWith("No browser is available here")
+  );
 }
 
 export function isAntigravitySignInRequiredError(error: unknown): boolean {
@@ -497,6 +508,7 @@ export function buildAntigravityAcpSpawnInput(input: {
 export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAuthorizationUrl")(
   function* (
     authorizationUrl: string,
+    source: "browser" | "terminal" = "browser",
   ): Effect.fn.Return<AntigravityAuthorizationUrl, AcpErrors.AcpError> {
     const invalidUrl = () =>
       authSupportError("Antigravity returned an invalid Google sign-in URL.");
@@ -508,7 +520,7 @@ export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAutho
     const redirectUri = url.searchParams.get("redirect_uri");
     if (
       url.origin !== "https://accounts.google.com" ||
-      url.pathname !== "/o/oauth2/v2/auth" ||
+      url.pathname !== (source === "browser" ? "/o/oauth2/v2/auth" : "/o/oauth2/auth") ||
       url.username !== "" ||
       url.password !== "" ||
       url.hash !== "" ||
@@ -521,12 +533,14 @@ export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAutho
       state.length > 512 ||
       /\s/.test(state) ||
       redirectUri === null ||
-      !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/$/.test(redirectUri)
+      (source === "browser"
+        ? !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/$/.test(redirectUri)
+        : redirectUri !== ANTIGRAVITY_TERMINAL_LOGIN_REDIRECT_URI)
     ) {
       return yield* invalidUrl();
     }
     const redirect = yield* decodeUrl(redirectUri).pipe(Effect.mapError(invalidUrl));
-    if (Number(redirect.port) < 1_024) return yield* invalidUrl();
+    if (source === "browser" && Number(redirect.port) < 1_024) return yield* invalidUrl();
     return { authorizationUrl, redirectUri, state };
   },
 );
