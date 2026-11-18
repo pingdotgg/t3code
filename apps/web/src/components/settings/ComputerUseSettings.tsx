@@ -64,11 +64,12 @@ function hostAbility(host: ComputerHostView): { readonly text: string; readonly 
 }
 
 /**
- * The decision endpoint and the audit log belong to one server, so they read the page's scope:
- * the environment the picker has selected, or nothing when it covers more than one.
+ * The decision endpoint and the audit log belong to one server, so they follow the page's picker:
+ * exactly one selected environment, and not a project scope that would write it environment-wide.
  */
 function useSoleEnvironment() {
   const { environment, scope } = useSettingsScope();
+  if (scope.kind !== "environment" && scope.kind !== "all") return null;
   if (scope.environmentIds.length !== 1) return null;
   return environment?.environmentId === scope.environmentIds[0] ? environment : null;
 }
@@ -337,8 +338,8 @@ function GrounderSection() {
     return (
       <SettingsSection id="computer-use-grounder" title="Decision endpoint">
         <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
-          Select one environment above to set the endpoint that answers a click computer use
-          cannot settle.
+          Select one environment above to set the endpoint that answers a click computer use cannot
+          settle.
         </p>
       </SettingsSection>
     );
