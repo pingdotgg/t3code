@@ -5,6 +5,7 @@ import type { UsageSource } from "@t3tools/contracts";
 import {
   formatDayRange,
   formatHourShort,
+  formatTokens,
   formatUsageMonth,
   makePeriodWindow,
   makeWindow,
@@ -277,9 +278,15 @@ describe("usage periods", () => {
     expect(formatDayRange(sinceDay, untilDay)).toBe(label);
   });
 
+  it("formatDayRange uses the locale's range format outside English", () => {
+    expect(formatDayRange("2026-11-01", "2026-11-08", "de")).toBe("1.–8. Nov.");
+  });
+
   it("formatUsageMonth uses full month names with and without the year", () => {
     expect(formatUsageMonth("2026-10")).toBe("October 2026");
     expect(formatUsageMonth("2026-10", false)).toBe("October");
+    expect(formatUsageMonth("2026-10", true, "de")).toBe("Oktober 2026");
+    expect(formatUsageMonth("2026-10", false, "de")).toBe("Oktober");
   });
 
   it.each([
@@ -290,5 +297,13 @@ describe("usage periods", () => {
     { value: "abc", parsed: undefined },
   ])("parseUsagePeriod($value) -> $parsed", ({ value, parsed }) => {
     expect(parseUsagePeriod(value)).toBe(parsed);
+  });
+});
+
+describe("token formatting", () => {
+  it("moves to the next unit when rounding reaches it", () => {
+    expect(formatTokens(999_999)).toBe("1M");
+    expect(formatTokens(999_999_999)).toBe("1B");
+    expect(formatTokens(-999_999)).toBe("-1M");
   });
 });
