@@ -1083,6 +1083,7 @@ it.effect.each([
             setPermissionMode: () => Effect.void,
             renameSession: () => Effect.void,
             backgroundTasks: () => Effect.succeed(false),
+            contextLimits: Effect.never,
             mcpServerStatus: Effect.succeed([]),
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
             callMcpTool: () => Effect.die("unexpected MCP tool call"),

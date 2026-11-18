@@ -46,7 +46,6 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
 import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import { t3AcpPromptWithInstructions } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
@@ -1734,13 +1733,7 @@ describe("AcpRegistryAdapterV2", () => {
         const promptBlocks = (ordinal: number) => [
           {
             type: "text",
-            text:
-              ordinal === 1
-                ? t3AcpPromptWithInstructions({
-                    prompt: "test prompt",
-                    state: { interactionMode: "default", hasT3Mcp: false },
-                  })
-                : "test prompt",
+            text: "test prompt",
           },
           ...(ordinal === 1 ? [runtimeInstructions] : []),
         ];

@@ -9319,7 +9319,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const instructionState = {
-            interactionMode: turnInput.runtimePolicy.interactionMode,
             hasT3Mcp: mcpSession !== undefined,
           } satisfies T3AcpInstructionState;
           const userText =
