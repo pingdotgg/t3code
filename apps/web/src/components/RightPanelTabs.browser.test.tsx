@@ -263,7 +263,7 @@ describe("right panel tab clicks", () => {
     );
 
     const diffTab = screen.container.querySelector('[data-active-tab="false"]')!;
-    await userEvent.click(diffTab, { position: { x: 8, y: 3 } });
+    await userEvent.click(diffTab, { position: { x: 14, y: 12 } });
     expect(onActivate).toHaveBeenCalledExactlyOnceWith(DIFF_SURFACE);
 
     onActivate.mockClear();
