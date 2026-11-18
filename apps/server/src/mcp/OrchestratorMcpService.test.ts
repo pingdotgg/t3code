@@ -30,6 +30,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -4757,6 +4758,30 @@ describe("OrchestratorMcpService thread lookup", () => {
         assert.include(error.message, `mcp:${bareId}`);
       }
       assert.equal(sends, 0);
+    }),
+  );
+
+  it.effect("points a pasted thread link at the thread it names", () =>
+    Effect.gen(function* () {
+      const delegated = liveThreadShell(ThreadId.make("thread:delegated-task:command%3Amcp%3Aabc"));
+      const ref = { environmentId: client.environmentId, threadId: delegated.id };
+      const sent = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        for (const link of [
+          `t3-thread://v2/${ref.environmentId}/${ref.threadId}`,
+          formatThreadLink(ref, "Delegated task"),
+          hostedThreadLink(ref),
+        ]) {
+          const read = yield* mcp
+            .readThread(client, { threadId: ThreadId.make(link) })
+            .pipe(Effect.flip);
+          assert.equal(read.code, "thread_not_found");
+          assert.include(read.message, `\`${delegated.id}\``);
+          assert.include(read.message, "is a thread link");
+          assert.notInclude(read.message, "no longer available");
+        }
+      }).pipe(Effect.provide(service([delegated], sent)));
     }),
   );
 
