@@ -188,7 +188,7 @@ it("merges with the last selected merge method", async () => {
         pr={null}
         number={1}
         status={null}
-        project={null}
+        project={repositoryProject}
         label="Test PR"
         onOpen={vi.fn()}
       />,
