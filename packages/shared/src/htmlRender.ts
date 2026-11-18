@@ -115,12 +115,10 @@ export function htmlRenderFrameHeight(
   return clampHtmlRenderHeight(Math.min(cap, measuredHeight(heights, width)));
 }
 
-/**
- * The page height the server measured at `width`, for a client that fits its frame to the page.
- * Undefined at a width the server did not measure.
- */
+/** The page height the server measured nearest `width`, for a client that fits its frame to the page. */
 export function htmlRenderMeasuredPageHeight(reference: HtmlRenderReference, width: number) {
-  return reference.heights?.find(([measuredWidth]) => Math.abs(measuredWidth - width) < 1)?.[1];
+  const heights = reference.heights;
+  return heights === undefined || heights.length === 0 ? undefined : measuredHeight(heights, width);
 }
 
 export function htmlRenderFileName(title: string) {

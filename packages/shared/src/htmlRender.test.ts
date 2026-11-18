@@ -162,23 +162,26 @@ describe("readHtmlRenderImageRequest", () => {
 });
 
 describe("readHtmlRenderReference", () => {
-  it("keeps measured page heights above the reference cap, for the widths they were measured at", () => {
+  it("keeps measured page heights above the reference cap", () => {
     const parsed = readHtmlRenderReference({
       ...reference,
       height: 2000,
       heights: [
+        [640, 6623],
         [728, 3684],
         [1144, 30_000],
       ],
     });
 
     expect(parsed?.heights).toEqual([
+      [640, 6623],
       [728, 3684],
       [1144, 20_000],
     ]);
     expect(parsed && htmlRenderFrameHeight(parsed, 728)).toBe(2000);
     expect(parsed && htmlRenderMeasuredPageHeight(parsed, 728)).toBe(3684);
-    expect(parsed && htmlRenderMeasuredPageHeight(parsed, 900)).toBeUndefined();
+    // Between samples a breakpoint can select either height, so the taller one wins.
+    expect(parsed && htmlRenderMeasuredPageHeight(parsed, 700)).toBe(6623);
   });
 });
 
