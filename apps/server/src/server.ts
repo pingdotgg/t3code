@@ -101,6 +101,7 @@ import * as ComputerService from "./computer/ComputerService.ts";
 import * as ComputerApprovals from "./computer/ComputerApprovals.ts";
 import * as ComputerAudit from "./computer/ComputerAudit.ts";
 import * as ComputerDecider from "./computer/ComputerDecider.ts";
+import * as LocalComputerHost from "./computer/LocalComputerHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
@@ -666,6 +667,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(ProcessRunner.layer),
   ),
   KeepAwake.layer,
+  // A macOS server outside the desktop app offers this computer to agents in process.
+  LocalComputerHost.layer,
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;

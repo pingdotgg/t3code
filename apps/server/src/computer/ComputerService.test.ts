@@ -5,6 +5,8 @@ import type {
   ComputerHostId,
   ComputerTaskId,
 } from "@t3tools/contracts";
+import type { ChildMessage, ChildRequest } from "@t3tools/computer-helper/child";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -19,12 +21,64 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 
+import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ComputerApprovals from "./ComputerApprovals.ts";
 import * as ComputerAudit from "./ComputerAudit.ts";
 import * as ComputerDecider from "./ComputerDecider.ts";
 import * as ComputerService from "./ComputerService.ts";
+import * as LocalComputerHost from "./LocalComputerHost.ts";
+
+/**
+ * A helper child as a test drives it. The server's access check is answered the moment it is sent, so a
+ * session needs no test clock to start; `exit` is the helper's process going away.
+ */
+const fakeHelper = (options: { readonly access?: boolean } = {}) => {
+  const listeners = new Set<(message: ChildMessage) => void>();
+  const exits = new Set<() => void>();
+  const sent: Array<ChildRequest> = [];
+  const helper: LocalComputerHost.HelperChild = {
+    send: (frame) => {
+      sent.push(frame);
+      const access = {
+        accessibility: options.access ?? true,
+        screenRecording: options.access ?? true,
+        host: "Terminal",
+      };
+      const answer: ChildMessage | null =
+        frame.kind === "access"
+          ? ({ id: frame.id, kind: "access", access } as ChildMessage)
+          : frame.kind === "control"
+            ? { id: frame.id, kind: "control", done: "Opened Safari" }
+            : frame.kind === "start"
+              ? { id: frame.id, kind: "started", taskId: frame.id }
+              : null;
+      if (answer === null) return;
+      for (const listener of listeners) listener(answer);
+    },
+    onMessage: (listener) => {
+      listeners.add(listener);
+    },
+    onExit: (listener) => {
+      exits.add(listener);
+    },
+    stop: () => {
+      for (const listener of exits) listener();
+    },
+  };
+  return {
+    helper,
+    sent,
+    /** What the helper says up: a step, a finished task, or anything else it would send. */
+    say: (message: ChildMessage) => {
+      for (const listener of listeners) listener(message);
+    },
+    exit: () => {
+      for (const listener of exits) listener();
+    },
+  };
+};
 
 const hello = (overrides: Partial<ComputerHostConnectInput> = {}): ComputerHostConnectInput => ({
   name: "JJ's MacBook",
@@ -54,10 +108,25 @@ const noGrounder = ComputerDecider.ComputerDecider.of({
   judge: () => Effect.succeed({ _tag: "not_configured" } as const),
 });
 
+/** A real server config with only the bootstrap field the local host reads changed. */
+const layerLocalHostConfig = (computerLocalHost: boolean) =>
+  Layer.unwrap(
+    Effect.map(ServerConfig.ServerConfig, (config) =>
+      Layer.succeed(ServerConfig.ServerConfig, { ...config, computerLocalHost }),
+    ),
+  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-computer-host-" })));
+
 const layerTest = (
   options: {
     readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
     readonly decider?: ComputerDecider.ComputerDecider["Service"];
+    /** A standalone server hosting this computer, with the helper a test supplies. */
+    readonly localHost?: {
+      readonly fork: () => LocalComputerHost.HelperChild;
+      readonly platform?: NodeJS.Platform;
+      /** False is the desktop app's bundled server. */
+      readonly enabled?: boolean;
+    };
   } = {},
 ) => {
   const settingsLayer = ServerSettings.layerTest(options.settings ?? {});
@@ -85,8 +154,23 @@ const layerTest = (
     ),
     Layer.provide(Layer.succeed(SecureRandom.SecureRandom, random)),
   );
+  const layerHost =
+    options.localHost === undefined
+      ? Layer.empty
+      : LocalComputerHost.layer.pipe(
+          Layer.provide(Layer.succeed(LocalComputerHost.HelperFork, options.localHost.fork)),
+          Layer.provide(
+            Layer.succeed(HostProcess.Platform, options.localHost.platform ?? "darwin"),
+          ),
+          Layer.provide(Layer.succeed(HostProcess.Hostname, "JJ's MacBook")),
+          Layer.provide(layerLocalHostConfig(options.localHost.enabled ?? true)),
+          // The same instances the service and the settings layer build below.
+          Layer.provideMerge(layerService),
+          Layer.provideMerge(settingsLayer),
+        );
   return Layer.mergeAll(
     layerService,
+    layerHost,
     layerAudit,
     settingsLayer,
     Layer.succeed(SecureRandom.SecureRandom, random),
@@ -548,3 +632,97 @@ it.effect("an in-process host attaches and detaches", () =>
     assert.strictEqual((yield* service.status).hosts.length, 0);
   }).pipe(Effect.provide(layerTest())),
 );
+
+it.effect("a standalone server offers this computer and withdraws it when the helper ends", () => {
+  const helper = fakeHelper();
+  return Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const snapshots = yield* service.subscribe;
+
+    yield* settings.updateSettings({ enableAgentComputerUse: true });
+    const listed = yield* snapshots.pipe(
+      Stream.filter((snapshot) => snapshot.hosts.length === 1),
+      Stream.runHead,
+    );
+    const host = listed._tag === "Some" ? listed.value.hosts[0] : undefined;
+    assert.strictEqual(host?.platform, "darwin");
+    assert.isTrue(host?.computerUse);
+    assert.strictEqual(host?.name, "JJ's MacBook");
+
+    // A control crosses the same way a task does: the server asks, the helper answers.
+    const controlled = yield* service.control({
+      control: { kind: "open_app", app: "Safari" },
+      requester: "agent: test",
+    });
+    assert.strictEqual(controlled.status, "done");
+    assert.strictEqual(controlled.reason, "Opened Safari");
+
+    // A task's `start` names the task, and its `started` must answer that exact request.
+    const started = yield* startUse();
+    helper.say({
+      id: started.taskId,
+      kind: "step",
+      taskId: started.taskId,
+      text: "clicked the button “Search”",
+    });
+    helper.say({
+      id: started.taskId,
+      kind: "finished",
+      taskId: started.taskId,
+      outcome: { status: "done", reason: "It was done.", steps: [], surface: null },
+    });
+    const finished = yield* snapshots.pipe(
+      Stream.filter(
+        (snapshot) =>
+          snapshot.tasks.find((task) => task.taskId === started.taskId)?.status === "done",
+      ),
+      Stream.runHead,
+    );
+    assert.strictEqual(finished._tag, "Some");
+
+    // The helper's process going away withdraws the host, as closing its session would.
+    assert.isAbove(helper.sent.length, 0);
+    helper.exit();
+    const withdrawn = yield* snapshots.pipe(
+      Stream.filter((snapshot) => snapshot.hosts.length === 0),
+      Stream.runHead,
+    );
+    assert.strictEqual(withdrawn._tag, "Some");
+  }).pipe(
+    Effect.provide(
+      layerTest({
+        localHost: { fork: () => helper.helper },
+        settings: { enableAgentComputerUse: true },
+      }),
+    ),
+  );
+});
+
+it.effect("a desktop-backed server never forks its own helper", () => {
+  const helper = fakeHelper();
+  let forks = 0;
+  return Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* settings.updateSettings({ enableAgentComputerUse: true });
+    const service = yield* ComputerService.ComputerService;
+    // A second of virtual time is every chance a fork would have had to happen.
+    yield* TestClock.adjust("1 second");
+    yield* Effect.yieldNow;
+    assert.strictEqual(forks, 0);
+    assert.strictEqual((yield* service.status).hosts.length, 0);
+  }).pipe(
+    Effect.provide(
+      layerTest({
+        localHost: {
+          fork: () => {
+            forks += 1;
+            return helper.helper;
+          },
+          enabled: false,
+        },
+        settings: { enableAgentComputerUse: true },
+      }),
+    ),
+  );
+});
