@@ -2,9 +2,11 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const {
+  renderComment,
   resolve,
   upsertCommentForCurrentHead,
   validateResult,
+  validateScenarios,
 } = require("./thread-transfer-report.cjs");
 
 function result(overrides = {}) {
@@ -40,6 +42,29 @@ function result(overrides = {}) {
   };
 }
 
+function scenarios(overrides = {}) {
+  const rows = [
+    {
+      phase: "long turn finished, cold open",
+      metric: "HTTP decoded",
+      unit: "bytes",
+      observed: 390_000,
+      ceiling: 420_000,
+    },
+    {
+      phase: "idle thread resume",
+      metric: "WebSocket messages",
+      unit: "count",
+      observed: 1,
+      ceiling: 1,
+    },
+  ];
+  return {
+    schemaVersion: 1,
+    providers: { codex: [{ ...rows[0], ...overrides }, rows[1]], claudeAgent: rows },
+  };
+}
+
 test("validates the fixed artifact schema", () => {
   assert.equal(validateResult(result()).schemaVersion, 1);
   assert.throws(
@@ -50,6 +75,60 @@ test("validates the fixed artifact schema", () => {
     () => validateResult(result({ totalWireBytes: "lots" })),
     /non-negative safe integer/,
   );
+
+  assert.equal(validateScenarios(scenarios()).schemaVersion, 1);
+  for (const phase of ["@everyone", "[link](https://example.com)", "a | b", "<img>", ""]) {
+    assert.throws(() => validateScenarios(scenarios({ phase })), /short plain label/);
+  }
+  assert.throws(() => validateScenarios(scenarios({ note: "extra" })), /unexpected fields/);
+  assert.throws(() => validateScenarios(scenarios({ ceiling: null })), /non-negative safe integer/);
+  assert.throws(
+    () =>
+      validateScenarios(scenarios({ phase: "idle thread resume", metric: "WebSocket messages" })),
+    /repeats an earlier row/,
+  );
+});
+
+test("lists scenario rows that changed or failed above the collapsed table", () => {
+  const run = { sha: "abcdef1234", url: "https://example.com/run", conclusion: "success" };
+  const render = (currentScenarios, baselineScenarios) =>
+    renderComment({
+      current: result(),
+      baseline: result(),
+      currentScenarios,
+      baselineScenarios,
+      currentRun: run,
+      baselineRun: { ...run, matchesBase: true },
+    });
+  const open = (body) => body.slice(0, body.indexOf("<details>"));
+
+  const unchanged = render(scenarios(), scenarios());
+  assert.match(unchanged, /✅ Thread transfer remains within every enforced ceiling/);
+  assert.match(open(unchanged), /All 4 scenario measurements match `main`/);
+  assert.doesNotMatch(open(unchanged), /long turn finished, cold open/);
+
+  const grown = render(scenarios({ observed: 400_000 }), scenarios());
+  assert.match(open(grown), /1 of 4 scenario measurements changed or failed/);
+  assert.match(
+    open(grown),
+    /\| Codex \| `long turn finished, cold open` \| `HTTP decoded` \| 380\.9 KiB \| 390\.6 KiB \| \+9\.8 KiB \(\+2\.6%\) \| 410\.2 KiB \| ✅ \|/,
+  );
+
+  const over = render(scenarios({ observed: 430_000, ceiling: 425_000 }), scenarios());
+  assert.match(over, /❌ One or more thread transfer ceilings were exceeded/);
+  assert.match(
+    over,
+    /Codex `long turn finished, cold open` `HTTP decoded`: 410\.2 KiB → 415\.0 KiB/,
+  );
+
+  // A row `main` does not have is not reported as matching it.
+  const added = render(scenarios({ phase: "GH-26" }), scenarios());
+  assert.match(open(added), /3 scenario measurements match `main`\. 1 have no `main` baseline\./);
+  assert.match(added, /\| Codex \| `GH-26` \|/);
+
+  // A main run from before the scenario file has nothing to compare; a PR run from before it has no section.
+  assert.match(open(render(scenarios(), undefined)), /No `main` baseline exists yet/);
+  assert.doesNotMatch(render(undefined, scenarios()), /Other scenarios/);
 });
 
 test("resolves a fallback PR with a redacted head repo and exact main baseline", async () => {
