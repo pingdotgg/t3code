@@ -43,6 +43,8 @@ export interface ProviderAdapterRegistryV2Shape {
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2["Service"], ProviderAdapterRegistryV2Error>;
   readonly list: () => Effect.Effect<ReadonlyArray<ProviderInstanceId>>;
+  /** Changes only when the instance is rebuilt; omitted by registries that never rebuild. */
+  readonly revision?: (instanceId: ProviderInstanceId) => Effect.Effect<unknown>;
   readonly getMetadata?: (instanceId: ProviderInstanceId) => Effect.Effect<
     {
       readonly driver: ProviderAdapter.ProviderAdapterV2["Service"]["driver"];
@@ -125,6 +127,9 @@ export const layerFromProviderInstanceRegistry: Layer.Layer<
             } satisfies ProviderAdapter.ProviderAdapterV2["Service"]);
           }),
         );
+      }),
+      revision: Effect.fn("ProviderAdapterRegistryV2.revision")(function* (instanceId) {
+        return (yield* instances.getInstance(instanceId))?.orchestrationAdapter;
       }),
       list: Effect.fn("ProviderAdapterRegistryV2.list")(function () {
         return instances.listInstances.pipe(
