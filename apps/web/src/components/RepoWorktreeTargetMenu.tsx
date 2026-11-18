@@ -1,4 +1,5 @@
 import type { ThreadRepoWorktree } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { ChevronDownIcon, FolderGit2Icon } from "lucide-react";
 
 import { Button } from "./ui/button";
@@ -19,6 +20,7 @@ export function RepoWorktreeTargetMenu(props: {
   readonly workspaceLabel: string;
   readonly onSelect: (worktreePath: string | null) => void;
 }) {
+  const gt = useGT();
   if (props.repoWorktrees.length === 0) return null;
   const label =
     props.selected === null
@@ -29,7 +31,7 @@ export function RepoWorktreeTargetMenu(props: {
       <DropdownMenuTrigger
         render={<Button size="xs" variant="ghost-muted" />}
         className="min-w-0 max-w-56"
-        aria-label={`Repository: ${label}`}
+        aria-label={gt("Repository: {label}", { label })}
       >
         <FolderGit2Icon className="size-3.5 shrink-0 opacity-70" />
         <span className="min-w-0 truncate">{label}</span>

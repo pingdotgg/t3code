@@ -1,3 +1,5 @@
+import { vcsActionLabelText } from "@t3tools/client-runtime/state/vcs";
+import { useMessages } from "gt-react-native";
 import { useMemo } from "react";
 
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
@@ -13,6 +15,7 @@ import {
 } from "./use-selected-thread-worktree";
 
 export function useSelectedThreadGitState() {
+  const messages = useMessages();
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   // Git actions follow the chosen repository worktree; branch controls stay on the thread.
@@ -47,7 +50,7 @@ export function useSelectedThreadGitState() {
   );
 
   return {
-    gitOperationLabel: gitActionState.currentLabel,
+    gitOperationLabel: vcsActionLabelText(gitActionState, messages),
     sourceControlDiscovery,
     selectedThreadBranches,
     selectedThreadBranchesLoading: selectedThreadBranchState.isPending,

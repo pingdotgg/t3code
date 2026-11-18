@@ -1,10 +1,11 @@
+import { useGT } from "gt-react";
 import { useRef } from "react";
 
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -12,6 +13,8 @@ import {
 } from "./useScopedSettings";
 
 export function RepoWorktreeSettings() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const { scope, targets } = useSettingsScope();
   const scopeKey = targets.map((target) => `${target.environmentId}:${target.projectId}`).join(",");
@@ -30,21 +33,25 @@ export function RepoWorktreeSettings() {
         {...searchableSetting("repo-worktrees")}
         description={
           isProjectScope
-            ? "Create or reuse separate worktrees for the Git repositories inside this project folder as needed."
-            : "Create or reuse separate worktrees for the Git repositories inside each project folder as needed. Projects can override it."
+            ? gt(
+                "Create or reuse separate worktrees for the Git repositories inside this project folder as needed.",
+              )
+            : gt(
+                "Create or reuse separate worktrees for the Git repositories inside each project folder as needed. Projects can override it.",
+              )
         }
         resetAction={
           settings.repoWorktrees ? (
             <SettingResetButton
-              label="multi-repository project folder"
-              tooltip="Reset multi-repository project folder to off"
+              ariaLabel={gt("Reset multi-repository project folder to default")}
+              tooltip={gt("Reset multi-repository project folder to off")}
               onClick={() => updateSettings({ repoWorktrees: false })}
             />
           ) : null
         }
         control={
           <Switch
-            aria-label="Multi-Repository Project Folder"
+            aria-label={gt("Multi-Repository Project Folder")}
             mixed={enabledMixed}
             checked={enabledMixed ? false : settings.repoWorktrees}
             onCheckedChange={(enabled) => updateSettings({ repoWorktrees: enabled })}
@@ -55,12 +62,14 @@ export function RepoWorktreeSettings() {
         <SettingsRow
           serverScoped
           settingKeys={["repoWorktreeInstructions"]}
-          title="Repository Guidance"
-          description="Instructions for agents working in these repositories, such as base branches and submodule rules."
+          title={gt("Repository Guidance")}
+          description={gt(
+            "Instructions for agents working in these repositories, such as base branches and submodule rules.",
+          )}
           resetAction={
             instructionsMixed || settings.repoWorktreeInstructions !== "" ? (
               <SettingResetButton
-                label="repository guidance"
+                ariaLabel={gt("Reset repository guidance to default")}
                 onClick={() => updateSettings({ repoWorktreeInstructions: "" })}
               />
             ) : null
@@ -69,7 +78,7 @@ export function RepoWorktreeSettings() {
           <div className="mt-3 max-w-2xl pb-3.5">
             <Textarea
               key={`${scopeKey}:${instructionsMixed}:${settings.repoWorktreeInstructions}`}
-              aria-label="Repository Guidance"
+              aria-label={gt("Repository Guidance")}
               onChange={() => {
                 instructionsEdited.current = true;
               }}
@@ -77,8 +86,10 @@ export function RepoWorktreeSettings() {
               defaultValue={instructionsMixed ? "" : settings.repoWorktreeInstructions}
               placeholder={
                 instructionsMixed
-                  ? "Mixed. Enter guidance to apply to all selected targets."
-                  : "Start api work from develop. Start shared/framework work from team-develop."
+                  ? gt("Mixed. Enter guidance to apply to all selected targets.")
+                  : gt(
+                      "Start api work from develop. Start shared/framework work from team-develop.",
+                    )
               }
               onBlur={(event) => {
                 const value = event.target.value.trim();

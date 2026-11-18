@@ -11,7 +11,7 @@ import { IssueInvolvement, IssueListState } from "@t3tools/contracts";
 export interface IssueListPreferences {
   readonly who: IssueInvolvement;
   readonly status: IssueListState;
-  readonly host?: string;
+  readonly host?: string | undefined;
   readonly q?: string | undefined;
   /** `label`, `assignee` and `order` for the same reason: the pull-request page has `labels` and `sort`. */
   readonly label?: ReadonlyArray<string> | undefined;
@@ -27,7 +27,7 @@ const DEFAULT_ISSUE_LIST_PREFERENCES = {
 const STORAGE_KEY = "t3.issues.preferences";
 
 const BoundedPreference = Schema.String.check(Schema.isMaxLength(200));
-const IssueListPreferencesSchema = Schema.Struct({
+export const IssueListPreferencesSchema = Schema.Struct({
   who: IssueInvolvement,
   status: IssueListState,
   host: Schema.optional(BoundedPreference),

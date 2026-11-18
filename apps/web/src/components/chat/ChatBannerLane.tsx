@@ -5,6 +5,7 @@ import type {
   ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import type { Dispatch, SetStateAction } from "react";
 import {
   dismissProviderStatusBannerForSession,
@@ -48,6 +49,7 @@ export function ChatBannerLane(props: {
     onRetryFileRestore,
     onClearFileRestoreRetry,
   } = props;
+  const gt = useGT();
   return (
     <div className="chat-banner-lane pointer-events-none absolute top-0 z-30 flex flex-col">
       <ProviderStatusBanner
@@ -62,7 +64,7 @@ export function ChatBannerLane(props: {
         errorCode={threadErrorCode}
         action={
           fileRestoreRetryMessage !== null && fileRestoreRetryMessage === threadError
-            ? { label: "Try again", onClick: onRetryFileRestore }
+            ? { label: gt("Try again"), onClick: onRetryFileRestore }
             : null
         }
         onDismiss={() => {

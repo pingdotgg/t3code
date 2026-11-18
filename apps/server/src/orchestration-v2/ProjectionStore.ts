@@ -9101,6 +9101,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0]?.count ?? 0;
     }, Effect.mapError(shellSnapshotReadError));
 
+    // Migration 98 indexes these exact expressions, so the read takes them from the index instead
+    // of parsing every active thread's payload. Changing one here needs a matching index change.
+    const indexedField = (path: string, read: "json_extract" | "json_type" = "json_extract") =>
+      sql.literal(
+        `CASE WHEN json_valid(t.payload_json) THEN ${read}(t.payload_json, '${path}') END`,
+      );
+    // The planner otherwise scans the whole (thread_id, type, status) index for this list.
+    const PENDING_ITEMS_INDEX = sql.literal(
+      "INDEXED BY orchestration_v2_projection_turn_items_shell_pending_idx",
+    );
     const listActiveShellIndex = Effect.fn("ProjectionStore.listActiveShellIndex")(function* () {
       const rows = yield* sql<{
         readonly thread_id: string;
@@ -9120,48 +9130,53 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         SELECT
           t.thread_id,
           t.project_id,
-          json_extract(t.payload_json, '$.lineage.relationshipToParent') AS relationship_to_parent,
-          json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent_thread_id,
-          json_extract(t.payload_json, '$.lineage.rootThreadId') AS root_thread_id,
-          json_extract(t.payload_json, '$.lineage.sideChat') AS side_chat,
-          json_extract(t.payload_json, '$.settledOverride') AS settled_override,
-          json_extract(t.payload_json, '$.settledAt') AS settled_at,
-          json_extract(t.payload_json, '$.pinnedAt') AS pinned_at,
-          json_extract(t.payload_json, '$.pinOrderKey') AS pin_order_key,
-          json_extract(t.payload_json, '$.snoozedUntil') AS snoozed_until,
+          ${indexedField("$.lineage.relationshipToParent")} AS relationship_to_parent,
+          ${indexedField("$.lineage.parentThreadId")} AS parent_thread_id,
+          ${indexedField("$.lineage.rootThreadId")} AS root_thread_id,
+          ${indexedField("$.lineage.sideChat")} AS side_chat,
+          ${indexedField("$.settledOverride")} AS settled_override,
+          ${indexedField("$.settledAt")} AS settled_at,
+          ${indexedField("$.pinnedAt")} AS pinned_at,
+          ${indexedField("$.pinOrderKey")} AS pin_order_key,
+          ${indexedField("$.snoozedUntil")} AS snoozed_until,
           -- A superset of isLiveSubagentShell: the sources of its run status, pending request,
-          -- and pending background work.
+          -- and pending background work. Each source is one list for the whole read, found
+          -- through its partial index, so finished threads cost no lookups.
           (
-            EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_runs r
-              WHERE r.thread_id = t.thread_id
-                AND r.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+            t.thread_id IN (
+              SELECT r.thread_id FROM orchestration_v2_projection_runs r
+              WHERE r.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
             )
-            OR EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_runtime_requests request
-              WHERE request.thread_id = t.thread_id AND request.status = 'pending'
+            OR t.thread_id IN (
+              SELECT request.thread_id FROM orchestration_v2_projection_runtime_requests request
+              WHERE request.status = 'pending'
             )
             -- Same predicates as the shell's pending item and link reads, for their partial indexes.
-            OR EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_turn_items item
-              WHERE item.thread_id = t.thread_id
-                AND item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+            OR t.thread_id IN (
+              SELECT item.thread_id
+              FROM orchestration_v2_projection_turn_items item ${PENDING_ITEMS_INDEX}
+              WHERE item.type IN ('command_execution', 'dynamic_tool', 'subagent')
                 AND item.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
             )
-            OR EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_turn_items link_request
-              WHERE link_request.thread_id = t.thread_id
-                AND link_request.type = 'link_request' AND link_request.status = 'waiting'
+            OR t.thread_id IN (
+              SELECT link_request.thread_id FROM orchestration_v2_projection_turn_items link_request
+              WHERE link_request.type = 'link_request' AND link_request.status = 'waiting'
             )
-            OR EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_provider_threads provider_thread
-              WHERE provider_thread.thread_id = t.thread_id
-                AND json_array_length(provider_thread.payload_json, '$.pendingBackgroundTasks') > 0
+            OR t.thread_id IN (
+              SELECT provider_thread.thread_id
+              FROM orchestration_v2_projection_provider_threads provider_thread
+              WHERE CASE WHEN json_valid(provider_thread.payload_json)
+                THEN json_array_length(provider_thread.payload_json, '$.pendingBackgroundTasks') > 0
+                ELSE 0 END
             )
-            OR EXISTS (
-              SELECT 1 FROM json_each(t.payload_json, '$.pullRequests') link
-              WHERE json_type(link.value, '$.watch') IS NOT NULL
-            )
+            -- Only a thread with a pull request link reads its payload. CASE, not AND: SQLite
+            -- 3.50 evaluates both AND operands here.
+            OR CASE WHEN ${indexedField("$.pullRequests[0]", "json_type")} IS NOT NULL
+              THEN EXISTS (
+                SELECT 1 FROM json_each(t.payload_json, '$.pullRequests') link
+                WHERE json_type(link.value, '$.watch') IS NOT NULL
+              )
+              ELSE 0 END
           ) AS may_be_live,
           -- One list for the whole read, found through the child_thread_id index. A lookup per
           -- thread would parse the payload of every subagent row.

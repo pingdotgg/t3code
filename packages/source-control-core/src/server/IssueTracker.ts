@@ -26,6 +26,7 @@ import type {
   StandaloneIssueTrackerDescriptor,
 } from "@t3tools/contracts";
 import { IssueTrackerKind as IssueTrackerKindSchema } from "@t3tools/contracts";
+import type { IssueLink } from "../shared/definition.ts";
 
 /**
  * The one failure shape every tracker reports, so the service can decide what a failure means
@@ -196,6 +197,8 @@ export interface IssueTrackerApi {
  */
 export interface StandaloneIssueTrackerApi extends IssueTrackerApi {
   readonly standalone: StandaloneIssueTrackerDescriptor;
+  /** Retains the workspace identity so canonical URLs can disambiguate repeated scope keys. */
+  readonly parseIssueUrl: (url: URL) => (IssueLink & { readonly workspace: string }) | null;
   /**
    * Who a credential signs in as and which scopes it reaches, asked of the tracker itself. Run on
    * a credential before it is stored, and on the stored one to report connection status.

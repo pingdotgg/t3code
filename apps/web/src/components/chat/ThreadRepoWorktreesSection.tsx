@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId, ThreadRepoWorktree } from "@t3tools/contracts";
+import { msg, T, useGT } from "gt-react";
 import { CopyIcon, FileDiffIcon, FolderGit2Icon, UnlinkIcon } from "lucide-react";
 
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -19,17 +20,22 @@ export function ThreadRepoWorktreesSection(props: {
   /** Makes the worktree the thread's Changes and Git target, then shows its changes. */
   readonly onShowChanges?: (worktreePath: string) => void;
 }) {
+  const gt = useGT();
   const ref = scopeThreadRef(props.environmentId, props.threadId);
   const repoWorktrees = useAtomValue(environmentThreadDetails.repoWorktreesAtom(ref));
   const detach = useAtomCommand(threadEnvironment.detachRepoWorktree, { reportFailure: true });
   if (repoWorktrees.length === 0) return null;
 
   const copyPath = (entry: ThreadRepoWorktree) =>
-    void writeTextToClipboard(entry.worktreePath, "worktree path").then((copied) => {
+    void writeTextToClipboard(entry.worktreePath, {
+      target: "worktree path",
+      unavailableMessage: msg("Clipboard API is unavailable while copying worktree path."),
+      failureMessage: msg("Failed to copy worktree path to the clipboard."),
+    }).then((copied) => {
       if (copied) {
         toastManager.add({
           type: "success",
-          title: "Path copied",
+          title: gt("Path copied"),
           description: entry.worktreePath,
         });
       }
@@ -38,7 +44,7 @@ export function ThreadRepoWorktreesSection(props: {
   return (
     <ThreadDetailsSection
       headingId="thread-details-repo-worktrees-heading"
-      title={`Repository worktrees · ${repoWorktrees.length}`}
+      title={gt("Repository worktrees · {count}", { count: repoWorktrees.length })}
     >
       <ul className="flex flex-col">
         {repoWorktrees.map((entry) => (
@@ -49,7 +55,11 @@ export function ThreadRepoWorktreesSection(props: {
                   <ThreadDetailsControl
                     size="sm"
                     variant="ghost"
-                    aria-label={`${entry.repository} on ${entry.branch} at ${entry.worktreePath}`}
+                    aria-label={gt("{repository} on {branch} at {path}", {
+                      repository: entry.repository,
+                      branch: entry.branch,
+                      path: entry.worktreePath,
+                    })}
                   />
                 }
               >
@@ -60,18 +70,19 @@ export function ThreadRepoWorktreesSection(props: {
               <MenuPopup align="end" className="max-w-(--available-width) min-w-60">
                 <MenuGroup>
                   <MenuGroupLabel>
-                    {entry.origin === "reused" ? "Reused worktree" : "Worktree"} at{" "}
-                    {entry.worktreePath}
+                    {entry.origin === "reused"
+                      ? gt("Reused worktree at {path}", { path: entry.worktreePath })
+                      : gt("Worktree at {path}", { path: entry.worktreePath })}
                   </MenuGroupLabel>
                   {props.onShowChanges ? (
                     <MenuItem onClick={() => props.onShowChanges?.(entry.worktreePath)}>
                       <FileDiffIcon className="size-3.5" />
-                      Show changes
+                      <T>Show changes</T>
                     </MenuItem>
                   ) : null}
                   <MenuItem onClick={() => copyPath(entry)}>
                     <CopyIcon className="size-3.5" />
-                    Copy path
+                    <T>Copy path</T>
                   </MenuItem>
                   <MenuItem
                     onClick={() =>
@@ -82,7 +93,7 @@ export function ThreadRepoWorktreesSection(props: {
                     }
                   >
                     <UnlinkIcon className="size-3.5" />
-                    Detach from thread
+                    <T>Detach from thread</T>
                   </MenuItem>
                 </MenuGroup>
               </MenuPopup>
@@ -91,8 +102,10 @@ export function ThreadRepoWorktreesSection(props: {
         ))}
       </ul>
       <p className="px-1.5 pt-1 text-2xs text-muted-foreground">
-        Turn diffs and rollback include these. Rollback restores no files while another thread also
-        works in one.
+        <T>
+          Turn diffs and rollback include these. Rollback restores no files while another thread
+          also works in one.
+        </T>
       </p>
     </ThreadDetailsSection>
   );

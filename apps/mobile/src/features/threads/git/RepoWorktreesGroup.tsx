@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
 import type { EnvironmentId, ThreadId, ThreadRepoWorktree } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
+import { useGT } from "gt-react-native";
 
 import { ListRow } from "../../../components/ui/ListRow";
 import { ListSection } from "../../../components/ui/ListSection";
@@ -17,9 +18,11 @@ export function RepoWorktreesGroup(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly selected: ThreadRepoWorktree | null;
-  readonly workspaceLabel: string;
+  /** What Git actions use when no repository worktree is selected. */
+  readonly workspace: "thread-worktree" | "project-folder";
   readonly onSelect: (worktreePath: string | null) => void;
 }) {
+  const gt = useGT();
   const repoWorktrees = useAtomValue(
     environmentThreadDetails.repoWorktreesAtom({
       environmentId: props.environmentId,
@@ -31,10 +34,16 @@ export function RepoWorktreesGroup(props: {
 
   const menuActions = (entry: ThreadRepoWorktree): MenuAction[] => [
     props.selected?.worktreePath === entry.worktreePath
-      ? { id: "use-workspace", title: `Use ${props.workspaceLabel.toLowerCase()} for Git` }
-      : { id: "use-worktree", title: "Use for Git and changes" },
-    { id: "copy-path", title: "Copy path" },
-    { id: "detach", title: "Detach from thread", attributes: { destructive: true } },
+      ? {
+          id: "use-workspace",
+          title:
+            props.workspace === "thread-worktree"
+              ? gt("Use thread worktree for Git")
+              : gt("Use project folder for Git"),
+        }
+      : { id: "use-worktree", title: gt("Use for Git and changes") },
+    { id: "copy-path", title: gt("Copy path") },
+    { id: "detach", title: gt("Detach from thread"), attributes: { destructive: true } },
   ];
   const onMenuAction = (entry: ThreadRepoWorktree, action: string) => {
     if (action === "use-workspace") props.onSelect(null);
@@ -50,12 +59,20 @@ export function RepoWorktreesGroup(props: {
 
   return (
     <ListSection
-      title="Repository worktrees"
-      footer={`${
-        props.selected === null
-          ? `Git and changes above use the ${props.workspaceLabel.toLowerCase()}. `
-          : ""
-      }Turn diffs and rollback include these. Rollback restores no files while another thread also works in one.`}
+      title={gt("Repository worktrees")}
+      footer={
+        props.selected !== null
+          ? gt(
+              "Turn diffs and rollback include these. Rollback restores no files while another thread also works in one.",
+            )
+          : props.workspace === "thread-worktree"
+            ? gt(
+                "Git and changes above use the thread worktree. Turn diffs and rollback include these. Rollback restores no files while another thread also works in one.",
+              )
+            : gt(
+                "Git and changes above use the project folder. Turn diffs and rollback include these. Rollback restores no files while another thread also works in one.",
+              )
+      }
     >
       {repoWorktrees.map((entry) => (
         <Menu
@@ -69,7 +86,7 @@ export function RepoWorktreesGroup(props: {
             label={`${entry.repository} · ${entry.branch}`}
             description={
               props.selected?.worktreePath === entry.worktreePath
-                ? `Git and changes above · ${entry.worktreePath}`
+                ? gt("Git and changes above · {path}", { path: entry.worktreePath })
                 : entry.worktreePath
             }
             // The menu opens on tap.

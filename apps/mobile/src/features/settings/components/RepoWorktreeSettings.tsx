@@ -1,12 +1,10 @@
 import type { ServerSettingsPatch } from "@t3tools/contracts";
+import { T, useGT } from "gt-react-native";
 import { useRef } from "react";
 import { View } from "react-native";
 
 import { AppText as Text, AppTextInput } from "../../../components/ui/AppText";
 import { SettingsSwitchRow } from "./SettingsSwitchRow";
-
-const GUIDANCE_HELP =
-  "Instructions for agents working in these repositories, such as base branches and submodule rules.";
 
 /** Rows inside an existing section. The first draws a top border, so another row must precede it. */
 export function RepoWorktreeSettings(props: {
@@ -17,17 +15,25 @@ export function RepoWorktreeSettings(props: {
   projectSelected: boolean;
   onChange: (patch: ServerSettingsPatch) => void;
 }) {
+  const gt = useGT();
   const instructionsEdited = useRef(false);
+  const guidanceHelp = gt(
+    "Instructions for agents working in these repositories, such as base branches and submodule rules.",
+  );
   return (
     <>
       <View className="border-t border-border-subtle">
         <SettingsSwitchRow
           icon="folder"
-          label="Multi-Repository Project Folder"
+          label={gt("Multi-Repository Project Folder")}
           subtitle={
             props.projectSelected
-              ? "Create or reuse separate worktrees for the Git repositories inside this project folder as needed."
-              : "Create or reuse separate worktrees for the Git repositories inside each project folder as needed. Projects can override it."
+              ? gt(
+                  "Create or reuse separate worktrees for the Git repositories inside this project folder as needed.",
+                )
+              : gt(
+                  "Create or reuse separate worktrees for the Git repositories inside each project folder as needed. Projects can override it.",
+                )
           }
           value={props.enabled}
           disabled={props.disabled.enabled}
@@ -38,24 +44,24 @@ export function RepoWorktreeSettings(props: {
         <View className="gap-2 border-t border-border-subtle px-4 py-3">
           <View className="gap-1">
             <Text textRole="body" className="text-foreground">
-              Repository Guidance
+              <T>Repository Guidance</T>
             </Text>
             <Text textRole="footnote" className="text-foreground-muted">
-              {GUIDANCE_HELP}
+              {guidanceHelp}
             </Text>
           </View>
           <AppTextInput
             key={props.instructions}
-            accessibilityLabel="Repository Guidance"
-            accessibilityHint={GUIDANCE_HELP}
+            accessibilityLabel={gt("Repository Guidance")}
+            accessibilityHint={guidanceHelp}
             onChangeText={() => {
               instructionsEdited.current = true;
             }}
             defaultValue={props.instructions ?? ""}
             placeholder={
               props.instructions === null
-                ? "Mixed. Enter guidance for all selected targets."
-                : "Start api work from develop. Start shared/framework work from team-develop."
+                ? gt("Mixed. Enter guidance for all selected targets.")
+                : gt("Start api work from develop. Start shared/framework work from team-develop.")
             }
             editable={!props.disabled.instructions}
             multiline
