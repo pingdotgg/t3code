@@ -13,6 +13,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
@@ -514,6 +516,8 @@ const buildObservabilityFragment = (observabilitySettings: BackendObservabilityS
   }),
 });
 
+const SETPRIV_PARENT_DEATH_ARGS = ["--pdeathsig", "KILL", "--"] as const;
+
 const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolvePrimary")(
   function* (
     input: SharedBootstrapInput & {
@@ -521,6 +525,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       readonly cliPath: Option.Option<string>;
       readonly shellEnvironmentPrepared: boolean;
       readonly desktopAppUpdate: boolean;
+      readonly killWithParent: boolean;
     },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -554,15 +559,21 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       ...buildObservabilityFragment(input.observabilitySettings),
     };
 
+    // Packaged builds have a separate cache; --require prevents cache settings leaking to provider subprocesses.
+    const args = [
+      ...(environment.isPackaged ? ["--require", environment.compileCachePath] : []),
+      environment.backendEntryPath,
+      "--bootstrap-fd",
+      "3",
+    ];
+
     return {
-      executablePath: process.execPath,
-      // Packaged builds have a separate cache; --require prevents cache settings leaking to provider subprocesses.
-      args: [
-        ...(environment.isPackaged ? ["--require", environment.compileCachePath] : []),
-        environment.backendEntryPath,
-        "--bootstrap-fd",
-        "3",
-      ],
+      ...(input.killWithParent
+        ? {
+            executablePath: "setpriv",
+            args: [...SETPRIV_PARENT_DEATH_ARGS, process.execPath, ...args],
+          }
+        : { executablePath: process.execPath, args }),
       entryPath: environment.backendEntryPath,
       cwd: environment.backendCwd,
       env: {
@@ -767,6 +778,27 @@ export const make = Effect.gen(function* () {
   const desktopState = yield* DesktopState.DesktopState;
   const mac = yield* Mac.Mac;
   const random = yield* SecureRandom.SecureRandom;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // The AppImage runtime unmounts the image the moment main exits, even on a crash or SIGKILL that
+  // runs no exit hook, and a backend still executing from it faults with SIGBUS. setpriv sets
+  // PR_SET_PDEATHSIG so the kernel kills the backend first; util-linux before 2.33 lacks the flag.
+  const killWithParent = yield* Effect.cached(
+    environment.platform === "linux" && Option.isSome(environment.appImagePath)
+      ? Effect.scoped(
+          Effect.gen(function* () {
+            const handle = yield* spawner.spawn(
+              ChildProcess.make("setpriv", [...SETPRIV_PARENT_DEATH_ARGS, "true"], {
+                stdin: "ignore",
+                stdout: "ignore",
+                stderr: "ignore",
+                forceKillAfter: "1 second",
+              }),
+            );
+            return (yield* handle.exitCode.pipe(Effect.timeout("5 seconds"))) === 0;
+          }),
+        ).pipe(Effect.orElseSucceed(() => false))
+      : Effect.succeed(false),
+  );
   // Random generation yields; serialize it so concurrent backends cannot capture distinct bootstrap secrets.
   const secretRef = yield* SynchronizedRef.make(Option.none<string>());
   const hostScope = yield* Effect.cached(
@@ -841,6 +873,7 @@ export const make = Effect.gen(function* () {
       cliPath,
       shellEnvironmentPrepared,
       desktopAppUpdate: yield* Ref.get(desktopState.canInstallUpdates),
+      killWithParent: yield* killWithParent,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
