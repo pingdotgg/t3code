@@ -4,6 +4,7 @@ import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineToken
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
 import { useComposerModelTokens } from "./useComposerModelTokens";
 import { requireNativeView } from "expo";
+import { useGT } from "gt-react-native";
 import {
   useCallback,
   useEffect,
@@ -27,7 +28,7 @@ import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/cont
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
-import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
+import { useComposerTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
   acknowledgeComposerNativeEvent,
   assumeComposerControlledState,
@@ -155,6 +156,7 @@ export function ComposerEditor({
   readResetGeneration = NO_RESET,
   ...props
 }: ComposerEditorProps) {
+  const gt = useGT();
   const nativeRef = useRef<NativeComposerEditorRef>(null);
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
@@ -176,7 +178,7 @@ export function ComposerEditor({
     });
     setConfirmedTokens({ value: props.value, tokens });
   }
-  const bodyText = useScaledTextRole("body");
+  const bodyText = useComposerTextRole();
   const theme = useUniwindTheme();
   const fontFamily = FONT_FAMILIES.regular;
 
@@ -366,8 +368,8 @@ export function ComposerEditor({
       editable={props.editable ?? true}
       readOnly={props.readOnly ?? false}
       enterBehavior={props.enterBehavior ?? DEFAULT_COMPOSER_ENTER_BEHAVIOR}
-      submitTitle={props.submitTitle ?? "Send Message"}
-      alternateSubmitTitle={props.alternateSubmitTitle ?? props.submitTitle ?? "Send Message"}
+      submitTitle={props.submitTitle ?? gt("Send Message")}
+      alternateSubmitTitle={props.alternateSubmitTitle ?? props.submitTitle ?? gt("Send Message")}
       scrollEnabled={props.scrollEnabled ?? true}
       autoFocus={props.autoFocus ?? false}
       autoCorrect={props.autoCorrect ?? true}
