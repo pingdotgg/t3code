@@ -1,6 +1,6 @@
 # T3 Dulli development
 
-T3 Dulli is the `YJJosh/t3dulli` community fork of **T3 Code v0.1.10** (`7d32075e37`). It uses T3's native provider, subagent, schedule, usage, and MCP infrastructure. Pi is no longer used in this fork: the retired Dulli provider, Pi extensions, Pi sessions, and Pi judge are not part of it, and T3 itself is the harness. Upstream's Pi provider only remains as the migration target for old Dulli threads (see below), not as a supported workflow.
+T3 Dulli is the `YJJosh/t3dulli` community fork of **T3 Code v0.1.10** (`7d32075e37`). It uses T3's native provider, subagent, schedule, usage, and MCP infrastructure. The retired Dulli provider is not part of it, and T3 itself is the harness.
 
 ## Identity and coexistence
 
@@ -52,7 +52,7 @@ Dispatch **T3 Dulli Release** (`.github/workflows/fork-desktop-release.yml`) wit
 - builds desktop installers, a signed Android APK, and native CLI archives on runners of each supported CLI architecture;
 - publishes a GitHub **prerelease** with updater manifests and `SHA256SUMS`, then publishes the `@yjosh/t3` npm launcher with the `latest` npm tag using OIDC provenance.
 
-Desktop's normal Latest track reads the `dulli` prerelease feed. The old same-base `-pi.N` to `-dulli.N` handoff is retired; v0.1.10 is a normal forward version upgrade. Upstream release, AUR, EAS/store/OTA, web-preview, Android-mirror, and relay publishing workflows are manual-only and repository-guarded so they cannot deploy from this fork. CI runs on GitHub-hosted runners.
+Desktop's normal Latest track reads the `dulli` prerelease feed. The old same-base version handoff is retired; v0.1.10 is a normal forward version upgrade. Upstream release, AUR, EAS/store/OTA, web-preview, Android-mirror, and relay publishing workflows are manual-only and repository-guarded so they cannot deploy from this fork. CI runs on GitHub-hosted runners.
 
 Repository setup required before publication:
 
@@ -71,7 +71,7 @@ If Portler is installed and `portler.yml` is present, use the repository's Portl
 
 ## Fork database migrations
 
-Fork migrations belong in `apps/server/src/persistence/Migrations/dulli/` and the fork's separate migration ledger. Never allocate an ID in upstream's numbered sequence for a fork feature. Keep the upstream sequence intact so later upstream upgrades remain unambiguous. The upgrade moves retired Dulli-provider threads to the Pi provider only so no thread is lost, and archives Dulli-only data in `dulli_archived_*` tables; there is no Dulli provider compatibility bridge and no Pi workflow to support. Back up state read-only before testing upgrades, and run only against a sandbox copy.
+Fork migrations belong in `apps/server/src/persistence/Migrations/dulli/` and the fork's separate migration ledger. Never allocate an ID in upstream's numbered sequence for a fork feature. Keep the upstream sequence intact so later upstream upgrades remain unambiguous. The upgrade keeps retired Dulli-provider threads and archives Dulli-only data in `dulli_archived_*` tables; there is no Dulli provider compatibility bridge. Back up state read-only before testing upgrades, and run only against a sandbox copy.
 
 ## Fork features
 

@@ -2,7 +2,7 @@
 
 T3 Dulli is the community fork of [T3 Code](https://github.com/pingdotgg/t3code), rebuilt on **stable v0.1.10**. It is an open-source desktop, web, and mobile control surface for coding agents, using your existing provider subscriptions.
 
-The fork keeps upstream's native providers, subagents, schedules, and usage features. It is built around Claude, Muse, and Codex through T3's own integrations. Pi is no longer used: the old Dulli provider and its Pi-extension bridges are retired and are not coming back. T3 itself is the harness.
+The fork keeps upstream's native providers, subagents, schedules, and usage features. It is built around Claude, Muse, and Codex through T3's own integrations. The old Dulli provider is retired and is not coming back. T3 itself is the harness.
 
 ## What this fork adds
 
