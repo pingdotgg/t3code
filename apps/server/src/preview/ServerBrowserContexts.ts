@@ -8,6 +8,7 @@ import * as NodePath from "node:path";
 import type { Browser, BrowserContext, CDPSession } from "playwright-core";
 
 import { chromeBrands } from "../fork/previewChrome.ts";
+import { answerPrompts } from "../fork/previewPrompts.ts";
 import { isStartPage, keepStartPage } from "../fork/previewDisplay.ts";
 import { sandboxDisabled } from "./PreviewBrowserHost.ts";
 
@@ -167,6 +168,7 @@ export class ServerBrowserContexts {
           chromium.launch({ ...options, executablePath }),
         );
         stubWorkerBadges(browser);
+        answerPrompts(browser);
         browser.on("disconnected", () => {
           if (this.browser === launched) this.browser = undefined;
         });
@@ -257,6 +259,7 @@ export class ServerBrowserContexts {
       }),
     );
     stubWorkerBadges(context);
+    answerPrompts(context);
     if (!options.headless) keepStartPage(context);
     return context;
   }

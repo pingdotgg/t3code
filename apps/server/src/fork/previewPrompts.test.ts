@@ -72,6 +72,13 @@ describe.each([
     expect(await popup.evaluate(GET)).toBe("NotAllowedError");
   });
 
+  it("never register a passkey", async () => {
+    const page = await open();
+    const create = settled(`navigator.credentials.create({ publicKey: { ...${PUBLIC_KEY},
+      authenticatorSelection: { userVerification: "discouraged" } } })`);
+    expect(await page.evaluate(create)).toBe("NotAllowedError");
+  });
+
   it("still refuse after another session on the page detaches", async () => {
     const page = await open();
     await (await context.newCDPSession(page)).detach();
