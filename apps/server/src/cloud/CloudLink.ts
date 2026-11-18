@@ -545,15 +545,16 @@ const make = Effect.gen(function* () {
   const validateLinkedCloudUser = (
     cloudUserId: string,
   ): Effect.Effect<void, EnvironmentAuth.ServerAuthInternalError | CloudLinkAccountMismatchError> =>
-    secrets.get(CLOUD_LINKED_USER_ID).pipe(
+    Effect.all([secrets.get(CLOUD_LINKED_USER_ID), secrets.get(CLOUD_LINK_REVOKED)]).pipe(
       Effect.mapError(
         (cause) =>
           new EnvironmentAuth.ServerAuthLinkedCloudAccountVerificationError({
             cause,
           }),
       ),
-      Effect.flatMap((existing) => {
-        if (Option.isNone(existing)) {
+      Effect.flatMap(([existing, revoked]) => {
+        // A link T3 Connect revoked no longer ties the environment to its account.
+        if (Option.isNone(existing) || Option.isSome(revoked)) {
           return Effect.void;
         }
         const existingCloudUserId = bytesToString(existing.value);
