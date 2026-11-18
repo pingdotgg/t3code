@@ -19,7 +19,12 @@ final class T3SocksListener {
   var isListening: Bool { listener?.state == .ready }
 
   /// `port` asks for a specific port, so a restarted listener keeps the address WebKit was given.
-  func start(port: UInt16? = nil, onReady: @escaping (UInt16) -> Void) {
+  /// `onFailed` runs when iOS tears the socket down, as it can while the app is in the background.
+  func start(
+    port: UInt16? = nil,
+    onReady: @escaping (UInt16) -> Void,
+    onFailed: @escaping () -> Void = {}
+  ) {
     let parameters = NWParameters.tcp
     parameters.allowLocalEndpointReuse = true
     parameters.requiredLocalEndpoint = .hostPort(
@@ -28,7 +33,11 @@ final class T3SocksListener {
     guard let listener = try? NWListener(using: parameters) else { return }
     self.listener = listener
     listener.stateUpdateHandler = { [weak listener] state in
-      if case .ready = state, let port = listener?.port?.rawValue { onReady(port) }
+      switch state {
+      case .ready: if let port = listener?.port?.rawValue { onReady(port) }
+      case .failed: onFailed()
+      default: break
+      }
     }
     listener.newConnectionHandler = { [weak self] connection in
       T3TunnelDiagnostics.shared.note { $0.accepted += 1 }
