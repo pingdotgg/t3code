@@ -102,18 +102,42 @@ export function runRanAfter(
 /**
  * Background subagents that die on a usage limit each start a root run from a notification.
  * Those runs finish within milliseconds, before the limit resets, and have no work to show.
- * They must not replace the limited run, or the thread is never armed or resumed.
- * Items of types other than user_message, notification and error may be omitted.
+ * These are the runs that may be such wakes: completed after the latest usage-limit failure
+ * and before its reset. A continuation the user or recovery started is never a wake.
  */
-function runsWithoutLimitedWakes(
+export function usageLimitWakeCandidates(
   runs: ReadonlyArray<OrchestrationV2Run>,
   turnItems: ReadonlyArray<FailureScanTurnItem>,
 ): ReadonlyArray<OrchestrationV2Run> {
   const failed = latestExecutedRun(runs.filter((run) => run.status === "failed"));
   const failure = latestRootProviderFailure(failed, turnItems);
-  if (failure?.class !== "usage_limit" || failure.resetAt == null) return runs;
+  if (failed === null || failure?.class !== "usage_limit" || failure.resetAt == null) return [];
   const resetMs = Date.parse(failure.resetAt);
-  if (!Number.isFinite(resetMs)) return runs;
+  if (!Number.isFinite(resetMs)) return [];
+  return runs.filter(
+    (run) =>
+      run.status === "completed" &&
+      run.completedAt !== null &&
+      run.rootNodeId !== null &&
+      DateTime.toEpochMillis(run.completedAt) <= resetMs &&
+      runRanAfter(run, failed) &&
+      run.manualContinuationOfRunId === undefined &&
+      run.usageLimitContinuationOfRunId === undefined &&
+      run.restartContinuationOfRunId === undefined,
+  );
+}
+
+/**
+ * Drops the wake candidates a notification started, so they cannot replace the limited run
+ * and leave the thread never armed or resumed. Items of types other than user_message,
+ * notification and error may be omitted.
+ */
+function runsWithoutLimitedWakes(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
+): ReadonlyArray<OrchestrationV2Run> {
+  const candidates = usageLimitWakeCandidates(runs, turnItems);
+  if (candidates.length === 0) return runs;
   const firstInputs = new Map<string, { readonly type: string; readonly ordinal: number }>();
   for (const item of turnItems) {
     if (item.nodeId == null || item.ordinal == null) continue;
@@ -123,14 +147,20 @@ function runsWithoutLimitedWakes(
       firstInputs.set(item.nodeId, { type: item.type, ordinal: item.ordinal });
     }
   }
-  return runs.filter(
-    (run) =>
-      run.status !== "completed" ||
-      run.completedAt === null ||
-      DateTime.toEpochMillis(run.completedAt) > resetMs ||
-      run.rootNodeId === null ||
-      firstInputs.get(run.rootNodeId)?.type !== "notification",
+  const wakes = new Set(
+    candidates.filter(
+      (run) => run.rootNodeId !== null && firstInputs.get(run.rootNodeId)?.type === "notification",
+    ),
   );
+  return wakes.size === 0 ? runs : runs.filter((run) => !wakes.has(run));
+}
+
+/** The latest executed run, not counting notification wakes that did no work before a reset. */
+export function latestRunIgnoringLimitedWakes(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
+): OrchestrationV2Run | null {
+  return latestExecutedRun(runsWithoutLimitedWakes(runs, turnItems));
 }
 
 export function usageLimitBlockedRun(
@@ -138,7 +168,7 @@ export function usageLimitBlockedRun(
   turnItems: ReadonlyArray<FailureScanTurnItem>,
   sessionError: string | null,
 ): OrchestrationV2Run | null {
-  const executed = latestExecutedRun(runsWithoutLimitedWakes(runs, turnItems));
+  const executed = latestRunIgnoringLimitedWakes(runs, turnItems);
   if (executed?.status !== "failed") return null;
   const summary = threadErrorSummary(latestRootProviderFailure(executed, turnItems), sessionError);
   return summary.lastErrorClass === "usage_limit" ? executed : null;

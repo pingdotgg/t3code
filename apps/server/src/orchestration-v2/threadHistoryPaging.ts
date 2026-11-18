@@ -5,7 +5,10 @@ import type {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
+import {
+  usageLimitBlockedRun,
+  usageLimitWakeCandidates,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Schema from "effect/Schema";
 
 /**
@@ -559,32 +562,34 @@ function isRetainedDependency(
   );
 }
 
-// usageLimitBlockedRun needs the limited run's root error and the notification that started each
-// later run, and a long chain of wakes pushes both out of the window. Starts are kept as stubs
-// without their unbounded detail, and dropped past a quarter of the budget (clients then show
+// usageLimitBlockedRun needs the limited run's root error and the first input of each wake
+// candidate, and a long chain of wakes pushes both out of the window. Inputs are kept as stubs
+// without their unbounded text, and dropped past a quarter of the budget (clients then show
 // the plain latest run).
 function limitRecoveryItems(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems">,
   maxEncodedBytes: number,
 ): ReadonlyMap<string, OrchestrationV2TurnItem> {
   const items = new Map<string, OrchestrationV2TurnItem>();
-  const blocked = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
-  if (blocked === null) return items;
-  const laterRoots = new Set<string>();
-  for (const run of projection.runs) {
-    if (run.ordinal > blocked.ordinal && run.rootNodeId !== null) {
-      laterRoots.add(String(run.rootNodeId));
-    }
+  const candidateRoots = new Set<string>();
+  for (const run of usageLimitWakeCandidates(projection.runs, projection.turnItems)) {
+    if (run.rootNodeId !== null) candidateRoots.add(String(run.rootNodeId));
   }
-  if (laterRoots.size === 0) return items;
+  if (candidateRoots.size === 0) return items;
+  const blocked = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
   const firstInputs = new Map<string, OrchestrationV2TurnItem>();
   for (const item of projection.turnItems) {
-    if (item.type === "error" && item.runId === blocked.id && item.nodeId === blocked.rootNodeId) {
+    if (
+      item.type === "error" &&
+      blocked !== null &&
+      item.runId === blocked.id &&
+      item.nodeId === blocked.rootNodeId
+    ) {
       items.set(String(item.id), item);
     } else if (
       (item.type === "user_message" || item.type === "notification") &&
       item.nodeId !== null &&
-      laterRoots.has(String(item.nodeId))
+      candidateRoots.has(String(item.nodeId))
     ) {
       const first = firstInputs.get(String(item.nodeId));
       if (first === undefined || item.ordinal < first.ordinal) {
@@ -595,9 +600,14 @@ function limitRecoveryItems(
   let startBytes = 0;
   const starts: Array<OrchestrationV2TurnItem> = [];
   for (const item of firstInputs.values()) {
-    if (item.type !== "notification") continue;
-    const { detail: _detail, ...rest } = item;
-    const stub = { ...rest, title: null, summary: item.summary.slice(0, 120).trimEnd() };
+    let stub: OrchestrationV2TurnItem;
+    if (item.type === "notification") {
+      const { detail: _detail, ...rest } = item;
+      stub = { ...rest, title: null, summary: item.summary.slice(0, 120).trimEnd() };
+    } else if (item.type === "user_message") {
+      const { context: _context, ...rest } = item;
+      stub = { ...rest, text: item.text.slice(0, 120), attachments: [] };
+    } else continue;
     startBytes += bytesOfJson(stub);
     starts.push(stub);
   }

@@ -9,9 +9,11 @@ import type {
 import {
   latestExecutedRun,
   latestRootProviderFailure,
+  latestRunIgnoringLimitedWakes,
   orchestrationV2WorktreePending,
   runRanAfter,
   usageLimitBlockedRun,
+  usageLimitWakeCandidates,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import { threadIssueKeysEqual } from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
@@ -1071,7 +1073,9 @@ function usageLimitHoldsQueue(
     latestSession?.lastError ?? null,
   );
   if (limited === null) return false;
-  if (latestExecutedRun(projection.runs)?.id === limited.id) return true;
+  if (latestRunIgnoringLimitedWakes(projection.runs, projection.turnItems)?.id === limited.id) {
+    return true;
+  }
   if (now === undefined) return false;
   const resetAt = latestRootProviderFailure(limited, projection.turnItems)?.resetAt;
   return resetAt != null && Date.parse(resetAt) > DateTime.toEpochMillis(now);
@@ -6898,10 +6902,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         source === undefined ||
         (source.status !== "interrupted" &&
           !(source.status === "failed" && limited?.class === "usage_limit")) ||
-        (
-          usageLimitBlockedRun(projection.runs, projection.turnItems, null) ??
-          latestExecutedRun(projection.runs)
-        )?.id !== source.id ||
+        latestRunIgnoringLimitedWakes(projection.runs, projection.turnItems)?.id !== source.id ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.runtimeRequests.some((request) => request.status === "pending")
@@ -12734,7 +12735,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     let { thread } = input.projection;
     let recovery = thread.limitRecovery;
     // Stop must also disarm a limited run that completed notification wakes hide. Only the
-    // latest failure's errors and the inputs of runs completed before its reset can matter.
+    // latest failure's errors and the inputs of its wake candidates can matter.
     const readItems = (filter: Parameters<typeof projectionStore.getThreadRecords>[2]) =>
       projectionStore
         .getThreadRecords(thread.id, ["turnItems"], filter)
@@ -12744,16 +12745,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       failed === null
         ? []
         : (yield* readItems({ turnItemTypes: ["error"], turnItemRunIds: [failed.id] })).turnItems;
-    const resetAt = latestRootProviderFailure(failed, errors)?.resetAt;
-    const resetMs = resetAt == null ? Number.NaN : Date.parse(resetAt);
-    const wakeRunIds = runs
-      .filter(
-        (run) =>
-          run.status === "completed" &&
-          run.completedAt !== null &&
-          DateTime.toEpochMillis(run.completedAt) <= resetMs,
-      )
-      .map((run) => run.id);
+    const wakeRunIds = usageLimitWakeCandidates(runs, errors).map((run) => run.id);
     const inputs =
       wakeRunIds.length === 0
         ? []
@@ -12762,7 +12754,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             turnItemRunIds: wakeRunIds,
           })).turnItems;
     const turnItems = [...errors, ...inputs];
-    const latest = usageLimitBlockedRun(runs, turnItems, null) ?? latestExecutedRun(runs);
+    const latest = latestRunIgnoringLimitedWakes(runs, turnItems);
     if (latest?.status === "failed") {
       const failure = latestRootProviderFailure(latest, turnItems);
       if (

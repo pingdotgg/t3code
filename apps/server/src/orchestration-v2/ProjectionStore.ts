@@ -1241,7 +1241,6 @@ const shellIndexLineage = (row: {
   ...(row.side_chat === null ? {} : { sideChat: row.side_chat === 1 }),
 });
 
-const LIMIT_EVIDENCE_MAX_RUNS = 200;
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 // Empty filters still scan SQLite rows; short-circuit them, including turnItemTypes: [].
@@ -4729,10 +4728,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           LIMIT 1
         )
     `;
-    // Mirrors the wake rule of usageLimitBlockedRun: a run that a notification started and
-    // that completed before the newest usage-limit failure resets did no work, so it must
-    // not replace that failure as the latest run.
-    const isLimitedWake = (alias: string) => {
+    // Mirrors usageLimitWakeCandidates: a completed run, not a continuation, that ended
+    // before the newest usage-limit failure resets. Runs that ended before the failure match
+    // too; they can never be the latest run, so selections come out the same.
+    const isWakeCandidate = (alias: string) => {
       const run = sql.literal(alias);
       return sql`(
         ${run}.status = 'completed'
@@ -4741,17 +4740,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND julianday(${run}.completed_at) <= julianday(
             json_extract(latest_failure_error.payload_json, '$.failure.resetAt')
           ), 0
-        ) AND (
-          SELECT wake.type FROM orchestration_v2_projection_turn_items wake
-          WHERE wake.run_id = ${run}.run_id
-            AND wake.node_id IS NOT NULL
-            AND wake.node_id IS json_extract(${run}.payload_json, '$.rootNodeId')
-            AND wake.type IN ('user_message', 'notification')
-          ORDER BY wake.ordinal
-          LIMIT 1
-        ) IS 'notification'
+        )
+        AND json_extract(${run}.payload_json, '$.manualContinuationOfRunId') IS NULL
+        AND json_extract(${run}.payload_json, '$.usageLimitContinuationOfRunId') IS NULL
+        AND json_extract(${run}.payload_json, '$.restartContinuationOfRunId') IS NULL
       )`;
     };
+    const firstRootInput = (alias: string, column: "type" | "turn_item_id") => {
+      const run = sql.literal(alias);
+      return sql`(
+        SELECT ${sql.literal(`wake.${column}`)} FROM orchestration_v2_projection_turn_items wake
+        WHERE wake.run_id = ${run}.run_id
+          AND wake.node_id IS NOT NULL
+          AND wake.node_id IS json_extract(${run}.payload_json, '$.rootNodeId')
+          AND wake.type IN ('user_message', 'notification')
+        ORDER BY wake.ordinal
+        LIMIT 1
+      )`;
+    };
+    // A wake candidate that a notification started did no work, so it must not replace the
+    // usage-limit failure as the latest run (usageLimitBlockedRun).
+    const isLimitedWake = (alias: string) =>
+      sql`(${isWakeCandidate(alias)} AND ${firstRootInput(alias, "type")} IS 'notification')`;
 
     const getLimitRecoveryCandidates = Effect.fn("ProjectionStore.getLimitRecoveryCandidates")(
       function* (options: Parameters<ProjectionStoreV2Shape["getLimitRecoveryCandidates"]>[0]) {
@@ -7823,16 +7833,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
-    // A window reads only the newest rows, so an older usage-limited run and the notification
-    // starts of the wakes after it can be missing. Clients need them (usageLimitBlockedRun)
-    // to resume it. They join runs and turnItems, never visibleTurnItems.
+    // A window reads only the newest rows, so an older usage-limited run and the first input
+    // of each wake candidate it loaded can be missing. Clients need them (usageLimitBlockedRun)
+    // to classify wakes and resume the run. They join runs and turnItems, never visibleTurnItems.
     const withLimitEvidence = Effect.fn("ProjectionStore.withLimitEvidence")(function* (
       threadId: ThreadId,
       projection: OrchestrationV2ThreadProjection,
     ) {
-      const rows = yield* sql<{ readonly kind: string; readonly id: string }>`
+      const rows = yield* sql<{ readonly kind: string; readonly id: string | null }>`
         WITH blocked AS (
-          SELECT r.run_id, r.ordinal, item.turn_item_id AS error_id
+          SELECT r.run_id, item.turn_item_id AS error_id
           FROM orchestration_v2_projection_threads t
           ${latestFailureJoins}
           INNER JOIN orchestration_v2_projection_runs r ON r.run_id = (
@@ -7856,45 +7866,31 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ORDER BY error.updated_at DESC, error.ordinal DESC, error.turn_item_id DESC
             LIMIT 1
           )
+          -- The blocked run, when there is one, is the newest failed run.
           WHERE t.thread_id = ${threadId}
-            AND EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_turn_items limited
-              WHERE limited.thread_id = t.thread_id
-                AND limited.type = 'error' AND limited.status = 'failed'
-                AND json_extract(limited.payload_json, '$.failure.class') = 'usage_limit'
-            )
+            AND json_extract(latest_failure_error.payload_json, '$.failure.class') = 'usage_limit'
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
-        ), later AS (
-          -- Runs omitted here are not loaded at all, which leaves the result unchanged.
-          SELECT run.run_id, run.payload_json
-          FROM orchestration_v2_projection_runs run, blocked
-          WHERE run.thread_id = ${threadId} AND run.ordinal > blocked.ordinal
-          ORDER BY run.ordinal DESC
-          LIMIT ${LIMIT_EVIDENCE_MAX_RUNS}
         )
         SELECT 'run' AS kind, run_id AS id FROM blocked
         UNION ALL SELECT 'item', error_id FROM blocked
-        UNION ALL SELECT 'run', run_id FROM later
         UNION ALL
-        SELECT 'item', start.turn_item_id
-        FROM later
-        CROSS JOIN orchestration_v2_projection_turn_items start ON start.turn_item_id = (
-          SELECT first_input.turn_item_id FROM orchestration_v2_projection_turn_items first_input
-          WHERE first_input.run_id = later.run_id
-            AND first_input.node_id IS json_extract(later.payload_json, '$.rootNodeId')
-            AND first_input.type IN ('user_message', 'notification')
-          ORDER BY first_input.ordinal
-          LIMIT 1
-        )
-        WHERE start.type = 'notification'
+        SELECT 'item', ${firstRootInput("run", "turn_item_id")}
+        FROM orchestration_v2_projection_threads t
+        ${latestFailureJoins}
+        INNER JOIN orchestration_v2_projection_runs run ON run.thread_id = t.thread_id
+        WHERE t.thread_id = ${threadId}
+          AND run.run_id IN (SELECT value FROM json_each(${encodeIdList(
+            projection.runs.map((run) => run.id),
+          )}))
+          AND ${isWakeCandidate("run")}
       `;
       const loadedRunIds = new Set<string>(projection.runs.map((run) => run.id));
       const loadedItemIds = new Set<string>(projection.turnItems.map((item) => item.id));
       const runIds = rows.flatMap((row) =>
-        row.kind === "run" && !loadedRunIds.has(row.id) ? [row.id] : [],
+        row.kind === "run" && row.id !== null && !loadedRunIds.has(row.id) ? [row.id] : [],
       );
       const itemIds = rows.flatMap((row) =>
-        row.kind === "item" && !loadedItemIds.has(row.id) ? [row.id] : [],
+        row.kind === "item" && row.id !== null && !loadedItemIds.has(row.id) ? [row.id] : [],
       );
       if (runIds.length === 0 && itemIds.length === 0) return projection;
       const runRows = yield* sql<PayloadRow>`

@@ -123,10 +123,13 @@ export function mergeOlderHistoryIntoProjection(
     ) {
       const currentItem = turnItemById.get(String(row.sourceItemId));
       // Hidden live items stay hidden. Snapshots also retain interrupt requests, pending
-      // request cards, and the error and wake notifications that usage-limit recovery reads
-      // outside the visible window; their history page shows them.
+      // request cards, and the error and run inputs that usage-limit recovery reads outside
+      // the visible window; their history page shows them.
       if (currentItem !== undefined) {
-        const recovery = currentItem.type === "error" || currentItem.type === "notification";
+        const recovery =
+          currentItem.type === "error" ||
+          currentItem.type === "notification" ||
+          currentItem.type === "user_message";
         if (
           (!recovery &&
             currentItem.type !== "run_interrupt_request" &&
@@ -140,7 +143,7 @@ export function mergeOlderHistoryIntoProjection(
           })
         )
           continue;
-        // Retained notifications are stubs without detail; the page row has the full item.
+        // Retained inputs are stubs without their full text; the page row has the full item.
         if (recovery) turnItemById.set(String(row.sourceItemId), row.item);
         else row = { ...row, item: currentItem };
       }

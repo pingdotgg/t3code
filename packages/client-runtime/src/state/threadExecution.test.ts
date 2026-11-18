@@ -301,6 +301,9 @@ describe("thread execution presentation", () => {
     expect(deriveResumableRunId(hidden, deriveThreadRuntime(hidden))).toBe(failed.id);
     const afterReset = { ...wake, completedAt: DateTime.makeUnsafe("2026-07-28T11:30:00.000Z") };
     expect(usageLimitBlockedRun([failed, afterReset], hidden.turnItems, null)).toBeNull();
+    // Manual Resume also starts from a notification; once it completes, it did the work.
+    const resumed = { ...wake, manualContinuationOfRunId: failed.id };
+    expect(usageLimitBlockedRun([failed, resumed], hidden.turnItems, null)).toBeNull();
   });
 
   it("keeps live activity attached to an executing run when a newer run is queued", () => {

@@ -791,6 +791,33 @@ describe("threadHistoryPaging", () => {
     expect(
       usageLimitBlockedRun(tight.projection.runs, tight.projection.turnItems, null),
     ).toBeNull();
+
+    // A user message started the run after the limit, so it did work even though only its
+    // later notification and the limit error are in the window.
+    const userStart = {
+      ...limitError,
+      id: TurnItemId.make("user-start"),
+      type: "user_message",
+      runId: wakes[5]!.run.id,
+      nodeId: wakes[5]!.run.rootNodeId,
+      ordinal: 0,
+      text: "a real request",
+      attachments: [],
+    } as unknown as OrchestrationV2TurnItem;
+    const userRows = [
+      { ...makeRow(0), position: -1, sourceItemId: userStart.id, item: userStart },
+      rows[0]!,
+      rows[6]!,
+    ];
+    const userRun = buildBoundedThreadProjection({
+      projection: {
+        ...makeProjection(userRows),
+        runs: [limited, wakes[5]!.run],
+      } as unknown as ReturnType<typeof makeProjection>,
+      snapshotSequence: 1,
+      policy: { maxItems: 2, maxEncodedBytes: 10_000_000 },
+    }).projection;
+    expect(usageLimitBlockedRun(userRun.runs, userRun.turnItems, null)).toBeNull();
   });
 
   it("charges local row.item duplication when measuring bounded timeline bytes", () => {
