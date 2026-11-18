@@ -7,9 +7,11 @@ import {
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
 import { use, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import { Keyboard, Platform, Pressable, RefreshControl, View } from "react-native";
+import { Keyboard, Platform, Pressable, View } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -28,6 +30,8 @@ import {
   usePullRequestListFilters,
   type PullRequestFilterMenu,
 } from "./PullRequestListFilters";
+import { SavedViewsMenu } from "../layout/workspace/SavedViewsMenu";
+import { pullRequestViewMatches } from "./pullRequestSavedViews";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
@@ -48,12 +52,16 @@ import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspace
 
 function PullRequestListErrors(props: { readonly count: number; readonly children: ReactNode }) {
   const [expanded, setExpanded] = useState(false);
-  const label = `${props.count} ${props.count === 1 ? "loading error" : "loading errors"}`;
+  const gt = useGT();
+  const label = gt("{count, plural, one {{count} loading error} other {{count} loading errors}}", {
+    count: props.count,
+  });
+  const detailsLabel = expanded ? gt("Hide details") : gt("Show details");
   return (
     <View>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${label}. ${expanded ? "Hide details" : "Show details"}`}
+        accessibilityLabel={`${label}. ${detailsLabel}`}
         accessibilityState={{ expanded }}
         onPress={() => setExpanded((value) => !value)}
         className="min-h-12 flex-row items-center gap-3 px-4 py-3 active:opacity-70"
@@ -64,9 +72,7 @@ function PullRequestListErrors(props: { readonly count: number; readonly childre
           tintColorClassName="accent-icon-muted"
         />
         <Text className="min-w-0 flex-1 text-sm font-t3-medium text-foreground">{label}</Text>
-        <Text className="shrink text-xs text-foreground-muted">
-          {expanded ? "Hide details" : "Show details"}
-        </Text>
+        <Text className="shrink text-xs text-foreground-muted">{detailsLabel}</Text>
         <SymbolView
           name={expanded ? "chevron.up" : "chevron.down"}
           size={11}
@@ -125,6 +131,7 @@ export function PullRequestsScreen(
   } = {},
 ) {
   const navigation = useNavigation();
+  const gt = useGT();
   const primaryColumn = use(NativePrimaryColumnContext);
   const workspace = useWorkspaceTabs()!;
   const { environments } = useWorkspaceState();
@@ -326,20 +333,16 @@ export function PullRequestsScreen(
         // to this tab. The thread list shows none either.
         showsVerticalScrollIndicator={Platform.OS !== "android"}
         recycleItems
-        renderScrollComponent={NativeScrollView}
-        // UIKit owns the bar's inset, so a minimizing bar and a resized column move
-        // the list in the same frame as the bar.
-        contentInsetAdjustmentBehavior="automatic"
+        renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
+        contentInsetAdjustmentBehavior="never"
+        contentInset={Platform.OS === "ios" ? { top: contentTopInset } : undefined}
         // A plain offset: LegendList adds the list header to an index-based restore, which
         // landed every return one header lower.
         initialScrollOffset={
           initialScrollOffset > 0 ? initialScrollOffset - contentTopInset : undefined
         }
-        contentInsetStartAdjustment={contentTopInset}
         contentContainerStyle={{
-          paddingBottom:
-            Math.max(bottomSafeArea, workspace.bottomClearance) -
-            (Platform.OS === "ios" ? bottomSafeArea : 0),
+          paddingBottom: Math.max(bottomSafeArea, workspace.bottomClearance),
         }}
         onScroll={(event) => {
           workspace.recordScrollOffset(
@@ -354,7 +357,43 @@ export function PullRequestsScreen(
         ListHeaderComponentStyle={{ zIndex: 1 }}
         ListHeaderComponent={
           <>
-            <PullRequestListFilters sidebar={sidebar} filters={filters} />
+            <PullRequestListFilters
+              sidebar={sidebar}
+              savedViewsMenu={
+                <SavedViewsMenu
+                  read={(preferences) => preferences.pullRequestSavedViews}
+                  write={(pullRequestSavedViews) => ({ pullRequestSavedViews })}
+                  list="pullRequest"
+                  suggestedName={
+                    controls.involvement === "reviewing" ? gt("PRs Requesting My Review") : ""
+                  }
+                  matches={pullRequestViewMatches}
+                  scope={{
+                    environmentId,
+                    controls,
+                    query: tab.searchMode === "resting" ? "" : tab.query,
+                  }}
+                  onApply={async (view) => {
+                    await listControls.applyView(view);
+                    workspace.dispatch(
+                      view.query.trim()
+                        ? { type: "search", tab: "pullRequests" }
+                        : { type: "cancel", tab: "pullRequests", scrollToTop: true },
+                    );
+                    workspace.dispatch({
+                      type: "query",
+                      tab: "pullRequests",
+                      query: view.query.trim(),
+                    });
+                    void listRef.current?.scrollToOffset({
+                      offset: Platform.OS === "ios" ? -insets.top : 0,
+                      animated: false,
+                    });
+                  }}
+                />
+              }
+              filters={filters}
+            />
             {result.data?.errors.length ? (
               <PullRequestListErrors
                 key={JSON.stringify(targets)}
@@ -363,7 +402,7 @@ export function PullRequestsScreen(
                 {result.data.errors.map((error) => (
                   <PullRequestListError
                     key={`${error.environmentId} ${error.projectTitle} ${error.message}`}
-                    message={`${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`}
+                    message={`${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || gt("Environment", { $context: "fallback name for a server" })}: ${error.message}`}
                   />
                 ))}
               </PullRequestListErrors>
@@ -375,15 +414,15 @@ export function PullRequestsScreen(
             <View className="items-center py-5">
               <AppActivityIndicator
                 colorClassName="accent-icon"
-                accessibilityLabel="Loading more pull requests"
+                accessibilityLabel={gt("Loading more pull requests")}
               />
             </View>
           ) : result.loadMoreError ? (
             <View className="items-center gap-2 px-8 py-4">
               <Text className="text-xs text-foreground-muted">{result.loadMoreError}</Text>
               <Button
-                label="Try again"
-                accessibilityLabel="Retry loading more pull requests"
+                label={gt("Try again")}
+                accessibilityLabel={gt("Retry loading more pull requests")}
                 onPress={() => void result.loadMore(true)}
               />
             </View>
@@ -391,8 +430,8 @@ export function PullRequestsScreen(
             // A filtered page can be too short to scroll, which leaves nothing to reach the end of.
             <View className="items-center py-4">
               <Button
-                label="Load more"
-                accessibilityLabel="Load more pull requests"
+                label={gt("Load more")}
+                accessibilityLabel={gt("Load more pull requests")}
                 onPress={() => void result.loadMore()}
               />
             </View>
@@ -408,23 +447,23 @@ export function PullRequestsScreen(
               <EmptyState
                 title={
                   result.error
-                    ? "Couldn't load pull requests"
+                    ? gt("Couldn't load pull requests")
                     : targets.length && connectedTargets.length === 0
-                      ? "Environment offline"
+                      ? gt("Environment offline")
                       : targets.length
                         ? query
-                          ? "No results"
-                          : "No matching pull requests"
-                        : "Connect an environment"
+                          ? gt("No results")
+                          : gt("No matching pull requests")
+                        : gt("Connect an environment")
                 }
                 detail={
                   result.error
-                    ? "Expand the loading errors above for details."
+                    ? gt("Expand the loading errors above for details.")
                     : targets.length && connectedTargets.length === 0
-                      ? "Reconnect to load pull requests that aren't saved on this device."
+                      ? gt("Reconnect to load pull requests that aren't saved on this device.")
                       : targets.length
-                        ? "Pull requests from the selected environments' projects appear here."
-                        : "Add an environment in Settings to browse its pull requests."
+                        ? gt("Pull requests from the selected environments' projects appear here.")
+                        : gt("Add an environment in Settings to browse its pull requests.")
                 }
                 variant="plain"
               />
