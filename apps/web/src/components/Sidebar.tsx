@@ -1021,6 +1021,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
   // Safari may click after Ctrl+click opens settings; suppress that selection until the picker reopens.
   const suppressNextScopeChangeRef = useRef(false);
+  const projectScopeTriggerRef = useRef<HTMLButtonElement>(null);
   const highlightedProjectScopeKeyRef = useRef<string | null>(null);
   // Hold dropped rows until server placement is confirmed; block another pickup from replacing the hold.
   const [optimisticDrop, setOptimisticDrop] = useState<SidebarOptimisticDrop | null>(null);
@@ -3024,6 +3025,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   }}
                 >
                   <ComboboxTrigger
+                    ref={projectScopeTriggerRef}
                     render={
                       <SidebarHeaderIconButton
                         label={
@@ -3226,7 +3228,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     projects: scopedProjectGroups.map((project) => project.displayName).join(", "),
                   })}
                 </span>
-                <Button variant="ghost-muted" size="micro" onClick={() => setProjectScopeKeys([])}>
+                <Button
+                  variant="ghost-muted"
+                  size="micro"
+                  onClick={(event) => {
+                    setProjectScopeKeys([]);
+                    // Unmounting the banner drops focus; a keyboard click (detail 0) returns it here.
+                    if (event.detail === 0) projectScopeTriggerRef.current?.focus();
+                  }}
+                >
                   <XIcon />
                   {gt("Clear", { $context: "verb, removes the sidebar project filter" })}
                 </Button>
