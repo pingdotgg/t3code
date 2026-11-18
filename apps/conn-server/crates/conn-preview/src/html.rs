@@ -420,7 +420,7 @@ mod tests {
         tokio::fs::create_dir(&root).await.unwrap();
         let pid_file = root.join("pid");
         let script = format!(
-            "#!/usr/bin/python3\nimport os,json,signal\nopen({},'w').write(str(os.getpid()))\nr=os.fdopen(3,'rb',buffering=0);w=os.fdopen(4,'wb',buffering=0)\nwhile True:\n data=bytearray()\n while True:\n  c=r.read(1)\n  if not c: signal.pause()\n  if c==b'\\0': break\n  data.extend(c)\n q=json.loads(data)\n if q['method']=='Browser.getVersion': w.write(json.dumps({{'id':q['id'],'result':{{}}}}).encode()+b'\\0')\n",
+            "#!/usr/bin/python3 -B\nimport os,json,signal\nopen({},'w').write(str(os.getpid()))\nr=os.fdopen(3,'rb',buffering=0);w=os.fdopen(4,'wb',buffering=0)\nwhile True:\n data=bytearray()\n while True:\n  c=r.read(1)\n  if not c: signal.pause()\n  if c==b'\\0': break\n  data.extend(c)\n q=json.loads(data)\n if q['method']=='Browser.getVersion': w.write(json.dumps({{'id':q['id'],'result':{{}}}}).encode()+b'\\0')\n",
             serde_json::to_string(&pid_file).unwrap()
         );
         let executable = root.join("chrome");

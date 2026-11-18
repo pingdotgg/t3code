@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -B
 import os, json
 r = os.fdopen(3, 'rb', buffering=0)
 w = os.fdopen(4, 'wb', buffering=0)
