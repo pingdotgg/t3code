@@ -20,4 +20,14 @@ describe("resolveLinkTarget", () => {
       );
     }
   });
+
+  it("sends the host's loopback links to its browser unless the click asks for the system one", () => {
+    const url = "http://127.0.0.1:5173/";
+    const input = { url, preference: "system", opensInEnvironmentBrowser: true } as const;
+    expect(resolveLinkTarget({ ...input, event: click, canOpenInApp: true })).toBe("app");
+    expect(
+      resolveLinkTarget({ ...input, event: { ...click, metaKey: true }, canOpenInApp: true }),
+    ).toBe("system");
+    expect(resolveLinkTarget({ ...input, event: click, canOpenInApp: false })).toBe("system");
+  });
 });

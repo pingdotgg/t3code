@@ -304,6 +304,13 @@ listed port opens as `http://localhost:<port>` and might not be a web page. For
 an HTTPS server or a specific path, set the **Preview URL** on the project
 script that starts it; T3 Code checks that address and opens it as written.
 
+On web and desktop, a `localhost` link in a remote environment's thread or
+terminal opens in that environment's browser, even when links normally open in
+your system browser, because `localhost` on your device is a different machine.
+Cmd/Ctrl-click opens it in your system browser instead. Over a LAN or Tailscale
+connection it uses the environment's address, which works only when the server
+listens on it, for example `vite --host`.
+
 To stop listing ports, set `T3CODE_PORT_DISCOVERY=0` in the environment that
 starts the T3 Code server, such as
 [`service.env`](./background-service.md#configure-the-service-environment) for

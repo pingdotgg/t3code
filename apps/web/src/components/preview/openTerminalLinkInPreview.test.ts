@@ -75,7 +75,10 @@ describe("openTerminalLinkInPreview", () => {
   });
 
   it("opens a server tab with the default zoom and appearance", async () => {
-    vi.spyOn(previewRuntime, "previewRuntimeFor").mockReturnValue("server");
+    vi.spyOn(previewRuntime, "previewTargetForLink").mockReturnValue({
+      url: "https://t3.chat/",
+      runtime: "server",
+    });
     const openPreview = vi.fn<OpenPreviewMutation>(async () =>
       AsyncResult.failure(Cause.interrupt()),
     );

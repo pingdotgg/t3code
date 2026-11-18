@@ -77,6 +77,7 @@ import {
   MAX_TERMINALS_PER_GROUP,
   type ThreadTerminalGroup,
 } from "../types";
+import { resolveClientBrowserUrl } from "~/browser/browserTargetResolver";
 import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose } from "~/lib/terminalCloseConfirm";
 import { useClientSettings } from "../hooks/useSettings";
@@ -1080,7 +1081,8 @@ function TerminalSessionViewport({
             return;
           }
           const fallbackToBrowser = () => {
-            void localApi.shell.openExternal(text).catch((error: unknown) => {
+            const url = resolveClientBrowserUrl(environmentId, text);
+            void localApi.shell.openExternal(url).catch((error: unknown) => {
               writeSystemMessage(
                 latestTerminal,
                 thrownErrorMessage(error, m) ?? m(msg("Unable to open link")),
