@@ -146,6 +146,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     profileDirectory: string | undefined;
     harnessPath: string | undefined;
     forceFileStorage: string | undefined;
+    autoCompactOverride: string | undefined;
     credentialKeys: ReadonlyArray<string>;
     geminiApiKey: string | undefined;
     tempDirectory: string | undefined;
@@ -202,6 +203,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         profileDirectory: env("GEMINI_HOME"),
         harnessPath: env("ANTIGRAVITY_HARNESS_PATH"),
         forceFileStorage: env("AGY_ACP_FORCE_FILE_STORAGE"),
+        autoCompactOverride: env("AGY_CLI_AUTO_COMPACT_OVERRIDE"),
         credentialKeys: Object.keys(environment).filter((key) =>
           blockedCredentialKeys.has(key.toUpperCase()),
         ),
@@ -309,7 +311,10 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
     "refreshes the selected executable and limits form capabilities to chat",
     () =>
       Effect.gen(function* () {
-        const h = yield* makeHarness();
+        const h = yield* makeHarness({
+          config: { autoCompactWindow: "840000" },
+          environment: [{ name: "AGY_CLI_AUTO_COMPACT_OVERRIDE", value: "70%" }],
+        });
         yield* h.refresh();
         const snapshot = yield* h.instance.snapshot.getSnapshot;
         expect(snapshot.status).toBe("ready");
@@ -442,6 +447,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             "--app-data-dir",
             "antigravity-acp",
           ]);
+          expect(h.launches.at(-1)?.autoCompactOverride).toBe("840000");
           expect(
             (yield* h.readRequests)
               .slice(requestsBefore)

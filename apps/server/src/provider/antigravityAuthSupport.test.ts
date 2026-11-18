@@ -109,24 +109,53 @@ describe("Antigravity process environment", () => {
     });
   });
 
-  it("runs the agy CLI as `agy acp` without a harness", () => {
+  it.each([
+    { autoCompactWindow: undefined, expected: "70%" },
+    { autoCompactWindow: "", expected: "70%" },
+    { autoCompactWindow: "840000", expected: "840000" },
+    { autoCompactWindow: "85%", expected: "85%" },
+  ])(
+    "runs agy acp with auto-compaction override $autoCompactWindow",
+    ({ autoCompactWindow, expected }) => {
+      const spawn = buildAntigravityAcpSpawnInput({
+        installation: { executablePath: "/usr/bin/agy", harnessPath: null },
+        profile,
+        cwd: "/project",
+        baseEnv: {
+          PATH: "/usr/bin",
+          ANTIGRAVITY_HARNESS_PATH: "/stale/harness",
+          AGY_CLI_AUTO_COMPACT_OVERRIDE: "70%",
+        },
+        ...(autoCompactWindow === undefined ? {} : { autoCompactWindow }),
+      });
+
+      expect(spawn.command).toBe("/usr/bin/agy");
+      expect(spawn.args).toEqual([
+        "acp",
+        "--gemini-dir",
+        profile.geminiHome,
+        "--app-data-dir",
+        "antigravity-acp",
+      ]);
+      expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
+      expect(spawn.env).toMatchObject({
+        GEMINI_HOME: profile.geminiHome,
+        PATH: "/usr/bin",
+        AGY_CLI_AUTO_COMPACT_OVERRIDE: expected,
+      });
+    },
+  );
+
+  it("preserves an inherited auto-compaction override for a JS harness", () => {
     const spawn = buildAntigravityAcpSpawnInput({
-      installation: { executablePath: "/usr/bin/agy", harnessPath: null },
+      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
       profile,
       cwd: "/project",
-      baseEnv: { PATH: "/usr/bin", ANTIGRAVITY_HARNESS_PATH: "/stale/harness" },
+      baseEnv: { AGY_CLI_AUTO_COMPACT_OVERRIDE: "70%" },
+      autoCompactWindow: "840000",
     });
 
-    expect(spawn.command).toBe("/usr/bin/agy");
-    expect(spawn.args).toEqual([
-      "acp",
-      "--gemini-dir",
-      profile.geminiHome,
-      "--app-data-dir",
-      "antigravity-acp",
-    ]);
-    expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
-    expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
+    expect(spawn.env?.AGY_CLI_AUTO_COMPACT_OVERRIDE).toBe("70%");
   });
 
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
