@@ -563,6 +563,75 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("dates Claude usage served from the CLI's saved reading by when it was fetched", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      // While /api/oauth/usage is rate-limited, Claude Code answers get_usage from this reading.
+      const savedFiveHour = { utilization: 12, resets_at: "2026-07-18T14:39:00Z" };
+      yield* fs.writeFileString(
+        path.join(fixtures.claudeHomePath, ".claude.json"),
+        JSON.stringify({
+          cachedUsageUtilization: {
+            fetchedAtMs: 20 * 60_000,
+            utilization: { five_hour: savedFiveHour },
+          },
+        }),
+      );
+      let fiveHour = savedFiveHour;
+      const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: () =>
+              Promise.resolve({
+                commands: [{ name: "usage", description: "", argumentHint: "" }],
+                account: {
+                  email: "test@example.com",
+                  subscriptionType: "pro",
+                  tokenSource: "oauth",
+                },
+              }),
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+              rate_limits_available: true,
+              rate_limits: { five_hour: fiveHour },
+            }),
+          }) as ReturnType<typeof ClaudeSdk.query>,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+      yield* TestClock.adjust("1 hour");
+
+      const claudeId = ProviderInstanceId.make("claude_saved_usage");
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+
+      const saved = yield* claude!.snapshot.refresh;
+      expect(saved.usageLimits?.windows[0]?.usedPercent).toBe(12);
+      expect(saved.usageLimits?.checkedAt).toBe("1970-01-01T00:20:00.000Z");
+
+      fiveHour = { ...savedFiveHour, utilization: 30 };
+      yield* claude!.invalidateCaches ?? Effect.void;
+      const fetched = yield* claude!.snapshot.refresh;
+      expect(fetched.usageLimits?.windows[0]?.usedPercent).toBe(30);
+      expect(fetched.usageLimits?.checkedAt).toBe("1970-01-01T01:00:00.000Z");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("scopes Claude's one-probe fallback to the logged-in organization", () =>
     Effect.gen(function* () {
       if (yield* HostProcess.isWindows) return;
