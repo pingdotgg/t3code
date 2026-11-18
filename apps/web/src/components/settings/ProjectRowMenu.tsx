@@ -106,7 +106,9 @@ export function ProjectRowMenu({
                 }
               >
                 {group.archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
-                {group.archived ? gt("Unarchive") : gt("Archive")}
+                {group.archived
+                  ? gt("Unarchive")
+                  : gt("Archive", { $context: "verb, archives a project" })}
               </MenuItem>
             )}
           </>
