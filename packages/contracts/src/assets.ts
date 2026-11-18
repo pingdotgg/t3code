@@ -8,6 +8,7 @@ import {
 } from "./chatAttachment.ts";
 import { ProjectFaviconPath } from "./project.ts";
 import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
+import { EnvironmentThemeId } from "./server.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
@@ -16,6 +17,14 @@ const ASSET_PATH_MAX_LENGTH = 1024;
  * it first, and servers and clients of different releases must keep understanding each other.
  */
 export const SOURCE_CONTROL_MEDIA_ASSET = "github-media" as const;
+
+export const NativeAppIconReference = Schema.Union([
+  ToolActivityNativeAppReference,
+  Schema.TaggedStruct("app-path", {
+    path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+  }),
+]);
+export type NativeAppIconReference = typeof NativeAppIconReference.Type;
 
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
@@ -26,6 +35,8 @@ export const AssetResource = Schema.Union([
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     disposition: Schema.optionalKey(Schema.Literal("attachment")),
+    // Written relative to the thread's workspace, so only that host's file is meant.
+    hostOnly: Schema.optionalKey(Schema.Literal(true)),
   }),
   Schema.TaggedStruct("draft-workspace-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
@@ -52,12 +63,15 @@ export const AssetResource = Schema.Union([
     path: Schema.optional(ProjectFaviconPath),
   }),
   Schema.TaggedStruct("native-app-icon", {
-    app: ToolActivityNativeAppReference,
+    app: NativeAppIconReference,
   }),
   // Media a change request body points at on its host. A private repository serves these only
   // to a request that carries a credential, which the client has none of, so the server fetches
   // them with the credential the host's driver holds for the repository at `cwd`. `repository`
   // names the change request's repository, which can differ from the checkout at `cwd`.
+  Schema.TaggedStruct("environment-theme-background", {
+    themeId: EnvironmentThemeId,
+  }),
   Schema.TaggedStruct(SOURCE_CONTROL_MEDIA_ASSET, {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
@@ -78,7 +92,10 @@ export const AssetImageDimensions = Schema.Struct({
 export type AssetImageDimensions = typeof AssetImageDimensions.Type;
 
 export const AssetCreateUrlResult = Schema.Struct({
-  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  relativeUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(4096),
+    Schema.isPattern(/^\/api\/assets\/(?!\.{1,2}\/)[\w.-]+\/(?!(?:\.|%2[eE]){1,2}$)[^/\\?#\s]+$/u),
+  ),
   expiresAt: Schema.Number,
   sourcePath: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
@@ -119,7 +136,10 @@ export type AttachmentCreateUploadUrlInput = typeof AttachmentCreateUploadUrlInp
 
 export const AttachmentCreateUploadUrlResult = Schema.Struct({
   attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
-  relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  relativeUrl: TrimmedNonEmptyString.check(
+    Schema.isMaxLength(4096),
+    Schema.isPattern(/^\/api\/attachments\/upload\/(?!\.{1,2}$)[\w.-]+$/u),
+  ),
   expiresAt: Schema.Number,
 });
 export type AttachmentCreateUploadUrlResult = typeof AttachmentCreateUploadUrlResult.Type;

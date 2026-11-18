@@ -1,4 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useGT } from "gt-react-native";
 import { useId, useState } from "react";
 
 import { useFileChipShare } from "../threads/useFileChipShare";
@@ -10,10 +11,11 @@ export function useWorkspaceFileSave(input: {
   readonly relativePath: string | null;
   readonly threadId: ThreadId | null;
 }) {
+  const gt = useGT();
   const sourceIdentifier = useId();
   const shareFile = useFileChipShare(input.environmentId, input.threadId, sourceIdentifier, {
     draftCwd: input.cwd,
-    failureTitle: "Could not save file",
+    failureTitle: gt("Could not save file"),
   });
   const [saving, setSaving] = useState(false);
 
