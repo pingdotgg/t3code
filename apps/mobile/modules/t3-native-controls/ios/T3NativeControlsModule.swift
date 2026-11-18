@@ -239,8 +239,6 @@ public final class T3NativeControlsModule: Module {
         else { return nil }
         return rootView.value(forKey: "loadingView") as? UIView
       }
-    // A single window's launch screen is the one expo-splash-screen hides itself, with its fade.
-    guard launchScreens.count > 1 else { return }
     for launchScreen in launchScreens {
       launchScreen.removeFromSuperview()
     }
