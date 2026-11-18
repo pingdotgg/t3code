@@ -49,7 +49,9 @@ export function IssueDetailGhost({ seed }: { seed?: IssueListEntry | null }) {
             </Button>
           </PullRequestDetailTitleRow>
           {/* Leaves room for the edit button, so the title wraps the same once loaded. */}
-          <h2 className="pr-7 text-label">{seed.title}</h2>
+          <h2 className="pr-7 text-title leading-(--pr-title-leading) [--pr-title-leading:1.3] [--type-title:1rem]">
+            {seed.title}
+          </h2>
           <span className="flex min-w-0 items-center gap-x-2.5 text-meta text-muted-foreground">
             <PullRequestActorLabel actor={seed.author} />
             <span>

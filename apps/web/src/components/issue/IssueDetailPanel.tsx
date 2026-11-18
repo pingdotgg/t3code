@@ -735,7 +735,9 @@ export function IssueDetailPanel({
             </form>
           ) : (
             <PullRequestDetailTitleRow className="group mt-1 gap-1">
-              <h2 className="min-w-0 flex-1 text-label">{detail.title}</h2>
+              <h2 className="min-w-0 flex-1 text-title leading-(--pr-title-leading) [--pr-title-leading:1.3] [--type-title:1rem]">
+                {detail.title}
+              </h2>
               {canEdit ? (
                 <PullRequestEditButton
                   aria-label={gt("Edit title")}
