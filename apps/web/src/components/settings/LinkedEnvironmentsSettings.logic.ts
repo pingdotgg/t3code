@@ -1,6 +1,7 @@
 import type { EnvironmentId, PeerLinkSummary } from "@t3tools/contracts";
 import { peerLinkHealth } from "@t3tools/client-runtime/state/peerLinks";
-import { m } from "../../i18n/messages";
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import type * as DateTime from "effect/DateTime";
 
@@ -32,39 +33,62 @@ export function returnLinkStatus(
   sourceId: EnvironmentId,
   links: ReadonlyArray<PeerLinkSummary> | null,
   now: DateTime.Utc,
+  resolve: MessageResolver = m,
 ) {
   if (links === null)
     return {
-      label: "Return unchecked",
-      detail: "Expand to check the return link.",
+      label: resolve(msg("Return unchecked")),
+      detail: resolve(msg("Expand to check the return link.")),
       warning: false,
     };
   const back = links.find((link) => link.environmentId === sourceId);
-  if (!back) return { label: "One-way", detail: "No return link was found.", warning: false };
+  if (!back)
+    return {
+      label: resolve(msg("One-way")),
+      detail: resolve(msg("No return link was found.")),
+      warning: false,
+    };
   const health = peerLinkHealth(back, now);
   if (health.kind === "expired")
-    return { label: "Return expired", detail: "The return link has expired.", warning: true };
+    return {
+      label: resolve(msg("Return expired")),
+      detail: resolve(msg("The return link has expired.")),
+      warning: true,
+    };
+  const detail = resolve(msg("Both devices have links. Return permission: {permission}."), {
+    permission:
+      back.access === "read-only"
+        ? resolve(msg("Read only"))
+        : resolve(runtimeModeConfig[back.access].label),
+  });
   return {
-    label: "Two-way",
-    detail: `Both devices have links. Return permission: ${back.access === "read-only" ? "Read only" : m(runtimeModeConfig[back.access].label)}.${health.kind !== "reachable" ? " The return link needs attention." : ""}`,
+    label: resolve(msg("Two-way")),
+    detail:
+      health.kind === "reachable"
+        ? detail
+        : `${detail} ${resolve(msg("The return link needs attention."))}`,
     warning: health.kind !== "reachable",
   };
 }
 
-export function linkedEnvironmentStatus(link: PeerLinkSummary, now: DateTime.Utc) {
+export function linkedEnvironmentStatus(
+  link: PeerLinkSummary,
+  now: DateTime.Utc,
+  resolve: MessageResolver = m,
+) {
   const health = peerLinkHealth(link, now);
   return {
     attention: health.kind !== "reachable" || health.expiresInDays !== null,
     label:
       health.kind === "reachable"
         ? health.expiresInDays === null
-          ? "Ready"
-          : `Expires in ${health.expiresInDays}d`
+          ? resolve(msg("Ready"))
+          : resolve(msg("Expires in {days}d"), { days: health.expiresInDays })
         : health.kind === "expired"
-          ? "Expired"
+          ? resolve(msg("Expired"))
           : health.kind === "failing"
-            ? "Last call failed"
-            : "Unreachable",
+            ? resolve(msg("Last call failed"))
+            : resolve(msg("Unreachable")),
     detail: health.kind === "failing" || health.kind === "unreachable" ? health.detail : null,
     dot:
       health.kind === "reachable"

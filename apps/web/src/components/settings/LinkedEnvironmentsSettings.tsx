@@ -300,7 +300,7 @@ function LinkedEnvironmentRow({
   const gt = useGT();
   const m = useMessages();
   const now = DateTime.makeUnsafe(useNowMinute());
-  const status = linkedEnvironmentStatus(link, now);
+  const status = linkedEnvironmentStatus(link, now, m);
   const target = useEnvironment(link.environmentId);
   const prepared = usePreparedConnection(link.environmentId);
   const canRead = useEnvironmentScope(link.environmentId, AuthAccessReadScope);
@@ -329,20 +329,22 @@ function LinkedEnvironmentRow({
     setEvidence({ links: reverse.data.links, at: reverse.dataUpdatedAt });
   const reverseLinks =
     !canCheck || (open && reverse.error) ? null : (reverse.data?.links ?? evidence?.links ?? null);
-  const direction = returnLinkStatus(environmentId, reverseLinks, now);
+  const direction = returnLinkStatus(environmentId, reverseLinks, now, m);
   const returnLabel =
     open && !canCheck
-      ? "Return unavailable"
+      ? gt("Return unavailable")
       : open && reverse.error
-        ? "Return unavailable"
+        ? gt("Return unavailable")
         : open && reverse.isPending && reverseLinks === null
-          ? "Checking return…"
+          ? gt("Checking return…")
           : direction.label;
   const returnDetail =
-    returnLabel === "Return unavailable"
-      ? "Connect to the destination with access to read its links to check the return direction."
-      : returnLabel === "Checking return…"
-        ? "Checking the destination for a return link."
+    returnLabel === gt("Return unavailable")
+      ? gt(
+          "Connect to the destination with access to read its links to check the return direction.",
+        )
+      : returnLabel === gt("Checking return…")
+        ? gt("Checking the destination for a return link.")
         : direction.detail;
   const unlink = useAtomCommand(peerLinkEnvironment.unlink, { label: "unlink environment" });
   const canUnlink = useAtomValue(peerLinkEnvironment.unlink.permissionAtom(environmentId));
@@ -392,12 +394,12 @@ function LinkedEnvironmentRow({
                   "inline-flex items-center gap-1 text-3xs font-normal",
                   direction.warning
                     ? "text-warning"
-                    : returnLabel === "Two-way"
+                    : returnLabel === gt("Two-way")
                       ? "text-info"
                       : "text-muted-foreground",
                 )}
               >
-                {returnLabel === "Two-way" ? (
+                {returnLabel === gt("Two-way") ? (
                   <ArrowLeftRightIcon aria-hidden className="size-3" />
                 ) : (
                   <ArrowRightIcon aria-hidden className="size-3" />
@@ -412,7 +414,7 @@ function LinkedEnvironmentRow({
           </span>
         </span>
         <span className="hidden text-xs text-muted-foreground sm:block">
-          {accessConfig[link.access].label}
+          {m(accessConfig[link.access].label)}
         </span>
         <span
           className="inline-flex items-center gap-1.5 text-xs"
