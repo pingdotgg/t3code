@@ -1,0 +1,59 @@
+---
+import FeatureCards from "../../components/FeatureCards.astro";
+import Layout from "../../layouts/Layout.astro";
+import { messagesFor } from "../../i18n";
+import { localeStaticPaths, localizedHref } from "../../i18n/locales";
+
+export const getStaticPaths = localeStaticPaths;
+
+const { locale } = Astro.props;
+const messages = messagesFor(locale);
+const t = messages.features;
+---
+
+<Layout title={t.title} description={t.description} locale={locale} localizedPath="/features">
+  <div class="shell features">
+    <h1 class="sr-only">{messages.layout.features}</h1>
+    <FeatureCards locale={locale} />
+    <a class="features-download" href={localizedHref(locale, "/download")}>
+      <span>{messages.download.heading}</span>
+      <span aria-hidden="true">→</span>
+    </a>
+  </div>
+</Layout>
+
+<style>
+  .features {
+    padding-top: 56px;
+    padding-bottom: 152px;
+  }
+
+  .features-download {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-top: 88px;
+    padding: 15px 16px;
+    border-radius: 8px;
+    background: oklch(0.571 0.21 264 / 0.14);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    transition: background 0.25s ease;
+  }
+
+  .features-download:hover {
+    background: oklch(0.571 0.21 264 / 0.22);
+  }
+
+  @media (max-width: 640px) {
+    .features-download {
+      margin-top: 64px;
+    }
+
+    .features {
+      padding-top: 40px;
+      padding-bottom: 104px;
+    }
+  }
+</style>

@@ -1,0 +1,86 @@
+---
+interface Props {
+  label: string;
+  stable: string;
+  nightly: string;
+}
+
+const { label, stable, nightly } = Astro.props;
+---
+
+<div class="channel-toggle" role="group" aria-label={label}>
+  <button type="button" data-channel-pick="stable" aria-pressed="true">{stable}</button>
+  <button type="button" data-channel-pick="nightly" aria-pressed="false">{nightly}</button>
+</div>
+
+<script>
+  import { onSiteChannel, setSiteChannel, siteChannel } from "../lib/channel";
+
+  const picks = document.querySelectorAll<HTMLButtonElement>("[data-channel-pick]");
+  const sync = () => {
+    for (const pick of picks) pick.setAttribute("aria-pressed", String(pick.dataset.channelPick === siteChannel()));
+  };
+  for (const pick of picks) {
+    pick.addEventListener("click", () => setSiteChannel(pick.dataset.channelPick === "nightly" ? "nightly" : "stable"));
+  }
+  onSiteChannel(sync);
+  sync();
+</script>
+
+<style>
+  /* The look follows html[data-channel], which is set before first paint, so the thumb never slides on load. */
+  .channel-toggle {
+    position: relative;
+    display: grid;
+    flex-shrink: 0;
+    grid-template-columns: 1fr 1fr;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    font-family: var(--font-mono);
+  }
+
+  .channel-toggle::before {
+    content: "";
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    left: 3px;
+    width: calc(50% - 3px);
+    border-radius: 6px;
+    background: rgb(255 255 255 / 0.1);
+    transition:
+      transform 0.28s cubic-bezier(0.3, 0.7, 0.2, 1),
+      background 0.28s ease;
+  }
+
+  :global(html[data-channel="nightly"]) .channel-toggle::before {
+    background: oklch(0.571 0.21 264);
+    transform: translateX(100%);
+  }
+
+  button {
+    position: relative;
+    padding: 3px 13px;
+    color: var(--fg-dim);
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 18px;
+    text-align: center;
+    text-transform: lowercase;
+    white-space: nowrap;
+    transition: color 0.18s ease;
+  }
+
+  button:hover {
+    color: var(--fg-muted);
+  }
+
+  :global(html:not([data-channel="nightly"])) button[data-channel-pick="stable"] {
+    color: var(--fg);
+  }
+
+  :global(html[data-channel="nightly"]) button[data-channel-pick="nightly"] {
+    color: #fff;
+  }
+</style>
