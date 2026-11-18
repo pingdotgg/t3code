@@ -2,6 +2,8 @@ import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/con
 import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
 import * as Schema from "effect/Schema";
 
+import { MarkedText } from "../errors/translatable.ts";
+
 const ConnectionTargetBase = {
   environmentId: EnvironmentId,
   label: Schema.String,
@@ -109,6 +111,7 @@ export class ConnectionTransientError extends Schema.TaggedError<ConnectionTrans
   {
     reason: ConnectionTransientReason,
     detail: Schema.String,
+    i18nMessage: Schema.optionalKey(MarkedText),
     traceId: Schema.optionalKey(Schema.String),
     /** The code this device shows while the host decides whether to trust it. */
     verificationCode: Schema.optionalKey(Schema.String),
@@ -125,6 +128,7 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
   {
     reason: ConnectionBlockedReason,
     detail: Schema.String,
+    i18nMessage: Schema.optionalKey(MarkedText),
     traceId: Schema.optionalKey(Schema.String),
     ...ConnectionFailureFields,
 
@@ -181,7 +185,11 @@ export interface SupervisorConnectionState {
   readonly generation: number;
   readonly lastFailure: ConnectionAttemptError | null;
   readonly retryAt: number | null;
+  /** While connected: saved routes whose host refused this device's credential on the way. */
+  readonly refusedRouteIds: ReadonlyArray<string>;
 }
+
+export const NO_REFUSED_ROUTES: ReadonlyArray<string> = Object.freeze([]);
 
 export type ConnectionProjectionPhase = "disconnected" | "synchronizing" | "ready";
 
@@ -210,4 +218,5 @@ export const AVAILABLE_CONNECTION_STATE: SupervisorConnectionState = Object.free
   generation: 0,
   lastFailure: null,
   retryAt: null,
+  refusedRouteIds: NO_REFUSED_ROUTES,
 });
