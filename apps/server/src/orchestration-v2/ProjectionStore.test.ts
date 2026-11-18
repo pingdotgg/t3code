@@ -729,6 +729,31 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       .join("\n");
     assert.notInclude(runPlan, "orchestration_v2_projection_runs_thread_ordinal_idx");
     assert.match(runPlan, /SEARCH orchestration_v2_projection_runs USING INDEX \w*status\w*/);
+    // The newest runs by ordinal, whatever their status, plus older runs the statuses match.
+    for (const [filter, expected] of [
+      [{ latestRunLimit: 2 }, [4, 5]],
+      [{ latestRunLimit: 2, runStatuses: ["rolled_back"] as const }, [1, 4, 5]],
+    ] as const) {
+      const traced = traceSqlStatements();
+      const recent = yield* store
+        .getThreadRecords(threadId, ["runs"], filter)
+        .pipe(Effect.withTracer(traced.tracer));
+      assert.deepEqual(
+        recent.runs.map((run) => run.ordinal),
+        [...expected],
+      );
+      const recentQuery = traced.statements.find((statement) =>
+        statement.includes("FROM orchestration_v2_projection_runs"),
+      );
+      assert.isDefined(recentQuery);
+      // Fetches the chosen runs by key instead of walking every run of the thread.
+      assert.match(
+        (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${recentQuery}`))
+          .map((row) => row.detail)
+          .join("\n"),
+        /^SEARCH orchestration_v2_projection_runs USING INDEX \w+ \(run_id=\?\)/,
+      );
+    }
     // An id filter reads by primary key, not every row of the thread.
     const byId = traceSqlStatements();
     const found = yield* store
@@ -4291,6 +4316,71 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           payload_json = json_set(payload_json,
             '$.runId', 'run:bounded-sql-history:' || ordinal, '$.type', 'command_execution')
         WHERE thread_id = ${threadId} AND ordinal IN (500, 580)
+      `;
+
+      // A settled subagent of an old run is outside the window; its page carries its record.
+      const subagentId = NodeId.make("node:bounded-sql-history:subagent");
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = 'subagent', payload_json = json_set(payload_json,
+          '$.type', 'subagent', '$.subagentId', ${subagentId}, '$.origin', 'provider_native',
+          '$.driver', ${driver}, '$.providerInstanceId', ${providerInstanceId},
+          '$.childThreadId', json('null'), '$.prompt', 'Look', '$.result', 'Done')
+        WHERE thread_id = ${threadId} AND ordinal = 580
+      `;
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:subagent"),
+        type: "subagent.updated",
+        threadId,
+        nodeId: subagentId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: subagentId,
+          threadId,
+          runId: RunId.make("run:bounded-sql-history:580"),
+          parentNodeId: NodeId.make("node:bounded-sql-history:580"),
+          origin: "provider_native",
+          createdBy: "agent",
+          driver,
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: "Look",
+          title: "Old child",
+          model: "claude-haiku-4-5-20251001",
+          status: "completed",
+          result: "Done",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
+      assert.deepEqual(
+        (yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 76 })).projection
+          .subagents,
+        [],
+      );
+      const subagentPage = yield* historyPage(
+        threadId,
+        encodeThreadHistoryCursor({
+          snapshotSequence: 0,
+          sourceThreadId: threadId,
+          sourceItemId: TurnItemId.make("turn-item:bounded-sql-history:590"),
+          position: 589,
+        }),
+      );
+      assert.deepEqual(
+        subagentPage.subagents?.map((agent) => [agent.id, agent.model]),
+        [[subagentId, "claude-haiku-4-5-20251001"]],
+      );
+      yield* sql`DELETE FROM orchestration_v2_projection_subagents WHERE subagent_id = ${subagentId}`;
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = 'command_execution', payload_json = json_set(payload_json, '$.type', 'command_execution')
+        WHERE thread_id = ${threadId} AND ordinal = 580
       `;
 
       // Older pages and timeline pages read the rows near the page, not the whole history. A
