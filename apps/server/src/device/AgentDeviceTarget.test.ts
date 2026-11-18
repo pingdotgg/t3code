@@ -3,6 +3,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeNet from "node:net";
+import * as NodeURL from "node:url";
 import * as NodeUtil from "node:util";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -154,6 +155,28 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
         "com.example.app",
         path.resolve("b/App.app"),
         `--out=${path.resolve("o.png")}`,
+        ...target,
+      ]);
+      expect(
+        yield* Effect.promise(() =>
+          launch(bound, [
+            "test",
+            "sample.ad",
+            "--reporter",
+            "./reporter.mjs",
+            "--reporter=junit:out/j.xml",
+            "--reporter",
+            "default",
+          ]),
+        ),
+      ).toEqual([
+        "test",
+        path.resolve("sample.ad"),
+        "--reporter",
+        NodeURL.pathToFileURL(path.resolve("reporter.mjs")).href,
+        `--reporter=junit:${path.resolve("out/j.xml")}`,
+        "--reporter",
+        "default",
         ...target,
       ]);
       expect(

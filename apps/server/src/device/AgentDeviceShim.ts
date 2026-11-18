@@ -186,7 +186,7 @@ const launcherSource = (node: string, entryPath: string, boundArgs: ReadonlyArra
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 const entry = ${JSON.stringify(entryPath)};
 const bound = ${JSON.stringify(boundArgs)};
 const refused = new Map([["cdp", ["--platform", "--udid", "--config", "--session"]], ["connection", ["--platform", "--udid"]]]);
@@ -244,13 +244,16 @@ if (local) {
 }
 const pathFlags = new Set(${JSON.stringify(PATH_FLAGS)});
 const absolute = value => value && value !== "-" && !isAbsolute(value) ? resolve(value) : value;
+// A reporter starting with "." is a module path; a file URL keeps it one on Windows too.
+const reporter = spec => spec.trim().startsWith(".") ? pathToFileURL(resolve(spec.trim())).href : spec.trim().startsWith("junit:") ? "junit:" + absolute(spec.trim().slice(6)) : spec;
+const flagValue = (flag, value) => flag === "--reporter" ? reporter(value) : pathFlags.has(flag) ? absolute(value) : value;
 const positionals = [];
 for (let index = 0; index < command.length && command[index] !== "--"; index++) {
   const arg = command[index];
   const equals = arg.indexOf("=");
   if (!arg.startsWith("-") || arg === "-") positionals.push(index);
-  else if (equals > 0) { if (pathFlags.has(arg.slice(0, equals))) command[index] = arg.slice(0, equals + 1) + absolute(arg.slice(equals + 1)); }
-  else if (valued.has(arg) && ++index < command.length && pathFlags.has(arg)) command[index] = absolute(command[index]);
+  else if (equals > 0) command[index] = arg.slice(0, equals + 1) + flagValue(arg.slice(0, equals), arg.slice(equals + 1));
+  else if (valued.has(arg) && ++index < command.length) command[index] = flagValue(arg, command[index]);
 }
 const [, ...operands] = positionals;
 const operand = position => operands[position] === undefined ? undefined : command[operands[position]];
