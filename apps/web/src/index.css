@@ -1769,12 +1769,14 @@ html[data-theme-scene] #root {
 html[data-theme-scene] [data-thread-details-card] {
   @apply dropdown-glass;
 }
-html[data-theme-scene] :is([data-terminal-actions], [data-panel-empty]) {
+html[data-theme-scene] [data-terminal-actions] {
   @apply surface-glass;
+}
+html[data-theme-scene] :is([data-thread-terminal-drawer], [data-panel-empty]) {
+  background: color-mix(in srgb, var(--background) calc(var(--glass-opacity) / 4), transparent);
 }
 html[data-theme-scene] [data-thread-terminal-drawer] {
   --terminal-background: transparent;
-  background: color-mix(in srgb, var(--background) calc(var(--glass-opacity) / 4), transparent);
 }
 html[data-theme-scene] [data-preview-panel-mode]:has([data-thread-terminal-drawer]) {
   background: transparent;
