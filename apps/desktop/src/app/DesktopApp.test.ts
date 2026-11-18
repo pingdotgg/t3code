@@ -84,6 +84,7 @@ interface StubbedDesktop {
   readonly backends?: ReadonlyArray<{ readonly stop: () => Effect.Effect<void> }>;
   readonly flushRendererHistory?: Effect.Effect<void>;
   readonly tokenRequested?: Deferred.Deferred<void>;
+  readonly activationStarted?: Deferred.Deferred<void>;
 }
 
 const runStubbedDesktop = (stub: StubbedDesktop) =>
@@ -189,7 +190,9 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           reconcile: Effect.void,
         } as DesktopWslBackend.DesktopWslBackend["Service"]),
         Effect.provideService(DesktopAppActivation.DesktopAppActivation, {
-          start: Effect.void,
+          start: stub.activationStarted
+            ? Deferred.succeed(stub.activationStarted, undefined)
+            : Effect.void,
         } as unknown as DesktopAppActivation.DesktopAppActivation["Service"]),
         Effect.provideService(DesktopRendererHistory.DesktopRendererHistory, {
           shutdown: stub.flushRendererHistory ?? Effect.void,
@@ -323,52 +326,60 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(DesktopShutdown.layer)),
 );
 
-it.effect("points a stale t3 launcher at the updated AppImage with Local environment off", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-desktop-app-" });
-    const launcher = DesktopCliShim.launcherPath({
-      path,
-      baseDir,
-      platform: "linux",
-    } as DesktopEnvironment.DesktopEnvironment["Service"]);
-    const removedAppImage = path.join(baseDir, "T3-Code-0.1.6-x86_64.AppImage");
-    const updatedAppImage = path.join(baseDir, "T3-Code-0.1.7-x86_64.AppImage");
-    yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
-    yield* fs.writeFileString(
-      launcher,
-      DesktopCliShim.renderCliShim({
-        target: { kind: "appimage", appImage: removedAppImage, executableName: "t3code" },
-        shimPath: launcher,
-        t3Home: baseDir,
-      }),
-    );
-    yield* fs.writeFileString(updatedAppImage, "", { mode: 0o755 });
-    const windowStarted = yield* Deferred.make<void>();
-
-    const app = yield* runStubbedDesktop({
-      localEnvironmentEnabled: false,
-      environment: {
+it.effect(
+  "points a stale t3 launcher at the updated AppImage and accepts t3 <dir> with Local environment off",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-desktop-app-" });
+      const launcher = DesktopCliShim.launcherPath({
         path,
         baseDir,
-        serverRoot: path.join(baseDir, "resources", "app.asar"),
-        appImagePath: Option.some(updatedAppImage),
-      },
-      fileSystem: Layer.succeed(FileSystem.FileSystem, fs),
-      record: () => Effect.void,
-      windowStarted,
-      registerLinuxUrlHandler: Effect.void,
-    });
-    yield* Deferred.await(windowStarted);
-    yield* (yield* DesktopShutdown.DesktopShutdown).request;
-    yield* Fiber.join(app);
+        platform: "linux",
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const removedAppImage = path.join(baseDir, "T3-Code-0.1.6-x86_64.AppImage");
+      const updatedAppImage = path.join(baseDir, "T3-Code-0.1.7-x86_64.AppImage");
+      yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+      yield* fs.writeFileString(
+        launcher,
+        DesktopCliShim.renderCliShim({
+          target: { kind: "appimage", appImage: removedAppImage, executableName: "t3code" },
+          shimPath: launcher,
+          t3Home: baseDir,
+        }),
+      );
+      yield* fs.writeFileString(updatedAppImage, "", { mode: 0o755 });
+      const windowStarted = yield* Deferred.make<void>();
+      const activationStarted = yield* Deferred.make<void>();
 
-    const content = yield* fs.readFileString(launcher);
-    assert.include(
-      content,
-      `app='${updatedAppImage}'`,
-      "startup left the t3 launcher pointing at the removed AppImage",
-    );
-  }).pipe(Effect.provide(Layer.mergeAll(DesktopShutdown.layer, NodeServices.layer))),
+      const app = yield* runStubbedDesktop({
+        localEnvironmentEnabled: false,
+        activationStarted,
+        environment: {
+          path,
+          baseDir,
+          serverRoot: path.join(baseDir, "resources", "app.asar"),
+          appImagePath: Option.some(updatedAppImage),
+        },
+        fileSystem: Layer.succeed(FileSystem.FileSystem, fs),
+        record: () => Effect.void,
+        windowStarted,
+        registerLinuxUrlHandler: Effect.void,
+      });
+      yield* Deferred.await(windowStarted);
+      yield* (yield* DesktopShutdown.DesktopShutdown).request;
+      yield* Fiber.join(app);
+
+      const content = yield* fs.readFileString(launcher);
+      assert.include(
+        content,
+        `app='${updatedAppImage}'`,
+        "startup left the t3 launcher pointing at the removed AppImage",
+      );
+      assert.isTrue(
+        yield* Deferred.isDone(activationStarted),
+        "startup left the t3 <dir> control socket closed",
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(DesktopShutdown.layer, NodeServices.layer))),
 );
