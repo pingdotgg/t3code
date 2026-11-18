@@ -116,3 +116,12 @@
 - Numbers: `vp run check:changed` all pass (typecheck 42 packages, 492 tests in 25 files, lint, knip, format, react compiler); `vp run i18n:check` pass; `UsageLimitsPooled.browser.test.tsx` 2/2.
 - Real run (worktree `.t3`, seeded copy, never `~/.t3/userdata`): Auto High/Medium/Low pinned at the top of Favorites with their routes, Usage → Limits pooled view and reset advice render, one Claude Haiku turn answered. Production build (`apps/web vp run build`, `apps/server node scripts/cli.ts build`) boots on an empty data dir.
 - Next: Tomáš switches hub2 and hub to the new build.
+
+## 2026-11-18: Auto-routed Claude turns see their level in the system prompt
+
+- What: when Auto routed a Claude turn, the system prompt ends with one line, `Auto level: <low|medium|high>`, taken from the `auto` option the router stamps on the selection. Hand-picked models get nothing new. The level is part of the compiled Claude selection, so a level change on a live session (say Auto Medium → Auto High, where only the effort moves on the same Opus 5.5) is no longer applied live: the next turn reopens the process with resume, as a thinking change already does. A level change while a background shell runs is refused the same way.
+- Why: since #10, Auto High runs Opus 5.5 at Extra High. `~/.agents/auto-mode.md` told the orchestrator to read its level from its model name (Opus → medium), so every Auto High thread routed itself as medium and could not see the level Auto picked.
+- Providers: Claude only. Only the Claude Auto instances (`claudeAuto`, `claudeAutoB`) carry `auto-mode.md`; Codex, Grok, OpenCode and Antigravity have no Auto orchestrator prompt to correct.
+- Numbers: the new adapter test failed on base (live effort change, no reopen) and passes; ClaudeAdapterV2 + claudeModelOptions 475/475. Real run on the worktree's seeded `.t3`: one Auto Low thread over the CLI (Sonnet 5.5 at low, Auto's first Low candidate) quoted `Auto level: low` from its system prompt.
+- `~/.agents`: `auto-mode.md` and the `auto` skill read the level from that line and fall back to the model name only without it.
+- Next: deploy on hub2 and the PC; copy the `~/.agents` change into `radys-s/t3-setup-improvements` for hub.
