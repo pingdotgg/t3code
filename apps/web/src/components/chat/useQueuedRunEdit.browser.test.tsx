@@ -34,6 +34,7 @@ interface RunStatus {
   readonly id: RunId;
   readonly status: string;
   readonly activeAttemptId?: string;
+  readonly modelSelection?: { readonly instanceId: string; readonly model: string };
 }
 
 const mocks = await vi.hoisted(async () => {
@@ -288,9 +289,10 @@ describe("useQueuedRunEdit", () => {
       mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
       mocks.promoteQueuedRun.mockResolvedValue({ _tag: "Success" });
       const activeRun = RunId.make("run-active");
+      const modelSelection = { instanceId: "claudeAgent", model: "claude-sonnet-4-6" };
       appAtomRegistry.set(mocks.threadRuns(runsKey(THREAD_A)), [
-        { id: activeRun, status: "running", activeAttemptId: "attempt-1" },
-        { id: RUN, status: "queued" },
+        { id: activeRun, status: "running", activeAttemptId: "attempt-1", modelSelection },
+        { id: RUN, status: "queued", modelSelection },
       ]);
       await using _screen = await render(view(THREAD_A, "queued", hook));
       await beginChangedEdit(hook);
