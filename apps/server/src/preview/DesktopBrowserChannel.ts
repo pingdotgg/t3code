@@ -196,9 +196,13 @@ const make = Effect.gen(function* () {
       // A redial can arrive before the old socket's close is seen here.
       yield* retireConnection;
       socketWrite = send;
-      yield* writeLock
-        .withPermits(1)(send(DESKTOP_BROWSER_CHANNEL_PING))
-        .pipe(Effect.delay(PING_INTERVAL), Effect.forever, Effect.ignore, Effect.forkScoped);
+      // Outside the write lock: a frame cannot interleave, and a dead socket must not hold commands.
+      yield* send(DESKTOP_BROWSER_CHANNEL_PING).pipe(
+        Effect.delay(PING_INTERVAL),
+        Effect.repeat({ while: () => socketWrite === send }),
+        Effect.ignore,
+        Effect.forkScoped,
+      );
       // The desktop forgets its turns when it dials. Its first frame shows that it has by now.
       let turnsRestored = false;
       const restoreTurns = Effect.suspend(() => {
