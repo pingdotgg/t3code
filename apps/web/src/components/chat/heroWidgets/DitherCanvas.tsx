@@ -3,8 +3,10 @@ import { useLayoutEffect, useRef } from "react";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
-/** Resolves any CSS color (variables, color-mix) to a string a canvas accepts. */
+/** Swaps a color's `var(--x)` references for their values, so a canvas can parse it. */
 export type ResolveColor = (cssColor: string) => string;
+
+const VAR_REFERENCE = /var\(\s*(--[\w-]+)\s*\)/g;
 
 export type DitherDraw = (
   context: CanvasRenderingContext2D,
@@ -23,23 +25,11 @@ function paintCanvas(canvas: HTMLCanvasElement, draw: DitherDraw) {
   if (!context) return;
   context.setTransform(ratio, 0, 0, ratio, 0, 0);
   context.clearRect(0, 0, width, height);
-  const probe = document.createElement("span");
-  probe.style.display = "none";
-  canvas.after(probe);
-  const resolved = new Map<string, string>();
-  try {
-    draw(context, { width, height }, (cssColor) => {
-      let value = resolved.get(cssColor);
-      if (value === undefined) {
-        probe.style.color = cssColor;
-        value = getComputedStyle(probe).color;
-        resolved.set(cssColor, value);
-      }
-      return value;
-    });
-  } finally {
-    probe.remove();
-  }
+  // Variables come off the canvas itself. A reused hidden probe span could keep its first color.
+  const style = getComputedStyle(canvas);
+  draw(context, { width, height }, (cssColor) =>
+    cssColor.replace(VAR_REFERENCE, (_, name: string) => style.getPropertyValue(name).trim()),
+  );
 }
 
 /**
