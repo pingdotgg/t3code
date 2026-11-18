@@ -209,8 +209,8 @@ const make = Effect.gen(function* () {
             "Pass either environmentId or url, not both. Pass neither to let the user pick the machine.",
         });
       }
-      // A machine already linked with enough access needs no card: the agent can
-      // use it now. One linked with less gets a card, and linking again raises it.
+      // A machine already linked needs no card: the agent can use it now. Only one
+      // asked for more access than the link has gets a card, and linking again raises it.
       if (input.environmentId !== undefined) {
         const linked = yield* usableLink(input.environmentId).pipe(
           Effect.mapError(
@@ -218,10 +218,10 @@ const make = Effect.gen(function* () {
               new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
           ),
         );
-        // An agent that names no access asks for the card's default.
         if (
           Option.isSome(linked) &&
-          mcpClientAccessCovers(linked.value.access, input.requestedAccess ?? "approval-required")
+          (input.requestedAccess === undefined ||
+            mcpClientAccessCovers(linked.value.access, input.requestedAccess))
         ) {
           if (input.clientRequestId !== undefined) {
             yield* closeAsLinked(

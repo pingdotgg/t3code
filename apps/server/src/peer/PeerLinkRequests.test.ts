@@ -1104,10 +1104,13 @@ it.live("a machine linked with less access than asked goes through the card, whi
         requestedAccess: "full-access",
       });
       expect(card).toMatchObject({ linkStatus: "pending", requestedAccess: "full-access" });
-      // Naming no access asks for the card's default, which read-only does not allow.
-      expect(yield* ask(a, { environmentId: box.environmentId })).toMatchObject({
-        linkStatus: "pending",
-      });
+      // Naming no access, or no more than the link has, takes the link as it is.
+      for (const asks of [{}, { requestedAccess: "read-only" }]) {
+        expect(
+          (yield* a.call({ environmentId: box.environmentId, ...asks })).structuredContent,
+        ).toMatchObject({ status: "linked", access: "read-only" });
+      }
+      expect((yield* linkCards(a)).filter((item) => item.linkStatus === "pending")).toEqual([card]);
 
       // Linking again over the old link replaces it; nothing is unlinked first.
       const pairing = yield* b.auth.issuePairingCredential();

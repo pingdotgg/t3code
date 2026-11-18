@@ -88,10 +88,10 @@ export interface LinkableMachine {
   /** The access of the thread's environment's link to it, or null when it has none. */
   readonly linkedAccess: AuthMcpClientAccess | null;
   /**
-   * Where the client knows it answers, most preferred first: the addresses it
-   * reports, then its saved routes, then its T3 Connect address. The server
-   * keeps only those that answer as this machine. Empty for a machine reached
-   * only over SSH or loopback, which name this client's device.
+   * Where it answers, most preferred first: the addresses it reports, then its
+   * saved routes, then its T3 Connect address, then where the thread's environment
+   * linked it. The server keeps only those that answer as this machine. Empty for
+   * a machine reached only over SSH or loopback, which name this client's device.
    */
   readonly urls: ReadonlyArray<string>;
 }
@@ -103,10 +103,10 @@ const isLoopbackUrl = (url: string) => {
 };
 
 /**
- * The catalog's machines other than the thread's own, in catalog order, then those only T3
- * Connect knows. `links` are the thread environment's; an expired one no longer counts as
- * linked. `connect` is what relay discovery found, and a server reaches a machine there as a
- * browser does, so its Connect address is usable.
+ * The catalog's machines other than the thread's own, then those only T3 Connect knows, then
+ * those only the thread environment's links know. An expired link no longer counts as linked,
+ * but still names the machine and where the environment reached it. A server reaches a machine
+ * on T3 Connect as a browser does, so its Connect address is usable.
  */
 export function linkableMachines(input: {
   readonly environments: ReadonlyArray<
@@ -114,14 +114,19 @@ export function linkableMachines(input: {
   >;
   /** Null lists every machine, for a view that is not about one environment. */
   readonly threadEnvironmentId: EnvironmentId | null;
-  readonly links: ReadonlyArray<Pick<PeerLinkSummary, "environmentId" | "status" | "access">>;
+  readonly links: ReadonlyArray<
+    Pick<PeerLinkSummary, "environmentId" | "label" | "urls" | "status" | "access">
+  >;
   readonly connect: ReadonlyMap<string, RelayDiscoveredEnvironment>;
 }): ReadonlyArray<LinkableMachine> {
-  const linkedAccess = new Map<string, AuthMcpClientAccess>(
-    input.links.flatMap((link) =>
-      link.status === "expired" ? [] : [[link.environmentId, link.access] as const],
-    ),
-  );
+  const links = new Map(input.links.map((link) => [link.environmentId as string, link]));
+  const linkedAccess = (environmentId: string) => {
+    const link = links.get(environmentId);
+    return link === undefined || link.status === "expired" ? null : link.access;
+  };
+  const linkUrls = (environmentId: string) => links.get(environmentId)?.urls ?? [];
+  const usable = (urls: ReadonlyArray<string>) =>
+    [...new Set(urls)].filter((url) => !isLoopbackUrl(url));
   const saved = input.environments
     .filter((environment) => environment.environmentId !== input.threadEnvironmentId)
     .map((environment) => {
@@ -139,23 +144,19 @@ export function linkableMachines(input: {
         machine: resolveEnvironmentMachineKind(environment.serverConfig),
         connected: environment.connection.phase === "connected",
         connectOnly: false,
-        linkedAccess: linkedAccess.get(environment.environmentId) ?? null,
-        urls: [
-          ...new Set([
-            ...reported,
-            ...routes,
-            ...(connect === undefined ? [] : [connect.httpBaseUrl]),
-          ]),
-        ].filter((url) => !isLoopbackUrl(url)),
+        linkedAccess: linkedAccess(environment.environmentId),
+        urls: usable([
+          ...reported,
+          ...routes,
+          ...(connect === undefined ? [] : [connect.httpBaseUrl]),
+          ...linkUrls(environment.environmentId),
+        ]),
       };
     });
-  const savedIds = new Set<string>(saved.map((machine) => machine.environmentId));
+  const known = new Set<string>(saved.map((m) => m.environmentId));
+  if (input.threadEnvironmentId !== null) known.add(input.threadEnvironmentId);
   const connectOnly = [...input.connect.values()]
-    .filter(
-      ({ environment }) =>
-        environment.environmentId !== input.threadEnvironmentId &&
-        !savedIds.has(environment.environmentId),
-    )
+    .filter(({ environment }) => !known.has(environment.environmentId))
     .map(({ environment, status }) => {
       const descriptor = Option.getOrUndefined(status)?.descriptor;
       return {
@@ -166,11 +167,23 @@ export function linkableMachines(input: {
         ),
         connected: false,
         connectOnly: true,
-        linkedAccess: linkedAccess.get(environment.environmentId) ?? null,
-        urls: [environment.endpoint.httpBaseUrl].filter((url) => !isLoopbackUrl(url)),
+        linkedAccess: linkedAccess(environment.environmentId),
+        urls: usable([environment.endpoint.httpBaseUrl, ...linkUrls(environment.environmentId)]),
       };
     });
-  return [...saved, ...connectOnly];
+  for (const machine of connectOnly) known.add(machine.environmentId);
+  const linkOnly = input.links
+    .filter((link) => !known.has(link.environmentId))
+    .map((link) => ({
+      environmentId: link.environmentId,
+      label: link.label,
+      machine: resolveEnvironmentMachineKind(null),
+      connected: false,
+      connectOnly: false,
+      linkedAccess: linkedAccess(link.environmentId),
+      urls: usable(link.urls),
+    }));
+  return [...saved, ...connectOnly, ...linkOnly];
 }
 
 const words = (text: string) =>
@@ -279,8 +292,9 @@ export function linkRequestTarget(
 }
 
 /**
- * Whether the card answers with the link its machine already has: only one with at least the
- * access asked for, else the default. Linking again over a weaker one renews it.
+ * Whether the card answers with the link its machine already has. An agent that asks for
+ * more access than the link has gets it linked again, which raises it; one that names no
+ * access takes the link as it is.
  */
 export const linkRequestKeepsLink = (
   item: Pick<LinkRequestItem, "requestedAccess">,
@@ -288,7 +302,8 @@ export const linkRequestKeepsLink = (
 ): boolean =>
   target.kind === "machine" &&
   target.linkedAccess !== null &&
-  mcpClientAccessCovers(target.linkedAccess, linkRequestDefaultAccess(item));
+  (item.requestedAccess === undefined ||
+    mcpClientAccessCovers(target.linkedAccess, item.requestedAccess));
 
 /** What a link request card shows: the actions while pending, otherwise a one-line outcome. */
 export type LinkRequestDisplay =
@@ -362,15 +377,12 @@ export function linkRequestAnswerInput(
     | {
         readonly type: "link";
         /**
-         * The machine picked, or an address typed in its place: for a machine this app knows
-         * by name but has no address for, the link must still answer as that machine.
+         * The machine picked, or an address typed in its place. A typed address links
+         * alone, whatever machine the card names: only this app's own addresses name one.
          */
         readonly target:
           | Pick<LinkableMachine, "environmentId" | "label" | "urls">
-          | {
-              readonly url: string;
-              readonly machine?: Pick<LinkableMachine, "environmentId" | "label">;
-            };
+          | { readonly url: string };
         readonly access: AuthMcpClientAccess;
         readonly pairingCode: string;
       }
@@ -385,16 +397,7 @@ export function linkRequestAnswerInput(
   if ("url" in target) {
     const url = target.url.trim();
     if (url.length === 0) return null;
-    return {
-      ...base,
-      answer: {
-        type: "link",
-        ...target.machine,
-        urls: [url],
-        access: answer.access,
-        pairingCode,
-      },
-    };
+    return { ...base, answer: { type: "link", urls: [url], access: answer.access, pairingCode } };
   }
   const [first, ...rest] = target.urls;
   if (first === undefined) return null;
