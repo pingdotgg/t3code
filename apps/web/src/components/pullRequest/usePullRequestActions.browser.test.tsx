@@ -56,20 +56,34 @@ function MergeButton({
   );
 }
 
-it.each(["merge", "ready"] as const)(
-  "keeps a pending %s action with its pull request when navigating between threads",
-  async (action) => {
+function setup() {
+  state.runAction.mockReset();
+  state.newThread.mockReset();
+  state.prepareThread.mockReset();
+}
+
+it.each([
+  { action: "merge", scope: "number" },
+  { action: "ready", scope: "number" },
+  { action: "merge", scope: "project" },
+  { action: "ready", scope: "project" },
+] as const)(
+  "keeps a pending $action action with its pull request when changing $scope",
+  async ({ action, scope }) => {
+    setup();
     const pendingLabel = action === "ready" ? "Marking..." : "Merging...";
     const first: PullRequestRef = {
       projectId: ProjectId.make("project"),
       repository: "owner/repo",
       number: 1,
     };
-    const second = { ...first, number: 2 };
+    const second =
+      scope === "number"
+        ? { ...first, number: 2 }
+        : { ...first, projectId: ProjectId.make("other-project") };
     const firstResult = deferred<{ _tag: "Success"; value: void }>();
     const secondResult = deferred<{ _tag: "Success"; value: void }>();
     state.runAction
-      .mockReset()
       .mockReturnValueOnce(firstResult.promise)
       .mockReturnValueOnce(secondResult.promise);
     await using screen = await render(<MergeButton reference={first} action={action} />);
@@ -118,6 +132,7 @@ function FixChecksButton() {
 }
 
 it("stops a pull request handoff when its loading toast is dismissed", async () => {
+  setup();
   const prepared = deferred<{
     _tag: "Success";
     value: {
@@ -128,10 +143,9 @@ it("stops a pull request handoff when its loading toast is dismissed", async () 
     };
   }>();
   state.newThread
-    .mockReset()
     .mockResolvedValueOnce({ draftId: "draft-1", threadId: ThreadId.make("thread-1") })
     .mockResolvedValueOnce({ draftId: "draft-2", threadId: ThreadId.make("thread-1") });
-  state.prepareThread.mockReset().mockReturnValueOnce(prepared.promise);
+  state.prepareThread.mockReturnValueOnce(prepared.promise);
   await using screen = await render(
     <ToastProvider>
       <FixChecksButton />

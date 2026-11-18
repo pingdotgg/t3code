@@ -210,6 +210,7 @@ export function usePullRequestActionRunner({
       ? null
       : JSON.stringify([
           environmentId,
+          reference.projectId,
           reference.host ?? null,
           reference.repository,
           reference.number,
