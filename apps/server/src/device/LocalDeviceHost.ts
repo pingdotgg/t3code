@@ -55,6 +55,8 @@ import {
 const HUB_READY_TIMEOUT_MS = 30_000;
 const DAEMON_READY_TIMEOUT_MS = 30_000;
 const DAEMON_POLL_MS = 100;
+// `daemon stop` waits 10s after SIGTERM and 2s after SIGKILL before it retires the registration.
+const DAEMON_STOP_TIMEOUT_MS = 15_000;
 const HUB_RESTART_STABLE_UPTIME_MS = 60_000;
 const HUB_RESTART_MAX_DELAY_MS = 30_000;
 
@@ -682,7 +684,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         agentDeviceStateDir(path, config.stateDir),
       ],
       env: { ...hostEnvironment, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
-      timeout: Duration.seconds(10),
+      timeout: Duration.millis(DAEMON_STOP_TIMEOUT_MS),
       timeoutBehavior: "timedOutResult",
     });
   }).pipe(
