@@ -31,6 +31,7 @@ final class T3SocksListener {
       if case .ready = state, let port = listener?.port?.rawValue { onReady(port) }
     }
     listener.newConnectionHandler = { [weak self] connection in
+      T3TunnelDiagnostics.shared.note { $0.accepted += 1 }
       guard let self else { return connection.cancel() }
       let socks = T3SocksConnection(
         connection: connection, queue: queue, requestAccess: requestAccess
@@ -167,10 +168,13 @@ private final class T3SocksConnection {
       case nil:
         if isComplete || error != nil { close() } else { readHandshake() }
       case .refuse(let code):
+        T3TunnelDiagnostics.shared.note { $0.refused = "\(code)" }
         finish(socksReply(code))
       case .connect(let port, let consumed):
         received.removeFirst(consumed)
+        T3TunnelDiagnostics.shared.note { $0.asked += 1 }
         requestAccess { [weak self] url in
+          T3TunnelDiagnostics.shared.note { url == nil ? ($0.denied += 1) : ($0.granted += 1) }
           self?.queue.async { self?.openTunnel(base: url, port: port) }
         }
       }
@@ -192,6 +196,7 @@ private final class T3SocksConnection {
     tunnel.resume()
     // A pong is the first sign the handshake succeeded; until then the page gets no reply.
     tunnel.sendPing { [weak self] error in
+      if let error { T3TunnelDiagnostics.shared.note { $0.tunnelError = error.localizedDescription } }
       self?.queue.async {
         guard let self, !self.closed else { return }
         if error != nil { return self.finish(socksReply(replyFailure)) }
@@ -256,6 +261,29 @@ private final class T3SocksConnection {
           )
         }
       }
+    }
+  }
+}
+
+// TEMPORARY: what the proxy saw, shown on the error screen while we debug real devices.
+final class T3TunnelDiagnostics {
+  struct Counts {
+    var accepted = 0
+    var asked = 0
+    var granted = 0
+    var denied = 0
+    var refused = "-"
+    var tunnelError = "-"
+  }
+
+  static let shared = T3TunnelDiagnostics()
+  private let lock = NSLock()
+  private var counts = Counts()
+
+  func note(_ update: (inout Counts) -> Void) { lock.withLock { update(&counts) } }
+  var summary: String {
+    lock.withLock {
+      "accepted \(counts.accepted), asked \(counts.asked), granted \(counts.granted), denied \(counts.denied), refused \(counts.refused), tunnel \(counts.tunnelError)"
     }
   }
 }

@@ -6,6 +6,7 @@ import { View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AppBar } from "../../components/ui/AppBar";
+import { AppText } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { useBarOverlap } from "../../components/ui/useBarInset";
@@ -52,6 +53,7 @@ export function LocalPreviewScreen(props: {
   const [page, setPage] = useState<TunnelNavigation | null>(null);
   const [failed, setFailed] = useState(false);
   const [disconnected, setDisconnected] = useState(false);
+  const [debug, setDebug] = useState<string | undefined>(undefined);
   const [unsupported, setUnsupported] = useState<string | null>(null);
   const bar = useBarFollowsScroll();
   // After a failed load the webview reports no URL, so the address stays on the one asked for.
@@ -134,6 +136,7 @@ export function LocalPreviewScreen(props: {
             if (failure.unsupported) return setUnsupported(failure.description);
             // A link to another port fails with that port's address, not the one typed earlier.
             if (failure.url) setRequested(failure.url);
+            setDebug(failure.debug);
             setFailed(true);
           }}
         />
@@ -172,6 +175,14 @@ export function LocalPreviewScreen(props: {
                 actionLabel="Try again"
                 onAction={retry}
               />
+              {debug ? (
+                <AppText
+                  selectable
+                  className="px-6 text-center font-mono text-xs text-foreground-muted"
+                >
+                  {debug}
+                </AppText>
+              ) : null}
             </View>
           </View>
         ) : null}

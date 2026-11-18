@@ -32,7 +32,12 @@ const NativeTunnelWebView = requireNativeView<
     readonly onAccessRequest: (event: NativeSyntheticEvent<{ requestId: string }>) => void;
     readonly onNavigationChange: (event: NativeSyntheticEvent<TunnelNavigation>) => void;
     readonly onLoadError: (
-      event: NativeSyntheticEvent<{ code: number; description: string; url: string }>,
+      event: NativeSyntheticEvent<{
+        code: number;
+        description: string;
+        url: string;
+        debug?: string;
+      }>,
     ) => void;
     readonly onPageScroll: (event: NativeSyntheticEvent<{ y: number }>) => void;
   }
@@ -61,6 +66,8 @@ export function TunnelWebView({
     readonly url: string;
     readonly unsupported: boolean;
     readonly description: string;
+    /** TEMPORARY: what the native proxy saw, while we debug real devices. */
+    readonly debug?: string;
   }) => void;
   /** Whether the last connection could get into the environment's tunnel at all. */
   readonly onAccess?: (available: boolean) => void;
@@ -94,6 +101,7 @@ export function TunnelWebView({
             // The view reports a setup failure with no URL and code -1, before any page loads.
             unsupported: nativeEvent.code === -1 && nativeEvent.url === "",
             description: nativeEvent.description,
+            debug: nativeEvent.debug,
           })
         }
       />
