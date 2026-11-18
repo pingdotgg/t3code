@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { MarkedText, translatableMessage } from "../errors/translatable.ts";
 import * as Schema from "effect/Schema";
 
 /** Cancellation is cooperative: settle only after the underlying work has stopped. */
@@ -5,9 +7,21 @@ export type VoiceTranscriptionOptions = {
   readonly signal: AbortSignal;
 };
 
+export type VoiceStreamingSession = {
+  readonly finish: (options: VoiceTranscriptionOptions) => Promise<string>;
+};
+
 export type PreparedVoiceTranscription = {
   readonly locale: string;
+  /**
+   * Runs alongside capture once recording starts. Resolves with the transcript when it
+   * transcribed live, or null when `transcribe` still runs after the recording stops.
+   * A rejection stops the recording.
+   */
+  readonly start?: (uri: string, options: VoiceTranscriptionOptions) => Promise<string | null>;
   readonly transcribe: (uri: string, options: VoiceTranscriptionOptions) => Promise<string>;
+  /** Present when audio streams during capture; `finish` then replaces `transcribe`. */
+  readonly streaming?: VoiceStreamingSession;
 };
 
 export type VoiceTranscriber = {
@@ -28,6 +42,7 @@ export class VoiceTranscriptionError extends Schema.TaggedError<VoiceTranscripti
   {
     code: VoiceTranscriptionErrorCode,
     message: Schema.String,
+    i18nMessage: Schema.optionalKey(MarkedText),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -36,7 +51,7 @@ export function throwIfVoiceTranscriptionAborted(signal: AbortSignal): void {
   if (signal.aborted) {
     throw new VoiceTranscriptionError({
       code: "cancelled",
-      message: "Voice transcription was cancelled.",
+      ...translatableMessage(msg("Voice transcription was cancelled.")),
     });
   }
 }

@@ -22,7 +22,7 @@ const withTerminals = <A, E>(use: (terminals: AcpClientTerminals) => Effect.Effe
       defaultCwd: process.cwd(),
     });
     return yield* use(terminals).pipe(Effect.ensuring(terminals.disposeAll));
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("AcpClientTerminals", () => {
   it.live("runs a command, buffers output, and reports the exit status", () =>
@@ -51,6 +51,52 @@ describe("AcpClientTerminals", () => {
     ),
   );
 
+  it.effect("preserves UTF-8 when stderr interleaves a split stdout character", () =>
+    Effect.gen(function* () {
+      const stdoutStarted = yield* Deferred.make<void>();
+      const stderrWritten = yield* Deferred.make<void>();
+      const child = ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        stdin: Sink.drain,
+        stdout: Stream.make(new Uint8Array([0xe2])).pipe(
+          Stream.concat(Stream.fromEffectDrain(Deferred.succeed(stdoutStarted, undefined))),
+          Stream.concat(Stream.fromEffectDrain(Deferred.await(stderrWritten))),
+          Stream.concat(Stream.make(new Uint8Array([0x82, 0xac]))),
+        ),
+        stderr: Stream.fromEffectDrain(Deferred.await(stdoutStarted)).pipe(
+          Stream.concat(Stream.make(new Uint8Array([0x58]))),
+          Stream.concat(Stream.fromEffectDrain(Deferred.succeed(stderrWritten, undefined))),
+        ),
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+        unref: Effect.succeed(Effect.void),
+      });
+      const terminals = yield* makeAcpClientTerminals({ defaultCwd: process.cwd() }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.succeed(child)),
+        ),
+      );
+      yield* Effect.addFinalizer(() => terminals.disposeAll);
+      const terminal = yield* terminals.create({ sessionId: "session", command: "fixture" });
+      const request = { sessionId: "session", ...terminal };
+      yield* terminals.waitForExit(request);
+
+      const output = yield* terminals.output(request);
+      expect(output.output).toContain("€");
+      expect(output.output).toContain("X");
+      expect(output.output).not.toContain("\uFFFD");
+      expect(output.truncated).toBe(false);
+      expect(terminals.readOutputSnapshot("session", terminal.terminalId)?.output).toBe(
+        output.output,
+      );
+    }),
+  );
+
   it.live("resolves terminal environment from the requesting ACP session", () =>
     Effect.gen(function* () {
       const terminals = yield* makeAcpClientTerminals({
@@ -74,7 +120,7 @@ describe("AcpClientTerminals", () => {
         const output = yield* terminals.output({ sessionId, terminalId: created.terminalId });
         expect(output.output).toBe(expected);
       }
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("runs Devin shell source with arguments, pipes, and session fallback variables", () =>
@@ -93,17 +139,20 @@ describe("AcpClientTerminals", () => {
       const output = yield* terminals.output({ sessionId: "devin", ...terminal });
       expect(exit.exitCode).toBe(0);
       expect(output.output.trim()).toBe("MAILBOX-PROBE");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.live("truncates buffered output from the beginning at the byte limit", () =>
+  it.live.each([
+    { text: "a".repeat(64) + "TAIL", limit: 16 },
+    { text: "€".repeat(16) + "TAIL", limit: 6 },
+  ])("truncates buffered output from the beginning at the $limit byte limit", ({ text, limit }) =>
     withTerminals((terminals) =>
       Effect.gen(function* () {
         const created = yield* terminals.create({
           sessionId: "session",
           command: process.execPath,
-          args: ["-e", "process.stdout.write('a'.repeat(64) + 'TAIL');"],
-          outputByteLimit: 16,
+          args: ["-e", `process.stdout.write(${JSON.stringify(text)});`],
+          outputByteLimit: limit,
         });
         yield* terminals.waitForExit({ sessionId: "session", terminalId: created.terminalId });
 
@@ -113,7 +162,8 @@ describe("AcpClientTerminals", () => {
         });
         expect(output.truncated).toBe(true);
         expect(output.output.endsWith("TAIL")).toBe(true);
-        expect(output.output.length).toBeLessThanOrEqual(16);
+        expect(Buffer.byteLength(output.output)).toBeLessThanOrEqual(limit);
+        expect(output.output).not.toContain("\uFFFD");
       }),
     ),
   );
@@ -148,6 +198,46 @@ describe("AcpClientTerminals", () => {
         expect(terminals.readOutputSnapshot("session", created.terminalId)).toBeDefined();
       }),
     ),
+  );
+
+  it.effect("answers wait_for_exit when a background child keeps the output pipes open", () =>
+    Effect.gen(function* () {
+      // Models `sh -c "setsid server & echo done"`: sh exits, the orphan inherits stdout/stderr.
+      const orphanExited = yield* Deferred.make<void>();
+      const heldOpen = Stream.fromEffectDrain(Deferred.await(orphanExited));
+      const child = ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        stdin: Sink.drain,
+        stdout: Stream.make(new TextEncoder().encode("done\n")).pipe(Stream.concat(heldOpen)),
+        stderr: heldOpen,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+        unref: Effect.succeed(Effect.void),
+      });
+      const terminals = yield* makeAcpClientTerminals({ defaultCwd: process.cwd() }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.succeed(child)),
+        ),
+      );
+      yield* Effect.addFinalizer(() =>
+        Deferred.succeed(orphanExited, undefined).pipe(Effect.andThen(terminals.disposeAll)),
+      );
+      const terminal = yield* terminals.create({ sessionId: "session", command: "fixture" });
+      const request = { sessionId: "session", ...terminal };
+      const waiting = yield* terminals.waitForExit(request).pipe(Effect.forkChild);
+
+      yield* TestClock.adjust("5 seconds");
+      expect(waiting.pollUnsafe()).toBeDefined();
+      expect(yield* Fiber.join(waiting)).toEqual({ exitCode: 0, signal: null });
+      const output = yield* terminals.output(request);
+      expect(output.output).toBe("done\n");
+      expect(output.exitStatus).toEqual({ exitCode: 0, signal: null });
+    }),
   );
 
   it.effect.each([
@@ -208,7 +298,7 @@ describe("AcpClientTerminals", () => {
         expect(yield* child.isRunning).toBe(false);
         yield* Fiber.join(killing);
         expect(yield* Fiber.join(waiting)).toEqual({ exitCode: 137, signal: null });
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.live("force-kills commands that ignore SIGTERM and resolves wait_for_exit", () =>
@@ -262,7 +352,7 @@ describe("AcpClientTerminals", () => {
         expect(exit).toEqual({ exitCode: null, signal: "SIGKILL" });
       }
       expect(yield* child.isRunning).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.live("reserves terminal capacity across concurrent creates", () =>

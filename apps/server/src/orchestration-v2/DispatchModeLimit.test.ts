@@ -455,4 +455,86 @@ it.layer(layerWithCeiling)("runtime mode ceiling", (it) => {
       assert.equal(ordinary?.status, "starting");
     }),
   );
+  it.effect(
+    "refuses restart continuations of scheduled origins while allowing ordinary restarts",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        for (const scheduled of [false, true]) {
+          for (const chained of [false, true]) {
+            const suffix = String(scheduled) + String(chained);
+            const threadId = ThreadId.make("thread:restart-policy:" + suffix);
+            yield* createThread(threadId);
+            yield* orchestrator.dispatch(sendMessage(threadId, "origin:" + suffix));
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const original = projection.runs[0]!;
+            const message = projection.messages.find((item) => item.id === original.userMessageId)!;
+            const occurredAt = yield* DateTime.now;
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make("cancel:" + suffix),
+                  type: "run.updated",
+                  threadId,
+                  runId: original.id,
+                  occurredAt,
+                  payload: { ...original, status: "cancelled", completedAt: occurredAt },
+                },
+                {
+                  id: EventId.make("origin:" + suffix),
+                  type: "message.updated",
+                  threadId,
+                  occurredAt,
+                  payload: {
+                    ...message,
+                    ...(scheduled
+                      ? { scheduledTaskId: ScheduledTaskId.make("task:before-policy") }
+                      : {}),
+                  },
+                },
+              ],
+            });
+            let sourceId = original.id;
+            if (chained) {
+              yield* orchestrator.dispatch(sendMessage(threadId, "intermediate:" + suffix));
+              const intermediate = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make("intermediate:" + suffix),
+                    type: "run.updated",
+                    threadId,
+                    runId: intermediate.id,
+                    occurredAt,
+                    payload: {
+                      ...intermediate,
+                      status: "cancelled",
+                      completedAt: occurredAt,
+                      restartContinuationOfRunId: original.id,
+                    },
+                  },
+                ],
+              });
+              sourceId = intermediate.id;
+            }
+            const before = yield* orchestrator.getThreadProjection(threadId);
+            yield* orchestrator.dispatch({
+              ...sendMessage(threadId, "continuation:" + suffix),
+              createdBy: "agent",
+              creationSource: "server",
+              restartContinuationOfRunId: sourceId,
+            });
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(after.runs.length, before.runs.length + (scheduled ? 0 : 1));
+            assert.equal(
+              after.messages.some(
+                (item) => item.id === MessageId.make("message:continuation:" + suffix),
+              ),
+              !scheduled,
+            );
+          }
+        }
+      }),
+  );
 });

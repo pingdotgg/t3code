@@ -1,11 +1,9 @@
 import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
+import { T, useGT, Var } from "gt-react";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
-import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -16,48 +14,28 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
-import { Switch } from "../ui/switch";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+
+const CLI_PROXY_NAME = "CLI Proxy";
 
 export function UsageProviderSettings({
   environmentId,
   environmentLabel,
   sources,
-  cursorKeychainUsageEnabled,
   readOnly,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly sources: UnifiedSettings["usageLimitSources"];
-  readonly cursorKeychainUsageEnabled: boolean;
   readonly readOnly: boolean;
 }) {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
-  const updateCursorSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "update Cursor account usage",
-  });
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
-  const platform = useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment
-    .platform;
   const [adding, setAdding] = useState(false);
-  const [updatingCursor, setUpdatingCursor] = useState(false);
   const entries = Object.entries(sources);
-
-  const setCursorUsageEnabled = async (enabled: boolean) => {
-    setUpdatingCursor(true);
-    const result = await updateCursorSettings({
-      environmentId,
-      input: { patch: { cursorKeychainUsageEnabled: enabled } },
-    });
-    if (result._tag === "Success") {
-      await refreshProviders({ environmentId, input: {} });
-    }
-    setUpdatingCursor(false);
-  };
 
   return (
     <>
@@ -67,28 +45,13 @@ export function UsageProviderSettings({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
               <PlusIcon className="size-3" aria-hidden />
-              Add hub
+              <T>Add hub</T>
             </Button>
           ) : null
         }
       >
-        {platform?.os === "darwin" ? (
-          <SettingsRow
-            id="cursor-keychain-usage"
-            title="Cursor account usage"
-            description="Read your existing Cursor CLI login from macOS Keychain to show account history and monthly limits. macOS may ask you to allow access."
-            control={
-              <Switch
-                aria-label="Cursor account usage"
-                checked={cursorKeychainUsageEnabled}
-                disabled={readOnly || updatingCursor}
-                onCheckedChange={(enabled) => void setCursorUsageEnabled(enabled)}
-              />
-            }
-          />
-        ) : null}
         {entries.length === 0 ? (
-          <SettingsRow title="No hubs configured." />
+          <SettingsRow title={gt("No hubs configured.")} />
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
@@ -98,7 +61,9 @@ export function UsageProviderSettings({
                 title={label}
                 description={
                   <span className="break-all">
-                    CLI Proxy{source.enabled ? "" : " · Disabled"}
+                    {source.enabled
+                      ? CLI_PROXY_NAME
+                      : gt("{name} · Disabled", { name: CLI_PROXY_NAME })}
                     {label !== source.url ? ` · ${source.url}` : ""}
                   </span>
                 }
@@ -139,20 +104,28 @@ function RemoveUsageProviderButton({
   return (
     <>
       <Button size="xs" variant="ghost" onClick={() => setOpen(true)}>
-        Remove
+        <T>Remove</T>
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {label}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              <T>
+                Remove <Var>{label}</Var>?
+              </T>
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              The hub's management key is deleted from this server. Its accounts leave the Limits
-              view; the hub itself is untouched. Add it again with the URL and key to bring them
-              back.
+              <T>
+                The hub's management key is deleted from this server. Its accounts leave the Limits
+                view; the hub itself is untouched. Add it again with the URL and key to bring them
+                back.
+              </T>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              <T>Cancel</T>
+            </AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -160,7 +133,7 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              Remove hub
+              <T>Remove hub</T>
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
