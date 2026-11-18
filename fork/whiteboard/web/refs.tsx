@@ -1,8 +1,17 @@
 // Exposes RegionTool and RefsLayer for board:// region references.
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
-import { atom, Box, StateNode, useEditor, useValue, type Editor, type TLPageId } from "tldraw";
-import { onHighlight, onHover, sendRefToChat, type HoverOrigin } from "./bridge";
+import {
+  atom,
+  Box,
+  react,
+  StateNode,
+  useEditor,
+  useValue,
+  type Editor,
+  type TLPageId,
+} from "tldraw";
+import { boardReady, onHighlight, onHover, sendRefToChat, type HoverOrigin } from "./bridge";
 import { cameraForRegion } from "./camera";
 
 type Region = { x: number; y: number; w: number; h: number };
@@ -108,6 +117,10 @@ export function RefsLayer() {
       // A region on another page has no place on this one; clicking the link switches pages.
       const here = region && refPage(editor, region) === editor.getCurrentPageId();
       hoverMark.set(here ? { ...region, mode: "hover", origin } : null);
+    });
+    return react("board ready", () => {
+      const view = editor.getViewportScreenBounds();
+      if (view.w > 0 && view.h > 0) boardReady();
     });
   }, [editor]);
   const view = editor.getViewportScreenBounds();

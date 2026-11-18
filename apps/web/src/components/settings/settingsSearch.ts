@@ -27,6 +27,7 @@ export type SettingsPath =
   | "/settings/chat"
   | "/settings/diffs"
   | "/settings/keybindings"
+  | "/settings/right-panel"
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/threads"
@@ -75,6 +76,7 @@ export interface SettingsSearchItem {
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly reflinkWorktreesOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
+  readonly rightPanelMenuOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -94,6 +96,8 @@ export interface SettingsSearchAvailability {
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
+  /** A whiteboard board host, the only place the right panel's menu settings exist. */
+  readonly hasRightPanelMenu?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -104,6 +108,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/chat": msg("Chat"),
   "/settings/diffs": msg("Diffs & pull requests"),
   "/settings/keybindings": msg("Keybindings"),
+  "/settings/right-panel": FORK_SETTING_TITLES.rightPanel,
   "/settings/snap-shot": msg("SnapShots"),
   "/settings/providers": msg("Providers"),
   "/settings/threads": msg("Threads"),
@@ -1008,6 +1013,13 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   ...KEYBINDING_SEARCH_ITEMS,
   {
+    id: "right-panel-menu",
+    title: FORK_SETTING_TITLES.rightPanel,
+    to: "/settings/right-panel",
+    rightPanelMenuOnly: true,
+    searchTerms: ["plus menu launcher surface whiteboard board hide show letter shortcut key"],
+  },
+  {
     id: "snap-shot-enabled",
     title: msg("SnapShots"),
     searchTerms: [msg("window capture screenshot")],
@@ -1496,6 +1508,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/diffs": null,
   "/settings/snap-shot": null,
   "/settings/keybindings": null,
+  "/settings/right-panel": null,
   "/settings/providers": null,
   "/settings/threads": null,
   "/settings/browser": null,
@@ -1646,7 +1659,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
       (!item.reflinkWorktreesOnly || availability.hasReflinkWorktreesEnvironment === true) &&
-      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),
+      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true) &&
+      (!item.rightPanelMenuOnly || availability.hasRightPanelMenu === true),
   );
 }
 

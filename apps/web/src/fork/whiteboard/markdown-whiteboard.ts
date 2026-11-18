@@ -1,6 +1,8 @@
 // A board reference is a `board://r/x,y,w,h` URL naming a rectangle on the
 // whiteboard that embeds this app. Rendered chat text turns those URLs into
 // links that point at the board instead of at a page.
+export { postWhiteboardHover } from "./boardChannel";
+
 type MarkdownNode = {
   type?: string;
   value?: string;
@@ -9,12 +11,6 @@ type MarkdownNode = {
 };
 
 const BOARD_URL_REGEX = /board:\/\/[^\s<>]+/g;
-
-/** Tell the board which reference the pointer is over, and where on screen it is. */
-export function postWhiteboardHover(ref: string | null, element?: Element): void {
-  const rect = element?.getBoundingClientRect();
-  window.parent.postMessage({ type: "wb-hover", ref, rect }, "*");
-}
 
 /** Autolink bare board URLs in prose, leaving existing links and code alone. */
 export function remarkWhiteboardLinks() {

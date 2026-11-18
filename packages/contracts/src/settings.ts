@@ -32,6 +32,7 @@ import {
   CompactWhenIdleSettings,
   CompactWhenIdleSettingsPatch,
 } from "./fork/idleCompactionLevels.ts";
+import { RightPanelMenuOverrides } from "./fork/rightPanelMenu.ts";
 import {
   CustomModelSetting,
   DEFAULT_TEXT_GENERATION_MODEL,
@@ -607,6 +608,10 @@ export const ClientSettingsSchema = Schema.Struct({
   // of the render path entirely. The fork defaults it on while upstream defaults
   // off; keep `true` when merging upstream.
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Fork: this browser's right-panel menu choices over the board host's defaults.
+  rightPanelMenuOverrides: RightPanelMenuOverrides.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -2180,5 +2185,6 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
   mathRenderingEnabled: Schema.optionalKey(Schema.Boolean),
+  rightPanelMenuOverrides: Schema.optionalKey(RightPanelMenuOverrides),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

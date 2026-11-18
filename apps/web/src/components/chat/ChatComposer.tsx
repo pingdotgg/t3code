@@ -1832,7 +1832,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return true;
   };
   const applyPromptReplacementStable = useStableCallback(applyPromptReplacement);
-  useWhiteboardInsertRef(composerEditorRef, promptRef, applyPromptReplacementStable);
+  useWhiteboardInsertRef(
+    composerEditorRef,
+    promptRef,
+    applyPromptReplacementStable,
+    composerFormRef,
+    routeThreadRef,
+  );
 
   const readComposerSnapshot = (): {
     value: string;

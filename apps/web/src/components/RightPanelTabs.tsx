@@ -32,6 +32,10 @@ import {
   ModeSurfaceIcon,
   modeSurfaceLabel,
 } from "~/fork/dashboard/dashboardSurface";
+import {
+  AllMenuItemsHidden,
+  useArrangedSurfaceActions,
+} from "~/fork/rightPanelMenu/rightPanelMenu";
 import type { SplitMenuAction } from "~/fork/rightPanelSplit/splitLayout.logic";
 import {
   SplitPaneFrame,
@@ -359,8 +363,9 @@ function RightPanelEmptyState(props: {
   const messages = useMessages();
   const [highlight, setHighlight] = useState(-1);
 
-  const actions = [
+  const actions = useArrangedSurfaceActions([
     {
+      id: "browser",
       label: msg("Browser"),
       icon: Globe2,
       shortcut: "B",
@@ -369,6 +374,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddBrowser,
     },
     {
+      id: "terminal",
       label: msg("Terminal"),
       icon: TerminalSquare,
       shortcut: "T",
@@ -377,6 +383,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddTerminal,
     },
     {
+      id: "files",
       label: msg("Files"),
       icon: Files,
       shortcut: "F",
@@ -385,6 +392,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddFiles,
     },
     {
+      id: "diff",
       label: msg("Diff"),
       icon: FileDiff,
       shortcut: "D",
@@ -393,6 +401,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddDiff,
     },
     {
+      id: "pull-request",
       label: msg("Pull request"),
       icon: PullRequestGlyph.pullRequest,
       shortcut: "P",
@@ -401,6 +410,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddPullRequest,
     },
     {
+      id: "pull-requests",
       label: msg("Linked pull requests"),
       icon: PullRequestGlyph.link,
       shortcut: "L",
@@ -409,6 +419,7 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddPullRequests,
     },
     {
+      id: "device",
       label: msg("Device"),
       description: msg("Watch an iOS Simulator or Android Emulator."),
       icon: Smartphone,
@@ -420,6 +431,7 @@ function RightPanelEmptyState(props: {
     ...(props.onAddSideChat
       ? [
           {
+            id: "side-chat" as const,
             label: msg("Side chat"),
             description: msg("Ask a side question while this thread keeps working."),
             icon: MessagesSquare,
@@ -432,7 +444,7 @@ function RightPanelEmptyState(props: {
         ]
       : []),
     ...(props.modeSurfaceActions ?? []),
-  ] as const;
+  ] as const);
 
   type SurfaceAction = (typeof actions)[number];
 
@@ -512,6 +524,7 @@ function RightPanelEmptyState(props: {
           <T>Open a surface</T>
         </h3>
         <div className="flex flex-col gap-0.5">
+          {actions.length === 0 ? <AllMenuItemsHidden in="launcher" /> : null}
           {actions.map((action) =>
             action.available ? (
               <div
@@ -627,6 +640,7 @@ function surfaceTitle(
       return resolve(msg("Side chat"));
     case "dashboard":
     case "replies":
+    case "whiteboard":
       return modeSurfaceLabel(surface.kind);
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
@@ -722,6 +736,7 @@ function SurfaceIcon({
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
     case "dashboard":
     case "replies":
+    case "whiteboard":
       return <ModeSurfaceIcon kind={surface.kind} />;
     case "device":
       return surface.target?.platform === "ios" ? (
@@ -1205,8 +1220,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   };
 
-  const addSurfaceActions = [
+  const addSurfaceActions = useArrangedSurfaceActions([
     {
+      id: "browser",
       label: msg("Browser"),
       icon: Globe2,
       shortcut: "B",
@@ -1215,6 +1231,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddBrowser,
     },
     {
+      id: "terminal",
       label: msg("Terminal"),
       icon: TerminalSquare,
       shortcut: "T",
@@ -1223,6 +1240,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddTerminal,
     },
     {
+      id: "files",
       label: msg("Files"),
       icon: Files,
       shortcut: "F",
@@ -1231,6 +1249,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddFiles,
     },
     {
+      id: "diff",
       label: msg("Diff"),
       icon: FileDiff,
       shortcut: "D",
@@ -1239,6 +1258,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddDiff,
     },
     {
+      id: "pull-request",
       label: msg("Pull request"),
       icon: PullRequestGlyph.pullRequest,
       shortcut: "P",
@@ -1247,6 +1267,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddPullRequest,
     },
     {
+      id: "pull-requests",
       label: msg("Linked pull requests"),
       icon: PullRequestGlyph.link,
       shortcut: "L",
@@ -1255,6 +1276,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddPullRequests,
     },
     {
+      id: "device",
       label: msg("Device"),
       icon: Smartphone,
       shortcut: "M",
@@ -1265,6 +1287,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     ...(props.onAddSideChat
       ? [
           {
+            id: "side-chat" as const,
             label: msg("Side chat"),
             icon: MessagesSquare,
             shortcut: "S",
@@ -1276,7 +1299,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         ]
       : []),
     ...(props.modeSurfaceActions ?? []),
-  ] as const;
+  ] as const);
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
@@ -1563,6 +1586,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                   sideOffset={6}
                   onKeyDownCapture={handleAddSurfaceMenuKeyDown}
                 >
+                  {addSurfaceActions.length === 0 ? <AllMenuItemsHidden in="menu" /> : null}
                   {addSurfaceActions.map((action) => {
                     const Icon = action.icon;
                     if (action.label === "Browser" && action.available) {
@@ -1570,7 +1594,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         <MenuSub key={action.label}>
                           <MenuSubTrigger
                             className="[&>svg:last-child]:ms-0"
-                            aria-keyshortcuts={action.shortcut}
+                            aria-keyshortcuts={action.shortcut || undefined}
                             onClick={(event) => {
                               const pointerType =
                                 "pointerType" in event.nativeEvent &&
@@ -1585,7 +1609,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                           >
                             <Icon />
                             {messages(action.label)}
-                            <MenuShortcut>{action.shortcut}</MenuShortcut>
+                            {action.shortcut ? (
+                              <MenuShortcut>{action.shortcut}</MenuShortcut>
+                            ) : null}
                           </MenuSubTrigger>
                           <MenuSubPopup className="max-w-56">
                             {browserProfiles.map((profile) => (

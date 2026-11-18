@@ -1,8 +1,9 @@
 // Exposes the Vite development and build configuration for the web client.
 import * as NodeURL from "node:url";
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Connect, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { config } from "./server/config.mjs";
+import { hostHeaderName, pageMode } from "./web/pageMode";
 
 // Vite's client also supplies the helpers used by dev-mode CSS, so it must remain available.
 // Disconnect only its HMR transport: otherwise any brief socket loss makes the client reload the
@@ -23,8 +24,27 @@ const disableHmrTransport = {
   },
 } satisfies Plugin;
 
+// Bare / on an "app" hostname is the chat; redirect before the board's code loads.
+const appRedirect: Connect.NextHandleFunction = (req, res, next) => {
+  const url = new URL(req.url ?? "/", "http://host");
+  if (req.method !== "GET" || url.pathname !== "/") return next();
+  const mode = pageMode({
+    hostname: hostHeaderName(req.headers.host ?? ""),
+    search: url.search,
+    framed: false,
+    openViews: config.openViews,
+  });
+  if (mode.kind !== "redirect") return next();
+  res.writeHead(302, { Location: mode.to }).end();
+};
+const appRedirectPlugin = {
+  name: "whiteboard:app-redirect",
+  configureServer: (server) => void server.middlewares.use(appRedirect),
+  configurePreviewServer: (server) => void server.middlewares.use(appRedirect),
+} satisfies Plugin;
+
 export default defineConfig({
-  plugins: [react(), disableHmrTransport],
+  plugins: [react(), disableHmrTransport, appRedirectPlugin],
   resolve: { dedupe: ["prosemirror-state"] },
   define: { __OPEN_VIEWS__: JSON.stringify(config.openViews) },
   build: {

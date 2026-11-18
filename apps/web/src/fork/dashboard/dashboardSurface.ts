@@ -1,5 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { LayoutDashboard, MessageSquareReply } from "lucide-react";
+import { LayoutDashboard, MessageSquareReply, Presentation } from "lucide-react";
 import { createElement } from "react";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -10,42 +10,65 @@ import {
   readThreadDisplay,
   useThreadDisplay,
 } from "../displayMode/useThreadDisplayMode";
+import {
+  boardOfferedFor,
+  isBoardHost,
+  isTopWindow,
+  readThreadProjectRoot,
+  useBoardHostRole,
+  useBoardOfferedFor,
+  useThreadProjectRoot,
+} from "../whiteboard/role";
 
-const MODE_SURFACES = {
-  dashboard: { label: "Dashboard", icon: LayoutDashboard },
-  replies: { label: "Replies", icon: MessageSquareReply },
-} as const satisfies Record<ModeSurfaceKind, unknown>;
+/** The fork's right-panel tabs. `shortcut` is the built-in menu letter; "" is none. */
+export const FORK_SURFACES = {
+  dashboard: { label: "Dashboard", icon: LayoutDashboard, shortcut: "" },
+  replies: { label: "Replies", icon: MessageSquareReply, shortcut: "" },
+  whiteboard: { label: "Whiteboard", icon: Presentation, shortcut: "W" },
+} as const satisfies Record<ModeSurfaceKind | "whiteboard", unknown>;
 
-/** The right panel's "+" item that opens one tab of the thread's display. */
-const modeSurfaceAction = (kind: ModeSurfaceKind, onClick: () => void) => ({
-  ...MODE_SURFACES[kind],
-  // No key: an empty shortcut matches no key press and renders no hint.
-  shortcut: "",
-  available: true,
-  disabledReason: "",
+type ForkSurfaceKind = keyof typeof FORK_SURFACES;
+
+/** The right panel's "+" and launcher item that opens the fork tab `kind`. */
+const forkSurfaceAction = (kind: ForkSurfaceKind, available: boolean, onClick: () => void) => ({
+  id: kind,
+  label: FORK_SURFACES[kind].label,
+  icon: FORK_SURFACES[kind].icon,
+  shortcut: FORK_SURFACES[kind].shortcut as string,
+  available,
+  disabledReason: kind === "whiteboard" ? "Available in a project thread on this machine." : "",
   onClick,
 });
 
-export type ModeSurfaceAction = ReturnType<typeof modeSurfaceAction>;
+export type ModeSurfaceAction = ReturnType<typeof forkSurfaceAction>;
 
-export const modeSurfaceLabel = (kind: ModeSurfaceKind) => MODE_SURFACES[kind].label;
+export const modeSurfaceLabel = (kind: ForkSurfaceKind) => FORK_SURFACES[kind].label;
 
-export const ModeSurfaceIcon = (props: { readonly kind: ModeSurfaceKind }) =>
-  createElement(MODE_SURFACES[props.kind].icon, { className: "size-3 shrink-0" });
+export const ModeSurfaceIcon = (props: { readonly kind: ForkSurfaceKind }) =>
+  createElement(FORK_SURFACES[props.kind].icon, { className: "size-3 shrink-0" });
 
-/** Whether the thread's display has the tab `kind`, read outside React. Other tabs need no display. */
+/** Whether the thread offers the tab `kind`, read outside React. Upstream tabs always pass. */
 export function threadHasModeSurface(threadRef: ScopedThreadRef, kind: string): boolean {
-  if (!(kind in MODE_SURFACES)) return true;
+  if (kind === "whiteboard") return boardOfferedFor(threadRef, readThreadProjectRoot(threadRef));
+  if (!(kind in FORK_SURFACES)) return true;
   return modeSurfaces(readThreadDisplay(threadRef)).some((surface) => surface === kind);
 }
 
-/** The "+" items that open the tabs of the thread's display: Replies, Dashboard, both or none. */
+/** The fork's "+" items: the display's Replies and Dashboard, then Whiteboard on a board host. */
 export function useModeSurfaceActions(
   threadRef: ScopedThreadRef | null,
 ): ReadonlyArray<ModeSurfaceAction> {
   const display = useThreadDisplay(threadRef);
-  const open = useStableCallback((kind: ModeSurfaceKind) => {
+  const boardPanel = isBoardHost(useBoardHostRole()) && isTopWindow();
+  const projectRoot = useThreadProjectRoot(boardPanel ? threadRef : null);
+  const boardOffered = useBoardOfferedFor(threadRef, projectRoot);
+  const open = useStableCallback((kind: ForkSurfaceKind) => {
     if (threadRef !== null) useRightPanelStore.getState().open(threadRef, kind);
   });
-  return modeSurfaces(display).map((kind) => modeSurfaceAction(kind, () => open(kind)));
+  return [
+    ...modeSurfaces(display).map((kind) => forkSurfaceAction(kind, true, () => open(kind))),
+    ...(boardPanel
+      ? [forkSurfaceAction("whiteboard", boardOffered, () => open("whiteboard"))]
+      : []),
+  ];
 }

@@ -38,6 +38,7 @@ const RIGHT_PANEL_KINDS = [
   "side-chat",
   "dashboard",
   "replies",
+  "whiteboard",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -111,7 +112,8 @@ export type RightPanelSurface =
     }
   | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId }
   | { id: "dashboard"; kind: "dashboard" }
-  | { id: "replies"; kind: "replies" };
+  | { id: "replies"; kind: "replies" }
+  | { id: "whiteboard"; kind: "whiteboard" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 15;
@@ -280,6 +282,8 @@ const singletonSurface = (
       return { id: "dashboard", kind };
     case "replies":
       return { id: "replies", kind };
+    case "whiteboard":
+      return { id: "whiteboard", kind };
   }
 };
 

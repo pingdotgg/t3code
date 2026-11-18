@@ -99,6 +99,7 @@ import type {
 } from "react-markdown";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { postWhiteboardHover, remarkWhiteboardLinks } from "../fork/whiteboard/markdown-whiteboard";
+import { showBoardRef } from "../fork/whiteboard/boardChannel";
 import { remarkEndLinksAtCjkPunctuation } from "../fork/cjkLinkEnd";
 import type { Pluggable, PluggableList } from "unified";
 import { defaultUrlTransform } from "react-markdown";
@@ -1307,7 +1308,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             onClick?.(event);
             if (isWhiteboardLink && href) {
               event.preventDefault();
-              window.parent.postMessage({ type: "wb-highlight", ref: href }, "*");
+              showBoardRef(href, threadRef);
               return;
             }
             if (isSameDocumentLink && href) {

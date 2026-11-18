@@ -9,6 +9,7 @@ export type BoardView = { room: string; session: string | null; label: string | 
 let chatListener: Listener | undefined;
 let highlightListener: Listener | undefined;
 let hoverListener: HoverListener | undefined;
+let readyListener: (() => void) | undefined;
 let latestChatRef: string | undefined;
 // ?room=<slug> opens that room directly, which is how the wb tools and links to a project board arrive.
 // Otherwise the page starts on the room the chat last reported, which is usually the one it reports again.
@@ -60,4 +61,13 @@ export function hoverRegion(ref: string | null, origin?: HoverOrigin): void {
 
 export function onHover(cb: HoverListener): void {
   hoverListener = cb;
+}
+
+// Fires when a board's reference handlers are registered and its viewport has a size.
+export function boardReady(): void {
+  readyListener?.();
+}
+
+export function onBoardReady(cb: () => void): void {
+  readyListener = cb;
 }

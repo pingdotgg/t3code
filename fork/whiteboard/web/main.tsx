@@ -1,4 +1,5 @@
-// Mounts the resizable board and ChatSlot layout into the browser page.
+// Mounts the page the hostname and query ask for: the board and ChatSlot split, the board-only
+// embed for a T3 Code panel, the export view, or a redirect to the chat.
 import { StrictMode, createRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -10,43 +11,42 @@ import {
 } from "react-resizable-panels";
 import { Board, ShowChat } from "./board";
 import { ChatSlot } from "./ChatSlot";
+import { pageMode, type OpenView } from "./pageMode";
+import { startPanelHost } from "./panelHost";
 import "./style.css";
 
-declare const __OPEN_VIEWS__: Record<string, "board" | "chat">;
+declare const __OPEN_VIEWS__: Record<string, OpenView>;
 
-const exportMode = new URLSearchParams(location.search).has("export");
+const mode = pageMode({
+  hostname: location.hostname,
+  search: location.search,
+  framed: window.parent !== window,
+  openViews: __OPEN_VIEWS__,
+});
 
 // Dragging the divider past a panel's minimum collapses that panel. Its button brings it back at that
 // minimum width, so the side already on screen changes as little as possible.
 const boardMin = 35;
 const chatMin = 20;
-const saved = JSON.parse(localStorage.getItem("wb-layout") ?? "null") as { layout: Layout } | null;
 const group = createRef<GroupImperativeHandle>();
-// A hostname listed in the config's openViews opens showing only that side on every load.
-const openView = __OPEN_VIEWS__[location.hostname];
-const openLayout =
-  openView === "board"
-    ? { board: 100, chat: 0 }
-    : openView === "chat"
-      ? { board: 0, chat: 100 }
-      : saved?.layout;
+const startLayout = (start: "board" | "chat" | "remembered"): Layout | undefined => {
+  if (start === "board") return { board: 100, chat: 0 };
+  if (start === "chat") return { board: 0, chat: 100 };
+  return (JSON.parse(localStorage.getItem("wb-layout") ?? "null") as { layout: Layout } | null)
+    ?.layout;
+};
 const showChat = () => group.current?.setLayout({ board: 100 - chatMin, chat: chatMin });
 const showBoard = () => group.current?.setLayout({ board: boardMin, chat: 100 - boardMin });
 
-function App() {
+function SplitPage({ start }: { start: "board" | "chat" | "remembered" }) {
   const [hidden, setHidden] = useState<"board" | "chat" | null>(null);
-  if (exportMode)
-    return (
-      <main>
-        <Board exportMode />
-      </main>
-    );
+  const [defaultLayout] = useState(() => startLayout(start));
   return (
     <main>
       <Group
         orientation="horizontal"
         groupRef={group}
-        defaultLayout={openLayout}
+        defaultLayout={defaultLayout}
         onLayoutChange={(layout) =>
           setHidden(layout.board === 0 ? "board" : layout.chat === 0 ? "chat" : null)
         }
@@ -66,7 +66,34 @@ function App() {
   );
 }
 
-const app = <App />;
-createRoot(document.getElementById("root")!).render(
-  exportMode ? app : <StrictMode>{app}</StrictMode>,
-);
+function page() {
+  switch (mode.kind) {
+    case "export":
+      return (
+        <main>
+          <Board exportMode />
+        </main>
+      );
+    case "embed":
+      startPanelHost();
+      return (
+        <StrictMode>
+          <main>
+            <Board />
+          </main>
+        </StrictMode>
+      );
+    case "redirect":
+      // The Vite server already answers bare / with a redirect; this covers a cached page.
+      location.replace(mode.to);
+      return null;
+    case "split":
+      return (
+        <StrictMode>
+          <SplitPage start={mode.start} />
+        </StrictMode>
+      );
+  }
+}
+
+createRoot(document.getElementById("root")!).render(page());

@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "vite",
     "server": "tsx server/main.ts",
-    "test": "tsx web/mathsplit.check.ts && tsx web/camera.check.ts && tsx web/mermaidschema.check.ts && node tools/wb.check.mjs",
+    "test": "tsx web/mathsplit.check.ts && tsx web/camera.check.ts && tsx web/mermaidschema.check.ts && tsx web/pageMode.check.ts && node tools/wb.check.mjs",
     "build": "tsc --noEmit && vite build"
   },
   "dependencies": {
