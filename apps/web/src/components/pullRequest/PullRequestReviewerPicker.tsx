@@ -109,34 +109,32 @@ export function PullRequestReviewerPicker({
   ) => {
     const keys = people.map((candidate) => `${candidate.kind}:${candidate.id}`);
     setPendingKeys((current) => new Set([...current, ...keys]));
-    try {
-      const result = await requestReviewers({
-        environmentId,
-        input: {
-          ...reference,
-          reviewers: people.map(({ id, kind }) => ({ id, kind })),
-          requested,
-        },
-      });
-      if (result._tag === "Success") return;
-      const logins = people.map((person) => person.login).join(", ");
-      toastManager.add({
-        type: "error",
-        title: requested
-          ? m(msg("Could not ask {logins} for a review", { logins }))
-          : m(msg("Could not take back the review request to {logins}", { logins })),
-        description: readableFailure(
-          squashAtomCommandFailure(result),
-          m(
-            msg(
-              "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
-            ),
+    const result = await requestReviewers({
+      environmentId,
+      input: {
+        ...reference,
+        reviewers: people.map(({ id, kind }) => ({ id, kind })),
+        requested,
+      },
+    }).finally(() => {
+      setPendingKeys((current) => new Set([...current].filter((key) => !keys.includes(key))));
+    });
+    if (result._tag === "Success") return;
+    const logins = people.map((person) => person.login).join(", ");
+    toastManager.add({
+      type: "error",
+      title: requested
+        ? m(msg("Could not ask {logins} for a review", { logins }))
+        : m(msg("Could not take back the review request to {logins}", { logins })),
+      description: readableFailure(
+        squashAtomCommandFailure(result),
+        m(
+          msg(
+            "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
           ),
         ),
-      });
-    } finally {
-      setPendingKeys((current) => new Set([...current].filter((key) => !keys.includes(key))));
-    }
+      ),
+    });
   };
 
   const onOpenChange = (nextOpen: boolean) => {

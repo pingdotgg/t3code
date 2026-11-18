@@ -66,25 +66,23 @@ export function PullRequestLabelPicker({
     const names = labels.map((label) => label.name);
     const keys = labels.map((candidate) => candidate.name);
     setPendingKeys((current) => new Set([...current, ...keys]));
-    try {
-      const result = await setLabels({
-        environmentId,
-        input: { ...reference, labels: names, applied },
-      });
-      if (result._tag === "Success") return;
-      toastManager.add({
-        type: "error",
-        title: applied
-          ? m(msg("Could not put {names} on", { names: names.join(", ") }))
-          : m(msg("Could not take {names} off", { names: names.join(", ") })),
-        description: readableFailure(
-          squashAtomCommandFailure(result),
-          m(msg("The host refused it. Check that you have triage access on this repository.")),
-        ),
-      });
-    } finally {
+    const result = await setLabels({
+      environmentId,
+      input: { ...reference, labels: names, applied },
+    }).finally(() => {
       setPendingKeys((current) => new Set([...current].filter((key) => !keys.includes(key))));
-    }
+    });
+    if (result._tag === "Success") return;
+    toastManager.add({
+      type: "error",
+      title: applied
+        ? m(msg("Could not put {names} on", { names: names.join(", ") }))
+        : m(msg("Could not take {names} off", { names: names.join(", ") })),
+      description: readableFailure(
+        squashAtomCommandFailure(result),
+        m(msg("The host refused it. Check that you have triage access on this repository.")),
+      ),
+    });
   };
 
   const onOpenChange = (nextOpen: boolean) => {
