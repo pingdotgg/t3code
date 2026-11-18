@@ -746,7 +746,11 @@ export const make = Effect.gen(function* () {
         const historical = historicalFileCache.get(path);
         if (historical !== undefined && historical.mtimeMs >= retentionCutoffMs) {
           historicalFileCache.delete(path);
-          fileCache.set(path, historical);
+          fileCache.set(path, {
+            ...historical,
+            records: correctedBatch(historical.records),
+            tailRecords: correctedBatch(historical.tailRecords),
+          });
           cacheDirty = true;
         }
         return { path, records, malformedRecords };

@@ -793,11 +793,12 @@ describe("UsageService", () => {
     }),
   );
 
-  it.effect(
-    "repairs initial Codex prices after unchanged-file retries, persists evidence and corrections, and honors later native tiers",
-    () =>
+  it.effect.each([false, true])(
+    "repairs initial Codex prices after unchanged-file retries, persists evidence and corrections, and honors later native tiers (historical: %s)",
+    (historical) =>
       Effect.gen(function* () {
         const { home, settings } = yield* setup;
+        if (historical) yield* TestClock.setTime(Date.parse("2027-02-01T12:00:00Z"));
         const sessions = NodePath.join(home, "codex", "sessions");
         const fastPath = NodePath.join(sessions, "fast.jsonl");
         const ultraPath = NodePath.join(sessions, "ultra.jsonl");
@@ -842,6 +843,15 @@ describe("UsageService", () => {
             lines([meta("ultra-session"), context("ultra-turn"), usage(4)]),
           );
         });
+        if (historical) {
+          yield* Effect.promise(() =>
+            Promise.all(
+              [fastPath, ultraPath].map((path) =>
+                NodeFSP.utimes(path, CURSOR_NOW / 1000, CURSOR_NOW / 1000),
+              ),
+            ),
+          );
+        }
         yield* Effect.gen(function* () {
           const first = yield* UsageService.make;
           verify(yield* first.readSummary(WINDOW), 7, 7);
@@ -863,6 +873,11 @@ describe("UsageService", () => {
           yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
           // History repair must touch both the committed record and tentative tail.
           verify(yield* retry.readSummary(WINDOW), 7, 30);
+          if (historical) {
+            const config = yield* ServerSettings.ServerSettingsService;
+            yield* config.updateSettings({ usageHistoryRetentionDays: "unlimited" });
+            verify(yield* retry.readSummary(WINDOW), 7, 30);
+          }
           yield* retry.awaitPersisted;
           yield* sql`ALTER TABLE orchestration_events RENAME TO resolved_events`;
           verify(yield* retry.readSummary(WINDOW), 7, 30);
