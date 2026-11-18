@@ -71,6 +71,7 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import {
   isRestartNoteContinuation,
+  isRestartResendContinuation,
   pendingRestartCancelledBackgroundWork,
   restartCancelledBackgroundWorkNote,
 } from "./RestartBackgroundNote.ts";
@@ -910,6 +911,10 @@ export const layer: Layer.Layer<
         projection.providerTurns,
         projection.attempts,
       );
+      // A request the source turn never got to a model is resent as a prompt, not resumed natively.
+      const promptedContinuation =
+        noteContinuation ||
+        isRestartResendContinuation(run, projection.runs, projection.providerTurns);
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
@@ -1856,7 +1861,7 @@ export const layer: Layer.Layer<
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
           const text = goalCommand ? userText : withInlineContext(context, userText);
-          const startInput = noteContinuation ? promptedInput : turnInput;
+          const startInput = promptedContinuation ? promptedInput : turnInput;
           const { resume: _resume, ...contextInput } = startInput;
           const { message: resumeMessage, resume: _resumeIntent, ...resumeInput } = startInput;
           const missedAttachments =
@@ -1869,7 +1874,10 @@ export const layer: Layer.Layer<
           // Like pending history, pending images need a prompt; native resume carries none.
           const prompted = context !== "" || missedAttachments.length > 0;
           const operation =
-            turnInput.resume && !prompted && session.resumeTurn !== undefined
+            !promptedContinuation &&
+            turnInput.resume &&
+            !prompted &&
+            session.resumeTurn !== undefined
               ? session.resumeTurn({ ...resumeInput, messageId: resumeMessage.messageId })
               : start({
                   ...(prompted ? contextInput : startInput),
@@ -1943,7 +1951,7 @@ export const layer: Layer.Layer<
         retryHandoff.attachments.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
-        !noteContinuation
+        !promptedContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
       return runExecution.startRootRun({
