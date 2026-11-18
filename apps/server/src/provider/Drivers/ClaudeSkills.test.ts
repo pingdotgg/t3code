@@ -42,7 +42,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       yield* writeSkill(
         path.join(plugin, "engineering"),
         "review",
-        "---\nname: review-alias\ndescription: Review changes.\ndisable-model-invocation: true\nuser-invocable: false\n---\n",
+        '---\nname: review-alias\ndescription: Review changes.\ndisable-model-invocation: true\nuser-invocable: false\nmetadata:\n  group: Review\n  group-order: "6"\n---\n',
       );
       yield* fs.makeDirectory(path.join(plugin, ".claude-plugin"), { recursive: true });
       yield* fs.writeFileString(
@@ -80,6 +80,8 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           description: "Review changes.",
           userInvocationOnly: true,
           userInvocable: false,
+          group: "Review",
+          groupOrder: 6,
         },
       ]);
     }),

@@ -9,6 +9,10 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { parse as parseYamlDocument } from "yaml";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import {
+  skillGroupFromFrontmatter,
+  type SkillGroup,
+} from "@t3tools/provider-core/server/skillGroup";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const SKILL_MENTION_PATTERN =
@@ -21,7 +25,7 @@ const MAX_SKILL_SCAN_ENTRIES = 10_000;
 const MAX_SKILL_SCAN_STATS = 100_000;
 const MAX_SKILL_SCAN_BYTES = ByteSize.bytes(8_000_000);
 
-interface CursorSkillFrontmatter {
+interface CursorSkillFrontmatter extends SkillGroup {
   readonly description?: string;
   readonly displayName?: string;
   readonly userInvocationOnly?: boolean;
@@ -118,6 +122,7 @@ function parseSkillFrontmatter(contents: string): CursorSkillFrontmatter | undef
     ...(parseFrontmatterBoolean(record["user-invocable"]) === false
       ? { userInvocable: false }
       : {}),
+    ...skillGroupFromFrontmatter(record),
   };
 }
 
@@ -185,6 +190,8 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
           ...(frontmatter.description ? { description: frontmatter.description } : {}),
           ...(frontmatter.userInvocationOnly ? { userInvocationOnly: true } : {}),
           ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
+          ...(frontmatter.group ? { group: frontmatter.group } : {}),
+          ...(frontmatter.groupOrder !== undefined ? { groupOrder: frontmatter.groupOrder } : {}),
         });
       }
     }

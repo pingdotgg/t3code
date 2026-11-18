@@ -11,6 +11,10 @@ import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import {
+  skillGroupFromFrontmatter,
+  type SkillGroup,
+} from "@t3tools/provider-core/server/skillGroup";
 
 import { claudeAccountConfigPath, readClaudeOauthAccount } from "../claudeResetCredits.ts";
 
@@ -27,13 +31,13 @@ const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 type SkillFrontmatter =
   | { readonly kind: "missing" }
   | { readonly kind: "malformed" }
-  | {
+  | (SkillGroup & {
       readonly kind: "parsed";
       readonly name?: string;
       readonly description?: string;
       readonly userInvocationOnly?: boolean;
       readonly userInvocable?: boolean;
-    };
+    });
 
 /** Claude accepts YAML 1.1 booleans that this YAML 1.2 parser leaves as strings or numbers. */
 function parseFrontmatterBoolean(value: unknown): boolean | undefined {
@@ -103,6 +107,7 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
     ...(parseFrontmatterBoolean(record["user-invocable"]) === false
       ? { userInvocable: false }
       : {}),
+    ...skillGroupFromFrontmatter(record),
   };
 }
 
@@ -835,6 +840,10 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         ...(userInvocationOnly ? { userInvocationOnly: true } : {}),
         ...(frontmatter.kind === "parsed" && frontmatter.userInvocable === false
           ? { userInvocable: false }
+          : {}),
+        ...(frontmatter.kind === "parsed" && frontmatter.group ? { group: frontmatter.group } : {}),
+        ...(frontmatter.kind === "parsed" && frontmatter.groupOrder !== undefined
+          ? { groupOrder: frontmatter.groupOrder }
           : {}),
       });
     }

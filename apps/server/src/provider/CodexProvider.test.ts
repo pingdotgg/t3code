@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
@@ -107,6 +108,7 @@ it.effect("reuses one Codex skills helper per launch until it idles out", () =>
     const providerScope = yield* Scope.make();
     const probe = yield* makeCodexSkillsProbe().pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
       Scope.provide(providerScope),
     );
     const read = (cwd: string, homePath = "/home-a") =>

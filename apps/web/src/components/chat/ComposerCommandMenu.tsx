@@ -1,6 +1,9 @@
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
-import { resolveProviderSkillSourceKind } from "@t3tools/client-runtime/providerSkills";
+import {
+  compareSkillGroups,
+  resolveProviderSkillSourceKind,
+} from "@t3tools/client-runtime/providerSkills";
 import {
   PROVIDER_DISPLAY_NAMES,
   type EnvironmentId,
@@ -145,7 +148,12 @@ function composerCommandItemGroup(
     case "provider-slash-command":
       return { key: `provider:${item.provider}`, label: providerLabel(item.provider, resolve) };
     case "skill": {
-      if (triggerKind === "slash-command") return { key: "skills", label: resolve(msg("Skills")) };
+      if (triggerKind === "slash-command") {
+        const group = item.skill.group;
+        return group
+          ? { key: `skills:group:${group}`, label: group }
+          : { key: "skills", label: resolve(msg("Skills")) };
+      }
       // `$` groups skills by where they come from, which replaces the per-row source badge.
       const source = resolveProviderSkillSourceKind(item.skill);
       if (source === "personal") {
@@ -176,6 +184,25 @@ function composerCommandItemGroup(
   }
 }
 
+// Search ranks skills across groups; the headings keep group order where the first one lands.
+function withSkillGroupsInOrder(groups: ComposerCommandGroup[]): ComposerCommandGroup[] {
+  const skillGroups = groups.flatMap((group) => {
+    const first = group.items[0];
+    return first?.type === "skill" ? [{ group, skill: first.skill }] : [];
+  });
+  if (skillGroups.length === 0) return groups;
+  const firstSkillGroup = groups.indexOf(skillGroups[0]!.group);
+  const otherGroups = groups.filter((group) => group.items[0]?.type !== "skill");
+  otherGroups.splice(
+    firstSkillGroup,
+    0,
+    ...skillGroups
+      .sort((left, right) => compareSkillGroups(left.skill, right.skill))
+      .map(({ group }) => group),
+  );
+  return otherGroups;
+}
+
 export function groupComposerCommandItems(
   items: ReadonlyArray<ComposerCommandItem>,
   triggerKind: ComposerTriggerKind | null,
@@ -192,6 +219,7 @@ export function groupComposerCommandItems(
     }
   }
   const ordered = [...groups.values()];
+  if (triggerKind === "slash-command") return withSkillGroupsInOrder(ordered);
   if (triggerKind === "path") {
     const order = ["threads", "environments", "paths"];
     ordered.sort((left, right) => order.indexOf(left.key) - order.indexOf(right.key));

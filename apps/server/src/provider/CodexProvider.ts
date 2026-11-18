@@ -50,6 +50,7 @@ import {
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { skillGroupFromSkillFile } from "@t3tools/provider-core/server/skillGroup";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import {
   codexRateLimitsFailureMessage,
@@ -515,6 +516,25 @@ function parseCodexSkillsListResponse(
   });
 }
 
+/** Codex's skills/list drops custom frontmatter, so read each skill's slash menu group here. */
+const withCodexSkillGroups = Effect.fn("withCodexSkillGroups")(function* (
+  skills: ReadonlyArray<ServerProviderSkill>,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* Effect.forEach(
+    skills,
+    (skill) =>
+      fileSystem.readFileString(skill.path).pipe(
+        Effect.map((contents): ServerProviderSkill => ({
+          ...skill,
+          ...skillGroupFromSkillFile(contents),
+        })),
+        Effect.orElseSucceed(() => skill),
+      ),
+    { concurrency: 16 },
+  );
+});
+
 const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   client: CodexClient.CodexAppServerClient["Service"],
 ) {
@@ -822,7 +842,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     cyberAccessProgramsUnavailable:
       accountResponse.account?.type === "apiKey" &&
       (config === undefined || cyberAccess?.features?.api_key_cyber_access_programs === false),
-    skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
+    skills: skillsResponse
+      ? yield* withCodexSkillGroups(parseCodexSkillsListResponse(skillsResponse, input.cwd))
+      : [],
   } satisfies CodexAppServerProviderSnapshot;
 });
 
@@ -876,7 +898,7 @@ export const probeCodexSkillsForCwd = Effect.fn("probeCodexSkillsForCwd")(functi
     environment: providerProbeEnvironment(input.environment ?? process.env),
   });
   const skillsResponse = yield* client.request("skills/list", { cwds: [input.cwd] });
-  return parseCodexSkillsListResponse(skillsResponse, input.cwd);
+  return yield* withCodexSkillGroups(parseCodexSkillsListResponse(skillsResponse, input.cwd));
 });
 
 // Long enough for a burst of workspace switches; short because the helper holds the user's
@@ -885,6 +907,7 @@ const CODEX_SKILLS_HELPER_IDLE_TTL = "30 seconds";
 
 /** Reuses one app-server per launch identity; each read passes its cwd and rescans from disk. */
 export const makeCodexSkillsProbe = Effect.fn("makeCodexSkillsProbe")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
   const helpers = yield* RcMap.make({
     lookup: (launch: {
       readonly binaryPath: string;
@@ -921,7 +944,9 @@ export const makeCodexSkillsProbe = Effect.fn("makeCodexSkillsProbe")(function* 
       Effect.onError(() => RcMap.invalidate(helpers, launch)),
       Effect.retry({ times: 1 }),
     );
-    return parseCodexSkillsListResponse(skillsResponse, cwd);
+    return yield* withCodexSkillGroups(parseCodexSkillsListResponse(skillsResponse, cwd)).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
   });
 });
 

@@ -133,6 +133,10 @@ export const ServerProviderSkill = Schema.Struct({
   userInvocationOnly: Schema.optional(Schema.Boolean),
   /** Claude user-invocable:false: only agents can invoke; composers must hide the slash command. */
   userInvocable: Schema.optional(Schema.Boolean),
+  /** SKILL.md `metadata.group`: the heading the slash menu lists this skill under. */
+  group: Schema.optional(TrimmedNonEmptyString),
+  /** SKILL.md `metadata.group-order`: where that heading sits, lowest first. */
+  groupOrder: Schema.optional(Schema.Finite),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 

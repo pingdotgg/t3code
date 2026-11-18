@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import { retainPendingComposerMenuItems } from "./composerMenuResults";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -57,6 +57,55 @@ describe("groupComposerCommandItems", () => {
     expect(groupComposerCommandItems([thread, path], "path").map((group) => group.key)).toEqual([
       "threads",
       "paths",
+    ]);
+  });
+
+  it("gives each slash menu skill group its own heading, in group order after search", () => {
+    const skill = (name: string, group?: string, groupOrder?: number) =>
+      ({
+        id: `skill:claude:${name}`,
+        type: "skill",
+        provider: ProviderDriverKind.make("claude"),
+        skill: {
+          name,
+          path: `/skills/${name}/SKILL.md`,
+          enabled: true,
+          ...(group ? { group } : {}),
+          ...(groupOrder !== undefined ? { groupOrder } : {}),
+        },
+        label: `/skill:${name}`,
+        description: "",
+      }) satisfies ComposerCommandItem;
+    const model = {
+      id: "slash:model",
+      type: "slash-command",
+      command: "model",
+      label: "/model",
+      description: "",
+    } satisfies ComposerCommandItem;
+    // `/skill` ranks every skill equally and sorts them by name.
+    const searched = [
+      model,
+      skill("architect", "Design", 4),
+      skill("babysit-pr", "Ship", 8),
+      skill("full-send", "Modes", 1),
+      skill("how", "Understand", 2),
+      skill("imagegen"),
+      skill("sharpen", "Design", 4),
+      skill("why", "Understand", 2),
+    ];
+    expect(
+      groupComposerCommandItems(searched, "slash-command").map((group) => [
+        group.label,
+        group.items.map((item) => item.label),
+      ]),
+    ).toEqual([
+      ["T3 Code", ["/model"]],
+      ["Modes", ["/skill:full-send"]],
+      ["Understand", ["/skill:how", "/skill:why"]],
+      ["Design", ["/skill:architect", "/skill:sharpen"]],
+      ["Ship", ["/skill:babysit-pr"]],
+      ["Skills", ["/skill:imagegen"]],
     ]);
   });
 });

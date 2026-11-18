@@ -83,6 +83,35 @@ describe("getProviderSkillsForSlashMenu", () => {
 
     expect(getProviderSkillsForSlashMenu(skills, true)).toEqual([enabledSkill]);
   });
+
+  it("puts skills in group order, unordered groups by name, and ungrouped skills last", () => {
+    const skill = (name: string, group?: string, groupOrder?: number) => ({
+      name,
+      path: `/skills/${name}/SKILL.md`,
+      enabled: true,
+      ...(group ? { group } : {}),
+      ...(groupOrder !== undefined ? { groupOrder } : {}),
+    });
+    const skills = [
+      skill("loose"),
+      skill("zeta", "Zeta"),
+      skill("ship", "Ship", 7),
+      skill("alpha", "Alpha"),
+      skill("how", "Understand", 1),
+      skill("file-pr", "Ship", 7),
+      skill("why", "Understand", 1),
+    ];
+
+    expect(getProviderSkillsForSlashMenu(skills, true).map((entry) => entry.name)).toEqual([
+      "how",
+      "why",
+      "ship",
+      "file-pr",
+      "alpha",
+      "zeta",
+      "loose",
+    ]);
+  });
 });
 
 describe("workspace provider snapshots", () => {

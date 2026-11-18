@@ -323,6 +323,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
                   cwd,
                   environment: effective.environment,
                 }).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.flatMap((skills) =>
                     snapshot.getSnapshot.pipe(Effect.map((draft) => ({ ...draft, skills }))),
                   ),
