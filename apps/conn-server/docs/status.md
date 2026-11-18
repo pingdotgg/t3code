@@ -107,6 +107,28 @@ builder with a test that fails without the fix.
   with `request_credentials`. MCP Apps rest on the parity checks alone.
 - **Release `conn-server-v0.2.0`**: every wave-1 slice; the version bump is its own PR.
 
+## Partly followed to Conn `444f032be7` (the 2026-11-18 sync)
+
+`tools/follow-conn.sh --capture`, then the red checks T3's change set explains:
+
+- Contract, tables, MCP tool names and GitHub GraphQL bindings regenerated; `gen-tools` mocks
+  T3's new `IssueService` and `ThreadIssueService`.
+- `thread.issue.link` and `thread.issue.unlink` are refused with a reason: this server does
+  not link issue trackers yet.
+- Payload scopes: `device.easAccount`, `device.simlockIdentity` and
+  `server.listTextGeneratorModels` need `settings:write` and `providers:manage` when the
+  payload holds a secret reference, as `requiredScopesForRpcCall` does.
+- Copy: T3's "Settings → Source Control" is now "Settings → Source control & issues".
+
+Still red:
+
+- `round_trip`: the new `get_config` sample has `worktreeCleanup: null` in a project override.
+  `optionalKey(NullOr(T))` is generated as `Option<T>`, so null is dropped. Fixing it in
+  `gen-contract.mjs` changes about 2,330 fields.
+- parity: `t3_worktree_status` after a handoff is an RPC error on the T3 server and `ok` here.
+- On mini: claude conformance (`env: : No such file`, red on 2026-11-17 as well) and canary
+  (writes to the decoy home from the CommandLineTools python cache).
+
 ## Followed to Conn `ea8a2d2e79` (the 2026-11-17 sync)
 
 `tools/follow-conn.sh --capture`, then each red check followed as T3 does it:
