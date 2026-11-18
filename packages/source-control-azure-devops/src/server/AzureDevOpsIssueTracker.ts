@@ -374,7 +374,7 @@ export const make: Effect.Effect<
   );
   // Cache misses and explicit refreshes share the same in-flight read and publication.
   const listClosedStates: Cache.Cache<string, ClosedStates, IssueTrackerError> =
-    yield* Cache.makeWith((key) => Cache.get(workflowReads, key), {
+    yield* Cache.makeWith((key: string) => Cache.get(workflowReads, key), {
       capacity: 256,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? CLOSED_STATES_TTL : Duration.zero),
     });
