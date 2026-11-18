@@ -123,7 +123,7 @@ export function AppBar(props: AppBarProps) {
   const visibleMenus: ReadonlyArray<AppBarMenu> = groupTrailing
     ? [
         {
-          title: gt("More"),
+          title: gt("More actions"),
           icon: "ellipsis",
           items: [
             ...(props.actions ?? []).map((action) => ({
