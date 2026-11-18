@@ -136,3 +136,37 @@ describe("applyServerConfigProjection provider catalogs", () => {
     expect(legacy.loadedCatalogDigest).toBeUndefined();
   });
 });
+
+describe("applyServerConfigProjection diskSpaceUpdated", () => {
+  it("sets the warning and drops it once the level is back to ok", () => {
+    const low = {
+      level: "low" as const,
+      volumes: [
+        {
+          path: "/home/me/.t3",
+          roles: ["t3Home" as const],
+          level: "low" as const,
+          availableBytes: 10,
+          totalBytes: 100,
+        },
+      ],
+    };
+    const current = Option.some({
+      config: { cwd: "/" } as unknown as ServerConfig,
+      latestEvent: {} as ServerConfigStreamEvent,
+      source: "live" as const,
+    });
+    const warned = applyServerConfigProjection(current, {
+      version: 1,
+      type: "diskSpaceUpdated",
+      payload: low,
+    });
+    expect(Option.getOrThrow(warned).config.diskSpace).toEqual(low);
+    const cleared = applyServerConfigProjection(warned, {
+      version: 1,
+      type: "diskSpaceUpdated",
+      payload: { level: "ok", volumes: [] },
+    });
+    expect(Object.hasOwn(Option.getOrThrow(cleared).config, "diskSpace")).toBe(false);
+  });
+});

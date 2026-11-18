@@ -10,9 +10,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import * as HostStorage from "./HostStorage.ts";
+
 export class HostResources extends Context.Service<
   HostResources,
-  { readonly read: Effect.Effect<HostResourcesSnapshot> }
+  {
+    /** CPU and memory only; load balancing polls this and must never wait on a filesystem. */
+    readonly read: Effect.Effect<HostResourcesSnapshot>;
+    /** Adds volumes and swap for views that show the whole machine. */
+    readonly readMachine: Effect.Effect<HostResourcesSnapshot>;
+  }
 >()("t3/resourceTelemetry/HostResources") {}
 
 // Linux CPU list syntax, as in Cpus_allowed_list: "0-3,8,10-11".
@@ -42,16 +49,28 @@ function pinnedCpu(stat: string, allowed: ReadonlySet<number>) {
   return cpu.count > 0 ? cpu : null;
 }
 
-function readCpu() {
-  const cpus = NodeOS.cpus();
+const cpuTotal = ({ times }: NodeOS.CpuInfo) =>
+  times.user + times.nice + times.sys + times.idle + times.irq;
+
+function readCpu(cpus: ReadonlyArray<NodeOS.CpuInfo>) {
   const cpu = cpus.reduce(
-    (sum, { times }) => ({
-      idle: sum.idle + times.idle,
-      total: sum.total + times.user + times.nice + times.sys + times.idle + times.irq,
-    }),
+    (sum, info) => ({ idle: sum.idle + info.times.idle, total: sum.total + cpuTotal(info) }),
     { idle: 0, total: 0 },
   );
   return { ...cpu, count: cpus.length };
+}
+
+export function coreUtilization(
+  before: ReadonlyArray<NodeOS.CpuInfo>,
+  after: ReadonlyArray<NodeOS.CpuInfo>,
+): ReadonlyArray<number> | undefined {
+  if (before.length === 0 || before.length !== after.length) return undefined;
+  return after.map((info, index) => {
+    const previous = before[index] ?? info;
+    const total = cpuTotal(info) - cpuTotal(previous);
+    const idle = info.times.idle - previous.times.idle;
+    return total > 0 && idle >= 0 ? Math.min(1, Math.max(0, 1 - idle / total)) : 0;
+  });
 }
 
 function darwinAvailableMemory(output: string): number | null {
@@ -73,6 +92,7 @@ function cgroupNumber(text: string, pattern: RegExp): number | null {
 const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
+  const storage = yield* HostStorage.HostStorage;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
@@ -102,10 +122,18 @@ const make = Effect.fn("makeHostResources")(function* () {
           )
         : null;
 
+    // Per-core shares are the host view from os.cpus(), even when a cpuset pins the server.
     const sampleCpu = () =>
-      allowedCpus
-        ? Effect.map(readFile("/proc/stat"), (stat) => pinnedCpu(stat, allowedCpus) ?? readCpu())
-        : Effect.sync(readCpu);
+      Effect.flatMap(
+        Effect.sync(() => NodeOS.cpus()),
+        (cores) =>
+          allowedCpus
+            ? Effect.map(readFile("/proc/stat"), (stat) => ({
+                cores,
+                ...(pinnedCpu(stat, allowedCpus) ?? readCpu(cores)),
+              }))
+            : Effect.succeed({ cores, ...readCpu(cores) }),
+      );
 
     const previousCpu = yield* sampleCpu();
     const previousUsage = yield* readCpuUsage();
@@ -172,13 +200,19 @@ const make = Effect.fn("makeHostResources")(function* () {
         memoryMax - (memoryCurrent - reclaimable),
       );
     }
-    return {
+    const cpuModel = cpu.cores[0]?.model.trim();
+    // Windows has no load average; os.loadavg() reports zeros there.
+    const [one = 0, five = 0, fifteen = 0] = platform === "win32" ? [] : NodeOS.loadavg();
+    const snapshot = {
       sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
-    };
+      ...(cpuModel ? { cpuModel } : {}),
+      ...(platform === "win32" ? {} : { loadAverage: { one, five, fifteen } }),
+    } satisfies HostResourcesSnapshot;
+    return { snapshot, cores: coreUtilization(previousCpu.cores, cpu.cores) };
   });
 
   const cache = yield* Cache.make({
@@ -186,7 +220,19 @@ const make = Effect.fn("makeHostResources")(function* () {
     lookup: (_key: "host") => sample(),
     timeToLive: "5 seconds",
   });
-  return HostResources.of({ read: Cache.get(cache, "host") });
+  const sampled = Cache.get(cache, "host");
+  return HostResources.of({
+    read: Effect.map(sampled, ({ snapshot }) => snapshot),
+    readMachine: Effect.all([sampled, storage.read], { concurrency: 2 }).pipe(
+      Effect.map(([{ snapshot, cores }, machine]) => ({
+        ...snapshot,
+        ...(cores ? { cpuCoreUtilization: cores } : {}),
+        storage: machine.storage,
+        gpu: machine.gpu,
+        ...(machine.swap ? { swap: machine.swap } : {}),
+      })),
+    ),
+  });
 });
 
 export const layer = Layer.effect(HostResources, make());

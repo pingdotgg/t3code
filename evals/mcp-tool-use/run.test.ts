@@ -620,6 +620,13 @@ const childCase: McpToolUseCase = {
 };
 
 const decodeDeviceCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
+const environmentCase = (id: string) =>
+  NodeFS.readFileSync(new URL("./cases/environments.ndjson", import.meta.url), "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => decodeDeviceCase(line))
+    .find((c) => c.id === id)!;
+
 const browserCase = (id: string) =>
   NodeFS.readFileSync(new URL("./cases/browser-routing.ndjson", import.meta.url), "utf8")
     .trim()
@@ -1104,6 +1111,20 @@ it.effect("fails preview calls with T3's errors when browser access is off or a 
       "Acme · Stripe Checkout",
       "Acme · Stripe Checkout",
     ]);
+    // A $byArg mock answers by environmentId; "" is this environment.
+    const machines = makeSample(environmentCase("machine-pick-reads-linked-resources"), base);
+    machines.tools.push({ name: "mcp__t3-code__t3_environment_read" });
+    const labels: Array<string> = [];
+    for (const environmentId of [undefined, "environment-build-box", "environment-vps"]) {
+      const result = yield* answerToolCall(machines, config, {
+        type: "tool_use",
+        id: `read-${environmentId}`,
+        name: "mcp__t3-code__t3_environment_read",
+        input: environmentId === undefined ? {} : { environmentId },
+      });
+      labels.push(String(/"label":"([^"]+)"/.exec(String(result.content))?.[1]));
+    }
+    assert.deepEqual(labels, ["MacBook Pro", "Build box", "Hetzner VPS"]);
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 

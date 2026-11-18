@@ -1,4 +1,10 @@
 import { DATABASE_COMPACTION_RECOMMENDED_BYTES } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -7,6 +13,7 @@ import * as Option from "effect/Option";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
+import * as DiskSpace from "../observability/DiskSpace.ts";
 import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
 import * as ServerOwnership from "../serverOwnership.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
@@ -58,10 +65,28 @@ const lockServerHome = Effect.fn("runDoctor.lockServerHome")(function* (paths: {
   );
 });
 
+const DISK_LEVEL_LABELS = { ok: "", low: " (low)", critical: " (critically low)" } as const;
+
 export const runDoctor = Effect.fn("runDoctor")(function* (
-  paths: { readonly dbPath: string; readonly serverRuntimeStatePath: string },
+  paths: {
+    readonly dbPath: string;
+    readonly serverRuntimeStatePath: string;
+    readonly diskSpaceTargets?: ReadonlyArray<DiskSpace.DiskSpaceTarget>;
+  },
   options: { readonly fix: boolean; readonly dryRun: boolean; readonly interactive?: boolean },
 ) {
+  if (paths.diskSpaceTargets !== undefined) {
+    const readings = yield* DiskSpace.readDiskSpace(paths.diskSpaceTargets).pipe(
+      Effect.orElseSucceed(() => []),
+    );
+    const levels = DiskSpace.applyDiskSpaceReadings(DiskSpace.EMPTY_DISK_SPACE, readings).volumes;
+    for (const reading of readings) {
+      const level = levels.find((volume) => volume.path === reading.path)?.level ?? "ok";
+      yield* Console.log(
+        `Disk (${reading.roles.join(", ")}): ${formatBytes(reading.availableBytes)} free of ${formatBytes(reading.totalBytes)}${DISK_LEVEL_LABELS[level]}.`,
+      );
+    }
+  }
   const databasePath = paths.dbPath;
   const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
   const status = yield* maintenance.inspect(databasePath);
@@ -206,9 +231,36 @@ export const doctorCommand = Command.make("doctor", {
     Effect.gen(function* () {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
-      yield* runDoctor(config, { fix: flags.fix, dryRun: flags.dryRun }).pipe(
-        Effect.provide(Layer.merge(DatabaseMaintenance.layer, CliService.layer(config))),
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* HostProcess.HomeDirectory;
+      const settings = yield* fs.readFileString(config.settingsPath).pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            fromLenientJson(
+              Schema.Struct({ worktreesDirectory: Schema.optionalKey(Schema.String) }),
+            ),
+          ),
+        ),
+        Effect.orElseSucceed(() => ({ worktreesDirectory: "" })),
       );
+      const worktrees =
+        resolveWorktreesDirectory(
+          settings.worktreesDirectory ?? "",
+          config.worktreesDir,
+          path,
+          home,
+        ) ?? config.worktreesDir;
+      yield* runDoctor(
+        {
+          ...config,
+          diskSpaceTargets: [
+            { role: "t3Home", path: config.baseDir },
+            { role: "worktrees", path: worktrees },
+          ],
+        },
+        { fix: flags.fix, dryRun: flags.dryRun },
+      ).pipe(Effect.provide(Layer.merge(DatabaseMaintenance.layer, CliService.layer(config))));
     }),
   ),
 );

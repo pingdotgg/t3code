@@ -45,6 +45,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { formatDiagnosticsDuration } from "./DiagnosticsSettings.logic";
 import { ExpandableText } from "./ExpandableText";
+import { MachineResourcesSection } from "./MachineResourcesSection";
 import { ResourceTelemetryDiagnostics } from "./ResourceTelemetryDiagnostics";
 import { formatCpuTime } from "./ResourceTelemetryDiagnostics.logic";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
@@ -1004,6 +1005,7 @@ function DiagnosticsSettingsBody() {
 
   return (
     <SettingsPageContainer width="expanded" className="gap-10">
+      {environmentId === null ? null : <MachineResourcesSection environmentId={environmentId} />}
       <ResourceTelemetryDiagnostics environmentId={environmentId} />
 
       <SettingsSection
