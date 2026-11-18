@@ -4,6 +4,7 @@ import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
 import {
   DESKTOP_BROWSER_CHANNEL_PATH,
+  DESKTOP_BROWSER_CHANNEL_PING,
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserCommand as DesktopBrowserCommandType,
@@ -41,6 +42,8 @@ export interface DesktopTabKey {
   readonly threadId: string;
   readonly tabId: string;
 }
+
+const PING_INTERVAL = "10 seconds";
 
 const keyOf = ({ threadId, tabId }: DesktopTabKey) => `${threadId}\u0000${tabId}`;
 
@@ -193,6 +196,9 @@ const make = Effect.gen(function* () {
       // A redial can arrive before the old socket's close is seen here.
       yield* retireConnection;
       socketWrite = send;
+      yield* writeLock
+        .withPermits(1)(send(DESKTOP_BROWSER_CHANNEL_PING))
+        .pipe(Effect.delay(PING_INTERVAL), Effect.forever, Effect.ignore, Effect.forkScoped);
       // The desktop forgets its turns when it dials. Its first frame shows that it has by now.
       let turnsRestored = false;
       const restoreTurns = Effect.suspend(() => {

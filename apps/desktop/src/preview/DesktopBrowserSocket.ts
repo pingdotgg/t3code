@@ -1,7 +1,11 @@
 /** Carries the desktop browser channel over a WebSocket for a backend whose launcher drops fds. */
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
-import { DESKTOP_BROWSER_CHANNEL_PATH, DesktopBrowserCommand } from "@t3tools/contracts";
+import {
+  DESKTOP_BROWSER_CHANNEL_PATH,
+  DESKTOP_BROWSER_CHANNEL_PING,
+  DesktopBrowserCommand,
+} from "@t3tools/contracts";
 import { currentDesktopBootstrapToken } from "@t3tools/shared/desktopBootstrapToken";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -15,6 +19,8 @@ import * as Socket from "effect/socket/Socket";
 import { wslLinuxPathToWindowsPath } from "../wsl/wslPathParsing.ts";
 
 const REDIAL_INTERVAL = "1 second";
+// The server pings every 10 seconds; a socket silent for this long is dead without having closed.
+const SILENCE_LIMIT = "30 seconds";
 
 // Effect drops its listeners before closing a socket that is still connecting, and `ws` then
 // emits an `error` nobody handles, which would exit the app while the backend boots.
@@ -92,11 +98,13 @@ export const run = Effect.fn("DesktopBrowserSocket.run")(function* (options: {
     const writer = yield* socket.writer;
     const reader = yield* socket.reader;
     const commands = reader.pull.pipe(
+      Effect.timeout(SILENCE_LIMIT),
       Effect.flatMap((frames) =>
         Effect.forEach(
           frames,
           (frame) => {
             const line = typeof frame === "string" ? frame : decoder.decode(frame);
+            if (line === DESKTOP_BROWSER_CHANNEL_PING) return Effect.void;
             return options.onCommand(
               options.distro === undefined ? line : translateWslPaths(line, options.distro),
             );

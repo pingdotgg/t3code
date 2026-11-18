@@ -7,6 +7,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Socket from "effect/socket/Socket";
 import { vi } from "vite-plus/test";
 
@@ -153,6 +154,9 @@ it.effect(
         const first = yield* connect;
         yield* first.send({ type: "attached", ...key });
         expect(yield* channel.awaitAttached(key, "5 seconds")).toBe(true);
+        // An idle socket still carries the ping a desktop tells a dead connection by.
+        yield* TestClock.adjust("10 seconds");
+        expect(yield* Queue.take(first.commands)).toBe("ping");
         const turn = { type: "turn", threadId: key.threadId, active: true };
         yield* channel.turn(key.threadId, true);
         expect(JSON.parse(yield* Queue.take(first.commands))).toEqual(turn);

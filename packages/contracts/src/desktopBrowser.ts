@@ -5,6 +5,9 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 /** Where a desktop whose backend launcher drops the browser fds dials the channel instead. */
 export const DESKTOP_BROWSER_CHANNEL_PATH = "/api/desktop-browser-channel";
 
+/** Sent by the server over the socket while it is idle, so a desktop can tell a dead one from a quiet one. */
+export const DESKTOP_BROWSER_CHANNEL_PING = "ping";
+
 const TabKey = {
   threadId: TrimmedNonEmptyString,
   tabId: TrimmedNonEmptyString,
