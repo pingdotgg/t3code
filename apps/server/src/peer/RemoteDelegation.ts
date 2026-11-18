@@ -1182,7 +1182,7 @@ const make = Effect.gen(function* () {
   const runStatus = Effect.fn("RemoteDelegation.runStatus")(
     function* (scope: ThreadScope, task: OrchestrationV2Subagent) {
       const remote = task.remoteChild;
-      if (remote?.runId === undefined) return null;
+      if (remote?.threadId === undefined || remote.runId === undefined) return null;
       const read = yield* forwarding.readThread(
         followScope(scope.thread, remote),
         remote.environmentId,
