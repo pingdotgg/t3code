@@ -1,5 +1,11 @@
 /// <reference lib="dom" />
-import type { IssueComment, IssueCommentsPage, IssueDetail, IssueRef } from "@t3tools/contracts";
+import {
+  type IssueComment,
+  type IssueCommentsPage,
+  type IssueDetail,
+  type IssueRef,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { expect } from "e2e";
 
 import { test, WEB } from "./t3.ts";
@@ -9,7 +15,10 @@ test(
   WEB,
   async ({ t3, app, browser, screen }) => {
     await t3.project("demo");
-    await browser.addInitScript(() => {
+    const stubIssueRpc = ({
+      issuesDetail,
+      issuesComments,
+    }: Pick<typeof WS_METHODS, "issuesDetail" | "issuesComments">) => {
       const pendingPage = new Promise<void>((resolve) => {
         Object.assign(window, { releaseOldIssuePage: () => resolve() });
       });
@@ -21,9 +30,15 @@ test(
         url: null,
       });
       let refreshed = false;
+      let pendingRefresh: Promise<void> | undefined;
       Object.assign(window, {
         armIssueRefresh: () => {
           refreshed = true;
+        },
+        holdIssueRefresh: () => {
+          const { promise, resolve } = Promise.withResolvers<void>();
+          pendingRefresh = promise;
+          Object.assign(window, { releaseIssueRefresh: resolve });
         },
       });
       // Keep the real socket for all other RPCs. Supply three pages of an unchanged GitHub
@@ -47,7 +62,7 @@ test(
               }),
             }),
           );
-        if (request.tag === "issues.detail") {
+        if (request.tag === issuesDetail) {
           const { projectId, tracker, scope, key } = request.payload;
           const detail: IssueDetail = {
             projectId,
@@ -95,8 +110,13 @@ test(
             events: [],
             linkedPullRequests: [],
           };
-          queueMicrotask(() => reply(detail));
-        } else if (request.tag === "issues.comments") {
+          if (pendingRefresh) {
+            void pendingRefresh.then(() => reply(detail));
+            pendingRefresh = undefined;
+          } else {
+            queueMicrotask(() => reply(detail));
+          }
+        } else if (request.tag === issuesComments) {
           if (request.payload.cursor === "first-older-page") {
             queueMicrotask(() =>
               reply({
@@ -114,6 +134,10 @@ test(
           } else return send.call(this, data);
         } else return send.call(this, data);
       };
+    };
+    await browser.addInitScript(stubIssueRpc, {
+      issuesDetail: WS_METHODS.issuesDetail,
+      issuesComments: WS_METHODS.issuesComments,
     });
 
     await t3.open("/issues?selectedProjectId=demo&tracker=github&scope=example/demo&key=42");
@@ -142,5 +166,21 @@ test(
     }, activity);
     await app.screenshot("activity-after-refresh-and-late-page");
     await expect(browser.locator(activity)).not.toContainText("First older comment");
+
+    await browser.evaluate(() => {
+      (window as unknown as { holdIssueRefresh: () => void }).holdIssueRefresh();
+      return null;
+    });
+    const refresh = screen.getByRole("button", "Refresh issue", { exact: true });
+    await refresh.tap();
+    await expect(refresh).toBeDisabled();
+    await expect(loadOlder).toBeDisabled();
+    await browser.evaluate(() => {
+      (window as unknown as { releaseIssueRefresh: () => void }).releaseIssueRefresh();
+      return null;
+    });
+    await expect(loadOlder).toBeEnabled();
+    await loadOlder.tap();
+    await screen.getByText("First older comment", { exact: true }).waitFor();
   },
 );

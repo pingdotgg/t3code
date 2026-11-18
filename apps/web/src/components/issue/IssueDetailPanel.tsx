@@ -518,6 +518,7 @@ export function IssueDetailPanel({
   // Older pages are tied to the cursor the detail was read with; a refreshed detail starts over.
   const olderComments = older?.seed === detail.commentsCursor ? older.comments : [];
   const nextCursor = older?.seed === detail.commentsCursor ? older.cursor : detail.commentsCursor;
+  const olderUnavailable = loadingOlder || detailQuery.isPending;
   const comments = prependIssueComments(detail.comments, olderComments);
   const timeline: ReadonlyArray<TimelineItem> = [
     ...comments.map((c): TimelineItem => ({ kind: "comment", at: c.createdAt, comment: c })),
@@ -536,7 +537,7 @@ export function IssueDetailPanel({
   const currentState = issueStatePresentation(detail.state);
 
   const loadOlder = async () => {
-    if (nextCursor === null || loadingOlder) return;
+    if (nextCursor === null || olderUnavailable) return;
     const asked = refreshes.current;
     setLoadingOlder(true);
     const result = await loadComments({
@@ -909,7 +910,7 @@ export function IssueDetailPanel({
                 size="sm"
                 variant="outline"
                 className="self-start"
-                disabled={loadingOlder}
+                disabled={olderUnavailable}
                 onClick={() => void loadOlder()}
               >
                 {loadingOlder ? <T>Loading…</T> : <T>Load older comments</T>}
