@@ -12,9 +12,9 @@ import {
   type LimitAccount,
   type LimitPoolWindow,
   resetCreditsForWindow,
-  usageShareSummary,
 } from "@t3tools/shared/usageLimits";
 import {
+  usageShareSummary,
   collectExternalUsageLinks,
   collectLimitNotices,
   cursorUsageWindowDetails,
@@ -538,7 +538,7 @@ export function UsageLimitsSection({
                     }
                     label={details?.label}
                     description={
-                      details?.description ?? usageShareSummary(share, windows) ?? undefined
+                      details?.description ?? usageShareSummary(share, windows, m) ?? undefined
                     }
                     wide={wide}
                   />
