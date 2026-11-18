@@ -74,9 +74,10 @@ function keepLastGoodReadings(
           (candidate) =>
             candidate.id === account.id &&
             candidate.driver === account.driver &&
-            // Fingerprinted Antigravity readings omit the listed identity, so absent means unknown.
-            (candidate.email === undefined || candidate.email === account.email) &&
-            (candidate.workspaceId === undefined || candidate.workspaceId === account.workspaceId),
+            // Fingerprinted Antigravity readings omit the listed identity, so they are never lent.
+            candidate.usageLimits.credentialFingerprint === undefined &&
+            candidate.email === account.email &&
+            candidate.workspaceId === account.workspaceId,
         );
         return last && !last.usageLimits.unavailable ? last : account;
       }),
