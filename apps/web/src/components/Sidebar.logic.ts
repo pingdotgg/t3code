@@ -1,4 +1,9 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import {
+  isSidebarHiddenThread,
+  NO_SIDEBAR_HIDDEN_MARKS,
+  type SidebarHiddenMarks,
+} from "../orbit/sidebarHiddenThreads.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
@@ -586,6 +591,7 @@ export async function deleteSelectedThreadEntries<
 /**
  * `delegatedUnderParent` holds the tasks linked environments run for a thread
  * the sidebar lists, by thread key; they show under that thread, as subagents do.
+ * `hiddenMarks` are Conn's sidebar marks; the Orbit panel and the palette still find those threads.
  */
 export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> & {
@@ -595,10 +601,12 @@ export function filterSidebarV2VisibleThreads<
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
   delegatedUnderParent: ReadonlySet<string>,
+  hiddenMarks: SidebarHiddenMarks = NO_SIDEBAR_HIDDEN_MARKS,
 ): T[] {
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
+      !isSidebarHiddenThread(hiddenMarks, thread) &&
       !isShownUnderParent(
         { environmentId: thread.environmentId, threadId: thread.id },
         thread.lineage,

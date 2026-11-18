@@ -25,6 +25,7 @@ const PROFILE_SECTION_NAMES = [
   APPEARANCE_SECTION,
   DESKTOP_DEVICE_SECTION,
   IPHONE_DEVICE_SECTION,
+  "sidebarHiddenThreads",
 ] as const;
 export type ProfileSectionName = (typeof PROFILE_SECTION_NAMES)[number];
 

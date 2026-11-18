@@ -64,6 +64,8 @@ export interface OrbitProfileSyncView {
   /** Appearance and desktop settings; "unsupported" is a Gateway that predates profile sections. */
   readonly sections: "unknown" | "supported" | "unsupported";
   readonly sectionsError: string | null;
+  /** Conn: the hidden sidebar threads' own sync. */
+  readonly hiddenThreadsError?: string | null;
 }
 
 export interface OrbitProfileSummary {
@@ -101,9 +103,13 @@ export function orbitProfileSummary(
   return {
     description,
     problem:
-      profileName !== null && view.phase !== "error" && view.sectionsError !== null
-        ? `Appearance and settings: ${view.sectionsError}`
-        : null,
+      profileName === null || view.phase === "error"
+        ? null
+        : view.sectionsError !== null
+          ? `Appearance and settings: ${view.sectionsError}`
+          : view.hiddenThreadsError
+            ? `Hidden sidebar threads: ${view.hiddenThreadsError}`
+            : null,
     synced: { workspaces, appearance: settings, desktop: settings },
   };
 }

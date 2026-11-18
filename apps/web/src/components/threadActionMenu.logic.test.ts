@@ -74,4 +74,16 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
+
+  it("offers Disconnect only for Orbit-managed rows, also without operate access", () => {
+    expect(buildThreadActionMenuItems(baseState).some((item) => item.id === "disconnect")).toBe(
+      false,
+    );
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      canDisconnect: true,
+    });
+    expect(items.find((item) => item.id === "disconnect")?.disabled).toBeUndefined();
+  });
 });

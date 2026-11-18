@@ -1551,6 +1551,22 @@ describe("resolveSidebarRouteReveal", () => {
     expect(resolve(hiddenKey)).toEqual({ pendingKey: hiddenKey, widensScope: true });
   });
 
+  it("never widens for a conversation hidden from the sidebar", () => {
+    // A Tasks peek opened it hidden; the user's scope must stay as chosen.
+    expect(
+      resolveSidebarRouteReveal({
+        reveal: { observedKey: "environment-test:other", pendingKey: null },
+        routeKey: hiddenKey,
+        routeKeyInPlace: false,
+        isSearching: false,
+        scopedProjectKeys,
+        delegatedUnderParent: new Set(),
+        hiddenMarks: { keys: new Set([hiddenKey]), environments: new Set(), shown: new Set() },
+        findThread,
+      }),
+    ).toEqual({ pendingKey: hiddenKey, widensScope: false });
+  });
+
   it("holds a pending reveal without widening while searching", () => {
     expect(
       resolveSidebarRouteReveal({

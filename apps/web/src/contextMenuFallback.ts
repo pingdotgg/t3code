@@ -160,6 +160,20 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     { tag: "circle", attrs: { cx: "17", cy: "15", r: "3" } },
     { tag: "path", attrs: { d: "m21 19-1.9-1.9" } },
   ],
+  unplug: [
+    { tag: "path", attrs: { d: "m19 5 3-3" } },
+    { tag: "path", attrs: { d: "m2 22 3-3" } },
+    {
+      tag: "path",
+      attrs: { d: "M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z" },
+    },
+    { tag: "path", attrs: { d: "M7.5 13.5 10 11" } },
+    { tag: "path", attrs: { d: "M10.5 16.5 13 14" } },
+    {
+      tag: "path",
+      attrs: { d: "m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z" },
+    },
+  ],
   trash: [
     { tag: "path", attrs: { d: "M3 6h18" } },
     { tag: "path", attrs: { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" } },

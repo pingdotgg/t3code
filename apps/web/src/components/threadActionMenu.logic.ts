@@ -29,6 +29,7 @@ export type ThreadActionMenuId =
   | "copy-branch"
   | "copy-thread"
   | "copy-thread-id"
+  | "disconnect"
   | "archive"
   | "delete";
 
@@ -121,6 +122,8 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Conn: an Orbit-managed thread leaves the sidebar; pairing and history stay. */
+  readonly canDisconnect?: boolean;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -136,6 +139,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-branch",
     "copy-thread",
     "copy-thread-id",
+    "disconnect",
   ].includes(action);
 }
 
@@ -286,6 +290,16 @@ export function buildThreadActionMenuItems(
       ],
     },
     { id: "project-settings", label: resolve(msg("Project settings")), icon: "settings" },
+    ...(state.canDisconnect
+      ? [
+          {
+            id: "disconnect" as const,
+            label: resolve(msg("Disconnect")),
+            icon: "unplug",
+            separatorBefore: true,
+          },
+        ]
+      : []),
     {
       id: "archive",
       label: resolve(msg("Archive thread")),

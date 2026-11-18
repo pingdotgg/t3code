@@ -906,5 +906,6 @@ export * from "./shellCommands.ts";
 export * from "./shellReducer.ts";
 export * from "./shellPullRequests.ts";
 export * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
+export { readShellThreadInventory } from "./shellInventory.ts";
 export * from "./snapshots.ts";
 export * from "./steadyShells.ts";

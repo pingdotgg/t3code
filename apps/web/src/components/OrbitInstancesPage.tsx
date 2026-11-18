@@ -32,6 +32,7 @@ import { useRef, useState } from "react";
 
 import { cn } from "../lib/utils";
 import { openOrbitInstanceById } from "../orbit/openOrbitInstance";
+import { showSidebarThread } from "../orbit/sidebarHiddenThreads";
 import { loadOrbitInstanceList } from "../orbit/orbitInstanceList";
 import { orbitWakeSupported, useOrbitInstanceSleep } from "../orbit/orbitInstanceSleep";
 import {
@@ -193,17 +194,18 @@ function InstanceThreads({ row }: { readonly row: OrbitInstanceWithThreads }) {
           <button
             type="button"
             className="flex w-full items-center gap-2 px-3 py-2 text-start text-ui hover:bg-accent"
-            onClick={() =>
+            onClick={() => {
+              const ref = scopeThreadRef(
+                EnvironmentId.make(thread.environmentId),
+                ThreadId.make(thread.id),
+              );
+              // An explicit open lists the thread in the sidebar again; its siblings keep their marks.
+              showSidebarThread(ref);
               void navigate({
                 to: "/$environmentId/$threadId",
-                params: buildThreadRouteParams(
-                  scopeThreadRef(
-                    EnvironmentId.make(thread.environmentId),
-                    ThreadId.make(thread.id),
-                  ),
-                ),
-              })
-            }
+                params: buildThreadRouteParams(ref),
+              });
+            }}
           >
             {thread.working ? (
               <Spinner className="size-3.5 shrink-0" />

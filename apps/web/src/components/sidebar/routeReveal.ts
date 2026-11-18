@@ -2,6 +2,7 @@ import { useRef } from "react";
 
 import { observeResize } from "~/lib/observeResize";
 
+import type { SidebarHiddenMarks } from "../../orbit/sidebarHiddenThreads.logic";
 import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
 
 // AppSidebarLayout owns this so drawer and Settings remounts preserve the chosen project scope.
@@ -81,10 +82,19 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
   readonly isSearching: boolean;
   readonly scopedProjectKeys: ReadonlySet<string> | null;
   readonly delegatedUnderParent: ReadonlySet<string>;
+  /** A hidden route thread has no row, so it never widens the scope. */
+  readonly hiddenMarks?: SidebarHiddenMarks;
   readonly findThread: (key: string) => T | undefined;
 }): { readonly pendingKey: string | null; readonly widensScope: boolean } {
-  const { reveal, routeKey, isSearching, scopedProjectKeys, delegatedUnderParent, findThread } =
-    input;
+  const {
+    reveal,
+    routeKey,
+    isSearching,
+    scopedProjectKeys,
+    delegatedUnderParent,
+    hiddenMarks,
+    findThread,
+  } = input;
   const pendingKey = pendingSidebarRouteReveal(reveal, routeKey, input.routeKeyInPlace);
   // Search results replace the thread list; the reveal waits for it to return.
   const thread = pendingKey === null || isSearching ? undefined : findThread(pendingKey);
@@ -92,6 +102,6 @@ export function resolveSidebarRouteReveal<T extends RevealableThread>(input: {
     thread !== undefined &&
     scopedProjectKeys !== null &&
     filterSidebarV2VisibleThreads([thread], scopedProjectKeys, delegatedUnderParent).length === 0 &&
-    filterSidebarV2VisibleThreads([thread], null, delegatedUnderParent).length === 1;
+    filterSidebarV2VisibleThreads([thread], null, delegatedUnderParent, hiddenMarks).length === 1;
   return { pendingKey, widensScope };
 }

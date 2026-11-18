@@ -114,7 +114,7 @@ export function SidebarSectionHeader(props: {
   marker: "working-header" | "snoozed-header" | "settled-header";
   label: string;
   /** A muted trailing count. */
-  count: number;
+  count: number | null;
   className?: string;
   dragging?: boolean;
   isDropTarget?: boolean;
@@ -138,7 +138,11 @@ export function SidebarSectionHeader(props: {
         expanded={props.toggle.expanded}
         tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "muted"}
         data-testid={`sidebar-${shelf}-shelf-toggle`}
-        accessory={<span className="font-normal tabular-nums">{props.count}</span>}
+        accessory={
+          props.count === null ? null : (
+            <span className="font-normal tabular-nums">{props.count}</span>
+          )
+        }
       >
         {props.label}
       </CollapsibleSectionHeader>

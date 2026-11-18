@@ -135,6 +135,24 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { useProjectPin } from "../hooks/useProjectGroupUpdate";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
+import { useEnvironmentProvider } from "../orbit/environmentProvider";
+import {
+  hideSidebarThread,
+  publishSidebarListedThreads,
+  useSidebarHiddenThreads,
+} from "../orbit/sidebarHiddenThreads";
+import {
+  hidesSidebarEnvironmentInventory,
+  isSidebarHiddenThread,
+  sidebarSettledCount,
+  unresolvedSidebarHiddenCount,
+  withoutSidebarHiddenProjects,
+  type SidebarHiddenMarks,
+} from "../orbit/sidebarHiddenThreads.logic";
+import {
+  syncSidebarOlderMembership,
+  useSidebarOlderMembership,
+} from "../orbit/sidebarOlderMembership";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -160,7 +178,11 @@ import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
-import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
+import {
+  useOlderSettledShelf,
+  useOlderSettledShelfGrowth,
+  useUnloadedOlderSettled,
+} from "../state/olderSettledShelf";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
@@ -371,6 +393,7 @@ interface SidebarThreadPartitionInput {
   // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
   // tracker's expiry version are inputs: a new key repartitions.
   readonly clockKey: string;
+  readonly hiddenMarks: SidebarHiddenMarks;
 }
 
 function scrollSidebarToTop(content: HTMLElement | null) {
@@ -431,6 +454,7 @@ function useSidebarThreads(input: {
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly threads: readonly EnvironmentThreadShell[];
   readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly hiddenMarks: SidebarHiddenMarks;
   readonly routeRowThreadKey: string | null;
   // Set in boring mode: the project groups to fold active threads into, in order.
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
@@ -445,6 +469,7 @@ function useSidebarThreads(input: {
     optimisticDrop,
     threads,
     delegatedUnderParent,
+    hiddenMarks,
     routeRowThreadKey,
     folderGroups,
     keepEmptyFolders: keepEmpty,
@@ -497,20 +522,43 @@ function useSidebarThreads(input: {
     workingShelfEnabled,
     sortActiveBySend: folderGroups !== null,
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
+    hiddenMarks,
   });
 
   const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
     partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
-    scopes: olderSettledScopes([...serverConfigs.keys()], scopedProjectKeys),
+    // Conn: a peeked environment's older threads stay out; the shelf neither pages nor counts them.
+    scopes: olderSettledScopes(
+      [...serverConfigs.keys()].filter(
+        (environmentId) => !hidesSidebarEnvironmentInventory(hiddenMarks, environmentId),
+      ),
+      scopedProjectKeys,
+    ),
     expanded: settledShelfExpanded,
     visibleCount: settledVisibleCount,
   });
   const listedSettledThreads = settledThreads.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettledThreads);
-  const settledCount =
-    settledThreads.length + olderSettledShelf.unloadedCount(partition.visibleThreads);
+  // Conn: hidden rows the client holds are no unloaded older thread; hidden ones it cannot place
+  // yet keep the label from a number until paging resolves them.
+  const heldKeys = new Set(threads.map(threadShellKey));
+  const heldThreads = [
+    ...partition.visibleThreads,
+    ...threads.filter(
+      (thread) => thread.archivedAt === null && isSidebarHiddenThread(hiddenMarks, thread),
+    ),
+  ];
+  const settledSize = sidebarSettledCount({
+    listed: settledThreads.length,
+    scopes: olderSettledShelf.scopes.map((scope) => ({
+      unloaded: olderSettledShelf.unloadedCount(heldThreads, [scope]),
+      unresolvedHidden: unresolvedSidebarHiddenCount(hiddenMarks, scope.environmentId, heldKeys),
+    })),
+  });
+  const settledCount = settledSize.upTo;
+  const settledCountKnown = settledSize.atLeast === settledSize.upTo;
   const visibleSettledThreads = (() => {
     const visible = listedSettledThreads.slice(0, settledVisibleCount);
     if (
@@ -585,6 +633,8 @@ function useSidebarThreads(input: {
     ],
     settledVisibleCount,
     settledCount,
+    settledLabelCount: settledCountKnown ? settledSize.atLeast : null,
+    settledCountKnown,
     olderSettledShelf,
     hiddenSettledCount: Math.max(0, settledCount - visibleSettledThreads.length),
     showMoreSettled: () =>
@@ -631,9 +681,15 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     optimisticDrop,
     workingShelfEnabled,
     sortActiveBySend,
+    hiddenMarks,
   } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
+  const visible = filterSidebarV2VisibleThreads(
+    threads,
+    scopedProjectKeys,
+    delegatedUnderParent,
+    hiddenMarks,
+  );
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -819,7 +875,36 @@ function useSidebarLookups() {
   const environments = useEnvironmentIdentities();
   const serverConfigs = useServerConfigs();
   const providerEntriesByEnvironment = useAtomValue(sidebarProviderEntriesAtom);
-  const projectGroups = useSidebarProjectGroups();
+  // Conn: a project whose threads are all hidden from the sidebar leaves its list and scope menu.
+  // A scope already on it stays narrowed: scope resolution reads every group.
+  const allProjectGroups = useSidebarProjectGroups();
+  const quietThreads = useQuietThreadShells();
+  const olderSettled = useUnloadedOlderSettled([...serverConfigs.keys()], quietThreads);
+  const olderMembership = useSidebarOlderMembership((state) => state.byEnvironment);
+  const { groups: projectGroups, unresolved } = withoutSidebarHiddenProjects(
+    allProjectGroups,
+    quietThreads,
+    useSidebarHiddenThreads((state) => state.marks),
+    {
+      unloaded: olderSettled.unloaded,
+      rows: (environmentId) => {
+        const entry = olderMembership.get(environmentId);
+        return entry !== undefined && entry.older === olderSettled.olderOf(environmentId)
+          ? entry.rows
+          : null;
+      },
+    },
+  );
+  const membershipReads = unresolved.flatMap((environmentId) => {
+    const older = olderSettled.olderOf(environmentId);
+    return older === null ? [] : [{ environmentId, older }];
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads older settled rows from the server while hidden marks leave a project's visibility undecided
+  useEffect(() => {
+    syncSidebarOlderMembership(membershipReads);
+  }, [membershipReads]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases pending inventory reads when the sidebar unmounts
+  useEffect(() => () => syncSidebarOlderMembership([]), []);
   const environmentLabelById = new Map(
     environments.map((environment) => [environment.environmentId, environment.label] as const),
   );
@@ -847,6 +932,7 @@ function useSidebarLookups() {
     projects,
     serverConfigs,
     projectGroups,
+    allProjectGroups,
     environmentLabelById,
     providerEntriesByEnvironment,
     projectByKey,
@@ -889,6 +975,12 @@ function checkThreadOperations(
   return false;
 }
 
+/** Conn: a thread on an Orbit Instance's server, which a row may disconnect from the sidebar. */
+function isOrbitManagedEnvironment(environmentId: EnvironmentId): boolean {
+  const { provider, orbitInstances } = useEnvironmentProvider.getState();
+  return provider === "orbit" && orbitInstances[environmentId] !== undefined;
+}
+
 const SIDEBAR_DRAG_DISTANCE = 6;
 
 // dnd-kit's 20% edge zone at full speed runs the list away while the pointer rests near the bottom.
@@ -916,6 +1008,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projects,
     serverConfigs,
     projectGroups,
+    allProjectGroups,
     environmentLabelById,
     providerEntriesByEnvironment,
     projectByKey,
@@ -1137,12 +1230,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     projectGroups.filter((project) => project.archived).map((project) => project.projectKey),
   );
   const chosenProjectScopeKeys = resolveSidebarProjectScopeKeys({
-    groups: projectGroups,
+    groups: allProjectGroups,
     keys: persistedProjectScopeKeys,
     settings: projectGroupingSettings,
     canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
   }).filter((key) => !archivedProjectKeys.has(key));
-  const chosenProjectGroups = scopeGroups.filter((project) =>
+  const chosenProjectGroups = pickableProjectGroups(allProjectGroups).filter((project) =>
     chosenProjectScopeKeys.includes(project.projectKey),
   );
   const chosenScopeProjectKeys =
@@ -1165,8 +1258,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ? asLaunchingThread(thread)
             : thread,
         );
+  const hiddenMarks = useSidebarHiddenThreads((state) => state.marks);
+  // A hidden conversation has no row: the route neither reveals one nor widens the scope.
   const routeRowThreadKey =
-    routeThreadRef === null
+    routeThreadRef === null ||
+    isSidebarHiddenThread(hiddenMarks, {
+      environmentId: routeThreadRef.environmentId,
+      id: routeThreadRef.threadId,
+    })
       ? null
       : scopedThreadKey(resolveListedAncestorThreadRef(routeThreadRef, threads));
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
@@ -1185,6 +1284,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     isSearching: isSearchingThreads,
     scopedProjectKeys: chosenScopeProjectKeys,
     delegatedUnderParent,
+    hiddenMarks,
     findThread: (key) => threads.find((candidate) => threadShellKey(candidate) === key),
   });
   const projectScopeKeys = revealWidensScope ? [] : chosenProjectScopeKeys;
@@ -1239,8 +1339,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const scopedProjectGroups = revealWidensScope ? [] : chosenProjectGroups;
   const scopedProjectRefs = scopedProjectGroups.flatMap((project) => project.memberProjectRefs);
+  // Conn: membership from every group, so a project whose loaded rows are hidden keeps its scope.
   const scopedProjectKeys = resolveScopedProjectKeys({
-    projectGroups,
+    projectGroups: allProjectGroups,
     workspace: activeWorkspace,
     scopedProjectGroups,
   });
@@ -1380,6 +1481,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     searchableThreads,
     settledVisibleCount,
     settledCount,
+    settledLabelCount,
+    settledCountKnown,
     olderSettledShelf,
     hiddenSettledCount,
     showMoreSettled,
@@ -1411,6 +1514,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     optimisticDrop,
     threads: listedThreads,
     delegatedUnderParent,
+    hiddenMarks,
     routeRowThreadKey,
     folderGroups: boringSidebarEnabled
       ? scopedProjectGroups.length === 0
@@ -1421,6 +1525,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
   });
+  // Conn: a Tasks peek, which runs outside React, asks whether this list has the target's row.
+  const listedThreadKeys = searchableThreads.map(threadShellKey).join("\n");
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this window's listed rows to the Tasks peek outside React
+  useEffect(() => {
+    publishSidebarListedThreads(
+      new Set(listedThreadKeys === "" ? [] : listedThreadKeys.split("\n")),
+    );
+    return () => publishSidebarListedThreads(new Set());
+  }, [listedThreadKeys]);
 
   // Ranked across environments as the palette ranks them, so one
   // environment's list does not sit above another's better matches; rows
@@ -2731,6 +2844,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              canDisconnect: isOrbitManagedEnvironment(threadRef.environmentId),
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2895,6 +3009,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            return;
+          case "disconnect":
+            hideSidebarThread(threadRef);
             return;
           case "archive": {
             if (confirmThreadArchive) {
@@ -3718,7 +3835,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                       "mt-auto",
                                   )}
                                   label={gt("Settled", { $context: "sidebar section" })}
-                                  count={settledCount}
+                                  count={settledLabelCount}
                                   dragging={from !== null}
                                   isDropTarget={dragTargetSection === "settled"}
                                   toggle={{
@@ -3770,12 +3887,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               ? gt("Loading")
                               : olderSettledShelf.failed
                                 ? gt("Could not load older threads. Retry")
-                                : gt(
-                                    "{count, plural, one {Show {count} more} other {Show {count} more}}",
-                                    {
-                                      count: Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT),
-                                    },
-                                  )}
+                                : !settledCountKnown
+                                  ? gt("Show more")
+                                  : gt(
+                                      "{count, plural, one {Show {count} more} other {Show {count} more}}",
+                                      {
+                                        count: Math.min(
+                                          hiddenSettledCount,
+                                          SETTLED_TAIL_PAGE_COUNT,
+                                        ),
+                                      },
+                                    )}
                           </button>
                         </li>
                       ) : null}
