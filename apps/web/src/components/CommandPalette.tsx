@@ -81,7 +81,7 @@ import {
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
-import { pinMessageSelection } from "../pinnedSelectionReveal";
+import { commitPinnedSelection } from "../pinnedSelectionReveal";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
 import {
@@ -169,6 +169,7 @@ import {
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
   dispatchCommandPalette,
+  getCommandPalettePinnedSelection,
   getCommandPaletteReturnFocus,
   useCommandPaletteMount,
   useCommandPaletteStore,
@@ -1385,7 +1386,11 @@ function OpenCommandPaletteDialog(props: {
       icon: <PinIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "thread.pinSelection",
       run: async () => {
-        if (pinMessageSelection(pinThreadRef)) return;
+        const selection = getCommandPalettePinnedSelection();
+        if (selection?.threadKey === scopedThreadKey(pinThreadRef)) {
+          commitPinnedSelection(pinThreadRef, selection.draft);
+          return;
+        }
         toastManager.add({
           id: "pin-selection-missing",
           title: "Select text in the thread first",

@@ -7,6 +7,11 @@ import {
   reduceCommandPaletteUiState,
 } from "./components/CommandPalette.logic";
 import { getWorkspaceFocusRequestVersion } from "./lib/workspaceFocus";
+import {
+  capturePinnedMessageSelection,
+  selectionViewport,
+  type PinnedSelectionDraft,
+} from "./pinnedSelections";
 
 const INITIAL_STATE: CommandPaletteUiState = {
   open: false,
@@ -18,11 +23,21 @@ const INITIAL_STATE: CommandPaletteUiState = {
 export const useCommandPaletteStore = create<CommandPaletteUiState>(() => INITIAL_STATE);
 
 let returnFocus: { element: HTMLElement | null; href: string; focusRequest: number } | null = null;
+let pinnedSelection: { threadKey: string; draft: PinnedSelectionDraft } | null = null;
+
+export function getCommandPalettePinnedSelection() {
+  return pinnedSelection;
+}
 
 export function dispatchCommandPalette(action: CommandPaletteUiAction): void {
   const state = useCommandPaletteStore.getState();
   const next = reduceCommandPaletteUiState(state, action);
   if (!state.open && next.open) {
+    const selection = window.getSelection();
+    const viewport = selectionViewport(selection);
+    const threadKey = viewport?.dataset.pinnedSelectionThread;
+    const draft = viewport && threadKey ? capturePinnedMessageSelection(viewport, selection) : null;
+    pinnedSelection = draft && threadKey ? { threadKey, draft } : null;
     // The workspace turns inert before the popup mounts, which blurs the opener.
     returnFocus = {
       element: document.activeElement instanceof HTMLElement ? document.activeElement : null,

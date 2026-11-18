@@ -125,7 +125,7 @@ type TextChunk = { node: Text | Element; start: number; end: number };
 
 const isText = (node: Node): node is Text => node.nodeType === 3;
 
-function readAssistantText(root: HTMLElement) {
+function readAssistantText(root: HTMLElement, excludedSelector = EXCLUDED_SELECTOR) {
   const parts: string[] = [];
   const chunks: TextChunk[] = [];
   let length = 0;
@@ -150,7 +150,7 @@ function readAssistantText(root: HTMLElement) {
     }
     if (node.nodeType !== 1) return;
     const element = node as Element;
-    if (element.matches(EXCLUDED_SELECTOR)) return;
+    if (element.matches(excludedSelector)) return;
     const block = element.matches(BLOCK_SELECTOR);
     if (block || element.tagName === "BR") separator = true;
     if (element.matches("[data-markdown-math]")) {
@@ -165,18 +165,22 @@ function readAssistantText(root: HTMLElement) {
   return { text: parts.join(""), chunks };
 }
 
-function excludedAncestor(node: Node): Element | null {
+function excludedAncestor(node: Node, excludedSelector = EXCLUDED_SELECTOR): Element | null {
   const element = node.nodeType === 1 ? (node as Element) : node.parentElement;
-  return element?.closest(EXCLUDED_SELECTOR) ?? null;
+  return element?.closest(excludedSelector) ?? null;
 }
 
-function isUsableRange(root: HTMLElement, range: Range): boolean {
+function isUsableRange(
+  root: HTMLElement,
+  range: Range,
+  excludedSelector = EXCLUDED_SELECTOR,
+): boolean {
   if (
     range.collapsed ||
     !root.contains(range.startContainer) ||
     !root.contains(range.endContainer) ||
-    excludedAncestor(range.startContainer) !== null ||
-    excludedAncestor(range.endContainer) !== null
+    excludedAncestor(range.startContainer, excludedSelector) !== null ||
+    excludedAncestor(range.endContainer, excludedSelector) !== null
   ) {
     return false;
   }
@@ -284,9 +288,13 @@ function rawTextOffset(text: string, normalizedOffset: number): number {
 export function resolveAssistantCitationRange(
   root: HTMLElement,
   selector: AssistantTextSelector,
+  includeHiddenUntilFound = false,
 ): Range | null {
-  if (excludedAncestor(root) !== null) return null;
-  const stream = readAssistantText(root);
+  const excludedSelector = includeHiddenUntilFound
+    ? EXCLUDED_SELECTOR.replace("[hidden]", '[hidden]:not([hidden="until-found"])')
+    : EXCLUDED_SELECTOR;
+  if (excludedAncestor(root, excludedSelector) !== null) return null;
+  const stream = readAssistantText(root, excludedSelector);
   const match = findAssistantCitationText(stream.text, selector);
   if (match === null) return null;
 
@@ -302,5 +310,5 @@ export function resolveAssistantCitationRange(
   else range.setStartBefore(first.node);
   if (isText(last.node)) range.setEnd(last.node, Math.min(last.node.length, end - last.start));
   else range.setEndAfter(last.node);
-  return isUsableRange(root, range) ? range : null;
+  return isUsableRange(root, range, excludedSelector) ? range : null;
 }

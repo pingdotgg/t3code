@@ -644,14 +644,23 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const pinnedReveal = usePinnedSelectionRevealStore((state) =>
     state.reveal?.threadKey === listIdentityKey ? state.reveal : null,
   );
-  const [lastPinnedReveal, setLastPinnedReveal] = useState(pinnedReveal);
-  if (pinnedReveal && pinnedReveal !== lastPinnedReveal) setLastPinnedReveal(pinnedReveal);
+  const [lastPinnedReveal, setLastPinnedReveal] = useState({
+    reveal: pinnedReveal,
+    citationKey: citationRequest?.key,
+  });
+  if (pinnedReveal && pinnedReveal !== lastPinnedReveal.reveal) {
+    setLastPinnedReveal({ reveal: pinnedReveal, citationKey: citationRequest?.key });
+  }
   const pinnedMessageId =
     pinnedReveal?.messageId ??
-    (lastPinnedReveal?.threadKey === listIdentityKey ? lastPinnedReveal.messageId : null);
+    (lastPinnedReveal.reveal?.threadKey === listIdentityKey &&
+    lastPinnedReveal.citationKey === citationRequest?.key
+      ? lastPinnedReveal.reveal.messageId
+      : null);
   const revealedMessageId =
+    (pinnedMessageId === null ? null : MessageId.make(pinnedMessageId)) ??
     citationRequest?.citation.messageId ??
-    (pinnedMessageId === null ? null : MessageId.make(pinnedMessageId));
+    null;
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
@@ -1480,7 +1489,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   return (
     <>
       {activityAnnouncer}
-      <MarkdownFindContext value={findActive}>
+      <MarkdownFindContext value={findActive || pinnedReveal !== null}>
         <TimelineRowActivityCtx value={activityState}>
           <TooltipScrollDismissArea
             ref={attachTimelineViewportElement}

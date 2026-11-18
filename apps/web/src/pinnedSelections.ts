@@ -241,7 +241,7 @@ export function resolvePinnedSelectionRange(
   const source = [
     ...message.querySelectorAll<HTMLElement>("[data-assistant-citation-source]"),
   ].find((element) => element.dataset.assistantCitationSource === pin.messageId);
-  if (source) return resolveAssistantCitationRange(source, pin);
+  if (source) return resolveAssistantCitationRange(source, pin, true);
   return resolvePlainRange(
     message.querySelector<HTMLElement>("[data-thread-find-text]") ?? message,
     pin,
