@@ -1,4 +1,3 @@
-import { pipe } from "effect/Function";
 import {
   SECRET_REQUEST_DEFAULT_PLACEHOLDER,
   secretRequestAnswerInput,
@@ -21,6 +20,7 @@ import type {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { View, type ColorValue } from "react-native";
 
@@ -41,9 +41,10 @@ export function SecretRequestCard(props: {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly iconColor: ColorValue;
 }) {
+  const m = useMessages();
   const { item, visibility } = props.projectedItem;
   if (item.type !== "secret_request") return null;
-  const display = secretRequestDisplay(item, visibility);
+  const display = secretRequestDisplay(item, visibility, m);
   if (display.kind === "pending") {
     return (
       <PendingSecretRequestForm
@@ -74,6 +75,8 @@ function PendingSecretRequestForm(props: {
   readonly item: SecretRequestItem;
   readonly iconColor: ColorValue;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { item } = props;
   const answer = useAtomCommand(serverEnvironment.answerSecretRequest, {
     label: "answer secret request",
@@ -82,7 +85,7 @@ function PendingSecretRequestForm(props: {
     reportDefect: false,
   });
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
-  const sources = secretRequestSources(config, config?.settings.secretProviders ?? {});
+  const sources = secretRequestSources(config, config?.settings.secretProviders ?? {}, m);
   const [sourceId, setSourceId] = useState<SecretProviderId | null>(null);
   const source = sources.find((candidate) => candidate.id === sourceId) ?? null;
   const [secret, setSecret] = useState("");
@@ -108,7 +111,7 @@ function PendingSecretRequestForm(props: {
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
-      pipe(squashAtomCommandFailure(result), secretRequestFailureMessage, setError);
+      setError(secretRequestFailureMessage(squashAtomCommandFailure(result), m));
     }
   };
   const save = () => {
@@ -136,7 +139,7 @@ function PendingSecretRequestForm(props: {
       {link !== null ? (
         <View className="gap-1.5">
           <Button
-            label={`Open ${link.host}`}
+            label={gt("Open {host}", { host: link.host })}
             tone="secondary"
             fullWidth
             onPress={() => void tryOpenExternalUrl(link.href, "secret-request")}
@@ -152,7 +155,7 @@ function PendingSecretRequestForm(props: {
       {sources.length > 0 ? (
         <View className="flex-row flex-wrap gap-2">
           <Chip
-            label="Value"
+            label={gt("Value", { $context: "noun, enter the secret value directly" })}
             size="small"
             selected={source === null}
             disabled={submitting}
@@ -179,7 +182,7 @@ function PendingSecretRequestForm(props: {
       {source === null ? (
         <SecretTextInput
           accessibilityLabel={item.label}
-          placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+          placeholder={item.placeholder ?? m(SECRET_REQUEST_DEFAULT_PLACEHOLDER)}
           value={secret}
           onChangeText={setSecret}
           editable={!submitting}
@@ -188,7 +191,10 @@ function PendingSecretRequestForm(props: {
       ) : (
         <TextInput
           key={source.id}
-          accessibilityLabel={`${item.label} reference in ${source.label}`}
+          accessibilityLabel={gt("{label} reference in {source}", {
+            label: item.label,
+            source: source.label,
+          })}
           placeholder={source.referencePlaceholder}
           value={reference}
           onChangeText={(next) => {
@@ -216,7 +222,7 @@ function PendingSecretRequestForm(props: {
         </Text>
       ) : null}
       <Button
-        label="Save securely"
+        label={gt("Save securely")}
         tone="primary"
         fullWidth
         disabled={submitting || draft.trim().length === 0}
@@ -231,11 +237,11 @@ function PendingSecretRequestForm(props: {
             type="monochrome"
           />
           <Text className="flex-1 font-sans text-xs text-foreground-muted">
-            {secretRequestPrivacyNote(item)}
+            {secretRequestPrivacyNote(item, m)}
           </Text>
         </View>
         <Button
-          label="Decline"
+          label={gt("Decline", { $context: "verb, refuses the secret request" })}
           tone="text"
           disabled={submitting}
           onPress={() => void send({ type: "decline" })}

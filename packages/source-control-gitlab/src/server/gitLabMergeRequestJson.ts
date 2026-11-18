@@ -1304,6 +1304,27 @@ const RawAwardSchema = Schema.Struct({
 
 const decodeAward = Schema.decodeUnknownExit(RawAwardSchema);
 
+type GitLabAward = typeof RawAwardSchema.Type;
+
+/** A page of REST `award_emoji`; a row that cannot be read is skipped. */
+export function decodeAwardListJson(
+  raw: string,
+): Result.Result<ReadonlyArray<GitLabAward>, DecodeFailure> {
+  return Result.map(decodeUnknownList(raw), (rows) =>
+    rows.flatMap((entry) => {
+      const award = decodeAward(entry);
+      return Exit.isSuccess(award) ? [award.value] : [];
+    }),
+  );
+}
+
+export function awardReactions(
+  awards: ReadonlyArray<GitLabAward>,
+  viewer: string | null,
+): ReadonlyArray<PullRequestReaction> {
+  return toReactions({ nodes: awards }, viewer);
+}
+
 export function decodeOwnAwardIdJson(
   raw: string,
   input: { readonly content: PullRequestReactionContent; readonly viewer: string },

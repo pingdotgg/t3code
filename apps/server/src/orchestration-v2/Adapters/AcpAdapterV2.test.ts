@@ -104,6 +104,7 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const DEVIN_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "devin" });
 const OMP_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
   source: "local",
   commandPath: "/usr/local/bin/omp",
@@ -2038,6 +2039,39 @@ describe("AcpAdapterV2", () => {
       answers: { q0: "blue" },
       result: { action: "accept", content: { q0: "blue" } },
     },
+    {
+      scenario: "Devin allowOther choice accepts a typed answer",
+      settings: DEVIN_SETTINGS,
+      meta: { "cognition.ai/allowOther": true },
+      schema: {
+        type: "object",
+        properties: {
+          q0: {
+            type: "string",
+            title: "Fruit",
+            description: "Which fruit?",
+            oneOf: [
+              { const: "Apple", title: "Apple" },
+              { const: "Banana", title: "Banana" },
+            ],
+          },
+        },
+        required: ["q0"],
+      },
+      questions: [
+        {
+          id: "q0",
+          header: "Fruit",
+          question: "Which fruit?",
+          options: [
+            { label: "Apple", description: "Apple", value: "Apple" },
+            { label: "Banana", description: "Banana", value: "Banana" },
+          ],
+        },
+      ],
+      answers: { q0: "Mango" },
+      result: { action: "accept", content: { q0: "Mango" } },
+    },
   ])("Registry elicitation $scenario", (fixture) => {
     const { schema, questions, answers, result } = fixture;
     const withAttachments = "withAttachments" in fixture && fixture.withAttachments;
@@ -2121,6 +2155,7 @@ describe("AcpAdapterV2", () => {
                   sessionId: "droid-session",
                   message: "Your answer?",
                   requestedSchema: schema,
+                  ...("meta" in fixture ? { _meta: fixture.meta } : {}),
                 },
               },
             },

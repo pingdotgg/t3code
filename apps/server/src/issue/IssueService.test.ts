@@ -37,7 +37,12 @@ function fakeStandaloneTracker(
     ...fakeTracker({
       getViewer: () => Effect.succeed("usr_julius"),
       getIssue: (input) =>
-        Effect.succeed({ ...issue(input.key), displayKey: input.key, viewer: "usr_julius" }),
+        Effect.succeed({
+          ...issue(input.key),
+          url: `https://linear.app/acme/issue/${input.key}/canonical-title`,
+          displayKey: input.key,
+          viewer: "usr_julius",
+        }),
       ...overrides,
     }),
     kind: LINEAR,
@@ -47,6 +52,18 @@ function fakeStandaloneTracker(
       host: "linear.app",
       scopeNoun: "team",
       credential: { label: "Personal API key", helpUrl: null },
+    },
+    parseIssueUrl: (url) => {
+      const links = new Map([
+        ["https://linear.app/acme/issue/ENG-1/old-title", "acme"],
+        ["https://linear.app/acme/issue/ENG-1/issue-title", "acme"],
+        ["https://linear.app/acme/issue/ENG-1/canonical-title", "acme"],
+        ["https://linear.app/other-workspace/issue/ENG-1/old-title", "other-workspace"],
+      ]);
+      const workspace = links.get(url.href);
+      return workspace === undefined
+        ? null
+        : { host: "linear.app", workspace, scope: "ENG", key: "ENG-1" };
     },
     probeCredential: () => Effect.succeed({ account: "julius", scopes: [] }),
   };
@@ -258,6 +275,15 @@ describe("IssueService", () => {
         host: "gitea.test",
       });
 
+      // A GitHub Enterprise Server's hostname need not say "github"; its project vouches for it.
+      const enterprise = yield* makeService({
+        projects: [project({ id: "ghes", repository: "acme/web", host: "code.acme.test" })],
+        trackers: [fakeTracker()],
+      });
+      expect(
+        yield* enterprise.resolveUrl("https://code.acme.test/acme/web/issues/7"),
+      ).toMatchObject({ projectId: "ghes", host: "code.acme.test", key: "7", writable: true });
+
       // Another host is not reachable through this project's credentials at all.
       const elsewhere = yield* Effect.flip(service.detail({ ...own, host: "ghe.example.test" }));
       expect(elsewhere).toMatchObject({
@@ -395,7 +421,7 @@ describe("IssueService", () => {
       expect(result.errors).toEqual([
         { projectId: "api", projectTitle: "api", message: "The issue tracker request failed." },
       ]);
-      expect(result.viewers).toEqual({ "github.com": "julius" });
+      expect(result.viewers).toEqual({});
       expect(result.trackers).toEqual([
         expect.objectContaining({ host: "github.com", projectCount: 4, configured: true }),
         expect.objectContaining({
@@ -405,6 +431,20 @@ describe("IssueService", () => {
           configured: false,
           capabilities: null,
         }),
+      ]);
+
+      // Narrowing to one host still names every tracker, so the client can switch between them.
+      // Narrowing by involvement reads the account it compares against.
+      const narrowed = yield* service.list({
+        state: "open",
+        host: "github.com",
+        involvement: "assigned",
+      });
+      expect(narrowed.viewers).toEqual({ "github.com": "julius" });
+      expect(narrowed.entries.every((entry) => entry.host === "github.com")).toBe(true);
+      expect(narrowed.trackers.map((tracker) => tracker.host)).toEqual([
+        "github.com",
+        "gitlab.com",
       ]);
 
       // A continuation only reads the scopes it names.
@@ -437,6 +477,31 @@ describe("IssueService", () => {
 });
 
 describe("IssueService with a standalone tracker", () => {
+  it.effect("rejects a URL from another workspace with the same team and issue key", () =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: [project({ id: "web" })],
+        trackers: [fakeStandaloneTracker()],
+        bindings: { web: { tracker: LINEAR, scope: "ENG" } },
+      });
+      expect(
+        yield* service.resolveUrl("https://linear.app/acme/issue/ENG-1/old-title"),
+      ).toMatchObject({ key: "ENG-1", writable: true });
+      const refused = yield* service
+        .resolveUrl("https://linear.app/other-workspace/issue/ENG-1/old-title")
+        .pipe(Effect.result);
+      expect(refused).toMatchObject({
+        _tag: "Failure",
+        failure: {
+          _tag: "IssueOperationError",
+          operation: "resolveUrl",
+          reason: "not-found",
+          detail: "This issue URL does not belong to the connected workspace.",
+        },
+      });
+    }),
+  );
+
   it.effect("lists a bound project's standalone scope beside its git host and serves both", () =>
     Effect.gen(function* () {
       const listed: string[] = [];
@@ -489,6 +554,21 @@ describe("IssueService with a standalone tracker", () => {
           key: "1",
         }),
       ).toMatchObject({ host: "github.com", writable: true });
+
+      const resolved = yield* bound
+        .resolveUrl("https://linear.app/acme/issue/ENG-1/issue-title", "web" as ProjectId)
+        .pipe(Effect.result);
+      expect(resolved).toMatchObject({
+        _tag: "Success",
+        success: {
+          projectId: "web",
+          tracker: LINEAR,
+          host: "linear.app",
+          scope: "ENG",
+          key: "ENG-1",
+          writable: true,
+        },
+      });
 
       // Unbound, the standalone scope is gone and its references are unsupported.
       listed.length = 0;

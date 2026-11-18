@@ -409,14 +409,14 @@ export function decodeTemplateJson(
 }
 
 /**
- * Awards on the issue and on every note of it, in one read, shaped exactly like the merge request
- * query so its decoder answers for both: `mergeRequest` is an alias for the issue field.
+ * Awards on every note of the issue, shaped like the merge request query so its decoder answers
+ * for both: `mergeRequest` is an alias for the issue field. GitLab's `Issue` type has no
+ * `awardEmoji`, so the issue's own awards are read from REST `award_emoji` instead.
  */
 export const ISSUE_AWARD_EMOJI_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!, $cursor: String) {
   currentUser { username }
   project(fullPath: $fullPath) {
     mergeRequest: issue(iid: $iid) {
-      awardEmoji { nodes { name user { username } } }
       notes(first: ${PAGE_SIZE}, after: $cursor) {
         pageInfo { hasNextPage endCursor }
         nodes { id awardEmoji { nodes { name user { username } } } }
