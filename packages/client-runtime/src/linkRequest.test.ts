@@ -15,6 +15,7 @@ import {
   linkRequestDisplay,
   linkRequestFailureMessage,
   linkRequestInitialMachine,
+  linkRequestKeepsLink,
   linkRequestTarget,
   linkRequestTargetName,
   rankMachinesByHint,
@@ -201,7 +202,7 @@ describe("linkableMachines", () => {
       linkableMachines({
         environments: [here, vps, mini],
         threadEnvironmentId: here.environmentId,
-        links: [{ environmentId: mini.environmentId, status: "unreachable" }],
+        links: [{ environmentId: mini.environmentId, status: "unreachable", access: "read-only" }],
         connect: new Map(),
       }),
     ).toEqual([
@@ -211,7 +212,7 @@ describe("linkableMachines", () => {
         machine: "laptop",
         connected: true,
         connectOnly: false,
-        linked: false,
+        linkedAccess: null,
         urls: ["https://vps.ts.net", "https://vps.example.com"],
       },
       {
@@ -220,7 +221,7 @@ describe("linkableMachines", () => {
         machine: "server",
         connected: false,
         connectOnly: false,
-        linked: true,
+        linkedAccess: "read-only",
         urls: [],
       },
     ]);
@@ -274,16 +275,16 @@ describe("linkableMachines", () => {
       environments: [here, vps, mini],
       threadEnvironmentId: here.environmentId,
       links: [
-        { environmentId: vps.environmentId, status: "expired" },
-        { environmentId: mini.environmentId, status: "unreachable" },
-        { environmentId: EnvironmentId.make("environment-old"), status: "expired" },
+        { environmentId: vps.environmentId, status: "expired", access: "auto" },
+        { environmentId: mini.environmentId, status: "unreachable", access: "auto" },
+        { environmentId: EnvironmentId.make("environment-old"), status: "expired", access: "auto" },
       ],
       connect: new Map([["environment-old", discovered("environment-old", "Old box")]]),
     });
-    expect(listed.map((machine) => [machine.label, machine.linked])).toEqual([
-      ["VPS", false],
-      ["Mini", true],
-      ["Old box", false],
+    expect(listed.map((machine) => [machine.label, machine.linkedAccess])).toEqual([
+      ["VPS", null],
+      ["Mini", "auto"],
+      ["Old box", null],
     ]);
   });
 
@@ -293,7 +294,13 @@ describe("linkableMachines", () => {
     const listed = linkableMachines({
       environments: [here, vps],
       threadEnvironmentId: here.environmentId,
-      links: [{ environmentId: EnvironmentId.make("environment-old"), status: "reachable" }],
+      links: [
+        {
+          environmentId: EnvironmentId.make("environment-old"),
+          status: "reachable",
+          access: "auto",
+        },
+      ],
       connect: new Map([
         // This environment and saved machines are listed once, as saved.
         [here.environmentId, discovered(here.environmentId, "Here")],
@@ -313,10 +320,10 @@ describe("linkableMachines", () => {
       machine: "mac-mini",
       connected: false,
       connectOnly: true,
-      linked: false,
+      linkedAccess: null,
       urls: ["https://environment-mini.t3.example"],
     });
-    expect(listed[2]).toMatchObject({ machine: "server", linked: true });
+    expect(listed[2]).toMatchObject({ machine: "server", linkedAccess: "auto" });
 
     // A Connect record that publishes only a loopback address gives the machine none.
     const local = discovered("environment-local", "Local");
@@ -392,7 +399,7 @@ describe("rankMachinesByHint", () => {
           machine: "server",
           connected: true,
           connectOnly: false,
-          linked: false,
+          linkedAccess: null,
           urls: [],
         }) as const,
     );
@@ -421,7 +428,7 @@ describe("linkRequestTarget", () => {
     machine: "server",
     connected: true,
     connectOnly: false,
-    linked: false,
+    linkedAccess: null,
     urls: ["http://10.0.0.2:3773", "https://box.t3connect.example/"],
   } as const;
 
@@ -447,7 +454,7 @@ describe("linkRequestTarget", () => {
       environmentId: box.environmentId,
       label: "Box",
       urls: box.urls,
-      linked: false,
+      linkedAccess: null,
     });
     expect(linkRequestTarget({ url: "http://box.t3connect.example" }, [box], null)).toEqual({
       kind: "address",
@@ -472,6 +479,22 @@ describe("linkRequestTarget", () => {
     expect(linkRequestTarget({}, [box], box.environmentId)).toMatchObject({ kind: "machine" });
     expect(linkRequestTarget({}, [box], ANOTHER_ADDRESS)).toEqual({ kind: "address" });
     expect(linkRequestTarget({}, [box], null)).toEqual({ kind: "none" });
+  });
+
+  it("keeps a link the machine has only when it allows the access asked for", () => {
+    const linked = { ...box, linkedAccess: "approval-required" } as const;
+    const target = linkRequestTarget({ environmentId: box.environmentId }, [linked], null);
+    expect(linkRequestKeepsLink({}, target)).toBe(true);
+    expect(linkRequestKeepsLink({ requestedAccess: "read-only" }, target)).toBe(true);
+    expect(linkRequestKeepsLink({ requestedAccess: "approval-required" }, target)).toBe(true);
+    // A weaker link is linked again, with the access the user picks.
+    expect(linkRequestKeepsLink({ requestedAccess: "full-access" }, target)).toBe(false);
+    expect(
+      linkRequestKeepsLink(
+        {},
+        linkRequestTarget({ environmentId: box.environmentId }, [box], null),
+      ),
+    ).toBe(false);
   });
 });
 

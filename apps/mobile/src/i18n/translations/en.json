@@ -4141,6 +4141,7 @@
     },
     ". The agent can use that link as it is; change its access in Settings → Environments."
   ],
+  "dc9a0b68d101e904": "Already linked. Linking again renews it with the access you pick.",
   "e8235ebb43ad7228": "Create a link on a machine: Settings → Sharing & access → Authorized clients → Create link, then paste its code here.",
   "a974e6c3c613e452": [
     "Create a link on ",

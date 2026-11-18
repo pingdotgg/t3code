@@ -41,7 +41,7 @@ export interface LinkBatchCandidate {
 
 /**
  * `writable` holds the machines where this client's session may create pairing codes.
- * Until `links` has loaded, no machine's `linked` is known, and linking one that is
+ * Until `links` has loaded, no machine's `linkedAccess` is known, and linking one that is
  * already linked would replace its working token, so none is offered.
  */
 export const linkBatchCandidates = (
@@ -54,7 +54,7 @@ export const linkBatchCandidates = (
     blocked:
       links !== "loaded"
         ? "links_unknown"
-        : machine.linked
+        : machine.linkedAccess !== null
           ? "linked"
           : !machine.connected
             ? "not_connected"

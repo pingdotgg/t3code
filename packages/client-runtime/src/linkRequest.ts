@@ -3,6 +3,7 @@ import {
   type AuthMcpClientAccess,
   type EnvironmentId,
   type EnvironmentMachineKind,
+  mcpClientAccessCovers,
   type OrchestrationV2TurnItem,
   type PeerLinkRequestAnswerInput,
   type PeerLinkName,
@@ -84,8 +85,8 @@ export interface LinkableMachine {
   readonly connected: boolean;
   /** Found on the user's T3 Connect account rather than saved in this client. */
   readonly connectOnly: boolean;
-  /** Whether the thread's environment already has a link to it. */
-  readonly linked: boolean;
+  /** The access of the thread's environment's link to it, or null when it has none. */
+  readonly linkedAccess: AuthMcpClientAccess | null;
   /**
    * Where the client knows it answers, most preferred first: the addresses it
    * reports, then its saved routes, then its T3 Connect address. The server
@@ -113,11 +114,13 @@ export function linkableMachines(input: {
   >;
   /** Null lists every machine, for a view that is not about one environment. */
   readonly threadEnvironmentId: EnvironmentId | null;
-  readonly links: ReadonlyArray<Pick<PeerLinkSummary, "environmentId" | "status">>;
+  readonly links: ReadonlyArray<Pick<PeerLinkSummary, "environmentId" | "status" | "access">>;
   readonly connect: ReadonlyMap<string, RelayDiscoveredEnvironment>;
 }): ReadonlyArray<LinkableMachine> {
-  const linkedIds = new Set(
-    input.links.flatMap((link) => (link.status === "expired" ? [] : [link.environmentId])),
+  const linkedAccess = new Map<string, AuthMcpClientAccess>(
+    input.links.flatMap((link) =>
+      link.status === "expired" ? [] : [[link.environmentId, link.access] as const],
+    ),
   );
   const saved = input.environments
     .filter((environment) => environment.environmentId !== input.threadEnvironmentId)
@@ -136,7 +139,7 @@ export function linkableMachines(input: {
         machine: resolveEnvironmentMachineKind(environment.serverConfig),
         connected: environment.connection.phase === "connected",
         connectOnly: false,
-        linked: linkedIds.has(environment.environmentId),
+        linkedAccess: linkedAccess.get(environment.environmentId) ?? null,
         urls: [
           ...new Set([
             ...reported,
@@ -163,7 +166,7 @@ export function linkableMachines(input: {
         ),
         connected: false,
         connectOnly: true,
-        linked: linkedIds.has(environment.environmentId),
+        linkedAccess: linkedAccess.get(environment.environmentId) ?? null,
         urls: [environment.endpoint.httpBaseUrl].filter((url) => !isLoopbackUrl(url)),
       };
     });
@@ -236,7 +239,7 @@ export type LinkRequestTarget =
       readonly environmentId: EnvironmentId;
       readonly label: string;
       readonly urls: ReadonlyArray<string>;
-      readonly linked: boolean;
+      readonly linkedAccess: AuthMcpClientAccess | null;
     }
   | { readonly kind: "address" };
 
@@ -271,9 +274,22 @@ export function linkRequestTarget(
     environmentId: machine?.environmentId ?? (chosen as EnvironmentId),
     label: machine?.label ?? linkRequestTargetName(item, resolve),
     urls: machine?.urls ?? [],
-    linked: machine?.linked ?? false,
+    linkedAccess: machine?.linkedAccess ?? null,
   };
 }
+
+/**
+ * Whether the card answers with the link its machine already has: only one with at least the
+ * access asked for. Linking again over a weaker one renews it with the access picked.
+ */
+export const linkRequestKeepsLink = (
+  item: Pick<LinkRequestItem, "requestedAccess">,
+  target: LinkRequestTarget,
+): boolean =>
+  target.kind === "machine" &&
+  target.linkedAccess !== null &&
+  (item.requestedAccess === undefined ||
+    mcpClientAccessCovers(target.linkedAccess, item.requestedAccess));
 
 /** What a link request card shows: the actions while pending, otherwise a one-line outcome. */
 export type LinkRequestDisplay =
