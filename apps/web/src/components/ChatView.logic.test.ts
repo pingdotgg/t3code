@@ -26,6 +26,7 @@ import {
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import {
   responseContextRecord,
   responseContextReference,
@@ -78,6 +79,17 @@ import {
 const environmentId = EnvironmentId.make("environment-local");
 const projectId = ProjectId.make("project-1");
 const threadId = ThreadId.make("thread-1");
+const trayCitation = {
+  version: 1 as const,
+  environmentId,
+  threadId,
+  messageId: MessageId.make("source"),
+  text: "Source",
+  start: 0,
+  end: 6,
+  prefix: "",
+  suffix: "",
+};
 const now = "2026-03-29T00:00:00.000Z";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -143,6 +155,12 @@ describe("deriveComposerSendState", () => {
       ],
     });
 
+    for (const citationCount of [0, 1]) {
+      expect(
+        deriveComposerSendState({ prompt: "", imageCount: 0, terminalContexts: [], citationCount })
+          .hasSendableContent,
+      ).toBe(citationCount > 0);
+    }
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
@@ -1233,10 +1251,18 @@ describe("snapshotComposerSend", () => {
 
   it("drops expired terminal contexts from the contexts and from the prompt", () => {
     const snapshot = snapshotComposerSend({
-      prompt: ensureInlineContextReferences("run", [
+      draftPrompt: ensureInlineContextReferences("run", [
         terminalContextReference(expired),
         terminalContextReference(live),
       ]),
+      trayCitations: [trayCitation],
+      prompt:
+        serializeAssistantCitation(trayCitation) +
+        "\n" +
+        ensureInlineContextReferences("run", [
+          terminalContextReference(expired),
+          terminalContextReference(live),
+        ]),
       images: [],
       files: [],
       terminalContexts: [expired, live],
@@ -1248,9 +1274,15 @@ describe("snapshotComposerSend", () => {
       replyTo: null,
     });
 
+    expect(snapshot.draftPrompt).toBe(
+      ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
+    );
+    expect(snapshot.trayCitations).toEqual([trayCitation]);
     expect(snapshot.terminalContexts).toEqual([live]);
     expect(snapshot.messageText).toBe(
-      ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
+      serializeAssistantCitation(trayCitation) +
+        "\n" +
+        ensureInlineContextReferences("run", [terminalContextReference(live)]).trim(),
     );
   });
 
@@ -1272,7 +1304,13 @@ describe("snapshotComposerSend", () => {
     });
     const reference = responseContextReference(replyTo);
     const snapshot = snapshotComposerSend({
-      prompt: ensureInlineContextReferences("", [reference]) + " why there?",
+      prompt:
+        serializeAssistantCitation(replyTo.citation) +
+        "\n" +
+        ensureInlineContextReferences("", [reference]) +
+        " why there?",
+      draftPrompt: "why there?",
+      trayCitations: [replyTo.citation],
       images: [],
       files: [],
       terminalContexts: [],
@@ -1285,8 +1323,9 @@ describe("snapshotComposerSend", () => {
     });
 
     expect(snapshot.messageText).toContain(`t3-context://v1/response/${replyTo.contextId}`);
-    expect(snapshot.draftText).toBe("why there?");
+    expect(snapshot.draftPrompt).toBe("why there?");
     expect(snapshot.replyTo).toBe(replyTo);
+    expect(snapshot.trayCitations).toEqual([replyTo.citation]);
   });
 });
 

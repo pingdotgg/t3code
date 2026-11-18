@@ -1,4 +1,10 @@
-import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type {
+  AssistantCitation,
+  EnvironmentId,
+  ResponseContextRecord,
+  ThreadContextRecord,
+} from "@t3tools/contracts";
+import { serializeComposerTray } from "./composerSubmission";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../../i18n/messages";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
@@ -22,7 +28,8 @@ export function composerDraftContentChanged(
     before.reviewComments !== after.reviewComments ||
     before.threadContexts !== after.threadContexts ||
     before.environmentContexts !== after.environmentContexts ||
-    before.replyTo !== after.replyTo
+    before.replyTo !== after.replyTo ||
+    before.trayCitations !== after.trayCitations
   );
 }
 
@@ -119,4 +126,34 @@ export function approvalRedirectNotice(
     return resolve(msg("Another approval arrived, so your message wasn't sent."));
   }
   return null;
+}
+
+export function composerDraftChangedSinceSend(input: {
+  prompt: string;
+  promptAtSend: string;
+  promptForSend: string;
+  attachmentIds: ReadonlyArray<string>;
+  attachmentIdsAtSend: ReadonlyArray<string>;
+  attachmentIdsBeforeAnnotation: ReadonlyArray<string>;
+  annotationImageId: string | undefined;
+  trayCitations: ReadonlyArray<AssistantCitation>;
+  liveTrayCitations: ReadonlyArray<AssistantCitation>;
+  replyTo: ResponseContextRecord | null;
+  liveReplyTo: ResponseContextRecord | null;
+}) {
+  const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
+    left.length === right.length && left.every((id, index) => id === right[index]);
+  const promptUnchanged =
+    input.prompt === input.promptAtSend || input.prompt === input.promptForSend;
+  const attachmentsUnchanged =
+    sameIds(input.attachmentIds, input.attachmentIdsAtSend) ||
+    (input.annotationImageId !== undefined &&
+      sameIds(input.attachmentIds, input.attachmentIdsBeforeAnnotation));
+  return (
+    !promptUnchanged ||
+    !attachmentsUnchanged ||
+    input.liveReplyTo !== input.replyTo ||
+    serializeComposerTray("", input.trayCitations) !==
+      serializeComposerTray("", input.liveTrayCitations)
+  );
 }

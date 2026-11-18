@@ -1,4 +1,5 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
+import { ArchiveIcon, TextCursorInputIcon } from "lucide-react";
 import { T, useGT, Var } from "gt-react";
 import { use, useEffect, useRef, useState, type RefObject } from "react";
 
@@ -7,12 +8,16 @@ import { textDirection } from "~/textDirection";
 
 import { ComposerContextActionsContext } from "../composerContextActions";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export function AssistantCitationCommentEditor({
   citation,
   inputRef,
   onSubmit,
   onSubmitAndSend,
+  onMove,
+  moveLabel,
+  moveAriaLabel,
   onCancel,
   onDraftChange,
   onVoiceSetupOpenChange,
@@ -20,7 +25,10 @@ export function AssistantCitationCommentEditor({
   citation: AssistantCitation;
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   onSubmit: (comment: string) => boolean;
-  onSubmitAndSend?: (comment: string) => boolean;
+  onMove?: ((comment: string) => void) | undefined;
+  moveLabel?: string;
+  moveAriaLabel?: string;
+  onSubmitAndSend?: ((comment: string) => boolean) | undefined;
   onCancel: () => void;
   onDraftChange?: (comment: string) => void;
   onVoiceSetupOpenChange?: (open: boolean) => void;
@@ -120,6 +128,25 @@ export function AssistantCitationCommentEditor({
       ) : null}
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
         <TextFieldSpeechControls speech={speech} />
+        {onMove ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  tabIndex={-1}
+                  disabled={speech.blocksSubmission || commentTooLong}
+                  aria-label={moveAriaLabel ?? moveLabel}
+                  onClick={() => onMove(comment)}
+                />
+              }
+            >
+              {moveLabel === gt("Insert inline") ? <TextCursorInputIcon /> : <ArchiveIcon />}
+            </TooltipTrigger>
+            <TooltipPopup>{moveLabel}</TooltipPopup>
+          </Tooltip>
+        ) : null}
         {/* Wrap as a pair so the recording pill never pushes Save alone onto a new row under Cancel. */}
         <div className="flex gap-2">
           <Button

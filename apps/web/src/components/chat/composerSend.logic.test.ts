@@ -1,11 +1,12 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
 import type { ComposerThreadDraftState } from "../../composerDraftStore";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
-import { threadContextReference } from "../../lib/composerContextRecords";
+import { responseContextRecord, threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import {
+  composerDraftChangedSinceSend,
   approvalRedirectNotice,
   composerDraftContentChanged,
   loadBalancingSendWarning,
@@ -51,6 +52,25 @@ it("detects draft edits during upload preparation without treating upload metada
       files: [{ ...draft.files[0]!, uploadedAttachmentId: "upload", uploadEnvironmentId: local }],
     }),
   ).toBe(false);
+  expect(
+    composerDraftContentChanged(draft, {
+      ...draft,
+      trayCitations: [
+        {
+          version: 1,
+          environmentId: local,
+          threadId: ThreadId.make("thread"),
+          messageId: MessageId.make("message"),
+          text: "quote",
+          start: 0,
+          end: 5,
+          prefix: "",
+          suffix: "",
+          comment: "edited",
+        },
+      ],
+    }),
+  ).toBe(true);
   expect(composerDraftContentChanged(draft, { ...draft, prompt: "after" })).toBe(true);
   expect(composerDraftContentChanged(draft, { ...draft, files: [] })).toBe(true);
   expect(composerDraftContentChanged(draft, { ...draft, threadContexts: [localThread] })).toBe(
@@ -165,4 +185,45 @@ describe("approvalRedirectNotice", () => {
     expect(approvalRedirectNotice({ ...settled, declined: false })).toBeNull();
     expect(approvalRedirectNotice(settled)).toBeNull();
   });
+});
+
+it("detects tray edits while uploads are pending", () => {
+  const citation = {
+    version: 1 as const,
+    environmentId: local,
+    threadId: ThreadId.make("thread"),
+    messageId: MessageId.make("message"),
+    text: "quote",
+    start: 0,
+    end: 5,
+    prefix: "",
+    suffix: "",
+  };
+  const input = {
+    prompt: "draft",
+    promptAtSend: "draft",
+    promptForSend: "draft",
+    attachmentIds: ["upload"],
+    attachmentIdsAtSend: ["upload"],
+    attachmentIdsBeforeAnnotation: ["upload"],
+    annotationImageId: undefined,
+    trayCitations: [citation],
+    liveTrayCitations: [citation],
+    replyTo: null,
+    liveReplyTo: null,
+  };
+  expect(composerDraftChangedSinceSend(input)).toBe(false);
+  expect(
+    composerDraftChangedSinceSend({
+      ...input,
+      replyTo: responseContextRecord({ citation, itemId: TurnItemId.make("item"), subagents: [] }),
+    }),
+  ).toBe(true);
+  expect(
+    composerDraftChangedSinceSend({
+      ...input,
+      liveTrayCitations: [{ ...citation, comment: "edited" }],
+    }),
+  ).toBe(true);
+  expect(composerDraftChangedSinceSend({ ...input, liveTrayCitations: [] })).toBe(true);
 });

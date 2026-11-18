@@ -1,3 +1,4 @@
+import { CitationDestinationSetting } from "./CitationDestinationSetting";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
@@ -1228,6 +1229,11 @@ export function ChatSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="composer" title={gt("Composer")}>
+        <SettingsRow
+          title={gt("New citations go")}
+          description={gt("Choose where newly cited assistant text is added on this client.")}
+          control={<CitationDestinationSetting />}
+        />
         <SettingsRow
           {...setting("composer-rich-text")}
           description={gt("Show formatted Markdown as you type.")}

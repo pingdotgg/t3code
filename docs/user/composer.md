@@ -142,6 +142,10 @@ delete it like other inline context. Copying, reloading, and restoring a
 with its quote, and sending tells the agent which words were quoted and which comment you wrote.
 The quoted text and comment count toward the message limit.
 
+On web and desktop, set **New citations go** to **In the tray** in **Settings → Chat**
+to collect quotes above the input. The default is **Inline**. Tray quotes are sent
+before your message in their listed order and stay with saved drafts and stashed prompts.
+
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.
 
