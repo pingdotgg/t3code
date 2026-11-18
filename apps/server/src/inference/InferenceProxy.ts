@@ -605,6 +605,8 @@ const make = Effect.gen(function* () {
         .spawn(
           ChildProcess.make(executable, ["-config", file, "-local-model"], {
             cwd: directory,
+            // Desktop updates terminate the backend process group if graceful shutdown stalls.
+            detached: false,
             env: {
               HOME: directory,
               USERPROFILE: directory,

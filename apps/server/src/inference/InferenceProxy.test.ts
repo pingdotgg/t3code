@@ -140,7 +140,10 @@ it.effect(
             }
             const exited = yield* Deferred.make<void>();
             if (!tailscale) {
-              if (ChildProcess.isStandardCommand(command)) configPath = String(command.args[1]);
+              if (ChildProcess.isStandardCommand(command)) {
+                expect.soft(command.options.detached).toBe(false);
+                configPath = String(command.args[1]);
+              }
               currentExit = exited;
               if (expectRecovery) yield* Deferred.succeed(recovered, undefined);
               yield* Effect.addFinalizer(() => Deferred.succeed(exited, undefined));
