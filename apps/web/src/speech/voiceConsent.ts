@@ -1,7 +1,11 @@
-import { VoiceTranscriptionDestination } from "@t3tools/contracts";
+import type { EnvironmentCatalogState } from "@t3tools/client-runtime/state/connections";
+import { EnvironmentId, VoiceTranscriptionDestination } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
+import { environmentCatalog } from "../connection/catalog";
 import { randomUUID } from "../lib/utils";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import {
   getLocalStorageItem,
   readLocalStorageValue,
@@ -70,6 +74,37 @@ function replaceChoice(choice: AudioChoice, previous = readChoice()) {
 
 export function chooseAudioDestination(destination: AudioDestination | null) {
   replaceChoice(destination ? { id: randomUUID(), destination } : "off");
+}
+
+/**
+ * Sends voice input to this machine's own environment until the person chooses a destination, and
+ * again once the environment they chose is gone, so audio stays on this machine by default.
+ */
+export function adoptHostAudioDestination(host: string | null, catalog: EnvironmentCatalogState) {
+  if (host === null || !catalog.isReady) return;
+  const environmentId = EnvironmentId.make(host);
+  if (!catalog.entries.has(environmentId)) return;
+  const choice = readChoice();
+  if (choice === "off" || pendingGrant(choice)) return;
+  if (choice && !("pending" in choice) && catalog.entries.has(choice.destination.environmentId))
+    return;
+  chooseAudioDestination({ kind: "environment", environmentId });
+}
+
+export function startHostAudioDefault(): () => void {
+  const adopt = () =>
+    adoptHostAudioDestination(
+      appAtomRegistry.get(hostEnvironmentIdAtom),
+      appAtomRegistry.get(environmentCatalog.catalogValueAtom),
+    );
+  const unsubscribes = [
+    appAtomRegistry.subscribe(hostEnvironmentIdAtom, adopt),
+    appAtomRegistry.subscribe(environmentCatalog.catalogValueAtom, adopt),
+  ];
+  adopt();
+  return () => {
+    for (const unsubscribe of unsubscribes) unsubscribe();
+  };
 }
 
 export function pendingCloudAudioChoice(
