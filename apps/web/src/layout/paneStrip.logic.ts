@@ -98,8 +98,8 @@ export type PaneStripSegment =
 
 /**
  * A pane's tab strip in drawing order. A tab joins its stored group, else a rule group its
- * thread matches (not a collapsed one while shown). Settled chats leave the strip when
- * `hideSettled`. The shown tab is always drawn, also inside a collapsed group.
+ * thread matches. Settled chats leave the strip when `hideSettled`. The shown tab is always
+ * drawn, also inside a collapsed group.
  */
 export function arrangePaneStrip(input: {
   readonly tabs: readonly LayoutTab[];
@@ -124,7 +124,7 @@ export function arrangePaneStrip(input: {
     if (!shown && input.hideSettled && state === "settled") continue;
     const group =
       (tab.groupId === undefined ? undefined : stored.get(tab.groupId)) ??
-      rules.find((rule) => rule.rule === state && !(shown && rule.collapsed));
+      rules.find((rule) => rule.rule === state);
     if (!group) {
       order.push({ kind: "tab", tab });
       continue;

@@ -185,11 +185,11 @@ describe("arrangePaneStrip", () => {
       expected: ["Working(2)[]", "i"],
     },
     {
-      case: "the shown chat stays in its place while working",
+      case: "the shown chat joins a collapsed Working group",
       tabs: ["w", "i", "w2"].map(chatTab),
       active: "w",
       groups: [workingTabGroup(true)],
-      expected: ["Working(1)[]", "w", "i"],
+      expected: ["Working(2)[w]", "i"],
     },
     {
       case: "the shown chat joins an open Working group",
@@ -197,13 +197,6 @@ describe("arrangePaneStrip", () => {
       active: "w",
       groups: [workingTabGroup(false)],
       expected: ["Working(2)[w w2]", "i"],
-    },
-    {
-      case: "Working forms only around chats that are not shown",
-      tabs: ["i", "w"].map(chatTab),
-      active: "w",
-      groups: [workingTabGroup(true)],
-      expected: ["i", "w"],
     },
     {
       case: "a settled chat leaves the strip while settled tabs hide",
