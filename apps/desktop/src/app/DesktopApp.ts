@@ -287,6 +287,10 @@ const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: bool
   const tray = yield* DesktopTray.DesktopTray;
   const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
   const settings = yield* desktopSettings.get;
+  const startAppActivation = appActivation.start.pipe(
+    Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
+    Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
+  );
   if (settings.localEnvironmentEnabled && (!backendStarted || (yield* Ref.get(state.quitting)))) {
     return;
   }
@@ -312,6 +316,8 @@ const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: bool
     if (!(yield* Ref.get(state.quitting))) {
       yield* desktopWindow.createMainIfBackendReady;
     }
+    // `t3 <dir>` still reaches the renderer, which opens it on this machine's connected service.
+    yield* startAppActivation;
     return;
   }
 
@@ -324,10 +330,7 @@ const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: bool
   ) {
     yield* desktopWindow.ensureMain;
   }
-  yield* appActivation.start.pipe(
-    Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
-    Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
-  );
+  yield* startAppActivation;
   yield* Effect.forkScoped((yield* DesktopWslBackend.DesktopWslBackend).reconcile);
 });
 
