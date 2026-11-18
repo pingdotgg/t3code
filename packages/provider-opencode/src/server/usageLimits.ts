@@ -509,10 +509,10 @@ export function mergeUsageLimits(
   // metadata stays: its fingerprint is what tells one account apart from
   // another when several environments report the same one.
   const { unavailable: _unavailable, ...consoleMetadata } = console;
-  const credentialFingerprint = mergeFingerprints(
-    consoleMetadata.credentialFingerprint,
-    integration.credentialFingerprint,
-  );
+  const credentialFingerprint =
+    console.windows.length > 0 && consoleMetadata.credentialFingerprint === undefined
+      ? undefined
+      : mergeFingerprints(consoleMetadata.credentialFingerprint, integration.credentialFingerprint);
   // The Console windows name the Console credential; an integration window
   // already names the credential that meters it.
   const consoleWindows =

@@ -321,6 +321,18 @@ describe("mergeUsageLimits", () => {
       credentialFingerprint: "minimax-account",
     });
     assert.strictEqual(merged.credentialFingerprint, "go-account.minimax-account");
+    const unidentifiedConsole = mergeUsageLimits(
+      {
+        checkedAt: console.checkedAt,
+        windows: [{ id: "go_weekly", kind: "weekly", usedPercent: 20 }],
+      },
+      {
+        checkedAt: console.checkedAt,
+        windows: merged.windows,
+        credentialFingerprint: "minimax-account",
+      },
+    );
+    assert.isUndefined(unidentifiedConsole.credentialFingerprint);
   });
 
   it("names the credential that meters each window", () => {
