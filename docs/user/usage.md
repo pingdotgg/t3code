@@ -20,6 +20,13 @@ record are missing from the totals.
 Text generation (thread titles, commit messages, PR text, branch names and review guides) is not in
 the totals for Codex or Claude Code 2.0.63 and newer, because those runs save no session history.
 
+The server keeps scanned usage history for 92 days by default. Claude Code deletes its own
+transcripts after 30 days, so for older Claude usage this history is the only record left. To keep
+it longer, set `usageHistoryRetentionDays` in `<T3 home>/userdata/settings.json` to a number of days
+such as `365`, or to `"unlimited"`. Usage views still show at most 90 days. Lowering the value
+prunes older history on the next refresh, and raising it again does not bring pruned history back.
+While `settings.json` cannot be read, nothing is pruned.
+
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
@@ -118,7 +125,7 @@ first. For an account with no weekly quota left, this is when its session become
 The first available window is used when no account reports a 5-hour limit. A gap means the
 account does not report that window. When the provider reports reset times, the card also says
 when the next reset lands and how much it hands back. The hatched
-part of a segment is what that reset restores. Tap a segment or account row for the account's plan,
+part of a segment is what that reset restores. Tap a segment for the account's plan,
 where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
 with banked reset credits show a ticket count and the **Use reset** action in the account details.
 Claude resets are not available when the server runs on macOS, where Claude keeps its login in the

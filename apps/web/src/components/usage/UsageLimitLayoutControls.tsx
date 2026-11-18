@@ -11,6 +11,7 @@ import {
 } from "@dnd-kit/core";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { SortableContext, type useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { useGT } from "gt-react";
 import { GripVerticalIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -31,6 +32,8 @@ export function UsageLimitSortableList({
   readonly onReorder: (active: string, over: string) => void;
   readonly children: ReactNode;
 }) {
+  const gt = useGT();
+  const position = (id: string | number) => items.indexOf(String(id)) + 1;
   const keyboardCoordinates: KeyboardCoordinateGetter = (
     event,
     { context, currentCoordinates },
@@ -59,6 +62,24 @@ export function UsageLimitSortableList({
       sensors={sensors}
       collisionDetection={limitCollisionDetection}
       modifiers={[restrictToVerticalAxis]}
+      accessibility={{
+        screenReaderInstructions: {
+          draggable: gt(
+            "Press Space to pick up. Use the arrow keys to move, Space to drop, and Escape to cancel.",
+          ),
+        },
+        announcements: {
+          onDragStart: ({ active }) =>
+            gt("Picked up item at position {position}.", { position: position(active.id) }),
+          onDragOver: ({ over }) =>
+            over ? gt("Moved to position {position}.", { position: position(over.id) }) : undefined,
+          onDragEnd: ({ over }) =>
+            over
+              ? gt("Dropped at position {position}.", { position: position(over.id) })
+              : gt("Reorder canceled."),
+          onDragCancel: () => gt("Reorder canceled."),
+        },
+      }}
       onDragEnd={({ active, over }) => {
         if (over && active.id !== over.id) onReorder(String(active.id), String(over.id));
       }}
@@ -91,7 +112,8 @@ export function UsageLimitLayoutControls({
   readonly onToggleVisibility: () => void;
   readonly children?: ReactNode;
 }) {
-  const visibilityLabel = `${hidden ? "Show" : "Hide"} ${label}`;
+  const gt = useGT();
+  const visibilityLabel = hidden ? gt("Show {label}", { label }) : gt("Hide {label}", { label });
   return (
     <div
       className={cn(
@@ -106,7 +128,7 @@ export function UsageLimitLayoutControls({
         ref={handleRef}
         {...attributes}
         {...listeners}
-        aria-label={`Reorder ${label}`}
+        aria-label={gt("Reorder {label}", { label })}
         className="flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing"
       >
         <GripVerticalIcon className="size-4" aria-hidden />
@@ -118,7 +140,7 @@ export function UsageLimitLayoutControls({
         title={visibilityLabel}
         onClick={onToggleVisibility}
       >
-        {hidden ? "Show" : "Hide"}
+        {hidden ? gt("Show") : gt("Hide")}
       </Button>
       {children}
     </div>
