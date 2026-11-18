@@ -90,6 +90,7 @@ describe("UsageLimitsPooled reset credits", () => {
         ],
         resetCredits: {
           availableCount: 3,
+          nextCreditId: "hub-credit",
           options: [
             {
               creditId: "grant-weekly",
@@ -118,7 +119,7 @@ describe("UsageLimitsPooled reset credits", () => {
                 usageLimitSources: [
                   {
                     id: UsageLimitSourceId.make("hub"),
-                    kind: "cliproxy",
+                    kind: "cliproxy" as const,
                     label: "Hub",
                     checkedAt,
                     accounts: [
@@ -147,6 +148,61 @@ describe("UsageLimitsPooled reset credits", () => {
     expect(weekly.elements()).toHaveLength(1);
     expect(fable.elements()).toHaveLength(1);
     await expect.element(screen.getByText("resets now", { exact: true })).toBeVisible();
+    if (!hub) {
+      const exhausted = {
+        ...claude,
+        usageLimits: {
+          ...claude.usageLimits!,
+          windows: [
+            { id: "session", kind: "session" as const, label: "Session", usedPercent: 100 },
+            {
+              id: "weekly",
+              kind: "weekly" as const,
+              label: "Weekly",
+              usedPercent: 100,
+              resetsAt: "2026-10-26T16:00:00.000Z",
+            },
+            { id: "fable", kind: "weekly" as const, label: "Fable", usedPercent: 20 },
+          ],
+        },
+      };
+      const updated = new Map([
+        [
+          EnvironmentId.make("desk"),
+          { entry: { target: { label: "Desk" } }, serverConfig: { providers: [exhausted] } },
+        ],
+      ]);
+      await screen.rerender(
+        <UsageLimitsPooled
+          presentations={updated}
+          now={Date.parse(checkedAt)}
+          display="left"
+          hideEmails={false}
+        />,
+      );
+      await expect.element(screen.getByRole("img", { name: /^Fable: 80% left/ })).toBeVisible();
+      const spent = {
+        ...exhausted,
+        usageLimits: {
+          ...exhausted.usageLimits,
+          windows: exhausted.usageLimits.windows.slice(0, 2),
+        },
+      };
+      updated.set(EnvironmentId.make("desk"), {
+        entry: { target: { label: "Desk" } },
+        serverConfig: { providers: [spent] },
+      });
+      await screen.rerender(
+        <UsageLimitsPooled
+          presentations={updated}
+          now={Date.parse(checkedAt)}
+          display="left"
+          hideEmails={false}
+        />,
+      );
+      await expect.element(screen.getByText("Out of usage", { exact: true })).toBeVisible();
+      expect(screen.getByText(/· back/).elements()).toHaveLength(0);
+    }
     if (hub) {
       await expect.element(weekly).toBeDisabled();
       await expect.element(fable).toBeDisabled();

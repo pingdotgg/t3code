@@ -1,5 +1,4 @@
-import { mFallback } from "gt-i18n";
-import type { MFunctionType } from "gt-i18n/types";
+import type { MessageResolver } from "../../i18n/messages";
 import { T, useGT, useMessages, msg } from "gt-react";
 import {
   collectExternalUsageLinks,
@@ -65,13 +64,6 @@ function windowName(label: string): string {
   return label.replace(/^Weekly · /, "");
 }
 
-function windowNoun(kind: ServerProviderUsageWindow["kind"]): string {
-  if (kind === "session") return "session";
-  if (kind === "weekly") return "week";
-  if (kind === "monthly") return "month";
-  return "window";
-}
-
 function shortPlan(plan: string): string {
   return plan.replace(/^claude\s+/i, "").replace(/\s+subscription$/i, "");
 }
@@ -97,11 +89,7 @@ function accountHue(seed: string): number {
   return Math.abs(hash) % 360;
 }
 
-function untilText(
-  iso: string | undefined,
-  now: number,
-  m: MFunctionType = mFallback,
-): string | null {
+function untilText(iso: string | undefined, now: number, m: MessageResolver): string | null {
   if (!iso) return null;
   const at = Date.parse(iso);
   return Number.isFinite(at) ? formatDuration(at - now, m) : null;
@@ -121,7 +109,7 @@ interface AccountCredit {
 function accountCredits(
   account: LimitAccount,
   now: number,
-  m: MFunctionType,
+  m: MessageResolver,
 ): readonly AccountCredit[] {
   const credits = account.limits.resetCredits;
   if (!credits || credits.availableCount === 0) return [];
@@ -169,7 +157,7 @@ function accountRow(
   account: LimitAccount,
   windows: readonly LimitPoolWindow[],
   now: number,
-  m: MFunctionType,
+  m: MessageResolver,
 ): AccountRowModel {
   const cells = windows.map(
     (window) => window.columns.find((column) => column.account.key === account.key)?.window ?? null,
@@ -177,12 +165,17 @@ function accountRow(
   const session = cells.find((cell) => cell?.kind === "session");
   const weekly = cells.find((cell) => cell?.kind === "weekly");
   const out =
-    session && weekly && remainingPercent(session) === 0 && remainingPercent(weekly) === 0;
-  const backAt = out
-    ? [session.resetsAt, weekly.resetsAt]
-        .filter((iso): iso is string => iso !== undefined)
-        .sort((left, right) => Date.parse(right) - Date.parse(left))[0]
-    : undefined;
+    session && weekly && cells.every((cell) => cell === null || remainingPercent(cell) === 0);
+  const clocks = cells.flatMap((cell) => (cell ? [cell.resetsAt] : []));
+  const cutoff = Math.max(now, Date.parse(account.limits.checkedAt));
+  const backAt =
+    out && clocks.every((iso) => iso !== undefined && Date.parse(iso) > cutoff)
+      ? clocks.reduce<string | undefined>(
+          (latest, iso) =>
+            latest === undefined || Date.parse(iso!) > Date.parse(latest) ? iso : latest,
+          undefined,
+        )
+      : undefined;
   return {
     account,
     cells,
@@ -239,11 +232,21 @@ function ResetChip({
   readonly onUse: () => void;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const kind = credit.key === "next" ? "" : `${credit.title.replace(/ reset$/i, "")} `;
-  const expires = untilText(credit.expiresAt, now);
-  const description = `${credit.title} · ${credit.count} left · ${credit.refills}${
-    expires ? gt(" · expires in {duration}", { duration: expires }) : ""
-  }`;
+  const expires = untilText(credit.expiresAt, now, m);
+  const description = expires
+    ? gt("{title} · {count} left · {refills} · expires in {duration}", {
+        title: credit.title,
+        count: credit.count,
+        refills: credit.refills,
+        duration: expires,
+      })
+    : gt("{title} · {count} left · {refills}", {
+        title: credit.title,
+        count: credit.count,
+        refills: credit.refills,
+      });
   return (
     <Tooltip>
       <TooltipTrigger
@@ -283,24 +286,33 @@ function PaceTooltipText({
   readonly now: number;
 }) {
   const gt = useGT();
-  const resetsIn = untilText(window.resetsAt, now);
+  const m = useMessages();
+  const resetsIn = untilText(window.resetsAt, now, m);
   const gap = remaining - timeLeft;
   let detail: string;
   if (remaining === 0) {
-    detail = resetsIn ? `Out of usage. Back in ${resetsIn}.` : "Out of usage.";
+    detail = resetsIn
+      ? gt("Out of usage. Back in {duration}.", { duration: resetsIn })
+      : gt("Out of usage.");
   } else if (gap < 0) {
-    detail = `Where you'd be if you spread this ${windowNoun(window.kind)} evenly. You're ${-gap}% behind, so at this rate you run out before it resets${
-      resetsIn ? ` in ${resetsIn}` : ""
-    }.`;
+    detail = resetsIn
+      ? gt(
+          "Where you'd be if you spread this window evenly. You're {gap}% behind, so at this rate you run out before it resets in {duration}.",
+          { gap: -gap, duration: resetsIn },
+        )
+      : gt(
+          "Where you'd be if you spread this window evenly. You're {gap}% behind, so at this rate you run out before it resets.",
+          { gap: -gap },
+        );
   } else {
-    detail = `You're ${gap}% ahead of pace.`;
+    detail = gt("You're {gap}% ahead of pace.", { gap });
   }
   return (
     <div className="flex max-w-64 flex-col gap-0.5">
       <span className="font-medium text-foreground">
         {gt("Even pace · {percent}% {display} by now", {
           percent: shown(timeLeft, display),
-          display: gt(display === "left" ? "left" : "used"),
+          display: display === "left" ? gt("left") : gt("used"),
         })}
       </span>
       <span className="text-muted-foreground">{detail}</span>
@@ -318,9 +330,9 @@ function Meter({
   readonly display: LimitDisplay;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
-  const m = useMessages();
   const resetsIn = formatResetsIn(window, now, m);
   const out = remaining === 0;
   const fill = shown(remaining, display);
@@ -332,7 +344,9 @@ function Meter({
           <span className="text-sm font-semibold text-foreground tabular-nums">
             {shown(remaining, display)}%
           </span>
-          <span className="text-2xs text-muted-foreground">{display}</span>
+          <span className="text-2xs text-muted-foreground">
+            {display === "left" ? gt("left") : gt("used")}
+          </span>
         </span>
         <span
           className={cn(
@@ -345,7 +359,12 @@ function Meter({
       </div>
       <div
         role="img"
-        aria-label={`${window.label}: ${shown(remaining, display)}% ${display}${resetsIn ? `, ${resetsIn}` : ""}`}
+        aria-label={gt("{window}: {percent}% {display}{reset}", {
+          window: window.label,
+          percent: shown(remaining, display),
+          display: display === "left" ? gt("left") : gt("used"),
+          reset: resetsIn ? `, ${resetsIn}` : "",
+        })}
         className="relative h-2"
       >
         <div
@@ -369,7 +388,7 @@ function Meter({
                   tabIndex={0}
                   aria-label={gt("Even pace: {percent}% {display} by now", {
                     percent: tick,
-                    display: gt(display === "left" ? "left" : "used"),
+                    display: display === "left" ? gt("left") : gt("used"),
                   })}
                   className="group absolute inset-y-0 flex w-2 -translate-x-1/2 cursor-default justify-center outline-none"
                   style={{ left: `clamp(1px, ${tick}%, calc(100% - 1px))` }}
@@ -421,6 +440,7 @@ function AccountCard({
   readonly onUseCredit: (credit: AccountCredit) => void;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const { account } = row;
   const subtitle = accountSubtitle(account, hideEmails);
@@ -433,7 +453,7 @@ function AccountCard({
   const focus = focusIndex >= 0 ? row.cells[focusIndex] : null;
   const focusLabel = focusIndex >= 0 ? windowName(windows[focusIndex]!.label) : null;
   const timeLeft = focus ? paceRemainingPercent(focus, now) : null;
-  const resetsIn = focus ? untilText(focus.resetsAt, now) : null;
+  const resetsIn = focus ? untilText(focus.resetsAt, now, m) : null;
   return (
     <div className="flex w-80 max-w-[calc(100vw-3rem)] flex-col gap-3 text-xs">
       <div className="flex min-w-0 items-center gap-2.5">
@@ -472,7 +492,7 @@ function AccountCard({
             <DetailRow label={gt("Even pace")}>
               {gt("{percent}% {display} by now", {
                 percent: shown(timeLeft, display),
-                display: gt(display === "left" ? "left" : "used"),
+                display: display === "left" ? gt("left") : gt("used"),
               })}
             </DetailRow>
           ) : null}
@@ -484,7 +504,7 @@ function AccountCard({
             <T>Resets</T>
           </span>
           {row.credits.map((credit) => {
-            const expires = untilText(credit.expiresAt, now);
+            const expires = untilText(credit.expiresAt, now, m);
             const soon = expiresSoon(credit, now);
             return (
               <div key={credit.key} className="flex items-center gap-3">
@@ -506,7 +526,7 @@ function AccountCard({
                     )}
                   >
                     {credit.refills}
-                    {expires ? ` · expires in ${expires}` : ""}
+                    {expires ? gt(" · expires in {duration}", { duration: expires }) : ""}
                   </span>
                 </div>
                 <div className="ms-auto shrink-0">
@@ -574,7 +594,7 @@ function RedeemableAccountRow({
           <span className="font-medium text-foreground">
             {accountTitle(props.row.account, props.hideEmails)}
           </span>{" "}
-          {redeem.busy ? "Using reset credit…" : redeem.status}
+          {redeem.busy ? gt("Using reset credit…") : redeem.status}
         </span>
       ) : null}
     </>
@@ -595,6 +615,7 @@ function AccountRowView({
   readonly onUseCredit: (credit: AccountCredit) => void;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const [cardOpen, setCardOpen] = useState(false);
   const { account } = row;
@@ -660,7 +681,7 @@ function AccountRowView({
   );
 
   if (row.outUntil !== undefined) {
-    const back = row.outUntil ? untilText(row.outUntil, now) : null;
+    const back = row.outUntil ? untilText(row.outUntil, now, m) : null;
     return (
       <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-muted-foreground">
         <div className="flex min-w-0 items-center gap-2 opacity-70">{identity}</div>
@@ -744,33 +765,29 @@ function ProviderCard({
   readonly hideEmails: boolean;
 }) {
   const m = useMessages();
+  const gt = useGT();
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
   const rows = pool.accounts.map((account) => accountRow(account, windows, now, m));
   const onlyRow = rows.length === 1 ? rows[0]! : null;
   const allOut = rows.every((row) => row.outUntil !== undefined);
 
-  if (onlyRow && allOut) {
-    return (
-      <section aria-label={label} className="rounded-xl border border-border/50 bg-muted/30">
-        <AccountRow
-          row={onlyRow}
-          windows={windows}
-          now={now}
-          display={display}
-          hideEmails={hideEmails}
-          provider={{ label }}
-        />
-      </section>
-    );
-  }
+  const condensed = onlyRow !== null && allOut;
 
   return (
     <section
       aria-label={label}
-      className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70"
+      className={cn(
+        "divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70",
+        condensed && "bg-muted/30",
+      )}
     >
-      <div className="grid min-w-0 gap-x-7 gap-y-2 bg-muted/30 px-4 py-2.5 @3xl/limits:grid-cols-[15rem_minmax(0,1fr)]">
+      <div
+        className={cn(
+          "grid min-w-0 gap-x-7 gap-y-2 bg-muted/30 px-4 py-2.5 @3xl/limits:grid-cols-[15rem_minmax(0,1fr)]",
+          condensed && "hidden",
+        )}
+      >
         <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium text-foreground">
           <ProviderInstanceIcon
             driverKind={pool.driver}
@@ -782,7 +799,9 @@ function ProviderCard({
           {label}
           {rows.length > 1 ? (
             <span className="text-2xs font-normal text-muted-foreground">
-              {rows.length} accounts
+              {gt("{count, plural, one {{count} account} other {{count} accounts}}", {
+                count: rows.length,
+              })}
             </span>
           ) : null}
         </h2>
@@ -821,7 +840,9 @@ function ProviderCard({
                   <span className="font-semibold text-foreground tabular-nums">
                     {display === "left" ? window.remainingPercent : window.usedPercent}%
                   </span>
-                  <span className="text-2xs text-muted-foreground">{display}</span>
+                  <span className="text-2xs text-muted-foreground">
+                    {display === "left" ? gt("left") : gt("used")}
+                  </span>
                 </span>
               </span>
             );
@@ -839,7 +860,7 @@ function ProviderCard({
             now={now}
             display={display}
             hideEmails={hideEmails}
-            provider={null}
+            provider={condensed ? { label } : null}
           />
         </div>
       ))}
