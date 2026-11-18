@@ -1262,6 +1262,46 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
     ),
 );
 
+it.effect(
+  "t3_background_wait marks work from a turn Claude started before T3 started its run",
+  () =>
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({ name: "t3_background_wait", arguments: { taskIds: ["checks"] } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.structuredContent).toEqual({ matched: ["checks"], unmatched: [] });
+    }).pipe(
+      Effect.provide(
+        layerOrchestratorToolkit.pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) =>
+                Effect.succeed(McpToolAccessTestkit.liveThreadShell(id, { activeRunId: null })),
+              awaitBackgroundTasks: ({ taskIds }) =>
+                Effect.succeed({ matched: taskIds, unmatched: [] }),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+          Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+          Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        ),
+      ),
+    ),
+);
+
 it.effect("discovers workflow stop targets and requires orchestration capability", () => {
   const threadId = ThreadId.make("workflow-parent");
   const shell = McpToolAccessTestkit.liveThreadShell(threadId);
