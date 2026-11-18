@@ -1462,7 +1462,8 @@ export function LayoutSurfaceHost({
               : stacked
                 ? { width: "100%" }
                 : {
-                    width: `min(${stripSize.maxShare * 100}%, max(${stripSize.share * 100}%, ${stripSize.minPx}px))`,
+                    // Match clientWidth rounding so fractional sidebar widths do not clamp the camera by a pixel.
+                    width: `min(calc(${stripSize.maxShare} * round(nearest, 100%, 1px)), max(${stripSize.share * 100}%, ${stripSize.minPx}px))`,
                   }
           }
         >
