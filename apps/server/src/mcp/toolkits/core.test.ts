@@ -644,7 +644,7 @@ it.effect("rejects an unknown thread target instead of changing the calling thre
         );
       expect(outcome, call.name).toMatchObject({
         _tag: "Failure",
-        failure: { message: expect.stringContaining("Expected no excess property") },
+        failure: { message: expect.stringContaining('Unknown argument "threadIds"') },
       });
     }
     expect(dispatched).toEqual([]);
@@ -759,7 +759,7 @@ const clientScope = (
   thread: undefined,
   client: { sessionId: "session-1", label: "Claude Code", access },
   issuedAt: 0,
-  capabilities: new Set(["orchestration", "worktree", "pull-requests"]),
+  capabilities: new Set(["orchestration", "worktree", "pull-requests", "issues"]),
 });
 
 it.effect("a client caller targets any thread within its ceiling and cannot act as a thread", () =>
@@ -1398,6 +1398,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
             getProjectThreadRecords: () =>
               Effect.succeed(McpToolAccessTestkit.idleThreadProjection(shell)),
+            getRunCount: () => Effect.succeed(1),
             getTimelinePage: () =>
               Effect.succeed({ items: [row], totalItems: 1, hasMore: false, hasEarlier: false }),
             stopWorkflow: (input) =>
@@ -1509,7 +1510,7 @@ it.effect("rejects an unknown attachment target instead of sending to the callin
     expect(read).toEqual([]);
     expect(outcome).toMatchObject({
       _tag: "Failure",
-      failure: { message: expect.stringContaining("Expected no excess property") },
+      failure: { message: expect.stringContaining('Unknown argument "threadIds"') },
     });
   }).pipe(
     Effect.provide(
@@ -1530,6 +1531,168 @@ it.effect("rejects an unknown attachment target instead of sending to the callin
         Layer.provide(
           ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-target-" }),
         ),
+        Layer.provide(
+          DocumentText.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+        Layer.provide(NodeCrypto.layer),
+      ),
+    ),
+  );
+});
+
+it.effect(
+  "t3_thread_list settled:false with an empty statuses list lists the unsettled threads",
+  () => {
+    const unsettled = McpToolAccessTestkit.liveThreadShell(ThreadId.make("unsettled-thread"));
+    const settled = {
+      ...McpToolAccessTestkit.liveThreadShell(ThreadId.make("settled-thread")),
+      settledOverride: "settled",
+    } as const;
+    return Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const result = yield* server
+        .callTool({
+          name: "t3_thread_list",
+          arguments: { projectId: unsettled.projectId, settled: false, statuses: [] },
+        })
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            clientScope("full-access"),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(result.isError).toBe(false);
+      expect(result.structuredContent).toMatchObject({
+        threads: [{ threadId: unsettled.id, settled: false }],
+        total: 1,
+      });
+    }).pipe(
+      Effect.provide(
+        layerOrchestratorToolkit.pipe(
+          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provide(
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              listProjectThreads: () => Effect.succeed([unsettled, settled]),
+              getShellSnapshot: () => Effect.succeed({ threads: [unsettled, settled] } as never),
+            }),
+          ),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
+          Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
+          Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (projectId) =>
+                Effect.succeedSome({
+                  id: projectId,
+                  title: "MCP test",
+                  workspaceRoot: "/repo",
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-10-18T00:00:00.000Z",
+                  updatedAt: "2026-10-18T00:00:00.000Z",
+                  deletedAt: null,
+                }),
+            }),
+          ),
+          Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
+          Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+          Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+          Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+          Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+        ),
+      ),
+    );
+  },
+);
+
+const sendTargetId = ThreadId.make("send-target-thread");
+const sendCommand = {
+  commandId: CommandId.make("mcp-core-send"),
+  commandType: "message.dispatch",
+};
+
+it.effect.each([
+  {
+    outcome: "says that the missing workspace could not be recreated",
+    refusal: new ThreadManagement.ThreadManagementWorktreeRestoreError({
+      threadId: sendTargetId,
+      cause: new Error("The branch no longer exists."),
+    }),
+    reply: {
+      _tag: "OrchestratorMcpFailure",
+      code: "thread_not_sendable",
+      message:
+        "Couldn't recreate the missing workspace of thread send-target-thread, so the message was not sent. The branch no longer exists.",
+    },
+  },
+  {
+    outcome: "passes on the text reason of an orchestrator rejection",
+    refusal: new OrchestratorCommandRejectedError({
+      ...sendCommand,
+      cause: "Thread send-target-thread is deleted.",
+    }),
+    reply: {
+      _tag: "OrchestratorMcpFailure",
+      code: "orchestration_error",
+      message: "Thread send-target-thread is deleted.",
+    },
+  },
+  {
+    outcome: "keeps an internal dispatch cause private",
+    refusal: new OrchestratorDispatchError({
+      ...sendCommand,
+      cause: new Error("private-storage-path"),
+    }),
+    reply: {
+      _tag: "OrchestratorMcpFailure",
+      code: "orchestration_error",
+      message: "The operation could not be completed.",
+    },
+  },
+])("t3_thread_send_attachments $outcome", ({ refusal, reply }) => {
+  const stored = ChatImageAttachment.make({
+    type: "image",
+    id: "owned-image",
+    name: "original.png",
+    mimeType: "image/png",
+    sizeBytes: 12,
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "t3_thread_send_attachments",
+        arguments: { threadId: sendTargetId, message: "See the file.", attachments: [stored] },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(declaredFailure(result)).toEqual(reply);
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerAttachmentToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: () =>
+              Effect.succeed({
+                ...McpToolAccessTestkit.idleThreadProjection(
+                  McpToolAccessTestkit.liveThreadShell(sendTargetId),
+                ),
+                messages: [{ attachments: [stored] }],
+              } as never),
+            sendToThread: () => Effect.fail(refusal),
+          }),
+        ),
+        Layer.provide(AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer))),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" })),
         Layer.provide(
           DocumentText.layer.pipe(
             Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),

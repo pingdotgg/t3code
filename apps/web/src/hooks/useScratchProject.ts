@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { RegistryContext } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
@@ -9,9 +10,11 @@ import {
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
+import { msg } from "gt-react";
 import { useContext } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import {
   type EnvironmentPresentation,
   useEnvironments,
@@ -26,7 +29,7 @@ function reportScratchFailure(title: string, error: unknown) {
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : "An error occurred.",
+      description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
     }),
   );
 }
@@ -66,7 +69,7 @@ export function createScratchProjectActions(input: {
 
   const openScratchProject = async (
     environmentId: EnvironmentId,
-    failureTitle = "Could not start without a project",
+    failureTitle = m(msg("Could not start without a project")),
   ): Promise<EnvironmentProject | null> => {
     const command = projectEnvironment.openScratch;
     const result = await runAtomCommand(
@@ -88,7 +91,7 @@ export function createScratchProjectActions(input: {
       await input
         .handleNewThread(scopeProjectRef(project.environmentId, project.id))
         .catch((error: unknown) =>
-          reportScratchFailure("Could not start without a project", error),
+          reportScratchFailure(m(msg("Could not start without a project")), error),
         );
     }
   };

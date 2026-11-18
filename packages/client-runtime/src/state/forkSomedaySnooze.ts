@@ -1,5 +1,8 @@
 // Snooze with no wake time, shown as "Later". The server requires a future wake, so this
 // is a wake far enough out that it never arrives; every snooze path then works unchanged.
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
 export const SOMEDAY_SNOOZED_UNTIL = "9999-12-31T00:00:00.000Z";
 
 const SOMEDAY_MS = Date.parse(SOMEDAY_SNOOZED_UNTIL);
@@ -8,12 +11,16 @@ export function isSomedaySnooze(snoozedUntil: string | null | undefined): boolea
   return snoozedUntil != null && Date.parse(snoozedUntil) >= SOMEDAY_MS;
 }
 
-export const SOMEDAY_SNOOZE_PRESET = {
-  id: "someday",
-  label: "Later",
-  whenLabel: "no wake",
-  snoozedUntil: SOMEDAY_SNOOZED_UNTIL,
-} as const;
+const SOMEDAY_SNOOZE_PRESET_ID = "someday";
+
+export function somedaySnoozePreset(resolve: MFunctionType = mFallback) {
+  return {
+    id: SOMEDAY_SNOOZE_PRESET_ID,
+    label: resolve(msg("Later", { $context: "snooze a thread with no wake time" })),
+    whenLabel: resolve(msg("no wake", { $context: "a snooze with no wake time" })),
+    snoozedUntil: SOMEDAY_SNOOZED_UNTIL,
+  } as const;
+}
 
 // Later threads stay snoozed for every behavior; only the lists shelve them apart.
 export function splitLaterSnoozes<T extends { readonly snoozedUntil?: string | null }>(
@@ -29,5 +36,5 @@ export function splitLaterSnoozes<T extends { readonly snoozedUntil?: string | n
 export function timedSnoozePresets<T extends { readonly id: string }>(
   presets: ReadonlyArray<T>,
 ): T[] {
-  return presets.filter((preset) => preset.id !== SOMEDAY_SNOOZE_PRESET.id);
+  return presets.filter((preset) => preset.id !== SOMEDAY_SNOOZE_PRESET_ID);
 }

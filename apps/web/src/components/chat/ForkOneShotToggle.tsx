@@ -1,5 +1,6 @@
 import type { OrchestrationMessageContext } from "@t3tools/contracts";
 import { withOneShotContext } from "@t3tools/shared/forkOneShot";
+import { T, useGT } from "gt-react";
 import { CircleCheckBigIcon } from "lucide-react";
 import { create } from "zustand";
 
@@ -13,9 +14,6 @@ import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "
 const useOneShotDrafts = create<{ readonly draftIds: ReadonlySet<string> }>(() => ({
   draftIds: new Set(),
 }));
-
-const TOOLTIP =
-  "Settle this thread when the agent finishes. The agent is told no follow-ups will come.";
 
 function toggle(draftId: string) {
   useOneShotDrafts.setState(({ draftIds }) => {
@@ -40,6 +38,7 @@ export function withDraftOneShotContext(
 }
 
 export function ForkOneShotToggle(props: { draftId: string | null; size: ComposerControlSize }) {
+  const gt = useGT();
   const enabled = useOneShot(props.draftId);
   const { draftId } = props;
   if (draftId === null) return null;
@@ -51,17 +50,21 @@ export function ForkOneShotToggle(props: { draftId: string | null; size: Compose
             size={props.size}
             type="button"
             aria-pressed={enabled}
-            aria-label="One-shot"
+            aria-label={gt("One-shot", { $context: "composer toggle" })}
             onClick={() => toggle(draftId)}
           />
         }
       >
         <ComposerControlIcon icon={CircleCheckBigIcon} size={props.size} />
         <span data-composer-control-label className="sr-only sm:not-sr-only">
-          One-shot
+          <T context="composer toggle">One-shot</T>
         </span>
       </TooltipTrigger>
-      <TooltipPopup side="top">{TOOLTIP}</TooltipPopup>
+      <TooltipPopup side="top">
+        {gt(
+          "Settle this thread when the agent finishes. The agent is told no follow-ups will come.",
+        )}
+      </TooltipPopup>
     </Tooltip>
   );
 }

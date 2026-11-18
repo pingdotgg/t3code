@@ -2,6 +2,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { splitLaterSnoozes } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { useGT } from "gt-react";
 
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import type { SidebarListItem } from "./Sidebar.logic";
@@ -36,11 +37,12 @@ export function LaterShelfHeader(props: {
   readonly className: string;
 }) {
   const { shelf } = props;
+  const gt = useGT();
   return (
     <SidebarSectionHeader
       marker="later-header"
       className={props.className}
-      label="Later"
+      label={gt("Later", { $context: "sidebar section" })}
       count={shelf.later.length}
       toggle={{ expanded: shelf.expanded, onToggle: shelf.toggle }}
     />
