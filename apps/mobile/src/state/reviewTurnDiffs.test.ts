@@ -102,6 +102,28 @@ describe("recordReviewTurnDiffAnswer", () => {
     }),
   );
 
+  it.effect("does not grow with the number of turns in the session", () =>
+    Effect.gen(function* () {
+      const registry = AtomRegistry.make();
+      const turns = 60;
+      for (let turn = 1; turn <= turns; turn += 1) {
+        yield* answer(registry, {
+          fromTurnCount: turn - 1,
+          toTurnCount: turn,
+          diff: "a".repeat(REVIEW_TURN_CHARACTERS),
+        });
+      }
+
+      const cached = registry.get(lastReviewTurnDiffsAtom(environmentId, threadId));
+      const characters = Object.values(cached).reduce((total, diff) => total + diff.length, 0);
+      // Without the budget the session keeps every turn's diff: 60 turns of this size
+      // are 33,754,260 characters of raw diff text, and each further turn adds more.
+      expect(Object.keys(cached).length).toBeLessThanOrEqual(MAX_CACHED_REVIEW_DIFFS);
+      expect(characters).toBeLessThanOrEqual(MAX_CACHED_REVIEW_SOURCE_CHARACTERS);
+      registry.dispose();
+    }),
+  );
+
   it.effect("keeps the other turns when one diff is larger than the whole budget", () =>
     Effect.gen(function* () {
       const registry = AtomRegistry.make();
