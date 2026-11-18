@@ -135,12 +135,11 @@ export function scrollLeftByWheel(element: HTMLElement, event: WheelEvent, delta
   wheelChases.set(element, state);
   const step = (time: number) => {
     if (wheelChases.get(element) !== state) return;
-    if (!element.isConnected) {
+    if (!element.isConnected || Math.abs(element.scrollLeft - state.position) > 1) {
       wheelChases.delete(element);
       return;
     }
     state.target = Math.min(state.target, element.scrollWidth - element.clientWidth);
-    if (Math.abs(element.scrollLeft - state.position) > 1) state.position = element.scrollLeft;
     const next = wheelChaseStep(state.position, state.target, Math.max(0, time - state.time));
     state.time = Math.max(time, state.time);
     state.position = next;
