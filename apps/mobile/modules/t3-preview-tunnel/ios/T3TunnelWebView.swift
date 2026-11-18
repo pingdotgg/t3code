@@ -15,6 +15,8 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   private var environmentId: String?
   private var pendingUrl: String?
   private var requestedUrl: URL?
+  /// A link that failed before its page committed leaves the old page current, so retry it.
+  private var failedUrl: URL?
   private var observations: [NSKeyValueObservation] = []
   private var reportedScrollY: CGFloat = 0
 
@@ -81,11 +83,12 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
 
   func goBack() { webView?.goBack() }
   func goForward() { webView?.goForward() }
-  // After a failed load the webview has no URL to reload, so retry the one asked for.
+  // After a failed load the webview may show no page or the previous one, so retry what failed.
   func reload() {
     guard let webView else { return }
-    if webView.url == nil, let requestedUrl {
-      webView.load(URLRequest(url: requestedUrl))
+    if let target = failedUrl ?? (webView.url == nil ? requestedUrl : nil) {
+      failedUrl = nil
+      webView.load(URLRequest(url: target))
     } else {
       webView.reload()
     }
@@ -115,7 +118,16 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
     didFailProvisionalNavigation navigation: WKNavigation!,
     withError error: Error
   ) {
+    let nsError = error as NSError
+    if !(nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled) {
+      let failing = nsError.userInfo[NSURLErrorFailingURLStringErrorKey] as? String
+      failedUrl = failing.flatMap(URL.init(string:)) ?? requestedUrl
+    }
     reportError(error)
+  }
+
+  func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    failedUrl = nil
   }
 
   func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
