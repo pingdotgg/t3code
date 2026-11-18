@@ -53,10 +53,10 @@ export function nextPoolReset(window: LimitPoolWindow, now: number) {
   );
   if (!next || !pooled) return next ?? null;
   const restoresPercent = window.resets.reduce(
-    (total, reset) => total + (reset.at === next.at ? reset.restoresPercent : 0),
+    (total, reset) => total + (reset.at === next.at ? reset.member.refillPercent : 0),
     0,
   );
-  return { ...next, restoresPercent };
+  return { ...next, restoresPercent: Math.round(restoresPercent / window.members.length) };
 }
 
 function driverPool(

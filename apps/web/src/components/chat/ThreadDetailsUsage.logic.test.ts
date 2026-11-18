@@ -205,40 +205,41 @@ describe("resolveThreadDetailsLimits", () => {
     expect(shown(unsupported, sources, natives)).toEqual({ kind: "pool", rows });
   });
 
-  it("names the next reset that refills quota, skipping an unused account's 0% reset", () => {
-    const soon = "2026-10-30T12:10:00.000Z";
-    const later = "2026-10-30T14:00:00.000Z";
+  it.each([
+    { name: "skips unused resets", used: [0, 80], times: ["12:10", "14:00"], restoresPercent: 40 },
+    {
+      name: "combines simultaneous resets",
+      used: [80, 80],
+      times: ["14:00", "14:00"],
+      restoresPercent: 80,
+    },
+    {
+      name: "rounds simultaneous restores once",
+      used: [100, 100, 100, 100, 100, 100],
+      times: Array(6).fill("14:00"),
+      restoresPercent: 100,
+    },
+  ])("names the next refill: $name", ({ used, times, restoresPercent }) => {
     const resolved = resolveThreadDetailsLimits(
       instanceId,
       [claudeInstance(unsupported)],
       [
-        hub("Hub", [
-          { id: "a.json", email: "a@example.com", limits: limitsResettingAt(0, soon) },
-          { id: "b.json", email: "b@example.com", limits: limitsResettingAt(80, later) },
-        ]),
+        hub(
+          "Hub",
+          used.map((percent, i) => ({
+            id: String(i),
+            email: i + "@example.com",
+            limits: limitsResettingAt(percent, "2026-10-30T" + times[i] + ":00.000Z"),
+          })),
+        ),
       ],
       now,
     );
     if (resolved?.kind !== "pool") throw new Error("expected a pool");
     const [window] = resolved.windows;
-    expect(window!.resets.map((reset) => reset.restoresPercent)).toEqual([0, 40]);
-    expect(nextPoolReset(window!, now)).toMatchObject({
-      at: Date.parse(later),
-      restoresPercent: 40,
-    });
-    const simultaneous = {
-      ...window!,
-      resets: window!.resets.map((reset) => ({
-        ...reset,
-        at: Date.parse(later),
-        restoresPercent: 40,
-      })),
-    };
-    expect(nextPoolReset(simultaneous, now)).toMatchObject({
-      at: Date.parse(later),
-      restoresPercent: 80,
-    });
-    expect(nextPoolReset(simultaneous, Date.parse(later))).toBeNull();
+    const at = Date.parse("2026-10-30T14:00:00.000Z");
+    expect(nextPoolReset(window!, now)).toMatchObject({ at, restoresPercent });
+    expect(nextPoolReset(window!, at)).toBeNull();
   });
 
   it("keeps the instance's notice when no hub has a readable account for its driver", () => {
