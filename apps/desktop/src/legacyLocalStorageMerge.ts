@@ -9,6 +9,8 @@ const NOT_IMPORTED_KEYS = new Set([
   // Identifies one running install to the server; two apps must not share it.
   "t3.backgroundActivity.clientId",
   "t3code:snap-shot-setup-resume:v1",
+  // An explicit "open on this device" opt-in belongs to the install that granted it.
+  "t3code:device-local-editor-routes:v1",
 ]);
 /** Matches MAX_STASH_ENTRIES in apps/web/src/promptStashStore.ts. */
 const MAX_STASH_ENTRIES = 20;

@@ -1304,6 +1304,11 @@
   "b48540ebc8788b76": "ChatGPT 로그인을 완료하지 못했습니다",
   "52e824623cffe356": "제공자로 돌아가 다시 시도하세요.",
   "68883cb3342998e5": "환경에 다시 연결한 후 다시 시도하세요.",
+  "e66fe285119ff819": "Path does not exist on this device: {path}. Local paths must match the environment.",
+  "ceb3761ce9cd14d8": "This editor's launcher cannot be started without a shell on this system.",
+  "f925ba44cbe31192": "Local editor opening failed ({reason}). No server-side fallback was attempted.",
+  "733ed4ec0d18287c": "Local editor opening failed.",
+  "968c74bddcf8c021": "Could not open editor on this device",
   "cb4b97318340b585": "기기",
   "d407926eb12273d6": "사용량 한도에 도달함",
   "81d48ad533f04c08": "제공자 오류",
@@ -3711,6 +3716,9 @@
   "b3f54ee1cdcbe5f5": "기본 편집기에서 파일 열기",
   "392611fdc89f2809": "{editor}에서 열림",
   "3dc681f293a3d077": "편집기 선택",
+  "9083d448ac4f9556": "Editor location: Automatic",
+  "6201d9ee373fa8ec": "Editor location: This device",
+  "fbef638285ead6d6": "Only this client and route. Local paths must match.",
   "a034c6eed75c3256": "설치된 편집기를 찾을 수 없음",
   "dafffd8aabbe22d2": [
     {

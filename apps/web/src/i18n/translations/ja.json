@@ -1304,6 +1304,11 @@
   "b48540ebc8788b76": "ChatGPT のサインインを完了できませんでした",
   "52e824623cffe356": "プロバイダーに戻って、もう一度お試しください。",
   "68883cb3342998e5": "環境に再接続して、もう一度お試しください。",
+  "e66fe285119ff819": "Path does not exist on this device: {path}. Local paths must match the environment.",
+  "ceb3761ce9cd14d8": "This editor's launcher cannot be started without a shell on this system.",
+  "f925ba44cbe31192": "Local editor opening failed ({reason}). No server-side fallback was attempted.",
+  "733ed4ec0d18287c": "Local editor opening failed.",
+  "968c74bddcf8c021": "Could not open editor on this device",
   "cb4b97318340b585": "デバイス",
   "d407926eb12273d6": "使用量の上限に達しました",
   "81d48ad533f04c08": "プロバイダーのエラー",
@@ -3713,6 +3718,9 @@
   "b3f54ee1cdcbe5f5": "優先エディターでファイルを開く",
   "392611fdc89f2809": "{editor} で開きました",
   "3dc681f293a3d077": "エディターを選択",
+  "9083d448ac4f9556": "Editor location: Automatic",
+  "6201d9ee373fa8ec": "Editor location: This device",
+  "fbef638285ead6d6": "Only this client and route. Local paths must match.",
   "a034c6eed75c3256": "インストール済みのエディターが見つかりません",
   "dafffd8aabbe22d2": [
     {

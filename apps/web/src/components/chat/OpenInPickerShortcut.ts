@@ -12,7 +12,13 @@ import { editorLabelForPlatform } from "../../editorLabels";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
 import { m } from "../../i18n/messages";
 import { announce } from "../../lib/announce";
-import { openRemoteEditorUrl, useRemoteCapableEditors, useRemoteOpenState } from "../../remoteOpen";
+import {
+  openDeviceLocalEditor,
+  openRemoteEditorUrl,
+  useLocalEditors,
+  useRemoteCapableEditors,
+  useRemoteOpenState,
+} from "../../remoteOpen";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import { shellEnvironment } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -58,9 +64,14 @@ export function useOpenFavoriteEditorShortcut({
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const remote = useRemoteOpenState(environmentId);
   const remoteCapableEditors = useRemoteCapableEditors();
+  const localEditors = useLocalEditors();
   // Matches the picker: remote editors run on the viewing machine.
   const [preferredEditor] = usePreferredEditor(
-    remote.mode === "local-exec" ? availableEditors : remoteCapableEditors,
+    remote.mode === "local-exec"
+      ? availableEditors
+      : remote.mode === "device-local"
+        ? localEditors
+        : remoteCapableEditors,
   );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a window keydown listener for the open-in-editor shortcut while enabled
@@ -77,6 +88,12 @@ export function useOpenFavoriteEditorShortcut({
 
       event.preventDefault();
       const label = editorLabelForPlatform(preferredEditor, navigator.platform);
+      if (remote.mode === "device-local") {
+        void openDeviceLocalEditor(preferredEditor, openInCwd).then((opened) => {
+          if (opened) announce(m(msg("Opened in {editor}", { editor: label })));
+        });
+        return;
+      }
       if (remote.mode === "remote-links") {
         const url = buildRemoteOpenUrl({
           editor: preferredEditor,
