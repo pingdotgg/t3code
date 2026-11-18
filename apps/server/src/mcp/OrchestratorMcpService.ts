@@ -159,7 +159,7 @@ const DEFAULT_THREAD_ITEM_MAX_CHARS = 500;
 const THREAD_PULL_REQUEST_PREVIEW_LIMIT = 5;
 // Claude Code saves MCP results over ~25k tokens to a file instead of showing them. Bytes, not
 // chars: CJK text runs near one token per char, which a char budget lets through at 30k tokens.
-const THREAD_READ_RESULT_MAX_BYTES = 30_000;
+const THREAD_RESULT_MAX_BYTES = 30_000;
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
@@ -1229,7 +1229,7 @@ function timelineItemWithin(
 
 /**
  * The items, read from the end the caller pages toward, whose result fits
- * THREAD_READ_RESULT_MAX_BYTES; `start` is the first kept index. Never empty for a non-empty page.
+ * THREAD_RESULT_MAX_BYTES; `start` is the first kept index. Never empty for a non-empty page.
  */
 function timelineItemsWithinBudget(
   envelope: Omit<OrchestratorMcpThreadReadResult, "items">,
@@ -1238,8 +1238,8 @@ function timelineItemsWithinBudget(
 ): { readonly items: Array<OrchestratorMcpThreadTimelineItem>; readonly start: number } {
   // An oversized envelope (say, a huge thread title) must not starve items to one char per read.
   const budget = Math.max(
-    THREAD_READ_RESULT_MAX_BYTES - jsonBytes({ ...envelope, items: [] }),
-    THREAD_READ_RESULT_MAX_BYTES / 2,
+    THREAD_RESULT_MAX_BYTES - jsonBytes({ ...envelope, items: [] }),
+    THREAD_RESULT_MAX_BYTES / 2,
   );
   const items: Array<OrchestratorMcpThreadTimelineItem> = [];
   let bytes = 0;
@@ -3325,13 +3325,26 @@ const make = Effect.gen(function* () {
         total = filtered.length;
         page = filtered.slice(cursor, cursor + limit);
       }
-      const nextCursor = cursor + limit < total ? cursor + limit : null;
-      return {
+      const envelope = {
         projectId,
         currentThreadId: parent?.thread.id ?? null,
-        threads: page.map((shell) => listItemFromShell(scope, shell, nowMs)),
-        nextCursor,
+        threads: [],
+        nextCursor: total,
         total,
+      } satisfies OrchestratorMcpThreadListResult;
+      const threads: Array<OrchestratorMcpThreadListItem> = [];
+      let bytes = jsonBytes(envelope);
+      for (const shell of page) {
+        const thread = listItemFromShell(scope, shell, nowMs);
+        bytes += jsonBytes(thread) + (threads.length === 0 ? 0 : 1);
+        if (threads.length > 0 && bytes > THREAD_RESULT_MAX_BYTES) break;
+        threads.push(thread);
+      }
+      const end = cursor + threads.length;
+      return {
+        ...envelope,
+        threads,
+        nextCursor: end < total ? end : null,
       } satisfies OrchestratorMcpThreadListResult;
     }),
     readThread: Effect.fn("OrchestratorMcpService.readThread")(function* (scope, input) {
@@ -3356,6 +3369,7 @@ const make = Effect.gen(function* () {
             : {}),
           limit,
           view,
+          ...(input.author === undefined ? {} : { author: input.author }),
           ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
         })
         .pipe(Effect.mapError(threadManagementFailure));
@@ -3376,6 +3390,10 @@ const make = Effect.gen(function* () {
         { concurrency: 1 },
       );
       const messagesByThreadId = new Map(sourceMessages);
+      const firstPage =
+        input.afterPosition === undefined &&
+        input.beforePosition === undefined &&
+        input.itemId === undefined;
       const thread = threadDetail(
         scope,
         target,
@@ -3383,13 +3401,12 @@ const make = Effect.gen(function* () {
         timeline.totalItems,
         shell,
         yield* Clock.currentTimeMillis,
-        input.afterPosition === undefined &&
-          input.beforePosition === undefined &&
-          input.itemId === undefined,
+        firstPage,
       );
+      // Later pages repeat the first page's runs unless the caller asks for them.
       const recentRuns = target.runs
         .toSorted((left, right) => right.ordinal - left.ordinal)
-        .slice(0, runLimit)
+        .slice(0, firstPage || input.runLimit !== undefined ? runLimit : 0)
         .map((run) => threadRun(target, run));
       const { items, start } = timelineItemsWithinBudget(
         { thread, recentRuns, nextPosition: null, hasMore: false, earlierPosition: null },

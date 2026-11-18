@@ -10,6 +10,7 @@ import {
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
   type OrchestratorMcpCapabilitiesResult,
+  type OrchestratorMcpThreadListResult,
   type OrchestratorMcpListScheduledTasksInput,
   type Project,
   OrchestratorMcpTarget,
@@ -4993,6 +4994,32 @@ describe("OrchestratorMcpService thread list", () => {
       );
       assert.deepStrictEqual(shellRequests, [[ThreadId.make("thread:a-snoozed")]]);
     }).pipe(Effect.provide(service)),
+  );
+
+  it.effect(
+    "keeps an allProjects page within an MCP client's output limit and pages the rest",
+    () =>
+      Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const extra = Array.from({ length: 100 }, (_, index) =>
+          shell(`thread:c-${index}`, "project:c", false),
+        );
+        shells.push(...extra);
+        const listed: Array<ThreadId> = [];
+        let cursor: number | null = 0;
+        while (cursor !== null) {
+          const page: OrchestratorMcpThreadListResult = yield* mcp.listThreads(client, {
+            allProjects: true,
+            limit: 100,
+            cursor,
+          });
+          // Claude Code saves MCP results over 25k tokens to a file instead of showing them.
+          assert.isAtMost(Buffer.byteLength(JSON.stringify(page)), 30_000);
+          listed.push(...page.threads.map((thread) => thread.threadId));
+          cursor = page.nextCursor;
+        }
+        assert.equal(listed.length, shells.length);
+      }).pipe(Effect.ensuring(Effect.sync(() => shells.splice(4))), Effect.provide(service)),
   );
 
   it.effect("points a caller outside any thread at allProjects when it omits projectId", () =>

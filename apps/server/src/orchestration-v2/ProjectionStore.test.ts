@@ -6277,7 +6277,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           };
           const userMessage = (inputIntent: string) =>
             add("user_message", {
-              createdBy: "user",
+              createdBy: items.length % 3 === 0 ? "agent" : "user",
               creationSource: "web",
               messageId: `message:window-equivalence:${round}:${items.length}`,
               inputIntent,
@@ -6455,17 +6455,36 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           for (let cursor: string | null = groupCursor; cursor !== null;)
             cursor = (yield* windowed(history(cursor, anchorId, false, "work"))).nextCursor;
         }
-        for (const view of ["messages", "activity"] as const) {
+        const authors = { user: ["user_message"], agent: ["assistant_message", "proposed_plan"] };
+        let authored = 0;
+        for (const filter of [
+          { view: "messages" },
+          { view: "activity" },
+          { author: "user" },
+          { author: "agent" },
+        ] as const) {
+          const read = Effect.fnUntraced(function* (
+            options: ProjectionStore.ProjectionTimelinePageOptions,
+          ) {
+            const { items } = yield* windowed(timeline({ ...filter, ...options }));
+            if (!("author" in filter)) return;
+            authored += items.length;
+            for (const { item } of items) {
+              assert.include(authors[filter.author], item.type);
+              if (item.type === "user_message") assert.equal(item.createdBy, "user");
+            }
+          });
           for (const afterPosition of [-1, Math.floor(totalItems / 3), totalItems - 5])
-            yield* windowed(timeline({ view, afterPosition, limit: 20 }));
+            yield* read({ afterPosition, limit: 20 });
           for (const beforePosition of [
             Number.POSITIVE_INFINITY,
             Math.floor(totalItems / 3),
             totalItems - 5,
           ])
-            yield* windowed(timeline({ view, beforePosition, limit: 20 }));
-          yield* windowed(timeline({ view, afterPosition: 3, beforePosition: 40, limit: 20 }));
+            yield* read({ beforePosition, limit: 20 });
+          yield* read({ afterPosition: 3, beforePosition: 40, limit: 20 });
         }
+        assert.isAbove(authored, 0);
         for (const itemId of [newest.sourceItemId, ...tiedWithHidden])
           yield* windowed(timeline({ itemId, limit: 1 }));
 
@@ -10227,6 +10246,31 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.deepEqual(earlierPage.items, targetAfterRollback.visibleTurnItems.slice(0, -2));
       assert.isTrue(earlierPage.hasMore);
       assert.isFalse(earlierPage.hasEarlier);
+      // The source reads its own rows; the fork reads the full index.
+      const authorPage = (
+        threadId: ThreadId,
+        author: "user" | "agent",
+        options: Partial<ProjectionStore.ProjectionTimelinePageOptions> = {},
+      ) =>
+        projectionStore
+          .getTimelinePage(threadId, { author, limit: 10, ...options })
+          .pipe(Effect.map((page) => page.items.map((row) => [row.position, row.item.type])));
+      assert.deepEqual(yield* authorPage(targetThreadId, "user"), [
+        [0, "user_message"],
+        [2, "user_message"],
+      ]);
+      assert.deepEqual(yield* authorPage(targetThreadId, "agent", { view: "activity" }), [
+        [1, "assistant_message"],
+        [3, "assistant_message"],
+      ]);
+      assert.deepEqual(yield* authorPage(sourceThreadId, "user"), [[0, "user_message"]]);
+      assert.deepEqual(yield* authorPage(sourceThreadId, "agent", { afterPosition: 0 }), [
+        [1, "assistant_message"],
+      ]);
+      assert.deepEqual(
+        yield* authorPage(sourceThreadId, "user", { beforePosition: Number.POSITIVE_INFINITY }),
+        [[0, "user_message"]],
+      );
       const tracedTimelinePage = (limit: number) =>
         Effect.gen(function* () {
           const { statements, tracer } = traceSqlStatements();

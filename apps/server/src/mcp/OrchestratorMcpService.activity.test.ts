@@ -266,6 +266,14 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     });
     expect(laterPage.thread.pullRequests).toBeUndefined();
     expect(laterPage.thread.pullRequestCount).toBe(8);
+    expect(result.recentRuns.length).toBeGreaterThan(0);
+    expect(laterPage.recentRuns).toEqual([]);
+    const laterPageWithRuns = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      afterPosition: 0,
+      runLimit: 1,
+    });
+    expect(laterPageWithRuns.recentRuns).toHaveLength(1);
 
     Object.assign(projection, {
       runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
