@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as TestClock from "effect/testing/TestClock";
 
 import type * as OpenCode2Server from "./OpenCode2Server.ts";
@@ -159,20 +160,22 @@ describe("readProviderEndpoints", () => {
 
   it.effect("returns no endpoints when the provider list cannot be read", () =>
     Effect.gen(function* () {
-      const endpoints = yield* readProviderEndpoints(
-        {
-          client: {
-            provider: {
-              list: () => Effect.die("no server"),
+      const endpoints = yield* Effect.exit(
+        readProviderEndpoints(
+          {
+            client: {
+              provider: {
+                list: () => Effect.die("no server"),
+              },
+              model: {
+                list: () => Effect.succeed({ data: [] }),
+              },
             },
-            model: {
-              list: () => Effect.succeed({ data: [] }),
-            },
-          },
-        } as unknown as OpenCode2Server.OpenCode2Connection,
-        "/work",
+          } as unknown as OpenCode2Server.OpenCode2Connection,
+          "/work",
+        ),
       );
-      assert.strictEqual(endpoints.size, 0);
+      assert.isTrue(Exit.isFailure(endpoints));
       const stalled = yield* readProviderEndpoints(
         {
           client: {
@@ -181,9 +184,9 @@ describe("readProviderEndpoints", () => {
           },
         } as unknown as OpenCode2Server.OpenCode2Connection,
         "/work",
-      ).pipe(Effect.forkChild);
+      ).pipe(Effect.exit, Effect.forkChild);
       yield* TestClock.adjust("5 seconds");
-      assert.strictEqual((yield* Fiber.join(stalled)).size, 0);
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(stalled)));
     }),
   );
 });

@@ -299,7 +299,7 @@ export interface OpenCodeUsageLimitsInput {
    * not probed: the key's owner would be unknown.
    */
   readonly resolveEndpoint?:
-    | ((integrationId: string) => Effect.Effect<string | undefined>)
+    | ((integrationId: string) => Effect.Effect<string | undefined, unknown>)
     | undefined;
 }
 
@@ -466,6 +466,10 @@ export const readOpenCodeIntegrationUsageLimits = Effect.fn("readOpenCodeIntegra
         checkedAt,
         windows: [] as readonly ServerProviderUsageWindow[],
         credentialFingerprint: undefined as string | undefined,
+        unavailable: {
+          reason: "probeFailed" as const,
+          message: "OpenCode could not read integration usage.",
+        },
       })),
     );
   },
@@ -523,7 +527,11 @@ export function mergeUsageLimits(
     ...(credentialFingerprint === undefined ? {} : { credentialFingerprint }),
     checkedAt: console.checkedAt,
     windows: [...consoleWindows, ...integration.windows],
-    ...(integration.unavailable === undefined ? {} : { unavailable: integration.unavailable }),
+    ...(integration.unavailable !== undefined
+      ? { unavailable: integration.unavailable }
+      : console.unavailable?.reason === "probeFailed"
+        ? { unavailable: console.unavailable }
+        : {}),
   };
 }
 

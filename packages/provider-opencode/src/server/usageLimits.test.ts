@@ -103,6 +103,26 @@ describe("readOpenCodeIntegrationUsageLimits", () => {
       assert.strictEqual(weekly?.usedPercent, 9);
       assert.isDefined(interval?.resetsAt);
       assert.isDefined(result.credentialFingerprint);
+      const discoveryFailed = yield* readOpenCodeIntegrationUsageLimits({
+        enabled: true,
+        serverUrl: "",
+        environment: { HOME: dir, XDG_DATA_HOME: dataHome },
+        resolveEndpoint: () => Effect.fail("discovery unavailable"),
+      }).pipe(Effect.provideService(HttpClient.HttpClient, client));
+      assert.strictEqual(
+        mergeUsageLimits(
+          { checkedAt: result.checkedAt, windows: [], unavailable: { reason: "unsupported" } },
+          discoveryFailed,
+        ).unavailable?.reason,
+        "probeFailed",
+      );
+      assert.strictEqual(
+        mergeUsageLimits(
+          { checkedAt: result.checkedAt, windows: [], unavailable: { reason: "probeFailed" } },
+          result,
+        ).unavailable?.reason,
+        "probeFailed",
+      );
       const failed = yield* readLimits(
         dataHome,
         dir,
