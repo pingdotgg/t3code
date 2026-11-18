@@ -161,6 +161,7 @@ test(
       await screen.getByRole("button", "New thread", { exact: true }).tap();
       await screen.getByRole("option", /Hosted models/).tap();
       await expect(browser).toHaveURL(/\/draft\//);
+      await expect(browser.locator("[data-command-palette]")).toHaveCount(0);
       const draft = await browser.evaluate(() => window.location.pathname);
       const picker = browser.locator("[data-chat-provider-model-picker]");
       const astraOption = screen.getByRole("option", /gpt-6\.2-astra/i);
