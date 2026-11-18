@@ -143,6 +143,11 @@ export function isHostPath(value: string): boolean {
 const QUOTED_PATH_AT_END = /(?:'((?:[^']|'\\'')+)'|"([^"]+)")\s*$/;
 const SHELL_ESCAPE = /\\([\s'"\\()[\]{}<>|&;$`!*?#~^=])/g;
 
+// Folder browsers only navigate `~/` home paths, so a pasted `~\` path is not a replacement.
+function isPastedFolderPath(value: string): boolean {
+  return isAbsolutePath(value) || value.startsWith("~/");
+}
+
 /**
  * What a folder box holds after a change. A full path pasted into it replaces the box, even after
  * the text already there, because `~/'/a b'` would create that nested folder.
@@ -157,17 +162,15 @@ export function resolvePastedPath(previous: string, next: string): string {
   // Text before the quote that wasn't in the box is a search, not a folder to paste after.
   if (match && previous.startsWith(next.slice(0, match.index).trimEnd())) {
     const quoted = match[1]?.replaceAll("'\\''", "'") ?? match[2] ?? "";
-    if (isHostPath(quoted)) return quoted;
+    if (isPastedFolderPath(quoted)) return quoted;
   }
 
   // Without a trailing separator, `/a` then `/a/b` is a longer path, not one pasted after a folder.
   const afterFolder = /[/\\]$/.test(previous) && next.startsWith(previous);
   const path = afterFolder ? next.slice(previous.length) : next;
-  if (!isHostPath(path)) return next;
-  // Keep backslashes in Windows and `~\` paths; only `/` and `~/` paths use shell escapes.
-  return isWindowsAbsolutePath(path) || path.startsWith("~\\")
-    ? path
-    : path.replace(SHELL_ESCAPE, "$1");
+  if (!isPastedFolderPath(path)) return next;
+  // `\` separates folders in Windows paths, so it only escapes in `/` and `~/` paths.
+  return isWindowsAbsolutePath(path) ? path : path.replace(SHELL_ESCAPE, "$1");
 }
 
 export function resolveWorkspaceFilePath(path: string, workspaceRoot: string): string {
