@@ -19,6 +19,7 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   private var failedUrl: URL?
   private var observations: [NSKeyValueObservation] = []
   private var reportedScrollY: CGFloat = 0
+  private var tallestTopInset: CGFloat = 0
   private var topInset: CGFloat = 0
 
   /// JavaScript remounts the view for another environment, so only the first one counts.
@@ -93,6 +94,7 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
   func setTopInset(_ inset: CGFloat) {
     guard inset != topInset else { return }
     topInset = inset
+    tallestTopInset = max(tallestTopInset, inset)
     if let webView { applyTopInset(to: webView) }
   }
 
@@ -120,7 +122,8 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
 
   /// Reports the page's scroll position in steps, enough for the bar to follow its direction.
   private func reportScroll(_ scrollView: UIScrollView) {
-    let y = max(0, scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
+    // Measured from the tallest bar, so the bar resizing itself never reads as a scroll.
+    let y = max(0, scrollView.contentOffset.y + tallestTopInset)
     guard abs(y - reportedScrollY) >= 24 || (y == 0 && reportedScrollY != 0) else { return }
     reportedScrollY = y
     onPageScroll(["y": y])
