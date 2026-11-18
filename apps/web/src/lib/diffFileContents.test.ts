@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { createGitDiffFileContentsLoader } from "./diffFileContents";
 import { getRenderablePatch } from "./diffRendering";
+import { MAX_RENDERED_DIFF_LINE_LENGTH } from "./longDiffLines";
 
 const originalLines = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`);
 const changedLines = originalLines.map((line, index) => (index === 29 ? "line 30 changed" : line));
@@ -85,6 +86,56 @@ describe("createGitDiffFileContentsLoader", () => {
     const loader = loaderReturning(toContents(oldLines), toContents(newLines));
 
     await expect(loader(partialFileDiff())).rejects.toThrow("changed since the diff was loaded");
+  });
+
+  it("cuts long lines in loaded contents the way the rendered patch cuts them", async () => {
+    const long = "x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH * 2);
+    const longLines = (last: string) =>
+      originalLines.map((line, index) => (index === 29 ? `${long}${last}` : line));
+    const patch = [
+      "diff --git a/src/file01.ts b/src/file01.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/file01.ts",
+      "+++ b/src/file01.ts",
+      "@@ -30 +30 @@",
+      `-${long}a`,
+      `+${long}b`,
+      "",
+    ].join("\n");
+
+    const loaded = await loaderReturning(
+      toContents(longLines("a")),
+      toContents(longLines("b")),
+    )(parsePartialFileDiff(patch));
+
+    expect(loaded.newFile.contents.split("\n")[29]).toBe(
+      `${"x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH - 64)} … 10,065 more characters not shown`,
+    );
+  });
+
+  it("checks long context lines against their full text, not the clamped one", async () => {
+    const context = "x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH * 2);
+    const patch = [
+      "diff --git a/src/file01.ts b/src/file01.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/file01.ts",
+      "+++ b/src/file01.ts",
+      "@@ -2,2 +2,2 @@",
+      ` ${context}`,
+      "-old",
+      "+new",
+      "",
+    ].join("\n");
+    const oldContents = `start\n${context}\nold\nend\n`;
+
+    // `git diff -w` prints one side's context; the other side differs only in whitespace.
+    await expect(
+      loaderReturning(oldContents, `start\n ${context}\nnew\nend\n`)(parsePartialFileDiff(patch)),
+    ).resolves.toBeDefined();
+    const stale = `${context.slice(0, -1)}y`;
+    await expect(
+      loaderReturning(oldContents, `start\n${stale}\nnew\nend\n`)(parsePartialFileDiff(patch)),
+    ).rejects.toThrow("changed since the diff was loaded");
   });
 
   it.each([

@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { resolveFileDiffPath } from "./diffRendering";
+import { clampLongLinesInContents, getUnclampedLines } from "./longDiffLines";
 
 interface GitDiffFileContentsSource {
   readonly environmentId: EnvironmentId;
@@ -80,17 +81,19 @@ function reproducesPatch(fileDiff: FileDiffMetadata, oldContents: string, newCon
   if (lastHunk === undefined) return true;
   const oldLines = splitLines(oldContents);
   const newLines = splitLines(newContents);
+  const deletionLines = getUnclampedLines(fileDiff.deletionLines);
+  const additionLines = getUnclampedLines(fileDiff.additionLines);
   const hunksMatch = fileDiff.hunks.every(
     (hunk) =>
       hunkSideMatches(
-        fileDiff.deletionLines,
+        deletionLines,
         hunk.deletionLineIndex,
         oldLines,
         hunk.deletionStart,
         hunk.deletionCount,
       ) &&
       hunkSideMatches(
-        fileDiff.additionLines,
+        additionLines,
         hunk.additionLineIndex,
         newLines,
         hunk.additionStart,
@@ -117,16 +120,16 @@ function createDiffFileContentsLoader(
     const oldPath = fileDiff.prevName
       ? resolveFileDiffPath({ ...fileDiff, name: fileDiff.prevName })
       : newPath;
-    const contents = await load({ changeType: fileDiff.type, oldPath, newPath });
+    const loaded = await load({ changeType: fileDiff.type, oldPath, newPath });
     const newFile = {
       name: newPath,
-      contents: contents.newContents,
+      contents: clampLongLinesInContents(loaded.newContents),
       cacheKey: `${cacheKey}:new:${newPath}`,
     };
     if (fileDiff.type === "rename-pure") {
       return { oldFile: null, newFile };
     }
-    if (!reproducesPatch(fileDiff, contents.oldContents, contents.newContents)) {
+    if (!reproducesPatch(fileDiff, loaded.oldContents, loaded.newContents)) {
       throw new Error(
         "This file changed since the diff was loaded. Refresh the diff to expand it.",
       );
@@ -134,7 +137,7 @@ function createDiffFileContentsLoader(
     return {
       oldFile: {
         name: oldPath,
-        contents: contents.oldContents,
+        contents: clampLongLinesInContents(loaded.oldContents),
         cacheKey: `${cacheKey}:old:${oldPath}`,
       },
       newFile,

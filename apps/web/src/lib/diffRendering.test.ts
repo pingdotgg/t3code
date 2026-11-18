@@ -11,6 +11,7 @@ import {
   resolveFileDiffPath,
   resolveFileDiffPreviousPath,
 } from "./diffRendering";
+import { MAX_RENDERED_DIFF_LINE_LENGTH } from "./longDiffLines";
 
 describe("getRenderablePatch", () => {
   it("hides indentation changes around inserted JSX without moving review lines", () => {
@@ -243,6 +244,39 @@ describe("getRenderablePatch", () => {
     expect(blankContext.files[0]?.hunks[0]?.unifiedLineCount).toBe(3);
 
     expect(getRenderablePatch(" \n\t\n", "review")).toBeNull();
+  });
+
+  it("cuts lines too long to render, keeping the hunk shape and the source text", () => {
+    const long = "x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH * 2);
+    const patch = [
+      "diff --git a/generated.ts b/generated.ts",
+      "--- a/generated.ts",
+      "+++ b/generated.ts",
+      "@@ -1,2 +1,2 @@",
+      " head",
+      `-${long}a`,
+      `+${long}b`,
+      "",
+    ].join("\n");
+
+    const parsed = getRenderablePatch(patch, "review");
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") return;
+    const [file] = parsed.files;
+    const clampedLine = `${"x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH - 64)} … 10,065 more characters not shown\n`;
+    expect(file?.additionLines).toEqual(["head\n", clampedLine]);
+    expect(file?.hunks).toEqual(parsed.sourceFiles[0]?.hunks);
+    expect(parsed.sourceFiles[0]?.additionLines[1]).toBe(`${long}b\n`);
+
+    const reparsed = getRenderablePatch(patch.replace(`+${long}b`, `+${clampedLine.trimEnd()}`));
+    if (reparsed?.kind !== "files") throw new Error("Expected a parsed patch.");
+    expect(reparsed.files[0]?.additionLines[1]).toBe(clampedLine);
+
+    // Only whitespace past the cut differs; clamping first would show it as changed.
+    const spaced = patch.replace(`-${long}a`, `-${long} b`);
+    const ignoringWhitespace = getRenderablePatch(spaced, "review", { ignoreWhitespace: true });
+    if (ignoringWhitespace?.kind !== "files") throw new Error("Expected a parsed patch.");
+    expect(getDiffLineStat(ignoringWhitespace.files)).toEqual({ additions: 0, deletions: 0 });
   });
 
   it("caches patches that differ only in trailing whitespace separately", () => {
