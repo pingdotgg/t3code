@@ -1,4 +1,5 @@
 /** Locales Apple's on-device SpeechTranscriber offers. Unset follows the device language. */
+/* oxlint-disable t3code/no-untranslated-copy -- Language names stay in their native languages in every locale. */
 export const DICTATION_LANGUAGES = [
   { locale: "en-US", label: "English (US)" },
   { locale: "en-GB", label: "English (UK)" },
@@ -20,6 +21,7 @@ export const DICTATION_LANGUAGES = [
   { locale: "zh-TW", label: "中文（台灣）" },
   { locale: "yue-CN", label: "粵語" },
 ] as const;
+/* oxlint-enable t3code/no-untranslated-copy */
 
 export type DictationLocale = (typeof DICTATION_LANGUAGES)[number]["locale"];
 
