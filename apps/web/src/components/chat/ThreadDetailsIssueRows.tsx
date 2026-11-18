@@ -1,4 +1,5 @@
 import { threadIssueKeyOf, type ScopedThreadRef, type ThreadIssueLink } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { MessageSquareIcon } from "lucide-react";
 import type { MouseEvent } from "react";
 
@@ -31,6 +32,7 @@ function LinkedIssueRow({
   compact: boolean;
   onOpen: (() => void) | undefined;
 }) {
+  const gt = useGT();
   const detail = useLinkedIssueDetail(threadRef.environmentId, link);
   const trackerPresentation = issueTrackerPresentation(link.tracker);
   const state = detail === null ? null : issueStatePresentation(detail.state);
@@ -40,7 +42,7 @@ function LinkedIssueRow({
     href: link.url,
     target: "_blank",
     rel: "noopener noreferrer",
-    "aria-label": `Issue ${link.displayKey}: ${title}`,
+    "aria-label": gt("Issue {key}: {title}", { key: link.displayKey, title }),
     onClick: (event: MouseEvent<HTMLElement>) => {
       event.stopPropagation();
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -61,7 +63,9 @@ function LinkedIssueRow({
     detail !== null && detail.commentCount > 0 ? (
       <span
         role="img"
-        aria-label={`${detail.commentCount} comments`}
+        aria-label={gt("{count, plural, one {{count} comment} other {{count} comments}}", {
+          count: detail.commentCount,
+        })}
         className="inline-flex shrink-0 items-center gap-0.5 tabular-nums"
       >
         <MessageSquareIcon aria-hidden className="size-3" />

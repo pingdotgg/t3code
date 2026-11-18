@@ -359,4 +359,11 @@ it("names a linked pull request row by its kind, number and title, not its URL",
   expect(name).toMatch(/pull request/i);
   expect(name).toContain("#1");
   expect(name).toContain("Test PR");
+  const exposedNumbers = [...screen.container.querySelectorAll("span")].filter(
+    (span) =>
+      span.textContent?.trim() === "#1" &&
+      span.closest("button") === null &&
+      span.closest('[aria-hidden="true"]') === null,
+  );
+  expect(exposedNumbers).toHaveLength(0);
 });

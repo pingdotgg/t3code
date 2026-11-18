@@ -63,5 +63,5 @@ const mergedIssueCandidates = createMergedIssueCandidatesAtoms(
 
 /** The labels and people of every scope a list filter covers; no targets reads nothing. */
 export function useIssueFilterCandidates(targets: ReadonlyArray<IssueCandidatesTarget>) {
-  return useAtomValue(mergedIssueCandidates(targets));
+  return useAtomValue(mergedIssueCandidates.atom(targets));
 }
