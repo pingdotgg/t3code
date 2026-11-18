@@ -1,11 +1,17 @@
-import type { ProjectId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  type LinkedPullRequestSort,
+  type LinkedPullRequestStatus,
+  type ProjectId,
+  type ScopedThreadRef,
+  type ThreadPullRequestLink,
+} from "@t3tools/contracts";
 import {
   sourceControlClients,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
 } from "@t3tools/client-runtime/source-control-clients";
 import {
   type PullRequestListLine,
-  pullRequestListLines,
   resolveThreadPullRequestChains,
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
@@ -15,6 +21,7 @@ import {
   EyeIcon,
   EyeOffIcon,
   LinkIcon,
+  ListFilterIcon,
   MoreHorizontalIcon,
   PlusIcon,
 } from "lucide-react";
@@ -27,9 +34,13 @@ import {
   encodePullRequestDragPayload,
 } from "~/components/chat/composerMentionDrag";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import {
+  persistClientSettingsUpdate,
+  updateClientSettings,
+  useClientSettings,
+} from "~/hooks/useSettings";
 import { findProjectForChangeRequest } from "@t3tools/client-runtime/change-request-links";
 import { pullRequestLinkPanelTarget, useOpenPrLink } from "~/lib/openPullRequestLink";
-import { useClientSettings } from "~/hooks/useSettings";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { usePullRequestIntentPrefetch } from "./usePullRequestIntentPrefetch";
 import { cn } from "~/lib/utils";
@@ -41,7 +52,20 @@ import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { RelativeTime } from "~/components/RelativeTime";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRadioItemIndicator,
+  MenuSeparator,
+  MenuTrigger,
+} from "../ui/menu";
+import { Separator } from "../ui/separator";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openLinkPullRequestDialog } from "./LinkPullRequestDialog";
@@ -56,11 +80,20 @@ import {
 import {
   PullRequestDiffStat,
   PullRequestReviewDecisionGlyph,
+  PullRequestStateGlyph,
   pullRequestChecksStatePresentation,
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { pullRequestQuickActions } from "./pullRequestList.logic";
 import { PullRequestSpeedActions, PullRequestSpeedModeContext } from "./PullRequestSpeedActions";
+import {
+  LINKED_PULL_REQUEST_STATUS_LABELS,
+  LINKED_PULL_REQUEST_STATUS_ORDER,
+  type LinkedPullRequestRow,
+  type LinkedPullRequestView,
+  linkedPullRequestRows,
+  linkedPullRequestStatus,
+} from "./threadPullRequestsView.logic";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
@@ -95,6 +128,8 @@ function ChecksGlyph({
 
 function LinkRowImpl({
   line,
+  position,
+  dimmed,
   threadRef,
   projectId,
   speedMode,
@@ -104,6 +139,8 @@ function LinkRowImpl({
   canStartWatch,
 }: {
   line: PullRequestListLine;
+  position: number | null;
+  dimmed: boolean;
   threadRef: ScopedThreadRef;
   projectId: ProjectId | null;
   speedMode: boolean;
@@ -144,7 +181,7 @@ function LinkRowImpl({
     actionEntry !== null && pullRequestQuickActions(actionEntry, linkHostActions).length > 0;
   return (
     <div
-      className={cn(PULL_REQUEST_ROW_CLASS, "relative hover:bg-accent/60")}
+      className={cn(PULL_REQUEST_ROW_CLASS, "relative hover:bg-accent/60", dimmed && "opacity-60")}
       onPointerEnter={() => onIntent(link)}
       onPointerLeave={(event) => {
         if (!event.currentTarget.contains(document.activeElement)) onIntent(null);
@@ -265,7 +302,7 @@ function LinkRowImpl({
                     }
                   >
                     <PullRequestGlyph.stack aria-hidden className="size-3" />
-                    {stack.size}
+                    {position === null ? stack.size : `${position}/${stack.size}`}
                   </TooltipTrigger>
                   <TooltipPopup>
                     {stack.kind === "native"
@@ -399,8 +436,109 @@ function latestSyncedAt(links: ReadonlyArray<ThreadPullRequestLink>): string | n
   return latest;
 }
 
-const lineKey = (line: PullRequestListLine) =>
-  `${line.link.host}/${line.link.repository}#${line.link.number}`;
+const SORT_LABELS: Record<LinkedPullRequestSort, string> = {
+  status: msg("Status"),
+  updated: msg("Recently updated"),
+  linked: msg("Recently linked"),
+  repository: msg("Repository"),
+};
+
+function LinkedPullRequestViewMenu({
+  view,
+  counts,
+}: {
+  view: LinkedPullRequestView;
+  counts: ReadonlyMap<LinkedPullRequestStatus, number>;
+}) {
+  const resolve = useMessages();
+  return (
+    <Menu>
+      <MenuTrigger render={<Button size="xs" variant="ghost" />}>
+        <ListFilterIcon className="size-3.5" />
+        {resolve(SORT_LABELS[view.sort])}
+      </MenuTrigger>
+      <MenuPopup align="end" side="top">
+        <MenuRadioGroup
+          value={view.sort}
+          onValueChange={(next) =>
+            void updateClientSettings({ linkedPullRequestSort: next as LinkedPullRequestSort })
+          }
+        >
+          <MenuGroupLabel>
+            <T>Sort by</T>
+          </MenuGroupLabel>
+          {(Object.keys(SORT_LABELS) as Array<LinkedPullRequestSort>).map((sort) => (
+            <MenuRadioItem key={sort} value={sort}>
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 flex-1 truncate">{resolve(SORT_LABELS[sort])}</span>
+                <MenuRadioItemIndicator />
+              </span>
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+        <MenuSeparator />
+        <MenuGroup>
+          <MenuGroupLabel>
+            <T>Status</T>
+          </MenuGroupLabel>
+          {LINKED_PULL_REQUEST_STATUS_ORDER.map((status) => (
+            <MenuCheckboxItem
+              key={status}
+              checked={!view.hiddenStatuses.includes(status)}
+              onCheckedChange={(checked) =>
+                void persistClientSettingsUpdate((current) => ({
+                  ...current,
+                  linkedPullRequestHiddenStatuses: checked
+                    ? current.linkedPullRequestHiddenStatuses.filter((hidden) => hidden !== status)
+                    : [...new Set([...current.linkedPullRequestHiddenStatuses, status])],
+                }))
+              }
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <PullRequestStateGlyph
+                  state={status === "draft" ? "open" : status}
+                  isDraft={status === "draft"}
+                />
+                <span className="min-w-0 flex-1 truncate">
+                  {resolve(LINKED_PULL_REQUEST_STATUS_LABELS[status])}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {counts.get(status) ?? 0}
+                </span>
+              </span>
+            </MenuCheckboxItem>
+          ))}
+          <MenuCheckboxItem
+            variant="switch"
+            checked={view.groupStacks}
+            onCheckedChange={(checked) =>
+              void updateClientSettings({ linkedPullRequestGroupStacks: checked })
+            }
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <PullRequestGlyph.stack aria-hidden className="size-3.5" />
+              <T>Group stacks</T>
+            </span>
+          </MenuCheckboxItem>
+        </MenuGroup>
+        <MenuSeparator />
+        <MenuItem
+          onClick={() =>
+            void persistClientSettingsUpdate((current) => ({
+              ...current,
+              linkedPullRequestSort: DEFAULT_CLIENT_SETTINGS.linkedPullRequestSort,
+              linkedPullRequestHiddenStatuses:
+                DEFAULT_CLIENT_SETTINGS.linkedPullRequestHiddenStatuses,
+              linkedPullRequestGroupStacks: DEFAULT_CLIENT_SETTINGS.linkedPullRequestGroupStacks,
+            }))
+          }
+        >
+          <T>Reset to default</T>
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
+}
 
 export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
   const gt = useGT();
@@ -418,6 +556,7 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 
 function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
   const gt = useGT();
+  const resolve = useMessages();
   const thread = useThreadShell(threadRef);
   const projects = useProjects();
   const environmentProjects = projects
@@ -425,9 +564,18 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
     .toSorted((left, right) =>
       left.id === thread?.projectId ? -1 : right.id === thread?.projectId ? 1 : 0,
     );
-  // Derive lines before later hooks to preserve compiler caching and avoid LegendList renders.
+  const sort = useClientSettings((settings) => settings.linkedPullRequestSort);
+  const hiddenStatuses = useClientSettings((settings) => settings.linkedPullRequestHiddenStatuses);
+  const groupStacks = useClientSettings((settings) => settings.linkedPullRequestGroupStacks);
+  const view = { sort, hiddenStatuses, groupStacks };
+  // Derive rows before later hooks to preserve compiler caching and avoid LegendList renders.
   const links = visibleThreadPullRequests(thread?.pullRequests ?? []);
-  const lines = pullRequestListLines(resolveThreadPullRequestChains(links));
+  const rows = linkedPullRequestRows(resolveThreadPullRequestChains(links), view);
+  const statusCounts = new Map<LinkedPullRequestStatus, number>();
+  for (const link of links) {
+    const status = linkedPullRequestStatus(link);
+    statusCounts.set(status, (statusCounts.get(status) ?? 0) + 1);
+  }
   const openCount = links.filter(
     (link) => link.snapshot === null || link.snapshot.state === "open",
   ).length;
@@ -506,6 +654,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
     thread,
     opensInApp,
     primaryEnvironmentId,
+    resolve,
   };
 
   if (linkCount === 0) {
@@ -534,34 +683,67 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
       <div className="flex h-full min-h-0 flex-col">
         {/* Threads that run a stack or a sweep link hundreds of pull requests; only the rows in
           view are mounted. */}
-        <LegendList<PullRequestListLine>
-          data={lines}
-          keyExtractor={lineKey}
+        <LegendList<LinkedPullRequestRow>
+          data={rows}
+          keyExtractor={(row) => row.key}
+          getItemType={(row) => row.kind}
           extraData={rowInputs}
-          renderItem={({ item: line }) => (
-            <LinkRow
-              line={line}
-              threadRef={threadRef}
-              projectId={
-                capabilities !== undefined
-                  ? (findProjectForChangeRequest(environmentProjects, line.link)?.id ??
-                    thread?.projectId ??
-                    null)
-                  : null
-              }
-              speedMode={speedMode}
-              onUnlink={handleUnlink}
-              onSetWatching={supportsWatch ? handleSetWatching : null}
-              onIntent={intendLink}
-              canStartWatch={canStartWatch}
-            />
-          )}
+          renderItem={({ item: row }) =>
+            row.kind === "header" ? (
+              <div className="flex items-center gap-2 px-2 pt-2 pb-1 text-xs font-medium text-muted-foreground/70">
+                <Tooltip>
+                  <TooltipTrigger render={<h3 className="min-w-0 truncate" />}>
+                    {sort === "status" ? resolve(row.label) : row.label}
+                  </TooltipTrigger>
+                  <TooltipPopup>{sort === "status" ? resolve(row.label) : row.label}</TooltipPopup>
+                </Tooltip>
+                <span className="shrink-0 tabular-nums text-muted-foreground/50">{row.count}</span>
+                <Separator className="min-w-2 flex-1" />
+              </div>
+            ) : row.kind === "hidden" ? (
+              <div className="px-1 pt-1">
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() =>
+                    void persistClientSettingsUpdate((current) => ({
+                      ...current,
+                      linkedPullRequestHiddenStatuses: [],
+                    }))
+                  }
+                >
+                  {gt("{count, plural, one {# hidden} other {# hidden}} · Show all", {
+                    count: row.count,
+                  })}
+                </Button>
+              </div>
+            ) : (
+              <LinkRow
+                line={row.line}
+                position={row.position}
+                dimmed={row.dimmed}
+                threadRef={threadRef}
+                projectId={
+                  capabilities !== undefined
+                    ? (findProjectForChangeRequest(environmentProjects, row.line.link)?.id ??
+                      thread?.projectId ??
+                      null)
+                    : null
+                }
+                speedMode={speedMode}
+                onUnlink={handleUnlink}
+                onSetWatching={supportsWatch ? handleSetWatching : null}
+                onIntent={intendLink}
+                canStartWatch={canStartWatch}
+              />
+            )
+          }
           estimatedItemSize={44}
           drawDistance={440}
           className="min-h-0 flex-1 overscroll-contain p-1.5"
         />
         <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-2xs text-muted-foreground">
-          <span>
+          <span className="min-w-0 truncate">
             {gt(
               "{openCount, plural, one {{openCount} open} other {{openCount} open}} · {linkCount, plural, one {{linkCount} linked} other {{linkCount} linked}}",
               { openCount, linkCount },
@@ -578,10 +760,13 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
               </>
             ) : null}
           </span>
-          <Button size="xs" variant="ghost" onClick={openLinkDialog}>
-            <PlusIcon className="size-3.5" />
-            <T context="verb, button">Link</T>
-          </Button>
+          <span className="flex shrink-0 items-center gap-1">
+            <LinkedPullRequestViewMenu view={view} counts={statusCounts} />
+            <Button size="xs" variant="ghost" onClick={openLinkDialog}>
+              <PlusIcon className="size-3.5" />
+              <T context="verb, button">Link</T>
+            </Button>
+          </span>
         </footer>
       </div>
     </PullRequestSpeedModeContext>
