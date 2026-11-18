@@ -81,7 +81,7 @@ export const turnNotSentNotification = (
 
 /**
  * Persist around injection; ambiguous delivery requires a fresh native thread. Call unsent if refused before prompt consumption.
- * `suppress` sends nothing and has `delivered` settle each handoff as delivered with every item omitted.
+ * A handoff `suppress` picks is not sent: `delivered` settles it as delivered with every item omitted.
  */
 export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
   function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
@@ -89,7 +89,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
-    readonly suppress?: boolean;
+    readonly suppress?: ((handoff: OrchestrationV2ContextHandoff) => boolean) | undefined;
     readonly alreadyDeliveredItemIds: ReadonlySet<string>;
     readonly inject?: (
       history: ProviderAdapter.ProviderAdapterV2HistoricalContext,
@@ -97,47 +97,42 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     readonly persist: (handoff: OrchestrationV2ContextHandoff) => Effect.Effect<void, PersistError>;
   }) {
     const nativeThreadId = input.providerThread.nativeThreadRef?.nativeId ?? undefined;
-    const pending = input.handoffs.filter(
+    const undelivered = input.handoffs.filter(
       (handoff) =>
         nativeThreadId === undefined ||
         handoff.delivery?.nativeThreadId !== nativeThreadId ||
         handoff.delivery.status === "pending",
     );
-    if (input.suppress && pending.length > 0) {
-      return {
-        context: "",
-        injected: false,
-        suppressed: true,
-        delivered: Effect.forEach(
-          pending,
-          (handoff) =>
-            input.persist({
-              ...handoff,
-              ...(nativeThreadId === undefined
-                ? {}
-                : {
-                    delivery: {
-                      nativeThreadId,
-                      status: "inline" as const,
-                      itemIds: [],
-                      omittedItemIds: [
-                        ...(handoff.history?.omittedItemIds ?? []),
-                        ...(handoff.history?.messages ?? []).map((message) => message.itemId),
-                      ],
-                    },
-                  }),
-            }),
-          { discard: true },
-        ),
-        unsent: Effect.void,
-      };
-    }
+    const held = input.suppress === undefined ? [] : undelivered.filter(input.suppress);
+    const pending = undelivered.filter((handoff) => !held.includes(handoff));
+    const suppressed = held.length > 0;
+    const settleHeld = Effect.forEach(
+      held,
+      (handoff) =>
+        input.persist({
+          ...handoff,
+          ...(nativeThreadId === undefined
+            ? {}
+            : {
+                delivery: {
+                  nativeThreadId,
+                  status: "inline" as const,
+                  itemIds: [],
+                  omittedItemIds: [
+                    ...(handoff.history?.omittedItemIds ?? []),
+                    ...(handoff.history?.messages ?? []).map((message) => message.itemId),
+                  ],
+                },
+              }),
+        }),
+      { discard: true },
+    );
     if (pending.length === 0 || (input.deferInline && input.inject === undefined))
       return {
         context: "",
         injected: false,
-        suppressed: false,
-        delivered: Effect.void,
+        suppressed,
+        delivered: settleHeld,
         unsent: Effect.void,
       };
     const budget = typeof input.budget === "number" ? input.budget : yield* input.budget;
@@ -182,8 +177,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         return {
           context: "",
           injected: false,
-          suppressed: false,
-          delivered: Effect.void,
+          suppressed,
+          delivered: settleHeld,
           unsent: Effect.void,
         };
       return yield* new ContextHandoffBudgetError();
@@ -239,8 +234,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         return {
           context: "",
           injected: true,
-          suppressed: false,
-          delivered: Effect.void,
+          suppressed,
+          delivered: settleHeld,
           unsent: Effect.void,
         };
       }
@@ -253,16 +248,16 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       return {
         context: "",
         injected: false,
-        suppressed: false,
-        delivered: Effect.void,
+        suppressed,
+        delivered: settleHeld,
         unsent: Effect.void,
       };
     }
     return {
       context: renderHistory(selected.messages, selected.context),
       injected: false,
-      suppressed: false,
-      delivered: persist("inline"),
+      suppressed,
+      delivered: persist("inline").pipe(Effect.andThen(settleHeld)),
       unsent: Effect.forEach(pending, input.persist, { discard: true }),
     };
   },

@@ -934,6 +934,12 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
+      // The retry of this thread's own unsent messages is the owner's text and always goes out;
+      // the switch holds back every other handoff.
+      const suppressHandoff = (retried: ReadonlyArray<OrchestrationV2ContextHandoff>) =>
+        additions?.t3ContextHandoff === false
+          ? (handoff: OrchestrationV2ContextHandoff) => !retried.includes(handoff)
+          : undefined;
       // A later completed turn marks the cancelled work delivered whether or not the note went out.
       const restartNote = additions?.t3RestartNote === false ? "" : restartNoteText;
       const tokenCap = yield* handoffTokenCapConfig.pipe(
@@ -1475,7 +1481,7 @@ export const layer: Layer.Layer<
             providerThread: { ...resumed.success, id: providerThread.id },
             budget: context.budget,
             deferInline: isCompactionCommandMessage(providerMessage) || goalCommand,
-            suppress: additions?.t3ContextHandoff === false,
+            suppress: suppressHandoff(resumedRetryHandoff.handoffs),
             alreadyDeliveredItemIds: context.deliveredItemIds,
             persist: () => Effect.void,
           }).pipe(
@@ -1895,7 +1901,7 @@ export const layer: Layer.Layer<
           const delivery = yield* deliverContextHandoffs({
             handoffs: [...effectiveHandoffs, ...retryHandoff.handoffs],
             deferInline: compact || goalCommand,
-            suppress: additions?.t3ContextHandoff === false,
+            suppress: suppressHandoff(retryHandoff.handoffs),
             providerThread: runningProviderThread,
             budget,
             alreadyDeliveredItemIds: deliveredItemIds,

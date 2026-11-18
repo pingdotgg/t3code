@@ -417,8 +417,8 @@ own CLI, and some from the model provider.
   additions**, the **T3 Code: context handoff**, **T3 Code: side-chat context** and **T3 Code:
   restart note** switches turn each one off. The thread then shows a row saying T3 Code did
   not send it, and the agent works without that context. Turning off the handoff also covers
-  history sent after a fork, a merge back or a lost provider session, and the retry of your
-  own messages from a run that failed before the agent received them.
+  history sent after a fork, a merge back, a lost provider session or an import. Your own
+  messages from a run that failed before the agent received them are always sent again.
 - **Messages T3 Code sends for you.** Wake-ups from delegated tasks and watched pull requests,
   goal continuation, idle compaction and restart continuation. They appear in the thread as
   sent by T3 Code. Under **Settings → Threads → Automatic additions**, four **T3 Code:**

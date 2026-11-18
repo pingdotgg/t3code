@@ -543,42 +543,44 @@ describe("handoff delivery", () => {
     }),
   );
 
-  it.effect("sends nothing when suppressed and settles the handoff with every item omitted", () =>
+  it.effect("holds back the handoffs it is told to and still sends the rest", () =>
     Effect.gen(function* () {
-      const persisted: Array<OrchestrationV2ContextHandoff> = [];
-      let injections = 0;
+      const kept = { ...handoff, id: ContextHandoffId.make("handoff-kept") };
+      const persisted = new Map<string, OrchestrationV2ContextHandoff>();
       const result = yield* deliverContextHandoffs({
-        handoffs: [handoff],
+        handoffs: [handoff, kept],
         providerThread,
         budget: 16_000,
-        suppress: true,
+        suppress: (candidate) => candidate.id === handoff.id,
         alreadyDeliveredItemIds: new Set<string>(),
-        inject: () =>
-          Effect.sync(() => {
-            injections += 1;
-            return true;
-          }),
-        persist: (value) => Effect.sync(() => void persisted.push(value)),
+        persist: (value) => Effect.sync(() => void persisted.set(value.id, value)),
       });
-      assert.deepEqual([result.context, result.injected, result.suppressed], ["", false, true]);
-      assert.equal(injections, 0);
-      assert.lengthOf(persisted, 0);
+      assert.isTrue(result.suppressed);
+      assert.notEqual(result.context, "");
+      assert.isUndefined(persisted.get(handoff.id));
       yield* result.delivered;
-      const durable = persisted[0]!;
-      assert.equal(durable.delivery?.status, "inline");
-      assert.deepEqual(durable.delivery?.itemIds, []);
-      assert.deepEqual(durable.delivery?.omittedItemIds, [
+      // Held back: settled as delivered with every item omitted, so it is not sent later.
+      const held = persisted.get(handoff.id)?.delivery;
+      assert.equal(held?.status, "inline");
+      assert.deepEqual(held?.itemIds, []);
+      assert.deepEqual(held?.omittedItemIds, [
         ...(handoff.history?.omittedItemIds ?? []),
         ...(handoff.history?.messages ?? []).map((message) => message.itemId),
       ]);
-      const again = yield* deliverContextHandoffs({
-        handoffs: [durable],
+      const sent = persisted.get(kept.id)?.delivery;
+      assert.equal(sent?.status, "inline");
+      assert.isAbove(sent?.itemIds.length ?? 0, 0);
+
+      const alone = yield* deliverContextHandoffs({
+        handoffs: [handoff],
         providerThread,
         budget: 16_000,
+        suppress: () => true,
         alreadyDeliveredItemIds: new Set<string>(),
+        inject: () => Effect.die("A held handoff is never injected."),
         persist: () => Effect.void,
       });
-      assert.equal(again.context, "");
+      assert.deepEqual([alone.context, alone.injected, alone.suppressed], ["", false, true]);
     }),
   );
 

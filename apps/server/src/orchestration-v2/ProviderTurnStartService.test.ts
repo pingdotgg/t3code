@@ -21,6 +21,7 @@ import {
   ThreadId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -488,6 +489,11 @@ function makeLocalCommandHarness(input: {
    * parent. `switchedProvider` puts the earlier run and its context on another provider thread.
    */
   readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
+  /** The thread's stored history, and the text of the retry handoff prepared from it. */
+  readonly retry?: {
+    readonly history: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly text: string;
+  };
   readonly sideChat?: {
     readonly contextRun: "current" | "failed" | "cancelled" | "delivered";
     readonly unsentResume?: boolean;
@@ -1296,17 +1302,27 @@ function makeLocalCommandHarness(input: {
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: (handoff) =>
-            input.sideChat?.nativeForkFrom === undefined
-              ? Effect.die("history read must fail first")
-              : Effect.succeed({
+            input.retry !== undefined && handoff.strategy === "delta_since_target_last_seen"
+              ? Effect.succeed({
                   ...handoff,
-                  id: ContextHandoffId.make("side-chat-fork-context"),
+                  id: ContextHandoffId.make("retry-handoff"),
                   createdByProviderInstanceId: handoff.toProviderInstanceId,
                   status: "ready",
                   summaryMessageId: null,
-                  summaryText: "PARENT_HISTORY",
+                  summaryText: input.retry.text,
                   updatedAt: handoff.createdAt,
-                }),
+                })
+              : input.sideChat?.nativeForkFrom === undefined
+                ? Effect.die("history read must fail first")
+                : Effect.succeed({
+                    ...handoff,
+                    id: ContextHandoffId.make("side-chat-fork-context"),
+                    createdByProviderInstanceId: handoff.toProviderInstanceId,
+                    status: "ready",
+                    summaryMessageId: null,
+                    summaryText: "PARENT_HISTORY",
+                    updatedAt: handoff.createdAt,
+                  }),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           writeIfRunCurrent,
@@ -1347,7 +1363,7 @@ function makeLocalCommandHarness(input: {
           getRun,
           getTurnStartHistory: () =>
             input.sideChat !== undefined || input.settings !== undefined
-              ? Effect.succeed([])
+              ? Effect.succeed([...(input.retry?.history ?? [])])
               : Effect.fail(
                   new ProjectionStore.ProjectionStoreReadError({
                     threadId,
@@ -2374,6 +2390,67 @@ effectIt.effect.each([true, false])(
                 detail: undefined,
               },
             ],
+      );
+    }),
+);
+
+effectIt.effect(
+  "always sends the retry of the thread's own unsent messages while holding back another handoff",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        // The earlier run failed before the provider saw its message.
+        sideChat: { contextRun: "failed" },
+        settings: { t3ContextHandoff: false, t3SideChatContext: false },
+        retry: {
+          text: "RETRY_OF_MY_MESSAGE",
+          history: [
+            {
+              id: "side-chat-earlier-item",
+              type: "user_message",
+              runId: "side-chat-earlier-run",
+              messageId: "side-chat-earlier-message",
+              text: "My earlier message",
+              createdBy: "user",
+              creationSource: "web",
+              attachments: [],
+            } as unknown as OrchestrationV2TurnItem,
+          ],
+        },
+      });
+      const projection = harness.projection();
+      const run = projection.runs.at(-1)!;
+      harness.setProjection({
+        ...projection,
+        contextHandoffs: [
+          ...projection.contextHandoffs,
+          {
+            id: ContextHandoffId.make("provider-switch-context"),
+            transferId: null,
+            threadId: run.threadId,
+            targetRunId: run.id,
+            fromProviderThreadIds: [],
+            toProviderThreadId: run.providerThreadId!,
+            coveredRunOrdinals: { from: 1, to: 1 },
+            strategy: "full_thread_summary",
+            status: "ready",
+            summaryMessageId: null,
+            summaryText: "HANDOFF_SUMMARY",
+            createdByProviderInstanceId: null,
+            createdAt: projection.updatedAt,
+            updatedAt: projection.updatedAt,
+          },
+        ],
+      });
+
+      yield* harness.start;
+
+      const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+      expect(text).toContain("RETRY_OF_MY_MESSAGE");
+      expect(text).not.toContain("HANDOFF_SUMMARY");
+      expect(notSentRows(harness).map((row) => row.summary)).toContain(
+        "T3 Code did not send the context handoff (switched off in Settings)",
       );
     }),
 );
