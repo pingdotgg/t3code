@@ -1390,18 +1390,31 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
-  it.live("resumes an imported native session without resending its history", () =>
+  const importedNativeSessionScenario = (
+    scenario: "first-send" | "after-failed-switch" | "resume-fails",
+  ) =>
     Effect.gen(function* () {
-      const cwd = yield* checkpointWorkspace("imported-native-session");
+      const cwd = yield* checkpointWorkspace(`imported-native-session-${scenario}`);
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const claudeOrdinal = scenario === "after-failed-switch" ? 2 : 1;
       const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
         makeTestAdapter({
           instanceId: CLAUDE_MODEL_SELECTION.instanceId,
           driver: CLAUDE_DRIVER,
           capabilities: ClaudeProviderCapabilitiesV2,
           modelSelection: CLAUDE_MODEL_SELECTION,
-          responseByRunOrdinal: { 1: "PELICAN" },
+          responseByRunOrdinal: { [claudeOrdinal]: "PELICAN" },
           capturedTurns,
+          failResume: scenario === "resume-fails",
+        }),
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          failedRunOrdinals: new Set([1]),
         }),
       ]);
       yield* Effect.gen(function* () {
@@ -1518,41 +1531,62 @@ describe("orchestration v2 provider switching", () => {
             },
           ],
         });
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("imported-native:1"),
-          threadId,
-          messageId: MessageId.make("imported-native:1"),
-          createdBy: "user",
-          creationSource: "web",
-          text: "What was the code word?",
-          attachments: [],
-          modelSelection: CLAUDE_MODEL_SELECTION,
-          dispatchMode: { type: "start_immediately" },
-        });
-        yield* orchestrator.streamStoredEvents.pipe(
-          Stream.filter(
-            ({ event }) =>
-              event.type === "run.updated" &&
-              event.payload.ordinal === 1 &&
-              (event.payload.status === "completed" || event.payload.status === "failed"),
-          ),
-          Stream.runHead,
-        );
-        yield* worker.drain();
+        const send = (ordinal: number, modelSelection: ModelSelection) =>
+          Effect.gen(function* () {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`imported-native:${ordinal}`),
+              threadId,
+              messageId: MessageId.make(`imported-native:${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: "What was the code word?",
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
+            });
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.ordinal === ordinal &&
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
+              ),
+              Stream.runHead,
+            );
+            yield* worker.drain();
+          });
+        if (scenario === "after-failed-switch") yield* send(1, CODEX_MODEL_SELECTION);
+        yield* send(claudeOrdinal, CLAUDE_MODEL_SELECTION);
 
         const projection = yield* orchestrator.getThreadProjection(threadId);
         assert.equal(projection.runs.at(-1)?.status, "completed");
-        const turns = yield* Ref.get(capturedTurns);
-        assert.equal(turns.length, 1);
-        assert.equal(turns[0]?.nativeThreadId, "native-session");
-        assert.deepEqual(projection.contextHandoffs, []);
-        assert.notInclude(turns[0]!.text, "Remember the code word PELICAN.");
+        const claudeTurn = (yield* Ref.get(capturedTurns)).findLast(
+          (turn) => turn.driver === CLAUDE_DRIVER,
+        );
+        const importHandoffTargets = projection.contextHandoffs
+          .filter((handoff) => handoff.strategy === "manual_context")
+          .map((handoff) => handoff.toProviderThreadId);
+        if (scenario === "resume-fails") {
+          // The replacement session is empty, so the recovery summary carries the import.
+          assert.notEqual(claudeTurn?.nativeThreadId, "native-session");
+          assert.deepEqual(
+            projection.contextHandoffs.map((handoff) => handoff.strategy),
+            ["full_thread_summary"],
+          );
+          assert.include(claudeTurn?.text ?? "", "Remember the code word PELICAN.");
+          return;
+        }
+        assert.equal(claudeTurn?.nativeThreadId, "native-session");
+        assert.notInclude(importHandoffTargets, providerThread.id);
+        assert.lengthOf(importHandoffTargets, scenario === "after-failed-switch" ? 1 : 0);
+        if (scenario === "first-send") assert.deepEqual(projection.contextHandoffs, []);
+        assert.notInclude(claudeTurn?.text ?? "", "Remember the code word PELICAN.");
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
             {
-              name: "imported-native-session",
+              name: `imported-native-session-${scenario}`,
               runtimePolicyOverride: {
                 cwd,
                 approvalPolicy: "never",
@@ -1563,7 +1597,15 @@ describe("orchestration v2 provider switching", () => {
           ),
         ),
       );
-    }),
+    });
+  it.live("resumes an imported native session without resending its history", () =>
+    importedNativeSessionScenario("first-send"),
+  );
+  it.live("returns to an imported native session without resending its history", () =>
+    importedNativeSessionScenario("after-failed-switch"),
+  );
+  it.live("recovers an imported native session's history when its resume fails", () =>
+    importedNativeSessionScenario("resume-fails"),
   );
 
   it.live.each(["native", "legacy"] as const)(
