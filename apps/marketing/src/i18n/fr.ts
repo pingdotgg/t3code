@@ -33,7 +33,7 @@ export const fr: Messages = {
     alsoOnPhone: "Aussi sur votre téléphone :",
     screenshotAlt:
       "T3 Code exécutant des sous-agents Claude, Codex, Muse et Gemini dans un même fil",
-    endorsementsTitle: "Plus de {users} devs nous tolèrent encore",
+    endorsementsTitle: "Toléré par plus de {users} devs",
     endorsementsSub: "Certains en ont même parlé sur X.",
     endorsementsLabel: "Avis de développeurs",
     readPost: "Lire le post de {handle} sur X",

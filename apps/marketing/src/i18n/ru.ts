@@ -32,7 +32,7 @@ export const ru: Messages = {
     sourceLink: "Украдите наш код (легально)",
     alsoOnPhone: "Есть и для телефона:",
     screenshotAlt: "T3 Code запускает субагентов Claude, Codex, Muse и Gemini в одном треде",
-    endorsementsTitle: "Нас всё ещё терпят более {users} разработчиков",
+    endorsementsTitle: "Более {users} разработчиков не против",
     endorsementsSub: "Некоторые даже написали об этом в X.",
     endorsementsLabel: "Отзывы разработчиков",
     readPost: "Читать пост {handle} в X",

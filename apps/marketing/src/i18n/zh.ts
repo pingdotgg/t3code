@@ -32,7 +32,7 @@ export const zh: Messages = {
     sourceLink: "来偷我们的代码（合法的）",
     alsoOnPhone: "手机上也能用：",
     screenshotAlt: "T3 Code 在同一个线程中运行 Claude、Codex、Muse 和 Gemini 子智能体",
-    endorsementsTitle: "超过 {users} 名开发者至今还没嫌弃我们",
+    endorsementsTitle: "超过 {users} 名开发者觉得还行",
     endorsementsSub: "有些人甚至发推夸了它。",
     endorsementsLabel: "开发者评价",
     readPost: "在 X 上阅读 {handle} 的帖子",

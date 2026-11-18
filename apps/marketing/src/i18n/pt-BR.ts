@@ -33,7 +33,7 @@ export const ptBR: Messages = {
     alsoOnPhone: "Também no seu celular:",
     screenshotAlt:
       "T3 Code executando subagentes do Claude, Codex, Muse e Gemini em uma mesma thread",
-    endorsementsTitle: "Mais de {users} devs ainda aturam a gente",
+    endorsementsTitle: "Tolerado por mais de {users} devs",
     endorsementsSub: "Alguns até tuitaram sobre isso.",
     endorsementsLabel: "Depoimentos de desenvolvedores",
     readPost: "Ler o post de {handle} no X",
