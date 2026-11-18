@@ -27,11 +27,12 @@ import {
   type CustomSnoozeInput,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { requireNativeModule } from "expo";
-import { msg, useGT, useLocale, useMessages } from "gt-react-native";
+import { msg, useGT, useMessages } from "gt-react-native";
 import { useEffect, useState } from "react";
 import { AppState, useWindowDimensions } from "react-native";
 
 import { OverlayPortal } from "../../components/ui/OverlayPortal";
+import { useFormattingLocale } from "../../i18n/I18nProvider";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import {
@@ -65,7 +66,7 @@ function systemUses24HourClock() {
 export function CustomSnoozeSheet(props: Props) {
   const gt = useGT();
   const m = useMessages();
-  const locale = useLocale();
+  const locale = useFormattingLocale();
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const [is24Hour, setIs24Hour] = useState(systemUses24HourClock);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to re-read the native 24-hour clock setting when the app resumes

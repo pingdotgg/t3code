@@ -15,7 +15,7 @@ export function applySnoozePickerTime(date: Date, selected: Date): Date {
   return next;
 }
 
-/** Date and time segment labels in the app language, not the device's. */
+/** Format the segment labels without changing the device's hour-cycle setting. */
 export function snoozePickerLabels(date: Date, locale: string, is24Hour: boolean) {
   return {
     date: date.toLocaleDateString(locale, { month: "short", day: "numeric" }),
