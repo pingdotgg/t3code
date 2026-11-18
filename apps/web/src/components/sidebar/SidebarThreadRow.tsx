@@ -383,7 +383,11 @@ function SidebarThreadTooltip({
             <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
             <div className="min-w-0 truncate">
               {thread.runtime.lastErrorClass === "usage_limit"
-                ? providerFailureTitle(thread.runtime.lastErrorClass, thread.runtime.lastErrorCode, m)
+                ? providerFailureTitle(
+                    thread.runtime.lastErrorClass,
+                    thread.runtime.lastErrorCode,
+                    m,
+                  )
                 : gt("Error occurred")}
             </div>
           </div>

@@ -909,7 +909,11 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           minute: "2-digit",
         })} (${new Intl.DateTimeFormat().resolvedOptions().timeZone})`
       : null;
-    const title = providerFailureTitle(failureItem.failure.class, failureItem.failure.code, messages);
+    const title = providerFailureTitle(
+      failureItem.failure.class,
+      failureItem.failure.code,
+      messages,
+    );
     const label = warning
       ? resetTime
         ? gt("{title}. Retry after {resetTime}.", { title, resetTime })
