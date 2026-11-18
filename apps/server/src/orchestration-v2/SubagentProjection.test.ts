@@ -393,6 +393,69 @@ it("waits for nested work and retains the report across monitor acknowledgements
   assert.equal(afterMonitorEnded.resultRun?.id, ended.id);
 });
 
+it("keeps the report when a run queued behind it ends without assistant text", () => {
+  const { projection, run } = taskFixture();
+  const report = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("report"),
+    turnItemId: TurnItemId.make("report"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "assistant",
+    text: "REPORT-OK",
+    ordinal: 1,
+    now: childCreatedAt,
+  });
+  const queued: OrchestrationV2Run = {
+    ...run,
+    id: RunId.make("queued-after-report"),
+    ordinal: 2,
+    userMessageId: MessageId.make("queued-message"),
+    startedAt: DateTime.makeUnsafe("2026-07-24T10:00:00.000Z"),
+    completedAt: DateTime.makeUnsafe("2026-07-24T10:00:01.000Z"),
+  };
+  for (const notification of [
+    undefined,
+    {
+      source: { kind: "command" as const },
+      outcome: "completed" as const,
+      summary: "1 command finished",
+    },
+  ]) {
+    const child = {
+      ...projection,
+      runs: [run, queued],
+      messages: [
+        { ...report.message, runId: run.id },
+        {
+          ...report.message,
+          id: MessageId.make("queued-message"),
+          runId: queued.id,
+          role: "user" as const,
+          text: "ACK-SILENT",
+          ...(notification ? { notification } : {}),
+        },
+      ],
+      turnItems: [{ ...report.turnItem, runId: run.id }],
+    };
+    const progress = delegatedTaskProgress(child);
+    assert.equal(progress.state, "result_available");
+    assert.equal(subagentResultForRun(child, progress.resultRun!).text, "REPORT-OK");
+    // Another task's run, or one that did not complete, keeps its own outcome.
+    for (const other of [
+      { ...queued, delegatedTaskId: NodeId.make("follow-up") },
+      { ...queued, status: "interrupted" as const },
+    ]) {
+      assert.notInclude(
+        subagentResultForRun({ ...child, runs: [run, other] }, other).text,
+        "REPORT-OK",
+      );
+    }
+  }
+});
+
 it("exposes the provider failure rather than a progress message from the failed run", () => {
   const { projection, run } = taskFixture();
   const failedRun = { ...run, status: "failed" as const };

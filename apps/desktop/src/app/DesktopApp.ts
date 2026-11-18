@@ -42,6 +42,8 @@ import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { msg } from "gt-i18n";
+import { m } from "../i18n/messages.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -147,7 +149,7 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
   const wasQuitting = yield* Ref.getAndSet(state.quitting, true);
   if (!wasQuitting) {
     yield* electronDialog.showErrorBox(
-      "T3 Code failed to start",
+      m(msg("T3 Code failed to start")),
       `Stage: ${stage}\n${message}${detail}`,
     );
   }
@@ -216,7 +218,7 @@ const startLocalBackend = Effect.gen(function* () {
       owner: Option.getOrNull(owner),
     });
     yield* (yield* ElectronDialog.ElectronDialog).showErrorBox(
-      "This T3 home is unavailable",
+      m(msg("This T3 home is unavailable")),
       DesktopHomeOwner.homeOwnedMessage(owner),
     );
     yield* (yield* ElectronApp.ElectronApp).quit;
@@ -283,6 +285,10 @@ const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: bool
   const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
   const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
   const settings = yield* desktopSettings.get;
+  const startAppActivation = appActivation.start.pipe(
+    Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
+    Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
+  );
   if (settings.localEnvironmentEnabled && (!backendStarted || (yield* Ref.get(state.quitting)))) {
     return;
   }
@@ -307,6 +313,8 @@ const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: bool
     if (!(yield* Ref.get(state.quitting))) {
       yield* desktopWindow.createMainIfBackendReady;
     }
+    // `t3 <dir>` still reaches the renderer, which opens it on this machine's connected service.
+    yield* startAppActivation;
     return;
   }
 
@@ -319,10 +327,7 @@ const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: bool
   ) {
     yield* desktopWindow.ensureMain;
   }
-  yield* appActivation.start.pipe(
-    Effect.tap(() => logBootstrapInfo("desktop app control socket ready")),
-    Effect.catch((error) => logStartupError("desktop app control socket unavailable", { error })),
-  );
+  yield* startAppActivation;
   yield* Effect.forkScoped((yield* DesktopWslBackend.DesktopWslBackend).reconcile);
 });
 

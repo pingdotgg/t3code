@@ -1,8 +1,10 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "./ui/Dialog";
 import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT } from "gt-react-native";
 import { useEffect, useState } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
@@ -45,6 +47,7 @@ import {
   composerMentionPath,
   type ComposerDocumentAttachment,
 } from "../lib/composerContext";
+import { m } from "../i18n/messages";
 
 export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly draftKey?: string | null;
@@ -66,6 +69,7 @@ export function ComposerEditor({
   onInertChipPress,
   ...props
 }: ComposerEditorProps) {
+  const gt = useGT();
   const draft = useComposerDraft(draftKey ?? null);
   const readResetGeneration = useComposerDraftResetGeneration(draftKey ?? null);
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
@@ -124,24 +128,32 @@ export function ComposerEditor({
       }
       if (!insertComposerDraftContext(draftKey, result, insertion)) {
         Dialog.alert(
-          "Could not paste context",
-          "Remove some attachments or context items from the draft, then paste again.",
+          gt("Could not paste context"),
+          gt("Remove some attachments or context items from the draft, then paste again."),
         );
         return;
       }
       const warnings: string[] = [];
       if (result.failures.length > 0)
         warnings.push(
-          "Some attachments could not be copied. Reconnect to the source environment and copy them again.",
+          gt(
+            "Some attachments could not be copied. Reconnect to the source environment and copy them again.",
+          ),
         );
       if (result.skippedThreads.length > 0)
         warnings.push(
-          `${result.skippedThreads.map((title) => `"${title}"`).join(", ")} ${result.skippedThreads.length === 1 ? "is" : "are"} on another machine.`,
+          gt(
+            "{count, plural, one {{titles} is on another machine.} other {{titles} are on another machine.}}",
+            {
+              count: result.skippedThreads.length,
+              titles: result.skippedThreads.map((title) => `"${title}"`).join(", "),
+            },
+          ),
         );
       if (warnings.length > 0)
         Dialog.alert(
-          "Some context is unavailable",
-          [...warnings, "Those references are marked unavailable."].join("\n\n"),
+          gt("Some context is unavailable"),
+          [...warnings, gt("Those references are marked unavailable.")].join("\n\n"),
         );
     });
     operation.finish();
@@ -149,8 +161,10 @@ export function ComposerEditor({
     if (AsyncResult.isFailure(settled) && !signal.aborted) {
       const error = squashAtomCommandFailure(settled);
       Dialog.alert(
-        "Could not paste context",
-        error instanceof Error ? error.message : "Try copying again.",
+        gt("Could not paste context"),
+        error instanceof Error
+          ? (errorDisplayMessage(error, m) ?? error.message)
+          : gt("Try copying again."),
       );
     }
   };
@@ -267,7 +281,9 @@ export function ComposerEditor({
         }}
       />
       {importing ? (
-        <Text className="py-2 text-xs text-foreground-muted">Copying context…</Text>
+        <Text className="py-2 text-xs text-foreground-muted">
+          <T>Copying context…</T>
+        </Text>
       ) : null}
       {selectedCitation ? (
         <AssistantCitationSheet
@@ -292,7 +308,10 @@ export function ComposerEditor({
       {selected && (selectedReference || selectedSkill) ? (
         <ComposerContextSheet
           label={
-            selectedReference?.label ?? selectedSkill?.displayName ?? selectedSkill?.name ?? "Skill"
+            selectedReference?.label ??
+            selectedSkill?.displayName ??
+            selectedSkill?.name ??
+            gt("Skill", { $context: "agent skill" })
           }
           record={
             record ??
