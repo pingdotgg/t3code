@@ -356,18 +356,20 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       settingKeys={["fallbackToAvailableAccounts"]}
       mixed={mixedAvailableAccounts}
       {...searchableSetting("fallback-available-accounts")}
-      description="When usage runs out, continue on another account with the same model, then another provider. New threads try the fallback model first."
+      description={gt(
+        "When usage runs out, continue on another account with the same model, then another provider. New threads try the fallback model first.",
+      )}
       resetAction={
         settings.fallbackToAvailableAccounts ? (
           <SettingResetButton
-            label="switching to available accounts"
+            ariaLabel={gt("Reset switching to available accounts to default")}
             onClick={() => updateSettings({ fallbackToAvailableAccounts: false })}
           />
         ) : null
       }
       control={
         <Switch
-          aria-label="Switch to an account with usage left"
+          aria-label={gt("Switch to an account with usage left")}
           mixed={mixedAvailableAccounts}
           checked={mixedAvailableAccounts ? false : settings.fallbackToAvailableAccounts}
           onCheckedChange={(enabled) => updateSettings({ fallbackToAvailableAccounts: enabled })}

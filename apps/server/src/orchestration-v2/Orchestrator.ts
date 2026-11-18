@@ -6888,8 +6888,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.deliveryIntent,
       );
       if (
-        mode.type === "steer_active" ||
-        mode.type === "restart_active" ||
+        ((mode.type === "steer_active" || mode.type === "restart_active") &&
+          command.freshContext !== true) ||
         !modelSelectionsEqual(projection.thread.modelSelection, automaticFallback.threadSelection)
       ) {
         command = {

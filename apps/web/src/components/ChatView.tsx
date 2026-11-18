@@ -2660,21 +2660,24 @@ export default function ChatView(props: ChatViewProps) {
       defaultSelection &&
       fallbackWindow !== dismissedFallbackWindow
         ? [
-            modelFallbackBannerItem({
-              fallbackModelName:
-                fallbackProvider?.models.find((model) => model.slug === fallbackSelection.model)
-                  ?.name ?? fallbackSelection.model,
-              fallbackProviderName: `${fallbackProvider?.displayName?.trim() || fallbackProvider?.driver || "Account"} [${fallbackSelection.instanceId}]`,
-              defaultProviderName: fallback.provider.displayName ?? fallback.provider.driver,
-              defaultModelName:
-                fallback.provider.models.find((model) => model.slug === defaultSelection.model)
-                  ?.name ?? defaultSelection.model,
-              resetsAt: fallback.resetsAt,
-              timestampFormat,
-              onUseDefault: () =>
-                onProviderModelSelectStable(defaultSelection.instanceId, defaultSelection.model),
-              onDismiss: () => setDismissedFallbackWindow(fallbackWindow),
-            }, messages),
+            modelFallbackBannerItem(
+              {
+                fallbackModelName:
+                  fallbackProvider?.models.find((model) => model.slug === fallbackSelection.model)
+                    ?.name ?? fallbackSelection.model,
+                fallbackProviderName: `${fallbackProvider?.displayName?.trim() || fallbackProvider?.driver || "Account"} [${fallbackSelection.instanceId}]`,
+                defaultProviderName: fallback.provider.displayName ?? fallback.provider.driver,
+                defaultModelName:
+                  fallback.provider.models.find((model) => model.slug === defaultSelection.model)
+                    ?.name ?? defaultSelection.model,
+                resetsAt: fallback.resetsAt,
+                timestampFormat,
+                onUseDefault: () =>
+                  onProviderModelSelectStable(defaultSelection.instanceId, defaultSelection.model),
+                onDismiss: () => setDismissedFallbackWindow(fallbackWindow),
+              },
+              messages,
+            ),
           ]
         : [];
     const limitRecoveryItems = limitRecoveryBanner === null ? [] : [limitRecoveryBanner];

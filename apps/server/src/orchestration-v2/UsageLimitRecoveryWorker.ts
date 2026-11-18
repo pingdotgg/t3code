@@ -168,6 +168,7 @@ const makeSweep = Effect.gen(function* () {
     ),
   );
   yield* forkParked(Stream.runForEach(settings.streamChanges, () => due.invalidate));
+  yield* forkParked(Stream.runForEach(registry.streamChanges, () => due.invalidate));
   return Effect.fn("UsageLimitRecoveryWorker.sweep")(function* () {
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
@@ -202,7 +203,9 @@ const makeSweep = Effect.gen(function* () {
             Effect.sync(() =>
               limitedUntil.set(
                 thread.modelSelection.instanceId,
-                Number.isFinite(resetMs) ? resetMs : nowMs + ACCOUNT_SWITCH_WINDOW_MS,
+                Number.isFinite(resetMs) && resetMs > nowMs
+                  ? resetMs
+                  : nowMs + ACCOUNT_SWITCH_WINDOW_MS,
               ),
             ),
           ),
@@ -245,7 +248,10 @@ const makeSweep = Effect.gen(function* () {
     // A sweep that acted, or failed to, re-checks on the next tick.
     if (acted) return;
     const wakeAt = yield* projections.getLimitRecoveryWakeAt(now);
-    yield* due.record(readVersion, wakeAt ?? Infinity, nowMs);
+    const accountWakeAt = preferences.fallbackToAvailableAccounts
+      ? Math.min(...Array.from(limitedUntil.values()).filter((expiry) => expiry > nowMs))
+      : Infinity;
+    yield* due.record(readVersion, Math.min(wakeAt ?? Infinity, accountWakeAt), nowMs);
   });
 });
 

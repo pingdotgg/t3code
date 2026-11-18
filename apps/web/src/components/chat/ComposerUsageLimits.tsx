@@ -103,7 +103,12 @@ export function modelFallbackBannerItem(
     id: "fallback-model",
     variant: "info",
     icon: <GaugeIcon />,
-    title: resolve(msg("Using {model} on {provider}", { model: fallbackModelName, provider: fallbackProviderName })),
+    title: resolve(
+      msg("Using {model} on {provider}", {
+        model: fallbackModelName,
+        provider: fallbackProviderName,
+      }),
+    ),
     description: resetsAt
       ? resolve(
           msg("{provider} is out of usage · resets {time}", {
