@@ -5,7 +5,14 @@ type UndoNotice = {
   readonly action: "Settled" | "Snoozed" | "Unpinned";
   readonly claim: ReturnType<typeof ThreadUndo.begin>;
   readonly undo: () => Promise<void>;
+  /** Threads the undo would restore; a group action counts every member. */
+  readonly count?: () => number;
 };
+
+export function threadUndoNoticeMessage(notice: UndoNotice): string {
+  const count = notice.count?.() ?? 1;
+  return count > 1 ? `${notice.action} ${count} threads` : `${notice.action} thread`;
+}
 
 let notice: UndoNotice | null = null;
 let expiry: ReturnType<typeof setTimeout> | undefined;

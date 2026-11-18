@@ -27,9 +27,20 @@ const state = vi.hoisted(() => ({
   requests: [] as {
     action: string;
     environmentId: string;
-    input: { threadId: string; orderKey?: string; snoozedUntil?: string; reason?: string };
+    input: {
+      threadId: string;
+      orderKey?: string;
+      snoozedUntil?: string;
+      reason?: string;
+      parentThreadId?: string;
+    };
   }[],
-  dialogs: [] as { onConfirm: () => void }[],
+  dialogs: [] as {
+    title?: string;
+    message?: string;
+    onConfirm: () => void;
+    onCancel?: () => void;
+  }[],
   alerts: [] as {
     title: string;
     buttons?: { text: string; onPress?: () => void }[];
@@ -55,7 +66,7 @@ vi.mock("expo-haptics", () => ({
 vi.mock("../../components/ui/Dialog", () => ({
   alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
     state.alerts.push({ title, buttons }),
-  confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
+  confirm: (dialog: (typeof state.dialogs)[number]) => state.dialogs.push(dialog),
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: (environmentId: string) => {
@@ -160,6 +171,8 @@ vi.mock("../../state/threads", () => ({
       "reorderActive",
       "updateMetadata",
       "regenerateTitle",
+      "attachToGroup",
+      "detachFromGroup",
     ].map((action) => [
       action,
       async (request: {
@@ -182,7 +195,11 @@ vi.mock("../../state/threads", () => ({
 
 import { appAtomRegistry } from "../../state/atom-registry";
 import { composerDraftsAtom } from "../../state/use-composer-drafts";
-import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
+import {
+  dismissThreadUndoNotice,
+  readThreadUndoNotice,
+  threadUndoNoticeMessage,
+} from "./thread-undo-notice";
 import { useThreadListActions } from "./useThreadListActions";
 
 const primaryEnvironmentId = EnvironmentId.make("primary");
@@ -589,6 +606,106 @@ describe("thread action undo", () => {
   });
 
   // regression: #21401 restore archive and thread action undo
+  it("lead settle settles every member with one undo", async () => {
+    const lead = makeThread({ id: ThreadId.make("lead") });
+    const worker = makeThread({ id: ThreadId.make("worker"), groupParentThreadId: lead.id });
+    state.shells = [lead, worker];
+
+    expect(await useThreadListActions().settleThread(lead)).toBe(true);
+    expect(state.requests.map(({ action, input }) => [action, input.threadId])).toEqual([
+      ["settle", "lead"],
+      ["settle", "worker"],
+    ]);
+    expect(threadUndoNoticeMessage(readThreadUndoNotice()!)).toBe("Settled 2 threads");
+
+    await readThreadUndoNotice()!.undo();
+    expect(state.requests.slice(2).map(({ action, input }) => [action, input.threadId])).toEqual([
+      ["unsettle", "lead"],
+      ["unsettle", "worker"],
+    ]);
+    expect(readThreadUndoNotice()).toBeNull();
+  });
+
+  it("worker settle settles only the worker", async () => {
+    const lead = makeThread({ id: ThreadId.make("lead") });
+    const worker = makeThread({ id: ThreadId.make("worker"), groupParentThreadId: lead.id });
+    state.shells = [lead, worker];
+
+    expect(await useThreadListActions().settleThread(worker)).toBe(true);
+    expect(state.requests.map(({ action, input }) => [action, input.threadId])).toEqual([
+      ["settle", "worker"],
+    ]);
+  });
+
+  it("lead settle confirms while a member is working, and cancel settles nothing", async () => {
+    const lead = makeThread({ id: ThreadId.make("lead") });
+    const working = makeThread({
+      id: ThreadId.make("worker"),
+      groupParentThreadId: lead.id,
+      runtime: {
+        status: "running",
+        activeRunId: RunId.make("run"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: null,
+        lastError: null,
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    state.shells = [lead, working];
+
+    const cancelled = useThreadListActions().settleThread(lead);
+    expect(state.dialogs[0]).toMatchObject({
+      title: "Settle the whole group?",
+      message: "1 thread in this group is still working.",
+    });
+    state.dialogs[0]!.onCancel!();
+    expect(await cancelled).toBe(false);
+    expect(state.requests).toEqual([]);
+  });
+
+  it("lead snooze snoozes the group and reports a member that cannot snooze", async () => {
+    const lead = makeThread({ id: ThreadId.make("lead") });
+    state.shells = [
+      lead,
+      makeThread({ id: ThreadId.make("calm"), groupParentThreadId: lead.id }),
+      makeThread({
+        id: ThreadId.make("waiting"),
+        groupParentThreadId: lead.id,
+        hasPendingApprovals: true,
+      }),
+    ];
+
+    expect(await useThreadListActions().snoozeThread(lead, "2099-01-01T09:00:00.000Z")).toBe(true);
+    expect(state.requests.map(({ action, input }) => [action, input.threadId])).toEqual([
+      ["snooze", "lead"],
+      ["snooze", "calm"],
+    ]);
+    expect(state.alerts.map(({ title }) => title)).toEqual(["1 thread could not be snoozed"]);
+    expect(readThreadUndoNotice()?.action).toBe("Snoozed");
+  });
+
+  it("lead archive asks for confirmation and resolves false on cancel", async () => {
+    const lead = makeThread({ id: ThreadId.make("lead") });
+    state.shells = [
+      lead,
+      makeThread({ id: ThreadId.make("worker"), groupParentThreadId: lead.id }),
+    ];
+
+    const cancelled = useThreadListActions().archiveThread(lead);
+    expect(state.dialogs[0]).toMatchObject({
+      title: "Archive thread?",
+      message: "1 thread of this group will be shown separately while it is archived.",
+    });
+    state.dialogs[0]!.onCancel!();
+    expect(await cancelled).toBe(false);
+    expect(state.requests).toEqual([]);
+
+    const confirmed = useThreadListActions().archiveThread(lead);
+    state.dialogs[1]!.onConfirm();
+    expect(await confirmed).toBe(true);
+    expect(state.requests.map(({ action }) => action)).toEqual(["archive"]);
+  });
+
   it("does not offer undo for a failed action", async () => {
     state.failedAction = "settle";
     expect(await useThreadListActions().settleThread(makeThread())).toBe(false);

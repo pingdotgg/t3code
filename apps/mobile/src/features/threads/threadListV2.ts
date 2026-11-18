@@ -20,6 +20,13 @@ import {
   type ProjectFolderDot,
 } from "@t3tools/client-runtime/state/project-folders";
 import {
+  partitionGroupWorkers,
+  resolveThreadGroupPlacement,
+  resolveThreadGroupSection,
+  splitThreadGroups,
+  type ThreadGroupMemberState,
+} from "@t3tools/client-runtime/state/thread-groups";
+import {
   ownWorkingSubagentCount,
   withWorkingSubagents,
   workingSubagentCountsByThread,
@@ -131,6 +138,8 @@ export function resolveThreadListV2SwipeActions(input: {
   readonly snoozeSupported: boolean;
   readonly snoozable: boolean;
   readonly snoozed?: boolean;
+  /** A settled group member can sit in a live group as a card. */
+  readonly settled?: boolean;
 }): {
   readonly primary: Exclude<ThreadListV2SwipeAction, "snooze">;
   readonly secondary: "snooze" | null;
@@ -139,7 +148,7 @@ export function resolveThreadListV2SwipeActions(input: {
     return { primary: "unsnooze", secondary: null };
   }
   const primary = input.settlementSupported
-    ? input.variant === "slim"
+    ? input.variant === "slim" || input.settled === true
       ? "unsettle"
       : "settle"
     : "archive";
@@ -453,6 +462,35 @@ export interface ThreadListV2Item {
   readonly isLast: boolean;
   /** Listed under its project's folder header, so the row leaves out the project name. */
   readonly inFolder?: boolean;
+  /** Search lists threads flat; the row's menu still needs the thread's group role. */
+  readonly groupRole?: "lead" | "worker";
+  readonly group?:
+    | {
+        readonly role: "lead";
+        readonly workerCount: number;
+        readonly collapsed: boolean;
+        /** The workers' most urgent state while the group is collapsed. */
+        readonly dot: ProjectFolderDot | null;
+        /** The lead's own state, which can differ from the section its workers put it in. */
+        readonly ownState: ThreadGroupMemberState;
+      }
+    | {
+        readonly role: "worker";
+        readonly memberState: ThreadGroupMemberState;
+        /** No overflow row follows this worker. */
+        readonly isLastInGroup: boolean;
+        readonly leadKey: string;
+      };
+}
+
+export interface ThreadListV2GroupOverflow {
+  /** The overflow row goes before the item at this index. */
+  readonly index: number;
+  readonly leadKey: string;
+  readonly kind: "settled" | "snoozed";
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly inFolder: boolean;
 }
 
 export interface ThreadListV2FolderGroup {
@@ -491,6 +529,7 @@ export interface ThreadListV2Layout {
   readonly settledShelfHeaderIndex: number | null;
   /** Project folder headers; each sits before the item at its index. Empty outside folder mode. */
   readonly folderHeaders: ReadonlyArray<ThreadListV2FolderHeader>;
+  readonly groupOverflows: ReadonlyArray<ThreadListV2GroupOverflow>;
   /** Arm a timeout here to repartition at snooze expiry rather than the next minute tick. */
   readonly nextSnoozeWakeAt: string | null;
   /** Threads listed only because their messages match the search. */
@@ -558,8 +597,19 @@ export interface ThreadListV2SettledShelfListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2GroupOverflowListItem {
+  readonly type: "v2-group-overflow";
+  readonly key: string;
+  readonly leadKey: string;
+  readonly kind: "settled" | "snoozed";
+  readonly count: number;
+  readonly expanded: boolean;
+  readonly inFolder: boolean;
+}
+
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
+  | ThreadListV2GroupOverflowListItem
   | ThreadListV2ProjectFolderListItem
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
@@ -572,10 +622,33 @@ export function isThreadListV2ListItem(value: {
   return (
     value.type === "v2-thread" ||
     value.type === "v2-project-folder" ||
+    value.type === "v2-group-overflow" ||
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
     value.type === "v2-settled-shelf"
+  );
+}
+
+function threadGroupsAreEqual(
+  previous: ThreadListV2Item["group"],
+  group: ThreadListV2Item["group"],
+): boolean {
+  if (previous === undefined || group === undefined) return previous === group;
+  if (previous.role === "lead") {
+    return (
+      group.role === "lead" &&
+      previous.workerCount === group.workerCount &&
+      previous.collapsed === group.collapsed &&
+      previous.dot === group.dot &&
+      previous.ownState === group.ownState
+    );
+  }
+  return (
+    group.role === "worker" &&
+    previous.memberState === group.memberState &&
+    previous.isLastInGroup === group.isLastInGroup &&
+    previous.leadKey === group.leadKey
   );
 }
 
@@ -595,6 +668,8 @@ export function threadListV2ListItemsAreEqual(
         previous.item.pinned === item.item.pinned &&
         previous.item.wokeAt === item.item.wokeAt &&
         previous.item.inFolder === item.item.inFolder &&
+        previous.item.groupRole === item.item.groupRole &&
+        threadGroupsAreEqual(previous.item.group, item.item.group) &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
         previous.snoozePresetMinute === item.snoozePresetMinute &&
@@ -614,6 +689,16 @@ export function threadListV2ListItemsAreEqual(
         previous.dot === item.dot &&
         previous.moveUpKey === item.moveUpKey &&
         previous.moveDownKey === item.moveDownKey
+      );
+    case "v2-group-overflow":
+      return (
+        previous.type === "v2-group-overflow" &&
+        previous.key === item.key &&
+        previous.leadKey === item.leadKey &&
+        previous.kind === item.kind &&
+        previous.count === item.count &&
+        previous.expanded === item.expanded &&
+        previous.inFolder === item.inFolder
       );
     case "v2-pending":
       return (
@@ -687,6 +772,7 @@ export function buildThreadListV2ListItems(input: {
   readonly moveAvailability?: ReadonlyMap<string, ThreadMoveAvailability>;
   readonly shelfPreferencesLoading?: boolean;
   readonly folderHeaders?: ReadonlyArray<ThreadListV2FolderHeader>;
+  readonly groupOverflows?: ReadonlyArray<ThreadListV2GroupOverflow>;
   readonly workingSubagentCounts?: ReadonlyMap<string, number>;
 }): ThreadListV2ListItem[] {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
@@ -704,7 +790,7 @@ export function buildThreadListV2ListItems(input: {
         ? input.snoozeLabelNow
         : undefined;
     const move =
-      item.variant === "card"
+      item.variant === "card" && item.group?.role !== "worker"
         ? input.moveAvailability?.get(`${item.thread.environmentId}:${item.thread.id}`)
         : undefined;
     const workingSubagents = resolveThreadListV2WorkingSubagents(
@@ -767,10 +853,36 @@ export function buildThreadListV2ListItems(input: {
       header = folderHeaders[nextFolder];
     }
   };
+  const groupOverflows = input.groupOverflows ?? [];
+  let nextOverflow = 0;
+  const pushOverflowsThrough = (index: number) => {
+    for (let overflow = groupOverflows[nextOverflow]; overflow && overflow.index <= index;) {
+      result.push({
+        type: "v2-group-overflow",
+        key: `group-overflow:${overflow.leadKey}:${overflow.kind}`,
+        leadKey: overflow.leadKey,
+        kind: overflow.kind,
+        count: overflow.count,
+        expanded: overflow.expanded,
+        inFolder: overflow.inFolder,
+      });
+      nextOverflow += 1;
+      overflow = groupOverflows[nextOverflow];
+    }
+  };
+  const pushThreadItems = (start: number, end: number) => {
+    for (let index = start; index < end; index += 1) {
+      pushOverflowsThrough(index);
+      result.push(threadItems[index]!);
+    }
+    pushOverflowsThrough(end);
+  };
   for (const [index, threadItem] of activeItems.entries()) {
+    pushOverflowsThrough(index);
     pushFoldersThrough(index);
     result.push(threadItem);
   }
+  pushOverflowsThrough(activeItems.length);
   pushFoldersThrough(Number.POSITIVE_INFINITY);
   const shelfDisabled = input.shelfPreferencesLoading === true;
   if (workingShelfHeaderIndex !== null && workingCount > 0) {
@@ -781,7 +893,7 @@ export function buildThreadListV2ListItems(input: {
       expanded: input.workingShelfExpanded === true,
       disabled: shelfDisabled,
     });
-    result.push(...threadItems.slice(workingShelfHeaderIndex, workingEnd));
+    pushThreadItems(workingShelfHeaderIndex, workingEnd);
   }
   if (snoozedShelfHeaderIndex !== null && snoozedCount > 0) {
     result.push({
@@ -791,7 +903,7 @@ export function buildThreadListV2ListItems(input: {
       expanded: input.snoozedShelfExpanded === true,
       disabled: shelfDisabled,
     });
-    result.push(...threadItems.slice(snoozedShelfHeaderIndex, snoozedEnd));
+    pushThreadItems(snoozedShelfHeaderIndex, snoozedEnd);
   }
   if (settledShelfHeaderIndex !== null && settledCount > 0) {
     result.push({
@@ -801,7 +913,7 @@ export function buildThreadListV2ListItems(input: {
       expanded: input.settledShelfExpanded !== false,
       disabled: shelfDisabled,
     });
-    result.push(...threadItems.slice(settledShelfHeaderIndex));
+    pushThreadItems(settledShelfHeaderIndex, threadItems.length);
   }
   return result.map((entry, index) => {
     if (entry.type !== "v2-thread" && entry.type !== "v2-pending") return entry;
@@ -867,6 +979,11 @@ export function buildThreadListV2Items(input: {
     readonly groups: ReadonlyArray<ThreadListV2FolderGroup>;
     readonly collapsedKeys: ReadonlySet<string>;
   } | null;
+  /** Groups workers under their lead; null keeps every thread its own row. Search stays flat. */
+  readonly threadGroups?: {
+    readonly collapsedKeys: ReadonlySet<string>;
+    readonly openOverflowKeys: ReadonlySet<string>;
+  } | null;
   readonly workingSubagentCounts?: ReadonlyMap<string, number>;
 }): ThreadListV2Layout {
   const now = input.now;
@@ -919,7 +1036,32 @@ export function buildThreadListV2Items(input: {
   // Threads listed only because their messages match; only their rows show
   // the message and open at it.
   const contentOnlyThreadKeys = new Set<string>();
-  for (const thread of listedThreads) {
+  const supportsSettlement = (thread: EnvironmentThreadShell) =>
+    input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
+  const supportsSnooze = (thread: EnvironmentThreadShell) =>
+    input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
+  const isSnoozedNow = (thread: EnvironmentThreadShell) =>
+    supportsSnooze(thread) && effectiveSnoozed(thread, { now });
+  const isSettledNow = (thread: EnvironmentThreadShell) =>
+    supportsSettlement(thread) &&
+    thread.settledOverride === "settled" &&
+    queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) !== true;
+  const memberStateOf = (thread: EnvironmentThreadShell): ThreadGroupMemberState =>
+    isSnoozedNow(thread) ? "snoozed" : isSettledNow(thread) ? "settled" : "live";
+  const noteSnoozeWake = (thread: EnvironmentThreadShell) => {
+    if (
+      thread.snoozedUntil != null &&
+      (nextSnoozeWakeAt === null ||
+        parseTimestampMs(thread.snoozedUntil) < parseTimestampMs(nextSnoozeWakeAt))
+    ) {
+      nextSnoozeWakeAt = thread.snoozedUntil;
+    }
+  };
+  const threadGroups = rankedMatches === null ? (input.threadGroups ?? null) : null;
+  const split = threadGroups === null ? null : splitThreadGroups(listedThreads);
+  const workersOf = (thread: EnvironmentThreadShell) =>
+    split?.workersByParentKey.get(`${thread.environmentId}:${thread.id}`) ?? [];
+  for (const thread of split?.roots ?? listedThreads) {
     if (matchingThreads !== null && !matchingThreads.has(thread)) {
       const key = threadSearchMatchKey({
         environmentId: thread.environmentId,
@@ -928,30 +1070,31 @@ export function buildThreadListV2Items(input: {
       if (input.matchedThreadKeys?.has(key) !== true) continue;
       contentOnlyThreadKeys.add(key);
     }
-    const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
-    const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
-    if (supportsSnooze && effectiveSnoozed(thread, { now })) {
-      snoozed.push(thread);
-      if (
-        thread.snoozedUntil != null &&
-        (nextSnoozeWakeAt === null ||
-          parseTimestampMs(thread.snoozedUntil) < parseTimestampMs(nextSnoozeWakeAt))
-      ) {
-        nextSnoozeWakeAt = thread.snoozedUntil;
-      }
-      continue;
+    const ownSection = isSnoozedNow(thread)
+      ? "snoozed"
+      : isSettledNow(thread)
+        ? "settled"
+        : thread.pinnedAt != null
+          ? "pinned"
+          : workingShelfEnabled && (input.isWorking ?? isThreadWorking)(thread)
+            ? "working"
+            : "active";
+    const workers = workersOf(thread);
+    const section =
+      workers.length === 0
+        ? ownSection
+        : resolveThreadGroupSection(
+            ownSection,
+            resolveThreadGroupPlacement([memberStateOf(thread), ...workers.map(memberStateOf)]),
+          );
+    for (const member of [thread, ...workers]) {
+      if (isSnoozedNow(member)) noteSnoozeWake(member);
     }
-    const hasQueuedMessages =
-      queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
-    if (supportsSettlement && thread.settledOverride === "settled" && !hasQueuedMessages) {
-      settled.push(thread);
-    } else if (thread.pinnedAt != null) {
-      pinned.push(thread);
-    } else if (workingShelfEnabled && (input.isWorking ?? isThreadWorking)(thread)) {
-      working.push(thread);
-    } else {
-      active.push(thread);
-    }
+    if (section === "snoozed") snoozed.push(thread);
+    else if (section === "settled") settled.push(thread);
+    else if (section === "pinned") pinned.push(thread);
+    else if (section === "working") working.push(thread);
+    else active.push(thread);
   }
 
   if (rankedMatches !== null) {
@@ -972,9 +1115,18 @@ export function buildThreadListV2Items(input: {
       return thread ? [thread] : [];
     });
     const results = [...rankedMatches, ...contentOnly];
+    const searchGroups = splitThreadGroups(listedThreads);
+    const searchRoots = new Set(searchGroups.roots);
+    const groupRoleOf = (thread: EnvironmentThreadShell) =>
+      !searchRoots.has(thread)
+        ? ("worker" as const)
+        : searchGroups.workersByParentKey.has(`${thread.environmentId}:${thread.id}`)
+          ? ("lead" as const)
+          : null;
     return {
       items: results.map((thread, index) => ({
         thread,
+        ...(groupRoleOf(thread) ? { groupRole: groupRoleOf(thread)! } : {}),
         variant: slim.has(thread) ? "slim" : "card",
         snoozed: snoozedThreads.has(thread),
         pinned: pinnedThreads.has(thread),
@@ -990,6 +1142,7 @@ export function buildThreadListV2Items(input: {
       settledCount: 0,
       settledShelfHeaderIndex: null,
       folderHeaders: [],
+      groupOverflows: [],
       nextSnoozeWakeAt,
       contentOnlyThreadKeys,
     };
@@ -1006,17 +1159,27 @@ export function buildThreadListV2Items(input: {
       parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
   );
   const selectedThreadKey = input.selectedThreadKey ?? null;
+  const leadKeyByWorkerKey = new Map<string, string>();
+  for (const [leadKey, workers] of split?.workersByParentKey ?? []) {
+    for (const worker of workers)
+      leadKeyByWorkerKey.set(`${worker.environmentId}:${worker.id}`, leadKey);
+  }
+  // A selected worker keeps its lead visible, wherever the lead's shelf is folded.
+  const selectedLeadKey =
+    selectedThreadKey === null
+      ? null
+      : (leadKeyByWorkerKey.get(selectedThreadKey) ?? selectedThreadKey);
   const visibleWorking =
     input.workingShelfExpanded === true
       ? orderedWorking
       : orderedWorking.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+          (thread) => `${thread.environmentId}:${thread.id}` === selectedLeadKey,
         );
   const visibleSnoozed =
     input.snoozedShelfExpanded === true
       ? orderedSnoozed
       : orderedSnoozed.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+          (thread) => `${thread.environmentId}:${thread.id}` === selectedLeadKey,
         );
   const orderedSettled = sortSettledThreadsReusingLast(settled);
   const listedSettled =
@@ -1028,20 +1191,16 @@ export function buildThreadListV2Items(input: {
   const limitedSettled =
     listedSettled.length > settledLimit ? listedSettled.slice(0, settledLimit) : listedSettled;
   const selectedSettled =
-    selectedThreadKey === null ||
-    limitedSettled.some((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey)
+    selectedLeadKey === null ||
+    limitedSettled.some((thread) => `${thread.environmentId}:${thread.id}` === selectedLeadKey)
       ? undefined
-      : orderedSettled.find(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
-        );
+      : orderedSettled.find((thread) => `${thread.environmentId}:${thread.id}` === selectedLeadKey);
   const pagedSettled =
     selectedSettled === undefined ? limitedSettled : [...limitedSettled, selectedSettled];
   const visibleSettled =
     input.settledShelfExpanded !== false
       ? pagedSettled
-      : pagedSettled.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
-        );
+      : pagedSettled.filter((thread) => `${thread.environmentId}:${thread.id}` === selectedLeadKey);
 
   // Folders lead with their own pins; only pins above projects stay in the Pinned section.
   const folderPinned =
@@ -1049,31 +1208,133 @@ export function buildThreadListV2Items(input: {
   const shelfPinned =
     folderPinned.length === 0 ? pinned : pinned.filter((thread) => thread.pinScope !== "project");
   const items: ThreadListV2Item[] = [];
+  const groupOverflows: ThreadListV2GroupOverflow[] = [];
+  const dotRowOf = (thread: EnvironmentThreadShell) => {
+    const status = withWorkingSubagents(
+      resolveThreadListV2Status(thread),
+      resolveThreadListV2WorkingSubagents(thread, input.workingSubagentCounts),
+    );
+    return { status, unread: status === "ready" && threadHasUnseenCompletion(thread) };
+  };
+  const pushRow = (
+    item: ThreadListV2Item,
+    section: "pinned" | "working" | "active" | "snoozed" | "settled",
+  ) => {
+    const lead = item.thread;
+    const workers = workersOf(lead);
+    if (workers.length === 0) {
+      items.push(item);
+      return;
+    }
+    const slim = section === "snoozed" || section === "settled";
+    const inFolder = item.inFolder === true;
+    const leadKey = `${lead.environmentId}:${lead.id}`;
+    const selectedWorker = selectedLeadKey === leadKey && selectedThreadKey !== leadKey;
+    const collapsed = threadGroups!.collapsedKeys.has(leadKey) && !selectedWorker;
+    items.push({
+      ...item,
+      snoozed: memberStateOf(lead) === "snoozed",
+      group: {
+        role: "lead",
+        workerCount: workers.length,
+        collapsed,
+        dot: collapsed ? projectFolderDot(workers.map(dotRowOf)) : null,
+        ownState: memberStateOf(lead),
+      },
+    });
+    if (collapsed) return;
+    const listedWorkers =
+      section === "settled" && input.isListedSettled !== undefined
+        ? workers.filter(
+            (worker) =>
+              input.isListedSettled!(worker) ||
+              `${worker.environmentId}:${worker.id}` === selectedThreadKey,
+          )
+        : workers;
+    const parts = partitionGroupWorkers(listedWorkers, memberStateOf);
+    const overflows = (["settled", "snoozed"] as const).flatMap((kind) => {
+      const members = kind === "settled" ? parts.settledOverflow : parts.snoozedOverflow;
+      if (members.length === 0) return [];
+      const open =
+        threadGroups!.openOverflowKeys.has(`${leadKey}:${kind}`) ||
+        members.some((member) => `${member.environmentId}:${member.id}` === selectedThreadKey);
+      return [{ kind, members, open }];
+    });
+    const rows = [
+      ...parts.inline.map((worker) => ({ worker, overflow: null })),
+      ...overflows.flatMap(({ kind, members, open }) =>
+        open ? members.map((worker) => ({ worker, overflow: kind })) : [],
+      ),
+    ];
+    const lastIndex = overflows.length === 0 ? rows.length - 1 : -1;
+    const pushOverflow = (kind: "settled" | "snoozed") => {
+      const entry = overflows.find((overflow) => overflow.kind === kind);
+      if (!entry) return;
+      groupOverflows.push({
+        index: items.length,
+        leadKey,
+        kind,
+        count: entry.members.length,
+        expanded: entry.open,
+        inFolder,
+      });
+    };
+    let openedKind: "settled" | "snoozed" | null = null;
+    const closeKind = () => {
+      if (openedKind !== null) pushOverflow(openedKind);
+      openedKind = null;
+    };
+    for (const [index, { worker, overflow }] of rows.entries()) {
+      if (overflow !== openedKind) closeKind();
+      openedKind = overflow;
+      const memberState = memberStateOf(worker);
+      items.push({
+        thread: worker,
+        variant: slim ? "slim" : "card",
+        snoozed: memberState === "snoozed",
+        pinned: worker.pinnedAt != null,
+        wokeAt: slim || memberState !== "live" ? null : resolveThreadListV2WokeAt(worker, { now }),
+        isLast: false,
+        ...(inFolder ? { inFolder } : {}),
+        group: { role: "worker", memberState, isLastInGroup: index === lastIndex, leadKey },
+      });
+    }
+    closeKind();
+    for (const { kind, open } of overflows) {
+      if (!open) pushOverflow(kind);
+    }
+  };
   for (const thread of applyPendingThreadOrder(
     sortPinnedThreadsByOrderKey(shelfPinned),
     "pinned",
     pending,
   )) {
-    items.push({
-      thread,
-      variant: "card",
-      snoozed: false,
-      pinned: true,
-      wokeAt: resolveThreadListV2WokeAt(thread, { now }),
-      isLast: false,
-    });
+    pushRow(
+      {
+        thread,
+        variant: "card",
+        snoozed: false,
+        pinned: true,
+        wokeAt: resolveThreadListV2WokeAt(thread, { now }),
+        isLast: false,
+      },
+      "pinned",
+    );
   }
   const folderHeaders: ThreadListV2FolderHeader[] = [];
   const pushActive = (thread: EnvironmentThreadShell, inFolder: boolean) => {
-    items.push({
-      thread,
-      variant: "card",
-      snoozed: false,
-      pinned: thread.pinnedAt != null,
-      wokeAt: resolveThreadListV2WokeAt(thread, { now }),
-      isLast: false,
-      ...(inFolder ? { inFolder } : {}),
-    });
+    pushRow(
+      {
+        thread,
+        variant: "card",
+        snoozed: false,
+        pinned: thread.pinnedAt != null,
+        wokeAt: resolveThreadListV2WokeAt(thread, { now }),
+        isLast: false,
+        ...(inFolder ? { inFolder } : {}),
+      },
+      "active",
+    );
   };
   if (projectFolders) {
     const folders = groupThreadsByProject(
@@ -1085,20 +1346,14 @@ export function buildThreadListV2Items(input: {
       const collapsed = projectFolders.collapsedKeys.has(folder.group.key);
       const visible = collapsed
         ? folder.threads.filter(
-            (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
+            (thread) => `${thread.environmentId}:${thread.id}` === selectedLeadKey,
           )
         : folder.threads;
       const dot = collapsed
         ? projectFolderDot(
             folder.threads
-              .filter((thread) => !visible.includes(thread))
-              .map((thread) => {
-                const status = withWorkingSubagents(
-                  resolveThreadListV2Status(thread),
-                  resolveThreadListV2WorkingSubagents(thread, input.workingSubagentCounts),
-                );
-                return { status, unread: status === "ready" && threadHasUnseenCompletion(thread) };
-              }),
+              .flatMap((thread) => (visible.includes(thread) ? [] : [thread, ...workersOf(thread)]))
+              .map(dotRowOf),
           )
         : null;
       folderHeaders.push({
@@ -1130,36 +1385,31 @@ export function buildThreadListV2Items(input: {
   }
   const workingShelfHeaderIndex = orderedWorking.length > 0 ? items.length : null;
   for (const thread of visibleWorking) {
-    items.push({
-      thread,
-      variant: "card",
-      snoozed: false,
-      pinned: false,
-      wokeAt: resolveThreadListV2WokeAt(thread, { now }),
-      isLast: false,
-    });
+    pushRow(
+      {
+        thread,
+        variant: "card",
+        snoozed: false,
+        pinned: false,
+        wokeAt: resolveThreadListV2WokeAt(thread, { now }),
+        isLast: false,
+      },
+      "working",
+    );
   }
   const snoozedShelfHeaderIndex = orderedSnoozed.length > 0 ? items.length : null;
   for (const thread of visibleSnoozed) {
-    items.push({
-      thread,
-      variant: "slim",
-      snoozed: true,
-      pinned: false,
-      wokeAt: null,
-      isLast: false,
-    });
+    pushRow(
+      { thread, variant: "slim", snoozed: true, pinned: false, wokeAt: null, isLast: false },
+      "snoozed",
+    );
   }
   const settledShelfHeaderIndex = settledTotal > 0 ? items.length : null;
   for (const thread of visibleSettled) {
-    items.push({
-      thread,
-      variant: "slim",
-      snoozed: false,
-      pinned: false,
-      wokeAt: null,
-      isLast: false,
-    });
+    pushRow(
+      { thread, variant: "slim", snoozed: false, pinned: false, wokeAt: null, isLast: false },
+      "settled",
+    );
   }
   const last = items.at(-1);
   if (last) {
@@ -1176,6 +1426,7 @@ export function buildThreadListV2Items(input: {
     settledCount: settledTotal,
     settledShelfHeaderIndex,
     folderHeaders,
+    groupOverflows,
     nextSnoozeWakeAt,
     contentOnlyThreadKeys,
   };

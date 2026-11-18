@@ -75,6 +75,7 @@ import { threadListEnvironmentsAtom } from "../../state/presentation";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
+  ThreadListV2GroupOverflowRow,
   ThreadListV2PendingRow,
   ThreadListV2ProjectFolderHeader,
   ThreadListV2Row,
@@ -93,6 +94,9 @@ import {
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
 import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
+import { useThreadGroupCollapse } from "../threads/use-thread-group-collapse";
+import { AttachToThreadSheet } from "../threads/AttachToThreadSheet";
+import { resolveAttachTargets } from "../threads/threadGroupActions";
 import {
   useProjectFolderCollapse,
   useProjectFolderMove,
@@ -161,6 +165,12 @@ interface HomeScreenProps {
   ) => Promise<boolean>;
   readonly onRenameThread: (thread: EnvironmentThreadShell) => void;
   readonly onRegenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly onAttachThread: (thread: EnvironmentThreadShell, target: EnvironmentThreadShell) => void;
+  readonly onDetachThread: (thread: EnvironmentThreadShell) => void;
+  readonly onSettleGroup: (
+    lead: EnvironmentThreadShell,
+    options: { readonly finishedOnly: boolean },
+  ) => void;
   readonly onSelectPendingTask: (pendingTask: PendingNewTask) => void;
   readonly onDeletePendingTask: (pendingTask: PendingNewTask) => void;
   readonly onNewThreadOnBranch: (thread: EnvironmentThreadShell) => void;
@@ -384,6 +394,9 @@ export function HomeScreen(props: HomeScreenProps) {
   const handleRenameThread = props.onRenameThread;
   const handleDeleteThread = props.onDeleteThread;
   const handleUnsettleThread = props.onUnsettleThread;
+  const handleDetachThread = props.onDetachThread;
+  const handleSettleGroup = props.onSettleGroup;
+  const handleAttachThread = props.onAttachThread;
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   );
@@ -408,6 +421,21 @@ export function HomeScreen(props: HomeScreenProps) {
   const projectFoldersEnabled = useProjectFoldersEnabled();
   const { collapsedKeys, toggleFolder } = useProjectFolderCollapse();
   const moveFolder = useProjectFolderMove(projectScopes, projects);
+  const {
+    loaded: threadGroupCollapseLoaded,
+    collapsedKeys: collapsedGroupKeys,
+    toggleGroup,
+  } = useThreadGroupCollapse();
+  // Not persisted: a group's overflow opens "<leadKey>:<kind>" until "Show less" or a restart.
+  const [openOverflowKeys, setOpenOverflowKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleGroupOverflow = (leadKey: string, kind: "settled" | "snoozed") =>
+    setOpenOverflowKeys((open) => {
+      const next = new Set(open);
+      const key = `${leadKey}:${kind}`;
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  const [attachThread, setAttachThread] = useState<EnvironmentThreadShell | null>(null);
   const projectFolderGroups = useMemo(
     () =>
       [
@@ -450,6 +478,9 @@ export function HomeScreen(props: HomeScreenProps) {
     environmentId: props.selectedEnvironmentId,
     projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
     projectFolders: projectFoldersEnabled ? { groups: projectFolderGroups, collapsedKeys } : null,
+    threadGroups: threadGroupCollapseLoaded
+      ? { collapsedKeys: collapsedGroupKeys, openOverflowKeys }
+      : null,
     searchQuery: props.searchQuery,
     searchMatches: threadSearchMatchByKey,
     settlementEnvironmentIds,
@@ -573,6 +604,15 @@ export function HomeScreen(props: HomeScreenProps) {
         />
       );
     }
+    if (item.type === "v2-group-overflow") {
+      return (
+        <ThreadListV2GroupOverflowRow
+          item={item}
+          onToggle={toggleGroupOverflow}
+          pane={sidebarSurface ? "sidebar" : "screen"}
+        />
+      );
+    }
     const thread = item.item.thread;
     return (
       <ThreadListV2Row
@@ -639,6 +679,12 @@ export function HomeScreen(props: HomeScreenProps) {
         onUnpinThread={handleUnpinThread}
         onSetThreadAutoSettle={handleSetThreadAutoSettle}
         onMoveThread={handleMoveThread}
+        group={item.item.group}
+        groupRole={item.item.groupRole}
+        onToggleGroup={toggleGroup}
+        onAttachThread={setAttachThread}
+        onDetachThread={handleDetachThread}
+        onSettleGroup={handleSettleGroup}
         onSwipeableClose={handleSwipeableClose}
         onSwipeableWillOpen={handleSwipeableWillOpen}
         simultaneousSwipeGesture={homeScrollGesture}
@@ -876,6 +922,21 @@ export function HomeScreen(props: HomeScreenProps) {
           </SwipeableScrollGateProvider>
         </View>
       </ScreenContent>
+      <AttachToThreadSheet
+        thread={attachThread}
+        candidates={attachThread === null ? [] : resolveAttachTargets(props.threads, attachThread)}
+        projectTitleOf={(candidate) =>
+          candidate.projectId === attachThread?.projectId
+            ? null
+            : (v2ProjectTitleByProjectKey.get(
+                scopedProjectKey(candidate.environmentId, candidate.projectId),
+              ) ?? null)
+        }
+        onPick={(target) => {
+          if (attachThread !== null) handleAttachThread(attachThread, target);
+        }}
+        onClose={() => setAttachThread(null)}
+      />
     </View>
   );
 }

@@ -16,6 +16,7 @@ import {
   dismissThreadUndoNotice,
   readThreadUndoNotice,
   useThreadUndoNotice,
+  threadUndoNoticeMessage,
 } from "./thread-undo-notice";
 
 export function ThreadUndoNotice(props: { readonly visible: boolean }) {
@@ -82,7 +83,7 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
       pointerEvents="box-none"
     >
       <Toast
-        message={`${notice.action} thread`}
+        message={threadUndoNoticeMessage(notice)}
         action={{
           label: "Undo",
           onPress: () => {

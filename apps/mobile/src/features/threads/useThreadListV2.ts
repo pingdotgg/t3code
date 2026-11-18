@@ -50,6 +50,8 @@ export function useThreadListV2(input: {
   readonly environmentId: EnvironmentId | null;
   readonly projectRefs: LayoutInput["projectRefs"];
   readonly projectFolders: LayoutInput["projectFolders"];
+  /** Null keeps every thread its own row (collapse preferences not loaded yet). */
+  readonly threadGroups: LayoutInput["threadGroups"];
   readonly searchQuery: string;
   /** Threads that match the search by content, keyed like `threadSearchMatchKey`. */
   readonly searchMatches: ReadonlyMap<string, unknown>;
@@ -151,6 +153,7 @@ export function useThreadListV2(input: {
         environmentId: input.environmentId,
         projectRefs: input.projectRefs,
         projectFolders: input.projectFolders,
+        threadGroups: input.threadGroups,
         workingSubagentCounts,
         searchQuery: input.searchQuery,
         matchedThreadKeys: new Set(input.searchMatches.keys()),
@@ -185,6 +188,7 @@ export function useThreadListV2(input: {
       input.environmentId,
       input.projectRefs,
       input.projectFolders,
+      input.threadGroups,
       workingSubagentCounts,
       input.searchQuery,
       input.searchMatches,
@@ -245,6 +249,7 @@ export function useThreadListV2(input: {
         moveAvailability,
         shelfPreferencesLoading: !input.shelfPreferencesLoaded,
         folderHeaders: layout.folderHeaders,
+        groupOverflows: layout.groupOverflows,
         workingSubagentCounts,
       }),
     [

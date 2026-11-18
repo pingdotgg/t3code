@@ -53,7 +53,7 @@ import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useThreadShell } from "../../state/entities";
+import { useQuietThreadShell, useThreadShell } from "../../state/entities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
 import {
@@ -538,6 +538,12 @@ function ThreadRouteContent(
       : scopeThreadRef(delegatedFrom.environmentId, delegatedFrom.threadId);
   // The title it had at delegation, until this client sees the parent itself.
   const delegatedFromThread = useThreadShell(delegatedFromRef);
+  // Only its title is read, so a streaming lead must not re-render the worker.
+  const groupLead = useQuietThreadShell(
+    selectedThread?.groupParentThreadId
+      ? scopeThreadRef(selectedThread.environmentId, selectedThread.groupParentThreadId)
+      : null,
+  );
   const selectedThreadActivity =
     selectedThread === null
       ? null
@@ -546,6 +552,8 @@ function ThreadRouteContent(
           status: resolveThreadListV2Status(selectedThread),
         });
   const baseHeaderSubtitle = [
+    // First, so a phone-width header truncates the project and environment instead of the lead.
+    groupLead ? `in ${groupLead.title}` : null,
     selectedThreadProject?.title ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
     // A linked environment's delegated task names its parent; other linked work its origin.

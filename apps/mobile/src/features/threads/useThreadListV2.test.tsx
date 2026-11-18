@@ -45,6 +45,7 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
     environmentId: null,
     projectRefs: null,
     projectFolders: null,
+    threadGroups: null,
     searchQuery: "",
     searchMatches: new Map(),
     settlementEnvironmentIds: environmentIds,
@@ -242,4 +243,88 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   expect(loaded.layout.items).toHaveLength(160);
   expect(loaded.olderSettledShelf.isListed(threads[150]!)).toBe(true);
   expect(loaded.items).not.toBe(loading.items);
+});
+
+it("grouped shells return worker rows after their lead", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
+  vi.mocked(olderSettledThreads.shelfAtom).mockReturnValue(
+    Atom.make<ReadonlyMap<EnvironmentId, OlderSettledShelfEnvironment>>(new Map()),
+  );
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  const environmentId = EnvironmentId.make("environment-1");
+  const shell = (id: string, extra: Parameters<typeof makeRawThreadShell>[0] = {}) =>
+    presentThreadShell(
+      environmentId,
+      makeRawThreadShell({
+        id: ThreadId.make(id),
+        title: id,
+        settledOverride: "active",
+        ...extra,
+      }),
+    );
+  const lead = shell("lead");
+  const threads = [
+    shell("worker-b", { groupParentThreadId: lead.id, groupOrderKey: "b" }),
+    lead,
+    shell("worker-a", { groupParentThreadId: lead.id, groupOrderKey: "a" }),
+  ];
+  const environmentIds = new Set([environmentId]);
+  const input: Parameters<typeof useThreadListV2>[0] = {
+    threads,
+    pendingTasks: [],
+    environmentId: null,
+    projectRefs: null,
+    projectFolders: null,
+    threadGroups: { collapsedKeys: new Set(), openOverflowKeys: new Set() },
+    searchQuery: "",
+    searchMatches: new Map(),
+    settlementEnvironmentIds: environmentIds,
+    snoozeEnvironmentIds: environmentIds,
+    pinReorderEnvironmentIds: environmentIds,
+    activeReorderEnvironmentIds: environmentIds,
+    queuedThreadKeys: new Set(),
+    settledLimit: 10,
+    now: "2026-01-02T00:00:00.000Z",
+    pendingOrder: null,
+    shelfPreferencesLoaded: true,
+    workingShelfEnabled: false,
+    workingShelfExpanded: false,
+    snoozedShelfExpanded: false,
+    settledShelfExpanded: false,
+    selectedThreadKey: null,
+  };
+  const seen: Array<ReturnType<typeof useThreadListV2>> = [];
+  function Probe(props: { input: typeof input }) {
+    return (
+      <RegistryContext value={registry}>
+        <ListProbe {...props} />
+      </RegistryContext>
+    );
+  }
+  function ListProbe(props: { input: typeof input }) {
+    const result = useThreadListV2(props.input);
+    useLayoutEffect(() => {
+      seen.push(result);
+    });
+    return null;
+  }
+  const threadIds = () =>
+    seen.at(-1)!.items.flatMap((item) => (item.type === "v2-thread" ? [item.item.thread.id] : []));
+
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  await act(async () => root.render(<Probe input={input} />));
+  expect(threadIds()).toEqual(["lead", "worker-a", "worker-b"]);
+
+  const collapsed = {
+    ...input,
+    threadGroups: {
+      collapsedKeys: new Set([`${environmentId}:lead`]),
+      openOverflowKeys: new Set<string>(),
+    },
+  };
+  await act(async () => root.render(<Probe input={collapsed} />));
+  expect(threadIds()).toEqual(["lead"]);
 });

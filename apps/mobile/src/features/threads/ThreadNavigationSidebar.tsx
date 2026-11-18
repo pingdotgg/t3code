@@ -28,6 +28,9 @@ import { useProjects } from "../../state/entities";
 import { steadyNavigationThreadShellsAtom } from "../../state/threads";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
+import { useThreadGroupCollapse } from "./use-thread-group-collapse";
+import { AttachToThreadSheet } from "./AttachToThreadSheet";
+import { resolveAttachTargets } from "./threadGroupActions";
 import {
   useProjectFolderCollapse,
   useProjectFolderMove,
@@ -69,6 +72,7 @@ import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColu
 import {
   ThreadListV2PendingRow,
   ThreadListV2ProjectFolderHeader,
+  ThreadListV2GroupOverflowRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
@@ -153,6 +157,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     moveThread,
     renameThread,
     regenerateThreadTitle,
+    attachThread,
+    detachThread,
+    settleGroup,
   } = useThreadListActions();
   const pendingTasks = usePendingNewTasks();
   const launchingThreads = useLaunchingThreads(threads);
@@ -260,6 +267,21 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const projectFoldersEnabled = useProjectFoldersEnabled();
   const { collapsedKeys, toggleFolder } = useProjectFolderCollapse();
   const moveFolder = useProjectFolderMove(projectScopes, projects);
+  const {
+    loaded: threadGroupCollapseLoaded,
+    collapsedKeys: collapsedGroupKeys,
+    toggleGroup,
+  } = useThreadGroupCollapse();
+  // Not persisted: a group's overflow opens "<leadKey>:<kind>" until "Show less" or a restart.
+  const [openOverflowKeys, setOpenOverflowKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleGroupOverflow = (leadKey: string, kind: "settled" | "snoozed") =>
+    setOpenOverflowKeys((open) => {
+      const next = new Set(open);
+      const key = `${leadKey}:${kind}`;
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  const [attachingThread, setAttachingThread] = useState<EnvironmentThreadShell | null>(null);
   const projectFolderGroups = useMemo(
     () =>
       [
@@ -302,6 +324,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     environmentId: options.selectedEnvironmentId,
     projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
     projectFolders: projectFoldersEnabled ? { groups: projectFolderGroups, collapsedKeys } : null,
+    threadGroups: threadGroupCollapseLoaded
+      ? { collapsedKeys: collapsedGroupKeys, openOverflowKeys }
+      : null,
     searchQuery: props.searchQuery,
     searchMatches: threadSearchMatchByKey,
     settlementEnvironmentIds,
@@ -525,12 +550,22 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onUnpinThread={unpinThread}
             onSetThreadAutoSettle={setThreadAutoSettle}
             onMoveThread={moveThread}
+            group={item.item.group}
+            groupRole={item.item.groupRole}
+            onToggleGroup={toggleGroup}
+            onAttachThread={setAttachingThread}
+            onDetachThread={detachThread}
+            onSettleGroup={settleGroup}
             onSwipeableClose={handleSwipeableClose}
             onSwipeableWillOpen={handleSwipeableWillOpen}
             simultaneousSwipeGesture={sidebarScrollGesture}
           />
         );
       }
+      case "v2-group-overflow":
+        return (
+          <ThreadListV2GroupOverflowRow item={item} onToggle={toggleGroupOverflow} pane="sidebar" />
+        );
       case "v2-working-shelf":
         return (
           <ThreadListV2WorkingShelfHeader
@@ -643,6 +678,24 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     </View>
   );
 
+  const attachSheet = (
+    <AttachToThreadSheet
+      thread={attachingThread}
+      candidates={attachingThread === null ? [] : resolveAttachTargets(threads, attachingThread)}
+      projectTitleOf={(candidate) =>
+        candidate.projectId === attachingThread?.projectId
+          ? null
+          : (projectTitleByProjectKey.get(
+              scopedProjectKey(candidate.environmentId, candidate.projectId),
+            ) ?? null)
+      }
+      onPick={(target) => {
+        if (attachingThread !== null) attachThread(attachingThread, target);
+      }}
+      onClose={() => setAttachingThread(null)}
+    />
+  );
+
   if (Platform.OS === "ios") {
     return (
       <>
@@ -684,6 +737,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           </SwipeableScrollGateProvider>
           <ThreadUndoNotice visible={props.visible} />
         </View>
+        {attachSheet}
       </>
     );
   }
@@ -739,6 +793,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       </View>
       {header}
       <ThreadUndoNotice visible={props.visible} />
+      {attachSheet}
     </View>
   );
 }

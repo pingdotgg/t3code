@@ -47,6 +47,7 @@ import {
   threadListV2ListItemsAreEqual,
   threadListV2RowAccessibilityLabel,
   threadHasUnseenCompletion,
+  type ThreadListV2Item,
   type ThreadListV2ListItem,
 } from "./threadListV2";
 
@@ -308,6 +309,18 @@ describe("resolveThreadListV2SwipeActions", () => {
     });
     expect(layout.snoozedCount).toBe(1);
   });
+
+  it("offers un-settle for a settled group member shown as a card", () => {
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "card",
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: true,
+        settled: true,
+      }).primary,
+    ).toBe("unsettle");
+  });
 });
 
 describe("search lists ranked matches", () => {
@@ -334,6 +347,28 @@ describe("search lists ranked matches", () => {
       ["mentioned", "card"],
     ]);
     expect([...layout.contentOnlyThreadKeys]).toEqual([matchKey("mentioned")]);
+  });
+
+  it("keeps each match's group role while the list is flat", () => {
+    const lead = makeThread({ id: ThreadId.make("lead"), title: "Deploy plan" });
+    const layout = buildThreadListV2Items({
+      threads: [
+        lead,
+        makeThread({
+          id: ThreadId.make("worker"),
+          title: "Deploy step",
+          groupParentThreadId: lead.id,
+        }),
+        makeThread({ id: ThreadId.make("solo"), title: "Deploy notes" }),
+      ],
+      environmentId: null,
+      searchQuery: "deploy",
+      threadGroups: { collapsedKeys: new Set(), openOverflowKeys: new Set() },
+      now: NOW,
+    });
+    expect(
+      Object.fromEntries(layout.items.map((item) => [item.thread.id, item.groupRole ?? null])),
+    ).toEqual({ lead: "lead", worker: "worker", solo: null });
   });
 });
 
@@ -2191,5 +2226,213 @@ describe("queued messages keep a settled thread active", () => {
       ["settled", "slim"],
     ]);
     expect(layout.settledCount).toBe(1);
+  });
+});
+
+describe("thread groups in the list", () => {
+  const leadId = ThreadId.make("lead");
+  const leadKey = `${environmentId}:lead`;
+  const threadGroups = { collapsedKeys: new Set<string>(), openOverflowKeys: new Set<string>() };
+  const worker = (id: string, order: string, overrides: Partial<EnvironmentThreadShell> = {}) =>
+    makeThread({
+      id: ThreadId.make(id),
+      title: id,
+      groupParentThreadId: leadId,
+      groupOrderKey: order,
+      ...overrides,
+    });
+  const lead = (overrides: Partial<EnvironmentThreadShell> = {}) =>
+    makeThread({ id: leadId, title: "lead", ...overrides });
+  const layoutOf = (
+    threads: ReadonlyArray<EnvironmentThreadShell>,
+    overrides: Partial<Parameters<typeof buildThreadListV2Items>[0]> = {},
+  ) =>
+    buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      threadGroups,
+      ...overrides,
+    });
+  const settled = { settledOverride: "settled" } as const;
+  const ids = (items: ReadonlyArray<{ readonly thread: EnvironmentThreadShell }>) =>
+    items.map((item) => item.thread.id);
+
+  it("workers follow their lead in the active list", () => {
+    const layout = layoutOf([worker("w2", "b"), lead(), worker("w1", "a")]);
+    expect(ids(layout.items)).toEqual(["lead", "w1", "w2"]);
+    expect(layout.items.map((item) => item.group)).toEqual([
+      { role: "lead", workerCount: 2, collapsed: false, dot: null, ownState: "live" },
+      { role: "worker", memberState: "live", isLastInGroup: false, leadKey },
+      { role: "worker", memberState: "live", isLastInGroup: true, leadKey },
+    ]);
+  });
+
+  it("settled lead with a live worker stays active", () => {
+    const layout = layoutOf([lead(settled), worker("w1", "a")]);
+    expect(layout.settledCount).toBe(0);
+    expect(layout.items.map((item) => [item.thread.id, item.variant] as const)).toEqual([
+      ["lead", "card"],
+      ["w1", "card"],
+    ]);
+    expect(layout.items[0]?.group).toMatchObject({ role: "lead", ownState: "settled" });
+  });
+
+  it("fully settled group is one settled-shelf row", () => {
+    const threads = [lead(settled), worker("w1", "a", settled)];
+    const collapsed = layoutOf(threads, {
+      threadGroups: { ...threadGroups, collapsedKeys: new Set([leadKey]) },
+    });
+    expect(ids(collapsed.items)).toEqual(["lead"]);
+    expect(collapsed.settledCount).toBe(1);
+    const expanded = layoutOf(threads);
+    expect(expanded.items.map((item) => [item.thread.id, item.variant] as const)).toEqual([
+      ["lead", "slim"],
+      ["w1", "slim"],
+    ]);
+    expect(expanded.settledCount).toBe(1);
+  });
+
+  it("lists only the loaded workers of a fully settled group", () => {
+    const layout = layoutOf(
+      [lead(settled), worker("w1", "a", settled), worker("w2", "b", settled)],
+      {
+        isListedSettled: (thread) => thread.id !== "w2",
+      },
+    );
+    expect(ids(layout.items)).toEqual(["lead", "w1"]);
+  });
+
+  it("three settled workers fold into an overflow", () => {
+    const threads = [
+      lead(),
+      worker("w1", "a"),
+      worker("w2", "b", settled),
+      worker("w3", "c", settled),
+      worker("w4", "d", settled),
+    ];
+    const layout = layoutOf(threads);
+    expect(ids(layout.items)).toEqual(["lead", "w1"]);
+    expect(layout.groupOverflows).toEqual([
+      { index: 2, leadKey, kind: "settled", count: 3, expanded: false, inFolder: false },
+    ]);
+    expect(layout.items[1]?.group).toMatchObject({ role: "worker", isLastInGroup: false });
+    const listed = (groups: Parameters<typeof layoutOf>[1]) => {
+      const built = layoutOf(threads, groups);
+      return buildThreadListV2ListItems({
+        items: built.items,
+        pendingTasks: [],
+        groupOverflows: built.groupOverflows,
+      }).map((item) => (item.type === "v2-thread" ? item.item.thread.id : item.type));
+    };
+    expect(listed({})).toEqual(["lead", "w1", "v2-group-overflow"]);
+    expect(
+      listed({
+        threadGroups: { ...threadGroups, openOverflowKeys: new Set([`${leadKey}:settled`]) },
+      }),
+    ).toEqual(["lead", "w1", "w2", "w3", "w4", "v2-group-overflow"]);
+    const open = layoutOf(threads, {
+      threadGroups: { ...threadGroups, openOverflowKeys: new Set([`${leadKey}:settled`]) },
+    });
+    expect(open.groupOverflows).toMatchObject([{ index: 5, expanded: true, count: 3 }]);
+  });
+
+  it("workers cannot move", () => {
+    const layout = layoutOf([lead(), worker("w1", "a"), worker("w2", "b")]);
+    const listItems = buildThreadListV2ListItems({
+      items: layout.items,
+      pendingTasks: [],
+      moveAvailability: new Map(
+        layout.items.map((item) => [
+          `${item.thread.environmentId}:${item.thread.id}`,
+          { canMoveUp: true, canMoveDown: true },
+        ]),
+      ),
+    });
+    expect(
+      listItems.map((item) =>
+        item.type === "v2-thread" ? [item.item.thread.id, item.canMoveUp, item.canMoveDown] : null,
+      ),
+    ).toEqual([
+      ["lead", true, true],
+      ["w1", false, false],
+      ["w2", false, false],
+    ]);
+  });
+
+  it("collapsed group lists only the lead with a dot", () => {
+    const layout = layoutOf([lead(), worker("w1", "a", { hasPendingUserInput: true })], {
+      threadGroups: { ...threadGroups, collapsedKeys: new Set([leadKey]) },
+    });
+    expect(ids(layout.items)).toEqual(["lead"]);
+    expect(layout.items[0]?.group).toMatchObject({
+      role: "lead",
+      workerCount: 1,
+      collapsed: true,
+      dot: "attention",
+    });
+  });
+
+  it("selected worker in a collapsed group stays visible", () => {
+    const threads = [
+      lead(),
+      worker("w1", "a"),
+      worker("w2", "b", settled),
+      worker("w3", "c", settled),
+      worker("w4", "d", settled),
+    ];
+    const layout = layoutOf(threads, {
+      threadGroups: { ...threadGroups, collapsedKeys: new Set([leadKey]) },
+      selectedThreadKey: `${environmentId}:w2`,
+    });
+    expect(ids(layout.items)).toEqual(["lead", "w1", "w2", "w3", "w4"]);
+    expect(layout.items[0]?.group).toMatchObject({ collapsed: false });
+    expect(layout.groupOverflows).toMatchObject([{ kind: "settled", expanded: true, count: 3 }]);
+  });
+
+  it("worker without its lead in scope is a root", () => {
+    const projectId = ProjectId.make("other-project");
+    const layout = layoutOf([lead(), worker("w1", "a", { projectId })], {
+      projectRefs: [{ environmentId, projectId }],
+    });
+    expect(ids(layout.items)).toEqual(["w1"]);
+    expect(layout.items[0]?.group).toBeUndefined();
+  });
+
+  it("search lists workers flat", () => {
+    const layout = layoutOf([lead(), worker("needle", "a")], { searchQuery: "needle" });
+    expect(ids(layout.items)).toEqual(["needle"]);
+    expect(layout.items[0]?.group).toBeUndefined();
+  });
+
+  it("equality notices group changes", () => {
+    const [leadRow, workerRow] = buildThreadListV2ListItems({
+      items: layoutOf([lead(), worker("w1", "a")]).items,
+      pendingTasks: [],
+    });
+    const withGroup = (row: ThreadListV2ListItem | undefined, group: ThreadListV2Item["group"]) => {
+      if (row?.type !== "v2-thread") throw new Error("expected a thread row");
+      return { ...row, item: { ...row.item, group } };
+    };
+    if (leadRow?.type !== "v2-thread" || leadRow.item.group?.role !== "lead") {
+      throw new Error("expected a lead row");
+    }
+    expect(threadListV2ListItemsAreEqual(leadRow, { ...leadRow })).toBe(true);
+    expect(
+      threadListV2ListItemsAreEqual(
+        leadRow,
+        withGroup(leadRow, { ...leadRow.item.group, collapsed: true }),
+      ),
+    ).toBe(false);
+    if (workerRow?.type !== "v2-thread" || workerRow.item.group?.role !== "worker") {
+      throw new Error("expected a worker row");
+    }
+    expect(
+      threadListV2ListItemsAreEqual(
+        workerRow,
+        withGroup(workerRow, { ...workerRow.item.group, memberState: "settled" }),
+      ),
+    ).toBe(false);
   });
 });

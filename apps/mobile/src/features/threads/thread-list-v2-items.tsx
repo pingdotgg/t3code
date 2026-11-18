@@ -45,8 +45,16 @@ import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useMemo, useState, type ComponentProps, type ReactNode } from "react";
-import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
+import {
+  type AccessibilityActionEvent,
+  Platform,
+  Pressable,
+  Text as RNText,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
+import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -94,8 +102,11 @@ import {
   resolveThreadListV2SwipeActions,
   layoutThreadListV2RowMenuActions,
   threadListV2RowAccessibilityLabel,
+  type ThreadListV2GroupOverflowListItem,
+  type ThreadListV2Item,
   type ThreadListV2Status,
 } from "./threadListV2";
+import { THREAD_GROUP_INDENT, ThreadGroupTreeLine } from "./ThreadGroupTreeLine";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -808,6 +819,152 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   );
 });
 
+const ATTACH_MENU_ACTION: MenuAction = { id: "attach", title: "Attach to thread…", image: "link" };
+const DETACH_MENU_ACTION: MenuAction = {
+  id: "detach",
+  title: "Detach from group",
+  image: "minus.circle",
+};
+const SETTLE_GROUP_MENU_ACTION: MenuAction = {
+  id: "settle-group-menu",
+  title: "Settle group",
+  image: "checkmark",
+  subactions: [
+    { id: "settle-group", title: "Whole group" },
+    { id: "settle-group-finished", title: "Only finished threads" },
+  ],
+};
+
+/** A row's horizontal content inset, where a group's line runs. */
+const rowContentInset = (sidebarPane: boolean) => (sidebarPane ? 12 : 20);
+const ROW_CONTENT_PADDING_Y = 10;
+
+type ThreadListV2LeadGroup = Extract<NonNullable<ThreadListV2Item["group"]>, { role: "lead" }>;
+
+function ThreadGroupChip(props: {
+  readonly group: ThreadListV2LeadGroup;
+  readonly selected: boolean;
+  readonly tertiaryClassName: string;
+  readonly tertiaryTintClassName: string;
+  readonly onToggle: () => void;
+}) {
+  const { group } = props;
+  const dot = group.collapsed && group.dot ? FOLDER_DOT[group.dot] : null;
+  const chevronStyle = useAnimatedStyle(() => ({
+    transform: [
+      {
+        rotate: withTiming(group.collapsed ? "0deg" : "90deg", {
+          duration: 200,
+          reduceMotion: ReduceMotion.System,
+        }),
+      },
+    ],
+  }));
+  return (
+    <View className="mt-1.5 flex-row">
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={group.collapsed ? "Expand group" : "Collapse group"}
+        accessibilityState={{ expanded: !group.collapsed }}
+        // Padding cancelled by negative margin grows the touch target without moving the chip.
+        className="-m-2.5 flex-row items-center gap-1.5 p-2.5"
+        onPress={props.onToggle}
+        // Handle long-press so opening the iOS row menu cannot also toggle the group on release.
+        onLongPress={() => undefined}
+        style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+      >
+        <Reanimated.View style={chevronStyle}>
+          <SymbolView
+            name="chevron.right"
+            size={10}
+            tintColorClassName={
+              props.selected
+                ? selectedThreadRowColors.mutedIconTintClassName
+                : props.tertiaryTintClassName
+            }
+            type="monochrome"
+            weight="semibold"
+          />
+        </Reanimated.View>
+        <Text
+          className={cn(
+            "text-xs tabular-nums",
+            props.selected
+              ? selectedThreadRowColors.mutedForegroundClassName
+              : props.tertiaryClassName,
+          )}
+        >
+          {group.workerCount}
+        </Text>
+        {dot ? (
+          <View
+            accessibilityLabel={dot.label}
+            className={cn("size-2 rounded-full", dot.className)}
+          />
+        ) : null}
+      </Pressable>
+    </View>
+  );
+}
+
+export const ThreadListV2GroupOverflowRow = memo(function ThreadListV2GroupOverflowRow(props: {
+  readonly item: ThreadListV2GroupOverflowListItem;
+  readonly onToggle: (leadKey: string, kind: "settled" | "snoozed") => void;
+  readonly pane: "screen" | "sidebar";
+}) {
+  const { item } = props;
+  const sidebarPane = props.pane === "sidebar";
+  const { fontScale } = useWindowDimensions();
+  const labelTypography = useScaledTextRole("label");
+  const folderIconSize = useFolderHeaderIconSize();
+  const theme = useUniwindTheme();
+  const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, false);
+  const folderIndent = item.inFolder ? folderIconSize + FOLDER_HEADER_ICON_GAP : 0;
+  const leadLeft = rowContentInset(sidebarPane) + folderIndent;
+  const lineHeight = Math.max(20, labelTypography.lineHeight * fontScale);
+  const label = item.expanded ? "Show less" : `+${item.count} ${item.kind}`;
+  return (
+    <RowPressable
+      accessibilityRole="button"
+      accessibilityLabel={
+        item.expanded
+          ? `Hide ${item.count} ${item.kind} threads`
+          : `Show ${item.count} ${item.kind} ${item.count === 1 ? "thread" : "threads"}`
+      }
+      accessibilityState={{ expanded: item.expanded }}
+      className={rowAppearance.className}
+      interactionClassName={rowAppearance.interactionClassName}
+      interactionOpacity={rowAppearance.interactionOpacity}
+      onPress={() => props.onToggle(item.leadKey, item.kind)}
+      style={rowAppearance.cardStyle}
+    >
+      <View
+        style={{
+          paddingLeft: leadLeft + THREAD_GROUP_INDENT - (sidebarPane ? 12 : 0),
+          // The sidebar pill already pads the row.
+          paddingVertical: sidebarPane ? 0 : ROW_CONTENT_PADDING_Y,
+          justifyContent: "center",
+          minHeight: lineHeight + (sidebarPane ? 0 : ROW_CONTENT_PADDING_Y * 2),
+        }}
+      >
+        <Text
+          className={cn("text-xs font-t3-medium", rowAppearance.tertiaryForegroundClassName)}
+          numberOfLines={1}
+        >
+          {label}
+        </Text>
+      </View>
+      <ThreadGroupTreeLine
+        kind="last"
+        color={theme[sidebarPane ? "--color-drawer-border" : "--color-border-subtle"]}
+        leadLeft={leadLeft}
+        branchY={ROW_CONTENT_PADDING_Y + lineHeight / 2}
+        contentInset={0}
+      />
+    </RowPressable>
+  );
+});
+
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
@@ -869,6 +1026,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly searchMatch?: EnvironmentThreadSearchMatch;
   readonly searchQuery?: string;
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
+  readonly group?: ThreadListV2Item["group"];
+  readonly groupRole?: ThreadListV2Item["groupRole"];
+  readonly onToggleGroup?: (leadKey: string) => void;
+  /** Opens the picker that attaches the thread to a group. */
+  readonly onAttachThread?: (thread: EnvironmentThreadShell) => void;
+  readonly onDetachThread?: (thread: EnvironmentThreadShell) => void;
+  readonly onSettleGroup?: (
+    lead: EnvironmentThreadShell,
+    options: { readonly finishedOnly: boolean },
+  ) => void;
 }) {
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const titleTypography = useScaledTextRole("body");
@@ -882,6 +1049,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const titleLineHeight =
     Platform.OS === "android" ? androidTitleLineHeight : titleTypography.lineHeight * fontScale;
   const folderIconSize = useFolderHeaderIconSize();
+  const { group, onToggleGroup, onAttachThread, onDetachThread, onSettleGroup } = props;
+  const leadGroup = group?.role === "lead" ? group : null;
+  const workerGroup = group?.role === "worker" ? group : null;
+  const hasWorkers = leadGroup !== null || props.groupRole === "lead";
   const {
     thread,
     variant,
@@ -951,6 +1122,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? { ...workingLabel, label: "Goal" }
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
+  // Slim rows are already muted; a card in a group shows a settled or snoozed member's state.
+  const cardMemberState =
+    variant === "card" ? (workerGroup?.memberState ?? leadGroup?.ownState ?? "live") : "live";
+  const memberMuted = cardMemberState !== "live";
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const timeLabel = props.timeLabel;
   const rowAccessibilityLabel = threadListV2RowAccessibilityLabel({
@@ -976,14 +1151,26 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       input: { threadId: thread.id, visitedAt: props.wokeAt },
     });
   }, [props.wokeAt, thread.environmentId, thread.id, visitThread]);
+  const handleToggleGroup = useCallback(
+    () => onToggleGroup?.(`${thread.environmentId}:${thread.id}`),
+    [onToggleGroup, thread.environmentId, thread.id],
+  );
   // VoiceOver cannot focus buttons inside the accessible row.
   const rowAccessibilityActions = useMemo(
     () => [
       ...(prBadgeLabel ? [{ name: "openPullRequests", label: prBadgeLabel }] : []),
       ...(showsWoke ? [{ name: "dismissWoke", label: "Dismiss Woke notification" }] : []),
+      ...(leadGroup
+        ? [{ name: "toggleGroup", label: leadGroup.collapsed ? "Expand group" : "Collapse group" }]
+        : []),
     ],
-    [prBadgeLabel, showsWoke],
+    [prBadgeLabel, showsWoke, leadGroup],
   );
+  const handleRowAccessibilityAction = (event: AccessibilityActionEvent) => {
+    if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
+    if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
+    if (event.nativeEvent.actionName === "toggleGroup") handleToggleGroup();
+  };
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
@@ -1020,8 +1207,23 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleMoveUp = useCallback(() => onMoveThread?.(thread, "up"), [onMoveThread, thread]);
   const handleMoveDown = useCallback(() => onMoveThread?.(thread, "down"), [onMoveThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
+  const isWorker = workerGroup !== null || props.groupRole === "worker";
+  const groupMenuItems = useMemo<MenuAction[]>(
+    () =>
+      isWorker
+        ? onDetachThread
+          ? [DETACH_MENU_ACTION]
+          : []
+        : onAttachThread
+          ? [ATTACH_MENU_ACTION]
+          : [],
+    [isWorker, onAttachThread, onDetachThread],
+  );
+  const canSettleGroup = hasWorkers && onSettleGroup !== undefined;
 
-  const canUnsettle = variant === "slim";
+  // A group's section follows its liveliest member, so a settled member can be a card.
+  const ownSettled = (leadGroup?.ownState ?? workerGroup?.memberState) === "settled";
+  const canUnsettle = variant === "slim" || ownSettled;
   // The gate's only time-dependent edge is the queued-turn grace window, so its
   // expiry is known without a clock: evaluate at the message's own timestamp.
   // A gate held by runtime status has no expiry, and no clock tick opens it.
@@ -1033,6 +1235,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const snoozeGateNow = new Date(snoozeGateNowMs).toISOString();
   const swipeActions = resolveThreadListV2SwipeActions({
     variant,
+    settled: ownSettled,
     settlementSupported: props.settlementSupported,
     snoozeSupported: props.snoozeSupported,
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
@@ -1158,7 +1361,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     if (snoozedRow) {
       return layoutThreadListV2RowMenuActions({
         nested,
-        direct: [...direct, SNOOZED_MENU_ACTIONS[0]!],
+        direct: [...direct, SNOOZED_MENU_ACTIONS[0]!, ...groupMenuItems],
         reorder: [],
         pin: [],
         secondary: [
@@ -1172,20 +1375,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     if (!props.settlementSupported) {
       return layoutThreadListV2RowMenuActions({
         nested,
-        direct: [...direct, LEGACY_MENU_ACTIONS[0]!],
+        direct: [...direct, LEGACY_MENU_ACTIONS[0]!, ...groupMenuItems],
         reorder: reorderMenuItems,
-        pin: pinMenuItems,
+        pin: isWorker ? [] : pinMenuItems,
         secondary: [...titleMenuItems, LEGACY_MENU_ACTIONS[1]!],
       });
     }
     if (canUnsettle) {
       return layoutThreadListV2RowMenuActions({
         nested,
-        direct: [...direct, SLIM_MENU_ACTIONS[0]!],
+        direct: [...direct, SLIM_MENU_ACTIONS[0]!, ...groupMenuItems],
         reorder: reorderMenuItems.filter(
           (action) => action.id !== "move-up" && action.id !== "move-down",
         ),
-        pin: pinMenuItems,
+        pin: isWorker ? [] : pinMenuItems,
         secondary: [
           ...titleMenuItems,
           ...autoSettleMenuItems,
@@ -1198,13 +1401,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       nested,
       direct: [
         ...direct,
-        CARD_MENU_ACTIONS[0]!,
+        canSettleGroup ? SETTLE_GROUP_MENU_ACTION : CARD_MENU_ACTIONS[0]!,
         ...(swipeActions.secondary === "snooze"
-          ? [{ id: "snooze", title: "Snooze", image: "clock", subactions: snoozePresetActions }]
+          ? [
+              {
+                id: "snooze",
+                title: hasWorkers ? "Snooze group" : "Snooze",
+                image: "clock",
+                subactions: snoozePresetActions,
+              },
+            ]
           : []),
+        ...groupMenuItems,
       ],
       reorder: reorderMenuItems,
-      pin: pinMenuItems,
+      pin: isWorker ? [] : pinMenuItems,
       secondary: [
         ...titleMenuItems,
         ...autoSettleMenuItems,
@@ -1214,7 +1425,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     });
   }, [
     autoSettleMenuItems,
+    canSettleGroup,
     canUnsettle,
+    groupMenuItems,
+    hasWorkers,
+    isWorker,
     pinMenuItems,
     props.settlementSupported,
     reorderMenuItems,
@@ -1228,6 +1443,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "settle") handleSettle();
+      if (nativeEvent.event === "attach") onAttachThread?.(thread);
+      if (nativeEvent.event === "detach") onDetachThread?.(thread);
+      if (nativeEvent.event === "settle-group") onSettleGroup?.(thread, { finishedOnly: false });
+      if (nativeEvent.event === "settle-group-finished") {
+        onSettleGroup?.(thread, { finishedOnly: true });
+      }
       if (nativeEvent.event === "unsettle") handleUnsettle();
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
       if (nativeEvent.event === "pin") handlePin();
@@ -1281,6 +1502,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       }
     },
     [
+      onAttachThread,
+      onDetachThread,
+      onSettleGroup,
       onNewThreadOnBranch,
       thread,
       handleArchive,
@@ -1374,7 +1598,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         "flex-1 text-base",
         !recede && "font-t3-medium",
         selected ? selectedThreadRowColors.foregroundClassName : rowAppearance.foregroundClassName,
-        isRegeneratingTitle && "opacity-55",
+        (isRegeneratingTitle || memberMuted) && "opacity-55",
       )}
       numberOfLines={2}
       onTextLayout={
@@ -1391,6 +1615,45 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       {thread.title}
     </Text>
   );
+  const groupChip = leadGroup ? (
+    <ThreadGroupChip
+      group={leadGroup}
+      selected={selected}
+      tertiaryClassName={rowAppearance.tertiaryForegroundClassName}
+      tertiaryTintClassName={rowAppearance.tertiaryIconTintClassName}
+      onToggle={handleToggleGroup}
+    />
+  ) : null;
+  const hasTrailingDivider =
+    !sidebarPane && THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false;
+  const groupLineColor = theme[sidebarPane ? "--color-drawer-border" : "--color-border-subtle"];
+  const groupLeft = rowContentInset(sidebarPane) + (variant === "card" ? folderIndent : 0);
+  const slimTitleY =
+    providerNameLabel || props.searchMatch
+      ? 8 + titleLineHeight / 2
+      : Math.max(22, 8 + titleLineHeight / 2);
+  const treeLine = workerGroup ? (
+    <ThreadGroupTreeLine
+      kind={workerGroup.isLastInGroup ? "last" : "worker"}
+      color={groupLineColor}
+      leadLeft={groupLeft}
+      branchY={
+        variant === "card"
+          ? ROW_CONTENT_PADDING_Y + (projectLine ? titleLineHeight : 0) + titleLineHeight / 2
+          : projectLine
+            ? 8 + titleLineHeight * 1.5
+            : slimTitleY
+      }
+      contentInset={titleTextInset}
+    />
+  ) : leadGroup && !leadGroup.collapsed ? (
+    <ThreadGroupTreeLine
+      kind="lead"
+      color={groupLineColor}
+      leadLeft={groupLeft}
+      stubHeight={variant === "card" ? ROW_CONTENT_PADDING_Y + (hasTrailingDivider ? 1 : 0) : 8}
+    />
+  ) : null;
   const cardContent = (
     <>
       <View className="flex-row items-start gap-2">
@@ -1405,7 +1668,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : (
           threadTitle
         )}
-        <View className="flex-row items-center gap-1.5" style={{ minHeight: titleLineHeight }}>
+        <View
+          className="flex-row items-center gap-1.5"
+          style={{
+            minHeight: titleLineHeight,
+            opacity: workerGroup !== null && memberMuted ? 0.55 : 1,
+          }}
+        >
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {pinnedRow ? (
             <SymbolView
@@ -1413,6 +1682,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               size={11}
               tintColorClassName={rowAppearance.mutedIconTintClassName}
               type="monochrome"
+            />
+          ) : null}
+          {memberMuted ? (
+            <SymbolView
+              name={cardMemberState === "settled" ? "checkmark" : "clock"}
+              size={11}
+              tintColorClassName={
+                selected
+                  ? selectedThreadRowColors.mutedIconTintClassName
+                  : rowAppearance.mutedIconTintClassName
+              }
+              type="monochrome"
+              weight="semibold"
             />
           ) : null}
           {showsWoke ? (
@@ -1511,7 +1793,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 </View>
               ) : null}
             </View>
-          ) : (
+          ) : workerGroup !== null && cardMemberState === "settled" ? null : (
             <Text
               className={cn(
                 "text-xs tabular-nums",
@@ -1520,7 +1802,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   : rowAppearance.tertiaryForegroundClassName,
               )}
             >
-              {timeLabel}
+              {workerGroup !== null &&
+              cardMemberState === "snoozed" &&
+              props.snoozeWakeLabelText !== undefined
+                ? props.snoozeWakeLabelText
+                : timeLabel}
             </Text>
           )}
         </View>
@@ -1697,12 +1983,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </View>
         ) : null}
       </View>
+      {leadGroup ? <View style={{ paddingLeft: titleTextInset }}>{groupChip}</View> : null}
     </>
   );
 
+  const contentIndent = folderIndent + (workerGroup ? THREAD_GROUP_INDENT : 0);
   const fadedCardContent =
-    recede || folderIndent > 0 ? (
-      <View style={{ opacity: recede ? 0.55 : 1, paddingLeft: folderIndent }}>{cardContent}</View>
+    recede || contentIndent > 0 ? (
+      <View style={{ opacity: recede ? 0.55 : 1, paddingLeft: contentIndent }}>{cardContent}</View>
     ) : (
       cardContent
     );
@@ -1743,6 +2031,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           selected={selected}
         />
       ) : null}
+      {groupChip}
     </View>
   );
   const slimTrailing = (
@@ -1766,6 +2055,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     </>
   );
 
+  const slimWorkerInsetStyle = workerGroup
+    ? { paddingLeft: groupLeft + THREAD_GROUP_INDENT }
+    : undefined;
+
   const rowContent = (close: () => void) =>
     variant === "card" ? (
       <RowPressable
@@ -1778,10 +2071,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityRole="button"
         accessibilityState={{ selected }}
         accessibilityActions={rowAccessibilityActions}
-        onAccessibilityAction={(event) => {
-          if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
-          if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
-        }}
+        onAccessibilityAction={handleRowAccessibilityAction}
         onPress={() => {
           close();
           selectThread();
@@ -1789,13 +2079,28 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         style={rowAppearance.cardStyle}
       >
         {sidebarPane ? (
-          fadedCardContent
+          <>
+            {fadedCardContent}
+            {treeLine}
+          </>
         ) : (
           <View>
             <View className={THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME}>{fadedCardContent}</View>
-            {THREAD_LIST_V2_ROW_DIVIDERS && props.showTrailingDivider !== false ? (
-              <View className="h-px bg-border-subtle" style={{ marginLeft: 20 + folderIndent }} />
+            {hasTrailingDivider ? (
+              <View
+                className="h-px bg-border-subtle"
+                // An open lead's divider starts past the tree trunk, in line with its workers'.
+                style={{
+                  marginLeft:
+                    20 +
+                    contentIndent +
+                    (leadGroup && !leadGroup.collapsed && leadGroup.workerCount > 0
+                      ? THREAD_GROUP_INDENT
+                      : 0),
+                }}
+              />
             ) : null}
+            {treeLine}
           </View>
         )}
       </RowPressable>
@@ -1808,6 +2113,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
+        accessibilityActions={rowAccessibilityActions}
+        onAccessibilityAction={handleRowAccessibilityAction}
         className={rowAppearance.className}
         onPress={() => {
           close();
@@ -1822,6 +2129,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               "min-h-[44px] py-2",
               sidebarPane && "px-3",
             )}
+            style={slimWorkerInsetStyle}
           >
             <View className="flex-row items-center gap-2">
               <ThreadListV2ProjectLine
@@ -1845,11 +2153,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               "min-h-[44px] flex-row items-center gap-2 py-2",
               sidebarPane && "px-3",
             )}
+            style={slimWorkerInsetStyle}
           >
             {slimDetails}
             {slimTrailing}
           </View>
         )}
+        {treeLine}
       </RowPressable>
     );
 

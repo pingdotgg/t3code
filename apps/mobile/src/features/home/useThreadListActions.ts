@@ -3,6 +3,8 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
+import { resolveThreadGroupFor } from "@t3tools/client-runtime/state/thread-groups";
 import { AuthOrchestrationOperateScope, type ThreadPinScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
@@ -39,6 +41,12 @@ import {
 import { getThreadListV2OrderedSection } from "../threads/threadListV2";
 import { threadCanArchive } from "./threadArchive";
 import { resolveThreadTitleRename } from "../threads/thread-title-rename";
+import {
+  groupLeadArchiveDetail,
+  groupLeadDeleteDetail,
+  planGroupSettle,
+  planGroupSnooze,
+} from "../threads/threadGroupActions";
 
 function environmentConfigLoaded(environmentId: EnvironmentThreadShell["environmentId"]) {
   return appAtomRegistry.get(environmentServerConfigsAtom).has(environmentId);
@@ -100,6 +108,48 @@ function liveThread(thread: EnvironmentThreadShell): EnvironmentThreadShell {
       .get(environmentThreadShells.threadShellsAtom)
       .find((row) => row.id === thread.id && row.environmentId === thread.environmentId) ?? thread
   );
+}
+
+function resolveLeadGroup(thread: EnvironmentThreadShell) {
+  const group = resolveThreadGroupFor(
+    appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+    thread.environmentId,
+    thread.id,
+  );
+  return group !== null && group.parent.id === thread.id ? group : null;
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function groupCommandsReady(thread: EnvironmentThreadShell): boolean {
+  return (
+    readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope) &&
+    environmentConfigLoaded(thread.environmentId)
+  );
+}
+
+type ThreadUndoClaim = ReturnType<typeof ThreadUndo.begin>;
+type UndoRestore = {
+  readonly thread: EnvironmentThreadShell;
+  readonly plan: ThreadUndo.ThreadUndoPlan;
+  readonly claim: ThreadUndoClaim;
+};
+
+// A group notice shows once, so its claim stands for every member claim. The notice finishes
+// the claim before undo runs, so the members still current are captured at the first finish.
+function combineUndoClaims(claims: ReadonlyArray<ThreadUndoClaim>) {
+  let restorable: ReadonlyArray<number> | null = null;
+  const currentIndexes = () => claims.flatMap((claim, index) => (claim.isCurrent() ? [index] : []));
+  return {
+    isCurrent: () => claims.some((claim) => claim.isCurrent()),
+    finish: () => {
+      restorable ??= currentIndexes();
+      for (const claim of claims) claim.finish();
+    },
+    restorableIndexes: () => restorable ?? currentIndexes(),
+  };
 }
 
 function useThreadActionExecutor(
@@ -204,7 +254,10 @@ function confirmThreadDeletion(
 ) {
   if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
   const title = "Delete thread?";
-  const message = `“${thread.title}” will be permanently deleted, including its terminal history.`;
+  const group = resolveLeadGroup(thread);
+  const message = `“${thread.title}” will be permanently deleted, including its terminal history.${
+    group ? ` ${groupLeadDeleteDetail(group.workers.length)}` : ""
+  }`;
   Dialog.confirm({
     title,
     message,
@@ -238,6 +291,12 @@ export function useThreadListActions(): {
   ) => Promise<boolean>;
   readonly renameThread: (thread: EnvironmentThreadShell) => void;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly attachThread: (thread: EnvironmentThreadShell, target: EnvironmentThreadShell) => void;
+  readonly detachThread: (thread: EnvironmentThreadShell) => void;
+  readonly settleGroup: (
+    lead: EnvironmentThreadShell,
+    options: { readonly finishedOnly: boolean },
+  ) => void;
 } {
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
@@ -253,14 +312,89 @@ export function useThreadListActions(): {
   const regenerateTitle = useAtomCommand(threadEnvironment.regenerateTitle, {
     reportFailure: false,
   });
+  const attachToGroupMutation = useAtomCommand(threadEnvironment.attachToGroup, {
+    reportFailure: false,
+  });
+  const detachFromGroupMutation = useAtomCommand(threadEnvironment.detachFromGroup, {
+    reportFailure: false,
+  });
   const snoozeInFlightThreadKeys = useRef(new Set<string>());
   const titleRegenerationInFlightThreadKeys = useRef(new Set<string>());
 
-  const archiveThread = (thread: EnvironmentThreadShell) => executeAction("archive", thread);
+  const archiveThread = async (thread: EnvironmentThreadShell) => {
+    const group = resolveLeadGroup(thread);
+    if (group) {
+      if (!checkThreadOperationPermission(thread, actionFailureTitle("archive"))) return false;
+      const confirmed = await new Promise<boolean>((resolve) =>
+        Dialog.confirm({
+          title: "Archive thread?",
+          message: groupLeadArchiveDetail(group.workers.length),
+          confirmText: "Archive",
+          onConfirm: () => resolve(true),
+          onCancel: () => resolve(false),
+        }),
+      );
+      if (!confirmed) return false;
+    }
+    return executeAction("archive", thread);
+  };
+  const runUndoPlan = (
+    thread: EnvironmentThreadShell,
+    action: "Settled" | "Snoozed" | "Unpinned",
+    plan: ThreadUndo.ThreadUndoPlan,
+  ) =>
+    ThreadUndo.executeThreadUndo(
+      plan,
+      async (step) => {
+        switch (step.action) {
+          case "unsettle":
+            return unsettleThread(thread, step.restoreUnsettledAt);
+          case "unsnooze":
+            return unsnoozeThread(thread);
+          case "pin":
+            return pinThread(thread, {
+              ...(step.orderKey !== undefined ? { orderKey: step.orderKey } : {}),
+              ...(step.scope !== undefined ? { scope: step.scope } : {}),
+            });
+          case "reorderActive": {
+            const result = await reorderActiveMutation({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, orderKey: step.orderKey },
+            });
+            if (result._tag === "Failure") throw Cause.squash(result.cause);
+            return true;
+          }
+          case "snooze": {
+            const failureTitle =
+              action === "Unpinned" ? "Could not undo unpin" : "Could not undo settle";
+            if (!checkThreadOperationPermission(thread, failureTitle)) return false;
+            const result = await snoozeMutation({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, snoozedUntil: step.snoozedUntil },
+            });
+            if (result._tag === "Failure") {
+              const error = Cause.squash(result.cause);
+              Dialog.alert(
+                "Could not restore snooze",
+                error instanceof Error ? error.message : "The thread could not be snoozed.",
+              );
+              return false;
+            }
+            return true;
+          }
+        }
+      },
+      (result) => result,
+    );
+  const alertUndoFailure = (error: unknown) =>
+    Dialog.alert(
+      "Could not undo thread action",
+      error instanceof Error ? error.message : "Try again.",
+    );
   const offerUndo = (
     thread: EnvironmentThreadShell,
     action: "Settled" | "Snoozed" | "Unpinned",
-    claim: ReturnType<typeof ThreadUndo.begin>,
+    claim: ThreadUndoClaim,
     plan: ThreadUndo.ThreadUndoPlan,
   ) =>
     showThreadUndoNotice({
@@ -268,86 +402,109 @@ export function useThreadListActions(): {
       claim,
       undo: async () => {
         try {
-          await ThreadUndo.executeThreadUndo(
-            plan,
-            async (step) => {
-              switch (step.action) {
-                case "unsettle":
-                  return unsettleThread(thread, step.restoreUnsettledAt);
-                case "unsnooze":
-                  return unsnoozeThread(thread);
-                case "pin":
-                  return pinThread(thread, {
-                    ...(step.orderKey !== undefined ? { orderKey: step.orderKey } : {}),
-                    ...(step.scope !== undefined ? { scope: step.scope } : {}),
-                  });
-                case "reorderActive": {
-                  const result = await reorderActiveMutation({
-                    environmentId: thread.environmentId,
-                    input: { threadId: thread.id, orderKey: step.orderKey },
-                  });
-                  if (result._tag === "Failure") throw Cause.squash(result.cause);
-                  return true;
-                }
-                case "snooze": {
-                  const failureTitle =
-                    action === "Unpinned" ? "Could not undo unpin" : "Could not undo settle";
-                  if (!checkThreadOperationPermission(thread, failureTitle)) return false;
-                  const result = await snoozeMutation({
-                    environmentId: thread.environmentId,
-                    input: { threadId: thread.id, snoozedUntil: step.snoozedUntil },
-                  });
-                  if (result._tag === "Failure") {
-                    const error = Cause.squash(result.cause);
-                    Dialog.alert(
-                      "Could not restore snooze",
-                      error instanceof Error ? error.message : "The thread could not be snoozed.",
-                    );
-                    return false;
-                  }
-                  return true;
-                }
-              }
-            },
-            (result) => result,
-          );
+          await runUndoPlan(thread, action, plan);
         } catch (error) {
-          Dialog.alert(
-            "Could not undo thread action",
-            error instanceof Error ? error.message : "Try again.",
-          );
+          alertUndoFailure(error);
         }
       },
     });
-  const settleThread = async (thread: EnvironmentThreadShell) => {
+  const offerGroupUndo = (action: "Settled" | "Snoozed", restores: ReadonlyArray<UndoRestore>) => {
+    if (restores.length === 0) return;
+    const claim = combineUndoClaims(restores.map((restore) => restore.claim));
+    showThreadUndoNotice({
+      action,
+      claim,
+      count: () => claim.restorableIndexes().length,
+      undo: async () => {
+        try {
+          await Promise.all(
+            claim
+              .restorableIndexes()
+              .map((index) => restores[index]!)
+              .map(({ thread, plan }) => runUndoPlan(thread, action, plan)),
+          );
+        } catch (error) {
+          alertUndoFailure(error);
+        }
+      },
+    });
+  };
+  const settleOne = async (thread: EnvironmentThreadShell) => {
     const key = scopedThreadKey(thread.environmentId, thread.id);
     const plan = ThreadUndo.planThreadUndo("settle", thread);
-    let claim: ReturnType<typeof ThreadUndo.begin> | undefined;
+    let claim: ThreadUndoClaim | undefined;
     const succeeded = await executeAction("settle", thread, () => {
       ThreadUndo.invalidate("pin", key);
       ThreadUndo.invalidate("snooze", key);
       claim = ThreadUndo.begin("settle", key);
     });
-    if (claim) {
-      if (succeeded) offerUndo(thread, "Settled", claim, plan);
-      else claim.finish();
+    if (claim && !succeeded) claim.finish();
+    return {
+      succeeded,
+      restore: claim && succeeded ? ({ thread, plan, claim } satisfies UndoRestore) : null,
+    };
+  };
+  const settleGroupMembers = async (
+    lead: EnvironmentThreadShell,
+    workers: ReadonlyArray<EnvironmentThreadShell>,
+    options: { readonly finishedOnly: boolean },
+  ) => {
+    const plan = planGroupSettle(lead, workers, {
+      ...options,
+      isInFlight: (member) => threadRuntimeIsActive(member.runtime),
+    });
+    if (plan.targets.length === 0) return false;
+    if (!options.finishedOnly && plan.working > 0) {
+      const confirmed = await new Promise<boolean>((resolve) =>
+        Dialog.confirm({
+          title: "Settle the whole group?",
+          message: `${
+            plan.working === 1
+              ? "1 thread in this group is"
+              : `${plan.working} threads in this group are`
+          } still working.`,
+          confirmText: "Settle group",
+          onConfirm: () => resolve(true),
+          onCancel: () => resolve(false),
+        }),
+      );
+      if (!confirmed) return false;
     }
+    // One member reports a missing permission or an unsupported server; not one alert each.
+    const targets = groupCommandsReady(lead) ? plan.targets : plan.targets.slice(0, 1);
+    const outcomes = await Promise.all(targets.map(settleOne));
+    offerGroupUndo(
+      "Settled",
+      outcomes.flatMap(({ restore }) => (restore ? [restore] : [])),
+    );
+    return outcomes[0]?.succeeded ?? false;
+  };
+  const settleThread = async (thread: EnvironmentThreadShell) => {
+    const group = resolveLeadGroup(thread);
+    if (group) return settleGroupMembers(thread, group.workers, { finishedOnly: false });
+    const { succeeded, restore } = await settleOne(thread);
+    if (restore) offerUndo(thread, "Settled", restore.claim, restore.plan);
     return succeeded;
   };
-  const snoozeThread = async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
-    if (!checkThreadOperationPermission(thread, "Could not snooze thread")) return false;
+  const snoozeOne = async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
+    if (!checkThreadOperationPermission(thread, "Could not snooze thread")) {
+      return { succeeded: false, restore: null };
+    }
     const key = scopedThreadKey(thread.environmentId, thread.id);
     if (snoozeInFlightThreadKeys.current.has(key)) {
-      return false;
+      return { succeeded: false, restore: null };
     }
     snoozeInFlightThreadKeys.current.add(key);
-    const succeeded = await (async () => {
+    const outcome = await (async (): Promise<{
+      readonly succeeded: boolean;
+      readonly restore: UndoRestore | null;
+    }> => {
       if (!environmentConfigLoaded(thread.environmentId)) {
         Dialog.alert(
           "Could not snooze thread",
           "This environment's server does not support snoozing yet. Update the server to use Snooze.",
         );
-        return false;
+        return { succeeded: false, restore: null };
       }
       if (!canSnooze(thread, { now: new Date().toISOString() })) {
         Dialog.alert(
@@ -356,7 +513,7 @@ export function useThreadListActions(): {
             ? "This thread is waiting on you. Respond to the pending request before snoozing it."
             : "This thread is still starting a turn. Try again once it's running.",
         );
-        return false;
+        return { succeeded: false, restore: null };
       }
 
       selectionHaptic();
@@ -382,12 +539,44 @@ export function useThreadListActions(): {
             ? error.message
             : "The thread could not be snoozed.",
         );
-        return false;
+        return { succeeded: false, restore: null };
       }
-      offerUndo(thread, "Snoozed", claim, ThreadUndo.planThreadUndo("snooze"));
-      return true;
+      return {
+        succeeded: true,
+        restore: { thread, plan: ThreadUndo.planThreadUndo("snooze"), claim },
+      };
     })();
     snoozeInFlightThreadKeys.current.delete(key);
+    return outcome;
+  };
+  const snoozeGroupMembers = async (
+    lead: EnvironmentThreadShell,
+    workers: ReadonlyArray<EnvironmentThreadShell>,
+    snoozedUntil: string,
+  ) => {
+    const plan = planGroupSnooze(lead, workers, { now: nowIso() });
+    // One member reports a missing permission or an unsupported server; not one alert each.
+    const ready = groupCommandsReady(lead);
+    const targets = ready ? plan.targets : plan.targets.slice(0, 1);
+    const outcomes = await Promise.all(targets.map((member) => snoozeOne(member, snoozedUntil)));
+    offerGroupUndo(
+      "Snoozed",
+      outcomes.flatMap(({ restore }) => (restore ? [restore] : [])),
+    );
+    if (ready && plan.skipped.length > 0) {
+      const count = plan.skipped.length;
+      Dialog.alert(
+        `${count} ${count === 1 ? "thread" : "threads"} could not be snoozed`,
+        "They stay active until their pending request is resolved.",
+      );
+    }
+    return outcomes[0]?.succeeded ?? false;
+  };
+  const snoozeThread = async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
+    const group = resolveLeadGroup(thread);
+    if (group) return snoozeGroupMembers(thread, group.workers, snoozedUntil);
+    const { succeeded, restore } = await snoozeOne(thread, snoozedUntil);
+    if (restore) offerUndo(thread, "Snoozed", restore.claim, restore.plan);
     return succeeded;
   };
   const unsnoozeThread = async (thread: EnvironmentThreadShell) => {
@@ -769,6 +958,41 @@ export function useThreadListActions(): {
   const confirmDeleteThread = (thread: EnvironmentThreadShell) =>
     confirmThreadDeletion(executeAction, thread);
 
+  const attachThread = async (thread: EnvironmentThreadShell, target: EnvironmentThreadShell) => {
+    if (!checkThreadOperationPermission(thread, "Could not add thread to group")) return;
+    selectionHaptic();
+    const result = await attachToGroupMutation({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id, parentThreadId: target.id },
+    });
+    if (result._tag === "Failure") {
+      const error = Cause.squash(result.cause);
+      Dialog.alert(
+        "Could not add thread to group",
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "The thread could not be added to the group.",
+      );
+    }
+  };
+  const detachThread = async (thread: EnvironmentThreadShell) => {
+    if (!checkThreadOperationPermission(thread, "Could not remove thread from group")) return;
+    selectionHaptic();
+    const result = await detachFromGroupMutation({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id },
+    });
+    if (result._tag === "Failure") {
+      const error = Cause.squash(result.cause);
+      Dialog.alert(
+        "Could not remove thread from group",
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "The thread could not be removed from the group.",
+      );
+    }
+  };
+
   // `moveThread` looks up its own row, and refuses while a list holds older rows.
   return {
     archiveThread: (thread) => archiveThread(liveThread(thread)),
@@ -783,6 +1007,12 @@ export function useThreadListActions(): {
     moveThread,
     renameThread: (thread) => renameThread(liveThread(thread)),
     regenerateThreadTitle: (thread) => regenerateThreadTitle(liveThread(thread)),
+    attachThread: (thread, target) => void attachThread(liveThread(thread), liveThread(target)),
+    detachThread: (thread) => void detachThread(liveThread(thread)),
+    settleGroup: (lead, options) => {
+      const live = liveThread(lead);
+      void settleGroupMembers(live, resolveLeadGroup(live)?.workers ?? [], options);
+    },
   };
 }
 
