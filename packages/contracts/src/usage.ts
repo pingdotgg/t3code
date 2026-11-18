@@ -78,6 +78,13 @@ export const UsageSourceFingerprint = Schema.Struct({
   resolvedHomePath: TrimmedNonEmptyString,
   /** Transcript directory device:inode distinguishes machines sharing a hostname and home path. */
   volumeId: Schema.String,
+  /**
+   * Opaque identity of a directory that the Windows server of a desktop install
+   * reads natively and its managed WSL server reads through a drvfs mount. Path
+   * and `volumeId` differ between the two sides, so clients treat sources with
+   * an equal value as one directory in addition to the fields above.
+   */
+  physicalSourceId: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type UsageSourceFingerprint = typeof UsageSourceFingerprint.Type;
 
