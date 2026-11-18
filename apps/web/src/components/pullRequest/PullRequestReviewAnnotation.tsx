@@ -704,8 +704,13 @@ export function HostedReviewThreadCard({
 }) {
   const gt = useGT();
   const target = { environmentId, input: reference };
-  const detail = useEnvironmentQuery(pullRequestEnvironment.detail(target));
-  const activity = useEnvironmentQuery(pullRequestEnvironment.activity(target));
+  const detail = useEnvironmentQuery(
+    pullRequestEnvironment.detail({ ...target, input: { ...reference, allowStale: false } }),
+  );
+  const viewer = !detail.isPending && !detail.error ? detail.data?.viewer?.trim() : null;
+  const activity = useEnvironmentQuery(
+    viewer ? pullRequestEnvironment.activity({ ...target, viewer }) : null,
+  );
   const thread = activity.data?.reviewThreads.find((entry) =>
     threadId ? entry.id === threadId : entry.comments.some((comment) => comment.id === commentId),
   );

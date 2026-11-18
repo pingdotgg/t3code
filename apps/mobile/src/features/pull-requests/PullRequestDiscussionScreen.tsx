@@ -1,3 +1,4 @@
+import { usePullRequestActivity } from "./usePullRequestDiff";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   parsePullRequestAnchor,
@@ -56,7 +57,7 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
   const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const bottomInset = keyboardVisible ? 8 : Math.max(insets.bottom, 12);
-  const activity = useEnvironmentQuery(composerPullRequests.activity(target));
+  const activity = usePullRequestActivity(params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const permissions = usePullRequestPermissions(params, detail.data);
   const refresh = useAtomRefresh(composerPullRequests.activity(target));

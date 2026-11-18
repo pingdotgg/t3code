@@ -229,3 +229,12 @@ export function usePullRequestDiff(
     onPullRefresh,
   };
 }
+
+export function usePullRequestActivity(params: PullRequestParams) {
+  const target = pullRequestTarget(params);
+  const detail = useEnvironmentQuery(
+    composerPullRequests.detail({ ...target, input: { ...target.input, allowStale: false } }),
+  );
+  const viewer = !detail.isPending && !detail.error ? detail.data?.viewer?.trim() : null;
+  return useEnvironmentQuery(viewer ? composerPullRequests.activity({ ...target, viewer }) : null);
+}

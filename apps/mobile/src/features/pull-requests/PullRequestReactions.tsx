@@ -1,3 +1,4 @@
+import { usePullRequestActivity } from "./usePullRequestDiff";
 import { useNavigation } from "@react-navigation/native";
 import {
   applyPendingPullRequestReactions,
@@ -134,7 +135,7 @@ function usePullRequestReact(params: PullRequestParams, subjectId?: string) {
 export function PullRequestReactions(props: { readonly params: PullRequestParams }) {
   const target = pullRequestTarget(props.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
-  const activity = useEnvironmentQuery(composerPullRequests.activity(target));
+  const activity = usePullRequestActivity(params);
   const { canReact } = usePullRequestPermissions(props.params, detail.data);
   const reactions = activity.data?.reactions ?? [];
   const onReact = usePullRequestReact(props.params);

@@ -1,3 +1,4 @@
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
   IssueTrackerKind,
@@ -28,6 +29,10 @@ const state = vi.hoisted(() => ({
   projects: [] as unknown[],
   pullRequests: [] as unknown[],
   projectMergeMethods: {} as Record<string, "merge" | "squash" | "rebase">,
+}));
+
+vi.mock(import("~/state/use-atom-command"), () => ({
+  useAtomCommand: (() => state.perform) as never,
 }));
 
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
@@ -92,7 +97,6 @@ vi.mock(import("~/state/query"), async (importOriginal) => ({
 }));
 vi.mock(import("../pullRequest/usePullRequestActions"), async (importOriginal) => ({
   ...(await importOriginal()),
-  usePullRequestActionRunner: () => ({ actionPending: false, perform: state.perform }),
   usePullRequestDefaultMergeMethodResolver: ((_environmentId: unknown, projectId: unknown) => () =>
     state.projectMergeMethods[String(projectId)]) as never,
 }));
@@ -144,6 +148,9 @@ const repositoryProject = {
   environmentId: EnvironmentId.make("environment"),
   title: "repo",
   workspaceRoot: "/work/repo",
+  defaultModelSelection: null,
+  createdAt: "2026-11-18T00:00:00.000Z",
+  updatedAt: "2026-11-18T00:00:00.000Z",
   scripts: [],
   repositoryIdentity: {
     canonicalKey: "github.com/owner/repo",
@@ -157,7 +164,7 @@ const repositoryProject = {
     name: "repo",
     displayName: "owner/repo",
   },
-};
+} satisfies EnvironmentProject;
 
 const clickButton = async (scope: ParentNode, label: string) =>
   await act(async () => {
@@ -167,6 +174,9 @@ const clickButton = async (scope: ParentNode, label: string) =>
   });
 
 it("merges with the last selected merge method", async () => {
+  using _permission = vi
+    .spyOn(pullRequestEnvironment.runAction, "permissionAtom")
+    .mockReturnValue(Atom.make(true));
   await using screen = await setup();
   const { container } = screen;
   state.mergeMethods = ["merge", "squash"];
@@ -194,7 +204,11 @@ it("merges with the last selected merge method", async () => {
   const dialog = document.querySelector('[role="alertdialog"]')!;
   expect(dialog.textContent).toContain("using squash");
   await clickMerge(dialog);
-  expect(state.perform).toHaveBeenCalledWith("merge", "squash");
+  expect(state.perform).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({ action: "merge", mergeMethod: "squash" }),
+    }),
+  );
 });
 
 it("requires a new merge click after passing checks become pending and pass again", async () => {

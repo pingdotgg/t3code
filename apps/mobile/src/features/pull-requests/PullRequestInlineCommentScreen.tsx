@@ -1,3 +1,4 @@
+import { usePullRequestActivity } from "./usePullRequestDiff";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { PullRequestThreadCard } from "./PullRequestCommentCard";
 import { Alert } from "react-native";
@@ -60,7 +61,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   const saveDraftComment = useAtomCommand(composerPullRequests.saveDraftComment, {
     reportFailure: false,
   });
-  const activity = useEnvironmentQuery(composerPullRequests.activity(pullRequestTarget(params)));
+  const activity = usePullRequestActivity(params);
   const pendingThread = saved?.hostedComment
     ? activity.data?.reviewThreads.find((thread) =>
         thread.comments.some((comment) => comment.id === saved.hostedComment?.commentId),

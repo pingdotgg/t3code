@@ -1,3 +1,4 @@
+import { usePullRequestActivity } from "./usePullRequestDiff";
 import { PullRequestComposerNotice } from "./PullRequestComposerNotice";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AppBar as AndroidScreenHeader } from "../../components/ui/AppBar";
@@ -178,7 +179,7 @@ import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();
   const messages = useMessages();
-  const result = useEnvironmentQuery(composerPullRequests.activity(requestTarget(params)));
+  const result = usePullRequestActivity(params);
   const filtered = result.data ? filterPullRequestActivity(result.data, filter) : null;
   const rows = (() => {
     if (!filtered) return [];
@@ -606,7 +607,9 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
       }),
     );
   const stack = usePullRequestStack(params, pr);
-  const refreshActivity = useAtomRefresh(composerPullRequests.activity(requestTarget(params)));
+  const refreshActivity = useAtomRefresh(
+    composerPullRequests.activity({ ...requestTarget(params), viewer: pr?.viewer ?? "" }),
+  );
   const refreshGuide = useAtomRefresh(composerPullRequests.reviewGuide(requestTarget(params)));
   const registry = use(RegistryContext);
   const refresh = () =>
@@ -1131,7 +1134,13 @@ export function PullRequestDiffContent({
   const [commit, setCommit] = useState<string | null>(params.commit ?? null);
   const { commit: _requestedCommit, ...reviewParams } = params;
   const { ignoreWhitespace, setIgnoreWhitespace } = useDiffWhitespacePreference();
-  const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(params)));
+  const detailTarget = requestTarget(params);
+  const detail = useEnvironmentQuery(
+    composerPullRequests.detail({
+      ...detailTarget,
+      input: { ...detailTarget.input, allowStale: false },
+    }),
+  );
   const terminology = sourceControlClients.get(
     (detail.data ?? params.initialSummary)?.provider,
   ).changeRequest;
@@ -1180,7 +1189,7 @@ export function PullRequestDiffContent({
     !result.isPending &&
     !result.withheldRefetching &&
     !result.error;
-  const activity = useEnvironmentQuery(composerPullRequests.activity(requestTarget(params)));
+  const activity = usePullRequestActivity(params);
   const { preferences: viewingPreferences, update: updateViewingPreferences } =
     usePullRequestViewingPreferences();
   const { commentsOnly, hideReviewed, groupByType } = viewingPreferences;

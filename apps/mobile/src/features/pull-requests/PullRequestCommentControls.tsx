@@ -1,3 +1,4 @@
+import { usePullRequestActivity } from "./usePullRequestDiff";
 import { T, useGT } from "gt-react-native";
 import { usePullRequestThreads } from "./usePullRequestThreads";
 import { canEditPullRequestComment } from "@t3tools/client-runtime/review-editing";
@@ -59,7 +60,7 @@ export function PullRequestCommentControls({
   const gt = useGT();
   const target = pullRequestTarget(params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
-  const activity = useEnvironmentQuery(composerPullRequests.activity(target));
+  const activity = usePullRequestActivity(params);
   const agent = usePullRequestThreads(params, detail.data);
   const markdown = `${comment.author?.login ? `**${comment.author.login}**\n\n` : ""}${comment.body}${comment.url ? `\n\n[View comment](${comment.url})` : ""}`;
   const allowed = useAtomValue(
