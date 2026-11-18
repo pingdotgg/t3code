@@ -120,10 +120,11 @@ const claudeSystemAppend = () => {
 
 const codexAdditionalContext = () =>
   Object.values(
-    buildCodexAdditionalContext(
-      { model: "gpt-6.1-sol", modelName: "GPT-6.1 Sol", reasoningEffort: "high" },
-      { browser: true, device: true },
-    ),
+    buildCodexAdditionalContext({
+      model: "gpt-6.1-sol",
+      modelName: "GPT-6.1 Sol",
+      reasoningEffort: "high",
+    }),
   )
     .map((entry) => entry.value)
     .join("");

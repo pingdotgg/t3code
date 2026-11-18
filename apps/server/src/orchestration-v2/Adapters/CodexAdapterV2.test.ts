@@ -4419,10 +4419,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         hasT3Mcp: true,
         cyberAccess: { defaultProgram: "daybreakBlue" },
       });
-      assert.include(
-        params.additionalContext?.t3_code_orchestration_01?.value ?? "",
-        "delegate_task",
-      );
+      assert.include(params.additionalContext?.t3_code_voice?.value ?? "", "### Voice");
       const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
       const transcript = makeCodexReplayTranscript({
         scenario: "restore-context",

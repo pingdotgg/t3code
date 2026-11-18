@@ -5,7 +5,6 @@ import * as NodeOS from "node:os";
 import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
-import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 
 import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
@@ -53,7 +52,7 @@ async function loadHooks(
   return handlers;
 }
 
-describe("Pi orchestration prompt section", () => {
+describe("Pi voice prompt section", () => {
   it.each([
     {
       name: "on Pi builds without prompt sections",
@@ -72,19 +71,18 @@ describe("Pi orchestration prompt section", () => {
         },
       ],
     },
-  ])("appends guidance $name", async ({ events }) => {
+  ])("appends the voice rules $name", async ({ events }) => {
     const bridge = await loadMcpBridge();
     const hook = bridge.handlers.get("before_agent_start")!;
     for (const event of events) {
       const result = await hook(event, { ui: { notify: assert.fail } });
       assert.isDefined(result);
       assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
-      assert.include(result!.systemPrompt, "orchestrator_capabilities");
-      assert.include(result!.systemPrompt, PULL_REQUEST_LINKING_INSTRUCTIONS);
+      assert.include(result!.systemPrompt, "### Voice");
     }
   });
 
-  it("sets the guidance section on Pi builds with prompt sections", async () => {
+  it("sets the voice section on Pi builds with prompt sections", async () => {
     const bridge = await loadMcpBridge();
     const sections: Record<string, string> = {};
     const result = await bridge.handlers.get("before_agent_start")!(
@@ -92,8 +90,8 @@ describe("Pi orchestration prompt section", () => {
       { ui: { notify: assert.fail } },
     );
     assert.isUndefined(result);
-    assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
-    assert.include(sections.t3_code_orchestration, PULL_REQUEST_LINKING_INSTRUCTIONS);
+    assert.include(sections.t3_code_voice, "### Voice");
+    assert.notInclude(sections.t3_code_voice, "orchestrator_capabilities");
   });
 });
 
@@ -192,7 +190,8 @@ describe("Pi MCP tool exposure", () => {
     const start = bridge.handlers.get("before_agent_start");
     assert.isDefined(start);
     const prompt = await start!({ systemPrompt: "Pi system prompt" }, discoveryContext);
-    assert.include(prompt?.systemPrompt ?? "", "orchestrator_capabilities");
+    assert.include(prompt?.systemPrompt ?? "", "### Voice");
+    assert.notInclude(prompt?.systemPrompt ?? "", "orchestrator_capabilities");
     assert.equal(bridge.servers.length, 0);
     assert.equal(bridge.tools.length, 8);
     const aliases = [

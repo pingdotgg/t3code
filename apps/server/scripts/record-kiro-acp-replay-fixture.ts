@@ -215,9 +215,6 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
 }
 
 const T3_INSTRUCTIONS_BODY = /<t3_code_instructions>\n[\s\S]*?\n<\/t3_code_instructions>/u;
-// A turn on another model sends its own runtime info, which the filter below
-// keeps; its model stays pinned and the linking guidance does not.
-const PULL_REQUEST_LINKING_BODY = /<pull_request_linking>\n[\s\S]*?\n<\/pull_request_linking>/u;
 
 /** Replaces T3-owned request content so prompt wording changes do not invalidate recordings. */
 function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructions: string) {
@@ -255,15 +252,10 @@ function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructi
             isRecord(part) && typeof part.text === "string"
               ? {
                   ...part,
-                  text: part.text
-                    .replace(
-                      T3_INSTRUCTIONS_BODY,
-                      "<t3_code_instructions>\n<any>\n</t3_code_instructions>",
-                    )
-                    .replace(
-                      PULL_REQUEST_LINKING_BODY,
-                      "<pull_request_linking>\n<any>\n</pull_request_linking>",
-                    ),
+                  text: part.text.replace(
+                    T3_INSTRUCTIONS_BODY,
+                    "<t3_code_instructions>\n<any>\n</t3_code_instructions>",
+                  ),
                 }
               : part,
           ),

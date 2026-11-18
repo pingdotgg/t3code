@@ -804,150 +804,7 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("marks failed turns as promptDropped only when Cursor did not checkpoint the run", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "cursor-v2-dropped-",
-      });
-      const checkpointedRuns = new Set<string>();
-      let sendCalls = 0;
-      const instanceId = ProviderInstanceId.make("cursor");
-      const threadId = ThreadId.make("cursor-dropped-thread");
-      const modelSelection = { instanceId, model: "gemini-4-neon" };
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: workspace,
-      });
-      const adapter = yield* makeCursorAdapterV2({
-        instanceId,
-        environment: { HOME: workspace },
-      }).pipe(
-        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
-          assertComplete: Effect.void,
-          open: () =>
-            Effect.succeed({
-              agentId: "native-cursor-dropped",
-              listMessages: Effect.succeed([]),
-              close: Effect.void,
-              runCheckpointed: (runId) =>
-                Effect.succeed(runId !== undefined && checkpointedRuns.has(runId)),
-              send: () =>
-                Effect.sync(() => {
-                  sendCalls += 1;
-                  const runId = `native-cursor-run-${sendCalls}`;
-                  return {
-                    agentId: "native-cursor-dropped",
-                    runId,
-                    cancel: Effect.void,
-                    wait: Effect.succeed({
-                      id: runId,
-                      status: "error" as const,
-                      error: {
-                        message:
-                          'AI Model Not Found Invalid parameters for registry model: "gemini-4-neon"',
-                      },
-                    }),
-                  };
-                }),
-            }),
-          textGenerate: () => Effect.die("unused"),
-        }),
-        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
-      );
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make("cursor-dropped-session"),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const now = yield* DateTime.now;
-      const appThread = {
-        id: threadId,
-        projectId: ProjectId.make("cursor-dropped-project"),
-        createdBy: "user" as const,
-        creationSource: "web" as const,
-        title: "Cursor dropped prompt",
-        providerInstanceId: instanceId,
-        modelSelection,
-        runtimeMode: "full-access" as const,
-        interactionMode: "default" as const,
-        branch: null,
-        worktreePath: null,
-        activeProviderThreadId: providerThread.id,
-        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-        forkedFrom: null,
-        createdAt: now,
-        updatedAt: now,
-        archivedAt: null,
-        settledOverride: null,
-        settledAt: null,
-        lastVisitedAt: null,
-        deletedAt: null,
-      };
-      const runFailed = (ordinal: number) =>
-        Effect.gen(function* () {
-          yield* runtime.startTurn({
-            threadId,
-            providerThread,
-            modelSelection,
-            runtimePolicy,
-            runId: RunId.make(`cursor-dropped-run-${ordinal}`),
-            runOrdinal: ordinal,
-            providerTurnOrdinal: ordinal,
-            attemptId: RunAttemptId.make(`cursor-dropped-attempt-${ordinal}`),
-            rootNodeId: NodeId.make(`cursor-dropped-root-${ordinal}`),
-            appThread,
-            message: {
-              messageId: MessageId.make(`cursor-dropped-message-${ordinal}`),
-              createdBy: "user",
-              creationSource: "web",
-              text: "Resume",
-              attachments: [],
-            },
-          });
-          const events = yield* runtime.events.pipe(
-            Stream.takeUntil((event) => event.type === "turn.terminal"),
-            Stream.runCollect,
-          );
-          const terminal = events.find((event) => event.type === "turn.terminal");
-          const turn = events.findLast(
-            (event) =>
-              event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
-          );
-          return {
-            terminal: terminal?.type === "turn.terminal" ? terminal : undefined,
-            turn: turn?.type === "provider_turn.updated" ? turn.providerTurn : undefined,
-          };
-        });
-
-      // Uncheckpointed failure: Cursor never persisted the prompt.
-      const uncheckpointed = yield* runFailed(1);
-      assert.equal(uncheckpointed.terminal?.status, "failed");
-      assert.equal(uncheckpointed.terminal?.promptDropped, true);
-      assert.equal(uncheckpointed.turn?.promptDropped, true);
-
-      // Checkpointed failure: Cursor kept the run's prompt in its store.
-      checkpointedRuns.add("native-cursor-run-2");
-      const checkpointed = yield* runFailed(2);
-      assert.equal(checkpointed.terminal?.status, "failed");
-      assert.isUndefined(checkpointed.terminal?.promptDropped);
-      assert.isUndefined(checkpointed.turn?.promptDropped);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
-      ),
-    ),
-  );
-
-  it.effect("sends T3 instructions to each Cursor conversation that lacks them", () =>
+  it.effect("sends the voice rules to each Cursor conversation that lacks them", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-device-" });
@@ -960,7 +817,7 @@ describe("CursorAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-device-thread");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      const setDeviceAccess = (device: boolean) =>
+      const setMcpSession = () =>
         mcpSessions.set({
           environmentId: EnvironmentId.make("cursor-device-environment"),
           threadId,
@@ -969,7 +826,7 @@ describe("CursorAdapterV2", () => {
           endpoint: "http://127.0.0.1:43123/mcp",
           authorizationHeader: "Bearer synthetic-cursor-token",
           browserToolsAvailable: true,
-          capabilities: new Set(device ? ["device"] : []),
+          capabilities: new Set(),
         });
       const modelSelection = { instanceId, model: "composer-2.5" };
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -1070,7 +927,7 @@ describe("CursorAdapterV2", () => {
         lastVisitedAt: null,
         deletedAt: null,
       };
-      // Starts at run 5: a conversation from before device instructions existed, now resumed.
+      // Starts at run 5: a conversation told on its first run, now resumed.
       let runOrdinal = 4;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
       const send = Effect.fnUntraced(function* (
@@ -1115,89 +972,15 @@ describe("CursorAdapterV2", () => {
         const providerTurn = events.findLast((event) => event.type === "provider_turn.updated");
         if (providerTurn?.type === "provider_turn.updated")
           lastProviderTurn = providerTurn.providerTurn;
-        const sent = sentMessages.at(-1)!;
-        return {
-          orchestration: sent.includes("## T3 Code orchestration"),
-          devices: sent.includes("## T3 Code devices"),
-          runtime: sent.includes("<runtime_info>"),
-        };
-      });
-      const told = (orchestration: boolean, devices: boolean, runtime: boolean) => ({
-        orchestration,
-        devices,
-        runtime,
+        return sentMessages.at(-1)!.includes("### Voice");
       });
 
-      yield* setDeviceAccess(true);
-      assert.deepEqual(yield* send(), told(false, true, true));
-      assert.deepEqual(yield* send(), told(false, false, false));
+      yield* setMcpSession();
+      assert.isFalse(yield* send());
+      assert.isFalse(yield* send());
       yield* send(true);
-      assert.deepEqual(
-        yield* send(),
-        told(true, true, true),
-        "compaction drops what the conversation was told",
-      );
-      yield* setDeviceAccess(false);
-      assert.deepEqual(yield* send(), told(false, false, false));
-      yield* setDeviceAccess(true);
-      assert.deepEqual(yield* send(), told(false, true, false), "device access turned on later");
-      assert.deepEqual(yield* send(), told(false, false, false));
-
-      assert.deepEqual(
-        yield* send(false, undefined, { model: "gemini-4-neon", status: "error" }),
-        told(false, false, true),
-        "a model change resends runtime instructions",
-      );
-      assert.deepEqual(
-        yield* send(),
-        told(false, false, true),
-        "reverting after a failed model-change run resends runtime instructions",
-      );
-      assert.include(sentMessages.at(-1)!, "as composer-2.5");
-      assert.deepEqual(
-        yield* send(false, undefined, { status: "error" }),
-        told(false, false, false),
-        "an unchanged turn omits runtime instructions even when it fails",
-      );
-      assert.deepEqual(
-        yield* send(),
-        told(false, false, false),
-        "a failed unchanged turn keeps delivered runtime instructions",
-      );
-      assert.deepEqual(
-        yield* send(false, undefined, { model: "gemini-4-neon", status: "error" }),
-        told(false, false, true),
-      );
-      assert.deepEqual(
-        yield* send(false, undefined, { model: "gemini-4-neon" }),
-        told(false, false, true),
-        "a failed turn does not record runtime instructions as delivered",
-      );
-      assert.include(sentMessages.at(-1)!, "as gemini-4-neon");
-      assert.deepEqual(
-        yield* send(false, undefined, {
-          model: "gemini-4-neon",
-          summaryCompleted: { failed: true },
-        }),
-        told(false, false, false),
-      );
-      assert.deepEqual(
-        yield* send(false, undefined, {
-          model: "gemini-4-neon",
-          summaryCompleted: {},
-        }),
-        told(false, false, false),
-        "a failed auto-compaction keeps delivered instructions",
-      );
-      assert.deepEqual(
-        yield* send(false, undefined, { model: "gemini-4-neon" }),
-        told(true, true, true),
-        "auto-compaction drops what the conversation was told",
-      );
-      assert.deepEqual(
-        yield* send(false, undefined, { model: "gemini-4-neon" }),
-        told(false, false, false),
-      );
+      assert.isTrue(yield* send(), "compaction drops what the conversation was told");
+      assert.isFalse(yield* send());
 
       const keptTurn = lastProviderTurn!;
       yield* send(false, undefined, { model: "gemini-4-neon" });
@@ -1214,9 +997,8 @@ describe("CursorAdapterV2", () => {
       rewindFails = true;
       yield* Effect.flip(rollbackToKept);
       rewindFails = false;
-      assert.deepEqual(
-        yield* send(false, true, { model: "gemini-4-neon" }),
-        told(false, false, false),
+      assert.isFalse(
+        yield* send(false, true),
         "a failed rewind leaves the conversation, and what it was told, unchanged",
       );
       const rewound = yield* rollbackToKept;
@@ -1226,9 +1008,8 @@ describe("CursorAdapterV2", () => {
         providerThread.nativeThreadRef,
         "Cursor rewinds the same agent",
       );
-      assert.deepEqual(
-        yield* send(false, true, { model: "gemini-4-neon" }),
-        told(true, true, true),
+      assert.isTrue(
+        yield* send(false, true),
         "the rewound conversation may have dropped instructions a later turn carried",
       );
 
@@ -1248,9 +1029,8 @@ describe("CursorAdapterV2", () => {
         "a rollback to the thread's start has no checkpoint to rewind onto",
       );
       providerThread = rolledBack.providerThread;
-      assert.deepEqual(
-        yield* send(false, false, { model: "gemini-4-neon" }),
-        told(true, true, true),
+      assert.isTrue(
+        yield* send(false, false),
         "the fresh agent after a rollback has been told nothing",
       );
     }).pipe(

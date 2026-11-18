@@ -60,7 +60,7 @@ import {
   rewriteCursorSkillMentions,
 } from "./skills.ts";
 import { cursorWorkspaceMcpServers } from "./workspaceMcpServers.ts";
-import { t3OrchestrationPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { t3VoicePrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -1100,10 +1100,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         // What the native conversation was told since it started or was last compacted.
         const told = yield* Ref.make<{
           readonly agent: string;
-          readonly orchestration: boolean;
-          readonly device: boolean;
-          readonly backgroundWait: boolean;
-          readonly runtime: string | undefined;
+          readonly voice: boolean;
         } | null>(null);
         // Cursor drops a run cancelled before its first checkpoint, so the next message carries its prompt.
         const interruptedPrompt = yield* Ref.make<{
@@ -2871,20 +2868,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const resolveUserMessage = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           mcpServers: Record<string, McpServerConfig> | undefined,
-          hasDeviceTools: boolean,
-          delivered: {
-            readonly orchestration: boolean;
-            readonly device: boolean;
-            readonly backgroundWait: boolean;
-            readonly runtime: string | undefined;
-          },
+          voiceDelivered: boolean,
           interrupted: string | undefined,
         ) {
           const rawText = turnInput.message.text;
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
             return { message: "/compress", prompt: undefined, runtimeInstructions: undefined };
           }
-          const newText = t3OrchestrationPrompt({
+          const newText = t3VoicePrompt({
             prompt: yield* providerMessageTextWithAttachmentPaths({
               text: yield* resolveCursorSkillText(
                 rawText,
@@ -2895,11 +2886,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               resolveExtractedTextPath: host.resolveExtractedTextPath,
             }),
             hasT3Mcp: mcpServers !== undefined,
-            hasDeviceTools,
-            orchestrationDelivered: delivered.orchestration,
-            deviceInstructionsDelivered: delivered.device,
-            providerInstructions: CURSOR_BACKGROUND_WAIT_INSTRUCTIONS,
-            providerInstructionsDelivered: delivered.backgroundWait,
+            voiceDelivered,
           });
           const userText =
             interrupted === undefined
@@ -2981,19 +2968,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             });
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const mcpServers = cursorMcpServers(mcpSession);
-            const hasDeviceTools =
-              mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
             const known = yield* Ref.get(told);
             // A conversation this process has not sent to was told on its first run.
-            const delivered =
+            const voiceDelivered =
               known?.agent === agent.nativeThreadId
-                ? known
-                : {
-                    orchestration: turnInput.nativeThreadHasTurns ?? turnInput.runOrdinal > 1,
-                    device: false,
-                    backgroundWait: false,
-                    runtime: undefined,
-                  };
+                ? known.voice
+                : (turnInput.nativeThreadHasTurns ?? turnInput.runOrdinal > 1);
             const interrupted = yield* Ref.get(interruptedPrompt);
             const runCheckpointed = (runId?: string) =>
               agent.session.runCheckpointed?.(runId) ?? Effect.succeed(false);
@@ -3031,18 +3011,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                         : undefined,
                   }
                 : resume === "replay"
-                  ? {
-                      message: dropped!.message,
-                      prompt: dropped!.text,
-                      runtimeInstructions: dropped!.runtimeInstructions,
-                    }
-                  : yield* resolveUserMessage(
-                      turnInput,
-                      mcpServers,
-                      hasDeviceTools,
-                      delivered,
-                      dropped?.text,
-                    );
+                  ? { message: dropped!.message, prompt: dropped!.text }
+                  : yield* resolveUserMessage(turnInput, mcpServers, voiceDelivered, dropped?.text);
             const compacted = resume === undefined && prompt === undefined;
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
@@ -3093,11 +3063,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             if (resume === undefined) {
               yield* Ref.set(told, {
                 agent: agent.nativeThreadId,
-                orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
-                device: !compacted && hasDeviceTools,
-                backgroundWait:
-                  !compacted && (delivered.backgroundWait || mcpServers !== undefined),
-                runtime: compacted ? undefined : delivered.runtime,
+                voice: !compacted && (voiceDelivered || mcpServers !== undefined),
               });
             }
             if (!compacted && resume !== "native") {
@@ -3601,13 +3567,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               // The kept turns may predate a compaction, so the instructions are sent again.
               const forgetConversation = (agent: string) =>
                 Effect.all([
-                  Ref.set(told, {
-                    agent,
-                    orchestration: false,
-                    device: false,
-                    backgroundWait: false,
-                    runtime: undefined,
-                  }),
+                  Ref.set(told, { agent, voice: false }),
                   Ref.set(interruptedPrompt, null),
                   Ref.set(resumedAgent, null),
                   // A shell the discarded runs left running must not wake the rewound thread.

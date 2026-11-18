@@ -312,7 +312,7 @@ export type ListThreadPullRequestsResult = typeof ListThreadPullRequestsResult.T
 
 const LinkPullRequestTool = Tool.make("link_pull_request", {
   description:
-    "Link a PR to this thread. T3 shows its status and settles the thread on merge. For several PRs, use `link_pull_requests`.",
+    "Link a PR to this thread. T3 shows its status and settles the thread on merge. Call it right after you create, take over, or push to a PR, for every stack layer; host tools such as `gh` don't link. Skip PRs you only read or review. For several PRs, use `link_pull_requests`.",
   parameters: PullRequestTargetInput,
   success: LinkPullRequestResult,
   failure: PullRequestToolError,

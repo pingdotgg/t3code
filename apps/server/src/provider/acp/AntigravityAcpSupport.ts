@@ -12,7 +12,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -54,8 +53,6 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   readonly clientCapabilities?: AcpSessionRuntime.AcpSessionRuntimeOptions["clientCapabilities"];
   /** The installed version, known before `initialize`; it picks the client name. */
   readonly runtimeVersion?: string | null;
-  /** Conversational sessions only; helpers and probes leave the system prompt untouched. */
-  readonly sessionSystemPromptAppend?: string;
   readonly authMethod?: AntigravityAuthMethod;
 }
 
@@ -84,26 +81,6 @@ export const antigravitySteersWithPrompt = (
   return parsed !== undefined && compareVersions(parsed, PROMPT_STEERING_RELEASE) >= 0;
 };
 
-export const antigravityAppendsSystemPrompt = (
-  initializeResult: EffectAcpSchema.InitializeResponse,
-) => {
-  const extension = initializeResult.agentCapabilities?._meta?.antigravity;
-  return (
-    Predicate.isObject(extension) &&
-    Predicate.isObject(extension.systemPrompt) &&
-    extension.systemPrompt.append === true
-  );
-};
-
-export function antigravitySessionMeta(
-  initializeResult: EffectAcpSchema.InitializeResponse,
-  systemPromptAppend?: string,
-): EffectAcpSchema.NewSessionRequest["_meta"] | undefined {
-  return systemPromptAppend !== undefined && antigravityAppendsSystemPrompt(initializeResult)
-    ? { antigravity: { systemPrompt: { append: systemPromptAppend } } }
-    : undefined;
-}
-
 /** Older releases offer non-Gemini models only to allowlisted clients such as Zed. */
 export function antigravityClientInfo(version: string | null | undefined) {
   const parsed = parseAntigravityVersion(version);
@@ -127,8 +104,6 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
       resumeMethod: "resume",
       cancelBehavior: "wait-for-prompt",
       clientInfo: antigravityClientInfo(input.runtimeVersion),
-      sessionMeta: (initializeResult) =>
-        antigravitySessionMeta(initializeResult, input.sessionSystemPromptAppend),
       clientCapabilities: {
         ...input.clientCapabilities,
         // Advertising writes swaps the agent's diff edits for whole-file client_edit_file.

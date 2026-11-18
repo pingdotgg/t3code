@@ -917,9 +917,6 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly modelSelection: ModelSelection;
     readonly hasT3Mcp?: boolean;
-    readonly agentFeedback?: AgentFeedbackMode;
-    readonly browserToolsAvailable?: boolean;
-    readonly deviceToolsAvailable?: boolean;
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
@@ -973,17 +970,10 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     );
     const t3Context =
       input.hasT3Mcp === true
-        ? buildCodexAdditionalContext(
-            {
-              model: input.modelSelection.model,
-              reasoningEffort: effort ?? undefined,
-              agentFeedback: input.agentFeedback ?? "off",
-            },
-            {
-              browser: input.browserToolsAvailable ?? true,
-              device: input.deviceToolsAvailable ?? false,
-            },
-          )
+        ? buildCodexAdditionalContext({
+            model: input.modelSelection.model,
+            reasoningEffort: effort ?? undefined,
+          })
         : undefined;
     // Its own entry, so the folder list reaches the model without T3 Code's MCP tools too.
     const workspaceInstructions = buildWorkspaceInstructions(input.runtimePolicy);
@@ -8041,9 +8031,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
-              agentFeedback: turnInput.agentFeedback ?? "off",
-              browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
-              deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),

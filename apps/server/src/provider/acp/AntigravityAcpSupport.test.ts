@@ -17,7 +17,6 @@ import {
   applyAntigravityAcpModelSelection,
   antigravityClientInfo,
   antigravityPermissionDisposition,
-  antigravitySessionMeta,
   antigravitySessionMode,
   buildAntigravityPrompt,
 } from "./AntigravityAcpSupport.ts";
@@ -60,30 +59,12 @@ function makeModelRuntime(
 
 describe("Antigravity release gates", () => {
   it.each([
-    { version: "1.5.0", ownName: false, advertisedAppend: false },
-    { version: "1.5.1", ownName: true, advertisedAppend: false },
-    { version: "1.5.7", ownName: true, advertisedAppend: true },
-    { version: undefined, ownName: false, advertisedAppend: false },
-    { version: "unknown", ownName: false, advertisedAppend: false },
-  ])(
-    "$version: advertised system append $advertisedAppend, own client name $ownName",
-    ({ version, ownName, advertisedAppend }) => {
-      const initialize = {
-        protocolVersion: 1,
-        ...(advertisedAppend
-          ? { agentCapabilities: { _meta: { antigravity: { systemPrompt: { append: true } } } } }
-          : {}),
-        ...(version === undefined
-          ? {}
-          : { agentInfo: { name: "Antigravity ACP Server", version } }),
-      };
-      // Helpers send no append.
-      expect(antigravitySessionMeta(initialize)).toBeUndefined();
-      expect(antigravitySessionMeta(initialize, "<pull_request_linking/>")).toEqual(
-        advertisedAppend
-          ? { antigravity: { systemPrompt: { append: "<pull_request_linking/>" } } }
-          : undefined,
-      );
+    { version: "1.5.0", ownName: false },
+    { version: "1.5.1", ownName: true },
+    { version: "1.5.7", ownName: true },
+    { version: undefined, ownName: false },
+    { version: "unknown", ownName: false },
+  ])("$version: own client name $ownName", ({ version, ownName }) => {
       expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
     },
   );
