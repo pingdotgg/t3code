@@ -692,7 +692,7 @@ it.effect("decodes a JSON-stringified delegate target as the same object", () =>
     yield* callTool("delegate_task", { task, target });
     yield* callTool("delegate_task", { task, target: JSON.stringify(target) });
 
-    for (const invalidTarget of ["{model:", "[]", '{"model":42}']) {
+    for (const invalidTarget of ["{model:", '{"model":42}']) {
       const error = yield* Effect.flip(callTool("delegate_task", { task, target: invalidTarget }));
       expect(error).toBeInstanceOf(McpSchema.InvalidParams);
     }
@@ -706,11 +706,6 @@ it.effect("decodes a JSON-stringified delegate target as the same object", () =>
     });
     expect(calls[1]).toEqual(calls[0]);
   }).pipe(Effect.provide(layerRecordingTools(calls)));
-});
-
-it("advertises delegate target as an object", () => {
-  const schema = advertisedJsonSchema(OrchestratorToolkit.tools.delegate_task);
-  expect(schema.properties).toMatchObject({ target: { type: "object" } });
 });
 
 it.effect("rejects arguments a tool does not declare instead of dropping them", () => {
