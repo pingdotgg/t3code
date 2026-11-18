@@ -415,6 +415,7 @@ export function ComposerDictationPrimaryAction(props: {
   readonly onStart: () => void;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
+  readonly secondary?: boolean;
 }) {
   const gt = useGT();
   if (props.presentation.trailingAction === "confirm") {
@@ -430,7 +431,7 @@ export function ComposerDictationPrimaryAction(props: {
         icon="checkmark"
         loading={!props.presentation.confirmationEnabled}
         onPress={props.onConfirm}
-        variant="primary"
+        variant={props.secondary ? "plain" : "primary"}
       />
     );
   }
