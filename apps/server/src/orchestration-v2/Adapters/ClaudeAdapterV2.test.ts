@@ -1979,6 +1979,11 @@ describe("ClaudeAdapterV2 resume compaction", () => {
         },
         { askRule: false, reason: "This shell -c script runs rm and could not be checked" },
         { askRule: false, reason: "A permission rule denies a command in this shell -c script" },
+        {
+          askRule: false,
+          reason:
+            "Claude Code can't be sure it read this command the way the shell will, so it can't rule out a dangerous removal. Read the command, and don't go ahead if you can't tell what it does.",
+        },
       ].entries()) {
         const safetyRequest = yield* runtime.events.pipe(
           Stream.filter((event) => event.type === "runtime_request.updated"),
