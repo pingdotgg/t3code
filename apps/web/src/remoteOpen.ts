@@ -16,7 +16,9 @@ import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { environmentPresentations } from "~/state/presentation";
 import { environmentSession } from "~/state/session";
+import { msg } from "gt-react";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 export interface RemoteOpenHost {
@@ -292,12 +294,23 @@ export async function launchDeviceLocalEditor(
     const result = await window.desktopBridge?.openLocalEditor?.({ editor, path });
     if (result?.ok) return null;
     return result?.reason === "path-missing"
-      ? `Path does not exist on this device: ${path}. Local paths must match the environment.`
+      ? m(
+          msg(
+            "Path does not exist on this device: {path}. Local paths must match the environment.",
+            {
+              path,
+            },
+          ),
+        )
       : result?.reason === "unsupported-launcher"
-        ? "This editor's launcher cannot be started without a shell on this system."
-        : `Local editor opening failed (${result?.reason ?? "desktop bridge unavailable"}). No server-side fallback was attempted.`;
+        ? m(msg("This editor's launcher cannot be started without a shell on this system."))
+        : m(
+            msg("Local editor opening failed ({reason}). No server-side fallback was attempted.", {
+              reason: result?.reason ?? "desktop bridge unavailable",
+            }),
+          );
   } catch {
-    return "Local editor opening failed.";
+    return m(msg("Local editor opening failed."));
   }
 }
 
@@ -306,7 +319,7 @@ export async function openDeviceLocalEditor(editor: EditorId, path: string): Pro
   if (failure === null) return true;
   toastManager.add({
     type: "error",
-    title: "Could not open editor on this device",
+    title: m(msg("Could not open editor on this device")),
     description: failure,
   });
   return false;

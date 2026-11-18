@@ -4,11 +4,13 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useEffect } from "react";
 
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
+import { m } from "../../i18n/messages";
 import { announce } from "../../lib/announce";
 import {
   openDeviceLocalEditor,
@@ -88,7 +90,7 @@ export function useOpenFavoriteEditorShortcut({
       const label = editorLabelForPlatform(preferredEditor, navigator.platform);
       if (remote.mode === "device-local") {
         void openDeviceLocalEditor(preferredEditor, openInCwd).then((opened) => {
-          if (opened) announce(`Opened in ${label}`);
+          if (opened) announce(m(msg("Opened in {editor}", { editor: label })));
         });
         return;
       }
@@ -100,7 +102,7 @@ export function useOpenFavoriteEditorShortcut({
         });
         if (url === undefined) return;
         void openRemoteEditorUrl(url).then((opened) => {
-          if (opened) announce(`Opened in ${label}`);
+          if (opened) announce(m(msg("Opened in {editor}", { editor: label })));
         });
         return;
       }
@@ -111,7 +113,7 @@ export function useOpenFavoriteEditorShortcut({
           editor: preferredEditor,
         },
       }).then((result) => {
-        if (result._tag === "Success") announce(`Opened in ${label}`);
+        if (result._tag === "Success") announce(m(msg("Opened in {editor}", { editor: label })));
       });
     };
     window.addEventListener("keydown", handler);

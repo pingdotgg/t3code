@@ -130,6 +130,51 @@ describe("makeMcpAppHost", () => {
     expect(sent.find((m) => m.id === 2)?.result).toEqual({ content: [] });
   });
 
+  it("delivers results whose stored image blocks lost their bytes, which the MCP Apps SDK rejects", async () => {
+    const { host, sent } = setup({
+      callTool: async () => ({
+        content: [
+          { type: "text", text: "rendered" },
+          { type: "image", mimeType: "image/png", sizeBytes: 300 },
+          { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+        ],
+        structuredContent: { rendered: true },
+      }),
+    });
+    initialize(host);
+    host.setToolCall({
+      arguments: {},
+      result: {
+        content: [
+          { type: "text", text: "Chart ready" },
+          { type: "image", source: { type: "base64", media_type: "image/png", sizeBytes: 300 } },
+          { type: "text", text: "[Image: source: /tmp/chart.png]" },
+        ],
+        structuredContent: { chart: "sales" },
+      },
+    });
+    host.receive({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "render" } });
+    await flush();
+
+    const notified = sent.find((m) => m.method === "ui/notifications/tool-result")?.params as {
+      content: ReadonlyArray<unknown>;
+      structuredContent: unknown;
+    };
+    expect(notified.structuredContent).toEqual({ chart: "sales" });
+    expect(notified.content).toContainEqual({ type: "text", text: "Chart ready" });
+    expect(notified.content).not.toContainEqual(expect.objectContaining({ type: "image" }));
+
+    const answered = sent.find((m) => m.id === 2)?.result as {
+      content: ReadonlyArray<unknown>;
+      structuredContent: unknown;
+    };
+    expect(answered.structuredContent).toEqual({ rendered: true });
+    expect(answered.content).toEqual([
+      { type: "text", text: "rendered" },
+      { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+    ]);
+  });
+
   it("sends a later result for a call that had none, without repeating its input", () => {
     const { host, sent } = setup();
     initialize(host);
@@ -325,7 +370,7 @@ describe("makeMcpAppHost", () => {
 
   it("forwards model context and download requests, and declares both", async () => {
     const contexts: Array<unknown> = [];
-    const downloads: Array<unknown> = [];
+    const downloads: Array<ReadonlyArray<{ readonly name: string }>> = [];
     const { host, sent } = setup({
       updateModelContext: async (update) => void contexts.push(update),
       downloadFile: async (files) => {
@@ -349,6 +394,7 @@ describe("makeMcpAppHost", () => {
         structuredContent: { overdue: 2, since: undefined },
       },
     });
+    const longName = `${"a".repeat(199)}😀.csv`;
     const embedded = {
       type: "resource",
       resource: { uri: "file:///report.csv", mimeType: "text/csv", text: "a,b" },
@@ -364,7 +410,7 @@ describe("makeMcpAppHost", () => {
       id: 3,
       method: "ui/download-file",
       params: {
-        contents: [embedded, { type: "resource_link", uri: "ui://todos/export", name: "x" }],
+        contents: [embedded, { type: "resource_link", uri: "ui://todos/export", name: longName }],
       },
     });
     host.receive({ jsonrpc: "2.0", id: 4, method: "ui/download-file", params: { contents: [{}] } });
@@ -380,8 +426,30 @@ describe("makeMcpAppHost", () => {
         bytes: new TextEncoder().encode("a,b"),
       },
     ]);
+    const capped = downloads[1]?.[1]?.name ?? "";
+    expect(capped.length).toBeLessThanOrEqual(200);
+    expect(capped.isWellFormed()).toBe(true);
     expect(sent.find((m) => m.id === 2)?.result).toEqual({});
     expect(sent.find((m) => m.id === 3)?.result).toEqual({ isError: true });
     expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
+
+    const unnamedUris = [
+      "https://example.invalid/report.csv?version=2",
+      "https://example.invalid/report.csv#page=2",
+      "https://example.invalid/report.csv?next=/noise.json#page=3",
+    ];
+    for (const [index, uri] of unnamedUris.entries()) {
+      const id = `download-${index}`;
+      const downloadIndex = downloads.length;
+      host.receive({
+        jsonrpc: "2.0",
+        id,
+        method: "ui/download-file",
+        params: { contents: [{ ...embedded, resource: { ...embedded.resource, uri } }] },
+      });
+      await flush();
+      expect(downloads[downloadIndex]?.[0]).toMatchObject({ _tag: "embedded", name: "report.csv" });
+      expect(sent.find((m) => m.id === id)?.result).toEqual({});
+    }
   });
 });
