@@ -6228,6 +6228,7 @@
   "217e1e7b60469736": "État du ticket, {state}",
   "a98a269e3061a069": "Ouvrir {issue} sur {provider}",
   "c1ff5afd83b1e027": "Actualiser le ticket",
+  "8ab83a75cae667a2": "Impossible d’actualiser ce ticket",
   "78398e2d7d040498": "Titre du ticket",
   "7b4fa0f856528bb0": "Modifier le titre",
   "c78c0974dbdb66c2": "Libellés",
