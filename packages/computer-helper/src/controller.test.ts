@@ -1281,6 +1281,26 @@ describe("an act the agent chose", () => {
     expect(page.picked).toEqual(["Select password", "Password for dana@acme.test"]);
   });
 
+  it("returns a popup once it has filled, not the first frame of it", async () => {
+    const { page, computer } = actWith();
+    await computer.run({ goal: "", text: null, act: { action: "click", ref: "search" } });
+    const observe = page.observe.bind(page);
+    let reads = 0;
+    page.observe = async () => {
+      if (page.menu.length)
+        page.menu =
+          ++reads > 1
+            ? ["Manage passwords…", "Password for dana@acme.test"]
+            : ["Manage passwords…"];
+      return observe();
+    };
+    expect(
+      await computer.run({ goal: "", text: null, act: { action: "key", key: "down" } }),
+    ).toMatchObject({
+      steps: ["pressed down", "popup open now: Manage passwords… | Password for dana@acme.test"],
+    });
+  });
+
   it("reopens a popup that closed before its line was clicked, from the focused field, and picks the line", async () => {
     const popupSeen = { text: "" };
     const { page, server, computer } = actWith({ popupSeen });

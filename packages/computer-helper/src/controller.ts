@@ -445,7 +445,16 @@ export class ComputerUse {
       await this.act(run, backend, chosen.screen, chosen.action, chosen.said);
       // A browser closes its saved-account pickers within seconds, so the popup comes back with the step itself.
       if (chosen.action.kind !== "type" && chosen.action.kind !== "scroll") {
-        const after = await settled(backend, { signal: run.signal }, this.clock);
+        let after = await backend.observe({ signal: run.signal });
+        // Its lines arrive after the popup itself (saved accounts load late): wait until it stops changing.
+        if (after.popup)
+          after = await settled(
+            backend,
+            { signal: run.signal },
+            this.clock,
+            () => true,
+            POPUP_SETTLE_MS,
+          );
         if (this.deps.popupSeen) this.deps.popupSeen.text = after.popup ?? "";
         if (after.popup) this.record(run, `popup open now: ${clip(after.popup, 400)}`);
       }
@@ -1285,6 +1294,7 @@ function sameSite(a: string, b: string): boolean {
 const SETTLE_MAX_MS = 8_000;
 const SETTLE_POLL_MS = 400;
 const NAVIGATION_SETTLE_MS = 1_000;
+const POPUP_SETTLE_MS = 1_000;
 
 /**
  * A read of the screen once it stops loading: read again while the window shows it is loading, then until its
