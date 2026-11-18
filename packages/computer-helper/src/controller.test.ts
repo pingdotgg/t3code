@@ -1228,6 +1228,20 @@ describe("an act the agent chose", () => {
     });
   });
 
+  it("takes the short ref a look gave, and finds that control again even when its path moved", async () => {
+    const refs = new Map([["e1", control("0.9.search", "textbox", "Search")]]);
+    const { server, computer } = actWith({ refs });
+    await computer.run({ goal: "", text: null, act: { action: "click", ref: "e1" } });
+    expect(server.requests[0]?.action).toMatchObject({
+      kind: "click",
+      ref: "search",
+      label: "Search",
+    });
+    expect(
+      await computer.run({ goal: "", text: null, act: { action: "click", ref: "e9" } }),
+    ).toMatchObject({ status: "stuck", reason: "That control is gone; look again." });
+  });
+
   it("opens a control's context menu and picks an item from it by label, in the background", async () => {
     const { page, server, computer } = actWith();
     expect(

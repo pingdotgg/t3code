@@ -120,6 +120,8 @@ export type Deps = Session & {
   urls?: { open(url: string): Promise<string>; browser?(): Promise<string> } | null;
   /** Where each site led (a sign-in host it redirected to), kept across tasks so its tab is found again. */
   landed?: Map<string, string>;
+  /** The short refs the last look gave ("e7"), and the controls they named. */
+  refs?: Map<string, ScreenControl>;
   log: Logger;
   minConfidence?: number;
   /** Time for the screen to settle after an action. */
@@ -435,7 +437,7 @@ export class ComputerUse {
         );
       const seen = await backend.observe({ signal: run.signal });
       surface = `${seen.app}: ${clip(seen.title, 60)}`;
-      const chosen = actOn(seen, act, task.text);
+      const chosen = actOn(seen, this.resolveRef(seen, act), task.text);
       if ("stop" in chosen) return end("stuck", chosen.stop);
       await this.act(run, backend, chosen.screen, chosen.action, chosen.said);
       return end("done", "");
@@ -538,6 +540,21 @@ export class ComputerUse {
   }
 
   /** The local stop's last word before the helper touches anything. */
+  /**
+   * A short ref from the last look, as the control on this screen: the same path, else the same role and label (the
+   * page moved it). A short ref that look did not give, or whose control is gone, names nothing.
+   */
+  private resolveRef(screen: Observation, act: ComputerAct): ComputerAct {
+    const refs = this.deps.refs;
+    if (!refs || act.ref === undefined || !/^e\d+$/.test(act.ref)) return act;
+    const was = refs.get(act.ref);
+    const now =
+      was &&
+      (screen.controls.find((c) => c.ref === was.ref) ??
+        screen.controls.find((c) => c.role === was.role && c.label === was.label));
+    return { ...act, ref: now ? now.ref : act.ref };
+  }
+
   /** A tab of the default browser already on one of `hosts`, switched to in the background. */
   private async siteTab(hosts: Set<string>) {
     const { tabs, urls } = this.deps;

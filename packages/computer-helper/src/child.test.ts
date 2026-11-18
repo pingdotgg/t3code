@@ -140,7 +140,7 @@ describe("the helper child", () => {
     const look = await parent.until((message) => message.kind === "look");
     expect(look).toMatchObject({ id: "look_1", look: { app: "Notes", text: "3 notes" } });
     expect(look.kind === "look" ? look.look.controls[0] : null).toEqual({
-      ref: "search",
+      ref: "e1",
       role: "textbox",
       label: "Search",
       value: "",
@@ -149,7 +149,7 @@ describe("the helper child", () => {
     parent.down({
       id: "act_1",
       kind: "start",
-      task: { goal: "click Delete", text: null, act: { action: "click", ref: "delete" } },
+      task: { goal: "click Delete", text: null, act: { action: "click", ref: "e3" } },
     });
     await parent.until((message) => message.kind === "finished");
     expect(parent.sent.find((message) => message.kind === "acted")).toMatchObject({

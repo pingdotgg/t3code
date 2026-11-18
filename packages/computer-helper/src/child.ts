@@ -22,7 +22,14 @@ import type { Logger } from "./log.ts";
 import { MacControls, parseControl } from "./macControls.ts";
 import type { ComputerControl } from "./macControls.ts";
 import { LocalStop } from "./stop.ts";
-import type { BrowserTabs, Observation, Point, Rect, ScreenBackend } from "./types.ts";
+import type {
+  BrowserTabs,
+  Observation,
+  Point,
+  Rect,
+  ScreenBackend,
+  ScreenControl,
+} from "./types.ts";
 
 /** The fixed controls the server can ask this computer for, and the notice a task start shows. */
 export type MacControlRunner = {
@@ -207,6 +214,7 @@ export function createChild(options: ChildOptions): Child {
   };
 
   const landed = new Map<string, string>();
+  const refs = new Map<string, ScreenControl>();
   const runs = new ComputerUseRuns({
     create: (session: Session) => {
       const { desktop, tabs, dock, apps, urls } = machine();
@@ -218,6 +226,7 @@ export function createChild(options: ChildOptions): Child {
         apps,
         urls: urls ?? null,
         landed,
+        refs,
         log,
       });
     },
@@ -340,7 +349,14 @@ export function createChild(options: ChildOptions): Child {
       window: _window,
       ...observed
     } = await settledRead(desktop, frame.app ? { app: frame.app } : {}, REAL_CLOCK);
-    const seen: Look = { ...observed, text: observed.text ?? "" };
+    // Short refs ("e7") instead of long accessibility paths, which a model copies wrong; acts map them back.
+    refs.clear();
+    const controls = observed.controls.map((control, index) => {
+      const ref = `e${index + 1}`;
+      refs.set(ref, control);
+      return { ...control, ref };
+    });
+    const seen: Look = { ...observed, controls, text: observed.text ?? "" };
     const wanted = frame.screenshot === true;
     if (!desktop.screenshot || (!wanted && seen.controls.length > 0)) return seen;
     const shot = await desktop
