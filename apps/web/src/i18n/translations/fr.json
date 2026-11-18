@@ -8303,6 +8303,7 @@
   "84b0f6ddab031f84": "Un clic sur un lien de pull request l’ouvre dans T3 Code. Désactivez cette option pour ouvrir ces liens comme les autres, sur votre hébergeur git.",
   "b9335f8e528f91d6": "Réinitialiser l’ouverture des pull requests dans T3 Code à la valeur par défaut",
   "d5a0a7ab5da467aa": "Ouvrir les pull requests dans T3 Code",
+  "b472052853e78770": "Les machines hors ligne ne recevront pas ce paramètre : {machines}.",
   "55087c889e8a065d": "Paramètres des appareils non enregistrés dans tous les environnements",
   "73e76ba75c8d3096": "Impossible de mettre à jour {environments}.",
   "b16605b8957226ea": "Mettre à jour",

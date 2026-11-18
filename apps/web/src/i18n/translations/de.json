@@ -8304,6 +8304,7 @@
   "84b0f6ddab031f84": "Ein Klick auf einen Pull-Request-Link öffnet ihn in T3 Code. Schalte das aus, um Pull-Request-Links wie andere Links bei deinem Git-Host zu öffnen.",
   "b9335f8e528f91d6": "Pull Requests in T3 Code öffnen auf Standard zurücksetzen",
   "d5a0a7ab5da467aa": "Pull Requests in T3 Code öffnen",
+  "b472052853e78770": "Offline-Rechner erhalten diese Einstellung nicht: {machines}.",
   "55087c889e8a065d": "Geräteeinstellungen nicht in allen Umgebungen gespeichert",
   "73e76ba75c8d3096": "{environments} konnte nicht aktualisiert werden.",
   "b16605b8957226ea": "Aktualisieren",

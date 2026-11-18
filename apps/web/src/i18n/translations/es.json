@@ -8302,6 +8302,7 @@
   "84b0f6ddab031f84": "Al hacer clic en un enlace de pull request se abre en T3 Code. Desactívalo para abrir los enlaces de pull requests como cualquier otro enlace, en tu host de git.",
   "b9335f8e528f91d6": "Restablecer abrir pull requests en T3 Code al valor predeterminado",
   "d5a0a7ab5da467aa": "Abrir pull requests en T3 Code",
+  "b472052853e78770": "Las máquinas sin conexión no recibirán este ajuste: {machines}.",
   "55087c889e8a065d": "Los ajustes de dispositivos no se guardaron en todos los entornos",
   "73e76ba75c8d3096": "No se pudo actualizar {environments}.",
   "b16605b8957226ea": "Actualizar",

@@ -8310,6 +8310,7 @@
   "84b0f6ddab031f84": "När du klickar på en länk till en pull request öppnas den i T3 Code. Stäng av för att öppna länkar till pull requests som vanliga länkar, hos din Git-värd.",
   "b9335f8e528f91d6": "Återställ Öppna pull requests i T3 Code till standard",
   "d5a0a7ab5da467aa": "Öppna pull requests i T3 Code",
+  "b472052853e78770": "Datorer som är offline får inte den här inställningen: {machines}.",
   "55087c889e8a065d": "Enhetsinställningarna sparades inte i alla miljöer",
   "73e76ba75c8d3096": "Kunde inte uppdatera {environments}.",
   "b16605b8957226ea": "Uppdatera",

@@ -8302,6 +8302,7 @@
   "84b0f6ddab031f84": "Clicar em um link de pull request o abre no T3 Code. Desative para abrir links de pull request como qualquer outro link, no seu host git.",
   "b9335f8e528f91d6": "Redefinir \"Abrir pull requests no T3 Code\" para o padrão",
   "d5a0a7ab5da467aa": "Abrir pull requests no T3 Code",
+  "b472052853e78770": "Máquinas offline não receberão esta configuração: {machines}.",
   "55087c889e8a065d": "Configurações de dispositivo não salvas em todos os ambientes",
   "73e76ba75c8d3096": "Não foi possível atualizar {environments}.",
   "b16605b8957226ea": "Atualizar",

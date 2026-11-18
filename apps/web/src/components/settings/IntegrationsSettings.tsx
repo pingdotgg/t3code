@@ -918,7 +918,9 @@ function DeviceIntegrationControls({
     .map((environment) => environment.label);
   const offlineStatus =
     offlineLabels.length > 0
-      ? `Offline machines will not get this setting: ${offlineLabels.join(", ")}.`
+      ? gt("Offline machines will not get this setting: {machines}.", {
+          machines: offlineLabels.join(", "),
+        })
       : undefined;
   const configure = useAtomCommand(deviceEnvironment.configure, { reportFailure: false });
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });

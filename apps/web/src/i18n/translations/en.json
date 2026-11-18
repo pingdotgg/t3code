@@ -8312,6 +8312,7 @@
   "84b0f6ddab031f84": "Clicking a pull request link opens it in T3 Code. Turn off to open pull request links like any other link, on your git host.",
   "b9335f8e528f91d6": "Reset open pull requests in T3 Code to default",
   "d5a0a7ab5da467aa": "Open pull requests in T3 Code",
+  "b472052853e78770": "Offline machines will not get this setting: {machines}.",
   "55087c889e8a065d": "Device settings not saved on all environments",
   "73e76ba75c8d3096": "Could not update {environments}.",
   "b16605b8957226ea": "Update",
