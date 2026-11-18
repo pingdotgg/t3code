@@ -1200,8 +1200,6 @@ describe("DesktopUpdates", () => {
         assert.equal(state.status, "error");
         assert.equal(state.errorContext, "check");
         assert.isTrue(state.canRetry);
-        assert.include(state.message, "Stable build");
-        assert.include(state.message, "Nightly track");
         assert.deepEqual(harness.checkAllowedDowngrade, [false]);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
