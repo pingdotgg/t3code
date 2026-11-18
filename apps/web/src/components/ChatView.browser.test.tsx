@@ -773,7 +773,7 @@ it("/side puts the draft back when the side chat does not start", async () => {
   await expect.element(page.getByRole("img", { name: "shot.png" })).toBeVisible();
   await expect.element(editor).toHaveTextContent("/side what is this?");
 
-  // A draft typed during the start stays, and the failed message is offered to copy.
+  // A draft typed during the start stays, and the failed message joins it.
   await userEvent.keyboard("{Enter}");
   await expect.element(page.getByRole("img", { name: "shot.png" })).not.toBeInTheDocument();
   await userEvent.keyboard("next draft");
@@ -783,7 +783,11 @@ it("/side puts the draft back when the side chat does not start", async () => {
     ),
   );
   await rejectPendingCommand("Side chats are paused.");
-  await expect.element(page.getByText("Side chat not started")).toBeVisible();
-  await expect.element(page.getByText("Copy message", { exact: true })).toBeVisible();
-  await expect.element(editor).toHaveTextContent("next draft");
+  await expect.element(page.getByRole("img", { name: "shot.png" })).toBeVisible();
+  await vi.waitFor(() =>
+    expect((editor.element() as HTMLElement).innerText.split("\n").filter(Boolean)).toEqual([
+      "next draft",
+      "/side what is this?",
+    ]),
+  );
 });
