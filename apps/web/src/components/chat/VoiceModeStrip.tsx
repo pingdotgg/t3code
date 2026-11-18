@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { VoiceSessionTarget } from "@t3tools/client-runtime/voice-mode";
 import { AudioLinesIcon, MicIcon, MicOffIcon, SquareIcon } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
@@ -76,6 +77,7 @@ export const VoiceModeStrip = memo(function VoiceModeStrip({
 }: {
   target: VoiceSessionTarget;
 }) {
+  const gt = useGT();
   const state = useVoiceModeState();
   const isOnThread = isVoiceTargetFor(state, target) && state.phase !== "idle";
   const isActive = isOnThread && state.phase === "active";
@@ -99,12 +101,12 @@ export const VoiceModeStrip = memo(function VoiceModeStrip({
   if (!isOnThread) return null;
 
   const status = !isActive
-    ? "Connecting…"
+    ? gt("Connecting…")
     : speaking
-      ? "Speaking"
+      ? gt("Speaking")
       : state.muted
-        ? "Muted"
-        : "Listening";
+        ? gt("Muted")
+        : gt("Listening");
   const captions = state.captions.slice(-VISIBLE_CAPTIONS);
   // Reduced motion keeps the meters still: full while a channel is live, low while muted.
   const staticMicrophoneLevel = prefersReducedMotion && isActive && !state.muted ? 0.4 : 0;
@@ -116,7 +118,7 @@ export const VoiceModeStrip = memo(function VoiceModeStrip({
         <ComposerBanner.Icon>{isActive ? <AudioLinesIcon /> : <Spinner />}</ComposerBanner.Icon>
         <ComposerBanner.Content className="gap-2">
           <span className="sr-only" role="status">
-            {isActive ? "Voice connected" : "Connecting voice…"}
+            {isActive ? gt("Voice connected") : gt("Connecting voice…")}
           </span>
           <span className="shrink-0 whitespace-nowrap text-muted-foreground">{status}</span>
           {isActive ? (
@@ -129,7 +131,7 @@ export const VoiceModeStrip = memo(function VoiceModeStrip({
                 )}
                 <LevelMeter
                   meterRef={microphoneMeterRef}
-                  label="Microphone level"
+                  label={gt("Microphone level")}
                   staticLevel={staticMicrophoneLevel}
                 />
               </span>
@@ -137,7 +139,7 @@ export const VoiceModeStrip = memo(function VoiceModeStrip({
                 <AudioLinesIcon className="size-3" aria-hidden />
                 <LevelMeter
                   meterRef={speakerMeterRef}
-                  label="Speaker level"
+                  label={gt("Speaker level")}
                   staticLevel={staticSpeakerLevel}
                 />
               </span>
@@ -146,11 +148,11 @@ export const VoiceModeStrip = memo(function VoiceModeStrip({
         </ComposerBanner.Content>
         <ComposerBanner.Actions>
           <Button size="xs" variant="ghost" onClick={() => voiceMode.toggleMuted()}>
-            {state.muted ? "Unmute" : "Mute"}
+            {state.muted ? gt("Unmute") : gt("Mute")}
           </Button>
           <Button size="xs" variant="ghost" onClick={() => voiceMode.stop()}>
             <SquareIcon className="size-3" aria-hidden />
-            Stop
+            {gt("Stop")}
           </Button>
         </ComposerBanner.Actions>
       </ComposerBanner.Row>
@@ -182,7 +184,8 @@ export function ComposerVoiceButton(props: {
   readonly disabledReason: string | null;
   readonly onToggle: () => void;
 }) {
-  const label = props.engaged ? "Stop voice conversation" : "Start voice conversation";
+  const gt = useGT();
+  const label = props.engaged ? gt("Stop voice conversation") : gt("Start voice conversation");
   return (
     <Tooltip>
       <TooltipTrigger

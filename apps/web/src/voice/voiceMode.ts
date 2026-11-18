@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -64,13 +66,14 @@ const runOnConnectionRuntime = (
     ).pipe(Effect.orDie),
   );
 
-const openSession = makeVoiceSessionOpener(runOnConnectionRuntime);
+const openSession = makeVoiceSessionOpener(runOnConnectionRuntime, m);
 
 const platform: VoiceModePlatform = {
+  resolveMessage: m,
   // The DOM's overloaded addEventListener does not fit the structural `never`
   // listener in VoicePeerConnection, though the runtime shape matches.
   createPeerConnection: () => new RTCPeerConnection() as unknown as VoicePeerConnection,
-  validateTarget: makeVoiceSessionValidator(runOnConnectionRuntime),
+  validateTarget: makeVoiceSessionValidator(runOnConnectionRuntime, m),
   getMicrophone,
   playRemoteAudio,
   openSession,
@@ -137,7 +140,10 @@ voiceMode.subscribe((state) => {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: previousPhase === "active" ? "Voice conversation ended" : "Couldn't start voice",
+        title:
+          previousPhase === "active"
+            ? m(msg("Voice conversation ended"))
+            : m(msg("Couldn't start voice")),
         description: state.error,
         data: { threadRef },
       }),
@@ -145,7 +151,7 @@ voiceMode.subscribe((state) => {
   } else if (state.endedReason !== null) {
     toastManager.add({
       type: "info",
-      title: describeVoiceEnd(state.endedReason),
+      title: describeVoiceEnd(state.endedReason, m),
       data: { threadRef },
     });
   }

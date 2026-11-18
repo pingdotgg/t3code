@@ -1,4 +1,6 @@
 // @effect-diagnostics globalTimers:off - WebRTC lifecycle runs on platform callbacks, outside an Effect runtime.
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type { ProviderVoiceSessionEvent, ProviderVoiceTranscriptRole } from "@t3tools/contracts";
 
 /** Clients own WebRTC audio; environments relay only signaling and captions.
@@ -54,6 +56,7 @@ export interface VoiceSessionHandlers {
 }
 
 export interface VoiceModePlatform {
+  readonly resolveMessage?: MFunctionType;
   readonly validateTarget?: (target: VoiceSessionTarget) => Promise<void>;
   readonly createPeerConnection: () => VoicePeerConnection;
   /** Resolves an echo-cancelled microphone stream, prompting for permission if needed. */
@@ -145,27 +148,29 @@ export function finishVoiceCaption(
 }
 
 /** User-facing text for why a conversation ended without the user stopping it. */
-export function describeVoiceEnd(reason: string): string {
+export function describeVoiceEnd(reason: string, resolve: MFunctionType = mFallback): string {
   switch (reason) {
     case "replaced":
-      return "Voice conversation moved to another window or device.";
+      return resolve(msg("Voice conversation moved to another window or device."));
     case "ended":
-      return "Voice conversation ended.";
+      return resolve(msg("Voice conversation ended."));
     default:
-      return `Voice conversation ended: ${reason.replaceAll("_", " ")}.`;
+      return resolve(msg("Voice conversation ended: {reason}."), {
+        reason: reason.replaceAll("_", " "),
+      });
   }
 }
 
-function describeError(cause: unknown): string {
+function describeError(cause: unknown, resolve: MFunctionType = mFallback): string {
   if (cause && typeof cause === "object" && "name" in cause) {
     const name = String((cause as { name: unknown }).name);
     if (name === "NotAllowedError" || name === "SecurityError") {
-      return "Microphone access was denied.";
+      return resolve(msg("Microphone access was denied."));
     }
-    if (name === "NotFoundError") return "No microphone was found.";
+    if (name === "NotFoundError") return resolve(msg("No microphone was found."));
   }
   if (cause instanceof Error && cause.message) return cause.message;
-  return "Voice conversation failed.";
+  return resolve(msg("Voice conversation failed."));
 }
 
 interface ActiveSession {
@@ -327,7 +332,7 @@ export class VoiceModeController {
         },
       );
     } catch (cause) {
-      this.fail(session, describeError(cause));
+      this.fail(session, describeError(cause, this.platform.resolveMessage));
     }
   }
 
@@ -359,7 +364,9 @@ export class VoiceModeController {
       case "answer":
         session.peer
           ?.setRemoteDescription({ type: "answer", sdp: event.sdp } as never)
-          .catch((cause: unknown) => this.fail(session, describeError(cause)));
+          .catch((cause: unknown) =>
+            this.fail(session, describeError(cause, this.platform.resolveMessage)),
+          );
         return;
       case "started":
         session.backendStarted = true;

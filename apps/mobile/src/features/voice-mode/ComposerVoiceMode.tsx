@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react-native";
 import type { VoiceModePhase } from "@t3tools/client-runtime/voice-mode";
 import { memo, useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
@@ -33,10 +34,11 @@ export function ComposerVoiceModeButton(props: {
   readonly disabled: boolean;
   readonly onPress: () => void;
 }) {
+  const gt = useGT();
   const live = props.phase !== "idle";
   return (
     <Pressable
-      accessibilityLabel={live ? "End voice conversation" : "Start voice conversation"}
+      accessibilityLabel={live ? gt("End voice conversation") : gt("Start voice conversation")}
       accessibilityRole="button"
       accessibilityState={{ disabled: props.disabled, selected: live }}
       className="size-[44px] shrink-0 items-center justify-center active:opacity-70"
@@ -101,6 +103,8 @@ function StripButton(props: {
  * Render only while this thread's conversation is connecting or active.
  */
 export function ComposerVoiceStrip() {
+  const gt = useGT();
+  const m = useMessages();
   const state = useVoiceModeState();
   const microphoneLevel = useSharedValue(0);
   const speakerLevel = useSharedValue(0);
@@ -141,15 +145,15 @@ export function ComposerVoiceStrip() {
           className="min-w-0 flex-1 text-sm font-t3-medium text-foreground"
           numberOfLines={1}
         >
-          {VOICE_STRIP_STATUS_LABEL[status]}
+          {m(VOICE_STRIP_STATUS_LABEL[status])}
         </Text>
         <StripButton
-          accessibilityLabel={state.muted ? "Unmute microphone" : "Mute microphone"}
+          accessibilityLabel={state.muted ? gt("Unmute microphone") : gt("Mute microphone")}
           icon={state.muted ? "mic.slash" : "mic"}
           onPress={() => voiceMode.toggleMuted()}
         />
         <StripButton
-          accessibilityLabel="End voice conversation"
+          accessibilityLabel={gt("End voice conversation")}
           icon="stop.fill"
           onPress={() => voiceMode.stop()}
         />

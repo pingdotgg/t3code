@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import type { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import {
   VoiceModeController,
@@ -52,12 +54,13 @@ function createPeerConnection(): VoicePeerConnection {
 }
 
 export const voiceMode = new VoiceModeController({
-  validateTarget: makeVoiceSessionValidator(runOnConnectionRuntime),
+  resolveMessage: m,
+  validateTarget: makeVoiceSessionValidator(runOnConnectionRuntime, m),
   createPeerConnection,
   getMicrophone: () => loadWebRTC().mediaDevices.getUserMedia({ audio: true }),
   // Native WebRTC plays remote audio tracks through its own audio device; there is nothing to attach.
   playRemoteAudio: () => () => undefined,
-  openSession: makeVoiceSessionOpener(runOnConnectionRuntime),
+  openSession: makeVoiceSessionOpener(runOnConnectionRuntime, m),
 });
 
 const KEEP_AWAKE_TAG = "voice-mode";
@@ -75,8 +78,8 @@ voiceMode.subscribe(({ phase }) => {
       voiceMode.stop();
       if (error !== undefined)
         Alert.alert(
-          "Voice audio failed",
-          error instanceof Error ? error.message : "Could not activate audio.",
+          m(msg("Voice audio failed")),
+          error instanceof Error ? error.message : m(msg("Could not activate audio.")),
         );
     }).catch(() => undefined);
   }

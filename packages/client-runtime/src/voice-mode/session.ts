@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import {
   EnvironmentId,
   ThreadId,
@@ -19,7 +21,7 @@ class VoiceSessionUnavailable extends Schema.TaggedError<VoiceSessionUnavailable
   { message: Schema.String },
 ) {}
 
-function failureMessage(cause: Cause.Cause<unknown>): string {
+function failureMessage(cause: Cause.Cause<unknown>, resolveMessage: MFunctionType): string {
   const error = Cause.squash(cause);
   if (error && typeof error === "object") {
     if ("detail" in error && typeof error.detail === "string") return error.detail;
@@ -27,7 +29,7 @@ function failureMessage(cause: Cause.Cause<unknown>): string {
       return error.message;
     }
   }
-  return "Voice conversation failed.";
+  return resolveMessage(msg("Voice conversation failed."));
 }
 
 /**
@@ -37,6 +39,7 @@ function failureMessage(cause: Cause.Cause<unknown>): string {
  */
 export function makeVoiceSessionOpener(
   runFork: (effect: Effect.Effect<void, never, EnvironmentRegistry>) => Fiber.Fiber<void>,
+  resolveMessage: MFunctionType = mFallback,
 ): VoiceModePlatform["openSession"] {
   return ({ environmentId, threadId, offerSdp }, handlers) => {
     const fiber = runFork(
@@ -54,7 +57,8 @@ export function makeVoiceSessionOpener(
         ),
         Effect.matchCause({
           onFailure: (cause) => {
-            if (!Cause.hasInterruptsOnly(cause)) handlers.onError(failureMessage(cause));
+            if (!Cause.hasInterruptsOnly(cause))
+              handlers.onError(failureMessage(cause, resolveMessage));
           },
           onSuccess: () => handlers.onEnd(),
         }),
@@ -67,6 +71,7 @@ export function makeVoiceSessionOpener(
 /** Refreshes the bound provider session before requesting microphone access. */
 export function makeVoiceSessionValidator(
   runFork: (effect: Effect.Effect<void, never, EnvironmentRegistry>) => Fiber.Fiber<void>,
+  resolveMessage: MFunctionType = mFallback,
 ): NonNullable<VoiceModePlatform["validateTarget"]> {
   return ({ environmentId, threadId }) =>
     new Promise((resolve, reject) => {
@@ -87,13 +92,15 @@ export function makeVoiceSessionValidator(
           );
           if (!session || !["ready", "running", "waiting"].includes(session.status)) {
             return yield* new VoiceSessionUnavailable({
-              message: "The provider session is no longer running. Send a message first.",
+              message: resolveMessage(
+                msg("The provider session is no longer running. Send a message first."),
+              ),
             });
           }
         }).pipe(
           Effect.matchCause({
             onSuccess: () => resolve(),
-            onFailure: (cause) => reject(new Error(failureMessage(cause))),
+            onFailure: (cause) => reject(new Error(failureMessage(cause, resolveMessage))),
           }),
         ),
       );

@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import {
   describeVoiceEnd,
   type VoiceModePhase,
@@ -7,10 +9,10 @@ import {
 export type VoiceStripStatus = "connecting" | "listening" | "speaking" | "muted";
 
 export const VOICE_STRIP_STATUS_LABEL: Record<VoiceStripStatus, string> = {
-  connecting: "Connecting…",
-  listening: "Listening",
-  speaking: "Speaking",
-  muted: "Muted",
+  connecting: msg("Connecting…"),
+  listening: msg("Listening"),
+  speaking: msg("Speaking"),
+  muted: msg("Muted"),
 };
 
 /** The assistant's voice outranks mute: while it talks, that is what the user hears. */
@@ -58,11 +60,14 @@ export interface VoiceModeNotice {
 /** What to tell the user about a finished conversation. Null when they ended it themselves. */
 export function resolveVoiceModeNotice(state: VoiceModeState): VoiceModeNotice | null {
   if (state.phase !== "idle") return null;
-  if (state.error) return { title: "Voice conversation failed", message: state.error };
+  if (state.error) return { title: m(msg("Voice conversation failed")), message: state.error };
   if (state.endedReason) {
     return state.endedReason === "ended"
-      ? { title: "Voice conversation ended" }
-      : { title: "Voice conversation ended", message: describeVoiceEnd(state.endedReason) };
+      ? { title: m(msg("Voice conversation ended")) }
+      : {
+          title: m(msg("Voice conversation ended")),
+          message: describeVoiceEnd(state.endedReason, m),
+        };
   }
   return null;
 }
