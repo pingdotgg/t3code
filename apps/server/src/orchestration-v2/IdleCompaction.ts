@@ -1,12 +1,8 @@
 import { isListedThreadLineage, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
-import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompaction";
+import { compactionSuggestionMinTokens } from "@t3tools/shared/claudeCompaction";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
-// Claude Code's idleCompaction defaults to 200K and won't go below 100K. Below
-// that a cold re-read is cheap, so compacting mostly loses context for little
-// saving.
-const MIN_CONTEXT_TOKENS = COMPACTION_SUGGESTION_MIN_TOKENS;
 // Start this long before the cache expires: enough for the session to resume
 // and send the compaction while the cache is still warm.
 const LEAD_MS = 2 * 60_000;
@@ -96,7 +92,9 @@ export function idleCompactionWindow(
     .filter((turn) => turn.providerThreadId === providerThread.id && turn.tokenUsage !== undefined)
     .map((turn) => turn.tokenUsage!)
     .toSorted((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  if ((usages[0]?.usedTokens ?? 0) < MIN_CONTEXT_TOKENS) return null;
+  if ((usages[0]?.usedTokens ?? 0) < compactionSuggestionMinTokens(usages[0]?.maxTokens)) {
+    return null;
+  }
   // A request served fully from cache creates no cache entry and reports no
   // TTL, but it still refreshes the cache. Treat it as unknown and skip.
   const expiresAt = usages[0]?.promptCacheExpiresAt;

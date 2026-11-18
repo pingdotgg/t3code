@@ -292,6 +292,17 @@ export function resolveClaudeReportedModelSlug(
   );
 }
 
+/** The catalog slug for a model id Claude Code reports on any backend, or the id itself. */
+export function resolveClaudeWireModelSlug(catalog: ClaudeModelCatalog, wireModel: string): string {
+  const firstParty = stripClaudeBackendDecoration(stripClaudeContextWindowSuffix(wireModel));
+  return (
+    (
+      resolveClaudeCatalogModel(catalog, firstParty) ??
+      resolveClaudeCatalogModel(catalog, firstParty.replace(/-\d{8}$/, ""))
+    )?.model.slug ?? wireModel
+  );
+}
+
 export function getClaudeCatalogModelCapabilities(
   catalog: ClaudeModelCatalog,
   slugOrAlias: string | null | undefined,

@@ -69,7 +69,8 @@ subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands an
 composer commands.
 
 **Compact idle threads** in **Settings > Providers > Advanced** controls this for threads
-over 200,000 tokens. Each Claude provider's settings can override it:
+over 200,000 tokens, or over 100,000 in a 200K context window. Each Claude provider's settings
+can override it:
 
 - **When you return** shows the **Compact** chip described above. This is the default.
 - **Before the cache expires (beta)** tries to compact an idle thread shortly before its
