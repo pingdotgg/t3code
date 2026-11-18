@@ -263,10 +263,32 @@ process.stdout.write(args[0] === "__ssh-helper"
             "41773",
           ]),
         );
-        yield* fs.writeFileString(
-          path.join(customHome, "userdata/server-runtime.json"),
-          JSON.stringify({ pid: external.pid, port: 41773 }),
+        const runtimeFile = path.join(customHome, "userdata/server-runtime.json");
+        const externalRecord = JSON.stringify({ pid: external.pid, port: 41773 });
+        const fixturePidFile = path.join(directory, "managed-fixture-pid");
+        yield* fs.writeFileString(runtimeFile, externalRecord);
+        const stopManagedFixture = fs.readFileString(fixturePidFile).pipe(
+          Effect.flatMap((pid) =>
+            fs.remove(fixturePidFile).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  const fixturePid = Number(pid);
+                  assert.isTrue(Number.isSafeInteger(fixturePid) && fixturePid > 1);
+                  try {
+                    process.kill(fixturePid, "SIGKILL");
+                  } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+                  }
+                }),
+              ),
+            ),
+          ),
+          Effect.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Effect.void,
+          ),
         );
+        yield* Effect.addFinalizer(() => Effect.orDie(stopManagedFixture));
         yield* fs.writeFileString(
           path.join(archiveDir, ".install-complete"),
           ARCHIVE.archiveVersion,
@@ -275,8 +297,22 @@ process.stdout.write(args[0] === "__ssh-helper"
           path.join(archiveDir, "t3"),
           `#!${process.execPath}
 const fs = require("node:fs");
+const path = require("node:path");
 const args = process.argv.slice(2);
-if (args[0] === "serve" || args[0] === "--version") process.exit(0);
+const runtimeFile = path.join(process.env.T3CODE_HOME, "userdata", "server-runtime.json");
+if (args[0] === "--version") process.exit(0);
+if (args[0] === "serve") {
+  const base = args[args.indexOf("--base-dir") + 1];
+  const port = Number(args[args.indexOf("--port") + 1]);
+  const file = path.join(base, "userdata", "server-runtime.json");
+  const pidFile = process.env.T3_FIXTURE_PID_FILE;
+  fs.writeFileSync(pidFile + ".tmp", String(process.pid));
+  fs.renameSync(pidFile + ".tmp", pidFile);
+  fs.writeFileSync(file + ".tmp", JSON.stringify({ pid: process.pid, port }));
+  fs.renameSync(file + ".tmp", file);
+  fs.watch(path.dirname(file), () => {});
+  return;
+}
 if (args[0] !== "__ssh-helper") process.exit(21);
 switch (args[1]) {
   case "home-dir": process.stdout.write(process.env.T3CODE_HOME); break;
@@ -286,8 +322,16 @@ switch (args[1]) {
   }
   case "pick-port": process.stdout.write("41774"); break;
   case "wait-ready": {
-    if (args[2] === "41774" && fs.readFileSync(process.env.T3_FIXTURE_STATE_DIR + "/server-home", "utf8").trim() !== process.env.T3CODE_HOME) process.exit(24);
-    process.exit(args[2] === process.env.T3_FIXTURE_READY_PORT ? 0 : 22); break;
+    if (args[2] !== process.env.T3_FIXTURE_READY_PORT) process.exit(22);
+    if (args[2] !== "41774") process.exit(0);
+    if (fs.readFileSync(process.env.T3_FIXTURE_STATE_DIR + "/server-home", "utf8").trim() !== process.env.T3CODE_HOME) process.exit(24);
+    const check = () => {
+      const runtime = JSON.parse(fs.readFileSync(runtimeFile, "utf8"));
+      if (runtime.port === 41774) process.exit(0);
+    };
+    fs.watch(path.dirname(runtimeFile), check);
+    check();
+    break;
   }
   default: process.exit(23);
 }`,
@@ -313,6 +357,7 @@ switch (args[1]) {
                 T3CODE_HOME: customHome,
                 T3_FIXTURE_READY_PORT: readyPort,
                 T3_FIXTURE_STATE_DIR: stateDir,
+                T3_FIXTURE_PID_FILE: fixturePidFile,
               },
               extendEnv: false,
             }),
@@ -358,6 +403,10 @@ switch (args[1]) {
           customHome,
         );
         assert.isTrue(yield* external.isRunning);
+
+        yield* stopManagedFixture;
+        yield* fs.remove(path.join(stateDir, "pid"));
+        yield* fs.writeFileString(runtimeFile, externalRecord);
 
         // A rejected runtime PID must not hide a live sibling on the selected home.
         const sibling = yield* realSpawner.spawn(
