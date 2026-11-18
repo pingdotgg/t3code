@@ -403,10 +403,11 @@ describe("acpRegistrySnapshotReadiness", () => {
       [],
     ).models.map((model) => model.capabilities?.optionDescriptors ?? []);
     expect(advertised).toEqual([
-      [{ ...liveOptions[0]!, role: "reasoning" }],
+      [{ ...liveOptions[0]!, label: "Reasoning", role: "reasoning" }],
       [
         {
           ...liveOptions[0]!,
+          label: "Reasoning",
           role: "reasoning",
           options: [{ id: "low", label: "Low" }],
           currentValue: "low",
@@ -467,9 +468,9 @@ describe("acpRegistrySnapshotReadiness", () => {
       ]);
     const thinking = (levels: ReadonlyArray<string>) => ({
       id: "thinking",
-      label: "Thinking",
+      label: "Reasoning",
       type: "select",
-      options: levels.map((id) => ({ id, label: id })),
+      options: levels.map((id) => ({ id, label: id[0]!.toUpperCase() + id.slice(1) })),
       currentValue: "high",
       role: "reasoning",
     });
@@ -492,7 +493,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     );
     expect(descriptors(onMedium)).toEqual([
       ["mistral-large-4-0-3", [thinking(["low", "medium", "high"])]],
-      ["mistral-medium-3.5", [thinking(["off", "high"])]],
+      ["mistral-medium-3.5", [thinking(["high", "off"])]],
     ]);
   });
 

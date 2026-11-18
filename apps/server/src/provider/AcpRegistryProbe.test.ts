@@ -107,7 +107,7 @@ describe("ACP Registry probe", () => {
       configOptions: [
         {
           id: "effort",
-          label: "Effort",
+          label: "Reasoning",
           type: "select",
           options: [{ id: "high", label: "High" }],
           currentValue: "high",
