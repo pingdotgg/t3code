@@ -497,16 +497,23 @@ export const makeCliproxyApi = Effect.gen(function* () {
     config: CliproxyHub,
   ) {
     // Accounts first: a failed lookup after the pop would lose those records for good.
-    const accountIds = new Map(
-      (yield* authFiles(config)).map((account) => [account.auth_index, account.id]),
+    const accounts = new Map(
+      (yield* authFiles(config)).map((account) => [account.auth_index, account]),
     );
     // Records without a session or account, or not JSON objects, carry nothing to match.
     const records = (yield* decodeUsageQueue(
       yield* management(config, "usage-queue?count=1000"),
     )).flatMap((record) => Option.toArray(decodeUsageQueueRecord(record)));
-    return records.flatMap(({ session_id, auth_index }) => {
-      const accountId = accountIds.get(auth_index);
-      return accountId ? [{ sessionId: session_id, accountId }] : [];
+    return records.map(({ session_id, auth_index }) => {
+      const account = accounts.get(auth_index);
+      const driver =
+        account && !account.disabled ? HUB_PROVIDERS.get(account.provider)?.driver : undefined;
+      return {
+        sessionId: session_id,
+        accountId: account?.id,
+        driver,
+        ...(account ? listedIdentity(account) : {}),
+      };
     });
   });
 

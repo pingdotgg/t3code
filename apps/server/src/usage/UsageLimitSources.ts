@@ -297,12 +297,19 @@ export const make = Effect.gen(function* () {
       for (const [id, routes] of reads) {
         const routed = new Map(previous.get(id));
         const source = snapshots.find((source) => source.id === id);
-        for (const { sessionId, accountId } of routes) {
-          const account = source?.accounts.find((account) => account.id === accountId);
-          if (!source || !account) continue;
+        for (const { sessionId, accountId, driver, email, workspaceId } of routes) {
           routed.delete(sessionId);
+          const account = source?.accounts.find((account) => account.id === accountId);
+          if (
+            !source ||
+            !account ||
+            account.driver !== driver ||
+            account.email !== email ||
+            account.workspaceId !== workspaceId
+          )
+            continue;
           routed.set(sessionId, {
-            accountId,
+            accountId: account.id,
             endpoint: source.endpoint,
             identity: routeIdentity(account),
           });

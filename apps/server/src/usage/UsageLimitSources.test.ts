@@ -416,6 +416,7 @@ it.effect("reads routed sessions from opted-in hubs, even with no client open", 
     const queueReads: string[] = [];
     let refused = false;
     let email = "account@example.com";
+    let accountId = "claude-a.json";
     const http = HttpClient.make((request) =>
       Effect.sync(() => {
         expect(request.headers.authorization).toBe("Bearer key");
@@ -433,7 +434,7 @@ it.effect("reads routed sessions from opted-in hubs, even with no client open", 
             Response.json({
               files: [
                 {
-                  id: "claude-a.json",
+                  id: accountId,
                   auth_index: "a",
                   provider: "claude",
                   email,
@@ -469,9 +470,18 @@ it.effect("reads routed sessions from opted-in hubs, even with no client open", 
     ]);
 
     email = "replacement@example.com";
+    yield* TestClock.adjust("30 seconds");
+    expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toBeUndefined();
     yield* sources.refresh;
     const replaced = yield* sources.current;
     expect(replaced[0]?.accounts[0]?.sessionIds).toBeUndefined();
+    yield* TestClock.adjust("30 seconds");
+    expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toEqual(["thread-session"]);
+
+    accountId = "claude-b.json";
+    yield* TestClock.adjust("30 seconds");
+    expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toBeUndefined();
+    yield* sources.refresh;
     yield* TestClock.adjust("30 seconds");
     expect((yield* sources.current)[0]?.accounts[0]?.sessionIds).toEqual(["thread-session"]);
 

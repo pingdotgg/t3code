@@ -472,8 +472,21 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const api = yield* test.api;
       expect(yield* api.readSessionAccounts(config)).toEqual([
-        { sessionId: "session-1", accountId: "second.json" },
-        { sessionId: "session-3", accountId: "first.json" },
+        {
+          sessionId: "session-1",
+          accountId: "second.json",
+          driver: "codex",
+          email: "second@example.com",
+          workspaceId: "account-b",
+        },
+        { sessionId: "session-2", accountId: undefined, driver: undefined },
+        {
+          sessionId: "session-3",
+          accountId: "first.json",
+          driver: "codex",
+          email: "first@example.com",
+          workspaceId: "account-a",
+        },
       ]);
     }),
   );
