@@ -136,6 +136,10 @@ jobs:
       - name: Check i18n catalogs
         run: vp run i18n:check
 
+      # Conn: catalogs name the app only through {appName}; lint's no-hardcoded-app-name covers source.
+      - name: Check Conn brand in catalogs
+        run: vp run brand:check
+
       - name: Check
         run: vp check
 

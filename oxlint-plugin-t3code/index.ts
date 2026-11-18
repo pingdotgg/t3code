@@ -6,6 +6,7 @@ import noDomTestEnvironment from "./rules/no-dom-test-environment.ts";
 import noEmDashCopy from "./rules/no-em-dash-copy.ts";
 import noFrameWaitsInBrowserTests from "./rules/no-frame-waits-in-browser-tests.ts";
 import noGlobalProcessRuntime from "./rules/no-global-process-runtime.ts";
+import noHardcodedAppName from "./rules/no-hardcoded-app-name.ts";
 import noHermesUnsupportedApis from "./rules/no-hermes-unsupported-apis.ts";
 import noHooklessUseFunction from "./rules/no-hookless-use-function.ts";
 import noInlineSchemaCompile from "./rules/no-inline-schema-compile.ts";
@@ -47,6 +48,7 @@ export default definePlugin({
     "no-em-dash-copy": noEmDashCopy,
     "no-frame-waits-in-browser-tests": noFrameWaitsInBrowserTests,
     "no-global-process-runtime": noGlobalProcessRuntime,
+    "no-hardcoded-app-name": noHardcodedAppName,
     "no-hermes-unsupported-apis": noHermesUnsupportedApis,
     "no-hookless-use-function": noHooklessUseFunction,
     "no-inline-schema-compile": noInlineSchemaCompile,

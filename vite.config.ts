@@ -558,6 +558,25 @@ export default defineConfig({
         ],
         rules: { "t3code/no-em-dash-copy": "error" },
       },
+      // Conn: copy names the app through the `{appName}` placeholder (FORK.md, "i18n and the
+      // app name"); `node scripts/check-conn-brand.ts` checks the catalogs.
+      {
+        files: [
+          "apps/web/src/**",
+          "apps/mobile/src/**",
+          "apps/desktop/src/**",
+          "packages/client-runtime/src/**",
+          "packages/shared/src/**",
+        ],
+        excludeFiles: [
+          "**/*.{test,spec,bench}.{ts,tsx,js,jsx,mts,cts,mjs,cjs}",
+          "**/{test,testkit,testing,fixtures}/**",
+          "**/*.test-fixtures.ts",
+          "**/{test-fixtures,*TestFixtures}.ts",
+          "**/*.gen.ts",
+        ],
+        rules: { "t3code/no-hardcoded-app-name": "error" },
+      },
       {
         files: ["apps/web/src/**"],
         rules: { "shadcn/no-raw-colors": "error" },
