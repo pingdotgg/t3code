@@ -5,7 +5,12 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  effectiveSnoozed,
+  threadWokeAt,
+} from "@t3tools/client-runtime/state/thread-settled";
+import { resolveThreadGroupFor } from "@t3tools/client-runtime/state/thread-groups";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   AuthOrchestrationOperateScope,
@@ -263,6 +268,35 @@ export function canTurnThreadIntoProject(threadRef: ScopedThreadRef): boolean {
   return project !== null && isScratchProject(project, config.scratchWorkspaceRoot);
 }
 
+const IN_FLIGHT_RUNTIME_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "starting",
+  "queued",
+  "running",
+  "waiting",
+]);
+
+function isThreadInFlight(shell: { readonly runtime: { readonly status: string } | null }) {
+  return shell.runtime !== null && IN_FLIGHT_RUNTIME_STATUSES.has(shell.runtime.status);
+}
+
+type ThreadUndoClaim = ReturnType<typeof ThreadUndo.begin>;
+
+// A group notice shows once, so its claim stands for every member claim. Undo restores only
+// the members still current when it starts, because it finishes the claim before it runs.
+function combineUndoClaims(claims: ReadonlyArray<ThreadUndoClaim>) {
+  let restorable: ReadonlyArray<number> | null = null;
+  const currentIndexes = () => claims.flatMap((claim, index) => (claim.isCurrent() ? [index] : []));
+  return {
+    isCurrent: () => claims.some((claim) => claim.isCurrent()),
+    finish: () => {
+      restorable ??= currentIndexes();
+      for (const claim of claims) claim.finish();
+    },
+    restorableIndexes: () => restorable ?? currentIndexes(),
+  };
+}
+
 function threadOperationFailure(target: ScopedThreadRef) {
   return readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope)
     ? null
@@ -311,6 +345,12 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const unsnoozeThreadMutation = useOrchestrationCommand(threadEnvironment.unsnooze, {
+    reportFailure: false,
+  });
+  const attachToGroupMutation = useOrchestrationCommand(threadEnvironment.attachToGroup, {
+    reportFailure: false,
+  });
+  const detachFromGroupMutation = useOrchestrationCommand(threadEnvironment.detachFromGroup, {
     reportFailure: false,
   });
   const markThreadUnread = useMarkThreadUnread();
@@ -816,19 +856,21 @@ export function useThreadActions() {
     return result;
   };
 
-  const settleThread = async (target: ScopedThreadRef) => {
+  const performSettle = async (target: ScopedThreadRef) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
-      return AsyncResult.failure(
-        Cause.fail(
-          new ThreadSettlementUnsupportedError({
-            environmentId: target.environmentId,
-            threadId: target.threadId,
-          }),
+      return {
+        result: AsyncResult.failure(
+          Cause.fail(
+            new ThreadSettlementUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
         ),
-      );
+        restore: null,
+      };
     }
     const resolved = resolveThreadTarget(target);
-    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     const nowIso = new Date().toISOString();
     const wokeAt = resolved ? threadWokeAt(resolved.thread, { now: nowIso }) : null;
     const undoPlan = ThreadUndo.planThreadUndo("settle", resolved?.thread);
@@ -843,17 +885,24 @@ export function useThreadActions() {
     });
     if (result._tag !== "Success") {
       action.finish();
-      return result;
+      return { result, restore: null };
     }
     if (wokeAt !== null) {
       markThreadVisited(scopedThreadKey(target), wokeAt);
     }
-    showThreadUndoNotice({
-      action: "Settled",
-      claim: action,
-      undo: () => runUndoPlan(target, undoPlan),
-      failureTitle: "Failed to undo settle",
-    });
+    return { result, restore: { target, plan: undoPlan, claim: action } };
+  };
+
+  const settleThread = async (target: ScopedThreadRef) => {
+    const { result, restore } = await performSettle(target);
+    if (restore) {
+      showThreadUndoNotice({
+        action: "Settled",
+        claim: restore.claim,
+        undo: () => runUndoPlan(target, restore.plan),
+        failureTitle: "Failed to undo settle",
+      });
+    }
     return result;
   };
 
@@ -929,28 +978,33 @@ export function useThreadActions() {
     });
   };
 
-  const snoozeThread = async (target: ScopedThreadRef, snoozedUntil: string) => {
+  const performSnooze = async (target: ScopedThreadRef, snoozedUntil: string) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
-      return AsyncResult.failure(
-        Cause.fail(
-          new ThreadSnoozeUnsupportedError({
-            environmentId: target.environmentId,
-            threadId: target.threadId,
-          }),
+      return {
+        result: AsyncResult.failure(
+          Cause.fail(
+            new ThreadSnoozeUnsupportedError({
+              environmentId: target.environmentId,
+              threadId: target.threadId,
+            }),
+          ),
         ),
-      );
+        restore: null,
+      };
     }
     const resolved = resolveThreadTarget(target);
-    // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
     if (resolved && !canSnooze(resolved.thread, { now: new Date().toISOString() })) {
-      return AsyncResult.failure(
-        Cause.fail(
-          new ThreadSnoozeBlockedError({
-            environmentId: resolved.threadRef.environmentId,
-            threadId: resolved.threadRef.threadId,
-          }),
+      return {
+        result: AsyncResult.failure(
+          Cause.fail(
+            new ThreadSnoozeBlockedError({
+              environmentId: resolved.threadRef.environmentId,
+              threadId: resolved.threadRef.threadId,
+            }),
+          ),
         ),
-      );
+        restore: null,
+      };
     }
     const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
     const result = await snoozeThreadMutation({
@@ -959,14 +1013,24 @@ export function useThreadActions() {
     });
     if (result._tag !== "Success") {
       action.finish();
-      return result;
+      return { result, restore: null };
     }
-    showThreadUndoNotice({
-      action: "Snoozed",
-      claim: action,
-      undo: () => runUndoPlan(target, ThreadUndo.planThreadUndo("snooze")),
-      failureTitle: "Failed to wake thread",
-    });
+    return {
+      result,
+      restore: { target, plan: ThreadUndo.planThreadUndo("snooze"), claim: action },
+    };
+  };
+
+  const snoozeThread = async (target: ScopedThreadRef, snoozedUntil: string) => {
+    const { result, restore } = await performSnooze(target, snoozedUntil);
+    if (restore) {
+      showThreadUndoNotice({
+        action: "Snoozed",
+        claim: restore.claim,
+        undo: () => runUndoPlan(target, restore.plan),
+        failureTitle: "Failed to wake thread",
+      });
+    }
     return result;
   };
 
@@ -995,6 +1059,121 @@ export function useThreadActions() {
       },
       (result) => result._tag === "Success",
     );
+
+  const resolveGroupMembers = (parent: ScopedThreadRef) => {
+    const group = resolveThreadGroupFor(readThreadShells(), parent.environmentId, parent.threadId);
+    const parentShell = group?.parent ?? readThreadShell(parent);
+    const workers = group?.parent.id === parent.threadId ? group.workers : [];
+    return { parentShell, workers };
+  };
+
+  const showGroupUndoNotice = (input: {
+    action: "Settled" | "Snoozed";
+    failureTitle: string;
+    restores: ReadonlyArray<{
+      target: ScopedThreadRef;
+      plan: ThreadUndo.ThreadUndoPlan;
+      claim: ThreadUndoClaim;
+    }>;
+  }) => {
+    if (input.restores.length === 0) return;
+    const claim = combineUndoClaims(input.restores.map((restore) => restore.claim));
+    let restored = 0;
+    showThreadUndoNotice({
+      action: input.action,
+      claim,
+      count: () => claim.restorableIndexes().length,
+      restoredCount: () => restored,
+      undo: async () => {
+        const results = await Promise.all(
+          claim
+            .restorableIndexes()
+            .map((index) => input.restores[index]!)
+            .map(({ target, plan }) => runUndoPlan(target, plan)),
+        );
+        restored = results.filter((result) => result._tag === "Success").length;
+        return results.find((result) => result._tag !== "Success") ?? results[0]!;
+      },
+      failureTitle: input.failureTitle,
+    });
+  };
+
+  const settleThreadGroup = async (parent: ScopedThreadRef, opts: { finishedOnly: boolean }) => {
+    const { parentShell, workers } = resolveGroupMembers(parent);
+    const unsettledWorkers = workers.filter((worker) => worker.settledOverride !== "settled");
+    const working = [...(parentShell ? [parentShell] : []), ...unsettledWorkers].filter(
+      isThreadInFlight,
+    );
+    const members = opts.finishedOnly
+      ? unsettledWorkers.filter((worker) => !isThreadInFlight(worker))
+      : unsettledWorkers;
+    const settlesParent = !(opts.finishedOnly && parentShell && isThreadInFlight(parentShell));
+    if (!opts.finishedOnly && working.length > 0) {
+      const localApi = readLocalApi();
+      if (localApi) {
+        const confirmation = await settlePromise(() =>
+          localApi.dialogs.confirm(
+            `${working.length === 1 ? "1 thread in this group is" : `${working.length} threads in this group are`} still working.\nSettle the whole group anyway?`,
+          ),
+        );
+        if (confirmation._tag === "Failure") return confirmation;
+        if (!confirmation.value) return AsyncResult.success(undefined);
+      }
+    }
+    const targets = [
+      ...(settlesParent ? [parent] : []),
+      ...members.map((member) => scopeThreadRef(member.environmentId, member.id)),
+    ];
+    if (targets.length === 0) return AsyncResult.success(undefined);
+    const outcomes = await Promise.all(targets.map(performSettle));
+    showGroupUndoNotice({
+      action: "Settled",
+      failureTitle: "Failed to undo settle",
+      restores: outcomes.flatMap(({ restore }) => (restore ? [restore] : [])),
+    });
+    return outcomes.find(({ result }) => result._tag !== "Success")?.result ?? outcomes[0]!.result;
+  };
+
+  const snoozeThreadGroup = async (parent: ScopedThreadRef, snoozedUntil: string) => {
+    const { workers } = resolveGroupMembers(parent);
+    const nowIso = new Date().toISOString();
+    const candidates = workers.filter(
+      (worker) =>
+        worker.settledOverride !== "settled" && !effectiveSnoozed(worker, { now: nowIso }),
+    );
+    const members = candidates.filter((worker) => canSnooze(worker, { now: nowIso }));
+    const skipped = candidates.length - members.length;
+    const outcomes = await Promise.all(
+      [parent, ...members.map((member) => scopeThreadRef(member.environmentId, member.id))].map(
+        (target) => performSnooze(target, snoozedUntil),
+      ),
+    );
+    showGroupUndoNotice({
+      action: "Snoozed",
+      failureTitle: "Failed to wake thread",
+      restores: outcomes.flatMap(({ restore }) => (restore ? [restore] : [])),
+    });
+    if (skipped > 0) {
+      toastManager.add({
+        type: "warning",
+        title: `${skipped} ${skipped === 1 ? "thread" : "threads"} could not be snoozed`,
+        description: "They stay active until their pending request is resolved.",
+      });
+    }
+    return outcomes.find(({ result }) => result._tag !== "Success")?.result ?? outcomes[0]!.result;
+  };
+
+  const attachThreadToGroup = (target: ScopedThreadRef, parent: ScopedThreadRef) =>
+    attachToGroupMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, parentThreadId: parent.threadId },
+    });
+
+  const detachThreadFromGroup = (target: ScopedThreadRef) =>
+    detachFromGroupMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId },
+    });
 
   const confirmAndDeleteThread = async (target: ScopedThreadRef, knownTitle?: string) => {
     const permissionFailure = threadOperationFailure(target);
@@ -1033,6 +1212,10 @@ export function useThreadActions() {
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
+    attachThreadToGroup,
+    detachThreadFromGroup,
+    settleThreadGroup,
+    snoozeThreadGroup,
     pinThread,
     unpinThread,
     confirmAndUnpinThread,

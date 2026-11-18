@@ -68,6 +68,8 @@ it("stamps authoritative provenance on commands that create threads or messages"
       threadId: ThreadId.make("thread:elsewhere"),
       title: "Somewhere else",
     },
+    // Group membership is the server's to set.
+    groupParentThreadId: ThreadId.make("thread:thread-management:forged-lead"),
     // A client's message goes through intake; only the server folds one into the creation.
     initialMessage: {
       messageId: MessageId.make("message:thread-management:forged"),
@@ -86,6 +88,7 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+  expect(stamped).not.toHaveProperty("groupParentThreadId");
   expect(stamped).not.toHaveProperty("initialMessage");
 });
 

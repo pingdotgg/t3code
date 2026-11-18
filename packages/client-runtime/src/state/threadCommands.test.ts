@@ -390,6 +390,7 @@ describe("remote thread lifecycle commands", () => {
     ["setAutoSettle", { enabled: false }, { autoSettleDisabledAt: expect.any(Object) }],
     ["reorderPin", { orderKey: "b" }, { pinOrderKey: "b" }],
     ["reorderActive", { orderKey: "b" }, { activeOrderKey: "b" }],
+    ["reorderInGroup", { orderKey: "b" }, { groupOrderKey: "b" }],
   ] as const;
 
   it.effect.each(actions)(
@@ -435,6 +436,90 @@ describe("remote thread lifecycle commands", () => {
         expect((yield* Effect.promise(() => result))._tag).toBe("Failure");
         expect(h.registry.get(h.visibleAtom)).toBe(initial);
       }),
+  );
+
+  it.effect("attachToGroup dispatches thread.group.attach and optimistically sets the parent", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const parentThreadId = ThreadId.make("parent");
+      const result = h.commands.attachToGroup.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, parentThreadId, orderKey: "a" },
+      });
+      expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject({
+        groupParentThreadId: parentThreadId,
+        groupOrderKey: "a",
+      });
+      const request = yield* Queue.take(h.requests);
+      expect(request.command).toMatchObject({
+        type: "thread.group.attach",
+        threadId: THREAD_ID,
+        parentThreadId,
+        orderKey: "a",
+      });
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+    }),
+  );
+
+  it.effect("attachToGroup to a worker lands under its lead and carries the thread's workers", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const shell = (id: string, parent: string | null) => ({
+        ...SNAPSHOT.threads[0]!,
+        id: ThreadId.make(id),
+        groupParentThreadId: parent === null ? null : ThreadId.make(parent),
+      });
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+        ...SNAPSHOT,
+        threads: [
+          shell("lead", null),
+          shell("worker", "lead"),
+          shell("moved", null),
+          shell("moved-worker", "moved"),
+        ],
+      });
+      const result = h.commands.attachToGroup.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: ThreadId.make("moved"), parentThreadId: ThreadId.make("worker") },
+      });
+      const parents = Object.fromEntries(
+        (h.registry.get(h.visibleAtom)?.threads ?? []).map((t) => [t.id, t.groupParentThreadId]),
+      );
+      expect(parents).toMatchObject({ moved: "lead", "moved-worker": "lead", worker: "lead" });
+      const request = yield* Queue.take(h.requests);
+      expect(request.command).toMatchObject({ parentThreadId: "worker" });
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+    }),
+  );
+
+  it.effect("detachFromGroup clears the group fields", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
+        ...SNAPSHOT,
+        threads: [
+          {
+            ...SNAPSHOT.threads[0]!,
+            groupParentThreadId: ThreadId.make("parent"),
+            groupOrderKey: "a",
+          },
+        ],
+      });
+      const result = h.commands.detachFromGroup.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID },
+      });
+      expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject({
+        groupParentThreadId: null,
+        groupOrderKey: null,
+      });
+      const request = yield* Queue.take(h.requests);
+      expect(request.command).toMatchObject({ type: "thread.group.detach", threadId: THREAD_ID });
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+    }),
   );
 
   it.effect("restamps snoozedAt when re-snoozing to the same wake time", () =>

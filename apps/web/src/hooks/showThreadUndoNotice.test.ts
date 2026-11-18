@@ -98,6 +98,21 @@ describe("thread undo notice", () => {
     expect(announce).toHaveBeenCalledExactlyOnceWith("Undid unpin of 1 thread");
   });
 
+  it("announces only the members a group undo restored, even when the rest fail", async () => {
+    const { options, add } = setup();
+    showThreadUndoNotice({
+      ...options,
+      count: () => 3,
+      restoredCount: () => 2,
+      undo: async () => AsyncResult.failure(Cause.fail(new Error("offline"))),
+    });
+    expect(notice().count).toBe(3);
+    vi.mocked(announce).mockClear();
+    await notice().undo();
+    expect(add).toHaveBeenCalledOnce();
+    expect(announce).toHaveBeenCalledExactlyOnceWith("Undid unpin of 2 threads");
+  });
+
   it("does not announce an undo that failed", async () => {
     const { options, add } = setup();
     showThreadUndoNotice({

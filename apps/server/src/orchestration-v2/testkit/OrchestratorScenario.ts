@@ -153,6 +153,8 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.pin":
     case "thread.unpin":
     case "thread.pin.reorder":
+    case "thread.group.detach":
+    case "thread.group.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
     case "thread.visit":
@@ -196,6 +198,8 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "thread.fork":
     case "thread.merge_back":
       return [command.sourceThreadId, command.targetThreadId];
+    case "thread.group.attach":
+      return [command.threadId, command.parentThreadId];
   }
 }
 

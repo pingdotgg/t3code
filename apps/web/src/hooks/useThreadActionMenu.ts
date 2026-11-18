@@ -18,7 +18,10 @@ import { useRouter } from "@tanstack/react-router";
 import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  resolveThreadGroupMenuContext,
   threadActionRequiresOperate,
+  threadGroupArchiveConfirmDetail,
+  threadGroupDeleteConfirmDetail,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
 import { titleRegenerationToast } from "../components/threadTitleRegenerationToast";
@@ -32,6 +35,7 @@ import {
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
   readThreadShell,
+  readThreadShells,
   useProjects,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
@@ -80,6 +84,10 @@ export function useThreadActionMenu(input: {
     settleThread,
     unsettleThread,
     snoozeThread,
+    snoozeThreadGroup,
+    settleThreadGroup,
+    attachThreadToGroup,
+    detachThreadFromGroup,
     unsnoozeThread,
     pinThread,
     confirmAndUnpinThread,
@@ -128,7 +136,12 @@ export function useThreadActionMenu(input: {
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
+      const { group, workers, attachTargets } = resolveThreadGroupMenuContext(
+        readThreadShells(),
+        thread,
+      );
       const items = buildThreadActionMenuItems({
+        group,
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
         branch: thread.branch ?? null,
@@ -170,9 +183,15 @@ export function useThreadActionMenu(input: {
                 threadRef.environmentId,
               );
         if (!preset) return;
-        const result = await snoozeThread(threadRef, preset.snoozedUntil);
+        const isLead = group.role === "parent";
+        const result = isLead
+          ? await snoozeThreadGroup(threadRef, preset.snoozedUntil)
+          : await snoozeThread(threadRef, preset.snoozedUntil);
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
+          failureToast(
+            isLead ? "Failed to snooze group" : "Failed to snooze thread",
+            squashAtomCommandFailure(result),
+          );
         }
         return;
       }
@@ -185,6 +204,17 @@ export function useThreadActionMenu(input: {
           failureToast(title, squashAtomCommandFailure(result));
         }
       };
+      if (action.startsWith("attach-to-thread:")) {
+        const target = attachTargets.find(
+          (candidate) => `attach-to-thread:${candidate.key}` === action,
+        );
+        if (target) {
+          await reportFailure("Failed to attach thread", () =>
+            attachThreadToGroup(threadRef, target.ref),
+          );
+        }
+        return;
+      }
       switch (action) {
         case "find":
           onFind?.(threadRef);
@@ -218,8 +248,18 @@ export function useThreadActionMenu(input: {
           }
           return;
         }
+        case "detach-from-group":
+          await reportFailure("Failed to detach thread", () => detachThreadFromGroup(threadRef));
+          return;
         case "settle":
-          await reportFailure("Failed to settle thread", () => settleThread(threadRef));
+        case "settle-finished":
+          if (group.role === "parent") {
+            await reportFailure("Failed to settle group", () =>
+              settleThreadGroup(threadRef, { finishedOnly: action === "settle-finished" }),
+            );
+          } else {
+            await reportFailure("Failed to settle thread", () => settleThread(threadRef));
+          }
           return;
         case "unsettle":
           await reportFailure("Failed to un-settle thread", () => unsettleThread(threadRef));
@@ -309,7 +349,12 @@ export function useThreadActionMenu(input: {
         case "archive": {
           if (confirmThreadArchive) {
             const confirmed = await settlePromise(() =>
-              api.dialogs.confirm(`Archive thread "${thread.title}"?`),
+              api.dialogs.confirm(
+                [
+                  `Archive thread "${thread.title}"?`,
+                  ...(workers.length > 0 ? [threadGroupArchiveConfirmDetail(workers.length)] : []),
+                ].join("\n"),
+              ),
             );
             if (confirmed._tag === "Failure" || !confirmed.value) return;
           }
@@ -334,6 +379,7 @@ export function useThreadActionMenu(input: {
                 [
                   `Delete thread "${thread.title}"?`,
                   "This permanently clears conversation history for this thread.",
+                  ...(workers.length > 0 ? [threadGroupDeleteConfirmDetail(workers.length)] : []),
                 ].join("\n"),
                 { variant: "destructive" },
               ),

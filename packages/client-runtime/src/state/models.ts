@@ -191,6 +191,9 @@ export interface EnvironmentThreadShell {
   readonly autoSettleDisabledAt?: string | null;
   readonly pinOrderKey: string | null;
   readonly pinScope?: import("@t3tools/contracts").ThreadPinScope | null;
+  readonly groupParentThreadId?: ThreadId | null;
+  readonly groupOrderKey?: string | null;
+  readonly groupLaunchedByThreadId?: ThreadId | null;
   readonly activeOrderKey: string | null;
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
@@ -352,6 +355,9 @@ export function presentThreadShell(
     autoSettleDisabledAt: nullableIso(thread.autoSettleDisabledAt ?? null),
     pinOrderKey: thread.pinOrderKey ?? null,
     pinScope: thread.pinScope ?? null,
+    groupParentThreadId: thread.groupParentThreadId ?? null,
+    groupOrderKey: thread.groupOrderKey ?? null,
+    groupLaunchedByThreadId: thread.groupLaunchedByThreadId ?? null,
     activeOrderKey: thread.activeOrderKey ?? null,
     ...(thread.lastVisitedAt === undefined
       ? {}

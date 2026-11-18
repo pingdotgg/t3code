@@ -619,6 +619,10 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadShell: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadShell | null, ProjectionStoreV2Error>;
+  /** Live threads, archived included, whose group parent is this thread. Scans thread rows. */
+  readonly listGroupMemberThreadIds: (
+    parentThreadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   /** The thread whose current guest share has this id. Scans thread rows; only redeem uses it. */
   readonly findGuestShareThreadId: (
     shareId: GuestShareId,
@@ -941,6 +945,9 @@ export function applyToProjection(
     case "thread.pinned":
     case "thread.unpinned":
     case "thread.pin-reordered":
+    case "thread.group-attached":
+    case "thread.group-detached":
+    case "thread.group-reordered":
     case "thread.metadata-updated":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
@@ -1874,6 +1881,9 @@ export function threadShellFromProjection(
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     pinScope: projection.thread.pinScope ?? null,
+    groupParentThreadId: projection.thread.groupParentThreadId ?? null,
+    groupOrderKey: projection.thread.groupOrderKey ?? null,
+    groupLaunchedByThreadId: projection.thread.groupLaunchedByThreadId ?? null,
     ...(projection.thread.tags?.length ? { tags: projection.thread.tags } : {}),
     lastVisitedAt: projection.thread.lastVisitedAt,
     opens: projection.thread.opens ?? null,
@@ -2178,6 +2188,9 @@ function shellFromState(input: {
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     pinScope: input.state.thread.pinScope ?? null,
+    groupParentThreadId: input.state.thread.groupParentThreadId ?? null,
+    groupOrderKey: input.state.thread.groupOrderKey ?? null,
+    groupLaunchedByThreadId: input.state.thread.groupLaunchedByThreadId ?? null,
     ...(input.state.thread.tags?.length ? { tags: input.state.thread.tags } : {}),
     lastVisitedAt: input.state.thread.lastVisitedAt,
     opens: input.state.thread.opens ?? null,
@@ -2355,6 +2368,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.pinned":
             case "thread.unpinned":
             case "thread.pin-reordered":
+            case "thread.group-attached":
+            case "thread.group-detached":
+            case "thread.group-reordered":
             case "thread.active-reordered":
             case "thread.tags-updated":
             case "thread.visited":
@@ -3175,6 +3191,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.pinned" &&
             event.type !== "thread.unpinned" &&
             event.type !== "thread.pin-reordered" &&
+            event.type !== "thread.group-attached" &&
+            event.type !== "thread.group-detached" &&
+            event.type !== "thread.group-reordered" &&
             event.type !== "thread.active-reordered" &&
             event.type !== "thread.tags-updated" &&
             event.type !== "thread.visited" &&
@@ -9155,6 +9174,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0] === undefined ? null : ThreadId.make(rows[0].thread_id);
     }, Effect.mapError(shellSnapshotReadError));
 
+    const listGroupMemberThreadIds = Effect.fn("ProjectionStore.listGroupMemberThreadIds")(
+      function* (parentThreadId: ThreadId) {
+        const rows = yield* sql<{ readonly thread_id: string }>`
+          SELECT thread_id
+          FROM orchestration_v2_projection_threads
+          WHERE deleted_at IS NULL
+            AND json_extract(payload_json, '$.groupParentThreadId') = ${parentThreadId}
+        `;
+        return rows.map((row) => ThreadId.make(row.thread_id));
+      },
+      Effect.mapError(shellSnapshotReadError),
+    );
+
     const listOlderSettledThreads: ProjectionStoreV2Shape["listOlderSettledThreads"] = Effect.fn(
       "ProjectionStore.listOlderSettledThreads",
     )(function* ({ before, projectIds, limit }) {
@@ -9308,6 +9340,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       readShellSnapshot: readOnReader(readShellSnapshot),
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),
       getThreadShell: readOnReader(getThreadShell),
+      listGroupMemberThreadIds: readOnReader(listGroupMemberThreadIds),
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),

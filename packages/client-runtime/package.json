@@ -343,6 +343,10 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
+    "./state/thread-groups": {
+      "types": "./src/state/threadGroups.ts",
+      "default": "./src/state/threadGroups.ts"
+    },
     "./state/subagent-activity": {
       "types": "./src/state/subagentActivity.ts",
       "default": "./src/state/subagentActivity.ts"

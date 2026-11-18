@@ -1177,6 +1177,72 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
     }),
   );
 
+  it.effect(
+    "group attach and a grouped create take the deletion lock; a plain create does not",
+    () =>
+      Effect.gen(function* () {
+        const projects = yield* ProjectService.ProjectService;
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const projectId = ProjectId.make("runtime-group-lock");
+        const create = (name: string, groupParentThreadId?: ThreadId) =>
+          orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`runtime-group-lock-create-${name}`),
+            createdBy: "user",
+            creationSource: "web",
+            threadId: ThreadId.make(`runtime-group-lock-${name}`),
+            projectId,
+            title: name,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            ...(groupParentThreadId === undefined ? {} : { groupParentThreadId }),
+          });
+        yield* projects.create({
+          commandId: CommandId.make("runtime-group-lock-project"),
+          projectId,
+          title: "Group lock",
+          workspaceRoot: "/work/group-lock",
+        });
+        yield* create("lead");
+        yield* create("loose");
+
+        const requests = yield* Ref.make(0);
+        const withDeletionLock = executor.withDeletionLock;
+        const observeDeletion: ThreadCommandExecutor.ThreadCommandExecutor["Service"]["withDeletionLock"] =
+          (effect) =>
+            Ref.update(requests, (count) => count + 1).pipe(
+              Effect.andThen(withDeletionLock(effect)),
+            );
+        const deletionSpy = vi
+          .spyOn(executor, "withDeletionLock")
+          .mockImplementation(observeDeletion);
+        yield* Effect.gen(function* () {
+          const countRequests = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            Ref.set(requests, 0).pipe(Effect.andThen(effect), Effect.andThen(Ref.get(requests)));
+          const leadId = ThreadId.make("runtime-group-lock-lead");
+          assert.deepEqual(
+            [
+              yield* countRequests(create("plain")),
+              yield* countRequests(create("grouped", leadId)),
+              yield* countRequests(
+                orchestrator.dispatch({
+                  type: "thread.group.attach",
+                  commandId: CommandId.make("runtime-group-lock-attach"),
+                  threadId: ThreadId.make("runtime-group-lock-loose"),
+                  parentThreadId: leadId,
+                }),
+              ),
+            ],
+            [0, 1, 1],
+          );
+        }).pipe(Effect.ensuring(Effect.sync(() => deletionSpy.mockRestore())));
+      }),
+  );
+
   it.effect("deleted sources keep the html_render pages any live fork shows", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;

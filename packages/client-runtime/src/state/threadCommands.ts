@@ -46,7 +46,10 @@ import {
   revertThreadCheckpoint,
   setThreadInteractionMode,
   setThreadRuntimeMode,
+  attachThreadToGroup,
+  detachThreadFromGroup,
   pinThread,
+  reorderThreadInGroup,
   reorderPinnedThread,
   reorderActiveThread,
   setThreadAutoSettle,
@@ -235,6 +238,24 @@ export function createThreadEnvironmentAtoms<R, E>(
     reorderPin: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:reorder-pin",
       execute: reorderPinnedThread,
+      scheduler,
+      concurrency,
+    }),
+    attachToGroup: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:group-attach",
+      execute: attachThreadToGroup,
+      scheduler,
+      concurrency,
+    }),
+    detachFromGroup: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:group-detach",
+      execute: detachThreadFromGroup,
+      scheduler,
+      concurrency,
+    }),
+    reorderInGroup: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:group-reorder",
+      execute: reorderThreadInGroup,
       scheduler,
       concurrency,
     }),
@@ -549,6 +570,49 @@ export function createThreadEnvironmentAtoms<R, E>(
     reorderPin: optimistic.wrap(commands.reorderPin, (thread, input) => ({
       ...thread,
       pinOrderKey: input.orderKey,
+    })),
+    attachToGroup: {
+      label: commands.attachToGroup.label,
+      run: ((registry, target) => {
+        const threads = registry.get(optimistic.snapshotAtom(target.environmentId))?.threads ?? [];
+        const { threadId, parentThreadId } = target.input;
+        const ids = new Set(threads.map((thread) => thread.id));
+        const targetThread = threads.find((thread) => thread.id === parentThreadId);
+        // Mirror the server: groups are one level deep, so a worker target resolves to its lead.
+        const targetLead = targetThread?.groupParentThreadId;
+        const effectiveParentId = targetLead && ids.has(targetLead) ? targetLead : parentThreadId;
+        const carriedIds = threads
+          .filter((thread) => thread.groupParentThreadId === threadId)
+          .map((thread) => thread.id);
+        let sent: ReturnType<typeof commands.attachToGroup.run> | undefined;
+        const shared: typeof commands.attachToGroup = {
+          label: commands.attachToGroup.label,
+          run: () => (sent ??= commands.attachToGroup.run(registry, target)),
+        };
+        const main = optimistic.wrap(shared, (thread, input) => ({
+          ...thread,
+          groupParentThreadId: effectiveParentId,
+          ...(input.orderKey === undefined ? {} : { groupOrderKey: input.orderKey }),
+        }));
+        const carried = optimistic.wrap(shared, (thread) => ({
+          ...thread,
+          groupParentThreadId: effectiveParentId,
+        }));
+        const result = main.run(registry, target);
+        for (const id of carriedIds) {
+          void carried.run(registry, { ...target, input: { ...target.input, threadId: id } });
+        }
+        return result;
+      }) satisfies typeof commands.attachToGroup.run,
+    },
+    detachFromGroup: optimistic.wrap(commands.detachFromGroup, (thread) => ({
+      ...thread,
+      groupParentThreadId: null,
+      groupOrderKey: null,
+    })),
+    reorderInGroup: optimistic.wrap(commands.reorderInGroup, (thread, input) => ({
+      ...thread,
+      groupOrderKey: input.orderKey,
     })),
     reorderActive: optimistic.wrap(commands.reorderActive, (thread, input) => ({
       ...thread,

@@ -115,6 +115,15 @@ export interface PinThreadInput extends ThreadCommandInput {
 }
 export type UnpinThreadInput = ThreadCommandInput;
 
+export interface AttachThreadToGroupInput extends ThreadCommandInput {
+  readonly parentThreadId: ThreadId;
+  readonly orderKey?: string;
+}
+export type DetachThreadFromGroupInput = ThreadCommandInput;
+export interface ReorderThreadInGroupInput extends ThreadCommandInput {
+  readonly orderKey: string;
+}
+
 export interface ReorderPinnedThreadInput extends ThreadCommandInput {
   readonly orderKey: string;
 }
@@ -493,6 +502,7 @@ function simpleThreadCommand(
     | "thread.settle"
     | "thread.pin"
     | "thread.unpin"
+    | "thread.group.detach"
     | "thread.guest-share.close",
   input: ThreadCommandInput,
 ) {
@@ -581,6 +591,37 @@ export const pinThread = Effect.fn("EnvironmentCommands.pinThread")(function* (
     ...(input.scope === undefined ? {} : { scope: input.scope }),
   });
 });
+
+export const attachThreadToGroup = Effect.fn("EnvironmentCommands.attachThreadToGroup")(function* (
+  input: AttachThreadToGroupInput,
+) {
+  const commandId = yield* allocateCommandId(input);
+  return yield* dispatch({
+    type: "thread.group.attach",
+    commandId,
+    threadId: input.threadId,
+    parentThreadId: input.parentThreadId,
+    ...(input.orderKey === undefined ? {} : { orderKey: input.orderKey }),
+  });
+});
+
+export const detachThreadFromGroup = Effect.fn("EnvironmentCommands.detachThreadFromGroup")(
+  function* (input: DetachThreadFromGroupInput) {
+    return yield* simpleThreadCommand("thread.group.detach", input);
+  },
+);
+
+export const reorderThreadInGroup = Effect.fn("EnvironmentCommands.reorderThreadInGroup")(
+  function* (input: ReorderThreadInGroupInput) {
+    const commandId = yield* allocateCommandId(input);
+    return yield* dispatch({
+      type: "thread.group.reorder",
+      commandId,
+      threadId: input.threadId,
+      orderKey: input.orderKey,
+    });
+  },
+);
 
 export interface SetThreadAutoSettleInput extends ThreadCommandInput {
   readonly enabled: boolean;

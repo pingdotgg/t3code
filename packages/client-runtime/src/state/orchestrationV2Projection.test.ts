@@ -189,6 +189,26 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.updatedAt).toEqual(archivedAt);
   });
 
+  it("group-attached event updates the thread's group fields", () => {
+    const parentThreadId = ThreadId.make("thread-group-parent");
+    const event = {
+      id: "event-group-attached",
+      type: "thread.group-attached",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...emptyProjection.thread,
+        groupParentThreadId: parentThreadId,
+        groupOrderKey: "n",
+        groupLaunchedByThreadId: null,
+      },
+    } as OrchestrationV2DomainEvent;
+
+    const next = applyOrchestrationV2ProjectionEvent(emptyProjection, event);
+    expect(next?.thread.groupParentThreadId).toBe(parentThreadId);
+    expect(next?.thread.groupOrderKey).toBe("n");
+  });
+
   it("preserves visible row identity when run updates do not change membership", () => {
     const item = commandItem("item-stable");
     const visibleTurnItems = [

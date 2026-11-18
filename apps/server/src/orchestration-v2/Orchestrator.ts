@@ -13,6 +13,7 @@ import {
   runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
+import { pinOrderKeyBetween } from "@t3tools/shared/pinOrderKey";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
@@ -27,6 +28,7 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
+  isListedThreadLineage,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   MessageId,
@@ -616,6 +618,36 @@ export function threadHasUnfinishedWork(records: {
   );
 }
 
+const threadCanJoinGroup = (thread: OrchestrationV2AppThread): boolean =>
+  thread.deletedAt === null && thread.archivedAt === null && isListedThreadLineage(thread.lineage);
+
+const threadInGroup = (
+  thread: OrchestrationV2AppThread,
+  group: {
+    readonly parentThreadId: ThreadId;
+    readonly orderKey: string;
+    readonly launchedByThreadId: ThreadId | null;
+  },
+): OrchestrationV2AppThread => ({
+  ...thread,
+  groupParentThreadId: group.parentThreadId,
+  groupOrderKey: group.orderKey,
+  groupLaunchedByThreadId: group.launchedByThreadId,
+});
+
+const threadOutsideGroup = (thread: OrchestrationV2AppThread): OrchestrationV2AppThread => ({
+  ...thread,
+  groupParentThreadId: null,
+  groupOrderKey: null,
+  groupLaunchedByThreadId: null,
+});
+
+const nextGroupOrderKey = (previous: string | null, next: string | null): string =>
+  pinOrderKeyBetween(previous, next) ?? `${previous ?? ""}n`;
+
+// pinOrderKeyBetween rejects a bound that is not a valid pin order key.
+const isValidGroupOrderKey = (key: string): boolean => pinOrderKeyBetween(key, null) !== null;
+
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
     case "thread.create":
@@ -636,6 +668,9 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.pin":
     case "thread.unpin":
     case "thread.pin.reorder":
+    case "thread.group.attach":
+    case "thread.group.detach":
+    case "thread.group.reorder":
     case "thread.active.reorder":
     case "thread.tag.set":
     case "thread.visit":
@@ -1854,6 +1889,91 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     (effect, threadId) =>
       effect.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
   );
+
+  const groupMemberThreads = Effect.fn("Orchestrator.groupMemberThreads")(
+    function* (parentThreadId: ThreadId) {
+      const memberIds = yield* projectionStore.listGroupMemberThreadIds(parentThreadId);
+      const members: Array<OrchestrationV2AppThread> = [];
+      for (const memberId of memberIds) {
+        const member = yield* projectionStore.getThread(memberId);
+        if (member.deletedAt === null) members.push(member);
+      }
+      return members.toSorted((left, right) => {
+        const leftKey = left.groupOrderKey ?? "";
+        const rightKey = right.groupOrderKey ?? "";
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      });
+    },
+    (effect, parentThreadId) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: parentThreadId, cause }),
+        ),
+      ),
+  );
+
+  /** Groups are one level deep: a worker's group is its parent's. */
+  const resolveGroupParent = Effect.fn("Orchestrator.resolveGroupParent")(function* (
+    requestedParentId: ThreadId,
+    threadId: ThreadId,
+  ) {
+    if (requestedParentId === threadId) {
+      return Result.fail(`Thread ${threadId} cannot join its own group.`);
+    }
+    const requested = yield* findThread(requestedParentId);
+    if (requested === null || !threadCanJoinGroup(requested)) {
+      return Result.fail(`Thread ${requestedParentId} cannot be a group parent.`);
+    }
+    const leadId = requested.groupParentThreadId;
+    if (leadId === threadId) {
+      return Result.fail(`Thread ${threadId} is the group parent of ${requestedParentId}.`);
+    }
+    // Membership survives archive, so an archived lead still owns its workers. A missing or
+    // deleted lead leaves the worker effectively standalone, so it becomes the parent itself.
+    const lead = leadId == null ? null : yield* findThread(leadId);
+    const joinsLead =
+      lead !== null && lead.deletedAt === null && isListedThreadLineage(lead.lineage);
+    return Result.succeed({
+      parent: joinsLead ? lead : requested,
+      launchedByThreadId: joinsLead ? requested.id : null,
+    });
+  });
+
+  const emitGroupAttached = Effect.fn("Orchestrator.emitGroupAttached")(function* (
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    command: OrchestrationV2ServerCommand,
+    thread: OrchestrationV2AppThread,
+    now: DateTime.Utc,
+  ) {
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.group-attached",
+      threadId: thread.id,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: thread,
+    });
+  });
+
+  const emitGroupDetached = Effect.fn("Orchestrator.emitGroupDetached")(function* (
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    command: OrchestrationV2ServerCommand,
+    thread: OrchestrationV2AppThread,
+    now: DateTime.Utc,
+  ) {
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.group-detached",
+      threadId: thread.id,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: threadOutsideGroup(thread),
+    });
+  });
 
   const getProjectionWithPendingEvents =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
@@ -3821,6 +3941,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: thread,
     });
+    if (command.groupParentThreadId !== undefined) {
+      const resolved = yield* resolveGroupParent(command.groupParentThreadId, command.threadId);
+      if (Result.isSuccess(resolved)) {
+        const siblings = yield* groupMemberThreads(resolved.success.parent.id);
+        yield* emitGroupAttached(
+          events,
+          command,
+          threadInGroup(thread, {
+            parentThreadId: resolved.success.parent.id,
+            orderKey: nextGroupOrderKey(siblings.at(-1)?.groupOrderKey ?? null, null),
+            launchedByThreadId: resolved.success.launchedByThreadId,
+          }),
+          now,
+        );
+      }
+    }
     if (command.importedNativeThread !== undefined) {
       yield* emitEvent({
         type: "provider-thread.updated",
@@ -3909,6 +4045,105 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(opens ? { opens } : {}),
       },
     });
+  });
+
+  const dispatchThreadGroup = Effect.fn("orchestrationV2.dispatch.threadGroup")(function* (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      {
+        readonly type: "thread.group.attach" | "thread.group.detach" | "thread.group.reorder";
+      }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const invalid = (cause: string) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause,
+      });
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (thread.deletedAt !== null) return yield* invalid(`Thread ${command.threadId} is deleted.`);
+    const now = yield* DateTime.now;
+
+    if (command.type === "thread.group.detach") {
+      if (thread.groupParentThreadId == null) return;
+      yield* emitGroupDetached(events, command, thread, now);
+      return;
+    }
+    if (thread.archivedAt !== null) {
+      return yield* invalid(`Thread ${command.threadId} is archived.`);
+    }
+    if (!isListedThreadLineage(thread.lineage)) {
+      return yield* invalid(`Thread ${command.threadId} cannot be grouped.`);
+    }
+
+    if (command.type === "thread.group.reorder") {
+      if (!isValidGroupOrderKey(command.orderKey)) {
+        return yield* invalid(`Order key ${command.orderKey} is not valid.`);
+      }
+      if (thread.groupParentThreadId == null) {
+        return yield* invalid(`Thread ${command.threadId} is not in a group.`);
+      }
+      if (thread.groupOrderKey === command.orderKey) return;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.group-reordered",
+        threadId: thread.id,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...thread, groupOrderKey: command.orderKey },
+      });
+      return;
+    }
+
+    if (command.orderKey !== undefined && !isValidGroupOrderKey(command.orderKey)) {
+      return yield* invalid(`Order key ${command.orderKey} is not valid.`);
+    }
+    const resolved = yield* resolveGroupParent(command.parentThreadId, command.threadId);
+    if (Result.isFailure(resolved)) return yield* invalid(resolved.failure);
+    const { parent } = resolved.success;
+    if (thread.groupParentThreadId === parent.id) return;
+
+    const siblingKeys = (yield* groupMemberThreads(parent.id)).flatMap((sibling) =>
+      sibling.id === thread.id || sibling.groupOrderKey == null ? [] : [sibling.groupOrderKey],
+    );
+    const orderKey = command.orderKey ?? nextGroupOrderKey(siblingKeys.at(-1) ?? null, null);
+    yield* emitGroupAttached(
+      events,
+      command,
+      threadInGroup(thread, {
+        parentThreadId: parent.id,
+        orderKey,
+        launchedByThreadId: null,
+      }),
+      now,
+    );
+
+    // A thread that joins another group takes its workers along, right behind it.
+    const upperBound = siblingKeys.find((key) => key > orderKey) ?? null;
+    let previousKey = orderKey;
+    for (const member of yield* groupMemberThreads(thread.id)) {
+      previousKey = nextGroupOrderKey(previousKey, upperBound);
+      yield* emitGroupAttached(
+        events,
+        command,
+        threadInGroup(member, {
+          parentThreadId: parent.id,
+          orderKey: previousKey,
+          launchedByThreadId: member.groupLaunchedByThreadId ?? null,
+        }),
+        now,
+      );
+    }
   });
 
   // Recheck under the lock after reading the host. Record the watch first so wake events carry it.
@@ -14995,6 +15230,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.visit":
         yield* dispatchThreadVisit(command, events);
         break;
+      case "thread.group.attach":
+      case "thread.group.detach":
+      case "thread.group.reorder":
+        yield* dispatchThreadGroup(command, events);
+        break;
       case "thread.auto-settle": {
         // Recheck live state; changes and explicit overrides take precedence over the sweep snapshot.
         const thread = yield* projectionStore
@@ -15071,6 +15311,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         }
         // The dispatch wrapper holds each side chat's lock, so none can commit after this plan.
+        for (const member of yield* groupMemberThreads(command.threadId)) {
+          yield* emitGroupDetached(events, command, member, now);
+        }
         const plans = [
           yield* planDeletion(command),
           ...(yield* Effect.forEach(sideChatIds, (threadId) =>
@@ -15082,7 +15325,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           )),
         ];
         return {
-          events: plans.flatMap((plan) => plan.events),
+          events: [...(yield* Ref.get(events)), ...plans.flatMap((plan) => plan.events)],
           effects: plans.flatMap((plan) => plan.effects),
         };
       }
@@ -15501,6 +15744,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.activity.record" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
+          // Joining the current group, leaving none, or reordering to the same key changes nothing.
+          command.type === "thread.group.attach" ||
+          command.type === "thread.group.detach" ||
+          command.type === "thread.group.reorder" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),
         (_planned) =>
           new OrchestratorDispatchError({
@@ -15734,15 +15981,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? dispatch
         : threadDispatch.withLock(command.sourceThreadId, dispatch);
     }
+    // Re-attaching or deleting a thread rewrites its members' events, so their locks come after its own.
+    const withMemberLocks = <A, E, R>(effect: Effect.Effect<A, E, R>, threadId: ThreadId) =>
+      projectionStore.listGroupMemberThreadIds(threadId).pipe(
+        Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+        Effect.flatMap((memberIds) =>
+          memberIds
+            .toSorted()
+            .reduce((locked, memberId) => threadDispatch.withLock(memberId, locked), effect),
+        ),
+      );
+    // Membership changes read the whole group, so they take the deletion permit ahead of every
+    // thread lock, as thread.delete does. Concurrent ones cannot nest a group or close a cycle.
+    if (command.type === "thread.group.attach")
+      return yield* threadDispatch.withDeletionLock(
+        threadDispatch.withLock(
+          command.threadId,
+          withMemberLocks(dispatchWithReceiptEffect(command), command.threadId),
+        ),
+      );
+    if (command.type === "thread.create" && command.groupParentThreadId !== undefined)
+      return yield* threadDispatch.withDeletionLock(dispatch);
     if (command.type === "thread.delete")
       return yield* threadDispatch.withDeletionLock(
         threadDispatch.withLock(
           command.threadId,
           liveSideChatIds(command.threadId).pipe(
             Effect.flatMap((sideChatIds) =>
-              sideChatIds.reduce(
-                (locked, sideChatId) => threadDispatch.withLock(sideChatId, locked),
-                dispatchWithReceiptEffect(command, sideChatIds),
+              withMemberLocks(
+                sideChatIds.reduce(
+                  (locked, sideChatId) => threadDispatch.withLock(sideChatId, locked),
+                  dispatchWithReceiptEffect(command, sideChatIds),
+                ),
+                command.threadId,
               ),
             ),
           ),

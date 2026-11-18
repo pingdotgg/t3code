@@ -143,6 +143,9 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
       pinnedAt: snoozedAt,
       pinOrderKey: "a0",
       activeOrderKey: "a1",
+      groupParentThreadId: ThreadId.make("thread:fork-lead"),
+      groupOrderKey: "n",
+      groupLaunchedByThreadId: ThreadId.make("thread:fork-launcher"),
       autoSettleDisabledAt: snoozedAt,
       delegatedFrom: {
         environmentId: EnvironmentId.make("linked-environment"),
@@ -165,6 +168,22 @@ it.effect("resets a fork's pin, snooze, settle and delegation state but keeps it
     assert.isNull(result.targetThread.pinnedAt);
     assert.isNull(result.targetThread.pinOrderKey);
     assert.isNull(result.targetThread.activeOrderKey);
+    const { delegatedFrom: _delegatedFrom, ...localWorker } = sourceThread;
+    const sideChat = yield* planFork(
+      sourceRun,
+      { ...makeSourceProjection(sourceRun), thread: localWorker },
+      { sideChat: true },
+    );
+    for (const { targetThread } of [result, sideChat]) {
+      assert.deepEqual(
+        [
+          targetThread.groupParentThreadId,
+          targetThread.groupOrderKey,
+          targetThread.groupLaunchedByThreadId,
+        ],
+        [null, null, null],
+      );
+    }
     assert.isNull(result.targetThread.autoSettleDisabledAt);
     assert.isUndefined(result.targetThread.delegatedFrom);
     assert.equal(result.targetThread.historyOrigin, "v1_import");

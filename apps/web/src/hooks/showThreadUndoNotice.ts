@@ -18,6 +18,10 @@ type UndoOptions = {
   failureTitle: string;
   claim: ReturnType<typeof ThreadUndo.begin>;
   commit?: () => void;
+  /** Threads this one undo restores, when it covers several (a whole group). */
+  count?: number | (() => number);
+  /** After undo runs, how many of `count` came back; defaults to all on success and none on failure. */
+  restoredCount?: () => number;
 };
 
 type UndoNotice = {
@@ -35,6 +39,9 @@ const UNDONE_ACTION = {
   Archived: "archive",
   Discarded: "discard",
 } satisfies Record<UndoOptions["action"], string>;
+
+const entryCount = (entry: Pick<UndoOptions, "count">) =>
+  typeof entry.count === "function" ? entry.count() : (entry.count ?? 1);
 
 function countLabel(action: UndoOptions["action"], count: number) {
   const noun = action === "Discarded" ? "draft" : "thread";
@@ -92,7 +99,7 @@ function refreshNotice() {
   }
   setNotice({
     action: latest.action,
-    count: group.length,
+    count: group.reduce((total, entry) => total + entryCount(entry), 0),
     undo: async () => {
       const current = group.filter((entry) => liveUndos.includes(entry) && entry.claim.isCurrent());
       liveUndos = liveUndos.filter((entry) => !group.includes(entry));
@@ -101,7 +108,8 @@ function refreshNotice() {
       refreshNotice();
       let undone = 0;
       await Promise.all(
-        current.map(async ({ undo, failureTitle }) => {
+        current.map(async (entry) => {
+          const { undo, failureTitle, restoredCount } = entry;
           const reportFailure = (error: unknown) => {
             toastManager.add(
               stackedThreadToast({
@@ -113,9 +121,12 @@ function refreshNotice() {
           };
           try {
             const result = await undo();
-            if (result._tag === "Success") undone++;
-            else if (!isAtomCommandInterrupted(result)) {
-              reportFailure(squashAtomCommandFailure(result));
+            if (result._tag === "Success") undone += restoredCount?.() ?? entryCount(entry);
+            else {
+              undone += restoredCount?.() ?? 0;
+              if (!isAtomCommandInterrupted(result)) {
+                reportFailure(squashAtomCommandFailure(result));
+              }
             }
           } catch (error) {
             reportFailure(error);

@@ -52,6 +52,9 @@ import type * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
+import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
+import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
+import * as SourceControlRepositoryService from "../../sourceControl/SourceControlRepositoryService.ts";
 import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
 import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
@@ -1485,4 +1488,98 @@ it.effect(
       ),
     );
   },
+);
+
+const launchedGroupParents = (callerScope: McpInvocationContext.McpInvocationScope) => {
+  const launched: Array<ThreadLaunchService.ThreadLaunchInput> = [];
+  const projectId = ProjectId.make("project:mcp-test");
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({
+        name: "t3_thread_launch",
+        arguments: {
+          projectId,
+          title: "Launched",
+          message: "Go.",
+          modelSelection: { instanceId: "codex", model: "gpt-5" },
+        },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, callerScope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(false);
+    return launched;
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerProjectRegistration.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
+        Layer.provide(
+          Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
+        ),
+        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-launch-" })),
+        Layer.provide(
+          DocumentText.layer.pipe(
+            Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          ),
+        ),
+        Layer.provide(
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/tmp/projects",
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        ),
+        Layer.provide(
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () => Effect.succeedSome({ workspaceRoot: "/tmp/project" } as never),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: (input) => {
+              launched.push(input);
+              return Effect.succeed({
+                projection: {
+                  thread: {
+                    id: input.threadId,
+                    title: input.title,
+                    projectId,
+                    modelSelection: input.modelSelection,
+                  },
+                  runs: [],
+                },
+              } as never);
+            },
+          }),
+        ),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+      ),
+    ),
+  );
+};
+
+it.effect("t3_thread_launch from a thread stamps it as group parent", () =>
+  Effect.gen(function* () {
+    const launched = yield* launchedGroupParents(scope);
+    expect(launched.map((input) => input.groupParentThreadId)).toEqual([threadId]);
+  }),
+);
+
+it.effect("t3_thread_launch without a caller thread sets no group parent", () =>
+  Effect.gen(function* () {
+    const launched = yield* launchedGroupParents({
+      ...scope,
+      thread: undefined,
+      client: { sessionId: "client", label: "Client", access: "full-access" },
+    });
+    expect(launched).toHaveLength(1);
+    expect(launched[0]?.groupParentThreadId).toBeUndefined();
+  }),
 );

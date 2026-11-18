@@ -22,6 +22,7 @@ import {
   resolveSettledThreadTimestamp,
   resolveThreadActivityTimestamp,
 } from "@t3tools/client-runtime/state/thread-sort";
+import { type ProjectFolderDot } from "@t3tools/client-runtime/state/project-folders";
 import { type EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import {
   formatWorkingDurationLabel,
@@ -48,6 +49,8 @@ import {
   ArrowRightLeftIcon,
   BotIcon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   CircleCheckIcon,
   CircleDashedIcon,
@@ -601,6 +604,28 @@ function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: 
   return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
 }
 
+const GROUP_DOT_CLASS_NAME = {
+  attention: "bg-warning",
+  failed: "bg-error",
+  unread: "bg-success",
+  working: "bg-info",
+} as const;
+
+const GROUP_DOT_LABEL = {
+  attention: "needs you",
+  failed: "failed",
+  unread: "done",
+  working: "working",
+} as const;
+
+function GroupDotMark(props: { dot: ProjectFolderDot }) {
+  return (
+    <span className={cn("size-1.5 shrink-0 rounded-full", GROUP_DOT_CLASS_NAME[props.dot])}>
+      <span className="sr-only">{GROUP_DOT_LABEL[props.dot]}</span>
+    </span>
+  );
+}
+
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
@@ -660,6 +685,15 @@ type SidebarThreadRowProps = {
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
+  readonly groupRole?: "parent" | "worker" | undefined;
+  readonly groupWorkerCount?: number | undefined;
+  readonly groupExpanded?: boolean | undefined;
+  readonly groupDot?: ProjectFolderDot | null | undefined;
+  readonly onToggleGroup?: (() => void) | undefined;
+  readonly groupMemberState?: "live" | "snoozed" | "settled" | undefined;
+  // A lead whose own state differs from its group's section; card and folder rows only.
+  readonly leadState?: "settled" | "snoozed" | null | undefined;
+  readonly hideProjectLine?: boolean | undefined;
 };
 
 // Mounted only while renaming, so each rename starts uncommitted.
@@ -1046,8 +1080,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     }
   };
 
+  const isGroupWorker = props.groupRole === "worker";
+  const hideCardProjectLine = isGroupWorker && props.hideProjectLine === true;
+  const isGroupParent = props.groupRole === "parent" && props.onToggleGroup !== undefined;
+  const leadState = props.groupRole === "parent" && variant !== "slim" ? props.leadState : null;
+  const memberState = isGroupWorker ? props.groupMemberState : (leadState ?? undefined);
+  const groupExpanded = props.groupExpanded === true;
+  const groupDot = groupExpanded ? null : (props.groupDot ?? null);
+  const groupWorkerCount = props.groupWorkerCount ?? 0;
+  const groupAnchorProps = isGroupWorker ? { "data-thread-group-anchor": "" } : undefined;
+  const GroupChevron = groupExpanded ? ChevronDownIcon : ChevronRightIcon;
+  const handleToggleGroupClick = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    props.onToggleGroup?.();
+  };
+  const groupToggleLabel = groupExpanded ? "Collapse group" : "Expand group";
   const rowSurfaceClassName = cn(
     "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+    (memberState === "settled" || memberState === "snoozed") && "opacity-60",
     variantAction === "unsettle" &&
       !props.isActive &&
       // The project name keeps its colour and recedes by opacity instead, as on mobile.
@@ -1235,7 +1286,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ) : null;
   const diff = latestRunDiff(thread);
   // Only the trailing icons would remain, so the row moves them to the title line instead.
+  const groupToggle =
+    isGroupParent && (variant === "card" || variant === "slim") ? (
+      <button
+        type="button"
+        aria-label={groupToggleLabel}
+        aria-expanded={groupExpanded}
+        onClick={handleToggleGroupClick}
+        onPointerDown={(event) => event.stopPropagation()}
+        className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm text-secondary-label tabular-nums outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        {groupDot ? <GroupDotMark dot={groupDot} /> : null}
+        <GroupChevron aria-hidden className="size-3 shrink-0" />
+        {groupWorkerCount}
+      </button>
+    ) : null;
   const metaLineEmpty =
+    groupToggle === null &&
     !checkoutThread.branch &&
     !showsScratchMachine &&
     prBadge === null &&
@@ -1270,6 +1337,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
         </span>
       ) : null}
+      {groupToggle}
       <span
         aria-hidden
         className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
@@ -1291,6 +1359,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       />
     </span>
   ) : null;
+  // A worker under its parent drops the project line, so its title takes that first line.
+  const workerTitleInline = hideCardProjectLine && !(activity && activityPresentation);
 
   if (variant !== "card") {
     const multiline = variant === "folder-multiline";
@@ -1305,6 +1375,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         {multiline ? titleLineIcons : null}
         {pinIndicator}
         {multiline ? null : terminalStatusIcon}
+        {variant === "slim" ? groupToggle : null}
       </>
     );
     return (
@@ -1330,6 +1401,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
+                aria-expanded={isGroupParent ? groupExpanded : undefined}
                 data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(
@@ -1338,8 +1410,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     ? "flex flex-col justify-center px-2.5 py-1.5"
                     : "flex h-9 items-center gap-2.5 px-2.5",
                   // Lines titles up with the folder name, past its chevron and icon.
-                  inFolder && "ps-9",
+                  inFolder && (isGroupWorker ? "ps-13.5" : "ps-9"),
                 )}
+                {...(!multiline && !projectLine ? groupAnchorProps : undefined)}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -1347,8 +1420,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               />
             }
           >
+            {isGroupParent && inFolder ? (
+              <button
+                type="button"
+                aria-label={groupToggleLabel}
+                aria-expanded={groupExpanded}
+                onClick={handleToggleGroupClick}
+                onPointerDown={(event) => event.stopPropagation()}
+                className="absolute top-4.5 left-2.5 z-10 inline-flex -translate-y-1/2 cursor-pointer items-center rounded-sm p-1 text-secondary-label outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                <GroupChevron aria-hidden className="size-3.5 shrink-0" />
+              </button>
+            ) : null}
             {/* `contents` keeps one-line rows a single flex row. */}
             <div
+              {...(multiline ? groupAnchorProps : undefined)}
               className={
                 multiline
                   ? "flex h-6 min-w-0 items-center gap-2.5"
@@ -1390,6 +1476,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   Regenerating title
                 </span>
               ) : null}
+              {isGroupParent && inFolder && !groupExpanded ? (
+                <span className="inline-flex shrink-0 items-center gap-1 text-xs tabular-nums text-secondary-label">
+                  {groupDot ? <GroupDotMark dot={groupDot} /> : null}
+                  {groupWorkerCount}
+                </span>
+              ) : null}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
@@ -1406,7 +1498,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       !isWoke && "group-any-hover/sidebar-row:opacity-0",
                     )}
                   >
-                    {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
+                    {(variantAction === "unsnooze" || memberState === "snoozed") &&
+                    props.snoozeWakeLabelText !== null ? (
                       <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums">
                         {/* The clock tells a wake time from an age at a glance. */}
                         <AlarmClockIcon aria-hidden className="size-3" />
@@ -1449,6 +1542,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           <WorkingSubagentsBadge count={workingSubagents} className="size-3" />
                         ) : null}
                       </span>
+                    ) : memberState === "settled" ? (
+                      <CheckIcon aria-label="Settled" role="img" className="size-3" />
                     ) : (
                       <span className="text-xs">
                         <RelativeTimeLabel
@@ -1524,7 +1619,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </div>
             {projectLine ? (
               // Indented past the icon and gap so the title sits under the project name.
-              <div className="flex h-5 min-w-0 items-center gap-2.5 ps-5.5">{rowTitle}</div>
+              <div {...groupAnchorProps} className="flex h-5 min-w-0 items-center gap-2.5 ps-5.5">
+                {rowTitle}
+              </div>
             ) : null}
             {multiline ? metaLine : null}
           </TooltipTrigger>
@@ -1543,7 +1640,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       // that have not rendered yet, so a hint off by a pixel lands it a pixel short per row above.
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
-        metaLineEmpty && "[contain-intrinsic-size:auto_60px]",
+        metaLineEmpty && !workerTitleInline && "[contain-intrinsic-size:auto_60px]",
+        workerTitleInline && !metaLineEmpty && "[contain-intrinsic-size:auto_54px]",
+        workerTitleInline && metaLineEmpty && "[contain-intrinsic-size:auto_36px]",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -1558,6 +1657,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               data-sidebar-parent={props.navigationParent}
               aria-label={accessibility.label}
               aria-current={accessibility.current}
+              aria-expanded={isGroupParent ? groupExpanded : undefined}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
@@ -1571,12 +1671,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <div
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
-              metaLineEmpty && "h-auto",
+              (metaLineEmpty || workerTitleInline) && "h-auto",
             )}
           >
-            <div className="flex h-5 min-w-0 items-center gap-1.5">
+            <div
+              {...(workerTitleInline ? groupAnchorProps : undefined)}
+              className="flex h-5 min-w-0 items-center gap-1.5"
+            >
               {draftIndicator}
-              {props.project ? (
+              {props.project && !hideCardProjectLine ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
@@ -1596,7 +1699,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   </span>
                   <span className="text-foreground/80">{` · ${activity.label}`}</span>
                 </span>
-              ) : props.projectDisplayName ? (
+              ) : props.projectDisplayName && !hideCardProjectLine ? (
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate font-normal text-xs",
@@ -1605,6 +1708,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 >
                   {props.projectDisplayName}
                 </span>
+              ) : workerTitleInline ? (
+                <>
+                  {title}
+                  {isRegeneratingTitle ? (
+                    <span role="status" className="sr-only">
+                      Regenerating title
+                    </span>
+                  ) : null}
+                  {titleLineIcons}
+                </>
               ) : (
                 <span className="flex-1" />
               )}
@@ -1689,6 +1802,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           ) : null}
                         </span>
                       )
+                    ) : memberState === "snoozed" && props.snoozeWakeLabelText !== null ? (
+                      <span className="inline-flex items-center gap-1 text-info-foreground">
+                        <AlarmClockIcon aria-hidden className="size-3" />
+                        {props.snoozeWakeLabelText}
+                      </span>
+                    ) : memberState === "settled" ? (
+                      <CheckIcon aria-label="Settled" role="img" className="size-4" />
                     ) : (
                       <RelativeTimeLabel timestamp={resolveThreadActivityTimestamp(thread)} />
                     )}
@@ -1754,15 +1874,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {props.sweepAction !== null ? dragDestination : null}
             </div>
-            <div className="mt-1 flex min-w-0 items-center gap-1.5">
-              {title}
-              {isRegeneratingTitle ? (
-                <span role="status" className="sr-only">
-                  Regenerating title
-                </span>
-              ) : null}
-              {titleLineIcons}
-            </div>
+            {workerTitleInline ? null : (
+              <div {...groupAnchorProps} className="mt-1 flex min-w-0 items-center gap-1.5">
+                {title}
+                {isRegeneratingTitle ? (
+                  <span role="status" className="sr-only">
+                    Regenerating title
+                  </span>
+                ) : null}
+                {titleLineIcons}
+              </div>
+            )}
             {metaLine}
           </div>
         </TooltipTrigger>

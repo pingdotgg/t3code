@@ -59,6 +59,7 @@ vi.mock("../state/entities", () => ({
     runtime: null,
     latestRun: null,
   }),
+  readThreadShells: () => [],
   useProjects: () => [{ id: "project", environmentId: "secondary" }],
 }));
 vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primary" }));

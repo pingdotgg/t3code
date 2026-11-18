@@ -545,6 +545,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   pinScope: Schema.optional(Schema.NullOr(ThreadPinScope)),
+  groupParentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  groupOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  groupLaunchedByThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
@@ -2031,6 +2034,9 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.auto-settle-set",
       "thread.unpinned",
       "thread.pin-reordered",
+      "thread.group-attached",
+      "thread.group-detached",
+      "thread.group-reordered",
       "thread.active-reordered",
       "thread.tags-updated",
       "thread.visited",
@@ -2296,6 +2302,9 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   pinScope: Schema.optional(Schema.NullOr(ThreadPinScope)),
+  groupParentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  groupOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  groupLaunchedByThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Absent on threads written before tags existed; read as empty. */
   tags: Schema.optional(StoredThreadTags),
@@ -2981,6 +2990,9 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.auto-settle-set",
       "thread.unpinned",
       "thread.pin-reordered",
+      "thread.group-attached",
+      "thread.group-detached",
+      "thread.group-reordered",
       "thread.active-reordered",
       "thread.tags-updated",
       "thread.visited",
@@ -3139,6 +3151,8 @@ export const OrchestrationV2Command = Schema.Union([
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
+    /** Only the server sets this; a client's thread.create never carries one. */
+    groupParentThreadId: Schema.optional(ThreadId),
     /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
     importedNativeThread: Schema.optional(
@@ -3248,6 +3262,24 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.unpin"),
     commandId: CommandId,
     threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.group.attach"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    parentThreadId: ThreadId,
+    orderKey: Schema.optional(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.group.detach"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.group.reorder"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    orderKey: TrimmedNonEmptyString,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.tag.set"),

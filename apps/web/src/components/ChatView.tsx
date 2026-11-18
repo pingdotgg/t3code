@@ -283,6 +283,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { ThreadGroupStrip } from "./chat/ThreadGroupStrip";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
@@ -965,6 +966,16 @@ export default function ChatView(props: ChatViewProps) {
           threadId: parentSubagentThreadRef.threadId,
           title: parentSubagentThread?.title ?? "Parent thread",
         };
+  const groupParentThreadId = serverThreadShell?.groupParentThreadId ?? null;
+  const groupParentShell = useQuietThreadShell(
+    groupParentThreadId === null || routeThreadRef === null
+      ? null
+      : scopeThreadRef(routeThreadRef.environmentId, groupParentThreadId),
+  );
+  const groupParentThreadLink =
+    groupParentThreadId === null || groupParentShell === null
+      ? null
+      : { threadId: groupParentThreadId, title: groupParentShell.title };
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
@@ -3379,6 +3390,7 @@ export default function ChatView(props: ChatViewProps) {
               activeThreadLinkOrigin={activeThreadShell?.linkOrigin?.label ?? null}
               activeProject={activeProject ?? null}
               parentThreadLink={headerParentThreadLink}
+              groupParentThreadLink={groupParentThreadLink}
               onOpenThread={onOpenRelatedThreadStable}
               rightPanelOpen={inlineRightPanelOwnsTitleBar}
               onNewThreadInProject={handleNewThreadInActiveProjectStable}
@@ -3388,6 +3400,9 @@ export default function ChatView(props: ChatViewProps) {
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
             />
           </header>
+        )}
+        {embedded || !isServerThread ? null : (
+          <ThreadGroupStrip environmentId={activeThread.environmentId} threadId={activeThread.id} />
         )}
 
         <div className="relative flex min-h-0 min-w-0 flex-1">

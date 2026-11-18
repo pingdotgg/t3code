@@ -167,6 +167,27 @@ can drag a thread onto the composer to mention it, but not within the sidebar, a
 section is off. The choice syncs through your servers, so
 the mobile app groups the same way; on mobile it is under **Settings → Labs → Project folders**.
 
+## Thread groups
+
+Threads an agent starts from a thread join that thread's group automatically. The thread
+that started them is the group's lead. The group sits under its lead in the sidebar, and you
+can collapse it. An open thread inside a collapsed group stays visible until you leave it.
+Settled and snoozed members stay in place, dimmed; when a group has several of them, they fold
+into a **+N settled** or **+N snoozed** line that you can open and close.
+
+To group threads yourself, right-click a thread and choose **Attach to thread**, then pick
+the lead. Choose **Detach from group** to take it out. Groups are one level deep: a thread
+in a group cannot have a group of its own.
+
+**Settle** and **Snooze** on a lead apply to the whole group, from the row, its menu, the
+keyboard shortcut and the chat header. Choose **Only finished threads** to leave members that
+are still working alone. A settled lead with live members stays in place, dimmed, and offers
+**Un-settle**; the group moves to Settled once every member is settled. Settling or snoozing
+a member only affects that member.
+
+Archiving the lead shows its threads separately until you unarchive it. Deleting the lead
+leaves them as regular threads.
+
 ## Live activity summary
 
 While a thread works, its sidebar row can show a phase, such as Implementing, and a few words about

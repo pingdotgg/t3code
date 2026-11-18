@@ -467,6 +467,23 @@ it.effect(
   },
 );
 
+it.effect("launch input group parent reaches thread.create", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const parent = yield* launches.launch(
+      launchInput({ command: "command:group-parent", thread: "thread:group-parent" }),
+    );
+    const child = yield* launches.launch({
+      ...launchInput({ command: "command:group-child", thread: "thread:group-child" }),
+      groupParentThreadId: parent.threadId,
+    });
+    const shell = yield* threads.getThreadShell(child.threadId);
+    assert.equal(shell?.groupParentThreadId, parent.threadId);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("leaves a task delegated from a linked environment out of the top-level list", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {

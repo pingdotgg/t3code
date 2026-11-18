@@ -2491,6 +2491,55 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it.effect("create_threads stamps the caller thread as group parent", () =>
+    Effect.gen(function* () {
+      const childShell = {
+        thread: {
+          id: ThreadId.make("thread:mcp-group-child"),
+          title: "Child",
+          modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+        },
+        runs: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const created: Array<string | undefined> = [];
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection([]) : childShell),
+          dispatch: (command) => {
+            if (command.type === "thread.create") created.push(command.groupParentThreadId);
+            return Effect.succeed({ storedEvents: [] } as never);
+          },
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.createThreads(scope, {
+          threads: [{ prompt: "One." }, { prompt: "Two." }],
+          clientRequestId: "create-threads-group-parent",
+        });
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+      assert.deepEqual(created, [parentThreadId, parentThreadId]);
+    }),
+  );
+
   it.effect("an unadvertised model refusal names advertised slugs to retry with", () =>
     Effect.gen(function* () {
       const codex = providerSnapshot({
