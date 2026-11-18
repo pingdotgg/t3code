@@ -104,6 +104,8 @@ import Migration0093 from "./Migrations/093_ProviderTurnAttemptIndex.ts";
 import Migration0094 from "./Migrations/094_TurnItemMessageOrdinalIndex.ts";
 import Migration0095 from "./Migrations/095_TurnItemInlineWorkOutput.ts";
 import Migration0096 from "./Migrations/096_RepairStaleTitleRegeneration.ts";
+import Migration0097 from "./Migrations/097_IssueTrackerBindings.ts";
+import Migration0098 from "./Migrations/098_ActiveShellIndexIndexes.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -203,6 +205,8 @@ const migrationEntries = [
   [94, "TurnItemMessageOrdinalIndex", Migration0094],
   [95, "TurnItemInlineWorkOutput", Migration0095],
   [96, "RepairStaleTitleRegeneration", Migration0096],
+  [97, "IssueTrackerBindings", Migration0097],
+  [98, "ActiveShellIndexIndexes", Migration0098],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -290,10 +294,12 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   // The desktop waits past its readiness budget until the finished line follows this one.
-  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+  const hasPending = yield* hasPendingMigrations();
+  if (hasPending) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
-  const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
+  // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
+  const previewMigrations = includesV2 && hasPending ? yield* reconcileV2PreviewMigration() : [];
   if (includesV2) {
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
