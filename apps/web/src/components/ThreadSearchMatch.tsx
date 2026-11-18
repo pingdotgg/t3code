@@ -1,3 +1,5 @@
+import { T, useGT, useMessages } from "gt-react";
+import { searchMatchHintLabel } from "@t3tools/shared/paletteSearchCopy";
 import {
   findSearchTokenRanges,
   splitSearchText,
@@ -22,9 +24,13 @@ function HighlightedSearchText(props: { text: string; ranges: ReadonlyArray<Sear
 
 /** Why a row matched when its title does not show it: the field and its match. */
 export function SearchMatchHintLine(props: { hint: SearchMatchHint }) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <span className="flex min-w-0 items-baseline gap-1 text-xs text-muted-foreground/85" dir="ltr">
-      <span className="shrink-0 text-muted-foreground/70">{props.hint.label}:</span>
+      <span className="shrink-0 text-muted-foreground/70">
+        {gt("{label}:", { label: searchMatchHintLabel(props.hint.field, messages) })}
+      </span>
       <bdi className="min-w-0 flex-1 truncate text-left" dir={textDirection(props.hint.text)}>
         <HighlightedSearchText text={props.hint.text} ranges={props.hint.ranges} />
       </bdi>
@@ -43,7 +49,7 @@ export function ThreadSearchMatchExcerpt(props: {
   return (
     <span className="flex min-w-0 items-baseline gap-1 text-xs text-muted-foreground/85" dir="ltr">
       <span className={`shrink-0 ${isUser ? "text-info-foreground" : "text-success-foreground"}`}>
-        {isUser ? "You:" : "Agent:"}
+        {isUser ? <T>You:</T> : <T>Agent:</T>}
       </span>
       <bdi className="min-w-0 flex-1 truncate text-left" dir={textDirection(props.match.snippet)}>
         <HighlightedSearchText

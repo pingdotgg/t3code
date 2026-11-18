@@ -26,7 +26,6 @@ import {
   closedStateNames,
   workItemStates,
   decodeCommentsJson,
-  decodeProfileJson,
   decodeUpdatesJson,
   decodeWorkItemJson,
   decodeWorkItemsJson,
@@ -348,7 +347,12 @@ export const make: Effect.Effect<
     read({
       cwd: input.cwd,
       operation: input.operation,
-      args: invokeArgs({ ...input, resource: "workitemtypes" }),
+      // Form layouts can exceed the CLI output cap; only workflow metadata is needed.
+      args: [
+        ...invokeArgs({ ...input, resource: "workitemtypes" }),
+        "--query",
+        "{value: value[].{name: name, isDisabled: isDisabled || `false`, states: (states || `[]`)[].{name: name, category: category}}}",
+      ],
       decode: decodeAs(decodeTypes),
     }).pipe(Effect.map((types) => types.value));
 
@@ -580,33 +584,9 @@ export const make: Effect.Effect<
     kind: KIND,
     capabilities: CAPABILITIES,
 
-    // The profile the token belongs to, which is what WIQL's `@Me` resolves to. Its email is the
-    // `uniqueName` every identity on a work item carries, so the two compare.
-    getViewer: (input) =>
-      read({
-        cwd: input.cwd,
-        operation: "getViewer",
-        args: [
-          "devops",
-          "invoke",
-          "--detect",
-          "true",
-          "--area",
-          "profile",
-          "--resource",
-          "profiles",
-          "--api-version",
-          REST_API_VERSION,
-          "--route-parameters",
-          "id=me",
-        ],
-        decode: decodeProfileJson,
-      }).pipe(
-        Effect.filterOrFail(
-          (login) => login !== null,
-          () => refused("getViewer", "Azure DevOps could not name the signed-in account."),
-        ),
-      ),
+    // Listing filters with WIQL's `@Me`, so nothing compares against a name. Looking one up
+    // needs a profile host that a PAT saved for one organization cannot reach.
+    getViewer: () => Effect.succeed("@Me"),
 
     listIssues: Effect.fn("AzureDevOpsIssueTracker.listIssues")(function* (input) {
       const cursor = input.cursor === undefined ? undefined : parseCursor(input.cursor);
@@ -661,22 +641,23 @@ export const make: Effect.Effect<
             Effect.flatMap((ids) =>
               ids.length === 0
                 ? Effect.succeed({ items: [], nextCursor: null })
-                : read({
+                : invokeWithBody({
                     cwd: input.cwd,
                     operation: "listIssues",
-                    args: invokeArgs({
-                      ...scope,
-                      resource: "workitems",
-                      query: [
-                        `ids=${ids
-                          .slice(0, limit)
-                          .map((row) => row.id)
-                          .join(",")}`,
-                        `fields=${LIST_FIELDS.join(",")}`,
-                      ],
-                    }),
-                    decode: (raw) => decodeWorkItemsJson(raw, closed),
+                    // az resolves `wit/workitems` to the create route (`workitems/${type}`)
+                    // and fails before sending; `workitemsbatch` has a single route.
+                    args: invokeArgs({ ...scope, resource: "workitemsbatch", method: "POST" }),
+                    body: {
+                      ids: ids.slice(0, limit).map((row) => row.id),
+                      fields: LIST_FIELDS,
+                    },
                   }).pipe(
+                    Effect.flatMap((raw) => {
+                      const decoded = decodeWorkItemsJson(raw, closed);
+                      return Result.isSuccess(decoded)
+                        ? Effect.succeed(decoded.success)
+                        : Effect.fail(unreadable("listIssues", decoded.failure));
+                    }),
                     Effect.map((hydrated) => {
                       // The cursor is the last row WIQL sorted, so its order is restored.
                       const position = new Map(ids.map((row, index) => [String(row.id), index]));
