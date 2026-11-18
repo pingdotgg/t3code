@@ -49,6 +49,9 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     readonly storedWidth: number | null;
     readonly width: number;
   } | null>(null);
+  if (unsaved && (unsaved.storageKey !== storageKey || unsaved.storedWidth !== storedWidth)) {
+    setUnsaved(null);
+  }
   const clampedWidth = clamp(
     unsaved?.storageKey === storageKey && unsaved.storedWidth === storedWidth
       ? unsaved.width
@@ -57,6 +60,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   const restoreWidth = useStableCallback((host: HTMLElement | null) => {
     host?.style.setProperty(RESIZABLE_WIDTH_PROPERTY, `${clampedWidth}px`);
   });
+  const currentStorageKey = useStableCallback(() => storageKey);
 
   const commitWidth = (nextStorageKey: string, nextWidth: number) => {
     const saved = writeLocalStorageValue(nextStorageKey, nextWidth, null, StoredWidthSchema);
@@ -81,7 +85,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       },
       finish(finalWidth, moved) {
         if (moved) commitWidth(startStorageKey, finalWidth);
-        else restoreWidth(host);
+        if (!moved || currentStorageKey() !== startStorageKey) restoreWidth(host);
       },
       cleanup(committed) {
         host?.style.removeProperty("transition-property");

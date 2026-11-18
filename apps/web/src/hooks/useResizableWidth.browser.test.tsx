@@ -5,9 +5,15 @@ import { RESIZABLE_WIDTH_PROPERTY, useResizableWidth } from "./useResizableWidth
 
 const STORAGE_KEY = "test:responsive-panel-width";
 
-function Panel({ defaultWidth }: { defaultWidth: number }) {
+function Panel({
+  defaultWidth,
+  storageKey = STORAGE_KEY,
+}: {
+  defaultWidth: number;
+  storageKey?: string;
+}) {
   const { width, setWidth, handlers } = useResizableWidth({
-    storageKey: STORAGE_KEY,
+    storageKey,
     defaultWidth,
     minWidth: 160,
     maxWidth: 560,
@@ -104,6 +110,34 @@ describe("useResizableWidth", () => {
     await expect.element(screen.getByText("500")).toBeInTheDocument();
   });
 
+  it("restores the current width when a drag finishes after switching storage keys", async () => {
+    const otherKey = `${STORAGE_KEY}:other`;
+    using _storage = {
+      [Symbol.dispose]: () => {
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(otherKey);
+      },
+    };
+    localStorage.setItem(otherKey, "220");
+    // This hook only needs browser storage and React; no navigation is involved.
+    await using screen = await render(<Panel defaultWidth={400} />, { router: false });
+    const handle = screen.getByRole("separator").element();
+    // Synthetic drag events have no active browser pointer to capture.
+    using _capture = vi.spyOn(handle, "setPointerCapture").mockImplementation(() => {});
+    const pointer = { bubbles: true, pointerId: 1, button: 0 };
+    await act(() => {
+      handle.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: 500 }));
+    });
+    await screen.rerender(<Panel defaultWidth={400} storageKey={otherKey} />);
+    await act(() => {
+      handle.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: 450 }));
+    });
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("450");
+    expect(localStorage.getItem(otherKey)).toBe("220");
+    await expect.element(screen.getByText("220")).toBeInTheDocument();
+    expect(screen.container.style.getPropertyValue(RESIZABLE_WIDTH_PROPERTY)).toBe("220px");
+  });
+
   it("keeps a width storage rejected for the next drag and a new default", async () => {
     using _storage = { [Symbol.dispose]: () => localStorage.removeItem(STORAGE_KEY) };
     // This hook only needs browser storage and React; no navigation is involved.
@@ -126,5 +160,17 @@ describe("useResizableWidth", () => {
 
     await screen.rerender(<Panel defaultWidth={200} />);
     await expect.element(screen.getByText("550")).toBeInTheDocument();
+
+    _write.mockRestore();
+    await act(() => {
+      localStorage.setItem(STORAGE_KEY, "500");
+      window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEY }));
+    });
+    await expect.element(screen.getByText("500")).toBeInTheDocument();
+    await act(() => {
+      localStorage.removeItem(STORAGE_KEY);
+      window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEY }));
+    });
+    await expect.element(screen.getByText("200")).toBeInTheDocument();
   });
 });
