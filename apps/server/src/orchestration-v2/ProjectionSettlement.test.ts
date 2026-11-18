@@ -9,6 +9,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   RunId,
   RuntimeRequestId,
@@ -21,8 +22,14 @@ import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { isAutoSettlementCandidate, isSnoozed, resolveAutoSettlementAt } from "./autoSettlement.ts";
+import {
+  isAutoSettlementCandidate,
+  isSnoozed,
+  resolveAutoSettlementAt,
+  resolveFinishedChildSettlementAt,
+} from "./autoSettlement.ts";
 
 const layerSql = ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
@@ -410,6 +417,52 @@ it.effect("sql: the user-authored message time ignores agent notifications", () 
     assert.equal(
       DateTime.formatIso(shellThread!.latestUserAuthoredMessageAt!),
       DateTime.formatIso(written),
+    );
+  }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: a shared provider session stopping does not restart a finished child's clock", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const parent = yield* createThread("session-parent");
+    const child = yield* createThread("session-child", { parentThreadId: parent });
+    yield* createRun(child);
+    const providerSessionId = ProviderSessionId.make("provider-session:codex:shared");
+    for (const [type, status] of [
+      ["provider-session.attached", "ready"],
+      ["provider-session.updated", "stopped"],
+    ] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:settlement:session:${status}`),
+        type,
+        threadId: child,
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: providerSessionId,
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId,
+          status,
+          cwd: "/repo",
+          model: null,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: old,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+    }
+
+    const [candidate] = yield* store.getSettlementCandidates(child);
+    assert.isDefined(candidate);
+    assert.deepEqual(
+      resolveFinishedChildSettlementAt({
+        thread: candidate!,
+        nowMs: DateTime.toEpochMillis(now),
+        afterHours: 12,
+      }),
+      old,
     );
   }).pipe(Effect.provide(layerSql)),
 );
