@@ -343,8 +343,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       try {
         process.kill(pid, 0);
         return true;
-      } catch {
-        return false;
+      } catch (cause) {
+        return !(
+          typeof cause === "object" &&
+          cause !== null &&
+          "code" in cause &&
+          cause.code === "ESRCH"
+        );
       }
     });
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
@@ -835,20 +836,34 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("drops a dead daemon's record without running agent-device when the host stops", () =>
-    Effect.gen(function* () {
-      // Above the Linux and macOS PID limits, so never a live process.
-      const deadPid = 4_194_305;
-      const path = yield* Path.Path;
-      const { host, fs, stateDir, runs } = yield* agentFixture(
-        () => Effect.die("A session that never readies agent tools must not start the daemon"),
-        processOutput(0),
-        { httpPort: 12345, token: "previous-token", pid: deadPid, version: AGENT_DEVICE_VERSION },
-      );
-      yield* host.stop;
-      expect(runs.filter((run) => run.args.includes("daemon"))).toEqual([]);
-      expect(yield* fs.exists(path.join(stateDir, "daemon.json"))).toBe(false);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  it.effect.each(["ESRCH", "EPERM", "unexpected"] as const)(
+    "confirms daemon death only for ESRCH when its process probe reports %s",
+    (probeError) =>
+      Effect.gen(function* () {
+        // Above the Linux and macOS PID limits, so never a live process.
+        const deadPid = 4_194_305;
+        const kill = process.kill;
+        using _probe = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+          if (pid === deadPid && signal === 0 && probeError !== "ESRCH") {
+            const cause = new Error("Process probe failed");
+            throw probeError === "EPERM" ? Object.assign(cause, { code: "EPERM" }) : cause;
+          }
+          return kill(pid, signal);
+        });
+        const path = yield* Path.Path;
+        const { host, fs, stateDir, runs, daemonStop } = yield* agentFixture(
+          () => Effect.die("A session that never readies agent tools must not start the daemon"),
+          processOutput(0),
+          { httpPort: 12345, token: "previous-token", pid: deadPid, version: AGENT_DEVICE_VERSION },
+        );
+        daemonStop.output = processOutput(1);
+        daemonStop.removeRecord = false;
+        yield* host.stop;
+        expect(runs.filter((run) => run.args.includes("daemon"))).toHaveLength(
+          probeError === "ESRCH" ? 0 : 1,
+        );
+        expect(yield* fs.exists(path.join(stateDir, "daemon.json"))).toBe(probeError !== "ESRCH");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("stops the agent daemon while the hub is still shutting down", () =>
