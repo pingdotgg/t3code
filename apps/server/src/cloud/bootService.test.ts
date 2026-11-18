@@ -1452,6 +1452,8 @@ process.disconnect();
       expect(BootService.bootServiceBaseDirOf(task)).toBe(plan.baseDir);
       expect(task).toContain("<UserId>PC\\theo</UserId>");
       expect(task).toContain("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>");
+      // schtasks decodes undeclared UTF-8 with the ANSI code page; UTF-16LE with a BOM is read as is.
+      expect([...(yield* fs.readFile(plan.unitPath)).subarray(0, 2)]).toEqual([0xff, 0xfe]);
       expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.3",
