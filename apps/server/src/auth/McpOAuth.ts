@@ -598,7 +598,10 @@ const make = Effect.gen(function* () {
           ),
         ),
       ),
-      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, () => Effect.void),
+      Effect.catchTags({
+        ServerAuthMissingCredentialError: () => Effect.void,
+        ServerAuthInvalidCredentialError: () => Effect.void,
+      }),
     );
   });
 

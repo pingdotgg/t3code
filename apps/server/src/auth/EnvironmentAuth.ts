@@ -1545,18 +1545,18 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
+  const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = Effect.fn(
+    "EnvironmentAuth.authenticateMcpClient",
+  )(function* (request) {
     const token = parseBearerToken(request);
-    if (token === null) return Effect.fail(new ServerAuthMissingCredentialError({}));
-    return verifyMcpClientToken(token).pipe(
-      Effect.withSpan("EnvironmentAuth.authenticateMcpClient"),
-    );
-  };
+    if (token === null) return yield* new ServerAuthMissingCredentialError({});
+    return yield* verifyMcpClientToken(token);
+  });
 
-  const authenticateMcpClientToken: EnvironmentAuth["Service"]["authenticateMcpClientToken"] = (
-    token,
-  ) =>
-    verifyMcpClientToken(token).pipe(Effect.withSpan("EnvironmentAuth.authenticateMcpClientToken"));
+  const authenticateMcpClientToken: EnvironmentAuth["Service"]["authenticateMcpClientToken"] =
+    Effect.fn("EnvironmentAuth.authenticateMcpClientToken")(function* (token) {
+      return yield* verifyMcpClientToken(token);
+    });
 
   const issueMcpClientSession: EnvironmentAuth["Service"]["issueMcpClientSession"] = (input) =>
     sessions
