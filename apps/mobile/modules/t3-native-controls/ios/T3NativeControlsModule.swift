@@ -239,7 +239,8 @@ public final class T3NativeControlsModule: Module {
         else { return nil }
         return rootView.value(forKey: "loadingView") as? UIView
       }
-    for launchScreen in launchScreens {
+    // Expo marks its splash hidden before fading; leave that transition alone.
+    for launchScreen in launchScreens where !launchScreen.isHidden {
       launchScreen.removeFromSuperview()
     }
   }
