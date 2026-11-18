@@ -117,13 +117,18 @@ export function IssueThreadLinks({
     hiddenKeys,
     hidingAnywhere,
   );
-  const linkedThreadsLabel = gt(
-    "{count, plural, one {Linked from {count} thread} other {Linked from {count} threads}}",
-    { count: linkedThreads.length },
-  );
+  const linkedThreadsLabel =
+    linkedThreads.length > 0
+      ? gt(
+          "{count, plural, one {Linked from {count} thread} other {Linked from {count} threads}}",
+          { count: linkedThreads.length },
+        )
+      : gt("Linked threads");
+  // A failed read shows "?" and falls back to searching threads for the issue's link.
+  const relationsKnown = (relations.data ?? lastRelations) !== null;
   return (
     <>
-      {linkedThreads.length > 0 ? (
+      {linkedThreads.length > 0 || (!relationsKnown && relations.error !== null) ? (
         <Tooltip>
           <TooltipTrigger
             render={
@@ -134,12 +139,14 @@ export function IssueThreadLinks({
                 onClick={() =>
                   openCommandPalette({
                     query: issue.url,
-                    linkedThreads: { environmentId, threads: linkedThreads },
+                    ...(relationsKnown
+                      ? { linkedThreads: { environmentId, threads: linkedThreads } }
+                      : {}),
                   })
                 }
               >
                 <MessageSquareIcon aria-hidden className="size-3.5" />
-                <span aria-hidden>{linkedThreads.length}</span>
+                <span aria-hidden>{linkedThreads.length || "?"}</span>
               </Button>
             }
           />

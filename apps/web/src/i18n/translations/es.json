@@ -5715,6 +5715,7 @@
   "6672a18b56815053": "No se pudo vincular la issue",
   "a0295b5f63009ecf": "El servidor lo rechazó.",
   "5fb273ac66588155": "{count, plural, one {Vinculada desde {count} hilo} other {Vinculada desde {count} hilos}}",
+  "938b14127a3c907d": "Hilos vinculados",
   "5bde91110c65afca": "{label}. Busca en la paleta de comandos.",
   "1d1268c1a332a292": "Desvincular de este hilo",
   "882a7614e3caa566": "Vincular a este hilo",
@@ -6874,7 +6875,6 @@
   ],
   "94154d8491776868": "No se pudo desvincular la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
   "29bb9b5b565a6df6": "No se pudo vincular la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
-  "938b14127a3c907d": "Hilos vinculados",
   "d37dbc4847107d90": "Desvincular de este hilo",
   "141d12d6b7f3c002": "Vincular a este hilo",
   "beb920ffd1cac72b": [

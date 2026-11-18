@@ -5717,6 +5717,7 @@
   "6672a18b56815053": "Could not link the issue",
   "a0295b5f63009ecf": "The server refused it.",
   "5fb273ac66588155": "{count, plural, one {Linked from {count} thread} other {Linked from {count} threads}}",
+  "938b14127a3c907d": "Linked threads",
   "5bde91110c65afca": "{label}. Search in the command palette.",
   "1d1268c1a332a292": "Unlink from this thread",
   "882a7614e3caa566": "Link to this thread",
@@ -6881,7 +6882,6 @@
   ],
   "94154d8491776868": "Could not unlink the {term, select, mr {merge request} cr {change request} other {pull request}}",
   "29bb9b5b565a6df6": "Could not link the {term, select, mr {merge request} cr {change request} other {pull request}}",
-  "938b14127a3c907d": "Linked threads",
   "d37dbc4847107d90": "Unlink from this thread",
   "141d12d6b7f3c002": "Link to this thread",
   "beb920ffd1cac72b": [

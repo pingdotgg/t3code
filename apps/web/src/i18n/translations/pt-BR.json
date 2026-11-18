@@ -5715,6 +5715,7 @@
   "6672a18b56815053": "Não foi possível vincular a issue",
   "a0295b5f63009ecf": "O servidor recusou.",
   "5fb273ac66588155": "{count, plural, one {Vinculado a partir de {count} thread} other {Vinculado a partir de {count} threads}}",
+  "938b14127a3c907d": "Threads vinculadas",
   "5bde91110c65afca": "{label}. Pesquise na paleta de comandos.",
   "1d1268c1a332a292": "Desvincular desta thread",
   "882a7614e3caa566": "Vincular a esta thread",
@@ -6874,7 +6875,6 @@
   ],
   "94154d8491776868": "Não foi possível desvincular {term, select, mr {o merge request} cr {a solicitação de alteração} other {o pull request}}",
   "29bb9b5b565a6df6": "Não foi possível vincular {term, select, mr {o merge request} cr {a solicitação de alteração} other {o pull request}}",
-  "938b14127a3c907d": "Threads vinculadas",
   "d37dbc4847107d90": "Desvincular desta thread",
   "141d12d6b7f3c002": "Vincular a esta thread",
   "beb920ffd1cac72b": [

@@ -5716,6 +5716,7 @@
   "6672a18b56815053": "Kunde inte länka ärendet",
   "a0295b5f63009ecf": "Servern nekade.",
   "5fb273ac66588155": "{count, plural, one {Länkad från {count} tråd} other {Länkad från {count} trådar}}",
+  "938b14127a3c907d": "Länkade trådar",
   "5bde91110c65afca": "{label}. Sök i kommandopaletten.",
   "1d1268c1a332a292": "Ta bort länken från den här tråden",
   "882a7614e3caa566": "Länka till den här tråden",
@@ -6880,7 +6881,6 @@
   ],
   "94154d8491776868": "Kunde inte ta bort länken till {term, select, mr {merge requesten} cr {ändringsbegäran} other {pull requesten}}",
   "29bb9b5b565a6df6": "Kunde inte länka {term, select, mr {merge requesten} cr {ändringsbegäran} other {pull requesten}}",
-  "938b14127a3c907d": "Länkade trådar",
   "d37dbc4847107d90": "Ta bort länken från den här tråden",
   "141d12d6b7f3c002": "Länka till den här tråden",
   "beb920ffd1cac72b": [

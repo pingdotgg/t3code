@@ -5716,6 +5716,7 @@
   "6672a18b56815053": "Das Issue konnte nicht verknüpft werden",
   "a0295b5f63009ecf": "Der Server hat es abgelehnt.",
   "5fb273ac66588155": "{count, plural, one {Verknüpft von {count} Thread} other {Verknüpft von {count} Threads}}",
+  "938b14127a3c907d": "Verknüpfte Threads",
   "5bde91110c65afca": "{label}. In der Befehlspalette suchen.",
   "1d1268c1a332a292": "Verknüpfung mit diesem Thread aufheben",
   "882a7614e3caa566": "Mit diesem Thread verknüpfen",
@@ -6875,7 +6876,6 @@
   ],
   "94154d8491776868": "{term, select, mr {Die Verknüpfung des Merge Requests konnte nicht aufgehoben werden} cr {Die Verknüpfung der Änderungsanfrage konnte nicht aufgehoben werden} other {Die Verknüpfung des Pull Requests konnte nicht aufgehoben werden}}",
   "29bb9b5b565a6df6": "{term, select, mr {Der Merge Request konnte nicht verknüpft werden} cr {Die Änderungsanfrage konnte nicht verknüpft werden} other {Der Pull Request konnte nicht verknüpft werden}}",
-  "938b14127a3c907d": "Verknüpfte Threads",
   "d37dbc4847107d90": "Verknüpfung mit diesem Thread lösen",
   "141d12d6b7f3c002": "Mit diesem Thread verknüpfen",
   "beb920ffd1cac72b": [

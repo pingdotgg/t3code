@@ -5716,6 +5716,7 @@
   "6672a18b56815053": "Impossible d’associer le ticket",
   "a0295b5f63009ecf": "Le serveur l’a refusé.",
   "5fb273ac66588155": "{count, plural, one {Associée depuis {count} fil} other {Associée depuis {count} fils}}",
+  "938b14127a3c907d": "Fils associés",
   "5bde91110c65afca": "{label}. Recherchez dans la palette de commandes.",
   "1d1268c1a332a292": "Dissocier de ce fil",
   "882a7614e3caa566": "Associer à ce fil",
@@ -6875,7 +6876,6 @@
   ],
   "94154d8491776868": "Impossible de dissocier la {term, select, mr {merge request} cr {demande de modification} other {pull request}}",
   "29bb9b5b565a6df6": "Impossible d’associer la {term, select, mr {merge request} cr {demande de modification} other {pull request}}",
-  "938b14127a3c907d": "Fils associés",
   "d37dbc4847107d90": "Dissocier de ce fil",
   "141d12d6b7f3c002": "Associer à ce fil",
   "beb920ffd1cac72b": [
