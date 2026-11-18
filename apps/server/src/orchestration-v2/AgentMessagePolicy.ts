@@ -19,7 +19,10 @@ export const AGENT_MESSAGES_BLOCKED = "The owner has blocked messages from other
 
 const BLOCKED_TEXT_LIMIT = 2_000;
 
-type Thread = Pick<OrchestrationV2ThreadShell, "id" | "title" | "lineage" | "delegatedFrom">;
+type Thread = Pick<
+  OrchestrationV2ThreadShell,
+  "id" | "title" | "lineage" | "delegatedFrom" | "linkOrigin"
+>;
 
 interface Dependencies {
   readonly threads: Pick<
@@ -128,14 +131,17 @@ export const makeRefuseBlockedSender = ({ threads, settings }: Dependencies) =>
       sender = { key: from.threadId, title: caller?.title ?? from.threadId };
     } else {
       const named = from.linked.from;
+      const sessionId = from.linked.sessionId;
       // A parent on another machine messaging the task it delegated here is inside the tree.
+      // The named thread is only the peer's word, so it counts only through the delegating link.
       if (
         named !== undefined &&
-        [target.delegatedFrom, targetRoot.delegatedFrom].some(
-          (parent) =>
-            parent != null &&
-            parent.environmentId === named.environmentId &&
-            parent.threadId === named.threadId,
+        [target, targetRoot].some(
+          ({ delegatedFrom, linkOrigin }) =>
+            delegatedFrom != null &&
+            linkOrigin?.sessionId === sessionId &&
+            delegatedFrom.environmentId === named.environmentId &&
+            delegatedFrom.threadId === named.threadId,
         )
       ) {
         return;

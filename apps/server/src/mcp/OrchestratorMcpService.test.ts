@@ -3501,6 +3501,13 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.isFalse(yield* blocked(linked, remoteTaskChild));
           assert.isTrue(yield* blocked(otherLinked, remoteTask));
           assert.isTrue(yield* blocked(otherLinked, remoteTaskChild));
+          // Only the link that delegated the task vouches for its parent; another link naming it does not.
+          const otherLink: McpInvocationScope = {
+            ...linked,
+            client: { ...linked.client!, sessionId: "other-link" },
+          };
+          assert.isTrue(yield* blocked(otherLink, remoteTask));
+          assert.isTrue(yield* blocked(otherLink, remoteTaskChild));
 
           yield* settings.updateSettings({ agentMessagePolicy: "allow" });
           assert.isFalse(yield* blocked(from(unrelated), root));
