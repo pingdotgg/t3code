@@ -134,10 +134,15 @@ Connecting ChatGPT in **Settings → Providers** signs in the Codex provider.
 Using your signed-in Chrome profile through the extension requires a browser
 connection for the current Codex thread.
 
-If a T3 Code thread reports `The browser access host is unavailable`, the thread
-could not connect to the extension, even if Chrome is open. For that task, follow [OpenAI's setup guide](https://learn.chatgpt.com/docs/chrome-extension),
-then select `@Chrome` in a Codex chat in the ChatGPT desktop app. T3 Code's built-in
-browser preview uses its own browser session.
+If a T3 Code thread reports `The browser access host is unavailable`, its browser
+host is unavailable; this does not identify an extension connection failure.
+For a task that requested Chrome, follow [OpenAI's setup guide](https://learn.chatgpt.com/docs/chrome-extension),
+then select Chrome in a Codex chat in the ChatGPT desktop app.
+If the task runs on a remote environment, `localhost` in the desktop browser
+refers to your computer. Forward the remote page's port or use a URL reachable
+from your computer before repeating the task. Connecting to T3 Code through a
+relay or tunnel does not by itself expose that page. T3 Code's built-in browser
+preview uses its own browser session.
 
 ## Use Daybreak
 
