@@ -619,6 +619,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           ): void => {
             const origin = permissionOrigin(rawUrl);
             if (origin === null) {
+              // A frame URL such as about:srcdoc cannot establish whether its origin is inherited or opaque.
               callback(false);
               return;
             }

@@ -138,6 +138,7 @@ it.each([
     );
     if (!attach) throw new Error("Attach button not found");
     attach.click();
+    expect(attach.disabled).toBe(false);
     expect(ipcSend.calls.some(([channel]) => channel === ELEMENT_PICKED_CHANNEL)).toBe(false);
     const listenerIndex = listeners.mock.contexts.findIndex(
       (target, index) => target === attach && listeners.mock.calls[index]?.[0] === "click",
