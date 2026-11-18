@@ -346,6 +346,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           expect(retried.credential).toBe(requested.credential);
 
           expect(yield* serverAuth.approveConnectDevice(request!.id)).toBe(true);
+          // A second approver denying the request after it was approved must not report success.
+          expect(yield* serverAuth.revokePairingLink(request!.id)).toBe(false);
           expect(
             (yield* serverAuth.listPairingLinks()).some((link) => link.connectDeviceRequest),
           ).toBe(false);
