@@ -476,6 +476,7 @@ const CommentFilterSchema = Schema.Struct({ bots: Schema.Boolean, resolved: Sche
 const DEFAULT_COMMENT_FILTER: typeof CommentFilterSchema.Type = { bots: false, resolved: false };
 
 export function PullRequestSummaryTab({
+  active = true,
   revealUrl,
   onRevealSettled,
   scrollerRef,
@@ -495,6 +496,7 @@ export function PullRequestSummaryTab({
   onRefresh,
   onRefreshChecks = onRefresh,
 }: {
+  active?: boolean;
   /** A clicked link to scroll to, until onRevealSettled reports it shown. */
   revealUrl?: string | undefined;
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
@@ -745,7 +747,7 @@ export function PullRequestSummaryTab({
         threadId={thread.id}
         completionScope={completionScope}
         pending={threadReplyPending}
-        collapsed={collapsed}
+        collapsed={collapsed || !active}
         {...(className === undefined ? {} : { className })}
         onReply={(body) => sendThreadReply(thread.id, body)}
       />
