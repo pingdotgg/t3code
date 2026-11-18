@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
@@ -573,7 +575,7 @@ const isStale = (result: AsyncResult.AsyncResult<unknown, unknown>, staleTimeMs:
  * TTL skips on a remount; this layer has no TTL (a transform drops it) while `self` keeps the cache.
  * It reads `self` as a dependency, not a subscription, so `self` goes idle with its last reader.
  */
-const revalidateOnMount =
+export const revalidateOnMount =
   (staleTimeMs: number) =>
   <A, E>(
     self: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
@@ -803,9 +805,19 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
               return Effect.fail(
                 new EnvironmentRpcUnavailableError({
                   environmentId: target.environmentId,
-                  message: `Environment ${target.environmentId} is ${
-                    connectionState.phase === "available" ? "not connected" : connectionState.phase
-                  }.`,
+                  ...translatableMessage(
+                    connectionState.phase === "offline"
+                      ? msg("Environment {environmentId} is offline.", {
+                          environmentId: target.environmentId,
+                        })
+                      : connectionState.phase === "blocked"
+                        ? msg("Environment {environmentId} is blocked.", {
+                            environmentId: target.environmentId,
+                          })
+                        : msg("Environment {environmentId} is not connected.", {
+                            environmentId: target.environmentId,
+                          }),
+                  ),
                 }),
               );
           }

@@ -44,6 +44,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
       "https://hub.test:8317",
       undefined,
     ]);
+    expect(snapshots[3]?.endpoint).toBe("https://hub.test:8317/team-a");
     expect(() =>
       encodeConfigEvent({
         version: 1,
@@ -84,7 +85,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
           },
           [UsageLimitSourceId.make("valid-hub")]: {
             kind: "cliproxy",
-            url: "https://hub.test:8317",
+            url: "https://hub.test:8317/team-a/management.html",
             managementKey: "",
             enabled: true,
           },
@@ -166,6 +167,107 @@ it.effect("reads a management key from its secret provider", () => {
           Effect.sync(() => {
             authorizations.push(request.headers.authorization);
             return HttpClientResponse.fromWeb(request, Response.json({ files: [] }));
+          }),
+        ),
+      ),
+      NodeCrypto.layer,
+    ]),
+  );
+});
+
+it.effect("keeps an account's last good reading when the hub's next read of it is refused", () => {
+  let refused = true;
+  let workspace = "account-a";
+  let listsIdentity = true;
+  const readAccount = Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    return Effect.gen(function* () {
+      yield* sources.refresh;
+      const [source] = yield* sources.current;
+      return source?.accounts[0]?.usageLimits;
+    });
+  });
+  return Effect.gen(function* () {
+    const read = yield* readAccount;
+    // Nothing to keep yet: the account stays listed as unreadable.
+    expect(yield* read).toMatchObject({ windows: [], unavailable: { reason: "probeFailed" } });
+    refused = false;
+    const good = yield* read;
+    expect(good?.windows.map((window) => window.usedPercent)).toEqual([78]);
+    expect(good?.unavailable).toBeUndefined();
+    refused = true;
+    expect(yield* read).toEqual(good);
+    // The same auth file now holds another login, whose reading is unknown.
+    workspace = "account-b";
+    expect(yield* read).toMatchObject({ windows: [], unavailable: { reason: "probeFailed" } });
+    // A file that lists no login cannot show whether the next one is the same.
+    listsIdentity = false;
+    refused = false;
+    yield* read;
+    refused = true;
+    expect(yield* read).toMatchObject({ windows: [], unavailable: { reason: "probeFailed" } });
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("hub")]: {
+            kind: "cliproxy",
+            url: "http://hub.test:8317",
+            managementKey: "management-secret",
+            enabled: true,
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
+        read: (references) => Effect.succeed(references.map(() => undefined)),
+        invalidate: () => Effect.void,
+      }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            if (new URL(request.url).pathname.endsWith("/auth-files")) {
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  files: [
+                    {
+                      id: "first.json",
+                      auth_index: "a",
+                      provider: "codex",
+                      ...(listsIdentity
+                        ? {
+                            email: "first@example.com",
+                            id_token: { chatgpt_account_id: workspace },
+                          }
+                        : {}),
+                    },
+                  ],
+                }),
+              );
+            }
+            const usage = {
+              plan_type: "pro",
+              rate_limit: {
+                secondary_window: {
+                  used_percent: 78,
+                  reset_at: 4070908800,
+                  limit_window_seconds: 604800,
+                },
+              },
+            };
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                refused
+                  ? { status_code: 429, body: "{}" }
+                  : { status_code: 200, body: JSON.stringify(usage) },
+              ),
+            );
           }),
         ),
       ),

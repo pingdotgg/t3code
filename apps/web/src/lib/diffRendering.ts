@@ -1,6 +1,9 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../i18n/messages";
 import { READABLE_LIGHT_THEME_NAME } from "./readableSyntaxTheme";
 
 // Light mode uses a darker pierre-light so syntax stays readable on every code surface.
@@ -158,6 +161,7 @@ export function getRenderablePatch(
   patch: string | undefined,
   cacheScope = "diff-panel",
   options: RenderablePatchOptions = {},
+  resolve: MessageResolver = m,
 ): RenderablePatch | null {
   if (!patch?.trim()) return null;
 
@@ -177,13 +181,13 @@ export function getRenderablePatch(
     return {
       kind: "raw",
       text: patch,
-      reason: "Unsupported diff format. Showing raw patch.",
+      reason: resolve(msg("Unsupported diff format. Showing raw patch.")),
     };
   } catch {
     return {
       kind: "raw",
       text: patch,
-      reason: "Failed to parse patch. Showing raw patch.",
+      reason: resolve(msg("Failed to parse patch. Showing raw patch.")),
     };
   }
 }
@@ -264,6 +268,30 @@ export function buildFileDiffContentVersion(fileDiff: FileDiffMetadata): number 
   }
 
   return hash;
+}
+
+const fileEntryCache = new WeakMap<
+  FileDiffMetadata,
+  { fileDiff: FileDiffMetadata; fileKey: string; fileVersion: number }
+>();
+
+/** Give repeated blocks independent viewer state without tying identity to patch content. */
+export function buildFileDiffEntries(files: ReadonlyArray<FileDiffMetadata>) {
+  const occurrences = new Map<string, number>();
+  return files.map((fileDiff) => {
+    let entry = fileEntryCache.get(fileDiff);
+    if (!entry) {
+      entry = {
+        fileDiff,
+        fileKey: buildFileDiffIdentityKey(fileDiff),
+        fileVersion: buildFileDiffContentVersion(fileDiff),
+      };
+      fileEntryCache.set(fileDiff, entry);
+    }
+    const occurrence = occurrences.get(entry.fileKey) ?? 0;
+    occurrences.set(entry.fileKey, occurrence + 1);
+    return occurrence === 0 ? entry : { ...entry, fileKey: `${entry.fileKey}\u0000${occurrence}` };
+  });
 }
 
 export const DIFF_SURFACE_THEME_UNSAFE_CSS = `

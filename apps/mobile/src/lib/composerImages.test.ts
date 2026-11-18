@@ -199,10 +199,13 @@ describe("native pasted image cleanup", () => {
   it("converts owned files to data-backed previews and deletes the source", async () => {
     const uri =
       "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/id.png";
+    const gif =
+      "file:///private/var/mobile/Containers/Data/Application/app/tmp/t3-composer-paste/anim.gif";
     files.set(uri, { base64: "aGVsbG8=", deleted: false });
+    files.set(gif, { base64: "R0lGODlh", deleted: false });
 
     const { attachments } = await convertPastedImagesToAttachments({
-      uris: [uri],
+      uris: [uri, gif],
       existingCount: 0,
     });
 
@@ -211,8 +214,10 @@ describe("native pasted image cleanup", () => {
         dataUrl: "data:image/png;base64,aGVsbG8=",
         previewUri: "data:image/png;base64,aGVsbG8=",
       }),
+      expect.objectContaining({ mimeType: "image/gif", dataUrl: "data:image/gif;base64,R0lGODlh" }),
     ]);
     expect(files.get(uri)?.deleted).toBe(true);
+    expect(files.get(gif)?.deleted).toBe(true);
   });
 
   it("deletes rejected and overflow owned files without deleting user-owned files", async () => {
@@ -327,10 +332,16 @@ describe("composerStripAttachments", () => {
 
   it("keeps media beside a document rather than dropping the whole strip", async () => {
     const { composerStripAttachments } = await import("./composerImages");
-    expect(composerStripAttachments([doc, image, video] as never).map((a) => a.id)).toEqual([
-      "img-1",
-      "vid-1",
-    ]);
+    expect(
+      composerStripAttachments([doc, image, video] as never, () => false).map((a) => a.id),
+    ).toEqual(["img-1", "vid-1"]);
+  });
+
+  it("shows a document whose upload failed, so it can be retried", async () => {
+    const { composerStripAttachments } = await import("./composerImages");
+    expect(
+      composerStripAttachments([doc, image] as never, (a) => a.id === "doc-1").map((a) => a.id),
+    ).toEqual(["doc-1", "img-1"]);
   });
 
   it("keeps oversized document-picked images visible while sending them as files", async () => {
@@ -345,7 +356,7 @@ describe("composerStripAttachments", () => {
       sizeBytes: PROVIDER_SEND_TURN_MAX_IMAGE_BYTES + 1,
     };
 
-    expect(composerStripAttachments([oversizedImage])).toEqual([oversizedImage]);
+    expect(composerStripAttachments([oversizedImage], () => false)).toEqual([oversizedImage]);
     expect(isComposerImageAttachment(oversizedImage)).toBe(false);
   });
 });

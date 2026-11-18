@@ -25,8 +25,8 @@ export function MiddleTruncate({
     const element = headRef.current;
     // A new head can keep the same box size, so refit here, not only on resize.
     if (!element || head === undefined) return;
-    fitHead(element);
-    return observeResize(element, () => fitHead(element));
+    scheduleFit(element);
+    return observeResize(element, () => scheduleFit(element));
   }, [head]);
   return (
     <span
@@ -60,36 +60,54 @@ export function MiddleTruncate({
   );
 }
 
+// Fitting heads one by one forces a layout per row, since each read follows the previous
+// head's write. Heads queued in one commit or resize delivery fit together in a microtask,
+// still before paint: all reads, then all writes.
+const pendingFits = new Set<HTMLElement>();
+
+function scheduleFit(head: HTMLElement) {
+  if (pendingFits.size === 0) queueMicrotask(fitPendingHeads);
+  pendingFits.add(head);
+}
+
 // An overflowing head is cut after its last whole character: clip the partial glyph
 // and slide the tail left over the slack. Neither changes layout, so the observed
 // size stays the true available width.
+function fitPendingHeads() {
+  const heads = [...pendingFits].filter((head) => head.isConnected);
+  pendingFits.clear();
+  const overflowing = heads.map(
+    (head) => head.scrollWidth > head.clientWidth && head.firstChild instanceof Text,
+  );
+  heads.forEach((head, index) => head.toggleAttribute("data-overflow", overflowing[index]));
+  const slacks = heads.map((head, index) => (overflowing[index] ? measureSlack(head) : 0));
+  heads.forEach((head, index) => {
+    const slack = slacks[index]!;
+    head.style.clipPath = slack > 0 ? `inset(-0.25em ${slack}px -0.25em 0)` : "";
+    const tail = head.nextElementSibling;
+    if (tail instanceof HTMLElement) tail.style.translate = slack > 0 ? `-${slack}px 0` : "";
+  });
+}
 
-function fitHead(head: HTMLElement) {
-  const text = head.firstChild;
-  const overflowing = head.scrollWidth > head.clientWidth && text instanceof Text;
-  head.toggleAttribute("data-overflow", overflowing);
-  let slack = 0;
-  if (overflowing) {
-    const range = document.createRange();
-    const left = head.getBoundingClientRect().left;
-    const widthTo = (end: number) => {
-      range.setStart(text, 0);
-      range.setEnd(text, end);
-      return range.getBoundingClientRect().right - left;
-    };
-    let fits = 0;
-    let over = text.length;
-    while (over - fits > 1) {
-      const mid = (fits + over) >> 1;
-      if (widthTo(mid) <= head.clientWidth) fits = mid;
-      else over = mid;
-    }
-    if (/[\uD800-\uDBFF]/.test(text.data[fits - 1] ?? "")) fits -= 1;
-    slack = Math.max(0, head.clientWidth - widthTo(fits));
+function measureSlack(head: HTMLElement) {
+  const text = head.firstChild as Text;
+  const range = document.createRange();
+  const left = head.getBoundingClientRect().left;
+  const width = head.clientWidth;
+  const widthTo = (end: number) => {
+    range.setStart(text, 0);
+    range.setEnd(text, end);
+    return range.getBoundingClientRect().right - left;
+  };
+  let fits = 0;
+  let over = text.length;
+  while (over - fits > 1) {
+    const mid = (fits + over) >> 1;
+    if (widthTo(mid) <= width) fits = mid;
+    else over = mid;
   }
-  head.style.clipPath = slack > 0 ? `inset(-0.25em ${slack}px -0.25em 0)` : "";
-  const tail = head.nextElementSibling;
-  if (tail instanceof HTMLElement) tail.style.translate = slack > 0 ? `-${slack}px 0` : "";
+  if (/[\uD800-\uDBFF]/.test(text.data[fits - 1] ?? "")) fits -= 1;
+  return Math.max(0, width - widthTo(fits));
 }
 
 // The segments render pre so the space at the cut survives, so collapse here what CSS

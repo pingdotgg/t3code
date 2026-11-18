@@ -8,23 +8,25 @@ import {
   type SpeedCost,
 } from "@t3tools/shared/usageMerge";
 
+import { msg } from "gt-react";
+
 import type { ShareSegment } from "./UsageShareBar";
 
-export function timeBreakdownMetric(metric: "cost" | "tokens") {
+export function timeBreakdownMetric(metric: "cost" | "tokens", locale?: string) {
   const formatCost = (totals: Pick<DailyTotals, "costUsd" | "totalTokens"> | undefined) =>
-    formatUsd(totals?.costUsd ?? 0);
+    formatUsd(totals?.costUsd ?? 0, locale);
   const formatTokenCount = (totals: Pick<DailyTotals, "costUsd" | "totalTokens"> | undefined) =>
     formatTokens(totals?.totalTokens ?? 0);
 
   return metric === "tokens"
     ? {
         formatValue: formatTokenCount,
-        secondaryLabel: "Cost",
+        secondaryLabel: msg("Cost"),
         formatSecondaryValue: formatCost,
       }
     : {
         formatValue: formatCost,
-        secondaryLabel: "Tokens",
+        secondaryLabel: msg("Tokens"),
         formatSecondaryValue: formatTokenCount,
       };
 }
@@ -68,11 +70,15 @@ const TYPE_COLORS = {
 
 export function costTypeSegments(cost: CategoryCost): readonly ShareSegment[] {
   return [
-    { label: "Input", value: cost.input, color: TYPE_COLORS.input },
-    { label: "Cache read", value: cost.cacheRead, color: TYPE_COLORS.cacheRead },
-    { label: "Cache write", value: cost.cacheWrite, color: TYPE_COLORS.cacheWrite },
-    { label: "Output", value: cost.output, color: TYPE_COLORS.output },
-    { label: "Other", value: cost.unsplit >= 0.005 ? cost.unsplit : 0, color: TYPE_COLORS.other },
+    { label: msg("Input"), value: cost.input, color: TYPE_COLORS.input },
+    { label: msg("Cache read"), value: cost.cacheRead, color: TYPE_COLORS.cacheRead },
+    { label: msg("Cache write"), value: cost.cacheWrite, color: TYPE_COLORS.cacheWrite },
+    { label: msg("Output"), value: cost.output, color: TYPE_COLORS.output },
+    {
+      label: msg("Other"),
+      value: cost.unsplit >= 0.005 ? cost.unsplit : 0,
+      color: TYPE_COLORS.other,
+    },
   ];
 }
 
@@ -80,17 +86,17 @@ export function tokenTypeSegments(
   tokens: Omit<UsageTokenTotals, "reasoningTokens">,
 ): readonly ShareSegment[] {
   return [
-    { label: "Input", value: tokens.uncachedInputTokens, color: TYPE_COLORS.input },
-    { label: "Cache read", value: tokens.cachedInputTokens, color: TYPE_COLORS.cacheRead },
-    { label: "Cache write", value: tokens.cacheCreationTokens, color: TYPE_COLORS.cacheWrite },
-    { label: "Output", value: tokens.outputTokens, color: TYPE_COLORS.output },
+    { label: msg("Input"), value: tokens.uncachedInputTokens, color: TYPE_COLORS.input },
+    { label: msg("Cache read"), value: tokens.cachedInputTokens, color: TYPE_COLORS.cacheRead },
+    { label: msg("Cache write"), value: tokens.cacheCreationTokens, color: TYPE_COLORS.cacheWrite },
+    { label: msg("Output"), value: tokens.outputTokens, color: TYPE_COLORS.output },
   ];
 }
 
 export function speedCostSegments(cost: SpeedCost): readonly ShareSegment[] {
   return [
-    { label: "Standard", value: cost.standard, color: ink(34) },
-    { label: "Fast", value: cost.fast, color: ink(66) },
-    { label: "Ultrafast", value: cost.ultrafast, color: ink(100) },
+    { label: msg("Standard"), value: cost.standard, color: ink(34) },
+    { label: msg("Fast"), value: cost.fast, color: ink(66) },
+    { label: msg("Ultrafast"), value: cost.ultrafast, color: ink(100) },
   ];
 }

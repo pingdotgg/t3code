@@ -1,8 +1,8 @@
 import * as MacPermissions from "./permissions/MacPermissions.ts";
+import { handleStdioError } from "./app/stdioErrors.ts";
+
 for (const stream of [process.stdout, process.stderr]) {
-  stream.on("error", (err: NodeJS.ErrnoException) => {
-    if (err.code !== "EPIPE") throw err;
-  });
+  stream.on("error", handleStdioError);
 }
 
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
@@ -16,14 +16,11 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
-import serverPackageJson from "../../server/package.json" with { type: "json" };
 
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 import * as ElectronApp from "./electron/ElectronApp.ts";
@@ -109,24 +106,15 @@ const layerDesktopEnvironment = Layer.unwrap(
   }),
 );
 
-const resolveDesktopSshCliRunner = (
-  environment: DesktopEnvironment.DesktopEnvironment["Service"],
-): RemoteT3RunnerOptions => {
-  const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteT3ServerEntryPath);
-  if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
-    return {
-      nodeScriptPath: devRemoteEntryPath,
-      nodeEngineRange: serverPackageJson.engines.node,
-    };
-  }
-  return { archiveVersion: environment.appVersion };
-};
-
 const layerDesktopSshEnvironment = Layer.unwrap(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const env = yield* HostProcess.Environment;
     return DesktopSshEnvironment.layer({
-      resolveCliRunner: Effect.succeed(resolveDesktopSshCliRunner(environment)),
+      // Per connect: the login shell's environment is installed after this layer is built.
+      resolveCliRunner: Effect.sync(() =>
+        DesktopSshEnvironment.resolveDesktopSshCliRunner(environment, env),
+      ),
       resolveLauncherId: yield* Effect.cached(
         DesktopSshEnvironment.readOrCreateLauncherId(
           environment.path.join(environment.stateDir, "ssh-launcher-id"),

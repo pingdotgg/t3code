@@ -466,3 +466,47 @@ export function injectHtmlRenderBootstrap(html: string): string {
   }
   return `<!doctype html><head>${markup}</head>${html}`;
 }
+
+const FILE_PREVIEW_SCROLL_METHOD = "t3/notifications/file-preview-scroll";
+const FILE_PREVIEW_RESTORE_SCROLL_METHOD = "t3/file-preview/restore-scroll";
+const FILE_PREVIEW_SCROLL_RESTORED_METHOD = "t3/notifications/file-preview-scroll-restored";
+
+export interface FilePreviewScroll {
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Appended after a served workspace page so it lands at the end of the body without changing
+ * the doctype. A preview frame is an opaque origin, so only the page can report and restore its
+ * scroll position across the reload that follows each workspace change.
+ */
+export const FILE_PREVIEW_SCROLL_SCRIPT = `<script>(function(){var p=window.parent,f=0;if(p===window)return;addEventListener("scroll",function(){if(!f)f=requestAnimationFrame(function(){f=0;p.postMessage({jsonrpc:"2.0",method:${JSON.stringify(FILE_PREVIEW_SCROLL_METHOD)},params:{x:scrollX,y:scrollY}},"*");});},{passive:true});addEventListener("message",function(e){var d=e.data,q=d&&d.params;if(e.source!==p||!d||d.jsonrpc!=="2.0"||d.method!==${JSON.stringify(FILE_PREVIEW_RESTORE_SCROLL_METHOD)}||!q||typeof q.x!=="number"||typeof q.y!=="number")return;scrollTo({left:q.x,top:q.y,behavior:"instant"});p.postMessage({jsonrpc:"2.0",method:${JSON.stringify(FILE_PREVIEW_SCROLL_RESTORED_METHOD)}},"*");});})();</script>`;
+
+export function readFilePreviewScroll(data: unknown): FilePreviewScroll | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { jsonrpc, method, params } = data as Record<string, unknown>;
+  if (jsonrpc !== "2.0" || method !== FILE_PREVIEW_SCROLL_METHOD) return undefined;
+  if (typeof params !== "object" || params === null) return undefined;
+  const { x, y } = params as Record<string, unknown>;
+  return typeof x === "number" && Number.isFinite(x) && typeof y === "number" && Number.isFinite(y)
+    ? { x, y }
+    : undefined;
+}
+
+export function isFilePreviewScrollRestored(data: unknown): boolean {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    (data as Record<string, unknown>).jsonrpc === "2.0" &&
+    (data as Record<string, unknown>).method === FILE_PREVIEW_SCROLL_RESTORED_METHOD
+  );
+}
+
+export function filePreviewRestoreScrollMessage(scroll: FilePreviewScroll) {
+  return {
+    jsonrpc: "2.0",
+    method: FILE_PREVIEW_RESTORE_SCROLL_METHOD,
+    params: { x: scroll.x, y: scroll.y },
+  } as const;
+}

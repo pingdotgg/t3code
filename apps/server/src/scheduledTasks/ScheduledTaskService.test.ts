@@ -4,6 +4,7 @@ import * as NodeUtil from "node:util";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import {
+  CommandId,
   ProjectId,
   ProviderInstanceId,
   ScheduledTaskError,
@@ -29,6 +30,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -507,6 +509,143 @@ it.effect.each([
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("a one-time task is removed once its turn completes", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-11-01T07:00:00.000Z"));
+    const projectId = ProjectId.make("project:test");
+    const ended = yield* Deferred.make<void>();
+    const sent = yield* Ref.make("");
+    const run = { id: "run:1", status: "completed", rootNodeId: "node:root" };
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) => Ref.set(sent, input.messageId).pipe(Effect.as({} as never)),
+            getThreadShell: () => Effect.succeed(threadShell(projectId)),
+            getProjectThreadRecords: () =>
+              Effect.map(
+                Ref.get(sent),
+                (userMessageId) => ({ runs: [{ ...run, userMessageId }] }) as never,
+              ),
+            waitForThread: (input) =>
+              Deferred.await(ended).pipe(
+                Effect.as({ threadId: input.threadId, run, timedOut: false } as never),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:once"),
+        title: "Release notes",
+        prompt: "Draft the release notes",
+        enabled: true,
+        schedule: { type: "once", runAt: "2026-11-01T07:01:00.000Z" },
+        projectId,
+        threadId: ThreadId.make("thread:once"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      const dispatched = service.subscribeList().pipe(
+        Stream.map(({ tasks }) => tasks.find((candidate) => candidate.id === task.id)),
+        Stream.filter((current) => current?.lastRunStatus === "succeeded"),
+        Stream.runHead,
+      );
+      const removed = service.subscribeList().pipe(
+        Stream.filter(({ tasks }) => tasks.every((candidate) => candidate.id !== task.id)),
+        Stream.runHead,
+      );
+      const recorded = yield* Effect.forkChild(dispatched);
+      const gone = yield* Effect.forkChild(removed);
+      yield* TestClock.adjust("2 minutes");
+      // The dispatch alone keeps it: the turn can still fail.
+      assert.isNull(Option.getOrThrow(yield* Fiber.join(recorded))?.nextRunAt);
+      yield* Deferred.succeed(ended, undefined);
+      yield* Fiber.join(gone);
+      assert.lengthOf((yield* service.list()).tasks, 0);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a paused one-time task run by hand before its time is kept", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(Date.parse("2026-11-01T07:00:00.000Z"));
+    const projectId = ProjectId.make("project:test");
+    const ended = yield* Deferred.make<void>();
+    const outcomeRead = yield* Deferred.make<void>();
+    const sent = yield* Ref.make("");
+    const run = { id: "run:1", status: "completed", rootNodeId: "node:root" };
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            sendToThread: (input) => Ref.set(sent, input.messageId).pipe(Effect.as({} as never)),
+            getThreadShell: () => Effect.succeed(threadShell(projectId)),
+            getProjectThreadRecords: () =>
+              Effect.map(
+                Ref.get(sent),
+                (userMessageId) => ({ runs: [{ ...run, userMessageId }] }) as never,
+              ),
+            waitForThread: (input) =>
+              Deferred.await(ended).pipe(
+                Effect.tap(() => Deferred.succeed(outcomeRead, undefined)),
+                Effect.as({ threadId: input.threadId, run, timedOut: false } as never),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Scheduler.layer,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:paused-once"),
+        title: "Release notes",
+        prompt: "Draft the release notes",
+        enabled: true,
+        schedule: { type: "once", runAt: "2026-11-01T08:00:00.000Z" },
+        projectId,
+        threadId: ThreadId.make("thread:once"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      yield* service.setEnabled({ id: task.id, enabled: false });
+      yield* service.runNow({ id: task.id });
+      yield* Deferred.succeed(ended, undefined);
+      yield* Deferred.await(outcomeRead);
+      yield* TestClock.adjust("1 second");
+      const [kept] = (yield* service.list()).tasks;
+      assert.equal(kept?.id, task.id);
+      assert.equal(kept?.runCount, 1);
+      const resumed = yield* service.setEnabled({ id: task.id, enabled: true });
+      assert.equal(resumed.task.nextRunAt, "2026-11-01T08:00:00.000Z");
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("a bound run follows its thread when promotion moves it mid-send", () =>
   Effect.gen(function* () {
     const scratch = ProjectId.make("project:scratch");
@@ -659,6 +798,67 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
       assert.equal(moved.task.threadMode, "fresh_session");
       const unbound = yield* service.upsert({ ...input, threadMode: "new_thread" });
       assert.equal(unbound.task.threadId, null);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a refused dispatch records its refusal, and opaque causes stay generic", () =>
+  Effect.gen(function* () {
+    const refusal = "Thread thread:refused was stopped.";
+    const refused = (cause: unknown) =>
+      new OrchestratorDispatchError({
+        commandId: CommandId.make("command:refused"),
+        commandType: "message.dispatch",
+        cause,
+      });
+    const generic = refused(undefined).message;
+    const cases = [
+      [refusal, refusal],
+      ["   ", generic],
+      [new Error("private-nested-secret"), generic],
+    ] as const;
+    const failure = yield* Ref.make<unknown>(undefined);
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: () => Effect.succeed(threadShell(ProjectId.make("project:test"))),
+            sendToThread: () =>
+              Ref.get(failure).pipe(Effect.flatMap((cause) => Effect.fail(refused(cause)))),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:refused"),
+        title: "Refused dispatch",
+        prompt: "Check progress",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId: ProjectId.make("project:test"),
+        threadId: ThreadId.make("thread:refused"),
+        workspaceStrategy: { type: "root" },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      for (const [cause, expected] of cases) {
+        yield* Ref.set(failure, cause);
+        const result = yield* service.runNow({ id: task.id });
+        assert.equal(result.task.lastRunStatus, "failed");
+        assert.equal(result.task.lastRunError, expected);
+      }
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
