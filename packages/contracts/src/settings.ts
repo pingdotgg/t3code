@@ -827,6 +827,45 @@ export const IDLE_COMPACTION_MODES = [
 export const AgentMessagePolicy = Schema.Literals(["allow", "block"]);
 export type AgentMessagePolicy = typeof AgentMessagePolicy.Type;
 
+/**
+ * An owner-written edit to each request a Claude session sends to the model. `remove` and
+ * `replace` run the JavaScript regular expression `pattern` (with `flags`) over each text of
+ * `target`; `add` appends `text` to the system prompt or the latest user message.
+ */
+export const RequestRewriteRule = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  enabled: Schema.Boolean,
+  action: Schema.Literals(["remove", "replace", "add"]),
+  target: Schema.Literals(["system", "reminders", "messages", "tools"]),
+  pattern: Schema.optionalKey(Schema.String),
+  flags: Schema.optionalKey(Schema.String),
+  text: Schema.optionalKey(Schema.String),
+});
+export type RequestRewriteRule = typeof RequestRewriteRule.Type;
+
+export const RequestRewriteWarning = Schema.Literals([
+  "first-system-block",
+  "cache-breakpoint",
+  "system-removed",
+]);
+export type RequestRewriteWarning = typeof RequestRewriteWarning.Type;
+
+/** What one rule did to one request. A rule with an `error` was skipped. */
+export const RequestRewriteRuleReport = Schema.Struct({
+  ruleId: Schema.String,
+  name: Schema.String,
+  blocks: Schema.Number,
+  removedChars: Schema.Number,
+  addedChars: Schema.Number,
+  warnings: Schema.Array(RequestRewriteWarning),
+  error: Schema.optionalKey(
+    Schema.Literals(["invalid-pattern", "missing-pattern", "add-to-tools"]),
+  ),
+  snippets: Schema.Array(Schema.Struct({ before: Schema.String, after: Schema.String })),
+});
+export type RequestRewriteRuleReport = typeof RequestRewriteRuleReport.Type;
+
 export const IdleCompactionMode = Schema.Literals(IDLE_COMPACTION_MODES.map((mode) => mode.value));
 export type IdleCompactionMode = typeof IdleCompactionMode.Type;
 
