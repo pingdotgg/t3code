@@ -1,4 +1,6 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Schema from "effect/Schema";
 import { HttpClient, type HttpClientResponse } from "effect/http";
 import {
@@ -14,6 +16,7 @@ import {
   type RelayEnvironmentLinkResponse as RelayEnvironmentLinkResponseType,
   type RelayManagedEndpointProviderKind,
 } from "@t3tools/contracts/relay";
+import { EnvironmentSupervisor } from "@t3tools/client-runtime/connection";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import { ManagedRelay, relayRequestFailureDetail } from "@t3tools/client-runtime/relay";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
@@ -175,6 +178,11 @@ const decodeRelayOkResponse = Schema.decodeUnknownEffect(RelayOkResponse);
 export const updateLinkedEnvironmentLiveActivityPreference = Effect.fn(
   "linkEnvironment.updateLinkedEnvironmentLiveActivityPreference",
 )(function* (liveActivitiesEnabled: boolean) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  if (Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))) {
+    return "disconnected" as const;
+  }
+
   return yield* executeConnectedEnvironmentHttpRequest<
     "connect",
     HttpClientResponse.HttpClientResponse,

@@ -46,7 +46,10 @@ const updateEnvironment = vi.fn<
   (
     id: EnvironmentId,
     enabled: boolean,
-  ) => Effect.Effect<"updated" | "unlinked" | "unsupported", CloudEnvironmentLinkError>
+  ) => Effect.Effect<
+    "updated" | "unlinked" | "unsupported" | "disconnected",
+    CloudEnvironmentLinkError
+  >
 >(() => Effect.succeed("updated"));
 
 const connection: SavedRemoteConnection = {

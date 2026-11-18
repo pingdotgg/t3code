@@ -27,7 +27,10 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     readonly updateEnvironment: (
       environmentId: EnvironmentId,
       enabled: boolean,
-    ) => Effect.Effect<"updated" | "unlinked" | "unsupported", CloudEnvironmentLinkError>;
+    ) => Effect.Effect<
+      "updated" | "unlinked" | "unsupported" | "disconnected",
+      CloudEnvironmentLinkError
+    >;
     readonly canUpdateEnvironment: (environmentId: EnvironmentId) => boolean;
     readonly canConfigureEnvironment: (environmentId: EnvironmentId) => boolean;
   }) {
@@ -39,7 +42,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
       const result = input.canUpdateEnvironment(connection.environmentId)
         ? yield* input.updateEnvironment(connection.environmentId, enabled)
         : "unlinked";
-      if (result === "updated") return "updated" as const;
+      if (result === "updated" || result === "disconnected") return result;
       if (
         !enabled ||
         !clerkToken ||
