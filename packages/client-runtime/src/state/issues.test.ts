@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - The retention test forces garbage collection in Node.
-import * as NodeTimersPromises from "node:timers/promises";
+// oxlint-disable-next-line t3code/namespace-node-imports -- the repro test imports setImmediate by name
+import { setImmediate } from "node:timers/promises";
 import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
 import {
@@ -140,15 +141,14 @@ describe("createMergedIssueCandidatesAtoms", () => {
 });
 
 describe("createMergedIssueListAtoms", () => {
-  const answer: IssueListResult = {
-    viewers: {},
-    trackers: [],
-    entries: [],
-    errors: [],
-    nextCursors: {},
-  };
-
   it("refreshes the open listings of the environment written to", () => {
+    const answer: IssueListResult = {
+      viewers: {},
+      trackers: [],
+      entries: [],
+      errors: [],
+      nextCursors: {},
+    };
     const reads = new Map<string, number>();
     const lists = new Map<string, Atom.Atom<AsyncResult.AsyncResult<IssueListResult>>>();
     const listings = createMergedIssueListAtoms((target) => {
@@ -183,6 +183,13 @@ describe("createMergedIssueListAtoms", () => {
   it("releases historical search targets when the list closes", async () => {
     NodeV8.setFlagsFromString("--expose-gc");
     const gc = NodeVM.runInNewContext("gc") as () => void;
+    const answer: IssueListResult = {
+      viewers: {},
+      trackers: [],
+      entries: [],
+      errors: [],
+      nextCursors: {},
+    };
     const listings = createMergedIssueListAtoms(
       () => Atom.make(AsyncResult.success(answer)),
       String,
@@ -200,7 +207,7 @@ describe("createMergedIssueListAtoms", () => {
       });
       // Let the registry remove all three unmounted queries and the WeakRefs leave their creation job.
       // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a zero-delay macrotask boundary, not a wait for time
-      await NodeTimersPromises.setImmediate();
+      await setImmediate();
       gc();
 
       listings.refreshEnvironment(registry, environmentId);
