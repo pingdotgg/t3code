@@ -4,6 +4,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
+import { T, useGT } from "gt-react";
 
 import { environmentCatalog } from "~/connection/catalog";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -31,9 +32,10 @@ function RenameEnvironmentForm({
   readonly label: string;
   readonly onDone: () => void;
 }) {
+  const gt = useGT();
   const [label, setLabel] = useState(currentLabel);
   const [saving, setSaving] = useState(false);
-  const setEnvironmentLabel = useAtomCommand(environmentCatalog.setLabel, "Rename environment");
+  const setEnvironmentLabel = useAtomCommand(environmentCatalog.setLabel, gt("Rename environment"));
   const canSave = !saving && label.trim() !== "";
 
   const save = async () => {
@@ -50,8 +52,8 @@ function RenameEnvironmentForm({
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not rename environment",
-        description: error instanceof Error ? error.message : "The label was not saved.",
+        title: gt("Could not rename environment"),
+        description: error instanceof Error ? error.message : gt("The label was not saved."),
       }),
     );
   };
@@ -65,11 +67,15 @@ function RenameEnvironmentForm({
       }}
     >
       <DialogHeader>
-        <DialogTitle>Rename environment</DialogTitle>
+        <DialogTitle>
+          <T>Rename environment</T>
+        </DialogTitle>
       </DialogHeader>
       <DialogPanel>
         <div className="grid gap-1.5">
-          <Label htmlFor="environment-label">Label</Label>
+          <Label htmlFor="environment-label">
+            <T>Label</T>
+          </Label>
           <Input
             id="environment-label"
             value={label}
@@ -80,9 +86,11 @@ function RenameEnvironmentForm({
         </div>
       </DialogPanel>
       <DialogFooter>
-        <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+        <DialogClose render={<Button type="button" variant="outline" />}>
+          <T>Cancel</T>
+        </DialogClose>
         <Button type="submit" disabled={!canSave}>
-          {saving ? "Saving…" : "Save"}
+          {saving ? gt("Saving…") : gt("Save")}
         </Button>
       </DialogFooter>
     </form>

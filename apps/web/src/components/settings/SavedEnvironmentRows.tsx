@@ -454,7 +454,7 @@ export function SavedBackendListRow({
           {environment.relayManaged ? null : (
             <MenuItem onClick={() => setRenameOpen(true)}>
               <PencilIcon />
-              Rename…
+              <T>Rename…</T>
             </MenuItem>
           )}
           <MenuItem onClick={() => setRoutesOpen((open) => !open)}>
