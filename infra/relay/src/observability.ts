@@ -11,7 +11,7 @@ import * as Tracer from "effect/Tracer";
 import { relayResourceNameForStage } from "./deploymentConfig.ts";
 import { RelayMonitoring } from "./monitoring.ts";
 
-export const relayRecentSpansQuery = (dataset: string) =>
+const relayRecentSpansQuery = (dataset: string) =>
   [
     `['${dataset}']`,
     `| where isnotnull(span_id) or isnotnull(trace_id)`,
