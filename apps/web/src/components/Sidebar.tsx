@@ -3222,7 +3222,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             {scopedProjectGroups.length > 0 ? (
               <div className="mt-1.5 flex h-7 min-w-0 items-center gap-2 rounded-md bg-sidebar-row-selected px-2 text-xs text-sidebar-foreground">
                 <span className="min-w-0 flex-1 truncate">
-                  Showing: {scopedProjectGroups.map((project) => project.displayName).join(", ")}
+                  {gt("Showing: {projects}", {
+                    projects: scopedProjectGroups.map((project) => project.displayName).join(", "),
+                  })}
                 </span>
                 <button
                   type="button"
@@ -3230,7 +3232,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   onClick={() => setProjectScopeKeys([])}
                 >
                   <XIcon className="size-3" />
-                  Clear
+                  {gt("Clear", { $context: "verb, removes the sidebar project filter" })}
                 </button>
               </div>
             ) : null}
