@@ -17,6 +17,7 @@ import {
   sampleAt,
   tokensBetween,
 } from "./heroWidgets.logic";
+import { DETAILS_CARD_CLEARANCE } from "../chatCanvasLayout";
 
 const NOW = new Date(2026, 10, 17, 15, 0);
 
@@ -63,23 +64,35 @@ describe("heroWidgetArea", () => {
     width: 1014,
     height: 731,
     stackLeft: 147,
+    stackWidth: 720,
     stackHeight: 164,
     headlineHeight: 179,
     detailsLeft: null,
   };
+  const center = (area: { left: number; width: number }) => area.left + area.width / 2;
 
-  it("centers in the pane, not on a lane the composer shares with a details card", () => {
+  it("shares the composer's center line, even when a details card narrows one side", () => {
     expect(heroWidgetArea(pane)).toEqual({ left: -99, width: 918, height: 332 });
+    // The details card floats beside a composer that stays centered in the whole pane.
+    const beside = heroWidgetArea({
+      ...pane,
+      width: 1774,
+      stackLeft: 378,
+      stackWidth: 1018,
+      detailsLeft: 1542,
+    });
+    expect(center(beside)).toBe(1018 / 2);
+    expect(378 + beside.left + beside.width).toBeLessThanOrEqual(1542 - DETAILS_CARD_CLEARANCE);
     // The details card at 730 pulls the composer lane left to 48..698.
-    const area = heroWidgetArea({ ...pane, stackLeft: 48, detailsLeft: 730 });
-    expect(area.width).toBe(650);
-    expect(area.left).toBe(0);
+    expect(
+      heroWidgetArea({ ...pane, stackLeft: 48, stackWidth: 650, detailsLeft: 730 }),
+    ).toMatchObject({
+      left: 0,
+      width: 650,
+    });
   });
 
-  it("caps the width and keeps centering inside the room left of the details card", () => {
-    const area = heroWidgetArea({ ...pane, width: 1534, stackLeft: 407, detailsLeft: 1250 });
-    expect(area.width).toBe(1170);
-    expect(area.left + 407).toBe(48);
+  it("caps the width", () => {
     expect(heroWidgetArea({ ...pane, width: 2400, stackLeft: 840 }).width).toBe(1360);
   });
 
