@@ -8,9 +8,11 @@ import {
   collectProviderUsageLimits,
   type LimitPace,
   paceOf,
+  paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
+import { useNavigate } from "@tanstack/react-router";
 import { msg, useGT, useLocale, useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
@@ -39,7 +41,7 @@ export interface ThreadDetailsUsageInput {
 
 type UsageTone = "error" | "warning" | null;
 
-/** The selected provider's limit windows. Each row reads as room left. */
+/** The selected provider's limit windows. Each row reads as room left and opens the usage page. */
 export function ThreadDetailsUsage({
   providerInstanceId,
   providers,
@@ -47,6 +49,8 @@ export function ThreadDetailsUsage({
 }: Omit<ThreadDetailsUsageInput, "contextWindow">) {
   const gt = useGT();
   const m = useMessages();
+  const navigate = useNavigate();
+  const openUsage = () => void navigate({ to: "/usage" });
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
   const report =
@@ -75,9 +79,12 @@ export function ThreadDetailsUsage({
             tone={null}
             value={gt("Unavailable")}
             tooltip={<span className="text-foreground">{notice}</span>}
+            onClick={openUsage}
           />
         ) : (
-          limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
+          limits.windows.map((window) => (
+            <LimitRow key={window.id} window={window} now={now} onClick={openUsage} />
+          ))
         )}
       </div>
     </ThreadDetailsSection>
@@ -154,23 +161,28 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
 function LimitRow({
   window,
   now,
+  onClick,
 }: {
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
+  readonly onClick: () => void;
 }) {
   const gt = useGT();
   const m = useMessages();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const left = remainingPercent(window);
   const pace = paceOf(window, now);
+  const timeLeft = paceRemainingPercent(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   return (
     <UsageRow
       label={window.label}
       fill={left}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
+      tick={timeLeft}
       value={`${left}%`}
       ariaValue={gt("{left}% left", { left })}
+      onClick={onClick}
       tooltip={
         <>
           <span className="text-foreground">
@@ -184,14 +196,18 @@ function LimitRow({
               })}
             </span>
           ) : null}
-          {pace ? <span className="text-muted-foreground">{m(PACE_LABEL[pace])}</span> : null}
+          {pace && timeLeft !== null ? (
+            <span className="text-muted-foreground">
+              {m(PACE_LABEL[pace])} · {gt("{timeLeft}% of the window left", { timeLeft })}
+            </span>
+          ) : null}
         </>
       }
     />
   );
 }
 
-/** One label, hairline, and value row; the whole row opens the details tooltip. */
+/** One label, hairline, and value row; the whole row opens the details tooltip. With `onClick` it is a button. */
 function UsageRow({
   label,
   fill,
@@ -201,6 +217,7 @@ function UsageRow({
   ariaValue = value,
   tooltip,
   muted = false,
+  onClick,
 }: {
   readonly label: string;
   /** Bar fill from 0 to 100. Null hides the bar. */
@@ -212,17 +229,25 @@ function UsageRow({
   readonly ariaValue?: string;
   readonly tooltip: ReactNode;
   readonly muted?: boolean;
+  readonly onClick?: () => void;
 }) {
   const gt = useGT();
+  const rowProps = {
+    "aria-label": gt("{label}: {value}", { label, value: ariaValue }),
+    className: cn(
+      "col-span-3 grid h-6 grid-cols-subgrid items-center rounded-lg px-2.5 text-start outline-none hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-black/[0.035] dark:hover:bg-white/[0.08] dark:data-popup-open:bg-white/[0.08]",
+      onClick ? "cursor-pointer" : "cursor-default",
+    ),
+  };
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <div
-            tabIndex={0}
-            aria-label={gt("{label}: {value}", { label, value: ariaValue })}
-            className="col-span-3 grid h-6 cursor-default grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-black/[0.035] dark:hover:bg-white/[0.08] dark:data-popup-open:bg-white/[0.08]"
-          />
+          onClick ? (
+            <button type="button" onClick={onClick} {...rowProps} />
+          ) : (
+            <div tabIndex={0} {...rowProps} />
+          )
         }
       >
         <span className="max-w-28 truncate text-muted-foreground">{label}</span>
