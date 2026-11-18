@@ -12,6 +12,7 @@ import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as TailnetDevices from "./peer/TailnetDevices.ts";
 import * as PushRegistrations from "./push/PushRegistrations.ts";
+import * as ComputerService from "./computer/ComputerService.ts";
 
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -1425,6 +1426,8 @@ export const layerWsRpc = (
       const threadTasks = yield* ThreadTaskService.ThreadTaskService;
       // A WebSocket client is the user: chat identity only ever comes from an MCP credential.
       const userCaller: ThreadTaskService.ThreadTaskCaller = { kind: "user" };
+      // Whoever answers an approval or stops a task is recorded, never an agent: no MCP tool does either.
+      const computerActor = `client:${currentSession.subject}`;
       const toTodoError = (cause: TodoService.TodoServiceError) =>
         new TodoError({
           message: cause.message,
@@ -1440,6 +1443,7 @@ export const layerWsRpc = (
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
+      const computer = yield* ComputerService.ComputerService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const orchestrationEngine = yield* Orchestrator.OrchestratorV2;
@@ -3350,6 +3354,24 @@ export const layerWsRpc = (
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
         [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
+        [WS_METHODS.computerSubscribe]: (_input) => Stream.unwrap(computer.subscribe),
+        [WS_METHODS.computerStop]: (input) =>
+          computer.stop({
+            ...(input.taskId === undefined ? {} : { taskId: input.taskId }),
+            by: computerActor,
+          }),
+        [WS_METHODS.computerRespondToApproval]: (input) =>
+          computer.respondToApproval({
+            approvalId: input.approvalId,
+            approve: input.approve,
+            decidedBy: computerActor,
+          }),
+        [WS_METHODS.computerAuditTail]: (input) => computer.auditTail(input.limit),
+        [WS_METHODS.computerHostConnect]: (input) => computer.hostConnect(input),
+        [WS_METHODS.computerHostRespond]: (input) => computer.hostRespond(input),
+        [WS_METHODS.computerHostDecide]: (input) => computer.hostDecide(input),
+        [WS_METHODS.computerHostAuthorize]: (input) => computer.hostAuthorize(input),
+        [WS_METHODS.computerHostEvent]: (input) => computer.hostEvent(input),
         [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>

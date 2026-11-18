@@ -9,6 +9,7 @@ import * as ProjectEnrichment from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ComputerService from "../computer/ComputerService.ts";
 import * as SettlementCascade from "./SettlementCascade.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
@@ -101,6 +102,7 @@ it.effect.each([
         Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
         ServerSettings.layerTest(),
         Layer.mock(SettlementCascade.SettlementCascade)({}),
+        Layer.mock(ComputerService.ComputerService)({ stopForThread: () => Effect.void }),
         Layer.mock(ProviderTurnStart.ProviderTurnStartServiceV2)({
           start: () => Effect.sync(() => calls.push("start")).pipe(Effect.asVoid),
         }),

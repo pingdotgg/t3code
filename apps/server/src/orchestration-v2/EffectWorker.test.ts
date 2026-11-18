@@ -43,6 +43,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ComputerService from "../computer/ComputerService.ts";
 import * as SettlementCascade from "./SettlementCascade.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
@@ -179,6 +180,7 @@ function layerExecutorFor(input: {
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
         Layer.mock(SettlementCascade.SettlementCascade)({}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+        Layer.mock(ComputerService.ComputerService)({ stopForThread: () => Effect.void }),
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
         ),

@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
+  AuthComputerApproveScope,
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -99,6 +100,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pushRegistrationsUnregister]: AuthOrchestrationReadScope,
   // A session on another member, never past the caller's own grant; the server decides who may.
   [WS_METHODS.tailnetDevicesOpenDevice]: AuthOrchestrationReadScope,
+  // Answering a consequential step on someone's computer is its own grant.
+  [WS_METHODS.computerRespondToApproval]: AuthComputerApproveScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
