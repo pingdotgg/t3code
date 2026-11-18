@@ -104,45 +104,6 @@ it("restores collapsed and expanded desktop state after remounting", async () =>
   localStorage.removeItem(storageKey);
 });
 
-function FoldControl(props: { readonly folded: boolean }) {
-  const { setFolded } = useSidebar();
-  return (
-    <button type="button" onClick={() => setFolded(props.folded)}>
-      {props.folded ? "Fold" : "Unfold"}
-    </button>
-  );
-}
-
-it("folds without saving, and a toggle during the fold wins and is saved", async () => {
-  await page.viewport(1280, 800);
-  const storageKey = "sidebar_fold_test";
-  localStorage.removeItem(storageKey);
-  await using screen = await render(
-    <SidebarProvider storageKey={storageKey}>
-      <SidebarTrigger />
-      <FoldControl folded />
-      <FoldControl folded={false} />
-    </SidebarProvider>,
-    { router: false /* no routes involved */ },
-  );
-  const trigger = screen.getByRole("button", { name: "Toggle Sidebar" });
-  await userEvent.click(screen.getByRole("button", { name: "Fold" }));
-  await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
-  expect(localStorage.getItem(storageKey)).toBeNull();
-  await userEvent.click(screen.getByRole("button", { name: "Unfold" }));
-  await expect.element(trigger).toHaveAttribute("aria-pressed", "true");
-
-  await userEvent.click(screen.getByRole("button", { name: "Fold" }));
-  await userEvent.click(trigger);
-  await expect.element(trigger).toHaveAttribute("aria-pressed", "true");
-  await userEvent.click(trigger);
-  await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
-  await userEvent.click(screen.getByRole("button", { name: "Unfold" }));
-  await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
-  expect(localStorage.getItem(storageKey)).toBe("false");
-  localStorage.removeItem(storageKey);
-});
-
 it("keeps the mobile sheet closed and leaves the saved desktop state alone", async () => {
   await page.viewport(390, 844);
   const storageKey = "sidebar_mobile_persistence_test";

@@ -105,12 +105,20 @@ function useOrbitTaskList(orbitProjectId: number | null) {
  */
 export function TasksPanel(props: { threadKey: string; orbitProjectId: number | null }) {
   const availability = orbitTasksAvailability();
-  if (!availability.available) {
-    return (
-      <TasksNotice icon={<UnplugIcon />} title="Tasks are unavailable" text={availability.reason} />
-    );
-  }
-  return <TasksPanelContent {...props} />;
+  // Same surface as the file and editor tabs beside it.
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      {availability.available ? (
+        <TasksPanelContent {...props} />
+      ) : (
+        <TasksNotice
+          icon={<UnplugIcon />}
+          title="Tasks are unavailable"
+          text={availability.reason}
+        />
+      )}
+    </div>
+  );
 }
 
 function TasksPanelContent(props: { threadKey: string; orbitProjectId: number | null }) {
@@ -212,7 +220,8 @@ function BoardToolbar() {
   const hiddenLanes = useTasksBoardLanes((state) => state.hiddenLanes);
   const hidden = hiddenLanes.length;
   return (
-    <div className="flex shrink-0 items-center gap-2 px-3 pb-3">
+    // Sits under the tab bar like the file view's breadcrumb row.
+    <div className="flex shrink-0 items-center gap-2 px-3 pt-toolbar pb-3">
       <InputGroup variant="soft" className="h-8 min-w-0 flex-1">
         <InputGroupAddon>
           <SearchIcon aria-hidden className="size-4 opacity-50" />
