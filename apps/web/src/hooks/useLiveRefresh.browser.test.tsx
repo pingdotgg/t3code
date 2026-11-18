@@ -9,12 +9,14 @@ function Probe(props: {
   readonly enabled?: boolean;
   readonly intervalMs?: number | null;
   readonly refreshOnShow?: boolean;
+  readonly minIntervalMs?: number;
 }) {
   useLiveRefresh(props.refresh, {
     key: props.viewKey,
     enabled: props.enabled ?? true,
     ...(props.intervalMs !== undefined ? { intervalMs: props.intervalMs } : {}),
     ...(props.refreshOnShow !== undefined ? { refreshOnShow: props.refreshOnShow } : {}),
+    ...(props.minIntervalMs !== undefined ? { minIntervalMs: props.minIntervalMs } : {}),
   });
   return null;
 }
@@ -61,5 +63,24 @@ describe("useLiveRefresh", () => {
 
     expect(periodic).toHaveBeenCalledTimes(5);
     expect(untimed).not.toHaveBeenCalled();
+  });
+
+  it("returning to a view reuses its read until minIntervalMs passes", async () => {
+    const refresh = vi.fn();
+    using _timers = fakeTimers({ now: 1_000_000 });
+    const probe = (viewKey: string) => (
+      <Probe refresh={refresh} viewKey={viewKey} minIntervalMs={30_000} intervalMs={null} />
+    );
+    // A bare hook probe; nothing here navigates.
+    await using screen = await render(probe("bug,p1"), { router: false });
+    await screen.rerender(probe("p1"));
+    await act(() => vi.advanceTimersByTime(15_000));
+    await screen.rerender(probe("bug,p1"));
+    expect(refresh).not.toHaveBeenCalled();
+
+    await screen.rerender(probe("p1"));
+    await act(() => vi.advanceTimersByTime(15_000));
+    await screen.rerender(probe("bug,p1"));
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 });

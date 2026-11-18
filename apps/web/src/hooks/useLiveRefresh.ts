@@ -10,8 +10,9 @@ function shouldLiveRefresh(input: {
   readonly visible: boolean;
   readonly now: number;
   readonly lastRefreshedAt: number;
+  readonly minIntervalMs: number;
 }): boolean {
-  return input.visible && input.now - input.lastRefreshedAt >= LIVE_REFRESH_MIN_INTERVAL_MS;
+  return input.visible && input.now - input.lastRefreshedAt >= input.minIntervalMs;
 }
 
 /**
@@ -22,6 +23,7 @@ function shouldRefreshOnArrival(input: {
   readonly visible: boolean;
   readonly now: number;
   readonly lastRefreshedAt: number | undefined;
+  readonly minIntervalMs: number;
 }): boolean {
   return (
     input.lastRefreshedAt !== undefined &&
@@ -34,6 +36,7 @@ function shouldRefreshOnInterval(input: {
   readonly now: number;
   readonly lastRefreshedAt: number;
   readonly lastInteractedAt: number;
+  readonly minIntervalMs: number;
 }): boolean {
   return (
     input.now - input.lastInteractedAt < LIVE_REFRESH_IDLE_AFTER_MS && shouldLiveRefresh(input)
@@ -83,6 +86,8 @@ export function useLiveRefresh(
      * long stale when shown.
      */
     readonly refreshOnShow?: boolean;
+    /** A read younger than this is reused; a view over a cached query passes its stale time. */
+    readonly minIntervalMs?: number;
   } = {},
 ): void {
   const {
@@ -90,6 +95,7 @@ export function useLiveRefresh(
     key,
     intervalMs = LIVE_REFRESH_INTERVAL_MS,
     refreshOnShow = false,
+    minIntervalMs = LIVE_REFRESH_MIN_INTERVAL_MS,
   } = options;
   const runRefresh = useEffectEvent((viewId: string, now: number) => {
     if (refresh === null) return;
@@ -112,12 +118,22 @@ export function useLiveRefresh(
         lastRefreshedAtByView.set(viewId, now);
         return;
       }
-      if (shouldRefreshOnArrival({ visible: visible(), now, lastRefreshedAt })) read(now);
+      if (shouldRefreshOnArrival({ visible: visible(), now, lastRefreshedAt, minIntervalMs })) {
+        read(now);
+      }
     };
     const onInterval = () => {
       const now = Date.now();
       const lastRefreshedAt = lastRefreshedAtByView.get(viewId) ?? now;
-      if (shouldRefreshOnInterval({ visible: visible(), now, lastRefreshedAt, lastInteractedAt })) {
+      if (
+        shouldRefreshOnInterval({
+          visible: visible(),
+          now,
+          lastRefreshedAt,
+          lastInteractedAt,
+          minIntervalMs,
+        })
+      ) {
         read(now);
       }
     };
@@ -139,7 +155,7 @@ export function useLiveRefresh(
     if (refreshOnShow) {
       const now = Date.now();
       const lastRefreshedAt = lastRefreshedAtByView.get(viewId);
-      if (lastRefreshedAt === undefined || now - lastRefreshedAt >= LIVE_REFRESH_MIN_INTERVAL_MS) {
+      if (lastRefreshedAt === undefined || now - lastRefreshedAt >= minIntervalMs) {
         read(now);
       }
     } else onArrival();
@@ -152,5 +168,5 @@ export function useLiveRefresh(
       document.removeEventListener("visibilitychange", onVisibilityChange);
       stopWatchingInteraction();
     };
-  }, [enabled, viewId, intervalMs, refreshOnShow]);
+  }, [enabled, viewId, intervalMs, refreshOnShow, minIntervalMs]);
 }

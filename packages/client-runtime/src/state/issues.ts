@@ -59,6 +59,8 @@ export function prependIssueComments(
   return [...older.filter((comment) => !seen.has(comment.id)), ...current];
 }
 
+export const ISSUE_LIST_STALE_TIME_MS = 30_000;
+
 export function canonicalIssueLabels(labels: ReadonlyArray<string>): ReadonlyArray<string> {
   return [...labels].sort();
 }
@@ -103,7 +105,7 @@ export function createIssueEnvironmentAtoms<R, E>(
   const listing = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:issues:list",
     tag: WS_METHODS.issuesList,
-    staleTimeMs: 30_000,
+    staleTimeMs: ISSUE_LIST_STALE_TIME_MS,
   });
   return {
     list: ({ environmentId, input }: Parameters<typeof listing>[0]) =>
