@@ -744,6 +744,7 @@ it.effect("a defaulted worktree launch stays shared only when Git says HEAD has 
     for (const [checkout, expected] of [
       ["not a repository", "root"],
       ["no commit yet", "root"],
+      ["branch tip object missing", "worktree"],
       ["git refuses the repository", "refused"],
     ] as const) {
       const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-head-" });
@@ -761,13 +762,20 @@ it.effect("a defaulted worktree launch stays shared only when Git says HEAD has 
           cwd: repo,
           args: ["init", "-b", "main"],
         });
+      if (checkout === "branch tip object missing")
+        yield* fileSystem.writeFileString(`${repo}/.git/refs/heads/main`, `${"1".repeat(40)}\n`);
       if (checkout === "git refuses the repository") {
         yield* git.execute({
           operation: "test.setupRepo",
           cwd: repo,
           args: [...commitArgs, "-m", "init"],
         });
-        yield* fileSystem.writeFileString(`${repo}/.git/config`, "[core\n");
+        // Git quotes the broken file's path in its refusal; that path must not read as "not a repository".
+        yield* fileSystem.writeFileString(`${repo}/not a git repository`, "[core\n");
+        yield* fileSystem.writeFileString(
+          `${repo}/.git/config`,
+          `[include]\n\tpath = ${repo}/not a git repository\n`,
+        );
       }
       const toolkit = yield* ProjectToolkit.pipe(
         Effect.provide(

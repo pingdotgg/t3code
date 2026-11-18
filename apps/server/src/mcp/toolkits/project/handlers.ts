@@ -23,7 +23,6 @@ import { mutateProjectWithClone } from "../../../project/ProjectMutation.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
-import { isNonRepositoryGitStderr } from "../../../vcs/GitVcsDriverCore.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
@@ -115,6 +114,10 @@ const projectFileThreadEnvMode = Effect.fn("mcp.projectFileThreadEnvMode")(funct
   ).value;
 });
 
+// Anchored to the fatal line: other diagnostics, such as a dubious-ownership refusal, quote the path.
+const NON_REPOSITORY_FATAL =
+  /^fatal: (?:not a git repository|gitfile does not point to a valid repository)/im;
+
 /** Branches from the checkout's current branch, as the composer does; a checkout with no commit or a detached HEAD stays shared. */
 const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(function* (
   workspaceRoot: string,
@@ -133,13 +136,14 @@ const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(functio
     .execute({
       operation: "mcp.defaultWorktreeStrategy",
       cwd: workspaceRoot,
-      args: ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+      // Not peeled: a branch whose tip object is missing still resolves, so only an unborn HEAD exits 1.
+      args: ["rev-parse", "--verify", "--quiet", "HEAD"],
       allowNonZeroExit: true,
       timeoutMs: 5_000,
     })
     .pipe(Effect.orElseSucceed(() => null));
   // Only Git saying "no commit yet" (exit 1) or "not a repository" keeps the launch shared.
-  if (commit?.exitCode === 1 || (commit !== null && isNonRepositoryGitStderr(commit.stderr)))
+  if (commit?.exitCode === 1 || (commit !== null && NON_REPOSITORY_FATAL.test(commit.stderr)))
     return undefined;
   if (commit?.exitCode !== 0) return yield* unreadable;
   // symbolic-ref skips the index, so a held index lock cannot drop the launch into the shared checkout.
