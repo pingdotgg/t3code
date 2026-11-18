@@ -269,6 +269,16 @@ the snooze. Enable **Snooze until limits reset** in thread behavior settings to
 snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
+To move to another provider or account instead of waiting, use **Auto-switch
+provider** in **Settings → Providers**. Pick when to switch: when the usage limit
+is reached, or when session or weekly usage passes a percentage. Percentages
+only work for providers that report their usage. **Ask me** opens a dialog on
+web and desktop to choose the provider and model. **Follow a route** switches on
+its own, from the thread's current provider to the next step in your route,
+skipping providers past their limit. The switch happens when the current turn
+ends, and the thread's context moves with it. A thread stopped by its limit
+continues on the new provider.
+
 On web and desktop, use **Agents** to follow work delegated to subagents.
 On mobile, open a subagent from its conversation card or **Agents**. On iOS
 layouts with an inspector, its thread opens beside the parent. Maximize it to

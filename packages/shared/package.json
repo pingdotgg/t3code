@@ -630,6 +630,10 @@
     "./paletteSearchCopy": {
       "types": "./src/paletteSearchCopy.ts",
       "import": "./src/paletteSearchCopy.ts"
+    },
+    "./providerAutoSwitch": {
+      "types": "./src/providerAutoSwitch.ts",
+      "import": "./src/providerAutoSwitch.ts"
     }
   },
   "scripts": {

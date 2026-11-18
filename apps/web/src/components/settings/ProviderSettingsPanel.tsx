@@ -103,6 +103,7 @@ import { IntervalSecondsField } from "./IntervalSecondsField";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
 import { TextGeneratorsSettings } from "./TextGeneratorsSettings";
+import { ProviderAutoSwitchSettings } from "./ProviderAutoSwitchSettings";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -1150,6 +1151,13 @@ export function EnvironmentProviderSettings({
         environmentId={environmentId}
         environmentLabel={environmentLabel}
         sources={settings.usageLimitSources}
+        readOnly={readOnly}
+      />
+
+      <ProviderAutoSwitchSettings
+        key={`auto-switch:${environmentId}`}
+        environmentId={environmentId}
+        providers={serverProviders}
         readOnly={readOnly}
       />
 
