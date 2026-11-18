@@ -1,7 +1,8 @@
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { issueEventSentence } from "@t3tools/client-runtime/issue-presentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
+import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import type {
   IssueComment,
   IssueEvent,
@@ -12,7 +13,7 @@ import type {
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { T, useGT, useMessages, Var } from "gt-react-native";
-import { useRef, useState } from "react";
+import { useContext, useState } from "react";
 import { Linking, Platform, Pressable, Share, View } from "react-native";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 
@@ -403,6 +404,9 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const detailAtom = issueEnvironment.detail(target);
   const detailQuery = useEnvironmentQuery(detailAtom);
   const pullRefresh = usePullToRefresh(detailAtom);
+  const registry = useContext(RegistryContext);
+  const [pager] = useState(() => createIssueCommentPager(detailAtom));
+  const { comments, nextCursor, loadingOlder, canLoadOlder } = useAtomValue(pager.view);
   const detail = detailQuery.data;
   const issue: IssueSummary | null = detail ?? params.initialSummary ?? null;
   const access = useIssueAccess(params, detail);
@@ -410,25 +414,13 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
   const postComment = useAtomCommand(issueEnvironment.comment, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
-  const [older, setOlder] = useState<{
-    readonly seed: string | null;
-    readonly comments: ReadonlyArray<IssueComment>;
-    readonly cursor: string | null;
-  } | null>(null);
-  const [busy, setBusy] = useState<"older" | "comment" | "state" | null>(null);
+  const [busy, setBusy] = useState<"comment" | "state" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState(0);
 
-  // Older pages are tied to the cursor the detail was read with; a refreshed detail starts over.
-  const olderComments = detail && older?.seed === detail.commentsCursor ? older.comments : [];
-  const nextCursor = !detail
-    ? null
-    : older?.seed === detail.commentsCursor
-      ? older.cursor
-      : detail.commentsCursor;
   const timeline = detail
     ? [
-        ...prependIssueComments(detail.comments, olderComments).map((comment) => ({
+        ...comments.map((comment) => ({
           key: `c:${comment.id}`,
           at: comment.createdAt,
           content: (
@@ -447,7 +439,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
     kind: NonNullable<typeof busy>,
     command: () => Promise<AsyncResult.AsyncResult<unknown, unknown>>,
   ) => {
-    if (busy !== null) return false;
+    if (busy !== null || registry.get(pager.view).loadingOlder) return false;
     setBusy(kind);
     setError(null);
     const failure = issueCommandError(await command());
@@ -457,28 +449,13 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
     if (failure === null) refreshIssueLists(target.environmentId);
     return failure === null;
   };
-  // Counts refreshes, so a page asked for before one is not laid over the read that follows it.
-  const refreshes = useRef(0);
   const loadOlder = async () => {
-    if (!detail || nextCursor === null || busy !== null) return;
-    const asked = refreshes.current;
-    setBusy("older");
-    setError(null);
-    const result = await loadComments({
-      ...target,
-      input: { ...target.input, cursor: nextCursor },
+    if (busy !== null) return;
+    const failure = await pager.loadOlder(registry, (cursor) => {
+      setError(null);
+      return loadComments({ ...target, input: { ...target.input, cursor } });
     });
-    setBusy(null);
-    if (asked !== refreshes.current) return;
-    if (AsyncResult.isFailure(result)) {
-      setError(gt("Older comments could not be read."));
-      return;
-    }
-    setOlder({
-      seed: detail.commentsCursor,
-      comments: prependIssueComments(olderComments, result.value.comments),
-      cursor: result.value.nextCursor,
-    });
+    if (failure) setError(gt("Older comments could not be read."));
   };
   const submitComment = (body: string) =>
     access?.comment === true
@@ -575,12 +552,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
           refreshControl={
             <RefreshControl
               refreshing={pullRefresh.refreshing}
-              onRefresh={() => {
-                // Older pages are cached under the cursor, which a refresh can hand back unchanged.
-                refreshes.current += 1;
-                setOlder(null);
-                pullRefresh.onRefresh();
-              }}
+              onRefresh={() => void pager.refresh(registry, pullRefresh.onRefresh)}
             />
           }
           contentContainerStyle={{
@@ -652,8 +624,8 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                     </PullRequestSectionHeading>
                     {nextCursor !== null ? (
                       <Button
-                        label={busy === "older" ? gt("Loading…") : gt("Load older comments")}
-                        disabled={busy !== null}
+                        label={loadingOlder ? gt("Loading…") : gt("Load older comments")}
+                        disabled={busy !== null || !canLoadOlder}
                         onPress={() => void loadOlder()}
                       />
                     ) : null}
