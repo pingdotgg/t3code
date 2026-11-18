@@ -2501,18 +2501,21 @@ describe("AcpRegistryAdapterV2", () => {
       const resultText = (reference: typeof page) => JSON.stringify({ htmlRender: reference });
       const readPage = { ...page, attachmentId: "thread-claude-lifecycle-read-html" };
       const laterFailedPage = { ...page, attachmentId: "thread-claude-lifecycle-later-html" };
+      const failedStatusPage = { ...page, attachmentId: "thread-claude-lifecycle-status-html" };
+      const monitorPage = { ...page, attachmentId: "thread-claude-lifecycle-monitor-html" };
       const droidCall = (
         toolCallId: string,
         completion: Record<string, unknown>,
-        kind = "other",
+        start: Record<string, unknown> = {},
       ) => [
         update(CLAUDE_ROOT_SESSION, {
           sessionUpdate: "tool_call_update",
           toolCallId,
           title: "Tool",
-          kind,
+          kind: "other",
           status: "pending",
           rawInput: args,
+          ...start,
         }),
         update(CLAUDE_ROOT_SESSION, {
           sessionUpdate: "tool_call_update",
@@ -2542,13 +2545,24 @@ describe("AcpRegistryAdapterV2", () => {
         ...droidCall("droid-content-block", {
           content: [{ type: "content", content: { type: "text", text: resultText(blockPage) } }],
         }),
-        ...droidCall("droid-read", { rawOutput: { text: resultText(readPage) } }, "read"),
+        ...droidCall("droid-read", { rawOutput: { text: resultText(readPage) } }, { kind: "read" }),
+        ...droidCall(
+          "droid-monitor",
+          { rawOutput: { text: resultText(monitorPage) } },
+          { rawInput: { ...args, variant: "monitor" } },
+        ),
         ...droidCall("droid-later-failure", { rawOutput: { text: resultText(laterFailedPage) } }),
         update(CLAUDE_ROOT_SESSION, {
           sessionUpdate: "tool_call_update",
           toolCallId: "droid-later-failure",
           status: "completed",
           rawOutput: { result: { isError: true } },
+        }),
+        ...droidCall("droid-failed-status", { rawOutput: { text: resultText(failedStatusPage) } }),
+        update(CLAUDE_ROOT_SESSION, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "droid-failed-status",
+          status: "failed",
         }),
         claudeMarker("tools complete"),
         claudeFrames.idle("end_turn"),
@@ -2557,7 +2571,15 @@ describe("AcpRegistryAdapterV2", () => {
       ]);
       const input = session.turnInput(1);
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      for (const published of [page, failedPage, blockPage, readPage, laterFailedPage]) {
+      for (const published of [
+        page,
+        failedPage,
+        blockPage,
+        readPage,
+        laterFailedPage,
+        failedStatusPage,
+        monitorPage,
+      ]) {
         yield* mcpSessions.recordHtmlRender(input.threadId, args, published);
       }
       yield* session.runtime.startTurn(input);
@@ -2583,16 +2605,21 @@ describe("AcpRegistryAdapterV2", () => {
           expected,
         );
       }
-      for (const nativeId of [
-        "droid-unpublished",
-        "droid-failed",
-        "droid-read",
-        "droid-later-failure",
-      ]) {
+      for (const nativeId of ["droid-unpublished", "droid-failed", "droid-later-failure"]) {
         const generic = lastItem(nativeId);
         assert.equal(generic?.status, "completed");
         assert.notEqual(generic?.toolName, "t3-code.html_render", nativeId);
       }
+      assert.equal(lastItem("droid-read")?.toolName, "Read");
+      const failedStatus = lastItem("droid-failed-status");
+      assert.equal(failedStatus?.status, "failed");
+      assert.notEqual(failedStatus?.toolName, "t3-code.html_render");
+      // The monitor keeps its command row and leaves the page for the real render call.
+      assert.equal(lastItem("droid-monitor"), undefined);
+      assert.deepEqual(
+        yield* mcpSessions.takeHtmlRender(input.threadId, {}, monitorPage),
+        monitorPage,
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 

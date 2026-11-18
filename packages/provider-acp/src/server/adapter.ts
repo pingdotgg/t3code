@@ -4362,16 +4362,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ),
           });
           // Some agents (Droid in script mode) report T3 calls with no MCP name or _meta; only a
-          // page this thread published identifies the call. Reads and other known kinds keep their rows.
+          // page this thread published identifies the call. Reads, commands and failures keep their rows.
           const unnamedRender =
             mcpIdentity === undefined &&
+            status === "completed" &&
             (toolCall.kind ?? "other") === "other" &&
+            !projectAsCommandExecution &&
             compactDynamicToolOutput(rawOutput)?.isError !== true &&
             compactDynamicToolOutput(rawOutputRecord?.result)?.isError !== true;
           let recoveredPage = unnamedRender
             ? context.recoveredHtmlRenders.get(toolCall.toolCallId)
             : undefined;
-          if (unnamedRender && recoveredPage === undefined && status === "completed") {
+          if (unnamedRender && recoveredPage === undefined) {
             const toolName = `t3-code.${HTML_RENDER_TOOL_NAME}`;
             const reportedPage =
               htmlRenderFromToolItem({ toolName, output: acpMcpToolCallOutput(rawOutput) }) ??
