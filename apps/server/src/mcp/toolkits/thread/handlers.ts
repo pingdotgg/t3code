@@ -197,11 +197,16 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
-      if (!tasks.some((task) => task.id === input.taskId))
+      const stored = tasks.find((task) => task.id === input.taskId);
+      if (stored === undefined)
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "The scheduled task was not found.",
         });
+      // Running a task bound to a thread starts a turn there with the task's prompt.
+      if (stored.threadId !== null) {
+        yield* refuseBlocked(stored.threadId, "a scheduled task run", stored.prompt);
+      }
       const { task, threadId } = yield* scheduler
         .runNow({ id: input.taskId })
         .pipe(

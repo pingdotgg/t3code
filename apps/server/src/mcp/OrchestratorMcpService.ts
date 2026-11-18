@@ -120,6 +120,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { agentMessageSenderOf } from "../orchestration-v2/AgentMessagePolicy.ts";
 import * as DelegationPolicy from "./DelegationPolicy.ts";
 import { hiddenModelMessage, hiddenModelSlugs, visibleProviderModels } from "./ModelVisibility.ts";
 import {
@@ -2540,6 +2541,18 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
+        // The prompt of a task bound to a thread is text that thread's agent will receive.
+        // The owner's own client is no sender, so nothing is checked for it.
+        const promptSender = agentMessageSenderOf(scope);
+        if (promptSender !== undefined && threadId !== null && input.prompt !== undefined) {
+          yield* threadManagement
+            .refuseBlockedSender(promptSender, {
+              threadId,
+              attempted: "a scheduled task prompt",
+              text: input.prompt,
+            })
+            .pipe(Effect.mapError(threadManagementFailure));
+        }
         // A bound run follows the bound thread's own provider, workspace and
         // modes, so accepting these edits would report success and change
         // nothing at run time.

@@ -4,6 +4,7 @@ import {
   CommandId,
   EnvironmentId,
   MessageId,
+  ScheduledTaskId,
   ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   ProjectId,
   ProviderDriverKind,
@@ -36,6 +37,7 @@ import * as ProviderReplayHarness from "../../../orchestration-v2/testkit/Provid
 import * as SqlitePersistence from "../../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as ThreadHandlers from "./handlers.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -332,6 +334,7 @@ it.effect(
   "refuses text an unrelated thread puts into another thread when the owner blocks it",
   () => {
     const callerId = ThreadId.make("thread:mcp-thread-controls-outsider");
+    let scheduledRuns = 0;
     const blocked = {
       code: "thread_not_sendable",
       message: "The owner has blocked messages from other threads",
@@ -406,6 +409,14 @@ it.effect(
           "Do something else",
         ],
       ]);
+      expect(
+        yield* last(
+          toolkit.handle("run_scheduled_task_now", {
+            taskId: ScheduledTaskId.make("scheduled-task:bound"),
+          }),
+        ),
+      ).toMatchObject(blocked);
+      expect(scheduledRuns).toBe(0);
       // Its own thread is never an outsider.
       expect(
         yield* last(toolkit.handle("t3_thread_goal", { threadId: callerId, goal: "My own goal" })),
@@ -441,6 +452,25 @@ it.effect(
           ),
           Layer.provideMerge(layerDiffStub),
           Layer.provideMerge(Layer.mock(ThreadSearch.ThreadSearch)({})),
+          Layer.provideMerge(
+            Layer.mock(ScheduledTasks.ScheduledTaskService)({
+              list: () =>
+                Effect.succeed({
+                  tasks: [
+                    {
+                      id: ScheduledTaskId.make("scheduled-task:bound"),
+                      threadId,
+                      prompt: "The owner's scheduled prompt",
+                    } as never,
+                  ],
+                }),
+              runNow: () =>
+                Effect.sync(() => {
+                  scheduledRuns += 1;
+                  return {} as never;
+                }),
+            }),
+          ),
         ),
       ),
     );

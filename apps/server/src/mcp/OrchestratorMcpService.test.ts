@@ -3191,6 +3191,30 @@ describe("OrchestratorMcpService provider resolution", () => {
             openSession: () => Effect.die("No thread starts: the effect worker is off."),
           },
         ]);
+        // A task the owner bound to the root thread; its prompt reaches that thread's agent.
+        let promptEdits = 0;
+        const boundTask: ScheduledTask = {
+          id: ScheduledTaskId.make("scheduled-task:policy"),
+          title: "Bound to root",
+          prompt: "The owner's prompt",
+          enabled: false,
+          schedule: { type: "interval", everyMs: 120_000 },
+          projectId: ProjectId.make("project:mcp-message-policy"),
+          threadId: ThreadId.make("thread:policy-root"),
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: "2026-10-05T00:00:00.000Z",
+          updatedAt: "2026-10-05T00:00:00.000Z",
+          nextRunAt: null,
+          lastRunAt: null,
+          lastRunStatus: "succeeded",
+          lastRunError: null,
+          runCount: 0,
+        };
         const layerDatabase = SqlitePersistence.layerMemory;
         const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
           { name: "mcp-message-policy" },
@@ -3220,7 +3244,15 @@ describe("OrchestratorMcpService provider resolution", () => {
               Layer.mock(SecretRequests.SecretRequests)({}),
               unusedDelegationPolicyLayer,
               Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+              Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                list: () => Effect.succeed({ tasks: [boundTask] }),
+                listWebhookDeliveries: () => Effect.succeed({ deliveries: [] }),
+                upsert: () =>
+                  Effect.sync(() => {
+                    promptEdits += 1;
+                    return { task: boundTask };
+                  }),
+              }),
             ),
           ),
         );
@@ -3395,11 +3427,33 @@ describe("OrchestratorMcpService provider resolution", () => {
             },
           ]);
 
+          // Changing the prompt of a task bound to that thread is refused the same way; its own tree may.
+          const edit = (scope: McpInvocationScope) =>
+            service
+              .updateScheduledTask(scope, {
+                scheduledTaskId: boundTask.id,
+                prompt: "Do something else",
+              })
+              .pipe(Effect.result);
+          const refusedEdit = yield* edit(from(unrelated));
+          assert.isTrue(
+            refusedEdit._tag === "Failure" &&
+              refusedEdit.failure.message === AGENT_MESSAGES_BLOCKED,
+          );
+          assert.equal(promptEdits, 0);
+          assert.include(
+            (yield* notices(root)).at(-1)?.summary,
+            "blocked a scheduled task prompt from Policy unrelated",
+          );
+          assert.equal((yield* edit(from(child)))._tag, "Success");
+          assert.equal(promptEdits, 1);
+          const rowsAfterEdits = (yield* notices(root)).length;
+
           // The same text again is the same row; long text is cut at 2,000 characters.
           assert.isTrue(yield* blocked(from(unrelated), root, "Stop what you are doing"));
-          assert.lengthOf(yield* notices(root), 2);
+          assert.lengthOf(yield* notices(root), rowsAfterEdits);
           assert.isTrue(yield* blocked(from(unrelated), root, "x".repeat(2_100)));
-          const long = (yield* notices(root))[2]?.detail ?? "";
+          const long = (yield* notices(root)).at(-1)?.detail ?? "";
           assert.isTrue(long.endsWith("\n[100 more characters not shown]"));
           assert.lengthOf(long, 2_000 + "\n[100 more characters not shown]".length);
 
@@ -3451,7 +3505,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* settings.updateSettings({ agentMessagePolicy: "allow" });
           assert.isFalse(yield* blocked(from(unrelated), root));
           assert.isFalse(yield* blocked(linked, root));
-          assert.lengthOf(yield* notices(root), 3);
+          assert.lengthOf(yield* notices(root), rowsAfterEdits + 1);
         }).pipe(Effect.provide(layerTest));
       }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
