@@ -391,6 +391,7 @@ describe("question answer paths", () => {
         mimeType: "application/x-ipynb+json",
       };
       const path = NodePath.join(config.attachmentsDir, `${file.id}.ipynb`);
+      const rawSource = String.raw`\begin{tabular}{lr} North & 120 \\ \end{tabular}`;
       const notebook = JSON.stringify({
         cells: [
           { cell_type: "markdown", source: ["# Survey\n", "Vessel: Larkspur"] },
@@ -412,6 +413,7 @@ describe("question answer paths", () => {
               },
             ],
           },
+          { cell_type: "raw", source: [rawSource] },
         ],
       });
       NodeFS.writeFileSync(path, notebook);
@@ -425,6 +427,7 @@ describe("question answer paths", () => {
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("301");
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("42");
       const extracted = NodeFS.readFileSync(`${path}.txt`, "utf8");
+      expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
       );
