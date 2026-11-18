@@ -15,7 +15,7 @@ const session = vi.hoisted(() => ({
   },
 }));
 vi.mock("electron", () => ({
-  app: { getLocale: () => "en-GB" },
+  app: { getLocale: () => "en-US", getSystemLocale: () => "en-GB" },
   session: { defaultSession: session },
 }));
 

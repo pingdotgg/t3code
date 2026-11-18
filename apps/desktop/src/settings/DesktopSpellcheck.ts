@@ -19,7 +19,7 @@ export class DesktopSpellcheck extends Context.Service<
   }
 >()("@t3tools/desktop/settings/DesktopSpellcheck") {}
 
-/** Electron seeds its list from the app locale; Chromium falls back to the base language. */
+/** Electron seeds its list from the system locale; Chromium falls back to the base language. */
 function localeDefaultLanguages(
   locale: string,
   available: ReadonlyArray<string>,
@@ -54,7 +54,7 @@ export const make = Effect.gen(function* () {
     const languages =
       requested.length > 0
         ? requested
-        : localeDefaultLanguages(Electron.app.getLocale(), available);
+        : localeDefaultLanguages(Electron.app.getSystemLocale(), available);
     yield* Effect.annotateCurrentSpan({ languages: languages.join(",") });
     // Only throws for codes outside availableSpellCheckerLanguages, which are filtered out above.
     yield* Effect.sync(() => session.setSpellCheckerLanguages([...languages]));
