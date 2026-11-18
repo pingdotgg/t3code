@@ -446,6 +446,14 @@ The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for
 idempotent retries.
 
+`modelSelection` (`model`, optional `options`) switches the thread's model from
+the new turn on, like the model picker. It names no provider instance, so a send
+never moves a thread to another provider. It starts or queues a turn: `auto`
+queues, and `steer` or `restart` are rejected. The model and options are
+validated against the thread's provider; an alias is stored as its slug. The
+thread takes the selection when the queued run starts, and later messages follow
+it. The result's `modelSelection` is what applied.
+
 ### `t3_thread_wait`
 
 Waits for a selected run to become `completed`, `failed`, `cancelled`,

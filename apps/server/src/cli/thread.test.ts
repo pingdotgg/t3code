@@ -140,6 +140,135 @@ it.effect(
     ),
 );
 
+it.effect("send --model and --effort switch the thread's model with the queued message", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const baseDir = yield* fs
+      .makeTempDirectoryScoped({ prefix: "t3-thread-send-model-" })
+      .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+    yield* persistServerRuntimeState({
+      path: path.join(baseDir, "userdata", "server-runtime.json"),
+      state: yield* makePersistedServerRuntimeState({
+        config: { host: "127.0.0.1", devUrl: undefined },
+        port: 3_773,
+      }),
+    });
+    const sends: Array<unknown> = [];
+    using _session = vi.spyOn(McpBridge, "mcpToolSession").mockReturnValue(
+      Effect.succeed({
+        call: (tool, args) => {
+          if (tool === "t3_thread_read") {
+            return Effect.succeed({
+              structuredContent: { thread: { providerInstanceId: "provider" } },
+            });
+          }
+          if (tool === "orchestrator_capabilities") {
+            return Effect.succeed({
+              structuredContent: {
+                parentThreadId: null,
+                inheritedProviderInstanceId: null,
+                inheritedModel: null,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                providers: [
+                  {
+                    providerInstanceId: "provider",
+                    driverKind: args.search === "gpt-6.1-sol" ? "codex" : "claudeAgent",
+                    displayName: null,
+                    models: [
+                      {
+                        id: args.search,
+                        options: [
+                          {
+                            id: args.search === "gpt-6.1-sol" ? "reasoningEffort" : "effort",
+                            values: ["high"],
+                          },
+                        ],
+                      },
+                    ],
+                    canRunChildTask: true,
+                    canRunCrossProviderChildTask: true,
+                    constraints: [],
+                  },
+                ],
+                features: {
+                  appOwnedSubagents: true,
+                  asyncPolling: true,
+                  cancellation: true,
+                  batchThreadCreation: true,
+                  threadManagement: true,
+                  incrementalThreadRead: true,
+                  scheduledTasks: true,
+                  maxBatchThreads: 10,
+                },
+              },
+            });
+          }
+          if (tool !== "t3_thread_send") return Effect.die(`unexpected ${tool} call`);
+          sends.push(args);
+          return Effect.succeed({
+            structuredContent: {
+              threadId,
+              messageId: "message-1",
+              runId,
+              status: "queued",
+              delivery: "queued",
+            },
+          });
+        },
+      }),
+    );
+    const run = (...args: ReadonlyArray<string>) =>
+      Command.runWith(threadCommand, { version: "0.0.0" })([
+        "send",
+        threadId,
+        "go",
+        "--base-dir",
+        baseDir,
+        ...args,
+      ]);
+
+    yield* run();
+    yield* run("--model", "claude-sonnet-5-5", "--effort", "high");
+    yield* run("--model", "claude-opus-5-5");
+    yield* run("--model", "gpt-6.1-sol", "--effort", "high");
+
+    assert.deepStrictEqual(sends, [
+      { threadId, message: "go", mode: "queue" },
+      {
+        threadId,
+        message: "go",
+        mode: "queue",
+        modelSelection: {
+          model: "claude-sonnet-5-5",
+          options: [{ id: "effort", value: "high" }],
+        },
+      },
+      { threadId, message: "go", mode: "queue", modelSelection: { model: "claude-opus-5-5" } },
+      {
+        threadId,
+        message: "go",
+        mode: "queue",
+        modelSelection: {
+          model: "gpt-6.1-sol",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      },
+    ]);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        NetService.layer,
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_PORT: "3773" } })),
+      ),
+    ),
+  ),
+);
+
 it.effect("does not sign in to whatever took over a dead server's port", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;

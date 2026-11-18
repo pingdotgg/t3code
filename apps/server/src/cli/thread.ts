@@ -1,4 +1,5 @@
 import {
+  OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpFailure,
   OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
@@ -895,6 +896,16 @@ const threadSendCommand = Command.make("send", {
   ...projectLocationFlags,
   thread: threadArgument,
   message: messageArgument,
+  model: Flag.String("model").pipe(
+    Flag.withDescription(
+      "Switch the thread to this model, on its own provider, from this message on.",
+    ),
+    Flag.optional,
+  ),
+  effort: Flag.String("effort").pipe(
+    Flag.withDescription("Effort for --model, such as high. Pass with --model."),
+    Flag.optional,
+  ),
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -904,15 +915,54 @@ const threadSendCommand = Command.make("send", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const threadId = yield* decodeThreadId(flags.thread);
+      if (Option.isSome(flags.effort) && Option.isNone(flags.model)) {
+        return yield* new ThreadUsageError({ detail: "--effort goes with --model." });
+      }
       const message = yield* readMessageArgument(flags.message);
       yield* withThreadTools(
         flags,
         Effect.fn("cli.thread.send")(function* (tools) {
+          let effortId = "effort";
+          if (Option.isSome(flags.effort) && Option.isSome(flags.model)) {
+            const requestedModel = flags.model.value;
+            const { thread } = yield* tools.call(
+              "t3_thread_read",
+              { threadId, limit: 1, runLimit: 1 },
+              Schema.Struct({ thread: Schema.Struct({ providerInstanceId: Schema.String }) }),
+            );
+            const capabilities = yield* tools.call(
+              "orchestrator_capabilities",
+              { search: requestedModel },
+              OrchestratorMcpCapabilitiesResult,
+            );
+            const provider = capabilities.providers.find(
+              (provider) => provider.providerInstanceId === thread.providerInstanceId,
+            );
+            const model = provider?.models.find((model) => model.id === requestedModel);
+            effortId =
+              model?.options?.find(
+                (option) => option.id === "effort" || option.id === "reasoningEffort",
+              )?.id ?? (provider?.driverKind === "codex" ? "reasoningEffort" : effortId);
+          }
           // Work already running when this is sent is not this message's to wait for.
           const followWakes = flags.wait ? yield* threadIsIdle(tools, threadId) : false;
           const sent = yield* tools.call(
             "t3_thread_send",
-            { threadId, message, mode: "queue" },
+            {
+              threadId,
+              message,
+              mode: "queue",
+              ...(Option.isSome(flags.model)
+                ? {
+                    modelSelection: {
+                      model: flags.model.value,
+                      ...(Option.isSome(flags.effort)
+                        ? { options: [{ id: effortId, value: flags.effort.value }] }
+                        : {}),
+                    },
+                  }
+                : {}),
+            },
             OrchestratorMcpThreadSendResult,
           );
           if (flags.wait) {

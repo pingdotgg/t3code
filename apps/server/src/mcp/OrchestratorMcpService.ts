@@ -3466,7 +3466,48 @@ const make = Effect.gen(function* () {
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       yield* assertTargetWithinLimits(limits, target.thread);
 
-      const mode = input.mode ?? "auto";
+      if (
+        input.modelSelection !== undefined &&
+        (input.mode === "steer" || input.mode === "restart")
+      ) {
+        return yield* failure(
+          "invalid_request",
+          `modelSelection needs a send that starts or queues a turn, not mode:'${input.mode}'.`,
+        );
+      }
+      // A switch cannot join a running turn, so `auto` queues instead of steering.
+      const mode =
+        input.modelSelection !== undefined && (input.mode ?? "auto") === "auto"
+          ? "queue"
+          : (input.mode ?? "auto");
+      const providers = input.modelSelection === undefined ? [] : yield* loadProviders;
+      const switchedTo =
+        input.modelSelection === undefined
+          ? undefined
+          : (yield* resolveTargetRechecking({
+              parent: target,
+              target: input.modelSelection,
+              providers,
+            })).modelSelection;
+      // Look the alias up in the catalog that accepted it: resolveTargetRechecking may have
+      // refreshed the instance, so the list loaded above can be stale.
+      const switchedProvider =
+        switchedTo === undefined
+          ? undefined
+          : (yield* loadProviders).find(
+              (provider) => provider.instanceId === switchedTo.instanceId,
+            );
+      // A model given as an alias is stored under its slug, as the picker would store it.
+      const switchedSelection =
+        switchedTo === undefined
+          ? undefined
+          : {
+              ...switchedTo,
+              model:
+                (switchedProvider === undefined
+                  ? undefined
+                  : advertisedModel(switchedProvider, switchedTo.model)?.slug) ?? switchedTo.model,
+            };
       const key = yield* requestKey(input.clientRequestId);
       const messageId = stableOperationMessageId({
         scope,
@@ -3492,6 +3533,7 @@ const make = Effect.gen(function* () {
           attachments: [],
           mode,
           ...(input.freshContext ? { freshContext: true } : {}),
+          ...(switchedSelection === undefined ? {} : { modelSelection: switchedSelection }),
           createdBy: "agent",
           creationSource: "mcp",
         })
@@ -3513,6 +3555,17 @@ const make = Effect.gen(function* () {
         ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
         status: result.run.status,
         delivery: result.delivery,
+        ...(switchedSelection === undefined
+          ? {}
+          : {
+              // Report what the run stored, not what was requested.
+              modelSelection: {
+                model: result.run.modelSelection.model,
+                ...(result.run.modelSelection.options === undefined
+                  ? {}
+                  : { options: result.run.modelSelection.options }),
+              },
+            }),
       } satisfies OrchestratorMcpThreadSendResult;
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {
