@@ -1,6 +1,8 @@
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import type { AttachmentUploadStatus } from "@t3tools/client-runtime/state/attachment-uploads";
+import { msg } from "gt-react-native";
+import { m, type MessageResolver } from "../i18n/messages";
 
 import { parseLegacyNewTaskDraftKey } from "../state/new-task-draft-key";
 import type { DraftComposerAttachment } from "./composerImages";
@@ -74,18 +76,22 @@ export function canUploadComposerAttachment(
   );
 }
 
-export function composerAttachmentUploadBlockReason(input: {
-  readonly environmentId: EnvironmentId;
-  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
-  readonly connected: boolean;
-  readonly serverConfig: UploadServerConfig | null;
-  readonly states: Readonly<Record<string, ComposerAttachmentUploadState>>;
-}): string | null {
+/** Render callers pass `useMessages()` so the reason follows a language switch. */
+export function composerAttachmentUploadBlockReason(
+  input: {
+    readonly environmentId: EnvironmentId;
+    readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+    readonly connected: boolean;
+    readonly serverConfig: UploadServerConfig | null;
+    readonly states: Readonly<Record<string, ComposerAttachmentUploadState>>;
+  },
+  resolve: MessageResolver = m,
+): string | null {
   if (!input.connected) return null;
   for (const attachment of input.attachments) {
     if (!canUploadComposerAttachment(attachment, input.serverConfig)) continue;
     const state = input.states[composerAttachmentUploadKey(input.environmentId, attachment.id)];
-    if (state?.status === "failed") return "Retry or remove the failed attachment";
+    if (state?.status === "failed") return resolve(msg("Retry or remove the failed attachment"));
   }
   return null;
 }

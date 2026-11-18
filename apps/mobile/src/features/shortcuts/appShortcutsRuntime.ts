@@ -50,7 +50,11 @@ export function createRecentThreadShortcuts(dependencies: RecentThreadShortcutsD
         () => undefined,
       );
     }
-    void dependencies.publish(next).catch((error: unknown) => {
+    publish(next);
+  };
+
+  const publish = (list: ReadonlyArray<RecentThreadShortcut>) => {
+    void dependencies.publish(list).catch((error: unknown) => {
       console.warn("[app-shortcuts] failed to update launcher shortcuts", error);
     });
   };
@@ -92,7 +96,17 @@ export function createRecentThreadShortcuts(dependencies: RecentThreadShortcutsD
       const kept = recents.filter(isSaved);
       if (kept.length !== recents.length) commit(kept);
     },
+    /** Publishes the current list again, for titles that follow the UI language. */
+    republish(): void {
+      if (recents !== null) publish(recents);
+    },
   };
+}
+
+let installedRecents: ReturnType<typeof createRecentThreadShortcuts> | null = null;
+
+export function republishAppShortcuts(): void {
+  installedRecents?.republish();
 }
 
 const activeThreadRefAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
@@ -148,6 +162,7 @@ export function installAppShortcuts(navigate: (href: string) => void): () => voi
     save: saveRecentThreadShortcuts,
     publish: (list) => QuickActions.setItems(buildShortcutActions(list)),
   });
+  installedRecents = recents;
   const unsubscribe = appAtomRegistry.subscribe(
     activeThreadShortcutAtom,
     (active) => recents.recordActiveThread(active),
@@ -161,6 +176,7 @@ export function installAppShortcuts(navigate: (href: string) => void): () => voi
     { immediate: true },
   );
   return () => {
+    if (installedRecents === recents) installedRecents = null;
     subscription.remove();
     unsubscribe();
     unsubscribeCatalog();
