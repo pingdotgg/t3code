@@ -754,8 +754,8 @@ export const PullRequestDiffFileContentsInput = Schema.Struct({
   ...PullRequestRef.fields,
   commit: Schema.optional(TrimmedNonEmptyString),
   changeType: Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
-  oldPath: TrimmedNonEmptyString,
-  newPath: TrimmedNonEmptyString,
+  oldPath: Schema.NonEmptyString,
+  newPath: Schema.NonEmptyString,
 });
 export type PullRequestDiffFileContentsInput = typeof PullRequestDiffFileContentsInput.Type;
 
@@ -946,18 +946,24 @@ export const PullRequestReactionInput = Schema.Struct({
 });
 export type PullRequestReactionInput = typeof PullRequestReactionInput.Type;
 
+/** The most labels or reviewers one write may change. */
+export const PULL_REQUEST_CHANGE_BATCH_LIMIT = 25;
+
 export const PullRequestReviewerRequestInput = Schema.Struct({
   ...PullRequestRef.fields,
   reviewers: Schema.Array(
     Schema.Struct({ id: TrimmedNonEmptyString, kind: PullRequestReviewerKind }),
-  ).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(PULL_REQUEST_CHANGE_BATCH_LIMIT)),
   requested: Schema.Boolean,
 });
 export type PullRequestReviewerRequestInput = typeof PullRequestReviewerRequestInput.Type;
 
 export const PullRequestLabelChangeInput = Schema.Struct({
   ...PullRequestRef.fields,
-  labels: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+  labels: Schema.Array(TrimmedNonEmptyString).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PULL_REQUEST_CHANGE_BATCH_LIMIT),
+  ),
   applied: Schema.Boolean,
 });
 export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Type;
