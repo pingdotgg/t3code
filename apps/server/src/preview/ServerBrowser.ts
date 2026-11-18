@@ -3264,6 +3264,8 @@ const make = Effect.gen(function* () {
       scrolledAt: 0,
       requestedSize: null,
     };
+    // A tab dropped while this session opened told only the viewers it already had.
+    if (tabs.get(tabKey(input.threadId, input.tabId)) !== tab) return yield* attachViewer(input);
     yield* Effect.acquireRelease(
       Effect.sync(() => {
         tab.viewers.add(viewer);
@@ -3273,17 +3275,17 @@ const make = Effect.gen(function* () {
       }),
       () =>
         Effect.promise(async () => {
-          await tab.control.disconnect(viewer.id, () => releaseViewerInput(viewer, session));
+          const releasing = tab.control.disconnect(viewer.id, () =>
+            releaseViewerInput(viewer, session),
+          );
+          // The drain can wait on a dialog that only the next controller can answer.
+          broadcastControl(tab);
+          await releasing;
           tab.viewers.delete(viewer);
           broadcastControl(tab);
           reportLiveTabs();
         }),
     );
-    if (input.canOperate && tab.control.agentId === null && tab.control.controller === null) {
-      yield* Effect.promise(() => tab.control.take(viewer.id));
-    }
-    broadcastControl(tab);
-    pushFileChooser(tab);
     const pushStill = async () => {
       const data = await withCaptureLock(tab, async () => {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -3356,6 +3358,14 @@ const make = Effect.gen(function* () {
     // An idle page does not repaint for a new screencast, so the viewer
     // starts from a still unless a live frame beat it.
     if (!screencastStarted) yield* Effect.forkScoped(Effect.promise(pushStill));
+    // Claimed only once setup is done, so a connect stuck in setup holds nothing, and not
+    // awaited: the drain can wait on a dialog that this viewer must be connected to answer.
+    const taking =
+      input.canOperate && tab.control.agentId === null && tab.control.controller === null
+        ? tab.control.take(viewer.id)
+        : Promise.resolve();
+    broadcastControl(tab);
+    void taking.then(() => pushFileChooser(tab)).catch(constVoid);
     return {
       output,
       input: (raw: unknown) =>
