@@ -253,6 +253,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
                 CLAUDE_INVESTIGATION_DENIED,
               ]
             : ["--tools", ""]),
+          ...(investigate ? ["--setting-sources", "user"] : []),
           "--disable-slash-commands",
           ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
           // managed-mcp.json already isolates servers and makes Claude reject this flag.

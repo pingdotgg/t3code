@@ -17,6 +17,8 @@ import {
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
 } from "@t3tools/contracts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
   readonly scope: AuthGrantScope;
@@ -25,98 +27,102 @@ export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
 }> = [
   {
     scope: AuthOrchestrationReadScope,
-    title: "View environment",
-    description: "Read threads, status, checkpoints, and configuration.",
+    title: msg("View environment"),
+    description: msg("Read threads, status, checkpoints, and configuration."),
   },
   {
     scope: AuthOrchestrationOperateScope,
-    title: "Operate tasks",
-    description: "Start, update, and stop tasks.",
+    title: msg("Operate tasks"),
+    description: msg("Start, update, and stop tasks."),
   },
   {
     scope: AuthSettingsWriteScope,
-    title: "Change environment settings",
-    description: "Edit environment preferences and keybindings.",
+    title: msg("Change environment settings"),
+    description: msg("Edit environment preferences and keybindings."),
   },
   {
     scope: AuthProvidersManageScope,
-    title: "Manage providers",
-    description: "Configure, install, sign in to, and update providers and usage sources.",
+    title: msg("Manage providers"),
+    description: msg("Configure, install, sign in to, and update providers and usage sources."),
   },
   {
     scope: AuthEnvironmentMaintainScope,
-    title: "Maintain environment",
-    description: "Update the server and control environment processes.",
+    title: msg("Maintain environment"),
+    description: msg("Update the server and control environment processes."),
   },
   {
     scope: AuthPreviewOperateScope,
-    title: "Control previews",
-    description: "Open browser previews and host browser automation.",
+    title: msg("Control previews"),
+    description: msg("Open browser previews and host browser automation."),
   },
   {
     scope: AuthDiagnosticsReadScope,
-    title: "View diagnostics and usage",
-    description: "Read process diagnostics, resource history, and usage totals.",
+    title: msg("View diagnostics and usage"),
+    description: msg("Read process diagnostics, resource history, and usage totals."),
   },
   {
     scope: AuthTerminalReadScope,
-    title: "View terminals",
-    description: "Read existing terminal output and status.",
+    title: msg("View terminals"),
+    description: msg("Read existing terminal output and status."),
   },
   {
     scope: AuthTerminalOperateScope,
-    title: "Use terminals",
-    description: "Create terminals and send input to running shells.",
+    title: msg("Use terminals"),
+    description: msg("Create terminals and send input to running shells."),
   },
   {
     scope: AuthSourceControlWriteScope,
-    title: "Change source control",
-    description: "Commit, push, manage branches and repositories, and change pull requests.",
+    title: msg("Change source control"),
+    description: msg("Commit, push, manage branches and repositories, and change pull requests."),
   },
   {
     scope: AuthFilesystemReadScope,
-    title: "Read files",
-    description: "Browse host files, search workspaces, and inspect local changes.",
+    title: msg("Read files"),
+    description: msg("Browse host files, search workspaces, and inspect local changes."),
   },
   {
     scope: AuthFilesystemWriteScope,
-    title: "Write files",
-    description: "Edit workspace files and save plans to disk.",
+    title: msg("Write files"),
+    description: msg("Edit workspace files and save plans to disk."),
   },
   {
     scope: AuthAccessReadScope,
-    title: "View access",
-    description: "Inspect pairing links and authorized clients.",
+    title: msg("View access"),
+    description: msg("Inspect pairing links and authorized clients."),
   },
   {
     scope: AuthAccessWriteScope,
-    title: "Manage access",
-    description: "Issue and revoke credentials for other clients.",
+    title: msg("Manage access"),
+    description: msg("Issue and revoke credentials for other clients."),
   },
   {
     scope: AuthRelayReadScope,
-    title: "View relay",
-    description: "Inspect managed relay connectivity.",
+    title: msg("View relay"),
+    description: msg("Inspect managed relay connectivity."),
   },
   {
     scope: AuthRelayWriteScope,
-    title: "Manage relay",
-    description: "Change managed tunnel connectivity.",
+    title: msg("Manage relay"),
+    description: msg("Change managed tunnel connectivity."),
   },
 ];
 
 /** Shown instead of the granted scopes while they are unknown, so every surface says the same thing. */
-export function sessionPermissionsUnavailableMessage(input: {
-  readonly connected: boolean;
-  /** The check errored; the client retries it while connected. */
-  readonly failed: boolean;
-  /** The environment answered that this session is not signed in; retrying will not change that. */
-  readonly rejected: boolean;
-}): string {
-  if (!input.connected) return "Connect to this environment to view this session’s permissions.";
+export function sessionPermissionsUnavailableMessage(
+  input: {
+    readonly connected: boolean;
+    /** The check errored; the client retries it while connected. */
+    readonly failed: boolean;
+    /** The environment answered that this session is not signed in; retrying will not change that. */
+    readonly rejected: boolean;
+  },
+  resolve: MFunctionType = mFallback,
+): string {
+  if (!input.connected)
+    return resolve(msg("Connect to this environment to view this session’s permissions."));
   if (input.rejected)
-    return "This environment did not accept your session. Reconnect to try again.";
+    return resolve(msg("This environment did not accept your session. Reconnect to try again."));
   return input.failed
-    ? "Could not verify your permissions. Retrying automatically."
-    : "Checking permissions…";
+    ? resolve(msg("Could not verify your permissions. Retrying automatically."))
+    : resolve(msg("Checking permissions…"));
 }

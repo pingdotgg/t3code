@@ -66,14 +66,19 @@ format, such as Core ML, ONNX, or MLX builds of the same model, can’t be used.
 
 Select the languages you dictate in to compare models that support all of them.
 Accuracy shows how often the model got words or characters wrong in each
-language; speed is the time to transcribe 30 seconds on a reference GPU. Choose
-**All languages** to browse the full catalog. Filtering does not switch your model.
+language; speed is the time to transcribe 30 seconds on a reference CPU or GPU,
+matching the selected environment's transcription backend. Recommendations use
+the same reference tier for every selected language. Choose **All languages** to
+browse without a language preference. Filtering does not switch your model.
 
 **Advanced** controls GPU or CPU use and when an idle model is unloaded. With hardware set to
 **Auto**, a recording that fails on the GPU is retried once on that same
 environment's CPU; a GPU you picked yourself reports the error instead. Nothing
 is ever retried on another environment. Models marked **Live preview** show
-text while you speak. Other models can process long recordings in chunks at pauses
+text while you speak. On web and desktop, turn off **Advanced → Streaming transcription**
+to transcribe with the same model after stopping instead. This may help when live
+transcription falls behind. The preference is saved on this device and only applies
+to models that support native streaming. Other models can process long recordings in chunks at pauses
 while you record; models with built-in long-form support transcribe when you stop.
 
 ## Dictate

@@ -6,6 +6,8 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export const DEFAULT_WEBHOOK_PROMPT = "Handle this webhook:\n{{body}}";
 
@@ -34,11 +36,11 @@ export const WEBHOOK_FILTER_OPS: ReadonlyArray<{
   readonly op: ScheduledTaskWebhookFilterOp;
   readonly label: string;
 }> = [
-  { op: "equals", label: "equals" },
-  { op: "notEquals", label: "does not equal" },
-  { op: "in", label: "is one of" },
-  { op: "startsWith", label: "starts with" },
-  { op: "exists", label: "exists" },
+  { op: "equals", label: msg("equals") },
+  { op: "notEquals", label: msg("does not equal") },
+  { op: "in", label: msg("is one of") },
+  { op: "startsWith", label: msg("starts with") },
+  { op: "exists", label: msg("exists") },
 ];
 
 let lastWebhookFilterDraftId = 0;
@@ -76,9 +78,10 @@ const decodeFilter = Schema.decodeUnknownOption(ScheduledTaskWebhookFilter);
  */
 export function parseWebhookFilterDrafts(
   drafts: ReadonlyArray<WebhookFilterDraft>,
+  resolve: MFunctionType = mFallback,
 ): { readonly filters: ReadonlyArray<ScheduledTaskWebhookFilter> } | { readonly error: string } {
   if (drafts.length > MAX_WEBHOOK_FILTERS) {
-    return { error: `Use at most ${MAX_WEBHOOK_FILTERS} filters.` };
+    return { error: resolve(msg("Use at most {max} filters.", { max: MAX_WEBHOOK_FILTERS })) };
   }
   const filters: ScheduledTaskWebhookFilter[] = [];
   for (const [index, draft] of drafts.entries()) {
@@ -99,13 +102,25 @@ export function parseWebhookFilterDrafts(
     );
     if (Option.isNone(filter)) {
       return {
-        error: `Filter ${index + 1} needs a path under body, headers or query${
+        error:
           draft.op === "exists"
-            ? "."
+            ? resolve(
+                msg("Filter {number} needs a path under body, headers or query.", {
+                  number: index + 1,
+                }),
+              )
             : draft.op === "in"
-              ? ", and at least one value."
-              : ", and a value."
-        }`,
+              ? resolve(
+                  msg(
+                    "Filter {number} needs a path under body, headers or query, and at least one value.",
+                    { number: index + 1 },
+                  ),
+                )
+              : resolve(
+                  msg("Filter {number} needs a path under body, headers or query, and a value.", {
+                    number: index + 1,
+                  }),
+                ),
       };
     }
     filters.push(filter.value);
