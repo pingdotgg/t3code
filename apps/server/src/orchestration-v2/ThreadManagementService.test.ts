@@ -16,6 +16,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -378,20 +379,23 @@ it.effect.each([
   }),
 );
 
-it.effect.each(["command", "user_input", "secret_request"] as const)(
-  "waitForThread wakes on a new %s while terminal-only callers keep waiting",
+it.effect.each(["command", "user_input", "secret_request", "assistant_message"] as const)(
+  "waitForThread responds to input events and ignores transcript updates (%s)",
   (kind) =>
     Effect.gen(function* () {
       const projectId = ProjectId.make("project:wait-event");
       const threadId = ThreadId.make("thread:wait-event");
       const runId = RunId.make("run:wait-event");
       const subscribed = yield* Deferred.make<void>();
-      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent, Cause.Done>();
       const now = yield* DateTime.now;
       let requests: OrchestrationV2ThreadProjection["runtimeRequests"] = [];
       let turnItems: OrchestrationV2ThreadProjection["turnItems"] = [];
       let reads = 0;
-      const eventType = kind === "secret_request" ? "turn-item.updated" : "runtime-request.updated";
+      const eventType =
+        kind === "secret_request" || kind === "assistant_message"
+          ? "turn-item.updated"
+          : "runtime-request.updated";
       const layerTest = ThreadManagementService.layer.pipe(
         Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
         Layer.provide(
@@ -414,7 +418,9 @@ it.effect.each(["command", "user_input", "secret_request"] as const)(
                     Stream.drain,
                     Stream.concat(Stream.fromQueue(events)),
                   )
-                : Stream.never,
+                : kind === "assistant_message"
+                  ? Stream.empty
+                  : Stream.never,
           }),
         ),
         Layer.provide(ServerSettings.layerTest()),
@@ -427,14 +433,25 @@ it.effect.each(["command", "user_input", "secret_request"] as const)(
         .waitForThread({ projectId, threadId, runId, timeoutMs: 600_000, returnOnInput: true })
         .pipe(Effect.forkChild);
       yield* Deferred.await(subscribed);
+      if (kind === "assistant_message") {
+        yield* Queue.offer(events, {
+          sequence: 8,
+          event: { type: eventType, threadId, payload: { type: kind } },
+        } as unknown as OrchestrationV2StoredEvent);
+        // End the mocked subscriptions so the wait performs its final read.
+        yield* Queue.end(events);
+        expect(yield* Fiber.join(fiber)).toMatchObject({
+          timedOut: true,
+          hasPendingQuestion: false,
+          pendingApproval: null,
+        });
+        expect(reads).toBe(2); // Initial and final reads only.
+        return;
+      }
       if (kind === "secret_request") {
         turnItems = [
           { type: kind, runId, nodeId: "node:secret", status: "waiting" },
         ] as unknown as OrchestrationV2ThreadProjection["turnItems"];
-        yield* Queue.offer(events, {
-          sequence: 8,
-          event: { type: eventType, threadId, payload: { type: "assistant_message" } },
-        } as unknown as OrchestrationV2StoredEvent);
       } else {
         requests = [
           {
