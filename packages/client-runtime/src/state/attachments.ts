@@ -6,6 +6,9 @@ import {
   type AttachmentDeleteInput,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -51,7 +54,7 @@ export type PersistedAttachmentVerification =
   | { readonly status: "missing" }
   | { readonly status: "failed"; readonly error: unknown };
 
-export async function verifyPersistedAttachmentUpload<A, E>(input: {
+export function verifyPersistedAttachmentUpload<A, E>(input: {
   readonly registry: AtomRegistry.AtomRegistry;
   readonly createAssetUrl: (query: {
     readonly environmentId: EnvironmentId;
@@ -61,25 +64,29 @@ export async function verifyPersistedAttachmentUpload<A, E>(input: {
   }) => Atom.Atom<AsyncResult.AsyncResult<A, E>>;
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
-}): Promise<PersistedAttachmentVerification> {
-  const result = await executeAtomQuery(
-    input.registry,
-    input.createAssetUrl({
-      environmentId: input.environmentId,
-      input: { resource: { _tag: "attachment", attachmentId: input.attachmentId } },
+}): Effect.Effect<PersistedAttachmentVerification> {
+  return Effect.promise(() =>
+    executeAtomQuery(
+      input.registry,
+      input.createAssetUrl({
+        environmentId: input.environmentId,
+        input: { resource: { _tag: "attachment", attachmentId: input.attachmentId } },
+      }),
+      // `refresh` forces a server round trip: the asset URL query atom caches
+      // results (SWR), so a retry right after a transient failure would
+      // otherwise re-observe the cached failure and never ask the server.
+      { reportFailure: false, reportDefect: false, refresh: true },
+    ),
+  ).pipe(
+    Effect.map((result): PersistedAttachmentVerification => {
+      if (result._tag === "Success") return { status: "verified" };
+      const error = squashAtomCommandFailure(result);
+      return isAssetAttachmentNotFoundFailure(error)
+        ? { status: "missing" }
+        : { status: "failed", error };
     }),
-    // `refresh` forces a server round trip: the asset URL query atom caches
-    // results (SWR), so a retry right after a transient failure would
-    // otherwise re-observe the cached failure and never ask the server.
-    { reportFailure: false, reportDefect: false, refresh: true },
+    Effect.withSpan("Attachments.verifyPersistedUpload"),
   );
-  if (result._tag === "Success") {
-    return { status: "verified" };
-  }
-  const error = squashAtomCommandFailure(result);
-  return isAssetAttachmentNotFoundFailure(error)
-    ? { status: "missing" }
-    : { status: "failed", error };
 }
 
 type AttachmentCreateUploadUrlCommand<E> = AtomCommand<
@@ -108,14 +115,8 @@ export function deletePendingAttachmentUpload<E>(input: {
   );
 }
 
-export interface AttachmentByteUpload {
-  readonly done: Promise<void>;
-  readonly abort: () => void;
-}
-
 export type AttachmentUploadCycleResult =
   | { readonly status: "uploaded"; readonly attachmentId: string }
-  | { readonly status: "cancelled"; readonly attachmentId: string | null }
   | {
       readonly status: "failed";
       readonly step: "mint" | "resolve-url" | "transfer";
@@ -124,65 +125,76 @@ export type AttachmentUploadCycleResult =
     };
 
 /**
- * The cycle never deletes the minted pending upload on failure: callers keep the returned
- * `attachmentId` and decide between retry and release. The one exception is `onMinted`
- * returning `"cancel"`, where the caller already abandoned the upload and the fresh mint is
- * deleted before returning.
+ * Mints an upload slot and sends the bytes. A failure keeps the minted id in the result so the
+ * caller decides between retry and release. Interrupting the cycle aborts the transfer and
+ * deletes the fresh mint, including when the interruption arrives while minting.
  */
-export async function runAttachmentUploadCycle<E, RE>(input: {
+export function runAttachmentUploadCycle<E, RE, TE>(input: {
   readonly registry: AtomRegistry.AtomRegistry;
   readonly createUploadUrl: AttachmentCreateUploadUrlCommand<E>;
   readonly remove: AttachmentRemoveCommand<RE>;
   readonly environmentId: EnvironmentId;
   readonly upload: AttachmentCreateUploadUrlInput;
   readonly resolveUploadUrl: (relativeUrl: string) => string | null;
-  readonly transport: (url: string) => AttachmentByteUpload;
-  readonly onMinted?: (attachmentId: string) => "continue" | "cancel";
-  readonly onTransferStart?: (abort: () => void) => void;
-}): Promise<AttachmentUploadCycleResult> {
-  const minted = await runAtomCommand(
-    input.registry,
-    input.createUploadUrl,
-    { environmentId: input.environmentId, input: input.upload },
-    { reportFailure: false },
-  );
-  if (minted._tag !== "Success") {
-    return {
-      status: "failed",
-      step: "mint",
-      attachmentId: null,
-      error: squashAtomCommandFailure(minted),
-    };
-  }
-  const attachmentId = minted.value.attachmentId;
-  if (input.onMinted?.(attachmentId) === "cancel") {
-    deletePendingAttachmentUpload({
-      registry: input.registry,
-      remove: input.remove,
-      environmentId: input.environmentId,
-      attachmentId,
-    });
-    return { status: "cancelled", attachmentId };
-  }
-
-  const url = input.resolveUploadUrl(minted.value.relativeUrl);
-  if (!url) {
-    return {
-      status: "failed",
-      step: "resolve-url",
-      attachmentId,
-      error: new Error("The environment is not connected."),
-    };
-  }
-
-  const transfer = input.transport(url);
-  input.onTransferStart?.(transfer.abort);
-  try {
-    await transfer.done;
-  } catch (error) {
-    return { status: "failed", step: "transfer", attachmentId, error };
-  }
-  return { status: "uploaded", attachmentId };
+  /** Sends the bytes; interrupting it aborts the transfer. */
+  readonly transport: (url: string) => Effect.Effect<void, TE>;
+}): Effect.Effect<AttachmentUploadCycleResult> {
+  return Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const minted = yield* Effect.promise(() =>
+        runAtomCommand(
+          input.registry,
+          input.createUploadUrl,
+          { environmentId: input.environmentId, input: input.upload },
+          { reportFailure: false },
+        ),
+      );
+      if (minted._tag !== "Success") {
+        return {
+          status: "failed",
+          step: "mint",
+          attachmentId: null,
+          error: squashAtomCommandFailure(minted),
+        } as const;
+      }
+      const attachmentId = minted.value.attachmentId;
+      return yield* restore(
+        Effect.suspend(() => {
+          const url = input.resolveUploadUrl(minted.value.relativeUrl);
+          if (!url) {
+            return Effect.succeed<AttachmentUploadCycleResult>({
+              status: "failed",
+              step: "resolve-url",
+              attachmentId,
+              error: new Error("The environment is not connected."),
+            });
+          }
+          return input.transport(url).pipe(
+            Effect.as<AttachmentUploadCycleResult>({ status: "uploaded", attachmentId }),
+            Effect.catch((error) =>
+              Effect.succeed<AttachmentUploadCycleResult>({
+                status: "failed",
+                step: "transfer",
+                attachmentId,
+                error,
+              }),
+            ),
+          );
+        }),
+      ).pipe(
+        Effect.onInterrupt(() =>
+          Effect.sync(() =>
+            deletePendingAttachmentUpload({
+              registry: input.registry,
+              remove: input.remove,
+              environmentId: input.environmentId,
+              attachmentId,
+            }),
+          ),
+        ),
+      );
+    }),
+  ).pipe(Effect.withSpan("Attachments.runUploadCycle"));
 }
 
 /**
@@ -193,18 +205,31 @@ export function clampFileAttachmentUploadBytes(advertisedMaxUploadBytes: number)
   return Math.min(advertisedMaxUploadBytes, PROVIDER_SEND_TURN_MAX_FILE_BYTES);
 }
 
-export function formatAttachmentSize(sizeBytes: number): string {
-  return sizeBytes >= 1024 * 1024
-    ? `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`
-    : `${Math.max(1, Math.ceil(sizeBytes / 1024))} KB`;
+export function formatAttachmentSize(
+  sizeBytes: number,
+  resolve: MFunctionType = mFallback,
+): string {
+  const kilobytes = Math.max(1, Math.ceil(sizeBytes / 1024));
+  // Pick the unit after rounding, so 1023.5 KB reads "1.0 MB", not "1024 KB".
+  return kilobytes >= 1024
+    ? resolve(msg("{size} MB", { size: (sizeBytes / (1024 * 1024)).toFixed(1) }))
+    : resolve(msg("{size} KB", { size: kilobytes }));
 }
 
-export function fileAttachmentTooLargeMessage(name: string, maxUploadBytes: number): string {
-  const maxUploadSize =
+export function fileAttachmentTooLargeMessage(
+  name: string,
+  maxUploadBytes: number,
+  resolve: MFunctionType = mFallback,
+): string {
+  const size =
     maxUploadBytes >= 1024 * 1024 && maxUploadBytes % (1024 * 1024) === 0
-      ? `${maxUploadBytes / (1024 * 1024)} MB`
+      ? resolve(msg("{count} MB", { count: maxUploadBytes / (1024 * 1024) }))
       : maxUploadBytes >= 1024 && maxUploadBytes % 1024 === 0
-        ? `${maxUploadBytes / 1024} KB`
-        : `${maxUploadBytes} ${maxUploadBytes === 1 ? "byte" : "bytes"}`;
-  return `'${name}' exceeds the ${maxUploadSize} attachment limit.`;
+        ? resolve(msg("{count} KB", { count: maxUploadBytes / 1024 }))
+        : resolve(
+            msg("{count, plural, one {{count} byte} other {{count} bytes}}", {
+              count: maxUploadBytes,
+            }),
+          );
+  return resolve(msg("''{name}'' exceeds the {size} attachment limit.", { name, size }));
 }

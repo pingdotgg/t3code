@@ -51,6 +51,29 @@ describe("getOrphanedWorktreePathForThread", () => {
     expect(result).toBeNull();
   });
 
+  it.each([
+    ["/tmp/repo/worktrees/feature-a", "/tmp/repo/worktrees/feature-a/"],
+    ["/tmp/repo/worktrees/feature-a", "/tmp/repo/worktrees/feature-a//"],
+    ["C:\\repo\\worktrees\\feature-a", "c:/repo/worktrees/feature-a/"],
+  ])("treats %s and %s as the same worktree", (targetPath, otherPath) => {
+    const threads = [
+      makeThread({ id: ThreadId.make("thread-1"), worktreePath: targetPath }),
+      makeThread({ id: ThreadId.make("thread-2"), worktreePath: otherPath }),
+    ];
+    expect(getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-1"))).toBeNull();
+    expect(getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-2"))).toBeNull();
+  });
+
+  it("keeps case-sensitive POSIX worktrees apart", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("thread-1"), worktreePath: "/tmp/repo/worktrees/Feature" }),
+      makeThread({ id: ThreadId.make("thread-2"), worktreePath: "/tmp/repo/worktrees/feature" }),
+    ];
+    expect(getOrphanedWorktreePathForThread(threads, ThreadId.make("thread-1"))).toBe(
+      "/tmp/repo/worktrees/Feature",
+    );
+  });
+
   it("ignores threads linked to different worktrees", () => {
     const threads = [
       makeThread({

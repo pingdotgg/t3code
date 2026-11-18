@@ -1,7 +1,15 @@
-import type { BrowserLinkTarget, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  AuthPreviewOperateScope,
+  type BrowserLinkTarget,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 
 import { ensureClientSettingsHydrated, getClientSettings } from "~/hooks/useSettings";
+import { readEnvironmentScope } from "~/state/session";
 import { isPreviewAvailableFor } from "./previewRuntime";
+import { isWebUrl } from "./webUrl";
+
+export { isWebUrl };
 
 export interface ResolveLinkTargetInput {
   readonly url: string;
@@ -22,15 +30,6 @@ export function resolveLinkTarget(input: ResolveLinkTargetInput): BrowserLinkTar
   return "app";
 }
 
-export function isWebUrl(url: string): boolean {
-  try {
-    const { protocol } = new URL(url);
-    return protocol === "http:" || protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 /** Before hydration, the default "system" would ignore a saved "app" link target. */
 export async function resolveBrowserLinkTargetPreference(): Promise<BrowserLinkTarget> {
   await ensureClientSettingsHydrated();
@@ -38,5 +37,9 @@ export async function resolveBrowserLinkTargetPreference(): Promise<BrowserLinkT
 }
 
 export function canOpenLinksInApp(threadRef: ScopedThreadRef | null | undefined): boolean {
-  return threadRef != null && isPreviewAvailableFor(threadRef.environmentId);
+  return (
+    threadRef != null &&
+    readEnvironmentScope(threadRef.environmentId, AuthPreviewOperateScope) &&
+    isPreviewAvailableFor(threadRef.environmentId)
+  );
 }

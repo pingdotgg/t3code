@@ -1,47 +1,45 @@
 # cloudflare-foldkit-ssr
 
-A [Foldkit](https://foldkit.dev) app rendered on the server, deployed to Cloudflare with `Cloudflare.Website.Foldkit`.
+The cookie-backed counter scaffold from `create-foldkit-app --rendering ssr`.
+Foldkit renders each page request in a Cloudflare Worker. Its Flags contain the
+count from the request cookie and the render timestamp. `Runtime.hydrate` adopts
+that HTML, and clicking a counter button persists the new count in the browser
+cookie. Reloading demonstrates that the Worker renders the persisted count.
 
-The sibling [`cloudflare-foldkit`](../cloudflare-foldkit) example is the client-only shape: it ships a template and the browser builds the page. This one renders each request at the edge and the browser adopts that markup, so the document a crawler reads already carries the page.
+Responses use `Cache-Control: private, no-store` and `Vary: cookie`. There are no
+prerendered pages in this example.
 
-## What makes it server-rendered
+## Run on Cloudflare
 
-- `src/entry.server.ts` exposes `renderPage(Request)`. It derives Flags from the request, renders through the same `view` the browser uses, and returns the markup plus the document's title.
-- `src/worker.ts` reads the built shell from the `ASSETS` binding, places the render into it with `Server.toResponse`, and answers asset misses and refused methods itself.
-- `src/entry.ts` calls `Runtime.hydrate` rather than `Runtime.run`, so the client adopts the served DOM instead of rebuilding it.
-- `alchemy.run.ts` turns the asset layer's page handling off so page requests actually reach the Worker.
-
-Load `/?count=7` and view source: the count is in the HTML before any JavaScript runs.
-
-## The two settings that matter
-
-```typescript
-assets: {
-  htmlHandling: "none",
-  notFoundHandling: "none",
-}
-```
-
-Both are load-bearing, and getting either wrong fails quietly — the site serves 200s carrying an empty document.
-
-`notFoundHandling: "none"` lets a request matching no file fall through to the Worker. Left at `"single-page-application"`, the asset layer answers every deep link with the unrendered template and the Worker is never reached.
-
-`htmlHandling: "none"` stops the asset layer resolving `/` to `/index.html` by itself, which would serve the template for the front page alone even after the first setting is right.
-
-Files are still served straight from the asset layer — only page requests reach the Worker.
-
-## The build id
-
-`renderToString` and `Runtime.hydrate` both require a build id, and hydration refuses a page whose id is not the running build's. `vite.config.ts` takes it from `FOLDKIT_BUILD_ID` and falls back to a fresh value, so a local build always has one. A real deployment should pass a value it already has, such as a commit or release tag, and give the client and server builds the same one. It is published in the page, so it must not be a secret.
-
-## A note on `alchemy dev`
-
-The Foldkit Vite plugin has an `ssr: { serverEntry }` option that serves rendered pages from the Vite dev server. This example deliberately does not set it: it loads the entry through `ssrLoadModule`, which needs a runnable `ssr` environment, and under `alchemy dev` that environment belongs to workerd. It is redundant here in any case — requests reach `src/worker.ts`, which renders through the same entry.
-
-## Commands
+From this directory, after installing the workspace dependencies:
 
 ```sh
-bun dev      # alchemy dev
-bun deploy   # alchemy deploy
-bun destroy  # alchemy destroy
+pnpm dev
+pnpm deploy
+pnpm destroy
 ```
+
+`pnpm build` runs the standard Vite build. `pnpm test` runs the credentialed
+Cloudflare integration checks and destroys the example afterward.
+
+`alchemy.run.ts` uses `Cloudflare.Website.Foldkit`. The application’s Vite plugin
+supplies the build output and routing metadata; no hand-written Worker wrapper
+or build identity declaration is required.
+
+## Scaffold source
+
+Application files follow [Foldkit’s generator and examples](https://github.com/foldkit/foldkit/tree/foldkit%400.167.0/packages/create-foldkit-app/templates/rendering/ssr)
+(Foldkit 0.167.0 / `create-foldkit-app` 0.39.0). The original files were produced using the
+generator’s `createProject` function. Alchemy adds the deployment file, workspace
+package configuration and integration tests. The SSR cookie helper uses the HTTP
+module path from this workspace’s Effect version.
+
+## Rendering examples
+
+- [SPA / CSR](../cloudflare-foldkit-spa): browser-only counter.
+- [SSG](../cloudflare-foldkit-ssg): prerendered home and about pages.
+- [SSR](../cloudflare-foldkit-ssr): cookie-backed request rendering.
+- [Hybrid](../cloudflare-foldkit-hybrid): prerendered pages and a dynamic counter.
+
+SSR/SSG documents follow the 0.167 scaffold: CSS is imported by the client entry,
+and the server exports `renderDocument`. There is no source `index.html`.

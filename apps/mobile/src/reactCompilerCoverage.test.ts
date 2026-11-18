@@ -182,6 +182,14 @@ describe("React Compiler coverage", () => {
     ).toEqual([true]);
   });
 
+  // The compiler once silently dropped these caches, so the new-task context
+  // value changed on every provider render and re-rendered every consumer.
+  it("caches the new-task model options and host environments", () => {
+    const file = "src/features/threads/new-task-flow-provider.tsx";
+    expect(compilerCachedCalls(file, "buildModelOptions")).toEqual([true]);
+    expect(compilerCachedCalls(file, "repositoryGroupingKeyOf")).toEqual([true, true]);
+  });
+
   // An uncached registration would re-register the workspace inspector on every render.
   it("registers the workspace inspector only when its renderer changes", () => {
     expect(

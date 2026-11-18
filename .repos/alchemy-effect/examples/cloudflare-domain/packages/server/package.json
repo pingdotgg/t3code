@@ -1,0 +1,34 @@
+{
+  "name": "@bank/server",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/cloudflare-domain/packages/server"
+  },
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@alchemy.run/axiom": "workspace:*",
+    "@alchemy.run/cloudflare": "workspace:*",
+    "@alchemy.run/domain": "workspace:*",
+    "@alchemy.run/stripe": "workspace:*",
+    "@bank/domain": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
+    "@distilled.cloud/stripe": "workspace:*",
+    "@effect/platform-node": "catalog:",
+    "alchemy": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vitest": "catalog:"
+  }
+}

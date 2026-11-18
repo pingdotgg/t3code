@@ -1,14 +1,19 @@
 import {
-  OnePasswordSecretProviderConfig,
   SecretProviderId,
   SecretProviderKind,
   SecretProviderLabel,
-  type OnePasswordAccount,
   type SecretProviderConfig,
 } from "@t3tools/contracts";
+import {
+  OnePasswordSecretProviderConfig,
+  type OnePasswordAccount,
+} from "@t3tools/secret-provider-onepassword/shared/definition";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 const decodeSecretProviderId = Schema.decodeOption(SecretProviderId);
 const decodeOnePasswordConfig = Schema.decodeUnknownOption(OnePasswordSecretProviderConfig);
@@ -73,15 +78,16 @@ export function secretProviderFromDraft(
   draft: SecretProviderDraft,
   existingIds: ReadonlySet<string>,
   target: SecretProviderTarget,
+  resolve: MessageResolver = m,
 ): Result.Result<
   { readonly id: SecretProviderId; readonly config: SecretProviderConfig },
   SecretProviderDraftIssues
 > {
-  const label = decodeField(SecretProviderLabel, draft.name, "Enter a name.");
+  const label = decodeField(SecretProviderLabel, draft.name, resolve(msg("Enter a name.")));
   const account = decodeField(
     OnePasswordSecretProviderConfig.fields.account,
     draft.account,
-    "Enter the 1Password account.",
+    resolve(msg("Enter the 1Password account.")),
   );
 
   let id: SecretProviderId | null = null;
@@ -90,9 +96,9 @@ export function secretProviderFromDraft(
     nameIssue = label.failure;
   } else {
     id = target.mode === "edit" ? target.id : secretProviderIdFromName(label.success);
-    if (id === null) nameIssue = "The name needs at least one letter or digit.";
+    if (id === null) nameIssue = resolve(msg("The name needs at least one letter or digit."));
     else if (target.mode === "add" && existingIds.has(id))
-      nameIssue = "A secret provider with this name exists.";
+      nameIssue = resolve(msg("A secret provider with this name exists."));
   }
 
   if (

@@ -240,7 +240,10 @@ const runPrivileged = Effect.fn("ServiceProtection.runPrivileged")(function* (sc
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const exitCode = yield* spawner
     .exitCode(
+      // Effect detaches children on POSIX by default; sudo then has no controlling
+      // terminal and cannot ask for a password.
       ChildProcess.make("sudo", ["/bin/sh", "-c", script], {
+        detached: false,
         stdin: "inherit",
         stdout: "inherit",
         stderr: "inherit",
@@ -296,7 +299,23 @@ export const installedProtection = Effect.fn("ServiceProtection.installed")(func
     : { ...plan, system, user };
 });
 
+/**
+ * False when the kernel lacks the memory cgroup controller (Raspberry Pi OS
+ * disables it by default), so only OOM scores can apply. True when unknown.
+ */
+export const memoryControllerAvailable = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const controllers = yield* fs
+    .readFileString("/sys/fs/cgroup/cgroup.controllers")
+    .pipe(Effect.option);
+  return Option.match(controllers, {
+    onNone: () => true,
+    onSome: (text) => text.split(/\s+/).includes("memory"),
+  });
+}).pipe(Effect.withSpan("ServiceProtection.memoryControllerAvailable"));
+
 export interface ServiceProtectionState {
+  readonly memoryControllerAvailable: boolean;
   /** The first cgroup from the top that grants the server no memory protection. */
   readonly unprotected: string | undefined;
   readonly oomScoreAdj: number | undefined;
@@ -322,9 +341,11 @@ export const readProtection = Effect.fn("ServiceProtection.read")(function* (use
       Effect.map((text) => text.trim()),
       Effect.orElseSucceed(() => ""),
     );
+  const memoryController = yield* memoryControllerAvailable;
   let unprotected: string | undefined;
   const grants = (value: string) => value !== "" && value !== "0";
-  for (let depth = 1; depth <= controlGroup.length && unprotected === undefined; depth++) {
+  const depths = memoryController ? controlGroup.length : 0;
+  for (let depth = 1; depth <= depths && unprotected === undefined; depth++) {
     const directory = path.join("/sys/fs/cgroup", ...controlGroup.slice(0, depth));
     const low = yield* read(path.join(directory, "memory.low"));
     const min = yield* read(path.join(directory, "memory.min"));
@@ -333,6 +354,7 @@ export const readProtection = Effect.fn("ServiceProtection.read")(function* (use
   const pid = Number(values.get("MainPID") ?? 0);
   const score = pid > 0 ? yield* read(`/proc/${pid}/oom_score_adj`) : "";
   return {
+    memoryControllerAvailable: memoryController,
     unprotected,
     oomScoreAdj: score === "" ? undefined : Number(score),
     setByProtect: yield* fs

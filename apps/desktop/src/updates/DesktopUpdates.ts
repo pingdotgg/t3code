@@ -1,5 +1,7 @@
 import {
   DESKTOP_UPDATE_RESTART_MARKER_FILE,
+  DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
+  DESKTOP_UPDATE_IN_PROGRESS_TTL_MS,
   DesktopUpdateChannelSchema,
   type DesktopRuntimeInfo,
   type DesktopUpdateActionResult,
@@ -25,6 +27,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -34,7 +37,12 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
-import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
+import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
+import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
+import {
+  normalizeDesktopUpdateReleaseNotes,
+  releaseNotesOfOfferedVersion,
+} from "./releaseNotes.ts";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
@@ -54,8 +62,8 @@ import {
 const CHANNEL_CHANGE_RETRY_DELAY = Duration.seconds(1);
 const CHANNEL_CHANGE_RETRIES = 30;
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
-const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
-const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
+const AUTO_UPDATE_POLL_INTERVAL = "4 hours";
+const UPDATE_CHECK_WAIT = Duration.seconds(90);
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
@@ -70,6 +78,7 @@ const UpdateInfo = Schema.Struct({
   version: Schema.String,
   // Malformed notes must not block update-state decoding; normalizeDesktopUpdateReleaseNotes validates separately.
   releaseNotes: Schema.optional(Schema.Unknown),
+  releaseName: Schema.optional(Schema.NullOr(Schema.String)),
   releaseDate: Schema.optional(Schema.String),
 });
 
@@ -161,9 +170,22 @@ export class DesktopUpdateUnexpectedActionError extends Schema.TaggedError<Deskt
   }
 }
 
+export class DesktopUpdateChannelManagedError extends Schema.TaggedError<DesktopUpdateChannelManagedError>()(
+  "DesktopUpdateChannelManagedError",
+  {
+    channel: DesktopUpdateChannelSchema,
+    policyMessage: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `${this.policyMessage} The ${this.channel} channel is not available.`;
+  }
+}
+
 export const DesktopUpdateSetChannelError = Schema.Union([
   DesktopUpdateActionInProgressError,
   DesktopUpdateChannelPersistenceError,
+  DesktopUpdateChannelManagedError,
 ]);
 export type DesktopUpdateSetChannelError = typeof DesktopUpdateSetChannelError.Type;
 
@@ -296,6 +318,10 @@ function getCanRetryFromState(state: DesktopUpdateState): boolean {
   return state.availableVersion !== null || state.downloadedVersion !== null;
 }
 
+function isOffered(state: DesktopUpdateState): boolean {
+  return state.status === "available" || state.status === "downloaded";
+}
+
 function shouldBroadcastDownloadProgress(
   currentState: DesktopUpdateState,
   nextPercent: number,
@@ -315,6 +341,7 @@ function shouldBroadcastDownloadProgress(
 }
 
 function getAutoUpdateDisabledReason(args: {
+  policy: DesktopUpdatePolicy.UpdatePolicy;
   isDevelopment: boolean;
   isPackaged: boolean;
   platform: NodeJS.Platform;
@@ -323,6 +350,9 @@ function getAutoUpdateDisabledReason(args: {
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
 }): string | null {
+  if (args.policy.mode === "off") {
+    return args.policy.message ?? "Updates are turned off on this machine.";
+  }
   if (!args.hasUpdateFeedConfig) {
     return "Automatic updates are not available because no update feed is configured.";
   }
@@ -346,12 +376,16 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
 export const make = Effect.gen(function* () {
   const config = yield* DesktopConfig.DesktopConfig;
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
   const desktopState = yield* DesktopState.DesktopState;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const policy = yield* DesktopUpdatePolicy.DesktopUpdatePolicy;
+  // Any user can set the mock flag, so it never replaces an administrator's update source.
+  const mockUpdates = config.mockUpdates && policy.message === null;
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
@@ -431,13 +465,17 @@ export const make = Effect.gen(function* () {
       : false;
 
   const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
-    Effect.map((appUpdateYmlConfig) => Option.isSome(appUpdateYmlConfig) || config.mockUpdates),
+    Effect.map(
+      (appUpdateYmlConfig) =>
+        Option.isSome(appUpdateYmlConfig) || mockUpdates || policy.feedUrl !== undefined,
+    ),
   );
 
   const resolveDisabledReason = Effect.gen(function* () {
     const hasFeedConfig = yield* hasUpdateFeedConfig;
     return Option.fromNullishOr(
       getAutoUpdateDisabledReason({
+        policy,
         isDevelopment: environment.isDevelopment,
         isPackaged: environment.isPackaged,
         platform: environment.platform,
@@ -448,6 +486,18 @@ export const make = Effect.gen(function* () {
       }),
     );
   });
+
+  // Without nightly, an install on that channel stays put until its user picks stable: moving it
+  // silently would be a downgrade nobody asked for, and checking nightly would break the policy.
+  const channelBlockedReason = (channel: DesktopUpdateChannel): Option.Option<string> =>
+    channel === "nightly" && !policy.allowNightly
+      ? Option.some(
+          `${policy.message ?? "Nightly updates are turned off on this machine."} Switch to the stable channel to keep getting updates.`,
+        )
+      : Option.none();
+
+  const resolveStateDisabledReason = (channel: DesktopUpdateChannel) =>
+    resolveDisabledReason.pipe(Effect.map(Option.orElse(() => channelBlockedReason(channel))));
 
   const activeUpdateAction = Ref.get(activeUpdateActionRef);
 
@@ -472,6 +522,23 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // Re-runs admit after each finished action, so a caller waiting on a check decides on its result.
+  const admitAfterCheck = Effect.fn("desktop.updates.admitAfterCheck")(function* (
+    admit: Effect.Effect<"admitted" | "refused" | "wait-for-check">,
+  ) {
+    const actionCompletions = yield* PubSub.subscribe(finishedUpdateActions);
+    let admission = yield* stateMutex.withPermits(1)(admit);
+    while (admission === "wait-for-check") {
+      const finishedAction = yield* PubSub.take(actionCompletions).pipe(
+        Effect.timeoutOption(UPDATE_CHECK_WAIT),
+      );
+      admission = Option.isNone(finishedAction)
+        ? "refused"
+        : yield* stateMutex.withPermits(1)(admit);
+    }
+    return admission;
+  });
+
   const applyAutoUpdaterChannel = Effect.fn("desktop.updates.applyAutoUpdaterChannel")(function* (
     channel: DesktopUpdateChannel,
   ) {
@@ -490,6 +557,17 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  // The flag is shared updater state, so callers flip it only while holding a reservation.
+  const runUpdaterCheck = Effect.fn("desktop.updates.runUpdaterCheck")(function* (
+    allowDowngrade: boolean,
+  ) {
+    const restoreDowngrade = yield* electronUpdater.allowDowngrade;
+    if (allowDowngrade) yield* electronUpdater.setAllowDowngrade(true);
+    return yield* electronUpdater.checkForUpdates.pipe(
+      Effect.ensuring(electronUpdater.setAllowDowngrade(restoreDowngrade).pipe(Effect.ignore)),
+    );
+  });
+
   const checkForUpdates = Effect.fn("desktop.updates.checkForUpdates")(function* (
     reason: string,
     actionReservation: "acquire" | "held" = "acquire",
@@ -500,6 +578,8 @@ export const make = Effect.gen(function* () {
     if (!(yield* Ref.get(updaterConfiguredRef))) return false;
 
     const state = yield* Ref.get(updateStateRef);
+    // A configured updater is disabled only by a channel the managed policy blocks.
+    if (state.status === "disabled") return false;
     if (state.status === "downloading") {
       yield* logUpdaterInfo("skipping update check while update is active", {
         reason,
@@ -511,15 +591,13 @@ export const make = Effect.gen(function* () {
     if (actionReservation === "acquire" && !(yield* tryStartUpdateAction("check"))) return false;
 
     const check = Effect.gen(function* () {
-      const checkedAt = yield* currentIsoTimestamp;
-      yield* setState(reduceDesktopUpdateStateOnCheckStart(state, checkedAt));
+      // An offer stays on screen while re-checking, so finding it again changes nothing.
+      if (!isOffered(state)) {
+        yield* setState(reduceDesktopUpdateStateOnCheckStart(state, yield* currentIsoTimestamp));
+      }
       yield* logUpdaterInfo("checking for updates", { reason });
 
-      // The flag is shared updater state, so it flips only while this check holds the reservation.
-      const restoreDowngrade = yield* electronUpdater.allowDowngrade;
-      if (allowDowngrade) yield* electronUpdater.setAllowDowngrade(true);
-      return yield* electronUpdater.checkForUpdates.pipe(
-        Effect.ensuring(electronUpdater.setAllowDowngrade(restoreDowngrade).pipe(Effect.ignore)),
+      return yield* runUpdaterCheck(allowDowngrade).pipe(
         Effect.as(true),
         Effect.catchTags({
           ElectronUpdaterCheckForUpdatesError: Effect.fn(
@@ -548,17 +626,56 @@ export const make = Effect.gen(function* () {
         );
   });
 
-  const downloadAvailableUpdate = Effect.gen(function* () {
-    const state = yield* Ref.get(updateStateRef);
-    if (!(yield* Ref.get(updaterConfiguredRef)) || state.status !== "available") {
+  // Install refreshes before downloading, and a second check could pick a stale, older release.
+  const downloadAvailableUpdate = Effect.fn("desktop.updates.downloadAvailableUpdate")(function* (
+    refresh: boolean,
+  ) {
+    const admission = yield* Effect.scoped(
+      admitAfterCheck(
+        Effect.gen(function* () {
+          const state = yield* Ref.get(updateStateRef);
+          if (!(yield* Ref.get(updaterConfiguredRef)) || state.status !== "available") {
+            return "refused" as const;
+          }
+          const activeAction = yield* Ref.get(activeUpdateActionRef);
+          if (Option.isSome(activeAction)) {
+            return activeAction.value === "check"
+              ? ("wait-for-check" as const)
+              : ("refused" as const);
+          }
+          return (yield* tryStartUpdateAction("download"))
+            ? ("admitted" as const)
+            : ("refused" as const);
+        }),
+      ),
+    );
+    if (admission === "refused") {
       return { accepted: false, completed: false };
     }
 
-    if (!(yield* tryStartUpdateAction("download"))) {
-      return { accepted: false, completed: false };
-    }
-
+    const offered = yield* Ref.get(updateStateRef);
+    let state = offered;
     return yield* Effect.gen(function* () {
+      if (refresh) {
+        // electron-updater downloads what its last check found, which can be hours old.
+        yield* logUpdaterInfo("checking for updates", { reason: "download" });
+        yield* runUpdaterCheck(
+          offered.channel !== desktopUpdateChannelOf(environment.appVersion),
+        ).pipe(
+          // A failed check keeps electron-updater's earlier result, so the known offer still downloads.
+          Effect.catchTags({
+            ElectronUpdaterCheckForUpdatesError: (error) =>
+              logUpdaterWarning(error.message, {
+                errorTag: error._tag,
+                cause: describeUpdateErrorCause(error.cause),
+              }),
+          }),
+        );
+      }
+      state = yield* Ref.get(updateStateRef);
+      if (state.status !== "available") {
+        return { accepted: true, completed: false };
+      }
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
@@ -570,12 +687,13 @@ export const make = Effect.gen(function* () {
       Effect.catchTags({
         ElectronUpdaterDownloadUpdateError: Effect.fn("desktop.updates.handleDownloadFailure")(
           function* (error) {
+            const cause = describeUpdateErrorCause(error.cause);
             yield* updateState((current) =>
-              reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
+              reduceDesktopUpdateStateOnDownloadFailure(current, `${error.message} ${cause}`),
             );
             yield* logUpdaterError(error.message, {
               errorTag: error._tag,
-              cause: describeUpdateErrorCause(error.cause),
+              cause,
               channel: error.channel,
             });
             return { accepted: true, completed: false };
@@ -606,7 +724,7 @@ export const make = Effect.gen(function* () {
       }),
       Effect.ensuring(finishUpdateAction("download")),
     );
-  }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
+  });
 
   const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
   const updateRestartMarkerPath = environment.path.join(
@@ -621,6 +739,34 @@ export const make = Effect.gen(function* () {
         logUpdaterWarning("Could not write the update restart marker.", { errorTag: error._tag }),
       ),
     );
+
+  const updateInProgressMarkerPath = environment.path.join(
+    updateRestartMarkerDir,
+    DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
+  );
+  const encodeUpdateMarker = Schema.encodeEffect(
+    Schema.fromJsonString(Schema.Struct({ startedAt: Schema.Number, expiresAt: Schema.Number })),
+  );
+  const updateInProgressTempPath = `${updateInProgressMarkerPath}.tmp`;
+  const writeUpdateInProgressMarker = Effect.gen(function* () {
+    const startedAt = DateTime.toEpochMillis(yield* DateTime.now);
+    const contents = yield* encodeUpdateMarker({
+      startedAt,
+      expiresAt: startedAt + DESKTOP_UPDATE_IN_PROGRESS_TTL_MS,
+    });
+    yield* fileSystem.writeFileString(updateInProgressTempPath, contents);
+    yield* fileSystem.rename(updateInProgressTempPath, updateInProgressMarkerPath);
+  }).pipe(
+    Effect.ensuring(
+      fileSystem.remove(updateInProgressTempPath, { force: true }).pipe(Effect.ignore),
+    ),
+    Effect.catch((error) =>
+      logUpdaterWarning("Could not write the update-in-progress marker.", { errorTag: error._tag }),
+    ),
+  );
+  const removeUpdateInProgressMarker = fileSystem
+    .remove(updateInProgressMarkerPath, { force: true })
+    .pipe(Effect.ignore);
 
   // Failed or interrupted installs leave no replacement backend; later quits must release the tunnel.
   const removeUpdateRestartMarker = fileSystem
@@ -659,6 +805,11 @@ export const make = Effect.gen(function* () {
     Ref.get(notAppliedVersionRef).pipe(
       Effect.map((notAppliedVersion) => ({
         ...createBaseUpdateState(channel, disabledReason, environment),
+        // Callers fall back to the channel's reason only when nothing else turns updates off.
+        ...(Option.isSome(disabledReason) &&
+        disabledReason.value === Option.getOrUndefined(channelBlockedReason(channel))
+          ? { channelBlockedByPolicy: true as const }
+          : {}),
         ...Option.match(notAppliedVersion, {
           onNone: () => ({}),
           onSome: (version) => ({ notAppliedVersion: version }),
@@ -672,6 +823,7 @@ export const make = Effect.gen(function* () {
       Ref.set(desktopState.quitting, false),
       Ref.set(installRunningBackendsRef, []),
       removeUpdateRestartMarker,
+      removeUpdateInProgressMarker,
       removeInstallRecord,
     ],
     { discard: true },
@@ -689,6 +841,7 @@ export const make = Effect.gen(function* () {
 
     yield* Ref.set(desktopState.quitting, false);
     yield* removeUpdateRestartMarker;
+    yield* removeUpdateInProgressMarker;
     yield* removeInstallRecord;
     yield* Effect.gen(function* () {
       const runningInstances = yield* Ref.getAndSet(installRunningBackendsRef, []);
@@ -714,47 +867,35 @@ export const make = Effect.gen(function* () {
   const installDownloadedUpdate = (expectedVersion?: string) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const actionCompletions = yield* PubSub.subscribe(finishedUpdateActions);
-        let admission: "admitted" | "refused" | "wait-for-check" = "wait-for-check";
-        while (admission === "wait-for-check") {
-          admission = yield* stateMutex.withPermits(1)(
-            Effect.gen(function* () {
-              const state = yield* Ref.get(updateStateRef);
-              const activeAction = yield* Ref.get(activeUpdateActionRef);
-              const hasExpectedDownload =
-                state.downloadedVersion !== null &&
-                (expectedVersion === undefined || state.downloadedVersion === expectedVersion);
-              if (
-                (yield* Ref.get(desktopState.quitting)) ||
-                !(yield* Ref.get(updaterConfiguredRef)) ||
-                !hasExpectedDownload
-              ) {
-                return "refused" as const;
-              }
-              if (Option.isSome(activeAction)) {
-                return activeAction.value === "check" && expectedVersion !== undefined
-                  ? ("wait-for-check" as const)
-                  : ("refused" as const);
-              }
-              const hasInstallableDownload =
-                state.status === "downloaded" ||
-                (state.status === "error" &&
-                  (state.errorContext === null || state.errorContext === "install"));
-              if (!hasInstallableDownload) return "refused" as const;
-              return (yield* tryStartUpdateAction("install"))
-                ? ("admitted" as const)
-                : ("refused" as const);
-            }),
-          );
-          if (admission === "wait-for-check") {
-            const finishedAction = yield* PubSub.take(actionCompletions).pipe(
-              Effect.timeoutOption(PREPARED_INSTALL_CHECK_WAIT),
-            );
-            if (Option.isNone(finishedAction)) {
-              admission = "refused";
+        const admission = yield* admitAfterCheck(
+          Effect.gen(function* () {
+            const state = yield* Ref.get(updateStateRef);
+            const activeAction = yield* Ref.get(activeUpdateActionRef);
+            const hasExpectedDownload =
+              state.downloadedVersion !== null &&
+              (expectedVersion === undefined || state.downloadedVersion === expectedVersion);
+            if (
+              (yield* Ref.get(desktopState.quitting)) ||
+              !(yield* Ref.get(updaterConfiguredRef)) ||
+              !hasExpectedDownload
+            ) {
+              return "refused" as const;
             }
-          }
-        }
+            if (Option.isSome(activeAction)) {
+              return activeAction.value === "check"
+                ? ("wait-for-check" as const)
+                : ("refused" as const);
+            }
+            const hasInstallableDownload =
+              state.status === "downloaded" ||
+              (state.status === "error" &&
+                (state.errorContext === null || state.errorContext === "install"));
+            if (!hasInstallableDownload) return "refused" as const;
+            return (yield* tryStartUpdateAction("install"))
+              ? ("admitted" as const)
+              : ("refused" as const);
+          }),
+        );
         if (admission === "refused") {
           return { accepted: false, completed: false, failed: false };
         }
@@ -764,18 +905,26 @@ export const make = Effect.gen(function* () {
 
         return yield* Effect.gen(function* () {
           yield* writeUpdateRestartMarker;
+          yield* writeUpdateInProgressMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
-          // Stop pooled backends before quitAndInstall can outrun their scope finalizers.
+          // Stop pooled backends and SSH tunnels before quitAndInstall can outrun their scope finalizers.
           const instances = yield* pool.list;
           // stop clears desiredRunning, so retain the recovery set beforehand.
           const runningInstances = yield* Effect.filter(instances, (instance) =>
             instance.snapshot.pipe(Effect.map((snapshot) => snapshot.desiredRunning)),
           );
           yield* Ref.set(installRunningBackendsRef, runningInstances);
-          yield* Effect.forEach(
-            instances,
-            (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+          yield* Effect.all(
+            [
+              Effect.forEach(
+                instances,
+                (instance) =>
+                  instance.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT }),
+                { concurrency: "unbounded" },
+              ),
+              sshEnvironment.closeAllTunnels,
+            ],
             { concurrency: "unbounded" },
           );
           yield* electronUpdater.quitAndInstall({
@@ -830,7 +979,42 @@ export const make = Effect.gen(function* () {
         state: yield* Ref.get(updateStateRef),
       };
     }
-    const result = yield* installDownloadedUpdate(expectedVersion);
+    let installVersion = expectedVersion;
+    // A download can be hours old: a release published since replaces it before restarting.
+    const retained = yield* Ref.get(updateStateRef);
+    if (
+      retained.downloadedVersion !== null &&
+      (expectedVersion === undefined || retained.downloadedVersion === expectedVersion) &&
+      (yield* checkForUpdates(
+        "install",
+        "acquire",
+        retained.channel !== desktopUpdateChannelOf(environment.appVersion),
+      )) &&
+      (yield* Ref.get(updateStateRef)).status === "available"
+    ) {
+      const refreshed = yield* Ref.get(updateStateRef);
+      // electron-updater compares a stale feed with the running build, not the retained download.
+      if (
+        refreshed.availableVersion === null ||
+        compareSemverVersions(refreshed.availableVersion, retained.downloadedVersion) <= 0
+      ) {
+        yield* setState(retained);
+      } else {
+        const download = yield* downloadAvailableUpdate(false);
+        if (!download.completed) {
+          return {
+            accepted: download.accepted,
+            completed: false,
+            failed: download.accepted,
+            state: yield* Ref.get(updateStateRef),
+          };
+        }
+        if (expectedVersion !== undefined) {
+          installVersion = (yield* Ref.get(updateStateRef)).downloadedVersion ?? expectedVersion;
+        }
+      }
+    }
+    const result = yield* installDownloadedUpdate(installVersion);
     return {
       accepted: result.accepted,
       completed: result.completed,
@@ -890,10 +1074,11 @@ export const make = Effect.gen(function* () {
             yield* Ref.set(lastLoggedDownloadMilestoneRef, -1);
             return;
           }
+          if (isOffered(state) && state.availableVersion === info.version) return;
 
           const checkedAt = yield* currentIsoTimestamp;
           const { releaseNotes, omittedReleaseCount } = normalizeDesktopUpdateReleaseNotes(
-            info.releaseNotes,
+            releaseNotesOfOfferedVersion(info),
             info.version,
             state.channel,
             info.releaseDate,
@@ -1064,9 +1249,13 @@ export const make = Effect.gen(function* () {
       }),
     ),
     emitState,
-    disabledReason: resolveDisabledReason,
+    disabledReason: Ref.get(updateStateRef).pipe(
+      Effect.flatMap((state) => resolveStateDisabledReason(state.channel)),
+    ),
     configure: Effect.gen(function* () {
       const context = yield* Effect.context<never>();
+      // Runs synchronously up to the first await, so a check's outcome is applied before the
+      // check's promise resolves and wakes the actions waiting on it.
       const runEffect = (effect: Effect.Effect<void>) => {
         void Effect.runPromiseWith(context)(effect);
       };
@@ -1083,16 +1272,29 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      if (config.mockUpdates) {
+      if (mockUpdates) {
         yield* electronUpdater.setFeedURL({
           provider: "generic",
           url: `http://localhost:${config.mockUpdateServerPort}`,
+        } as ElectronUpdater.ElectronUpdaterFeedUrl);
+      } else if (policy.feedUrl !== undefined) {
+        // The administrator's mirror replaces the GitHub feed baked into app-update.yml.
+        yield* electronUpdater.setFeedURL({
+          provider: "generic",
+          url: policy.feedUrl,
         } as ElectronUpdater.ElectronUpdaterFeedUrl);
       }
 
       const settings = yield* desktopSettings.get;
       const disabledReason = yield* resolveDisabledReason;
-      yield* setState(yield* baseUpdateState(settings.updateChannel, disabledReason));
+      // A blocked nightly channel still lets the user switch back to stable, so it stays updatable.
+      yield* Ref.set(desktopState.canInstallUpdates, Option.isNone(disabledReason));
+      yield* setState(
+        yield* baseUpdateState(
+          settings.updateChannel,
+          Option.orElse(disabledReason, () => channelBlockedReason(settings.updateChannel)),
+        ),
+      );
       if (Option.isSome(disabledReason)) {
         return;
       }
@@ -1141,6 +1343,12 @@ export const make = Effect.gen(function* () {
       options?: { readonly minimumVersion?: string | undefined },
     ) {
       yield* Effect.annotateCurrentSpan({ channel: nextChannel });
+      if (Option.isSome(channelBlockedReason(nextChannel))) {
+        return yield* new DesktopUpdateChannelManagedError({
+          channel: nextChannel,
+          policyMessage: policy.message ?? "Your administrator manages T3 Code updates.",
+        });
+      }
       // A background check holds the updater only briefly, so wait it out instead of refusing.
       const activeAction = yield* tryStartChannelChange.pipe(
         Effect.repeat({
@@ -1157,7 +1365,10 @@ export const make = Effect.gen(function* () {
       }
 
       return yield* Effect.gen(function* () {
-        yield* Ref.set(releaseFloorRef, Option.fromNullishOr(options?.minimumVersion));
+        const previousFloor = yield* Ref.getAndSet(
+          releaseFloorRef,
+          Option.fromNullishOr(options?.minimumVersion),
+        );
         const state = yield* Ref.get(updateStateRef);
         const retained = state.downloadedVersion ?? state.availableVersion;
         // A build from another track re-checks, so retrying a track switch finds an older release.
@@ -1170,13 +1381,12 @@ export const make = Effect.gen(function* () {
           return state;
         }
 
-        yield* desktopSettings
-          .setUpdateChannel(nextChannel)
-          .pipe(
-            Effect.mapError(
-              (cause) => new DesktopUpdateChannelPersistenceError({ channel: nextChannel, cause }),
-            ),
-          );
+        yield* desktopSettings.setUpdateChannel(nextChannel).pipe(
+          Effect.onError(() => Ref.set(releaseFloorRef, previousFloor)),
+          Effect.mapError(
+            (cause) => new DesktopUpdateChannelPersistenceError({ channel: nextChannel, cause }),
+          ),
+        );
 
         const disabledReason = yield* resolveDisabledReason;
         yield* setState(yield* baseUpdateState(nextChannel, disabledReason));
@@ -1213,7 +1423,7 @@ export const make = Effect.gen(function* () {
       };
     }),
     download: Effect.gen(function* () {
-      const result = yield* downloadAvailableUpdate;
+      const result = yield* downloadAvailableUpdate(true);
       return {
         accepted: result.accepted,
         completed: result.completed,

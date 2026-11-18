@@ -2,6 +2,11 @@
   "name": "railway-website-vinext",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/railway-website-vinext"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -10,22 +15,24 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@alchemy.run/railway": "workspace:*",
     "alchemy": "workspace:*",
     "effect": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-server-dom-webpack": "catalog:",
-    "vinext": "^1.0.0-beta.10"
+    "vinext": "catalog:"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@distilled.cloud/railway": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@tailwindcss/vite": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "@vitejs/plugin-react": "catalog:",
-    "@vitejs/plugin-rsc": "^0.5.34",
+    "@vitejs/plugin-rsc": "catalog:",
     "alchemy": "workspace:*",
     "effect": "catalog:",
     "tailwindcss": "catalog:",
@@ -34,10 +41,5 @@
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/railway-website-vinext"
   }
 }
