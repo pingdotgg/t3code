@@ -22,6 +22,10 @@ const boundedOpaqueValue = (value: string, maximumLength: number): string | unde
 const choiceId = (value: string): string | undefined =>
   value === "" ? ACP_EMPTY_OPTION_VALUE : boundedOpaqueValue(value, MAX_TEXT_LENGTH);
 
+/** Mistral Vibe 3.1 sends its reasoning level under `thinking`, a category ACP reserves but never defined. */
+export const isAcpThoughtLevelOption = (option: EffectAcpSchema.SessionConfigOption): boolean =>
+  option.category === "thought_level" || option.category === "thinking";
+
 export function flattenSelectChoices(
   options: EffectAcpSchema.SessionConfigSelectOptions,
 ): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
@@ -91,7 +95,8 @@ export function acpProviderOptionDescriptors(input: {
       continue;
     }
     if (option.category === "mode") hasModeCategory = true;
-    if (option.category === "thought_level") {
+    const isThoughtLevel = isAcpThoughtLevelOption(option);
+    if (isThoughtLevel) {
       mirroredModeChoiceSets.push(new Set(choices.map((choice) => choice.id)));
     }
     const currentValue = choiceId(option.currentValue);
@@ -102,7 +107,7 @@ export function acpProviderOptionDescriptors(input: {
       ...(currentValue && choices.some((choice) => choice.id === currentValue)
         ? { currentValue }
         : {}),
-      ...(option.category === "thought_level" ? { role: "reasoning" as const } : {}),
+      ...(isThoughtLevel ? { role: "reasoning" as const } : {}),
     });
     if (descriptors.length === MAX_OPTION_DESCRIPTORS) return descriptors;
   }
