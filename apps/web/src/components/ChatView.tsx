@@ -2765,7 +2765,7 @@ export default function ChatView(props: ChatViewProps) {
         messageAreaRef.current?.contains(document.activeElement) === true),
     terminalFocus: getTerminalFocusOwner() !== null,
     terminalOpen: Boolean(terminalUiState.terminalOpen),
-    previewFocus: isPreviewFocused(),
+    previewFocus: !embedded && isPreviewFocused(),
     previewOpen: previewPanelOpen,
     rightPanelOpen,
     editableFocus: isEditableFocused(eventTarget),
