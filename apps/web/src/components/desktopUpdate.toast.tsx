@@ -37,10 +37,7 @@ function ReleaseNotesLink({
       type="button"
     >
       <T>Read more</T>
-      <ArrowRightIcon
-        aria-hidden
-        className="ml-1 inline size-3 -rotate-45 align-[-0.125em]"
-      />
+      <ArrowRightIcon aria-hidden className="ml-1 inline size-3 -rotate-45 align-[-0.125em]" />
     </button>
   );
 }
