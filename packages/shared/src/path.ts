@@ -63,9 +63,12 @@ export function normalizeProjectPathForComparison(value: string): string {
 // Windows refuses these as file names, with or without an extension.
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 
-/** Folds common Latin diacritics and ligatures to ASCII; other scripts pass through. */
+/** Folds accented Latin letters to ASCII ("tìm" -> "tim"); other scripts pass through. */
 export function foldLatinDiacritics(text: string): string {
   return text
+    .replace(/Ŀ/g, "L")
+    .replace(/ŀ/g, "l")
+    .replace(/ŉ/g, "'n")
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/đ/g, "d") // These letters have no Unicode decomposition.
@@ -79,7 +82,19 @@ export function foldLatinDiacritics(text: string): string {
     .replace(/æ/g, "ae")
     .replace(/Æ/g, "AE")
     .replace(/œ/g, "oe")
-    .replace(/Œ/g, "OE");
+    .replace(/Œ/g, "OE")
+    .replace(/Ð/g, "D")
+    .replace(/Þ/g, "TH")
+    .replace(/ð/g, "d")
+    .replace(/þ/g, "th")
+    .replace(/Ħ/g, "H")
+    .replace(/ħ/g, "h")
+    .replace(/ı/g, "i")
+    .replace(/ĸ/g, "q")
+    .replace(/Ŋ/g, "N")
+    .replace(/ŋ/g, "n")
+    .replace(/Ŧ/g, "T")
+    .replace(/ŧ/g, "t");
 }
 
 export function newProjectFolderName(name: string): string {
