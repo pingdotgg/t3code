@@ -737,37 +737,59 @@ it.effect("a launch that omits its workspace follows the new-threads-in-a-worktr
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("a defaulted worktree launch creates nothing when Git cannot read HEAD", () =>
+it.effect("a defaulted worktree launch stays shared only when Git says HEAD has no commit", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-head-fails-" });
-    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
-    const { projectId, dependencies } = clientLaunchHarness({
-      runtimeModeCeiling: "auto",
-      launched,
-      workspaceRoot: repo,
-      defaultThreadEnvMode: "worktree",
-    });
-    const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
-    for (const args of [
-      ["init", "-b", "main"],
-      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
-    ]) {
-      yield* git.execute({ operation: "test.setupRepo", cwd: repo, args });
-    }
-    // The repository has a commit, but Git refuses to run in it.
-    yield* fileSystem.writeFileString(`${repo}/.git/config`, "[core\n");
-    const toolkit = yield* ProjectToolkit.pipe(
-      Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
-      ),
-    );
-    const refused = (yield* toolkit
-      .handle("t3_thread_launch", { title: "Fix", projectId })
-      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies))).at(-1)?.result;
+    const commitArgs = ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty"];
+    for (const [checkout, expected] of [
+      ["not a repository", "root"],
+      ["no commit yet", "root"],
+      ["git refuses the repository", "refused"],
+    ] as const) {
+      const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-head-" });
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+        workspaceRoot: repo,
+        defaultThreadEnvMode: "worktree",
+      });
+      const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
+      if (checkout !== "not a repository")
+        yield* git.execute({
+          operation: "test.setupRepo",
+          cwd: repo,
+          args: ["init", "-b", "main"],
+        });
+      if (checkout === "git refuses the repository") {
+        yield* git.execute({
+          operation: "test.setupRepo",
+          cwd: repo,
+          args: [...commitArgs, "-m", "init"],
+        });
+        yield* fileSystem.writeFileString(`${repo}/.git/config`, "[core\n");
+      }
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      const result = (yield* toolkit
+        .handle("t3_thread_launch", { title: "Fix", projectId })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies))).at(-1)?.result;
 
-    expect(refused).toMatchObject({ code: "orchestration_error" });
-    expect(launched).toHaveLength(0);
+      if (expected === "refused") {
+        expect(result, checkout).toMatchObject({ code: "orchestration_error" });
+        expect(launched, checkout).toHaveLength(0);
+      } else {
+        expect(
+          launched.map((launch) => launch.workspaceStrategy.type),
+          checkout,
+        ).toEqual([expected]);
+      }
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

@@ -23,6 +23,7 @@ import { mutateProjectWithClone } from "../../../project/ProjectMutation.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import { isNonRepositoryGitStderr } from "../../../vcs/GitVcsDriverCore.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
@@ -123,11 +124,24 @@ const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(functio
   GitVcsDriver.GitVcsDriver
 > {
   const git = yield* GitVcsDriver.GitVcsDriver;
-  const hasCommit = yield* git.resolveCommit({ cwd: workspaceRoot, revision: "HEAD" }).pipe(
-    Effect.as(true),
-    Effect.orElseSucceed(() => false),
-  );
-  if (!hasCommit) return undefined;
+  const unreadable = new OrchestratorMcpFailure({
+    code: "orchestration_error",
+    message:
+      "Could not read the project's current branch for the new worktree. No thread was created. Retry, or pass workspaceStrategy.",
+  });
+  const commit = yield* git
+    .execute({
+      operation: "mcp.defaultWorktreeStrategy",
+      cwd: workspaceRoot,
+      args: ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+    })
+    .pipe(Effect.orElseSucceed(() => null));
+  // Only Git saying "no commit yet" (exit 1) or "not a repository" keeps the launch shared.
+  if (commit?.exitCode === 1 || (commit !== null && isNonRepositoryGitStderr(commit.stderr)))
+    return undefined;
+  if (commit?.exitCode !== 0) return yield* unreadable;
   // symbolic-ref skips the index, so a held index lock cannot drop the launch into the shared checkout.
   const head = yield* git
     .execute({
@@ -140,12 +154,7 @@ const defaultWorktreeStrategy = Effect.fn("mcp.defaultWorktreeStrategy")(functio
     .pipe(Effect.orElseSucceed(() => null));
   if (head?.exitCode === 1) return undefined;
   const branch = head?.exitCode === 0 ? head.stdout.trim() : "";
-  if (branch.length === 0)
-    return yield* new OrchestratorMcpFailure({
-      code: "orchestration_error",
-      message:
-        "Could not read the project's current branch for the new worktree. No thread was created. Retry, or pass workspaceStrategy.",
-    });
+  if (branch.length === 0) return yield* unreadable;
   return { type: "worktree" as const, baseRef: branch };
 });
 
