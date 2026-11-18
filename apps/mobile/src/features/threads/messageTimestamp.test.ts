@@ -61,4 +61,11 @@ describe("createMessageTimeFormatter", () => {
     const format12 = createMessageTimeFormatter(false, "en-GB");
     expect(format12(new Date(2026, 0, 1, 15, 7).toISOString(), now)).toMatch(/^3:07\spm$/i);
   });
+
+  it("writes earlier days in the given locale's date order", () => {
+    const format = createMessageTimeFormatter(true, "de");
+    const june = new Date(2026, 5, 1, 20, 0).getTime();
+    expect(format(new Date(2026, 2, 5, 15, 7).toISOString(), june)).toBe("5.3. 15:07");
+    expect(format(new Date(2025, 2, 5, 15, 7).toISOString(), june)).toBe("5.3.2025 15:07");
+  });
 });
