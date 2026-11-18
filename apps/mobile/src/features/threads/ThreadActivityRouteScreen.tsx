@@ -1,4 +1,4 @@
-import { T, useGT, useMessages } from "gt-react-native";
+import { T, Var, useGT, useMessages } from "gt-react-native";
 import {
   deriveActivitySummary,
   type ActivitySummary,
@@ -213,7 +213,10 @@ function StatusBanner(props: { readonly summary: ActivitySummary }) {
             <>
               {details.length > 0 ? " · " : null}
               <T>
-                Updated <RelativeTime timestamp={summary.lastActivityAt} />
+                Updated{" "}
+                <Var>
+                  <RelativeTime timestamp={summary.lastActivityAt} />
+                </Var>
               </T>
             </>
           ) : null}

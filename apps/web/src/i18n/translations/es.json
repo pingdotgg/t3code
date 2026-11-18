@@ -3130,12 +3130,13 @@
   "e29c5755b2c5f6f8": "Archivos afectados",
   "cdd6e29a0e362f2b": "Fuera del espacio de trabajo",
   "4dde60fb8197f00f": "Aún no hay nada que mostrar",
-  "079a7ff36da61ab1": [
-    "Actualizado ",
+  "f48a686cd54c5897": [
+    "Actualizado",
+    " ",
     {
       "i": 1,
-      "k": "_gt_time_1",
-      "v": "rt"
+      "k": "_gt_value_1",
+      "v": "v"
     }
   ],
   "b7419ed1c775db7e": "El proceso del proveedor ya no existe. Interrumpe o reinicia la ejecución para responder.",
@@ -8464,6 +8465,7 @@
   "329fd01696d446b8": "Panel derecho: alternar maximizado",
   "97c7de6aaab317a2": "Panel derecho: cerrar",
   "97b8f50a68ff3e02": "Pull request: copiar número",
+  "7e2491fea33ea0f8": "Actividad: Mostrar u ocultar",
   "a608714c5062154d": "Diff: alternar",
   "c63b12ef6fc2d448": "Vista previa: alternar",
   "6ca1f18ba380f986": "Vista previa: actualizar",
@@ -9728,6 +9730,7 @@
   "95be9d8739887c7f": "Estado predeterminado de los archivos del diff",
   "04fb467bba7698e2": "Cambios de espacios en blanco en el diff",
   "71d047b3f6ea9497": "Abrir los paneles de pull requests y cambios de forma proactiva",
+  "32322954dae9bccc": "Abrir el panel de actividad cuando se inicie el agente",
   "4b46043fd3700c17": "Mostrar skills en el menú de barra",
   "2407d5d61e7f7206": "Cuadro de mensaje con texto enriquecido",
   "64b8fd2c284c3137": "Atajo de envío",
@@ -9814,7 +9817,6 @@
   "16bdc70b858c223f": "Restablecer los paneles proactivos al valor predeterminado",
   "24cf2ab2b827b8c8": "Muestra qué está haciendo el agente, qué ha terminado y qué archivos ha modificado en cuanto empieza un turno. No se aplica a ventanas estrechas.",
   "caca3ddeb489df31": "Restablecer la apertura automática del panel de actividad al valor predeterminado",
-  "32322954dae9bccc": "Abrir el panel de actividad cuando se inicie el agente",
   "c5424f09d77138ff": "Cuándo compactar un hilo inactivo de Claude con más de 200 000 tokens: al volver, justo antes de que caduque su caché de prompts o nunca. Cada proveedor de Claude puede anularlo.",
   "3e99c5c14f4939c8": "Restablecer la compactación de hilos inactivos al valor predeterminado",
   "d52b3d6bf9f2a013": "Mixto",

@@ -3130,12 +3130,13 @@
   "e29c5755b2c5f6f8": "Berörda filer",
   "cdd6e29a0e362f2b": "Utanför arbetsytan",
   "4dde60fb8197f00f": "Inget att visa ännu",
-  "079a7ff36da61ab1": [
-    "Uppdaterat ",
+  "f48a686cd54c5897": [
+    "Uppdaterad",
+    " ",
     {
       "i": 1,
-      "k": "_gt_time_1",
-      "v": "rt"
+      "k": "_gt_value_1",
+      "v": "v"
     }
   ],
   "b7419ed1c775db7e": "Leverantörsprocessen finns inte längre. Avbryt eller starta om körningen för att svara.",
@@ -8472,6 +8473,7 @@
   "329fd01696d446b8": "Högerpanel: växla maximerad",
   "97c7de6aaab317a2": "Högerpanel: stäng",
   "97b8f50a68ff3e02": "Pull request: kopiera nummer",
+  "7e2491fea33ea0f8": "Aktivitet: Visa/dölj",
   "a608714c5062154d": "Diff: växla",
   "c63b12ef6fc2d448": "Förhandsvisning: växla",
   "6ca1f18ba380f986": "Förhandsvisning: uppdatera",
@@ -9738,6 +9740,7 @@
   "95be9d8739887c7f": "Standardläge för filer i diffar",
   "04fb467bba7698e2": "Blankstegsändringar i diffar",
   "71d047b3f6ea9497": "Öppna panelerna för pull requests och ändringar proaktivt",
+  "32322954dae9bccc": "Öppna aktivitetspanelen när agenten startar",
   "4b46043fd3700c17": "Visa färdigheter i snedstrecksmenyn",
   "2407d5d61e7f7206": "Inmatningsfält med formaterad text",
   "64b8fd2c284c3137": "Kortkommando för att skicka",
@@ -9824,7 +9827,6 @@
   "16bdc70b858c223f": "Återställ proaktiva paneler till standard",
   "24cf2ab2b827b8c8": "Visa vad agenten gör, vad den har slutfört och vilka filer den har ändrat så snart en tur startar. Används inte i smala fönster.",
   "caca3ddeb489df31": "Återställ automatisk öppning av aktivitetspanelen till standard",
-  "32322954dae9bccc": "Öppna aktivitetspanelen när agenten startar",
   "c5424f09d77138ff": "När en inaktiv Claude-tråd på över 200 000 token ska komprimeras: när du kommer tillbaka, precis innan dess promptcache går ut, eller aldrig. Varje Claude-leverantör kan åsidosätta detta.",
   "3e99c5c14f4939c8": "Återställ komprimering av inaktiva trådar till standard",
   "d52b3d6bf9f2a013": "Blandat",

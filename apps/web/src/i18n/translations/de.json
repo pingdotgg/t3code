@@ -3131,12 +3131,13 @@
   "e29c5755b2c5f6f8": "Betroffene Dateien",
   "cdd6e29a0e362f2b": "Außerhalb des Arbeitsbereichs",
   "4dde60fb8197f00f": "Noch nichts anzuzeigen",
-  "079a7ff36da61ab1": [
-    "Aktualisiert ",
+  "f48a686cd54c5897": [
+    "Aktualisiert",
+    " ",
     {
       "i": 1,
-      "k": "_gt_time_1",
-      "v": "rt"
+      "k": "_gt_value_1",
+      "v": "v"
     }
   ],
   "b7419ed1c775db7e": "Der Anbieterprozess ist beendet. Unterbrich den Lauf oder starte ihn neu, um zu antworten.",
@@ -8466,6 +8467,7 @@
   "329fd01696d446b8": "Rechter Bereich: Maximieren umschalten",
   "97c7de6aaab317a2": "Rechter Bereich: Schließen",
   "97b8f50a68ff3e02": "Pull Request: Nummer kopieren",
+  "7e2491fea33ea0f8": "Aktivität: Ein-/ausblenden",
   "a608714c5062154d": "Diff: Umschalten",
   "c63b12ef6fc2d448": "Vorschau: Umschalten",
   "6ca1f18ba380f986": "Vorschau: Aktualisieren",
@@ -9731,6 +9733,7 @@
   "95be9d8739887c7f": "Standardzustand von Diff-Dateien",
   "04fb467bba7698e2": "Leerzeichenänderungen im Diff",
   "71d047b3f6ea9497": "Pull-Request- und Änderungs-Panels proaktiv öffnen",
+  "32322954dae9bccc": "Aktivitätsbereich öffnen, wenn der Agent startet",
   "4b46043fd3700c17": "Skills im Slash-Menü anzeigen",
   "2407d5d61e7f7206": "Rich-Text-Eingabefeld",
   "64b8fd2c284c3137": "Tastenkürzel zum Senden",
@@ -9817,7 +9820,6 @@
   "16bdc70b858c223f": "Proaktive Panels auf Standard zurücksetzen",
   "24cf2ab2b827b8c8": "Zeige ab Beginn eines Durchgangs, woran der Agent arbeitet, was er erledigt hat und welche Dateien er geändert hat. Gilt nicht für schmale Fenster.",
   "caca3ddeb489df31": "Automatisches Öffnen des Aktivitätsbereichs auf Standard zurücksetzen",
-  "32322954dae9bccc": "Aktivitätsbereich öffnen, wenn der Agent startet",
   "c5424f09d77138ff": "Wann ein inaktiver Claude-Thread über 200.000 Tokens komprimiert wird: nach deiner Rückkehr, kurz bevor sein Prompt-Cache abläuft, oder nie. Jeder Claude-Anbieter kann das überschreiben.",
   "3e99c5c14f4939c8": "Inaktive Threads komprimieren auf Standard zurücksetzen",
   "d52b3d6bf9f2a013": "Gemischt",

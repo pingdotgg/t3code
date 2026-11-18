@@ -3130,12 +3130,13 @@
   "e29c5755b2c5f6f8": "Files touched",
   "cdd6e29a0e362f2b": "Outside workspace",
   "4dde60fb8197f00f": "Nothing to show yet",
-  "079a7ff36da61ab1": [
-    "Updated ",
+  "f48a686cd54c5897": [
+    "Updated",
+    " ",
     {
       "i": 1,
-      "k": "_gt_time_1",
-      "v": "rt"
+      "k": "_gt_value_1",
+      "v": "v"
     }
   ],
   "b7419ed1c775db7e": "Provider process is gone. Interrupt or restart the run to respond.",
@@ -8474,6 +8475,7 @@
   "329fd01696d446b8": "Right Panel: Toggle Maximized",
   "97c7de6aaab317a2": "Right Panel: Close",
   "97b8f50a68ff3e02": "Pull Request: Copy Number",
+  "7e2491fea33ea0f8": "Activity: Toggle",
   "a608714c5062154d": "Diff: Toggle",
   "c63b12ef6fc2d448": "Preview: Toggle",
   "6ca1f18ba380f986": "Preview: Refresh",
@@ -9740,6 +9742,7 @@
   "95be9d8739887c7f": "Default diff file state",
   "04fb467bba7698e2": "Diff whitespace changes",
   "71d047b3f6ea9497": "Open pull requests and changes panels proactively",
+  "32322954dae9bccc": "Open the Activity panel when the agent starts",
   "4b46043fd3700c17": "Show skills in slash menu",
   "2407d5d61e7f7206": "Rich text composer",
   "64b8fd2c284c3137": "Send shortcut",
@@ -9826,7 +9829,6 @@
   "16bdc70b858c223f": "Reset proactive panels to default",
   "24cf2ab2b827b8c8": "Show what the agent is doing, what it finished, and which files it changed as soon as a turn starts. Not used on narrow windows.",
   "caca3ddeb489df31": "Reset activity panel auto-open to default",
-  "32322954dae9bccc": "Open the Activity panel when the agent starts",
   "c5424f09d77138ff": "When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this.",
   "3e99c5c14f4939c8": "Reset compact idle threads to default",
   "d52b3d6bf9f2a013": "Mixed",

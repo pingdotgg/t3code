@@ -3130,12 +3130,13 @@
   "e29c5755b2c5f6f8": "Arquivos alterados",
   "cdd6e29a0e362f2b": "Fora do workspace",
   "4dde60fb8197f00f": "Ainda não há nada para mostrar",
-  "079a7ff36da61ab1": [
-    "Atualizado ",
+  "f48a686cd54c5897": [
+    "Atualizado",
+    " ",
     {
       "i": 1,
-      "k": "_gt_time_1",
-      "v": "rt"
+      "k": "_gt_value_1",
+      "v": "v"
     }
   ],
   "b7419ed1c775db7e": "O processo do provedor não existe mais. Interrompa ou reinicie a execução para responder.",
@@ -8464,6 +8465,7 @@
   "329fd01696d446b8": "Painel direito: alternar maximizado",
   "97c7de6aaab317a2": "Painel direito: fechar",
   "97b8f50a68ff3e02": "Pull request: copiar número",
+  "7e2491fea33ea0f8": "Atividade: Alternar",
   "a608714c5062154d": "Diff: alternar",
   "c63b12ef6fc2d448": "Pré-visualização: alternar",
   "6ca1f18ba380f986": "Pré-visualização: atualizar",
@@ -9729,6 +9731,7 @@
   "95be9d8739887c7f": "Estado padrão dos arquivos no diff",
   "04fb467bba7698e2": "Alterações de espaço em branco no diff",
   "71d047b3f6ea9497": "Abrir os painéis de pull requests e alterações proativamente",
+  "32322954dae9bccc": "Abrir o painel de atividade quando o agente começar",
   "4b46043fd3700c17": "Mostrar skills no menu de barra",
   "2407d5d61e7f7206": "Editor de texto formatado",
   "64b8fd2c284c3137": "Atalho de envio",
@@ -9815,7 +9818,6 @@
   "16bdc70b858c223f": "Redefinir os painéis proativos para o padrão",
   "24cf2ab2b827b8c8": "Mostrar o que o agente está fazendo, o que concluiu e quais arquivos alterou assim que um turno começar. Não se aplica a janelas estreitas.",
   "caca3ddeb489df31": "Redefinir a abertura automática do painel de atividade para o padrão",
-  "32322954dae9bccc": "Abrir o painel de atividade quando o agente começar",
   "c5424f09d77138ff": "Quando compactar uma thread do Claude ociosa com mais de 200.000 tokens: depois que você voltar, logo antes de o cache do prompt expirar ou nunca. Cada provedor Claude pode substituir isso.",
   "3e99c5c14f4939c8": "Redefinir a compactação de threads ociosas para o padrão",
   "d52b3d6bf9f2a013": "Misto",

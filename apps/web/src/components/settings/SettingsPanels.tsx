@@ -568,7 +568,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? [gt("Open pull requests and changes panels proactively")]
       : []),
     ...(settings.activityPanelAutoOpen !== DEFAULT_UNIFIED_SETTINGS.activityPanelAutoOpen
-      ? ["Open the Activity panel when the agent starts"]
+      ? [gt("Open the Activity panel when the agent starts")]
       : []),
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? [gt("Show skills in slash menu")]

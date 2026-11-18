@@ -1,4 +1,4 @@
-import { T, useGT, useMessages } from "gt-react";
+import { T, Var, useGT, useMessages } from "gt-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import {
   deriveProviderSubagentStatus,
@@ -172,7 +172,10 @@ function StatusBanner(props: { summary: ActivitySummary; approvals: ActivityPane
         {summary.lastActivityAt ? (
           <span className="text-xs text-foreground/70">
             <T>
-              Updated <RelativeTime timestamp={summary.lastActivityAt} />
+              Updated{" "}
+              <Var>
+                <RelativeTime timestamp={summary.lastActivityAt} />
+              </Var>
             </T>
           </span>
         ) : null}

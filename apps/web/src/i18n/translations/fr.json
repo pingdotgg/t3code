@@ -3130,12 +3130,13 @@
   "e29c5755b2c5f6f8": "Fichiers concernés",
   "cdd6e29a0e362f2b": "Hors de l’espace de travail",
   "4dde60fb8197f00f": "Rien à afficher pour le moment",
-  "079a7ff36da61ab1": [
-    "Mis à jour ",
+  "f48a686cd54c5897": [
+    "Mis à jour",
+    " ",
     {
       "i": 1,
-      "k": "_gt_time_1",
-      "v": "rt"
+      "k": "_gt_value_1",
+      "v": "v"
     }
   ],
   "b7419ed1c775db7e": "Le processus du fournisseur n’existe plus. Interrompez ou redémarrez l’exécution pour répondre.",
@@ -8465,6 +8466,7 @@
   "329fd01696d446b8": "Panneau de droite : agrandir/restaurer",
   "97c7de6aaab317a2": "Panneau de droite : fermer",
   "97b8f50a68ff3e02": "Pull request : copier le numéro",
+  "7e2491fea33ea0f8": "Activité : afficher/masquer",
   "a608714c5062154d": "Diff : afficher/masquer",
   "c63b12ef6fc2d448": "Aperçu : afficher/masquer",
   "6ca1f18ba380f986": "Aperçu : actualiser",
@@ -9730,6 +9732,7 @@
   "95be9d8739887c7f": "État par défaut des fichiers du diff",
   "04fb467bba7698e2": "Modifications d’espaces dans le diff",
   "71d047b3f6ea9497": "Ouvrir proactivement les panneaux des pull requests et des modifications",
+  "32322954dae9bccc": "Ouvrir le panneau d’activité au démarrage de l’agent",
   "4b46043fd3700c17": "Afficher les skills dans le menu slash",
   "2407d5d61e7f7206": "Zone de saisie en texte enrichi",
   "64b8fd2c284c3137": "Raccourci d’envoi",
@@ -9816,7 +9819,6 @@
   "16bdc70b858c223f": "Réinitialiser les panneaux proactifs à la valeur par défaut",
   "24cf2ab2b827b8c8": "Affiche ce que fait l’agent, ce qu’il a terminé et les fichiers qu’il a modifiés dès le début d’un tour. Ne s’applique pas aux fenêtres étroites.",
   "caca3ddeb489df31": "Rétablir l’ouverture automatique du panneau d’activité par défaut",
-  "32322954dae9bccc": "Ouvrir le panneau d’activité au démarrage de l’agent",
   "c5424f09d77138ff": "Quand compacter un fil Claude inactif de plus de 200 000 tokens : à votre retour, juste avant l’expiration de son cache de prompt, ou jamais. Chaque fournisseur Claude peut remplacer ce paramètre.",
   "3e99c5c14f4939c8": "Réinitialiser le compactage des fils inactifs à la valeur par défaut",
   "d52b3d6bf9f2a013": "Mixte",
