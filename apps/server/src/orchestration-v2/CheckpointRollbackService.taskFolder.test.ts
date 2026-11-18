@@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   EventId,
   MessageId,
   NodeId,
@@ -428,11 +429,17 @@ const taskFolderThread = Effect.fn(function* (state: State, options: Options) {
     ),
   );
   /** Rewinds to the end of run `ordinal`, restoring files. */
-  const rewind = Effect.fnUntraced(function* (ordinal: number) {
+  const rewind = Effect.fnUntraced(function* (ordinal: number, requestId?: CommandId) {
     const checkpointId = yield* ids.allocate
       .checkpoint({ checkpointScopeId: rootScope.id, name: String(ordinal) })
       .pipe(Effect.orDie);
-    yield* rollbacks.execute({ threadId, providerThreadId, checkpointId, scopeId: rootScope.id });
+    yield* rollbacks.execute({
+      threadId,
+      providerThreadId,
+      checkpointId,
+      scopeId: rootScope.id,
+      ...(requestId === undefined ? {} : { requestId }),
+    });
   });
   /** Run statuses by ordinal, and each folder's checkpoint statuses by ordinal. */
   const recorded = Effect.gen(function* () {
@@ -561,6 +568,44 @@ it.live("rewinds a linked project folder's repositories to how each was before t
       assert.deepEqual(yield* thread.turn(4, write(path.join(folders.web, "b.txt"), "again")), {
         shop: [],
         web: ["b.txt"],
+      });
+    }),
+  ),
+);
+
+it.live("names the repositories a rewind could not restore", () =>
+  withThread({ projectIsRepository: false }, (thread) =>
+    Effect.gen(function* () {
+      const { path, folders, write, read } = thread;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      yield* thread.turn(1, write(path.join(folders.api, "a.txt"), "1"));
+      yield* thread.turn(2, write(path.join(folders.api, "a.txt"), "2"));
+      yield* thread.turn(3, write(path.join(folders.web, "a.txt"), "3"));
+      // web's only record of how it was before turn 3 is lost.
+      const { checkpoints, checkpointScopes } = yield* thread.records;
+      const web = checkpointScopes.find((scope) => scope.label === "web")!;
+      const baseline = checkpoints.find(
+        (checkpoint) => checkpoint.scopeId === web.id && checkpoint.runId === null,
+      )!;
+      yield* thread.apply({
+        type: "checkpoint.captured",
+        nodeId: baseline.nodeId,
+        payload: { ...baseline, status: "missing" },
+      });
+      const requestId = CommandId.make("command:rewind:unrestored");
+
+      yield* thread.rewind(1, requestId);
+
+      assert.deepEqual(
+        yield* Effect.all([
+          read(path.join(folders.api, "a.txt")),
+          read(path.join(folders.web, "a.txt")),
+        ]),
+        ["1", "3"],
+      );
+      assert.deepEqual((yield* store.getThread(threadId)).rollbackUnrestored, {
+        requestId,
+        repositories: ["web"],
       });
     }),
   ),

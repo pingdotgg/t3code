@@ -160,8 +160,8 @@ restored:
 - **A plain project folder.** Only repositories have snapshots, so files that sit outside every
   repository keep their current contents.
 - **A repository with no earlier snapshot.** If nothing was recorded for a repository before the
-  turns you discard, it keeps their changes. The rewind still completes and does not say so, so
-  check that repository's uncommitted changes afterwards.
+  turns you discard, it keeps their changes. The rewind still completes and names the repositories
+  it left, so check their uncommitted changes afterwards.
 
 ## Limits
 
