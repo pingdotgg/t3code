@@ -1117,8 +1117,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         const baseDir = yield* fs
           .makeTempDirectoryScoped({ prefix: "t3-agy-cli-test-" })
           .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-        const cliDirectory = path.join(baseDir, "cli");
+        const cliDirectory = path.join(baseDir, 'cli" ');
         yield* fs.makeDirectory(cliDirectory);
+        const siblingDirectory = path.join(baseDir, 'cli"');
+        yield* fs.makeDirectory(siblingDirectory);
+        yield* fs.writeFileString(path.join(siblingDirectory, "agy"), "other cli", { mode: 0o755 });
         const cli = path.join(cliDirectory, "antigravity");
         const alias = path.join(cliDirectory, "agy");
         const other = path.join(cliDirectory, "custom-acp");
@@ -1166,7 +1169,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           const windowsDirectory = path.join(baseDir, `windows-${name}`);
           yield* fs.makeDirectory(windowsDirectory);
           yield* fs.writeFileString(path.join(windowsDirectory, name), "cli");
-          const selected = yield* windows.resolve("agy", { PATH: windowsDirectory });
+          const selected = yield* windows.resolve("agy", { PATH: `"${windowsDirectory}"` });
           expect(selected.harnessPath).toBeNull();
           expect((yield* fs.realPath(selected.executablePath)).toLowerCase()).toBe(
             (yield* fs.realPath(path.join(windowsDirectory, name))).toLowerCase(),

@@ -5,6 +5,8 @@ import {
   verifyPersistedAttachmentUpload,
 } from "@t3tools/client-runtime/state/attachments";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import type {
   ChatFileAttachment,
   ChatImageAttachment,
@@ -136,7 +138,9 @@ function supportedImageWireMimeType(
   const mimeType = PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES.find(
     (type) => type === attachment.mimeType.toLowerCase() || type === inferred,
   );
-  if (!mimeType) throw new Error(`Unsupported image type for '${attachment.name}'.`);
+  if (!mimeType) {
+    throw new Error(m(msg("Unsupported image type for ''{name}''.", { name: attachment.name })));
+  }
   return mimeType;
 }
 
@@ -212,7 +216,7 @@ async function uploadFileBytes(
   const { File, Paths, UploadType } = await import("expo-file-system");
   if (signal.aborted) throw new Error("Upload cancelled.");
   if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-    throw new Error("This connection cannot upload attachments.");
+    throw new Error(m(msg("This connection cannot upload attachments.")));
   }
   const fileUri = attachment.fileUri;
   const inlineDataUrl = attachment.type === "image" ? attachment.dataUrl : undefined;
@@ -246,7 +250,14 @@ async function uploadFileBytes(
         : {}),
     });
     if (result.status < 200 || result.status >= 300) {
-      throw new Error(`Upload failed for '${attachment.name}' (${result.status}).`);
+      throw new Error(
+        m(
+          msg("Upload failed for ''{name}'' ({status}).", {
+            name: attachment.name,
+            status: String(result.status),
+          }),
+        ),
+      );
     }
   } finally {
     if (fileUri === undefined && file.exists) file.delete();
@@ -255,7 +266,7 @@ async function uploadFileBytes(
 
 function requireUploadAccess(environmentId: EnvironmentId): void {
   if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-    throw new Error("This connection cannot upload attachments.");
+    throw new Error(m(msg("This connection cannot upload attachments.")));
   }
 }
 
@@ -297,7 +308,7 @@ export const uploadComposerAttachment = Effect.fn("uploadComposerAttachment")(fu
       appAtomRegistry.get(environmentSession.preparedConnectionValueAtom(environmentId)),
     )
   ) {
-    return yield* attachmentUploadError(new Error("The environment is not connected."));
+    return yield* attachmentUploadError(new Error(m(msg("The environment is not connected."))));
   }
   const result = yield* runAttachmentUploadCycle({
     registry: appAtomRegistry,
@@ -330,10 +341,10 @@ export const uploadComposerAttachment = Effect.fn("uploadComposerAttachment")(fu
   return yield* attachmentUploadError(
     result.step === "resolve-url" &&
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-      ? new Error("This connection cannot upload attachments.")
+      ? new Error(m(msg("This connection cannot upload attachments.")))
       : result.error instanceof Error
         ? result.error
-        : new Error(`Upload failed for '${attachment.name}'.`),
+        : new Error(m(msg("Upload failed for ''{name}''.", { name: attachment.name }))),
   );
 });
 

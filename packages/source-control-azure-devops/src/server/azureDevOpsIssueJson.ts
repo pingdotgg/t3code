@@ -219,7 +219,7 @@ export function workItemStates(
   return states.some((state) => state.name === item.state.name) ? states : [...states, item.state];
 }
 
-/** The `{ count, value }` page `wit/workitems` answers; a row this cannot place is skipped. */
+/** The `{ count, value }` page `wit/workitemsbatch` answers; a row this cannot place is skipped. */
 export function decodeWorkItemsJson(
   raw: string,
   closed: ClosedStates,
@@ -424,19 +424,4 @@ export function pullRequestNumberOf(relation: typeof Relation.Type): number | nu
   if (match === null) return null;
   const number = decodeURIComponent(match[1]!).split("/").at(-1) ?? "";
   return /^[1-9]\d{0,9}$/.test(number) ? Number(number) : null;
-}
-
-const Profile = Schema.Struct({
-  emailAddress: Schema.optional(Schema.NullOr(Schema.String)),
-  displayName: Schema.optional(Schema.NullOr(Schema.String)),
-});
-
-const decodeProfile = decodeJsonResult(Profile);
-
-/** `GET profile/profiles/me` names the signed-in account, which WIQL's `@Me` compares against. */
-export function decodeProfileJson(raw: string): Result.Result<string | null, DecodeFailure> {
-  return Result.map(
-    decodeProfile(raw),
-    (profile) => trimmed(profile.emailAddress) ?? trimmed(profile.displayName),
-  );
 }

@@ -8,6 +8,7 @@ import {
   type SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { T, useGT, useMessages } from "gt-react-native";
 import type { ReactNode } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -69,7 +70,7 @@ function DetailPage(props: { readonly title: string; readonly children: ReactNod
 
 const Unavailable = () => (
   <Text className="px-2 text-base text-foreground-muted">
-    Connect this environment to change its settings.
+    <T>Connect this environment to change its settings.</T>
   </Text>
 );
 
@@ -79,6 +80,8 @@ export function SettingsSourceControlProviderRouteScreen({
   readonly environmentId: EnvironmentId;
   readonly kind: SourceControlProviderKind;
 }>) {
+  const gt = useGT();
+  const messages = useMessages();
   const { environmentId, kind } = route.params;
   const { environment, canWrite } = useDetailEnvironment(environmentId);
   const definition = sourceControlClients.find(kind);
@@ -91,22 +94,27 @@ export function SettingsSourceControlProviderRouteScreen({
   const appSignIn = item?.appSignIn === true ? credentials?.appSignIn : undefined;
   const disabled = !canWrite || !canUpdate;
   return (
-    <DetailPage title={definition?.label ?? "Provider"}>
+    <DetailPage
+      title={
+        definition?.label ??
+        gt("Provider", { $context: "settings page of one source control provider" })
+      }
+    >
       {!environment || !definition ? (
         <Unavailable />
       ) : (
         <>
           {item ? (
             <Text selectable className="px-2 text-sm text-foreground-muted">
-              {[Option.getOrNull(item.version), sourceControlProviderSummary(item)]
+              {[Option.getOrNull(item.version), sourceControlProviderSummary(item, messages)]
                 .filter(Boolean)
                 .join(" · ")}
             </Text>
           ) : null}
           {appSignIn ? (
             <SettingsSection
-              title="Sign in"
-              footer="A far higher API rate limit than a personal token or CLI login."
+              title={gt("Sign in", { $context: "settings section title" })}
+              footer={gt("A far higher API rate limit than a personal token or CLI login.")}
             >
               <AppSignInRow
                 environment={environment}
@@ -118,7 +126,7 @@ export function SettingsSourceControlProviderRouteScreen({
             </SettingsSection>
           ) : null}
           {!credentials && definition.settings ? (
-            <SettingsSection title="Credentials">
+            <SettingsSection title={gt("Credentials")}>
               <SourceControlHostFieldsForm
                 environment={environment}
                 definition={definition}
@@ -129,7 +137,13 @@ export function SettingsSourceControlProviderRouteScreen({
             </SettingsSection>
           ) : null}
           {credentials ? (
-            <SettingsSection title={appSignIn ? "Or use your own credentials" : "Token"}>
+            <SettingsSection
+              title={
+                appSignIn
+                  ? gt("Or use your own credentials")
+                  : gt("Token", { $context: "access token field" })
+              }
+            >
               <SourceControlTokenForm
                 environment={environment}
                 definition={definition}
@@ -151,6 +165,8 @@ export function SettingsIssueTrackerRouteScreen({
   readonly environmentId: EnvironmentId;
   readonly tracker: string;
 }>) {
+  const gt = useGT();
+  const messages = useMessages();
   const { environmentId } = route.params;
   const { environment, canWrite } = useDetailEnvironment(environmentId);
   const query = useEnvironmentQuery(
@@ -161,13 +177,13 @@ export function SettingsIssueTrackerRouteScreen({
   const disabled = !canWrite || !canEdit;
   const usable = tracker?.connected === true && tracker.account !== null;
   return (
-    <DetailPage title={tracker?.displayName ?? "Issue tracker"}>
+    <DetailPage title={tracker?.displayName ?? gt("Issue tracker")}>
       {!environment || !tracker ? (
         <Unavailable />
       ) : (
         <>
           <Text selectable className="px-2 text-sm text-foreground-muted">
-            {issueTrackerSummary(tracker, query.data?.bindings ?? {})}
+            {issueTrackerSummary(tracker, query.data?.bindings ?? {}, messages)}
           </Text>
           <SettingsSection title={tracker.credential.label}>
             <IssueTrackerCredentialForm
@@ -178,8 +194,11 @@ export function SettingsIssueTrackerRouteScreen({
           </SettingsSection>
           {usable && tracker.scopes.length > 0 ? (
             <SettingsSection
-              title="Projects"
-              footer={`Pick the ${tracker.displayName} ${tracker.scopeNoun} whose issues each project lists beside its repository's own.`}
+              title={gt("Projects")}
+              footer={gt(
+                "Pick the {tracker} {scope} whose issues each project lists beside its repository's own.",
+                { tracker: tracker.displayName, scope: tracker.scopeNoun },
+              )}
             >
               <IssueTrackerProjectRows
                 environmentId={environmentId}

@@ -123,6 +123,7 @@ function makeTestAdapter(input: {
   readonly subagentOnlyBackgroundWork?: boolean;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
   readonly releaseFirstTurn?: Deferred.Deferred<void>;
+  readonly holdOpenSession?: Deferred.Deferred<void>;
   /** A tool call the held turn reports running before it holds. */
   readonly heldRunningToolCall?: {
     readonly id: TurnItemId;
@@ -141,6 +142,7 @@ function makeTestAdapter(input: {
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
+        if (input.holdOpenSession !== undefined) yield* Deferred.await(input.holdOpenSession);
         const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         if (input.closedSessions !== undefined) {
           const closedSessions = input.closedSessions;
@@ -1965,10 +1967,24 @@ describe("orchestration v2 provider switching", () => {
         detail: "Claude provider query ended before the turn could start.",
       }),
     ],
-  ] as const)("keeps the native session after turns refused for %s", ([, refusalCause]) =>
+    // Injected history is text only, so a refusal after injection must not settle the image.
+    [
+      "background work after native history injection",
+      new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+      true,
+    ],
+    [
+      "background work followed by a lost native session",
+      new ClaudeBackgroundWorkBlocksQueryReplacementError(),
+      false,
+      true,
+    ],
+  ] as const)("retains missed images after %s", ([, refusalCause, inject, loseSession]) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("refused-start-keeps-native");
+      const failResumeOnce = yield* Ref.make(false);
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
       const refuseStarts = yield* Ref.make(0);
       const generation = yield* Ref.make(0);
       const registry = ProviderAdapterRegistry.layerFromAdapters([
@@ -1981,12 +1997,21 @@ describe("orchestration v2 provider switching", () => {
           capturedTurns,
           refuseStarts,
           refusalCause,
+          failResumeOnce,
           nativeThreadGeneration: generation,
+          ...(inject === true ? { injectedHistory } : {}),
         }),
       ]);
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const missedImage: ChatAttachment = {
+          type: "image",
+          id: "refused-start-image",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 100_000,
+        };
         const run = Effect.fn("run")(function* (ordinal: number) {
           yield* orchestrator.dispatch({
             type: "message.dispatch",
@@ -1996,7 +2021,7 @@ describe("orchestration v2 provider switching", () => {
             createdBy: "user",
             creationSource: "web",
             text: `Request ${ordinal}`,
-            attachments: [],
+            attachments: ordinal === 2 ? [missedImage] : [],
             modelSelection: CLAUDE_MODEL_SELECTION,
             dispatchMode: { type: "start_immediately" },
           });
@@ -2030,14 +2055,19 @@ describe("orchestration v2 provider switching", () => {
         yield* Ref.set(refuseStarts, 2);
         assert.equal(yield* run(2), "failed");
         assert.equal(yield* run(3), "failed");
+        yield* Ref.set(failResumeOnce, loseSession === true);
         assert.equal(yield* run(4), "completed");
 
         const turns = yield* Ref.get(capturedTurns);
         assert.equal(turns.length, 2);
-        assert.equal(yield* Ref.get(generation), 1);
-        assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
-        assert.include(turns[1]?.text, "Request 2");
-        assert.include(turns[1]?.text, "Request 3");
+        assert.equal(yield* Ref.get(generation), loseSession === true ? 2 : 1);
+        if (loseSession !== true) {
+          assert.equal(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+        }
+        const delivered = `${turns[1]?.text}${JSON.stringify(yield* Ref.get(injectedHistory))}`;
+        assert.include(delivered, "Request 2");
+        assert.include(delivered, "Request 3");
+        assert.deepEqual(turns[1]?.attachments, [missedImage]);
       }).pipe(
         Effect.provide(
           ProviderReplayHarness.layerWithRegistry(
@@ -2477,6 +2507,282 @@ describe("orchestration v2 provider switching", () => {
           ),
         );
       }
+    }),
+  );
+
+  const steerProviderSwitchHarness = Effect.fn("steerProviderSwitchHarness")(function* (
+    key: string,
+    holdOpenSession?: Deferred.Deferred<void>,
+  ) {
+    const cwd = yield* checkpointWorkspace(`steer-provider-switch-${key}`);
+    const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const threadId = ThreadId.make(`thread:steer-provider-switch:${key}`);
+    const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+      makeTestAdapter({
+        instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+        driver: CLAUDE_DRIVER,
+        capabilities: ClaudeProviderCapabilitiesV2,
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        responseByRunOrdinal: { 1: "Claude finished the current turn" },
+        capturedTurns,
+        holdFirstTurn: started,
+        releaseFirstTurn: release,
+        ...(holdOpenSession === undefined ? {} : { holdOpenSession }),
+      }),
+      makeTestAdapter({
+        instanceId: CODEX_MODEL_SELECTION.instanceId,
+        driver: CODEX_DRIVER,
+        capabilities: CodexProviderCapabilitiesV2,
+        modelSelection: CODEX_MODEL_SELECTION,
+        responseByRunOrdinal: { 2: "Codex continued" },
+        capturedTurns,
+      }),
+    ]);
+    const layer = ProviderReplayHarness.layerWithRegistry(
+      {
+        name: `steer-provider-switch-${key}`,
+        runtimePolicyOverride: {
+          cwd,
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      },
+      layerRegistry,
+    );
+    const startClaudeTurn = Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`command:steer-provider-switch:${key}:create`),
+        threadId,
+        projectId: ProjectId.make(`project:steer-provider-switch:${key}`),
+        title: "Steer provider switch",
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`command:steer-provider-switch:${key}:first`),
+        threadId,
+        messageId: MessageId.make(`message:steer-provider-switch:${key}:first`),
+        text: "Current Claude turn",
+        attachments: [],
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        dispatchMode: { type: "start_immediately" },
+      });
+    });
+    const markClaudeTurnRunning = Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const [claudeRun] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`event:steer-provider-switch:${key}:first-turn-running`),
+            type: "provider-turn.updated",
+            threadId,
+            runId: claudeRun!.id,
+            nodeId: claudeRun!.rootNodeId!,
+            driver: CLAUDE_DRIVER,
+            providerInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            occurredAt: now,
+            payload: {
+              // The adapter's own turn id, so its completion ends this turn.
+              id: ProviderTurnId.make(`provider-turn:${CLAUDE_DRIVER}:${threadId}:1`),
+              providerThreadId: claudeRun!.providerThreadId!,
+              nodeId: claudeRun!.rootNodeId!,
+              runAttemptId: claudeRun!.activeAttemptId!,
+              nativeTurnRef: null,
+              ordinal: 1,
+              status: "running",
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+        ],
+      });
+    });
+    const steerToCodex = Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      return yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`command:steer-provider-switch:${key}:codex`),
+        threadId,
+        messageId: MessageId.make(`message:steer-provider-switch:${key}:codex`),
+        text: "Continue with Codex",
+        attachments: [],
+        modelSelection: CODEX_MODEL_SELECTION,
+        deliveryIntent: "steer",
+        dispatchMode: { type: "start_immediately" },
+      });
+    });
+    return {
+      threadId,
+      started,
+      release,
+      capturedTurns,
+      layer,
+      startClaudeTurn,
+      markClaudeTurnRunning,
+      steerToCodex,
+    };
+  });
+
+  it.live.each(["is running", "has no provider session yet"] as const)(
+    "runs a provider switch steered into a Claude turn that %s after that turn",
+    (phase) =>
+      Effect.gen(function* () {
+        const sessionGate = yield* Deferred.make<void>();
+        if (phase === "is running") yield* Deferred.succeed(sessionGate, undefined);
+        const harness = yield* steerProviderSwitchHarness(
+          phase === "is running" ? "running" : "before-session",
+          sessionGate,
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const waitForRun = (ordinal: number) =>
+            orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.threadId === harness.threadId &&
+                  event.payload.ordinal === ordinal &&
+                  event.payload.status === "completed",
+              ),
+              Stream.runHead,
+              Effect.andThen(worker.drain()),
+            );
+          yield* harness.startClaudeTurn;
+          if (phase === "is running") {
+            yield* Deferred.await(harness.started);
+            yield* worker.drain();
+            yield* harness.markClaudeTurnRunning;
+          } else {
+            const beforeSession = yield* orchestrator.getThreadProjection(harness.threadId);
+            assert.include(["preparing", "starting"], beforeSession.runs[0]?.status);
+            assert.lengthOf(beforeSession.providerSessions, 0);
+          }
+          // Claude cannot restart its turn for new input, so the switch waits for the turn.
+          yield* harness.steerToCodex;
+          const queued = (yield* orchestrator.getThreadProjection(harness.threadId)).runs.at(-1);
+          assert.equal(queued?.status, "queued");
+          assert.equal(queued?.providerInstanceId, CODEX_MODEL_SELECTION.instanceId);
+          assert.isUndefined(queued?.steerWhenReadyRunId);
+
+          yield* Deferred.succeed(sessionGate, undefined);
+          yield* Deferred.await(harness.started);
+          yield* Deferred.succeed(harness.release, undefined);
+          yield* waitForRun(1);
+          yield* waitForRun(2);
+          const projection = yield* orchestrator.getThreadProjection(harness.threadId);
+          assert.deepEqual(
+            projection.runs.map((run) => [run.status, run.providerInstanceId]),
+            [
+              ["completed", CLAUDE_MODEL_SELECTION.instanceId],
+              ["completed", CODEX_MODEL_SELECTION.instanceId],
+            ],
+          );
+          assert.deepEqual(projection.thread.modelSelection, CODEX_MODEL_SELECTION);
+          const handoff = projection.contextHandoffs.find(
+            (candidate) => candidate.id === projection.runs[1]?.contextHandoffId,
+          );
+          assert.isDefined(handoff);
+          const codexTurn = (yield* Ref.get(harness.capturedTurns)).at(-1)!;
+          assert.include(codexTurn.text, "Continue with Codex");
+          assert.include(codexTurn.text, "Current Claude turn");
+          assert.include(codexTurn.text, "Claude finished the current turn");
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
+  it.live("stops a Claude turn for a /goal steered into it with another provider", () =>
+    Effect.gen(function* () {
+      const harness = yield* steerProviderSwitchHarness("goal");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* harness.startClaudeTurn;
+        yield* Deferred.await(harness.started);
+        yield* worker.drain();
+        yield* harness.markClaudeTurnRunning;
+        const [claudeRun] = (yield* orchestrator.getThreadProjection(harness.threadId)).runs;
+        // An explicit steer without a delivery intent, as thread tools send it.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:steer-provider-switch:goal:codex"),
+          threadId: harness.threadId,
+          messageId: MessageId.make("message:steer-provider-switch:goal:codex"),
+          text: "/goal all tests pass",
+          attachments: [],
+          modelSelection: CODEX_MODEL_SELECTION,
+          dispatchMode: { type: "steer_active", targetRunId: claudeRun!.id },
+        });
+        const projection = yield* orchestrator.getThreadProjection(harness.threadId);
+        assert.isTrue(
+          projection.turnItems.some(
+            (item) => item.type === "run_interrupt_request" && item.runId === claudeRun!.id,
+          ),
+        );
+        assert.deepEqual(
+          projection.runs.map((run) => [run.status, run.providerInstanceId]),
+          [
+            ["running", CLAUDE_MODEL_SELECTION.instanceId],
+            ["queued", CODEX_MODEL_SELECTION.instanceId],
+          ],
+        );
+        yield* Deferred.succeed(harness.release, undefined);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  // regression: #32891 a steer that Stop already reached is refused, not queued
+  it.live("refuses a provider switch steered into a Claude turn that Stop reached", () =>
+    Effect.gen(function* () {
+      const harness = yield* steerProviderSwitchHarness("after-stop");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* harness.startClaudeTurn;
+        yield* Deferred.await(harness.started);
+        yield* worker.drain();
+        yield* harness.markClaudeTurnRunning;
+        const [claudeRun] = (yield* orchestrator.getThreadProjection(harness.threadId)).runs;
+        // The worker has not delivered the interrupt yet, so the run still reads as running.
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("command:steer-provider-switch:after-stop:stop"),
+          threadId: harness.threadId,
+          runId: claudeRun!.id,
+        });
+        const error = yield* harness.steerToCodex.pipe(Effect.flip);
+        assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(harness.threadId)).runs.map(
+            (run) => run.providerInstanceId,
+          ),
+          [CLAUDE_MODEL_SELECTION.instanceId],
+        );
+        yield* Deferred.succeed(harness.release, undefined);
+      }).pipe(Effect.provide(harness.layer));
     }),
   );
 
