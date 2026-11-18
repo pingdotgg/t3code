@@ -32,7 +32,7 @@ export const ko: Messages = {
     sourceLink: "코드 훔쳐 가기(합법적으로)",
     alsoOnPhone: "휴대폰에서도:",
     screenshotAlt: "하나의 스레드에서 Claude, Codex, Muse, Gemini 서브에이전트를 실행 중인 T3 Code",
-    endorsementsTitle: "{users}명이 넘는 개발자가 아직도 저희를 봐줍니다",
+    endorsementsTitle: "{users}명이 넘는 개발자가 아직도 저희를 참아 줍니다",
     endorsementsSub: "몇몇은 트윗까지 했습니다.",
     endorsementsLabel: "개발자 추천",
     readPost: "X에서 {handle}님의 게시물 읽기",
