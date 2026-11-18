@@ -485,6 +485,8 @@ export function SavedBackendListRow({
 /** Copying the host's own MCP address, for hosted agents or agents on this machine. */
 export function LocalEnvironmentMcpUrlRow({ entry }: { readonly entry: ConnectionCatalogEntry }) {
   const cloudLink = usePrimaryCloudLinkState();
+  const setting = useSearchableSetting();
+  const gt = useGT();
   const { copyToClipboard: copyMcpUrl } = useCopyMcpUrl();
   const tunnelMcpUrl = t3ConnectMcpUrl({
     thisMachine: true,
@@ -498,21 +500,28 @@ export function LocalEnvironmentMcpUrlRow({ entry }: { readonly entry: Connectio
   const loopback = isLoopbackHostname(new URL(mcpUrl).hostname);
   return (
     <SettingsRow
-      {...searchableSetting("mcp-url")}
+      {...setting("mcp-url")}
       description={
         tunnelReachability?.status === "reachable"
-          ? `Tunnel connected. Give this URL to a hosted agent, such as ChatGPT: ${mcpUrl}`
+          ? gt("Tunnel connected. Give this URL to a hosted agent, such as ChatGPT: {url}", {
+              url: mcpUrl,
+            })
           : tunnelReachability?.status === "unreachable"
-            ? `T3 Connect is unreachable right now, so a hosted agent can use this URL after the tunnel recovers: ${mcpUrl}`
+            ? gt(
+                "T3 Connect is unreachable right now, so a hosted agent can use this URL after the tunnel recovers: {url}",
+                { url: mcpUrl },
+              )
             : tunnelAvailable
-              ? `Give this URL to a hosted agent, such as ChatGPT: ${mcpUrl}`
+              ? gt("Give this URL to a hosted agent, such as ChatGPT: {url}", { url: mcpUrl })
               : loopback
-                ? `Give this URL to an agent running on this machine: ${mcpUrl}`
-                : `Give this URL to an agent that can reach this environment: ${mcpUrl}`
+                ? gt("Give this URL to an agent running on this machine: {url}", { url: mcpUrl })
+                : gt("Give this URL to an agent that can reach this environment: {url}", {
+                    url: mcpUrl,
+                  })
       }
       control={
         <Button size="sm" variant="outline" onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>
-          Copy
+          <T>Copy</T>
         </Button>
       }
     />
