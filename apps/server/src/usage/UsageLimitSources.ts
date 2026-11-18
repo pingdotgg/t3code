@@ -70,6 +70,8 @@ function keepLastGoodReadings(
       ...source,
       accounts: source.accounts.map((account) => {
         if (account.usageLimits.unavailable?.reason !== "probeFailed") return account;
+        // Without a listed login, a reused auth file name cannot be told apart from the old one.
+        if (account.email === undefined && account.workspaceId === undefined) return account;
         const last = before.accounts.find(
           (candidate) =>
             candidate.id === account.id &&
