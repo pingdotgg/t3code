@@ -380,7 +380,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
   });
 
-  it("passes every --add-dir launch directory to Claude", () => {
+  it("passes every --add-dir and --plugin-dir launch directory to Claude", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
       nativeThreadId: "native-add-dir",
@@ -389,7 +389,8 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       attachmentsDir: "/attachments",
       settings: {
         ...AUTO_COMPACT_CLAUDE_SETTINGS,
-        launchArgs: "--add-dir ../apps ../lib --verbose --add-dir=/shared",
+        launchArgs:
+          '--add-dir ../apps ../lib --verbose --add-dir=/shared --plugin-dir ./a --plugin-dir=./b.zip --append-system-prompt "--plugin-dir=./prompt"',
       },
     });
     assert.deepEqual(options.additionalDirectories, [
@@ -400,6 +401,20 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       "/shared",
     ]);
     assert.isUndefined(options.extraArgs?.["add-dir"]);
+    assert.deepEqual(options.plugins, [
+      { type: "local", path: "./a" },
+      { type: "local", path: "./b.zip" },
+    ]);
+    assert.isUndefined(options.extraArgs?.["plugin-dir"]);
+    const bare = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-bare-plugin-dir",
+      resume: false,
+      cwd: "/workspace",
+      settings: { ...AUTO_COMPACT_CLAUDE_SETTINGS, launchArgs: "--plugin-dir --verbose" },
+    });
+    assert.isUndefined(bare.plugins);
+    assert.isNull(bare.extraArgs?.["plugin-dir"]);
   });
 
   it("gives delegated children Claude's subagent prompt cache TTL", () => {
