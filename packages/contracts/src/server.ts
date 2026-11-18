@@ -627,7 +627,7 @@ const EnvironmentThemeColors = Schema.Record(
   TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
 );
 
-export const THEME_CSS_MAX_LENGTH = 50_000;
+export const THEME_CSS_MAX_LENGTH = 100_000;
 
 const environmentThemeFields = {
   version: Schema.optional(Schema.Literal(1)),

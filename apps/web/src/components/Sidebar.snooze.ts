@@ -4,6 +4,7 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
+import { msg } from "gt-react";
 import {
   PULL_REQUEST_SNOOZE_STATUS,
   pickSnoozePreset as pickSharedSnoozePreset,
@@ -13,6 +14,7 @@ import {
   type SnoozePreset,
 } from "@t3tools/client-runtime/state/thread-settled";
 
+import { m, type MessageResolver } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { serverEnvironment } from "../state/server";
 import { formatShortTimestamp } from "../timestampFormat";
@@ -28,8 +30,9 @@ export function resolveSnoozePresets(
   now: Date,
   timestampFormat: TimestampFormat,
   environmentId: EnvironmentId,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<SnoozePreset> {
-  return resolveSharedSnoozePresets(now, snoozeOptions(timestampFormat, environmentId));
+  return resolveSharedSnoozePresets(now, snoozeOptions(timestampFormat, environmentId), resolve);
 }
 
 /** A single thread's snooze menu: the time presets, then its pull request snoozes. */
@@ -40,9 +43,10 @@ export function resolveThreadSnoozePresets(
     readonly environmentId: EnvironmentId;
     readonly pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   },
+  resolve: MessageResolver = m,
 ): ReadonlyArray<SnoozePreset> {
   return [
-    ...resolveSnoozePresets(now, timestampFormat, thread.environmentId),
+    ...resolveSnoozePresets(now, timestampFormat, thread.environmentId, resolve),
     ...resolvePullRequestSnoozePresets(
       appAtomRegistry.get(serverEnvironment.configValueAtom(thread.environmentId))?.environment
         .capabilities.threadSnoozeUntilPullRequest === true
@@ -50,6 +54,7 @@ export function resolveThreadSnoozePresets(
         : undefined,
       thread.pullRequests,
       now,
+      resolve,
     ),
   ];
 }
@@ -61,8 +66,11 @@ export function snoozeBadgeLabel(
     readonly snoozeUntilPullRequest?: PullRequestSnoozeTrigger | null | undefined;
   },
   now: string,
+  resolve: MessageResolver = m,
 ): string {
-  return thread.snoozeUntilPullRequest ? "PR" : snoozeWakeLabel(thread.snoozedUntil, { now });
+  return thread.snoozeUntilPullRequest
+    ? resolve(msg("PR", { $context: "badge on a thread snoozed until its pull request changes" }))
+    : snoozeWakeLabel(thread.snoozedUntil, { now }, resolve);
 }
 
 /** A snoozed thread in a sentence, such as "Snoozed, 3h left" or "Snoozed until PR review". */
@@ -72,12 +80,18 @@ export function snoozeStatusLabel(
     readonly snoozeUntilPullRequest?: PullRequestSnoozeTrigger | null | undefined;
   },
   now: string,
+  resolve: MessageResolver = m,
 ): string {
   if (thread.snoozeUntilPullRequest) {
-    return `Snoozed ${PULL_REQUEST_SNOOZE_STATUS[thread.snoozeUntilPullRequest]}`;
+    return resolve(PULL_REQUEST_SNOOZE_STATUS[thread.snoozeUntilPullRequest]);
   }
-  const wake = thread.snoozedUntil ? snoozeWakeLabel(thread.snoozedUntil, { now }) : null;
-  return wake && wake !== "now" ? `Snoozed, ${wake} left` : "Snoozed";
+  return thread.snoozedUntil && Date.parse(thread.snoozedUntil) > Date.parse(now)
+    ? resolve(
+        msg("Snoozed, {remaining} left", {
+          remaining: snoozeWakeLabel(thread.snoozedUntil, { now }, resolve),
+        }),
+      )
+    : resolve(msg("Snoozed", { $context: "thread status" }));
 }
 
 /** A shown menu choice as picked; see the shared `pickSnoozePreset`. */
@@ -86,18 +100,20 @@ export function pickSnoozePreset(
   id: string,
   timestampFormat: TimestampFormat,
   environmentId: EnvironmentId,
+  resolve: MessageResolver = m,
 ): SnoozePreset | undefined {
   const picked = pickSharedSnoozePreset({
     shown,
     id,
     now: new Date(),
     ...snoozeOptions(timestampFormat, environmentId),
+    resolve,
   });
   if (!picked) {
     toastManager.add({
       type: "warning",
-      title: "Could not snooze thread",
-      description: "That snooze time has passed. Choose another time.",
+      title: resolve(msg("Could not snooze thread")),
+      description: resolve(msg("That snooze time has passed. Choose another time.")),
     });
   }
   return picked;
