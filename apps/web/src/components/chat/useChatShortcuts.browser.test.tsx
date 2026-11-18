@@ -202,7 +202,7 @@ function ScrollChat(props: {
   const messageAreaRef = useRef<HTMLDivElement | null>(null);
   const [composerElement, setComposerElement] = useState<HTMLDivElement | null>(null);
   useChatShortcuts({
-    enabled: true,
+    enabled: props.embedded !== true,
     embedded: props.embedded === true,
     messageAreaRef,
     composerElement,
@@ -210,7 +210,9 @@ function ScrollChat(props: {
     scriptKeybindings: [],
     getShortcutContext: (target) => ({
       ...shortcutContext,
-      messageAreaFocus: document.activeElement === messageAreaRef.current,
+      messageAreaFocus:
+        document.activeElement === messageAreaRef.current ||
+        document.activeElement?.hasAttribute("data-workspace-focus-default") === true,
       composerFocus:
         target instanceof Element && target.getAttribute("aria-label") === "Chat input",
       ...props.context,
@@ -231,8 +233,10 @@ function ScrollChat(props: {
   });
   return (
     <div data-side-chat-pane={props.embedded ? "true" : undefined}>
-      <div ref={messageAreaRef} tabIndex={0} aria-label="Messages">
-        <button>Message action</button>
+      <div ref={messageAreaRef} tabIndex={0}>
+        <div tabIndex={-1} data-workspace-focus-default aria-label="Messages">
+          <button>Message action</button>
+        </div>
       </div>
       <div ref={setComposerElement}>
         <textarea aria-label="Chat input" />

@@ -2759,7 +2759,10 @@ export default function ChatView(props: ChatViewProps) {
 
   const messageAreaRef = useRef<HTMLDivElement | null>(null);
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
-    messageAreaFocus: document.activeElement === messageAreaRef.current,
+    messageAreaFocus:
+      document.activeElement === messageAreaRef.current ||
+      (document.activeElement?.hasAttribute("data-workspace-focus-default") === true &&
+        messageAreaRef.current?.contains(document.activeElement) === true),
     terminalFocus: getTerminalFocusOwner() !== null,
     terminalOpen: Boolean(terminalUiState.terminalOpen),
     previewFocus: isPreviewFocused(),

@@ -134,8 +134,9 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     input.closeThreadFind();
   });
   const handleEmbeddedShortcut = useEffectEvent((event: KeyboardEvent) => {
+    const context = input.getShortcutContext(event.target);
     if (
-      event.target !== input.messageAreaRef?.current &&
+      !context.messageAreaFocus &&
       !(event.target instanceof Node && input.composerElement?.contains(event.target))
     )
       return;
@@ -143,10 +144,9 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
       context: input.getShortcutContext(event.target),
     });
-    const context = input.getShortcutContext(event.target);
     const run =
       command === "chat.scrollToEnd"
-        ? input.enabled && canScrollToEnd(context)
+        ? canScrollToEnd(context)
           ? input.commands[command]
           : undefined
         : command
