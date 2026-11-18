@@ -141,7 +141,7 @@ export function describeMcpElicitation(
     payload.serverName;
   if (payload.mode === "url") {
     return {
-      appName,
+      appName: payload.serverName,
       options: MCP_URL_ELICITATION_OPTIONS,
     };
   }
@@ -208,7 +208,7 @@ export function toMcpElicitationResponse(
       action:
         decision === "accept" && url !== undefined && httpPageUrl(url) !== null
           ? "accept"
-          : "decline",
+          : "cancel",
     };
   }
 

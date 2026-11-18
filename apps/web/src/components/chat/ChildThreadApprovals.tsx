@@ -41,7 +41,7 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           <T>Provider process is gone. Interrupt or restart the child thread to respond.</T>
         </p>
       ) : null}
-      {approval.elicitationUrl ? (
+      {approval.elicitationUrl && approval.responseCapability === "live" ? (
         <div className="mt-2">
           <McpElicitationLink
             url={approval.elicitationUrl}

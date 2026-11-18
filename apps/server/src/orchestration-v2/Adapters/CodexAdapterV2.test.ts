@@ -12073,6 +12073,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 threadId: nativeThreadId,
                 turnId: nativeTurnId,
                 serverName: "review-service",
+                _meta: { app_name: "Calendar" },
                 mode: "url",
                 message: "Sign in to continue.",
                 elicitationId: "login-1",
@@ -12089,6 +12090,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ]);
         const request = yield* answerNext;
         yield* harness.firstTerminal;
+        const owner = harness.events.find(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            event.providerTurn.nativeTurnRef?.nativeId === nativeTurnId,
+        );
+        assert.isTrue(owner?.type === "provider_turn.updated");
+        if (owner?.type !== "provider_turn.updated") throw new Error("Missing owning turn");
+        assert.equal(request.providerTurnId, owner.providerTurn.id);
+        assert.equal(approvalItem(harness.events, request)?.providerTurnId, owner.providerTurn.id);
         assert.equal(request.kind, "mcp-elicitation");
         assert.equal(request.nativeRequestRef?.nativeId, "login-1");
         assert.deepInclude(approvalItem(harness.events, request), {

@@ -166,7 +166,7 @@ describe("Codex MCP elicitation approvals", () => {
     });
     for (const decision of ["acceptAlways", "acceptForSession"] as const) {
       NodeAssert.deepStrictEqual(toMcpElicitationResponse(urlRequest, decision), {
-        action: "decline",
+        action: "cancel",
       });
     }
     for (const action of ["decline", "cancel"] as const) {
@@ -174,9 +174,13 @@ describe("Codex MCP elicitation approvals", () => {
     }
     for (const url of ["javascript:alert(1)", "file:///tmp/login", "invalid", ""]) {
       NodeAssert.deepStrictEqual(toMcpElicitationResponse({ ...urlRequest, url }, "accept"), {
-        action: "decline",
+        action: "cancel",
       });
     }
+    NodeAssert.equal(
+      describeMcpElicitation({ ...urlRequest, _meta: { app_name: "Calendar" } }).appName,
+      "computer-use",
+    );
     NodeAssert.deepStrictEqual(
       describeMcpElicitation({
         ...urlRequest,

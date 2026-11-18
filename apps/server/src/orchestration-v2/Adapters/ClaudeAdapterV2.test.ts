@@ -7371,16 +7371,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           assert.deepInclude(card?.type === "turn_item.updated" ? card.turnItem : undefined, {
             elicitationUrl: url,
+            appName: "deploys",
             options: [
               { decision: "cancel", label: "Cancel" },
               { decision: "decline", label: "Decline" },
               { decision: "accept", label: "Continue" },
             ],
           });
+          const itemIndex = harness.events.findIndex(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "approval_request" &&
+              event.turnItem.requestId === request.id,
+          );
+          const requestIndex = harness.events.findIndex(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.id === request.id,
+          );
+          assert.isBelow(itemIndex, requestIndex);
           assert.isUndefined(answer.pollUnsafe());
           yield* harness.runtime.respondToRuntimeRequest({ requestId: request.id, decision });
           assert.deepEqual(yield* Fiber.join(answer), {
-            action: decision === "accept" || decision === "cancel" ? decision : "decline",
+            action: decision === "accept" || decision === "decline" ? decision : "cancel",
           });
         }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );

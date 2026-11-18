@@ -60,7 +60,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
           {props.approval.detail}
         </Text>
       ) : null}
-      {elicitationUrl ? (
+      {elicitationUrl && canRespond ? (
         <View className="gap-2">
           <Text className="font-sans text-sm text-foreground-secondary">
             {m(MCP_URL_ELICITATION_HINT)}

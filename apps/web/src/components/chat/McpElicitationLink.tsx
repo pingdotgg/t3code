@@ -20,7 +20,13 @@ export function McpElicitationLink({ url, disabled }: { url: string; disabled: b
       </span>
       <InlineButton
         disabled={disabled}
+        render={
+          !window.desktopBridge && !disabled ? (
+            <a href={page.href} target="_blank" rel="noopener noreferrer" />
+          ) : undefined
+        }
         onClick={() => {
+          if (!window.desktopBridge) return;
           setError(false);
           void ensureLocalApi()
             .shell.openExternal(page.href)

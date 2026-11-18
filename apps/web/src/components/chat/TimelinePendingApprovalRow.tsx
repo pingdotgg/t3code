@@ -79,7 +79,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
         {approval.appName ? (
           <span className="text-muted-foreground wrap-anywhere">{approval.appName}</span>
         ) : null}
-        {approval.elicitationUrl ? (
+        {approval.elicitationUrl && canRespond ? (
           <McpElicitationLink
             url={approval.elicitationUrl}
             disabled={
