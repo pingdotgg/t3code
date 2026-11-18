@@ -1192,7 +1192,7 @@ function LayoutPaneTabButton({
           )}
         </TooltipTrigger>
         <TooltipPopup side="bottom" className="whitespace-pre-line">
-          {parentLink ? gt("{title}\nParent thread", { title: label.title }) : label.tooltip}
+          {parentLink ? `${label.title}\n${gt("Parent thread")}` : label.tooltip}
         </TooltipPopup>
       </Tooltip>
       {/* A back link has no close button; middle click and its menu still close the tab. */}
