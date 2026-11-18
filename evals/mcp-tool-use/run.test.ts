@@ -262,6 +262,9 @@ it("accepts any tool listed as an alternative", () => {
   );
   for (const [input, passes] of [
     [{ url: "https://github.com/acme/app/issues/42" }, true],
+    [{ url: "https://github.com/acme/app/issues/42/" }, true],
+    [{ url: "https://github.com/acme/app/issues/42/", threadId: "issue-work-thread" }, true],
+    [{ url: "https://github.com/acme/app/issues/42/", threadId: "another-thread" }, false],
     [{ key: "42", projectId: "app" }, true],
     [{ key: "42" }, true],
     [{ key: "42", threadId: "issue-work-thread" }, true],
@@ -277,7 +280,7 @@ it("accepts any tool listed as an alternative", () => {
       failed(issueCase.expect, {
         ...run("link_issue"),
         finalText: "Change Setings to Settings.",
-        calls: [{ step: 0, tool: "link_issue", input }],
+        calls: [{ step: 0, tool: "link_issue", input, failed: false }],
       }).length === 0,
       passes,
     );
@@ -293,6 +296,13 @@ it("accepts any tool listed as an alternative", () => {
     failed(issueCase.expect, {
       ...run("link_issue"),
       finalText: "Linked the issue.",
+      calls: [{ step: 0, tool: "link_issue", input: { key: "42" }, failed: false }],
+    }),
+  );
+  assert.isNotEmpty(
+    failed(issueCase.expect, {
+      ...run("link_issue"),
+      finalText: "Change Setings to Settings.",
       calls: [{ step: 0, tool: "link_issue", input: { key: "42" } }],
     }),
   );

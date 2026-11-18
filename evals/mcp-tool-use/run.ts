@@ -1874,7 +1874,7 @@ export const gradeSample = (
     among.some(
       (call) =>
         tool.split("|").includes(call.tool) &&
-        (success === undefined || success === !call.failed) &&
+        (success === undefined || call.failed === false) &&
         matches(args, call.input) &&
         (argsAnyOf === undefined ||
           argsAnyOf.some((alternative) => matches(alternative, call.input))),
