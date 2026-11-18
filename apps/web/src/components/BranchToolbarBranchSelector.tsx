@@ -477,13 +477,19 @@ export function BranchToolbarBranchSelector({
         environmentId,
         input: { cwd: checkout.cwd, localOnly: true },
       });
-      // Unreadable status is not a branchless checkout; keep the best guess so the prompt still runs.
-      currentBranch =
-        fresh._tag === "Success"
-          ? fresh.value.refName
-          : checkout.cwd === branchCwd
-            ? (currentGitBranch ?? activeThreadBranch)
-            : null;
+      if (fresh._tag !== "Success") {
+        if (!isAtomCommandInterrupted(fresh)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: gt("Failed to switch ref."),
+              description: toBranchActionErrorMessage(squashAtomCommandFailure(fresh)),
+            }),
+          );
+        }
+        return false;
+      }
+      currentBranch = fresh.value.refName;
     }
     return confirmCheckoutSwitch({
       environmentId,
@@ -549,7 +555,7 @@ export function BranchToolbarBranchSelector({
       if (
         !(await confirmCheckoutSwitchIn(
           { cwd: selectionTarget.checkoutCwd, worktreePath: selectionTarget.nextWorktreePath },
-          selectedBranchName,
+          refName.name,
         ))
       ) {
         return;

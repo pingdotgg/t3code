@@ -369,12 +369,35 @@ export function describeCheckoutSwitchImpact(input: {
   readonly currentBranch: string;
   readonly nextBranch: string;
 }): string {
-  const quoted = input.titles.map((title) => `"${title}"`);
-  const names =
-    quoted.length <= 2
-      ? quoted.join(" and ")
-      : `${quoted.slice(0, 2).join(", ")} and ${quoted.length - 2} more`;
-  return `${names} ${quoted.length === 1 ? "also works" : "also work"} on ${input.currentBranch} in this checkout. Switching to ${input.nextBranch} moves ${quoted.length === 1 ? "it" : "them"} too. Use a worktree to keep branches apart.\n\nSwitch anyway?`;
+  const variables = {
+    first: input.titles[0] ?? "",
+    second: input.titles[1] ?? "",
+    count: input.titles.length - 2,
+    currentBranch: input.currentBranch,
+    nextBranch: input.nextBranch,
+  };
+  if (input.titles.length === 1) {
+    return m(
+      msg(
+        '"{first}" also works on {currentBranch} in this checkout. Switching to {nextBranch} moves it too. Use a worktree to keep branches apart.\n\nSwitch anyway?',
+      ),
+      variables,
+    );
+  }
+  if (input.titles.length === 2) {
+    return m(
+      msg(
+        '"{first}" and "{second}" also work on {currentBranch} in this checkout. Switching to {nextBranch} moves them too. Use a worktree to keep branches apart.\n\nSwitch anyway?',
+      ),
+      variables,
+    );
+  }
+  return m(
+    msg(
+      '"{first}", "{second}" and {count, plural, one {{count} more} other {{count} more}} also work on {currentBranch} in this checkout. Switching to {nextBranch} moves them too. Use a worktree to keep branches apart.\n\nSwitch anyway?',
+    ),
+    variables,
+  );
 }
 
 export function resolveBranchSelectionTarget(input: {
