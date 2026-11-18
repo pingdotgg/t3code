@@ -2090,6 +2090,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
         // Codex reports MCP startup on thread start, usually before the turn context exists.
         const mcpStartupFailures = new Map<string, Map<string, string>>();
+        const omittedServiceTiers = new Map<string, string>();
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
         const usageStateForThread = (nativeThreadId: string) => {
           let state = turnTokenUsageByThread.get(nativeThreadId);
@@ -2364,15 +2365,29 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           yield* emitGoalUpdate(nativeThreadId);
         });
 
-        const emitMcpStartupFailures = Effect.fn("CodexAdapterV2.emitMcpStartupFailures")(
+        const emitPendingStartupNotices = Effect.fn("CodexAdapterV2.emitPendingStartupNotices")(
           function* (context: ActiveCodexTurnContext) {
             const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
             if (nativeThreadId == null) return;
             const failures = mcpStartupFailures.get(nativeThreadId);
-            if (failures === undefined) return;
+            const tierWarning = omittedServiceTiers.get(nativeThreadId);
+            if (failures === undefined && tierWarning === undefined) return;
             mcpStartupFailures.delete(nativeThreadId);
-            for (const [name, message] of failures) {
-              const nativeItemId = `mcp-startup-failed:${context.providerTurnId}:${name}`;
+            omittedServiceTiers.delete(nativeThreadId);
+            const notices = Array.from(failures ?? [], ([name, message]) => ({
+              nativeItemId: `mcp-startup-failed:${context.providerTurnId}:${name}`,
+              title: `MCP server ${name} failed to start`,
+              message,
+            }));
+            const tierItemId = `service-tier-omitted:${context.providerTurnId}`;
+            if (tierWarning !== undefined && !context.itemPositions.has(tierItemId)) {
+              notices.push({
+                nativeItemId: tierItemId,
+                title: "Codex did not apply the configured service tier",
+                message: tierWarning,
+              });
+            }
+            for (const { nativeItemId, title, message } of notices) {
               const { ordinal, startedAt } = yield* resolveItemPosition(context, nativeItemId);
               yield* emitProviderEvent({
                 type: "turn_item.updated",
@@ -2392,7 +2407,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ordinal,
                   type: "system_notice",
                   status: "completed",
-                  title: `MCP server ${name} failed to start`,
+                  title,
                   message,
                   startedAt,
                   completedAt: startedAt,
@@ -2524,7 +2539,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             },
           });
           yield* rememberRootProviderThread(input.turnInput.providerThread);
-          yield* emitMcpStartupFailures(context);
+          yield* emitPendingStartupNotices(context);
           return context;
         });
 
@@ -5052,7 +5067,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
             const context = yield* findActiveTurnByNativeThreadId(payload.threadId);
-            if (context !== undefined) yield* emitMcpStartupFailures(context);
+            if (context !== undefined) yield* emitPendingStartupNotices(context);
+          }),
+        );
+
+        yield* client.handleServerNotification("warning", (payload) =>
+          Effect.gen(function* () {
+            if (
+              payload.threadId == null ||
+              !payload.message.startsWith("Configured service tier ") ||
+              !payload.message.endsWith("will be omitted from requests.")
+            ) {
+              return;
+            }
+            omittedServiceTiers.set(payload.threadId, payload.message);
+            const context = yield* findActiveTurnByNativeThreadId(payload.threadId);
+            if (context !== undefined) yield* emitPendingStartupNotices(context);
           }),
         );
 

@@ -3284,14 +3284,26 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   it.effect.each(["before", "during"] as const)(
-    "surfaces a user MCP server that fails to start %s the turn",
+    "surfaces thread startup notices received %s the turn without failing it",
     (timing) =>
       Effect.gen(function* () {
         const nativeThreadId = "mcp-startup-failed-thread";
         const nativeTurnId = "mcp-startup-failed-turn";
         const startupError =
           "MCP client for `example_mcp` failed to start: MCP startup failed: handshaking with MCP server failed";
+        const tierWarning =
+          "Configured service tier `ultrafast` is not advertised as supported for model `gpt-6.2-astra` and will be omitted from requests.";
+        const warning = (threadId: string | null, message: string) => ({
+          type: "emit_inbound" as const,
+          label: "warning",
+          frame: { method: "warning", params: { threadId, message } },
+        });
         const startup: Array<CodexReplay.CodexAppServerReplayEntry> = [
+          warning(null, tierWarning.replace("ultrafast", "priority")),
+          warning("another-thread", tierWarning.replace("ultrafast", "priority")),
+          warning(nativeThreadId, "Under-development features enabled."),
+          warning(nativeThreadId, tierWarning),
+          warning(nativeThreadId, tierWarning),
           {
             type: "emit_inbound",
             label: "mcp-starting",
@@ -3359,11 +3371,21 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }),
         );
         yield* harness.firstTerminal;
-        const surfaced = harness.events.filter((event) => {
-          const serialized = JSON.stringify(event);
-          return serialized.includes("example_mcp") && serialized.includes("failed to start");
-        });
-        assert.isNotEmpty(surfaced);
+        const notices = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [[event.turnItem.threadId, event.turnItem.message]]
+            : [],
+        );
+        assert.sameDeepMembers(notices, [
+          [harness.threadId, startupError],
+          [harness.threadId, tierWarning],
+        ]);
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+          ),
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
