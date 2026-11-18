@@ -102,6 +102,29 @@ describe("DesktopRemoteUpdates", () => {
         assert.equal(terminals[0]?.requestId, "req-1");
         assert.equal(harness.quitAndInstalls(), 0);
 
+        yield* Queue.offer(requests, request("req-retry"));
+        yield* settle;
+        assert.deepEqual(
+          terminalReports(reports).map((report) => report.outcome),
+          ["ready-to-install", "ready-to-install"],
+        );
+        assert.equal(terminalReports(reports)[1]?.requestId, "req-retry");
+        assert.equal(terminalReports(reports)[1]?.preparedRequestId, "req-1");
+        assert.equal(harness.quitAndInstalls(), 0);
+        assert.equal(harness.downloadCount(), 1);
+
+        yield* Queue.offer(requests, {
+          ...request("req-other-track"),
+          channel: "nightly",
+          targetVersion: "1.2.4-nightly.20261027.1",
+        });
+        yield* settle;
+        assert.equal(terminalReports(reports)[2]?.outcome, "failed");
+        assert.equal(
+          terminalReports(reports)[2]?.reason,
+          "A prepared desktop update is already in progress.",
+        );
+
         yield* Queue.offer(commits, {
           version: 1,
           type: "commitDesktopUpdate",
@@ -115,6 +138,49 @@ describe("DesktopRemoteUpdates", () => {
           .map((report) => report.state.status);
         assert.include(statuses, "available");
         assert.include(statuses, "downloaded");
+      }),
+    );
+  });
+
+  it.effect("does not renew the preparation lease when a retry recovers its token", () => {
+    const harness = makeHarness();
+
+    return runRemoteUpdatesTest(harness, ({ reports, requests, commits }) =>
+      Effect.gen(function* () {
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* settle;
+        yield* Queue.offer(requests, request("req-original"));
+        yield* settle;
+
+        yield* TestClock.adjust(Duration.minutes(4));
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* settle;
+        yield* Queue.offer(requests, request("req-retry"));
+        yield* settle;
+        assert.equal(terminalReports(reports)[1]?.preparedRequestId, "req-original");
+
+        yield* TestClock.adjust(Duration.minutes(1));
+        yield* Queue.offer(commits, {
+          version: 1,
+          type: "commitDesktopUpdate",
+          requestId: "req-original",
+        });
+        yield* settle;
+        assert.equal(
+          terminalReports(reports)[2]?.reason,
+          "This desktop update is no longer prepared.",
+        );
+        assert.equal(harness.quitAndInstalls(), 0);
+
+        yield* Queue.offer(requests, request("req-new"));
+        yield* settle;
+        yield* Queue.offer(commits, {
+          version: 1,
+          type: "commitDesktopUpdate",
+          requestId: "req-new",
+        });
+        yield* settle;
+        assert.equal(harness.quitAndInstalls(), 1);
       }),
     );
   });
@@ -667,16 +733,15 @@ describe("DesktopRemoteUpdates", () => {
   it.effect("waits for a background check before installing a prepared update", () => {
     const backgroundCheckStarted = Deferred.makeUnsafe<void>();
     const releaseBackgroundCheck = Deferred.makeUnsafe<void>();
-    let checks = 0;
+    let blockCheck = false;
     const harness = makeHarness({
-      checkForUpdates: Effect.suspend(() => {
-        checks += 1;
-        return checks === 2
+      checkForUpdates: Effect.suspend(() =>
+        blockCheck
           ? Deferred.succeed(backgroundCheckStarted, undefined).pipe(
               Effect.andThen(Deferred.await(releaseBackgroundCheck)),
             )
-          : Effect.void;
-      }),
+          : Effect.void,
+      ),
     });
 
     return runRemoteUpdatesTest(harness, ({ requests, commits }) =>
@@ -689,9 +754,10 @@ describe("DesktopRemoteUpdates", () => {
         harness.emit("update-downloaded", { version: "1.2.4" });
         yield* settle;
 
+        blockCheck = true;
         const backgroundCheck = yield* updates.check("poll").pipe(Effect.forkChild);
         yield* Deferred.await(backgroundCheckStarted);
-        assert.equal((yield* updates.getState).status, "checking");
+        assert.isTrue(yield* updates.isActionActive);
 
         yield* Queue.offer(commits, {
           version: 1,
@@ -701,7 +767,6 @@ describe("DesktopRemoteUpdates", () => {
         yield* settle;
         assert.equal(harness.quitAndInstalls(), 0);
 
-        harness.emit("update-downloaded", { version: "1.2.4" });
         yield* Deferred.succeed(releaseBackgroundCheck, undefined);
         yield* Fiber.join(backgroundCheck);
         yield* settle;
