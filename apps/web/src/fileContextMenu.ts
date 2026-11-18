@@ -18,6 +18,9 @@ import { useAtomCommand } from "./state/use-atom-command";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { toastManager } from "./components/ui/toast";
 import { useAtomValue } from "@effect/atom-react";
+import { msg, useMessages } from "gt-react";
+
+import type { MessageResolver } from "./i18n/messages";
 
 export type FileContextMenuAction =
   | "copy-relative-path"
@@ -86,11 +89,16 @@ export interface FileContextMenuCapabilities {
 export function buildFileContextMenuItems(input: {
   readonly target: FileContextMenuTarget;
   readonly capabilities: FileContextMenuCapabilities;
+  readonly resolve: MessageResolver;
 }): readonly ContextMenuItem<FileContextMenuAction>[] {
   const hasHostFilePath = resolveFileContextMenuAbsolutePath(input.target) !== null;
   const items: ContextMenuItem<FileContextMenuAction>[] = [];
   if (hasHostFilePath && input.capabilities.canOpenDefault) {
-    items.push({ id: "open", label: "Open", icon: "pencil" });
+    items.push({
+      id: "open",
+      label: input.resolve(msg("Open", { $context: "verb, opens a file" })),
+      icon: "pencil",
+    });
   }
   if (hasHostFilePath && input.capabilities.revealLabel !== undefined) {
     items.push({
@@ -103,7 +111,7 @@ export function buildFileContextMenuItems(input: {
   if (hasHostFilePath && editorIds.length > 0) {
     items.push({
       id: "open-with",
-      label: "Open with",
+      label: input.resolve(msg("Open with")),
       children: editorIds.map((editorId) => ({
         id: `editor:${editorId}` as FileContextMenuAction,
         label: EDITOR_LABEL_BY_ID.get(editorId) ?? editorId,
@@ -130,6 +138,7 @@ export function buildFileContextMenuItems(input: {
 export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const resolve = useMessages();
 
   const availableEditors = serverConfig?.availableEditors ?? [];
   const capabilities: FileContextMenuCapabilities = {
@@ -139,8 +148,8 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       serverConfig?.shellRevealInFileManager === true &&
       serverConfig.availableEditors.includes("file-manager")
         ? serverConfig.shellRevealInFileManagerKind === undefined
-          ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
-          : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
+          ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os, resolve)
+          : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind, resolve)
         : undefined,
     canOpenDefault: availableEditors.includes("file-manager"),
     editorIds: availableEditors,
@@ -158,7 +167,11 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       if (path === null) return;
       const label = action === "copy-relative-path" ? "Relative path" : "Absolute path";
       try {
-        const copied = await writeTextToClipboard(path, "file path");
+        const copied = await writeTextToClipboard(path, {
+          target: "file path",
+          unavailableMessage: msg("Clipboard API is unavailable while copying file path."),
+          failureMessage: msg("Failed to copy file path to the clipboard."),
+        });
         if (copied) {
           toastManager.add({ type: "success", title: `${label} copied`, description: path });
         }
@@ -190,10 +203,14 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       type: "error",
       title:
         action === "open"
-          ? "Could not open file"
+          ? resolve(msg("Could not open file"))
           : reveal
-            ? "Unable to reveal file"
-            : `Could not open in ${EDITOR_LABEL_BY_ID.get(editor) ?? editor}`,
+            ? resolve(msg("Unable to reveal file"))
+            : resolve(
+                msg("Could not open in {editor}", {
+                  editor: EDITOR_LABEL_BY_ID.get(editor) ?? editor,
+                }),
+              ),
       description: absolutePath,
     });
   };
@@ -201,7 +218,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const buildItems = (
     target: FileContextMenuTarget,
   ): readonly ContextMenuItem<FileContextMenuAction>[] =>
-    buildFileContextMenuItems({ target, capabilities });
+    buildFileContextMenuItems({ target, capabilities, resolve });
 
   const show = async (
     target: FileContextMenuTarget,

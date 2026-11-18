@@ -53,6 +53,7 @@ const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;
   readonly defaultRuntimeMode?: RuntimeMode;
   readonly newWorktreesStartFromOrigin?: boolean;
+  readonly defaultThreadEnvMode?: "local" | "worktree";
   readonly fallbackModel?: ModelSelection;
   readonly providers?: readonly ServerProvider[];
   /** Where Settings saves a project's model; the legacy project field stays null. */
@@ -85,6 +86,9 @@ const clientLaunchHarness = (input: {
       ...(input.newWorktreesStartFromOrigin === undefined
         ? {}
         : { newWorktreesStartFromOrigin: input.newWorktreesStartFromOrigin }),
+      ...(input.defaultThreadEnvMode === undefined
+        ? {}
+        : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
       ...(input.overrideModel === undefined
         ? {}
         : {
@@ -684,6 +688,55 @@ it.effect("a worktree launch that omits startFromOrigin follows the new-worktree
       expect(launched.map((launch) => launch.workspaceStrategy)).toEqual([strategy]);
     }
   }),
+);
+
+it.effect("a launch that omits its workspace follows the new-threads-in-a-worktree default", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    for (const source of ["setting", "t3.json"] as const) {
+      const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-env-mode-" });
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+        workspaceRoot: repo,
+        ...(source === "setting" ? { defaultThreadEnvMode: "worktree" as const } : {}),
+      });
+      const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
+      for (const args of [
+        ["init", "-b", "main"],
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
+      ]) {
+        yield* git.execute({ operation: "test.setupRepo", cwd: repo, args });
+      }
+      if (source === "t3.json")
+        yield* fileSystem.writeFileString(
+          `${repo}/t3.json`,
+          JSON.stringify({ defaultThreadEnvMode: "worktree" }),
+        );
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      for (const workspaceStrategy of [undefined, { type: "root" as const }]) {
+        yield* toolkit
+          .handle("t3_thread_launch", {
+            title: "Fix",
+            projectId,
+            ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
+          })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      }
+
+      expect(
+        launched.map((launch) => launch.workspaceStrategy.type),
+        source,
+      ).toEqual(["worktree", "root"]);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("a launch into a new worktree creates nothing when its branch collides", () =>

@@ -37,9 +37,10 @@ const mergedIssueCandidates = createMergedIssueCandidatesAtoms(
 
 /** The labels and people of every scope a list filter covers; no targets reads nothing. */
 export function useIssueFilterCandidates(targets: ReadonlyArray<IssueCandidatesTarget>) {
-  return useAtomValue(mergedIssueCandidates(targets));
+  return useAtomValue(mergedIssueCandidates.atom(targets));
 }
 
+/** Asks again only the scopes that failed; the ones that answered keep their answer. */
 export function refreshIssueFilterCandidates(targets: ReadonlyArray<IssueCandidatesTarget>) {
-  for (const target of targets) appAtomRegistry.refresh(issueEnvironment.candidates(target));
+  mergedIssueCandidates.retry(appAtomRegistry, targets);
 }
