@@ -59,7 +59,7 @@ const opencode = (model: string, effort: string): AutoCandidate => ({
  */
 const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>> = {
   high: [
-    claude("claude-opus-5-5", "xhigh"),
+    claude("claude-opus-5-5", "max"),
     antigravity("claude-opus-4-6-thinking", "high"),
     codex("gpt-6.1-sol", "high"),
     codex("gpt-6-astra", "high"),
