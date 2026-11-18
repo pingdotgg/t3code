@@ -381,6 +381,35 @@ describe("MessagesTimeline work rows", () => {
     await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
   });
 
+  it("lands a syncing thread's catch-up at the end without animating", async () => {
+    const props = { ...baseProps(), isWorking: true, syncing: true };
+    const container = document.createElement("div");
+    container.style.cssText =
+      "height: min(600px, 100vh); width: 900px; display: flex; flex-direction: column;";
+    const entries = Array.from({ length: 12 }, (_, index) =>
+      message(`Earlier context ${index}`, {}, `context-${index}`),
+    );
+    await using screen = await render(<MessagesTimeline {...props} timelineEntries={entries} />, {
+      container,
+    });
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const distanceFromEnd = () =>
+      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
+    using scrollTo = vi.spyOn(Element.prototype, "scrollTo");
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          ...entries,
+          message("Work done while away\n\n".repeat(60), { role: "assistant" }, "caught-up"),
+        ]}
+      />,
+    );
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
+    expect(scrollTo).not.toHaveBeenCalledWith(expect.objectContaining({ behavior: "smooth" }));
+  });
+
   it.each(["delegated", "legacy", "missing"] as const)(
     "uses the reported task for %s completion notifications",
     async (source) => {
