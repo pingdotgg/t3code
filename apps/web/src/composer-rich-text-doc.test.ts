@@ -608,6 +608,29 @@ describe("composer rich text document model", () => {
     });
   });
 
+  describe("a paragraph after a list", () => {
+    it.each([
+      ["a numbered list", "1. a\n2. b\n3. c"],
+      ["a bullet list", "- a\n- b"],
+      ["a task list", "- [ ] a"],
+    ])(
+      "is written after a blank line after %s, or Markdown folds it into the last item",
+      (_kind, list) => {
+        const listJson = buildDocJson(list, (name) => ({ label: name, description: null }));
+        const doc = ProseMirrorNode.fromJSON(schema, {
+          type: "doc",
+          content: [
+            ...listJson.content,
+            { type: "paragraph", content: [{ type: "text", text: "d" }] },
+          ],
+        });
+        doc.check();
+        expect(doc.childCount).toBe(2);
+        expect(serializeEditorDoc(doc).value).toBe(`${list}\n\nd`);
+      },
+    );
+  });
+
   describe("a dash rule after a paragraph", () => {
     const paragraph = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
     const rule = (source: string) => ({ type: "horizontalRule", attrs: { source } });
