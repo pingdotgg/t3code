@@ -727,7 +727,11 @@ export const make = Effect.gen(function* () {
 
           yield* installEntryLocked(entry, { retainEquivalentRuntime: true });
 
-          if (bearerReplaced && registration._tag === "BearerConnectionRegistration") {
+          if (
+            bearerReplaced &&
+            registration._tag === "BearerConnectionRegistration" &&
+            registration.credential._tag === "BearerConnectionCredential"
+          ) {
             const scope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
             if (scope !== undefined) {
               const state = yield* SubscriptionRef.get(scope.supervisor.state);
