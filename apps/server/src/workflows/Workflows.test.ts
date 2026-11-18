@@ -15,7 +15,8 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
-import { cancel, issues, runs, signal, signalAll, start, store } from "./stepServices.ts";
+import { issues, pullRequests } from "./forgeApi.ts";
+import { cancel, runs, signal, signalAll, start, store } from "./stepServices.ts";
 import { invoke, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import Migration0099 from "../persistence/Migrations/099_Workflows.ts";
@@ -25,6 +26,7 @@ import Migration0102 from "../persistence/Migrations/102_WorkflowRunInput.ts";
 import Migration0103 from "../persistence/Migrations/103_WorkflowStore.ts";
 import Migration0104 from "../persistence/Migrations/104_WorkflowRunParent.ts";
 import Migration0105 from "../persistence/Migrations/105_WorkflowStepResult.ts";
+import Migration0106 from "../persistence/Migrations/106_WorkflowWaitWatch.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import { Issue, unavailable, WorkflowForge } from "./WorkflowForge.ts";
 import { agent, ask } from "./workflowAgent.ts";
@@ -427,6 +429,18 @@ const triage = workflow(
   }),
 );
 const decodeIssue = Schema.decodeSync(Issue);
+const land = workflow(
+  "land",
+  { version: 1, payload: Schema.Struct({ url: Schema.String }), returns: Schema.String },
+  Effect.fn(function* (payload) {
+    const standing = yield* pullRequests.wait(
+      "checks",
+      { project: PROJECT, url: payload.url },
+      { until: "checks", timeout: "1 hour" },
+    );
+    return Option.match(standing, { onNone: () => "gave up", onSome: (at) => at.checks });
+  }),
+);
 const issueAt = (key: string, createdAt: string) =>
   decodeIssue({
     projectId: "project-1",
@@ -452,12 +466,24 @@ const fakeForge = () => {
   const open: Array<Issue> = [];
   const asked: Array<Parameters<WorkflowForge["Service"]["issues"]["list"]>[0]> = [];
   const comments: Array<string> = [];
+  const pullRequest = {
+    state: "open",
+    mergeability: "mergeable",
+    url: "https://github.com/me/app/pull/7",
+    checks: [{ name: "test", status: "pending", description: null, url: null }],
+  };
   return {
     open,
     asked,
     comments,
+    pullRequest,
     service: WorkflowForge.of({
       ...unavailable,
+      pullRequests: {
+        ...unavailable.pullRequests,
+        // Only what a wait looks at; the rest of a pull request is the host's business.
+        read: () => Effect.sync(() => structuredClone(pullRequest) as never),
+      },
       issues: {
         ...unavailable.issues,
         list: (query) =>
@@ -489,6 +515,7 @@ const harness = Effect.gen(function* () {
         Migration0103,
         Migration0104,
         Migration0105,
+        Migration0106,
       ],
       {
         discard: true,
@@ -503,6 +530,7 @@ const harness = Effect.gen(function* () {
   const forge = fakeForge();
   const engine = WorkflowEngine.layer([
     triage,
+    land,
     ...definitions(counts, failures),
     fix,
     ...triggered,
@@ -1254,6 +1282,32 @@ it.effect("an issue opened after the workflow loaded starts one run, which can c
           labels: ["bug"],
           query: undefined,
         });
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a wait on a pull request ends when its checks have, and says how", () =>
+  Effect.gen(function* () {
+    const { boot, forge } = yield* harness;
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start(
+          "land",
+          { url: forge.pullRequest.url },
+          { idempotencyKey: "pr-7" },
+        );
+        yield* workflows.waitFor(runId, status("waiting"));
+        yield* workflows.sweep;
+        assert.equal((yield* workflows.waitFor(runId, () => true)).status, "waiting");
+        // Not a question for anyone: nothing waits on a person.
+        assert.deepStrictEqual(yield* workflows.questions, []);
+        forge.pullRequest.checks[0]!.status = "success";
+        yield* TestClock.adjust("2 minutes");
+        yield* workflows.sweep;
+        const done = yield* workflows.waitFor(runId, status("completed"));
+        assert.equal(done.result, "passing");
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

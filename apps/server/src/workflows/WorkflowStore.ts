@@ -63,6 +63,7 @@ export interface WaitRow {
   readonly token: string;
   readonly schema_json: string;
   readonly request_json: string | null;
+  readonly watch_json: string | null;
   readonly deadline: string | null;
   readonly opened_at: string;
 }
@@ -133,6 +134,8 @@ export class WorkflowStore extends Context.Service<
       readonly schemaJson: string;
       /** What a person is asked, when this wait is a question. */
       readonly requestJson: string | null;
+      /** What the engine looks at to end this wait by itself. */
+      readonly watchJson: string | null;
       readonly deadline: string | null;
     }) => Effect.Effect<void>;
     readonly waitClosed: (runId: string, name: string) => Effect.Effect<void>;
@@ -167,6 +170,8 @@ export class WorkflowStore extends Context.Service<
     ) => Effect.Effect<ReadonlyArray<WaitRow>>;
     readonly waitsPastDeadline: Effect.Effect<ReadonlyArray<WaitRow>>;
     readonly requests: Effect.Effect<ReadonlyArray<WaitRow>>;
+    /** Open waits the engine ends by looking at something. */
+    readonly watches: Effect.Effect<ReadonlyArray<WaitRow>>;
     /** The thread of the run's latest agent step, if it has had one. */
     readonly latestThread: (
       runId: string,
@@ -217,7 +222,7 @@ const make = Effect.gen(function* () {
   // healthy run, so a database that cannot take it is a defect of the process instead.
   const write = <A, E>(runId: string, effect: Effect.Effect<A, E>) =>
     effect.pipe(Effect.orDie, Effect.andThen(PubSub.publish(changes, runId)), Effect.asVoid);
-  const waitColumns = sql`run_id, name, token, schema_json, request_json, deadline, opened_at`;
+  const waitColumns = sql`run_id, name, token, schema_json, request_json, watch_json, deadline, opened_at`;
 
   return WorkflowStore.of({
     changes,
@@ -347,10 +352,11 @@ const make = Effect.gen(function* () {
         wait.runId,
         sql`
           INSERT INTO workflow_waits (
-            run_id, name, workflow, token, key, schema_json, request_json, deadline, opened_at
+            run_id, name, workflow, token, key, schema_json, request_json, watch_json, deadline,
+            opened_at
           ) VALUES (
             ${wait.runId}, ${wait.name}, ${wait.workflow}, ${wait.token}, ${wait.key ?? null},
-            ${wait.schemaJson}, ${wait.requestJson}, ${wait.deadline}, ${at}
+            ${wait.schemaJson}, ${wait.requestJson}, ${wait.watchJson}, ${wait.deadline}, ${at}
           )
           ON CONFLICT (run_id, name) DO NOTHING
         `,
@@ -518,6 +524,10 @@ const make = Effect.gen(function* () {
     requests: sql<WaitRow>`
       SELECT ${waitColumns} FROM workflow_waits
       WHERE request_json IS NOT NULL AND signalled_at IS NULL ORDER BY opened_at
+    `.pipe(Effect.orDie),
+    watches: sql<WaitRow>`
+      SELECT ${waitColumns} FROM workflow_waits
+      WHERE watch_json IS NOT NULL AND signalled_at IS NULL ORDER BY opened_at
     `.pipe(Effect.orDie),
     mailPut: Effect.fn("WorkflowStore.mailPut")(function* (mail) {
       yield* sql`

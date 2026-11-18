@@ -327,8 +327,23 @@ workflow(
 
 An issue or pull request is named by what a trigger or `list` gave, or by `{ project, url }`, which
 is how to name one an agent returned the address of. A comment is posted again if its step is run
-again, so keep one comment to one step. To wait for a pull request, `read` it in a step and
-`sleep` between looks.
+again, so keep one comment to one step.
+
+`pullRequests.wait(name, pullRequest, { until, timeout? })` is for the body, not a step. The run
+rests until the pull request gets there: `until: "checks"` until none of its checks is still
+running, `"merged"` or `"closed"` until it is no longer open. Merging or closing ends any of them.
+It gives `{ state, checks, mergeability, url }`, with `checks` one of `passing`, `failing`,
+`pending` or `none`, or nothing after `timeout`. Read `state` first: a wait for checks also ends
+when someone closes the pull request.
+
+```ts
+const at =
+  yield * pullRequests.wait("checks", { project, url }, { until: "checks", timeout: "2 hours" });
+if (Option.isNone(at) || at.value.state !== "open" || at.value.checks !== "passing") {
+  return yield * stop("not ready to merge");
+}
+yield * step("merge", { returns: Schema.Void }, pullRequests.act({ project, url }, "merge"));
+```
 
 ## Triggers
 

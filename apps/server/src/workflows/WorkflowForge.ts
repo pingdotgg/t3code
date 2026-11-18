@@ -54,6 +54,69 @@ export type PullRequestAddress =
   | { readonly project: string; readonly url: string }
   | Pick<PullRequest, "projectId" | "host" | "repository" | "number">;
 
+/** Where a pull request stands, as a wait on it gives it. */
+export const PullRequestStanding = Schema.Struct({
+  state: Schema.Literals(["open", "closed", "merged"]),
+  /** `none` when the host lists no checks for it. */
+  checks: Schema.Literals(["passing", "failing", "pending", "none"]),
+  mergeability: Schema.Literals(["mergeable", "conflicting", "unknown"]),
+  url: Schema.String,
+});
+export type PullRequestStanding = typeof PullRequestStanding.Type;
+export type PullRequestUntil = "checks" | "merged" | "closed";
+/** What a wait on a pull request keeps for the engine to look at. */
+export interface PullRequestWatch {
+  readonly kind: "pullRequest";
+  readonly until: PullRequestUntil;
+  readonly pullRequest:
+    | { readonly project: string; readonly url: string }
+    | {
+        readonly projectId: string;
+        readonly host: string;
+        readonly repository: string;
+        readonly number: number;
+      };
+}
+
+// Checks take a moment to be listed after a push, so "none" only counts once it has stayed none.
+const NO_CHECKS_AFTER_MS = 2 * 60_000;
+
+/** Required checks decide when the host marks any as required; otherwise all of them do. */
+export const standingOf = (
+  detail: Pick<PullRequestDetail, "state" | "checks" | "mergeability" | "url">,
+): PullRequestStanding => {
+  const listed = detail.checks.filter((check) => check.placeholder !== true);
+  const counted = listed.some((check) => check.required === true)
+    ? listed.filter((check) => check.required === true)
+    : listed;
+  const failing = counted.some(
+    (check) =>
+      check.status === "failure" ||
+      check.status === "cancelled" ||
+      // Nothing moves it but a person, so a run waiting for it would wait for good.
+      check.status === "action-required",
+  );
+  const pending = counted.some((check) => check.status === "pending");
+  return {
+    state: detail.state,
+    checks: counted.length === 0 ? "none" : failing ? "failing" : pending ? "pending" : "passing",
+    mergeability: detail.mergeability,
+    url: detail.url,
+  };
+};
+
+/** Whether a wait `until` this is over, having waited `waitedMs`. */
+export const isSettled = (
+  until: PullRequestUntil,
+  standing: PullRequestStanding,
+  waitedMs: number,
+): boolean => {
+  if (standing.state !== "open") return true;
+  if (until !== "checks") return false;
+  if (standing.checks === "none") return waitedMs >= NO_CHECKS_AFTER_MS;
+  return standing.checks !== "pending";
+};
+
 export interface IssueQuery {
   readonly project: string;
   /** Defaults to open. */

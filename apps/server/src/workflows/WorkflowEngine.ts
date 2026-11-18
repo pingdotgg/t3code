@@ -35,7 +35,16 @@ import {
 } from "./workflow.ts";
 import { forStep, KeyValues, layerKeyValues, EngineLink, layerEngineLink } from "./stepServices.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
-import { type Issue, type PullRequest, unavailable, WorkflowForge } from "./WorkflowForge.ts";
+import {
+  type Issue,
+  isSettled,
+  type PullRequest,
+  type PullRequestAddress,
+  type PullRequestWatch,
+  standingOf,
+  unavailable,
+  WorkflowForge,
+} from "./WorkflowForge.ts";
 import {
   HOOK_PREFIX,
   WorkflowInputError,
@@ -265,6 +274,36 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }
   });
 
+  /** End each wait on a pull request that has got where the wait wanted it. */
+  const fireWatches = Effect.gen(function* () {
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
+    for (const wait of yield* store.watches) {
+      const id = `watch:${wait.run_id}/${wait.name}`;
+      const last = lookedAt.get(id);
+      if (last !== undefined && now - last < Duration.toMillis(LOOK_EVERY)) continue;
+      lookedAt.set(id, now);
+      const watch = WorkflowStore.jsonValue(
+        wait.watch_json ?? "null",
+      ) as unknown as PullRequestWatch;
+      yield* forge.pullRequests.read(watch.pullRequest as PullRequestAddress).pipe(
+        Effect.flatMap(
+          Effect.fnUntraced(function* (detail) {
+            const standing = standingOf(detail);
+            const waited = now - DateTime.toEpochMillis(DateTime.makeUnsafe(wait.opened_at));
+            if (!isSettled(watch.until, standing, waited)) return;
+            if (!(yield* store.waitSignalled(wait.run_id, wait.name))) return;
+            lookedAt.delete(id);
+            yield* wake(wait, { expired: false, value: standing });
+          }),
+        ),
+        // The wait's own timeout is what ends a wait on something that cannot be read.
+        Effect.catch((error) =>
+          Effect.logWarning("A workflow could not look at a pull request", { wait: id, error }),
+        ),
+      );
+    }
+  });
+
   const hooks = yield* Effect.forEach(
     latestDefinitions.flatMap((definition) =>
       definition.triggers.flatMap((trigger) =>
@@ -381,6 +420,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     yield* store.mailExpire;
     yield* fireSchedules;
     yield* fireOpened;
+    yield* fireWatches;
     for (const row of yield* store.runsToEnd(END_STEP, END_TRIES)) yield* endCancelled(row);
     for (const row of yield* store.runs("running")) yield* reconcile(row);
     const at = yield* DateTime.now;
