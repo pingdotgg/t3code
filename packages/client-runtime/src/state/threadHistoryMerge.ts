@@ -2,6 +2,7 @@ import type {
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
 
 export type ThreadHistoryMeta = {
@@ -143,8 +144,10 @@ export function mergeOlderHistoryIntoProjection(
           })
         )
           continue;
-        // Retained inputs are stubs without their full text; the page row has the full item.
-        if (recovery) turnItemById.set(String(row.sourceItemId), row.item);
+        // Retained inputs are stubs without their full text, so an equally recent page row
+        // restores it. A live update newer than the page stays.
+        if (recovery && DateTime.isGreaterThanOrEqualTo(row.item.updatedAt, currentItem.updatedAt))
+          turnItemById.set(String(row.sourceItemId), row.item);
         else row = { ...row, item: currentItem };
       }
     }

@@ -4729,8 +4729,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
     `;
     // Mirrors usageLimitWakeCandidates: a completed run on the limited provider, not a
-    // continuation, that ended before the newest usage-limit failure resets. Runs that ended
-    // before the failure match too; they can never be latest, so selections come out the same.
+    // continuation, that ended after the newest usage-limit failure (runRanAfter) and before
+    // it resets.
     const isWakeCandidate = (alias: string) => {
       const run = sql.literal(alias);
       return sql`(
@@ -4742,6 +4742,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND julianday(${run}.completed_at) <= julianday(
             json_extract(latest_failure_error.payload_json, '$.failure.resetAt')
           ), 0
+        )
+        AND (
+          ${run}.completed_at > latest_failure.completed_at
+          OR (${run}.completed_at = latest_failure.completed_at
+            AND ${run}.ordinal > latest_failure.ordinal)
         )
         AND json_extract(${run}.payload_json, '$.manualContinuationOfRunId') IS NULL
         AND json_extract(${run}.payload_json, '$.usageLimitContinuationOfRunId') IS NULL
@@ -7900,8 +7905,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         WHERE thread_id = ${threadId}
           AND run_id IN (SELECT value FROM json_each(${encodeIdList(runIds)}))
       `;
+      // Recovery reads only an input's identity, root and ordinal, so its text never leaves SQL.
       const itemRows = yield* sql<PayloadRow>`
-        SELECT payload_json FROM orchestration_v2_projection_turn_items
+        SELECT CASE type
+          WHEN 'notification' THEN json_remove(payload_json, '$.detail')
+          WHEN 'user_message' THEN json_remove(
+            json_set(payload_json, '$.text', substr(json_extract(payload_json, '$.text'), 1, 120)),
+            '$.context'
+          )
+          ELSE payload_json
+        END AS payload_json
+        FROM orchestration_v2_projection_turn_items
         WHERE thread_id = ${threadId}
           AND turn_item_id IN (SELECT value FROM json_each(${encodeIdList(itemIds)}))
       `;
@@ -8269,6 +8283,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   candidate.status = 'cancelled'
                   AND json_extract(candidate.payload_json, '$.startedAt') IS NULL
                 )
+                AND NOT ${isSilentShellRun("candidate")}
                 AND NOT ${isLimitedWake("candidate")}
               -- latestExecutedRun: the run that ended last (runRanAfter).
               ORDER BY candidate.completed_at IS NULL DESC, candidate.completed_at DESC,

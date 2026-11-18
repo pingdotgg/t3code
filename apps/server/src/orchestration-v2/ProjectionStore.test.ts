@@ -8609,6 +8609,57 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)!.latestRunId,
         original.id,
       );
+      // A silent compaction that completes after the limit is not work either, in both shells.
+      const compactRunId = RunId.make("run:limit-shell:compaction");
+      const compactMessageId = MessageId.make("message:limit-shell:compaction");
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:compaction-message"),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "agent",
+          creationSource: "server",
+          id: compactMessageId,
+          threadId,
+          runId: compactRunId,
+          nodeId: null,
+          role: "user",
+          text: "/compact",
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:compaction"),
+        type: "run.created",
+        threadId,
+        runId: compactRunId,
+        nodeId: NodeId.make("node:limit-shell:compaction"),
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: compactRunId,
+          ordinal: original.ordinal + 5,
+          rootNodeId: NodeId.make("node:limit-shell:compaction"),
+          userMessageId: compactMessageId,
+          status: "completed",
+          startedAt: DateTime.add(now, { minutes: 2 }),
+          completedAt: DateTime.add(now, { minutes: 2 }),
+        },
+      });
+      const compactProjection = yield* store.getThreadProjection(threadId);
+      const compactShells = [
+        ProjectionStore.threadShellFromProjection(compactProjection),
+        (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)!,
+      ];
+      for (const shell of compactShells) assert.equal(shell.lastErrorClass, "usage_limit");
+      const compactSql = yield* SqlClient.SqlClient;
+      yield* compactSql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${compactRunId}`;
       // Near misses: a wake completed after the reset, or a run a user message started, did work.
       const assertLatest = Effect.fnUntraced(function* (runId: RunId) {
         const projection = yield* store.getThreadProjection(threadId);
@@ -9434,6 +9485,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             source: { kind: "delegated_task", taskIds: [] },
             outcome: "failed",
             summary: "Subagent failed",
+            detail: "d".repeat(5_000),
           },
         });
       }
@@ -9443,6 +9495,41 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         usageLimitBlockedRun(projection.runs, projection.turnItems, null)?.id,
         original.id,
       );
+      // A one-row window loads the last wake's run but not its notification. The notification
+      // is read without its detail.
+      const lastWake = RunId.make("run:limit-window:wake-5");
+      const lastNode = NodeId.make("node:limit-window:wake-5");
+      yield* store.apply({
+        id: EventId.make("event:limit-window:wake-5:command"),
+        type: "turn-item.updated",
+        threadId,
+        runId: lastWake,
+        nodeId: lastNode,
+        driver,
+        occurredAt: now,
+        payload: {
+          ...base,
+          id: TurnItemId.make("limit-window:wake-5:command"),
+          runId: lastWake,
+          nodeId: lastNode,
+          parentItemId: null,
+          ordinal: 100,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "command_execution",
+          input: "true",
+          output: "",
+          exitCode: 0,
+        },
+      });
+      const narrow = (yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 1 })).projection;
+      const notification = narrow.turnItems.find((item) => item.id === "limit-window:wake-5");
+      assert.equal(notification?.type, "notification");
+      assert.notProperty(notification!, "detail");
+      assert.equal(usageLimitBlockedRun(narrow.runs, narrow.turnItems, null)?.id, original.id);
       assert.notInclude(
         projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
         "limit-window:error",

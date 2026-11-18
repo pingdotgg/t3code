@@ -782,15 +782,21 @@ describe("threadHistoryPaging", () => {
     expect(retained.length).toBeGreaterThan(0);
     expect(JSON.stringify(retained).length).toBeLessThan(10_000);
 
-    // Evidence past a quarter of the budget is dropped, so the snapshot stays within it.
+    // Evidence past a quarter of the budget is dropped, so the snapshot stays within it. The
+    // visible rows carry no detail here, so they fit the budget on their own.
+    const slimRows = rows.map((row) => ({ ...row, item: { ...row.item, detail: "d" } }));
     const tight = buildBoundedThreadProjection({
-      projection: full,
+      projection: {
+        ...makeProjection(slimRows as unknown as typeof rows),
+        runs: full.runs,
+      } as unknown as ReturnType<typeof makeProjection>,
       snapshotSequence: 1,
       policy: { maxItems: 2, maxEncodedBytes: 8_000 },
     });
     expect(
       usageLimitBlockedRun(tight.projection.runs, tight.projection.turnItems, null),
     ).toBeNull();
+    expect(boundedTimelineEncodedBytes(tight.projection)).toBeLessThanOrEqual(8_000);
 
     // A user message started the run after the limit, so it did work even though only its
     // later notification and the limit error are in the window.

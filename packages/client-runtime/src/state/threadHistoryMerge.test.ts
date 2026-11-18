@@ -255,7 +255,7 @@ describe("threadHistoryMerge", () => {
       ...v2Projection,
       turnItems: [error, stub, recent.item],
       visibleTurnItems: [{ ...recent, position: 0 }],
-    } as never;
+    } as unknown as typeof v2Projection;
 
     const merged = mergeOlderHistoryIntoProjection(coldOpen, [
       { ...row(0), item: error },
@@ -268,6 +268,15 @@ describe("threadHistoryMerge", () => {
       recent.item,
     ]);
     expect(merged.turnItems).toEqual([error, notification, recent.item]);
+
+    // A live update that arrived after the page was fetched stays.
+    const live = { ...error, updatedAt: DateTime.makeUnsafe("2026-06-20T00:00:05.000Z") };
+    const kept = mergeOlderHistoryIntoProjection(
+      { ...coldOpen, turnItems: [live, recent.item] } as never,
+      [{ ...row(0), item: error }] as never,
+    );
+    expect(kept.turnItems).toContainEqual(live);
+    expect(kept.visibleTurnItems.map((entry) => entry.item)).toContainEqual(live);
   });
 
   it("retains merged older rows when a live turn-item update arrives", () => {

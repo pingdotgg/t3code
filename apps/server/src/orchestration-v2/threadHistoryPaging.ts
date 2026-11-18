@@ -6,6 +6,7 @@ import type {
   TurnItemId,
 } from "@t3tools/contracts";
 import {
+  latestRootProviderFailure,
   usageLimitBlockedRun,
   usageLimitWakeCandidates,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -562,7 +563,7 @@ function isRetainedDependency(
   );
 }
 
-// usageLimitBlockedRun needs the limited run's root error and the first input of each wake
+// usageLimitBlockedRun needs the limited run's latest root error and the first input of each wake
 // candidate, and a long chain of wakes pushes both out of the window. Inputs are kept as stubs
 // without their unbounded text, and dropped past a quarter of the budget (clients then show
 // the plain latest run).
@@ -577,14 +578,10 @@ function limitRecoveryItems(
   }
   if (candidateRoots.size === 0) return items;
   const blocked = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
+  const failure = latestRootProviderFailure(blocked, projection.turnItems);
   const firstInputs = new Map<string, OrchestrationV2TurnItem>();
   for (const item of projection.turnItems) {
-    if (
-      item.type === "error" &&
-      blocked !== null &&
-      item.runId === blocked.id &&
-      item.nodeId === blocked.rootNodeId
-    ) {
+    if (item.type === "error" && failure !== null && item.failure === failure) {
       items.set(String(item.id), item);
     } else if (
       (item.type === "user_message" || item.type === "notification") &&
