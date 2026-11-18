@@ -97,6 +97,9 @@ import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from "..
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { createModelSelection } from "@t3tools/shared/model";
+// Aliased so the line stays valid on upstream sources that already import these names.
+import { useThreadShell as useBoundThreadShell } from "../../state/entities";
+import { scopeThreadRef as scopeBoundThreadRef } from "@t3tools/client-runtime/environment";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -1164,13 +1167,24 @@ function ScheduledTaskEditorForm({
     activeModel,
   );
 
-  const activeEntry = instanceEntries.find((entry) => entry.instanceId === activeInstanceId);
+  // A bound run uses the thread's current model and effort, so show those read-only.
+  const boundShell = useBoundThreadShell(
+    draft.threadId ? scopeBoundThreadRef(environmentId, draft.threadId as ThreadId) : null,
+  );
   // Options belong to the model they were chosen for; a different model starts from its defaults.
-  const activeOptions =
+  const draftOptions =
     draft.baseModelSelection?.instanceId === activeInstanceId &&
     draft.baseModelSelection.model === activeModel
       ? draft.baseModelSelection.options
       : undefined;
+  const traitsSelection = draft.threadId
+    ? (boundShell?.modelSelection ?? null)
+    : activeModel
+      ? { instanceId: activeInstanceId, model: activeModel, options: draftOptions }
+      : null;
+  const traitsEntry = instanceEntries.find(
+    (entry) => entry.instanceId === traitsSelection?.instanceId,
+  );
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
       stackedThreadToast({
@@ -1486,24 +1500,24 @@ function ScheduledTaskEditorForm({
                   setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
                 }
               />
-              {activeEntry && activeModel && draft.threadId === "" ? (
+              {traitsEntry && traitsSelection ? (
                 <TraitsPicker
-                  provider={activeEntry.driverKind}
-                  instanceId={activeInstanceId}
-                  models={activeEntry.models}
-                  model={activeModel}
-                  modelOptions={activeOptions ?? []}
+                  provider={traitsEntry.driverKind}
+                  instanceId={traitsSelection.instanceId}
+                  models={traitsEntry.models}
+                  model={traitsSelection.model}
+                  modelOptions={traitsSelection.options ?? []}
                   allowPromptInjectedEffort={false}
                   planModeEnabled={false}
-                  disabled={saving || !connected}
+                  disabled={saving || !connected || draft.threadId !== ""}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onModelOptionsChange={(options) =>
                     setDraft((current) => ({
                       ...current,
-                      modelKey: `${activeInstanceId}:${activeModel}`,
+                      modelKey: `${traitsSelection.instanceId}:${traitsSelection.model}`,
                       baseModelSelection: createModelSelection(
-                        activeInstanceId,
-                        activeModel,
+                        traitsSelection.instanceId,
+                        traitsSelection.model,
                         options,
                       ),
                     }))
