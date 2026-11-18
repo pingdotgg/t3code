@@ -166,6 +166,35 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // regression: #38588 a daemon left by an earlier server kept its sessions' device claims
+  it.effect("replaces a healthy daemon left by an earlier server instead of adopting it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let attempts = 0;
+      const { host } = yield* agentFixture(
+        (stateDir) =>
+          Effect.gen(function* () {
+            attempts++;
+            yield* fs
+              .writeFileString(
+                `${stateDir}/daemon.json`,
+                JSON.stringify({ httpPort: 23456, token: "fresh-token" }),
+              )
+              .pipe(Effect.orDie);
+            return processOutput(0);
+          }),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: process.pid, version: "0.0.1" },
+      );
+      const ready = yield* host.ensureAgentReady(() => Effect.void);
+      expect(attempts).toBe(1);
+      expect(ready.agentDevice).toMatchObject({
+        baseUrl: "http://127.0.0.1:23456",
+        token: "fresh-token",
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("uses the SDK a later shell environment selects", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
