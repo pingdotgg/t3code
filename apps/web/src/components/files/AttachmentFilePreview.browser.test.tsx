@@ -79,6 +79,7 @@ import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
 import type { TextPreviewResult } from "./largeTextProtocol";
 import type { ReactElement } from "react";
 import type { OfficeWorkerResult } from "./officePreviewProtocol";
+import { previewErrorText } from "./previewFailureMessages";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
 // when the full browser project runs concurrently on CI.
@@ -220,7 +221,8 @@ describe("bounded binary previews", () => {
       ]);
       expect(await request({ type: "entry", path: "replaced.txt" })).toEqual({
         type: "error",
-        message: "This archive entry is unavailable.",
+        code: "archive-entry-unavailable",
+        message: "archive-entry-unavailable",
       });
     } finally {
       worker.terminate();
@@ -1330,9 +1332,9 @@ it.each([
     const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
     const { prepareOffice } = await import("./officeArchive");
     if (row > 250000) {
-      await expect(prepareOffice(bytes, "xlsx")).rejects.toThrow(
-        "This workbook exceeds the preview limit",
-      );
+      await expect(
+        prepareOffice(bytes, "xlsx").catch((cause: unknown) => previewErrorText(cause, "")),
+      ).resolves.toContain("This workbook exceeds the preview limit");
       return;
     }
     const prepared = await prepareOffice(bytes, "xlsx");
