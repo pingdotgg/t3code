@@ -107,6 +107,13 @@ describe("GitLab CLI commands", () => {
     }
     expect(definition.changeRequestCloseCommand.test("glab mr view 7")).toBe(false);
   });
+
+  it("recognizes shell creates, including glab's `new` alias", () => {
+    for (const command of ["glab mr create --fill --yes", "glab mr new --fill --yes"]) {
+      expect(definition.changeRequestCreateCommand.test(command), command).toBe(true);
+    }
+    expect(definition.changeRequestCreateCommand.test("glab mr view 7")).toBe(false);
+  });
 });
 
 describe("GitLab remotes", () => {

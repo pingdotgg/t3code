@@ -11,6 +11,7 @@ import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabCredentials from "./GitLabCredentials.ts";
 import * as GitLabMediaFetch from "./gitLabMediaFetch.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
+import * as GitLabIssueTracker from "./GitLabIssueTracker.ts";
 import * as GitLabPullRequestProvider from "./GitLabPullRequestProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 
@@ -24,6 +25,7 @@ const makeInstance = Effect.all({
   discovery: Effect.succeed(GitLabSourceControlProvider.discovery),
   pullRequests: GitLabPullRequestProvider.make,
   fetchMedia: GitLabMediaFetch.make,
+  issues: GitLabIssueTracker.make,
 });
 
 export const driver = defineSourceControlDriver({
