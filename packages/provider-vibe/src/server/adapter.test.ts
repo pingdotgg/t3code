@@ -510,6 +510,67 @@ describe("Vibe adapter against an in-memory app-server", () => {
     ),
   );
 
+  it.effect("publishes completed snapshot output before newer patches and the terminal event", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const session = { id: "native-session" };
+        const turnId = "tracked-turn";
+        const entry = (id: string, turn: string, text: string, generationStatus: string) => ({
+          id,
+          turnId: turn,
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text }],
+          generationStatus,
+        });
+        const patch = (eventId: number, value: string) => ({
+          method: "history/entryUpdated",
+          params: {
+            sessionId: session.id,
+            eventId,
+            entryId: "answer",
+            patch: [{ op: "append", path: "/content/0/text", value }],
+          },
+        });
+        const { runtime, providerThread, notify, takeEvent } = yield* openFakeVibe((method) => {
+          if (method === "session/resume") {
+            return {
+              result: {
+                state: {
+                  session,
+                  eventId: 10,
+                  turns: [{ id: turnId, sessionId: session.id, status: "completed" }],
+                  history: [
+                    entry("old-answer", "earlier-turn", "Earlier", "completed"),
+                    entry("answer", turnId, "Hello", "completed"),
+                  ],
+                },
+              },
+            };
+          }
+          if (method === "session/history/list") {
+            return { result: { items: [] }, notifications: [patch(9, "lo"), patch(11, "!")] };
+          }
+          return undefined;
+        });
+        yield* notify("turn/started", { turn: { id: turnId } });
+        yield* takeEvent("provider_turn.updated");
+        yield* notify("history/entryAdded", {
+          entry: entry("answer", turnId, "Hel", "in_progress"),
+        });
+        expect((yield* takeEvent("message.updated")).message.text).toBe("Hel");
+
+        yield* runtime.resumeThread({ providerThread });
+        expect((yield* takeEvent("message.updated")).message).toMatchObject({
+          text: "Hello",
+          streaming: false,
+        });
+        expect((yield* takeEvent("message.updated")).message.text).toBe("Hello!");
+        expect((yield* takeEvent("turn.terminal")).status).toBe("completed");
+      }).pipe(Effect.provide(layerTest)),
+    ),
+  );
+
   it.effect("publishes a question card, returns the answer, and resolves the card", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -971,80 +1032,91 @@ describe("Vibe adapter against an in-memory app-server", () => {
     ),
   );
 
-  it.effect("recovers buffered final updates when a same-session resume retry is rejected", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let resumeAttempts = 0;
-        const sessionId = "native-session";
-        const turnId = "tracked-turn";
-        const vibe = yield* openFakeVibe((method) => {
-          if (method === "session/history/list") {
-            return { error: { code: "unavailable", message: "History read failed" } };
-          }
-          if (method !== "session/resume") return undefined;
-          resumeAttempts++;
-          if (resumeAttempts === 1) {
-            return { result: { state: { session: { id: sessionId }, eventId: 5 } } };
-          }
-          return {
-            error: { code: "conflict", message: "Resume rejected" },
-            notifications: [
-              {
-                method: "history/entryAdded",
-                params: {
-                  sessionId,
-                  eventId: 6,
-                  entry: {
-                    id: "tracked-answer",
-                    type: "message",
-                    role: "assistant",
-                    turnId,
-                    generationStatus: "in_progress",
-                    content: [{ type: "text", text: "Tracked" }],
+  it.effect.each(["rejected", "malformed"] as const)(
+    "recovers buffered final updates when a same-session resume retry is %s",
+    (failure) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let resumeAttempts = 0;
+          let interruptRequests = 0;
+          const sessionId = "native-session";
+          const turnId = "tracked-turn";
+          const vibe = yield* openFakeVibe((method) => {
+            if (method === "turn/interrupt") interruptRequests++;
+            if (method === "session/history/list") {
+              return { error: { code: "unavailable", message: "History read failed" } };
+            }
+            if (method !== "session/resume") return undefined;
+            resumeAttempts++;
+            if (resumeAttempts === 1) {
+              return { result: { state: { session: { id: sessionId }, eventId: 5 } } };
+            }
+            return {
+              ...(failure === "rejected"
+                ? { error: { code: "conflict", message: "Resume rejected" } }
+                : { result: { state: { session: {} } } }),
+              notifications: [
+                {
+                  method: "history/entryAdded",
+                  params: {
+                    sessionId,
+                    eventId: 6,
+                    entry: {
+                      id: "tracked-answer",
+                      type: "message",
+                      role: "assistant",
+                      turnId,
+                      generationStatus: "in_progress",
+                      content: [{ type: "text", text: "Tracked" }],
+                    },
                   },
                 },
-              },
-              {
-                method: "history/entryUpdated",
-                params: {
-                  sessionId: "different-session",
-                  eventId: 7,
-                  entryId: "tracked-answer",
-                  patch: [{ op: "append", path: "/content/0/text", value: " wrong" }],
+                {
+                  method: "history/entryUpdated",
+                  params: {
+                    sessionId: "different-session",
+                    eventId: 7,
+                    entryId: "tracked-answer",
+                    patch: [{ op: "append", path: "/content/0/text", value: " wrong" }],
+                  },
                 },
-              },
-              {
-                method: "history/entryUpdated",
-                params: {
-                  sessionId,
-                  eventId: 8,
-                  entryId: "tracked-answer",
-                  patch: [{ op: "append", path: "/content/0/text", value: " answer" }],
+                {
+                  method: "history/entryUpdated",
+                  params: {
+                    sessionId,
+                    eventId: 8,
+                    entryId: "tracked-answer",
+                    patch: [{ op: "append", path: "/content/0/text", value: " answer" }],
+                  },
                 },
-              },
-              { method: "turn/completed", params: { sessionId, turn: { id: turnId } } },
-            ],
-          };
-        });
-        yield* vibe.notify("turn/started", { turn: { id: turnId } });
-        const { providerTurn } = yield* vibe.takeEvent("provider_turn.updated");
+                { method: "turn/completed", params: { sessionId, turn: { id: turnId } } },
+              ],
+            };
+          });
+          yield* vibe.notify("turn/started", { turn: { id: turnId } });
+          const { providerTurn } = yield* vibe.takeEvent("provider_turn.updated");
 
-        const resume = vibe.runtime.resumeThread({ providerThread: vibe.providerThread });
-        expect((yield* Effect.flip(resume))._tag).toBe("ProviderAdapterProtocolError");
-        expect((yield* Effect.flip(resume))._tag).toBe("ProviderAdapterProtocolError");
+          const resume = vibe.runtime.resumeThread({ providerThread: vibe.providerThread });
+          expect((yield* Effect.flip(resume))._tag).toBe("ProviderAdapterProtocolError");
+          expect((yield* Effect.flip(resume))._tag).toBe("ProviderAdapterProtocolError");
+          yield* vibe.runtime.interruptTurn({
+            providerThread: vibe.providerThread,
+            providerTurnId: providerTurn.id,
+          });
+          expect(interruptRequests).toBe(0);
 
-        expect((yield* vibe.takeEvent("message.updated")).message.text).toBe("Tracked");
-        expect((yield* vibe.takeEvent("message.updated")).message.text).toBe("Tracked answer");
-        expect((yield* vibe.takeEvent("message.updated")).message).toMatchObject({
-          text: "Tracked answer",
-          streaming: false,
-        });
-        expect(yield* vibe.takeEvent("turn.terminal")).toMatchObject({
-          status: "completed",
-          providerTurnId: providerTurn.id,
-        });
-      }).pipe(Effect.provide(layerTest)),
-    ),
+          expect((yield* vibe.takeEvent("message.updated")).message.text).toBe("Tracked");
+          expect((yield* vibe.takeEvent("message.updated")).message.text).toBe("Tracked answer");
+          expect((yield* vibe.takeEvent("message.updated")).message).toMatchObject({
+            text: "Tracked answer",
+            streaming: false,
+          });
+          expect(yield* vibe.takeEvent("turn.terminal")).toMatchObject({
+            status: "completed",
+            providerTurnId: providerTurn.id,
+          });
+        }).pipe(Effect.provide(layerTest)),
+      ),
   );
 
   it.effect("keeps snapshot and live turns in order across resume and rewind", () =>

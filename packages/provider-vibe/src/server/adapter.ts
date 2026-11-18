@@ -234,6 +234,7 @@ interface AdoptionEvent {
 
 interface ThreadAdoption {
   readonly notifications: AdoptionEvent[];
+  recoverySessionId?: string;
   snapshot?: {
     readonly state: VibeAppServer.PublicSessionState;
     readonly watermark: number | undefined;
@@ -1086,6 +1087,15 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         Effect.tapError((cause) =>
           Effect.sync(() => {
             if (cause._tag !== "VibeAppServerRequestError" || cause.code === "terminated") {
+              const previousSessionId =
+                attached.attachedSessionId ?? attached.unreconciledSessionId;
+              if (
+                cause._tag === "VibeAppServerProtocolError" &&
+                nativeId !== undefined &&
+                nativeId === previousSessionId
+              ) {
+                adoption.recoverySessionId = previousSessionId;
+              }
               attached.attachedSessionId = undefined;
               attached.unreconciledSessionId = undefined;
             }
@@ -1132,6 +1142,8 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         updatedAt,
       };
       const runningTurn = nativeTurns.find((turn) => turn.status === "in_progress");
+      const trackedTurnId =
+        nativeThreadId === sessionIdOf() ? state.activeTurn?.nativeTurnId : undefined;
       // The open response's history and event watermark describe the same instant.
       state.historyWatermark = watermark === undefined ? undefined : { eventId: watermark };
       state.entries.clear();
@@ -1150,6 +1162,13 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         driver: VIBE_PROVIDER,
         providerThread: thread,
       });
+      if (trackedTurnId !== undefined) {
+        for (const [entryId, entry] of state.entries) {
+          if (entry["turnId"] === trackedTurnId) {
+            yield* projectHistoryEntry(entry, entryId, ensureInput.threadId);
+          }
+        }
+      }
       if (runningTurn) {
         yield* onNotification("turn/started", { sessionId: nativeThreadId, turn: runningTurn });
       }
@@ -1189,7 +1208,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
                 state.adoptingThread = undefined;
                 return;
               }
-              const sessionId = connection.unreconciledSessionId;
+              const sessionId = adoption.recoverySessionId ?? connection.unreconciledSessionId;
               if (sessionId !== undefined) yield* recoverFailedAdoption(sessionId, adoption);
               state.adoptingThread = undefined;
               const outcomes = yield* Effect.forEach(
