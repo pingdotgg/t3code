@@ -405,40 +405,43 @@ files show the copy that was attached to the message.
 An agent sees more than what you type. Some of it comes from T3 Code, some from the agent's
 own CLI, and some from the model provider.
 
+The thread gathers what reached the agent, or was kept from it, without you typing it into one
+panel named **What reached the agent**, closed by default. Its header sums what each source
+added and counts what was held back or blocked; blocked messages and failed requests show in
+amber. Open it to see each item, and select **View** to read the exact text.
+
 - **T3 Code's instructions.** Each agent session gets instructions about T3 Code's own tools:
   delegation, threads, browser, devices, pull request linking and runtime info. On web,
   desktop and mobile, turn off **Settings → Threads → Automatic additions → T3 Code agent
   instructions** to leave them out of sessions started afterwards. The tools stay available;
   the agent just gets no guidance on them.
 - **Context T3 Code adds to a turn.** A handoff when you change provider or model, side-chat
-  context, a note after a restart, and the goal block while a goal is active. The thread shows
-  a row named **T3 Code added context to this turn**; open it to read the text that was sent.
-  Long text is cut off after 20,000 characters. Under **Settings → Threads → Automatic
+  context, a note after a restart, and the goal block while a goal is active. The panel lists
+  it under **Added by T3 Code**. Long text is cut off after 20,000 characters. Under **Settings → Threads → Automatic
   additions**, the **T3 Code: context handoff**, **T3 Code: side-chat context** and **T3 Code:
-  restart note** switches turn each one off. The thread then shows a row saying T3 Code did
-  not send it, and the agent works without that context. Turning off the handoff also covers
+  restart note** switches turn each one off. The panel then lists it under **Held back by your
+  settings**, and the agent works without that context. Turning off the handoff also covers
   history sent after a fork, a merge back, a lost provider session or an import. Your own
   messages from a run that failed before the agent received them are always sent again.
 - **Messages T3 Code sends for you.** Wake-ups from delegated tasks and watched pull requests,
   goal continuation, idle compaction and restart continuation. They appear in the thread as
   sent by T3 Code. Under **Settings → Threads → Automatic additions**, four **T3 Code:**
   switches turn off the wake when a delegated task finishes, when it asks a question, on pull
-  request updates, and goal continuation. With a switch off, T3 Code starts no turn; the thread
-  shows a row saying it did not wake the agent, with what the wake would have said. With
+  request updates, and goal continuation. With a switch off, T3 Code starts no turn; the panel
+  lists the wake under **Held back by your settings**, with what it would have said. With
   goal continuation off, a goal pauses after each turn; resume it to run one more. Idle compaction and restart
   continuation keep their own settings.
 - **Messages from other threads.** An agent can send a message into another thread. Set
   **T3 Code: messages from other threads** to **Block** to refuse messages from threads
   outside the target's own delegation tree and from linked machines. The sending agent gets an
-  error, and the target thread shows a row naming the sender with the blocked text. A thread
+  error, and the target thread's panel lists it under **Blocked**, with the sender and the text. A thread
   and the tasks it delegated can always message each other. The block covers T3 Code's agent
   tools only: an agent with an unsandboxed shell can still run `t3 thread send`, which counts
   as you.
 - **What the agent's CLI adds.** Project instruction files, memory, hook output and system
   reminders come from the CLI, not T3 Code, so manage them in its settings. For Claude Code,
-  the thread shows a row named **Claude Code added context to this turn** and a row with its
-  system prompt when that changes; open either to read the text. If Claude Code kept no record,
-  a row says so. Other harnesses are not shown. To stop Claude Code adding an item, turn off
+  the panel lists each item under **Added by Claude Code** with its size, the system prompt
+  first when it changes. If Claude Code kept no record, the panel says so. Other harnesses are not shown. To stop Claude Code adding an item, turn off
   its **Claude Code:** switch under **Settings → Threads → Automatic additions**: instruction
   files, auto-memory, git context, the skill list, the tool, MCP and skill lists, or hooks.
   Each switch says what turning it off breaks. Turning off hooks stops every Claude Code hook
@@ -472,10 +475,11 @@ off. Only you can change them; agents cannot.
   it fails. Removing or changing a block that carries a prompt-cache breakpoint makes less of
   the prompt cacheable. A dry run shows these warnings beside the rule's switch. Patterns run on
   every request over the whole conversation on the T3 Code server, so a slow pattern delays every
-  session there; the turn's row warns when the rules took more than 50 ms on one request.
-- **In the thread.** A row named **Your rules changed what was sent this turn** lists each rule
-  that changed something, with the characters removed and added. A request a rule changed that
-  then fails gets its own row with the provider's error.
+  session there; the panel warns when the rules took more than 50 ms on one request.
+- **In the thread.** The panel lists each rule that changed something under **Changed by your
+  rules**, with the requests it touched and the characters it removed or added. A request a rule
+  changed that then fails is listed there with the provider's error and counts as failed in the
+  panel's header.
 
 ## Attached files
 
