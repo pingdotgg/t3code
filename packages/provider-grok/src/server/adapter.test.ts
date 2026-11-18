@@ -32,7 +32,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { GrokSettings } from "../settings.ts";
-import { makeGrokAdapterV2 } from "./adapter.ts";
+import { makeGrokAcpAdapterFlavor, makeGrokAdapterV2 } from "./adapter.ts";
 
 const layerTest = Layer.mergeAll(
   NodeServices.layer,
@@ -265,3 +265,37 @@ describe("Grok reasoning effort", () => {
     }),
   );
 });
+
+it.effect("a steer reaches Grok as an interjection that carries its images", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ readonly method: string; readonly params: unknown }> = [];
+    let reply: unknown = { result: { status: "queued" } };
+    const runtime = {
+      request: (method: string, params: unknown) => {
+        requests.push({ method, params });
+        return Effect.succeed(reply);
+      },
+    } as unknown as AcpSessionRuntime.AcpSessionRuntime["Service"];
+    const steering = makeGrokAcpAdapterFlavor(
+      { makeRuntime: () => Effect.never } as unknown as Parameters<
+        typeof makeGrokAcpAdapterFlavor
+      >[0],
+      "/home/ada",
+    ).steering!;
+    const image = { type: "image", data: "aGk=", mimeType: "image/png" } as const;
+
+    assert.isUndefined(yield* steering.send(runtime, "session-1", "Look at this", [image]));
+    yield* steering.send(runtime, "session-1", "Text only", []);
+    assert.deepEqual(requests, [
+      {
+        method: "_x.ai/interject",
+        params: { sessionId: "session-1", text: "Look at this", content: [image] },
+      },
+      { method: "_x.ai/interject", params: { sessionId: "session-1", text: "Text only" } },
+    ]);
+
+    reply = { result: { status: "rejected" } };
+    const refused = yield* steering.send(runtime, "session-1", "Late", []).pipe(Effect.flip);
+    assert.strictEqual(refused._tag, "AcpRequestError");
+  }),
+);

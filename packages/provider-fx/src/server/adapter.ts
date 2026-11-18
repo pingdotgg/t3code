@@ -20,7 +20,9 @@ import {
   applyFxEffortDefault,
   applyFxModelSelection,
   FX_DRIVER_KIND,
+  FX_SESSION_META,
   fxPermissionDisposition,
+  FX_MODE_CONFIG_ID,
   fxSessionModeForPolicy,
   makeFxAcpRuntime,
   withFxSessionMode,
@@ -181,11 +183,16 @@ function makeFxAcpAdapterFlavor(options: FxAdapterV2Options): AcpAdapterV2Flavor
     driver: FX_DRIVER_KIND,
     runtimeHarness: "fx",
     capabilities: FxProviderCapabilitiesV2,
-    makeRuntime: (input) => makeRuntime(input).pipe(Effect.map(withFxSessionMode)),
+    makeRuntime: (input) =>
+      makeRuntime({ ...input, sessionMeta: () => FX_SESSION_META }).pipe(
+        Effect.map(withFxSessionMode),
+      ),
     applyModelSelection: ({ runtime, modelSelection }) =>
       applyFxModelSelection(runtime, modelSelection, options.defaultModel).pipe(
         Effect.tap(() => applyFxEffortDefault(runtime, modelSelection)),
       ),
+    ownedModelOptionIds: [FX_MODE_CONFIG_ID],
+    lockSessionModeToPolicy: true,
     sessionModeForPolicy: fxSessionModeForPolicy,
     permissionDisposition: fxPermissionDisposition,
     extractSubagentUpdate: extractFxSubagentUpdate,

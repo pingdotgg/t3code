@@ -32,6 +32,20 @@ it.effect("ModelSelection prefers explicit instanceId over legacy provider", () 
   }),
 );
 
+it.effect("ModelSelection treats null options as omitted", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeModelSelection({
+      instanceId: "codex",
+      model: "gpt-5",
+      options: null,
+    });
+    assert.deepStrictEqual(parsed, {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5",
+    });
+  }),
+);
+
 it.effect(
   "ModelSelection decodes unknown driver kinds via legacy provider (rollback / fork invariant)",
   () =>

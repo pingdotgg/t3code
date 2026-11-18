@@ -118,9 +118,45 @@ const GrokProviderCapabilitiesV2 = {
     ...AcpProviderCapabilitiesV2.checkpointing,
     providerCanReadConversationSnapshot: true,
   },
-  // Cancelling a Grok prompt kills its running foreground tool.
-  turns: { ...AcpProviderCapabilitiesV2.turns, supportsSteeringByInterruptRestart: false },
+  turns: {
+    ...AcpProviderCapabilitiesV2.turns,
+    // `_x.ai/interject` lets the running tool finish; the model reads the message at its next step.
+    supportsActiveSteering: true,
+    activeSteeringInterruptsTools: false,
+    // Cancelling a Grok prompt kills its running foreground tool.
+    supportsSteeringByInterruptRestart: false,
+  },
 } satisfies OrchestrationV2ProviderCapabilities;
+
+const XAI_INTERJECT_METHOD = "_x.ai/interject";
+const isXAiInterjectQueued = Schema.is(
+  Schema.Struct({ result: Schema.Struct({ status: Schema.Literal("queued") }) }),
+);
+
+/** A queued interjection joins the running prompt, so its acceptance is the delivery. */
+const grokSteering: NonNullable<AcpAdapterV2Flavor["steering"]> = {
+  send: (runtime, sessionId, text, images) =>
+    runtime
+      .request(XAI_INTERJECT_METHOD, {
+        sessionId,
+        text,
+        ...(images.length === 0 ? {} : { content: images }),
+      })
+      .pipe(
+        Effect.flatMap((result) =>
+          isXAiInterjectQueued(result)
+            ? Effect.undefined
+            : Effect.fail(
+                new EffectAcpErrors.AcpRequestError({
+                  code: -32603,
+                  errorMessage: "Grok did not queue the interjection.",
+                  method: XAI_INTERJECT_METHOD,
+                  data: result,
+                }),
+              ),
+        ),
+      ),
+};
 
 export interface GrokAdapterV2Options {
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
@@ -331,6 +367,7 @@ export function makeGrokAcpAdapterFlavor(
     // Grok accepts image blocks despite advertising promptCapabilities.image:false.
     supportsImagePrompts: true,
     supportsCompaction: true,
+    steering: grokSteering,
     // Grok expands only a leading `/name`, while the `$` picker inserts `$name` from the
     // `grok inspect` catalog. Ask that catalog again so other `$` text is left alone.
     rewriteUserText: (text, turnInput) => {
