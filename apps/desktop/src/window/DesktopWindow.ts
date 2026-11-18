@@ -147,6 +147,9 @@ export class DesktopWindow extends Context.Service<
     readonly dispatchSnapShotEvent: (
       event: DesktopSnapShotEvent,
     ) => Effect.Effect<void, DesktopWindowError>;
+    /** The live app window a capture was delivered to, until that window acknowledges it. */
+    readonly snapShotOwner: (id: string) => Effect.Effect<Option.Option<Electron.BrowserWindow>>;
+    readonly releaseSnapShot: (id: string) => Effect.Effect<void>;
     // Electron zoom roles target focused guests; zoomMain must always target the app.
     readonly zoomMain: (direction: MainWindowZoomDirection) => Effect.Effect<void>;
     readonly runMainContentsCommand: (command: MainWindowContentsCommand) => Effect.Effect<void>;
@@ -1234,9 +1237,19 @@ export const make = Effect.gen(function* () {
         ...(pinned === undefined ? {} : { target: pinned }),
       });
       if (captureId === undefined) return;
-      // A capture's later events go to the window that showed its first, even if focus moved.
-      if (event.type === "ready" || event.type === "failed") snapShotTargets.delete(captureId);
+      // A capture's events, and the capture itself, belong to the window that showed its first,
+      // even if focus moves; the pin lasts until that window acknowledges it.
+      if (event.type === "failed") snapShotTargets.delete(captureId);
       else if (Option.isSome(target)) snapShotTargets.set(captureId, target.value);
+    }),
+    snapShotOwner: Effect.fn("desktop.window.snapShotOwner")(function* (id) {
+      const owner = snapShotTargets.get(id);
+      return owner === undefined || owner.isDestroyed()
+        ? Option.none<Electron.BrowserWindow>()
+        : Option.some(owner);
+    }),
+    releaseSnapShot: Effect.fn("desktop.window.releaseSnapShot")(function* (id) {
+      snapShotTargets.delete(id);
     }),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });

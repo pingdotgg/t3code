@@ -120,6 +120,8 @@ const layerDesktopWindow = (
         Effect.asVoid,
       ),
     dispatchSnapShotEvent: () => Effect.void,
+    snapShotOwner: () => Effect.succeedNone,
+    releaseSnapShot: () => Effect.void,
     zoomMain: (direction) =>
       Deferred.succeed(selectedAction, `zoom-${direction}`).pipe(Effect.asVoid),
     runMainContentsCommand: (command) =>

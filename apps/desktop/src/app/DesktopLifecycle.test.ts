@@ -104,6 +104,8 @@ function layerDesktopWindow(
     prepareCaptureReveal: Effect.void,
     dispatchMenuAction: () => Effect.void,
     dispatchSnapShotEvent: () => Effect.void,
+    snapShotOwner: () => Effect.succeedNone,
+    releaseSnapShot: () => Effect.void,
     zoomMain: () => Effect.void,
     runMainContentsCommand: () => Effect.void,
     syncAppearance: Effect.void,
