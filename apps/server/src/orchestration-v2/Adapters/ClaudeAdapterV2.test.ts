@@ -10443,6 +10443,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     const nextTurnAfter = Effect.fnUntraced(function* (input: {
       readonly transcript: ((promptUuid: string) => string) | null;
       readonly backgroundShell?: boolean;
+      readonly scheduledWakeup?: boolean;
       readonly pinnedHead?: string;
     }) {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -10478,6 +10479,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
       yield* harness.runtime.startTurn(turn(1));
       if (input.backgroundShell === true) yield* harness.offerAndWait(wakeTaskStarted);
+      if (input.scheduledWakeup === true) {
+        for (const frame of scheduleWakeupFrames({
+          toolUseId: "toolu_stale_process_wakeup",
+          uuids: ["00000000-0000-4000-8000-000000000c05", "00000000-0000-4000-8000-000000000c06"],
+          toolInput: { delaySeconds: 3600, prompt: "check", reason: "wake", noop: false },
+          scheduledFor: DateTime.toEpochMillis(now) + 3_600_000,
+        })) {
+          yield* harness.offerAndWait(frame);
+        }
+      }
       yield* harness.offerAndWait(makeAssistantTextFrame({ uuid: firstReply, text: "Working." }));
       yield* harness.offerAndWait(makeAssistantTextFrame({ uuid: secondReply, text: "Done." }));
       yield* harness.offerAndWait(turnOneResult);
@@ -10549,6 +10560,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         name: "replacing it would end background work",
         transcript: (promptUuid: string) => t3Turn(promptUuid) + terminalExchange,
         backgroundShell: true,
+      },
+      {
+        name: "replacing it would cancel a scheduled wakeup",
+        transcript: (promptUuid: string) => t3Turn(promptUuid) + terminalExchange,
+        scheduledWakeup: true,
+      },
+      {
+        // Longer than the tail T3 reads, and the process's own messages are not written yet.
+        name: "a long transcript's tail holds none of its messages",
+        transcript: () =>
+          entry("user", "old-1", null, "x".repeat(1_200_000)) +
+          entry("assistant", "old-2", "old-1", [{ type: "text", text: "y".repeat(1_200_000) }]),
       },
     ])("keeps the warm process when $name", (row) =>
       Effect.gen(function* () {

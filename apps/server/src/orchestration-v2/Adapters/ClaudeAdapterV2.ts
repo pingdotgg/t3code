@@ -1330,11 +1330,11 @@ const CLAUDE_TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
 
 /** Whether a live process missed messages a terminal `claude --resume` appended to its session.
  * Anchors on the last message the process emitted; Claude flushes the file after streaming, so
- * an emitted message can be missing from it. Without an anchor, only a tail can prove a miss. */
+ * an emitted message can be missing from it. Lines with no anchor before them prove nothing:
+ * they can all predate the process. */
 function claudeTranscriptHasUnseenMessages(
   lines: ReadonlyArray<string>,
   emittedUuids: ReadonlySet<string>,
-  wholeFile: boolean,
 ): boolean {
   let anchored = false;
   let unseen: Array<ClaudeHistoryMessage> = [];
@@ -1361,8 +1361,7 @@ function claudeTranscriptHasUnseenMessages(
     }
     unseen.push({ type: entry.type, uuid, message: { content: entry.message.content } });
   }
-  if (!anchored && wholeFile) return false;
-  return claudeMessagesBeforeTrailingAborts(unseen) > 0;
+  return anchored && claudeMessagesBeforeTrailingAborts(unseen) > 0;
 }
 
 const claudeConfigDirOf = (
@@ -12815,11 +12814,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // The last piece is empty or a line Claude is still writing; a cut tail starts mid-line.
             lines.pop();
             if (tail.start > 0) lines.shift();
-            return claudeTranscriptHasUnseenMessages(
-              lines,
-              live.emittedMessageUuids,
-              tail.start === 0,
-            );
+            return claudeTranscriptHasUnseenMessages(lines, live.emittedMessageUuids);
           },
           Effect.orElseSucceed(() => false),
         );
@@ -12897,7 +12892,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             resumeSessionAt === undefined &&
             (yield* liveProcessMissedTranscriptMessages(existing))
           ) {
-            if (yield* liveProcessRunsBackgroundWork(existing)) {
+            // A scheduled wakeup dies with the process, like its background work.
+            if (
+              (yield* liveProcessRunsBackgroundWork(existing)) ||
+              scheduledWakeupsByNativeThread.has(nativeThreadId)
+            ) {
               yield* Effect.logWarning(
                 "orchestration-v2.claude-stale-process-kept-for-background-work",
                 { threadId: turnInput.threadId, nativeThreadId },
