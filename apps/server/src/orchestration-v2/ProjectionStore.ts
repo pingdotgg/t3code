@@ -4728,13 +4728,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           LIMIT 1
         )
     `;
-    // Mirrors usageLimitWakeCandidates: a completed run, not a continuation, that ended
-    // before the newest usage-limit failure resets. Runs that ended before the failure match
-    // too; they can never be the latest run, so selections come out the same.
+    // Mirrors usageLimitWakeCandidates: a completed run on the limited provider, not a
+    // continuation, that ended before the newest usage-limit failure resets. Runs that ended
+    // before the failure match too; they can never be latest, so selections come out the same.
     const isWakeCandidate = (alias: string) => {
       const run = sql.literal(alias);
       return sql`(
         ${run}.status = 'completed'
+        AND json_extract(${run}.payload_json, '$.providerInstanceId')
+          IS json_extract(latest_failure.payload_json, '$.providerInstanceId')
         AND COALESCE(
           json_extract(latest_failure_error.payload_json, '$.failure.class') = 'usage_limit'
           AND julianday(${run}.completed_at) <= julianday(

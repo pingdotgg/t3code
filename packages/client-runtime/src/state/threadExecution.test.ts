@@ -304,6 +304,9 @@ describe("thread execution presentation", () => {
     // Manual Resume also starts from a notification; once it completes, it did the work.
     const resumed = { ...wake, manualContinuationOfRunId: failed.id };
     expect(usageLimitBlockedRun([failed, resumed], hidden.turnItems, null)).toBeNull();
+    // A wake on another provider ran there; the limited provider's failure stays behind it.
+    const otherProvider = { ...wake, providerInstanceId: ProviderInstanceId.make("other") };
+    expect(usageLimitBlockedRun([failed, otherProvider], hidden.turnItems, null)).toBeNull();
   });
 
   it("keeps live activity attached to an executing run when a newer run is queued", () => {

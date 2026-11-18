@@ -100,10 +100,9 @@ export function runRanAfter(
 }
 
 /**
- * Background subagents that die on a usage limit each start a root run from a notification.
- * Those runs finish within milliseconds, before the limit resets, and have no work to show.
- * These are the runs that may be such wakes: completed after the latest usage-limit failure
- * and before its reset. A continuation the user or recovery started is never a wake.
+ * Subagents that die on a usage limit start notification runs that finish before the reset
+ * with no work to show. These candidates ran on the limited provider after its latest failure
+ * and before the reset; continuations and other providers' runs are never wakes.
  */
 export function usageLimitWakeCandidates(
   runs: ReadonlyArray<OrchestrationV2Run>,
@@ -119,6 +118,7 @@ export function usageLimitWakeCandidates(
       run.status === "completed" &&
       run.completedAt !== null &&
       run.rootNodeId !== null &&
+      run.providerInstanceId === failed.providerInstanceId &&
       DateTime.toEpochMillis(run.completedAt) <= resetMs &&
       runRanAfter(run, failed) &&
       run.manualContinuationOfRunId === undefined &&

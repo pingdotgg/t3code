@@ -8618,23 +8618,27 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           runId,
         );
       });
-      const setWakeCompletedAt = (completedAt: DateTime.Utc) =>
+      const updateWake = (tag: string, patch: Partial<(typeof wakeProjection.runs)[number]>) =>
         store.apply({
-          id: EventId.make(`event:limit-shell:wake-at-${DateTime.formatIso(completedAt)}`),
+          id: EventId.make(`event:limit-shell:wake-${tag}`),
           type: "run.updated",
           threadId,
           runId: wakeRunId,
           nodeId: wakeNodeId,
           driver,
           occurredAt: now,
-          payload: {
-            ...wakeProjection.runs.find((run) => run.id === wakeRunId)!,
-            completedAt,
-          },
+          payload: { ...wakeProjection.runs.find((run) => run.id === wakeRunId)!, ...patch },
         });
-      yield* setWakeCompletedAt(DateTime.makeUnsafe("2099-01-02T00:00:00.000Z"));
+      yield* updateWake("after-reset", {
+        completedAt: DateTime.makeUnsafe("2099-01-02T00:00:00.000Z"),
+      });
       yield* assertLatest(wakeRunId);
-      yield* setWakeCompletedAt(DateTime.add(now, { minutes: 1 }));
+      // A wake on another provider ran there, so it is the latest run.
+      yield* updateWake("other-provider", {
+        providerInstanceId: ProviderInstanceId.make("other-provider"),
+      });
+      yield* assertLatest(wakeRunId);
+      yield* updateWake("before-reset", {});
       yield* assertLatest(original.id);
       yield* store.apply({
         id: EventId.make("event:limit-shell:wake-user-start"),
