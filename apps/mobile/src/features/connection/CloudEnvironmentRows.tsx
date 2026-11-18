@@ -322,6 +322,13 @@ function CloudEnvironmentRowShell(props: {
     props.connectionError && props.connectionState !== "unsupported" && !props.awaitingApproval
       ? "text-danger-foreground"
       : "text-foreground-muted";
+  const accessibilityHint =
+    [
+      props.dimmed ? statusText : null,
+      props.onRemove ? gt("Long press to remove from this device") : null,
+    ]
+      .filter(Boolean)
+      .join(". ") || undefined;
   const [errorMeasurement, setErrorMeasurement] = useState<{
     readonly text: string;
     readonly lineCount: number;
@@ -358,7 +365,7 @@ function CloudEnvironmentRowShell(props: {
     <View collapsable={false} className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5">
       <ContentContainer
         className="min-w-0 flex-1 gap-0.5 active:opacity-70"
-        accessibilityHint={props.onRemove ? gt("Long press to remove from this device") : undefined}
+        accessibilityHint={accessibilityHint}
         accessibilityRole={props.onOpen ? "button" : undefined}
         accessibilityLabel={rowActionLabel}
         onPress={props.onOpen}
@@ -426,6 +433,7 @@ function CloudEnvironmentRowShell(props: {
         </StatusContainer>
       </ContentContainer>
       <ThemedSwitch
+        accessibilityHint={props.dimmed ? statusText : undefined}
         accessibilityLabel={gt("Enable {environment}", { environment: props.label })}
         style={{ alignSelf: "center", opacity: props.dimmed ? PAUSED_SWITCH_OPACITY : 1 }}
         disabled={props.disabled}
