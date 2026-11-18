@@ -95,10 +95,7 @@ const make = Effect.gen(function* () {
         if (!config) return undefined;
         const usesEnvironmentHome =
           !config.homePath.trim() &&
-          !(
-            "shadowHomePath" in config &&
-            (config.setupMode === "managed" || config.shadowHomePath.trim())
-          );
+          !("shadowHomePath" in config && config.setupMode === "managed");
         const homeVariable = entry.driver === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR";
         let variables = entry.environment;
         if (usesEnvironmentHome) {

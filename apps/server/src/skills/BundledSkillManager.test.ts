@@ -420,7 +420,7 @@ it.layer(
                 providerInstances: {
                   [instanceId]: {
                     driver: ProviderDriverKind.make("codex"),
-                    config: { homePath: "", shadowHomePath: "" },
+                    config: { homePath: "", shadowHomePath: `${home}/shadow-codex` },
                     environment: [
                       { name: "CODEX_HOME", value: `${home}/custom-codex`, sensitive: false },
                     ],
@@ -473,6 +473,9 @@ it.layer(
                     providerInstances: {
                       [instanceId]: {
                         driver: ProviderDriverKind.make(driver),
+                        ...(driver === "codex"
+                          ? { config: { shadowHomePath: `${home}/secret-shadow` } }
+                          : {}),
                         environment: [
                           {
                             name,

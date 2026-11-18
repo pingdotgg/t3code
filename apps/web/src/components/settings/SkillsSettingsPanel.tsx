@@ -1,3 +1,4 @@
+import { T, Var, msg, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { BookOpenIcon, DownloadIcon, Trash2Icon } from "lucide-react";
@@ -33,14 +34,16 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { useSettingsScope } from "./SettingsScopeContext";
 
 const STATUS_LABELS = {
-  not_installed: "Not installed",
-  installed: "Up to date",
-  update_available: "Update available",
-  modified: "Locally modified",
-  unmanaged: "Installed outside T3 Code",
+  not_installed: msg("Not installed"),
+  installed: msg("Up to date"),
+  update_available: msg("Update available"),
+  modified: msg("Locally modified"),
+  unmanaged: msg("Installed outside T3 Code"),
 } as const;
 
 export function EnvironmentSkillsSettings({ environmentId }: { environmentId: EnvironmentId }) {
+  const gt = useGT();
+  const messages = useMessages();
   const query = useEnvironmentQuery(serverEnvironment.bundledSkills({ environmentId, input: {} }));
   const manage = useAtomCommand(serverEnvironment.manageBundledSkill, { reportFailure: false });
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -78,12 +81,22 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
     query.refresh();
     if (result._tag === "Success") {
       setNotice(
-        `${skill.title} ${action === "remove" ? "removed" : action === "update" ? "updated" : "installed"}. Restart the agent session to apply the change.`,
+        action === "remove"
+          ? gt("{title} removed. Restart the agent session to apply the change.", {
+              title: skill.title,
+            })
+          : action === "update"
+            ? gt("{title} updated. Restart the agent session to apply the change.", {
+                title: skill.title,
+              })
+            : gt("{title} installed. Restart the agent session to apply the change.", {
+                title: skill.title,
+              }),
       );
       await refreshProviders({ environmentId, input: { instanceId } });
     } else if (!isAtomCommandInterrupted(result)) {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "The skill could not be changed.");
+      setError(failure instanceof Error ? failure.message : gt("The skill could not be changed."));
     }
     setBusy(null);
   };
@@ -91,7 +104,7 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
   return (
     <>
       <SettingsSection
-        title="T3 Code skills"
+        title={gt("T3 Code skills")}
         icon={<BookOpenIcon className="size-4" />}
         headerAction={
           <Button
@@ -100,13 +113,15 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
             onClick={() => query.refresh()}
             disabled={query.isPending || busy !== null}
           >
-            <RefreshIcon /> Check for updates
+            <RefreshIcon /> <T>Check for updates</T>
           </Button>
         }
       >
         <SettingsRow
-          title="Provider"
-          description="Install for every project using this provider on the selected environment."
+          title={gt("Provider")}
+          description={gt(
+            "Install for every project using this provider on the selected environment.",
+          )}
           control={
             <Select
               value={target?.instanceId ?? ""}
@@ -120,8 +135,8 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
                 }
               }}
             >
-              <SelectTrigger aria-label="Skill provider">
-                <SelectValue>{target?.label ?? "Select provider"}</SelectValue>
+              <SelectTrigger aria-label={gt("Skill provider")}>
+                <SelectValue>{target?.label ?? gt("Select provider")}</SelectValue>
               </SelectTrigger>
               <SelectPopup>
                 {targets.map((entry) => (
@@ -135,7 +150,7 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
         />
         {query.isPending && !query.data ? (
           <p role="status" className="p-4 text-sm text-muted-foreground">
-            Loading skills…
+            <T>Loading skills…</T>
           </p>
         ) : null}
         {target?.skills.map((skill) => {
@@ -156,7 +171,7 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
                         : "secondary"
                   }
                 >
-                  {STATUS_LABELS[skill.status]}
+                  {messages(STATUS_LABELS[skill.status])}
                 </Badge>
               </div>
               <p className="text-sm text-muted-foreground">{skill.description}</p>
@@ -169,7 +184,11 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
                   <Button
                     size="sm"
                     variant="outline"
-                    aria-label={`${skill.status === "update_available" ? "Update" : "Install"} ${skill.title}`}
+                    aria-label={
+                      skill.status === "update_available"
+                        ? gt("Update {title}", { title: skill.title })
+                        : gt("Install {title}", { title: skill.title })
+                    }
                     disabled={!canManage || busy !== null || query.isPending}
                     onClick={() =>
                       void change(skill, skill.status === "update_available" ? "update" : "install")
@@ -183,28 +202,31 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
                       <DownloadIcon />
                     )}
                     {busy === skill.id
-                      ? "Saving…"
+                      ? gt("Saving…")
                       : skill.status === "update_available"
-                        ? "Update"
-                        : "Install"}
+                        ? gt("Update")
+                        : gt("Install")}
                   </Button>
                 ) : null}
                 {skill.status === "installed" || skill.status === "update_available" ? (
                   <Button
                     size="sm"
                     variant="ghost"
-                    aria-label={`Remove ${skill.title}`}
+                    aria-label={gt("Remove {title}", { title: skill.title })}
                     disabled={!canManage || busy !== null || query.isPending}
                     onClick={() =>
                       setRemoving({ skill, instanceId: target.instanceId, label: target.label })
                     }
                   >
-                    <Trash2Icon /> Remove
+                    <Trash2Icon /> <T>Remove</T>
                   </Button>
                 ) : null}
                 {blocked ? (
                   <p className="text-xs text-muted-foreground">
-                    Your files are preserved. Move this copy before installing the bundled version.
+                    <T>
+                      Your files are preserved. Move this copy before installing the bundled
+                      version.
+                    </T>
                   </p>
                 ) : null}
               </div>
@@ -224,18 +246,20 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
       ) : null}
       {query.data && targets.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          Add a Codex or Claude provider to install T3 Code skills.
+          <T>Add a Codex or Claude provider to install T3 Code skills.</T>
         </p>
       ) : null}
       {!canManage ? (
         <p className="text-sm text-muted-foreground">
-          Settings permission is required to install, update, or remove skills.
+          <T>Settings permission is required to install, update, or remove skills.</T>
         </p>
       ) : null}
       <p className="text-xs text-muted-foreground">
-        Skills are bundled with this environment’s T3 Code version. Updating the server makes newer
-        copies available here. Installation currently supports Codex and Claude; other providers can
-        use manual installation.
+        <T>
+          Skills are bundled with this environment’s T3 Code version. Updating the server makes
+          newer copies available here. Installation currently supports Codex and Claude; other
+          providers can use manual installation.
+        </T>
       </p>
       <AlertDialog
         open={removing !== null}
@@ -245,14 +269,22 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {removing?.skill.title}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              <T>
+                Remove <Var>{removing?.skill.title}</Var>?
+              </T>
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the managed copy for {removing?.label}. Your threads and worktrees stay
-              in place.
+              <T>
+                This removes the managed copy for <Var>{removing?.label}</Var>. Your threads and
+                worktrees stay in place.
+              </T>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              <T>Cancel</T>
+            </AlertDialogClose>
             <Button
               variant="destructive"
               disabled={!canManage || busy !== null}
@@ -262,7 +294,7 @@ export function EnvironmentSkillsSettings({ environmentId }: { environmentId: En
                 if (pending) void change(pending.skill, "remove", pending.instanceId);
               }}
             >
-              Remove skill
+              <T>Remove skill</T>
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
@@ -276,10 +308,12 @@ export function SkillsSettingsPanel() {
   return (
     <SettingsPageContainer>
       {!environment ? (
-        <p className="text-sm text-muted-foreground">Connect an environment to manage skills.</p>
+        <p className="text-sm text-muted-foreground">
+          <T>Connect an environment to manage skills.</T>
+        </p>
       ) : environment.serverConfig?.environment.capabilities.bundledSkills !== true ? (
         <p className="text-sm text-muted-foreground">
-          Update this environment’s T3 Code server to manage bundled skills.
+          <T>Update this environment’s T3 Code server to manage bundled skills.</T>
         </p>
       ) : (
         <EnvironmentSkillsSettings
