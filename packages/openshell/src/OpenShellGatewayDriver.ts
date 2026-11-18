@@ -29,6 +29,7 @@ import {
   MANAGED_BY_LABEL,
   WORKER_CLASS_LABEL,
   parseWorkerPairingMaterial,
+  type WorkerPairingMaterial,
 } from "./gatewayClient.ts";
 import { sandboxPolicyForRuntimeMode } from "./sandboxPolicy.ts";
 import { seedEnvironment } from "./workerBaggage.ts";
@@ -353,6 +354,11 @@ export class OpenShellGatewayDriver implements GatewayDriver {
   private readonly index: FleetWorkerIndex;
   private readonly now: () => number;
   private readonly fallbackKey: () => Promise<string>;
+  /** Per-sandbox promise chains: spawn's binding section and a removal's
+   * drain→delete span are the two mutators of one fleet row, and interleaving
+   * them could double-drain a worker or strand a re-pairing on a deleted
+   * sandbox. The driver is the Promise seam, so the lock is a keyed chain. */
+  private readonly sandboxLocks = new Map<string, Promise<unknown>>();
 
   constructor(options: OpenShellGatewayDriverOptions) {
     this.client = options.client;
@@ -365,6 +371,17 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     this.index = options.index ?? memoryFleetWorkerIndex();
     this.now = options.now ?? Date.now;
     this.fallbackKey = options.fallbackIdempotencyKey ?? (async () => fallbackIdempotencyKey());
+  }
+
+  private locked<T>(sandboxName: string, run: () => Promise<T>): Promise<T> {
+    const key = `sandbox:${sandboxName}`;
+    const previous = this.sandboxLocks.get(key) ?? Promise.resolve();
+    const next = previous.then(run, run);
+    this.sandboxLocks.set(
+      key,
+      next.catch(() => undefined),
+    );
+    return next;
   }
 
   listTemplates(): Promise<ReadonlyArray<OpenShellSandboxTemplate>> {
@@ -497,7 +514,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
         cause: exec.stderr,
       });
     }
-    let material;
+    let material: WorkerPairingMaterial;
     try {
       material = parseWorkerPairingMaterial(exec.stdout);
     } catch (cause) {
@@ -507,6 +524,7 @@ export class OpenShellGatewayDriver implements GatewayDriver {
         cause,
       });
     }
+    const pairing = material;
     const environmentId = EnvironmentId.make(material.environmentId);
     const label = spec.label ?? ready.name;
     const ttlMs =
@@ -519,36 +537,53 @@ export class OpenShellGatewayDriver implements GatewayDriver {
         message: `${environmentId} is this managing instance; a worker cannot report it.`,
       });
     }
-    const existing = await this.index.get(environmentId);
-    if (existing !== null && existing.sandboxName !== null && existing.sandboxName !== ready.name) {
-      // A worker claiming another worker's id would let a later removal target the
-      // wrong sandbox, so the binding is never replaced.
-      throw new OpenShellGatewayDriverError({
-        reason: "pairing",
-        message: `${environmentId} is already bound to sandbox ${existing.sandboxName}; ${ready.name} was not registered.`,
+    const registrar = this.registrar;
+    // Serialized against removal on the same sandbox: without the lock, a
+    // removal could drain the previous row while this binding re-registers,
+    // and the row would come back pointing at a deleted sandbox. The live
+    // check under the lock closes that window.
+    await this.locked(ready.name, async () => {
+      const existing = await this.index.get(environmentId);
+      if (
+        existing !== null &&
+        existing.sandboxName !== null &&
+        existing.sandboxName !== ready.name
+      ) {
+        // A worker claiming another worker's id would let a later removal target
+        // the wrong sandbox, so the binding is never replaced.
+        throw new OpenShellGatewayDriverError({
+          reason: "pairing",
+          message: `${environmentId} is already bound to sandbox ${existing.sandboxName}; ${ready.name} was not registered.`,
+        });
+      }
+      if ((await this.client.get(ready.name)) === null) {
+        throw new OpenShellGatewayDriverError({
+          reason: "pairing",
+          message: `Sandbox ${ready.name} was deleted while pairing; its worker was not registered.`,
+        });
+      }
+      await this.index.upsert({
+        environmentId,
+        state: "pairing",
+        workerClass: spec.workerClass,
+        label,
+        sandboxName: ready.name,
+        sandboxId: ready.sandboxId,
+        ...(expiresAt === null ? {} : { expiresAt }),
       });
-    }
-    await this.index.upsert({
-      environmentId,
-      state: "pairing",
-      workerClass: spec.workerClass,
-      label,
-      sandboxName: ready.name,
-      sandboxId: ready.sandboxId,
-      ...(expiresAt === null ? {} : { expiresAt }),
+      await registrar.register({
+        environmentId,
+        role: "worker",
+        label,
+        urls: [pairing.url],
+        workerClass: spec.workerClass,
+      });
+      await registrar.exchangeBootstrap({
+        environmentId,
+        bootstrapCredential: pairing.bootstrapCredential,
+      });
+      await this.index.setState(environmentId, "ready");
     });
-    await this.registrar.register({
-      environmentId,
-      role: "worker",
-      label,
-      urls: [material.url],
-      workerClass: spec.workerClass,
-    });
-    await this.registrar.exchangeBootstrap({
-      environmentId,
-      bootstrapCredential: material.bootstrapCredential,
-    });
-    await this.index.setState(environmentId, "ready");
 
     const warnings: string[] = [];
     if (spec.seedFrom !== undefined && seedEnv === undefined) {
@@ -585,7 +620,16 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     environmentId: EnvironmentId,
     options: { timeoutMs?: number } = {},
   ): Promise<GatewayDriverDrainResult> {
-    return this.drainForRemoval(environmentId, options);
+    return (async () => {
+      const row = await this.index.get(environmentId);
+      if (row === null || row.sandboxName === null) {
+        throw new OpenShellGatewayDriverError({
+          reason: "unknown_worker",
+          message: `${environmentId} is not a fleet worker with a sandbox.`,
+        });
+      }
+      return await this.locked(row.sandboxName, () => this.drainForRemoval(environmentId, options));
+    })();
   }
 
   private async drainForRemoval(
@@ -694,47 +738,58 @@ export class OpenShellGatewayDriver implements GatewayDriver {
     if (row === null || row.sandboxName === null) {
       return { environmentId, outcome: "refused", reason: "unknown_worker" };
     }
-    let drain: OpenShellDrainProgress | undefined;
-    if (row.state !== "deleting") {
-      const drained = await this.drainForRemoval(environmentId, {
-        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-        snapshotOnly: options.force === true,
-      });
-      drain = drained.progress;
-      if (drained.state === "draining") {
-        return { environmentId, outcome: "drain_pending", drain };
+    // The whole drain→delete→row-remove span holds the sandbox lock: a
+    // concurrent re-pairing of this sandbox must not resurrect the row while
+    // the deletion is in flight, and two removals must not double-drain.
+    return await this.locked(row.sandboxName, async () => {
+      const fresh = await this.index.get(environmentId);
+      if (fresh === null || fresh.sandboxName === null) {
+        return { environmentId, outcome: "refused" as const, reason: "unknown_worker" };
       }
-      if (drained.state === "failed") {
-        // The drain just updated the row's error; the row read above is stale.
-        const fresh = await this.index.get(environmentId);
-        return {
-          environmentId,
-          outcome: "refused",
-          drain,
-          reason:
-            fresh?.lastError ?? row.lastError ?? "drain failed; the sandbox is kept (nothing lost)",
-        };
+      let drain: OpenShellDrainProgress | undefined;
+      if (fresh.state !== "deleting") {
+        const drained = await this.drainForRemoval(environmentId, {
+          ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+          snapshotOnly: options.force === true,
+        });
+        drain = drained.progress;
+        if (drained.state === "draining") {
+          return { environmentId, outcome: "drain_pending" as const, drain };
+        }
+        if (drained.state === "failed") {
+          // The drain just updated the row's error; the row read above is stale.
+          const now = await this.index.get(environmentId);
+          return {
+            environmentId,
+            outcome: "refused" as const,
+            drain,
+            reason:
+              now?.lastError ??
+              fresh.lastError ??
+              "drain failed; the sandbox is kept (nothing lost)",
+          };
+        }
       }
-    }
-    let sandboxOutcome: GatewayDriverRemoveResult["sandboxOutcome"];
-    try {
-      sandboxOutcome = await this.client.deleteSandbox(row.sandboxName, {
-        requestId: options.idempotencyKey ?? `t3-remove:${environmentId}`,
-      });
-    } catch (cause) {
-      throw new OpenShellGatewayDriverError({
-        reason: "gateway",
-        message: `Deleting sandbox ${row.sandboxName} failed; the sandbox is kept and removal can be retried.`,
-        cause,
-      });
-    }
-    await this.index.remove(environmentId);
-    return {
-      environmentId,
-      outcome: "completed",
-      ...(drain === undefined ? {} : { drain }),
-      sandboxOutcome,
-    };
+      let sandboxOutcome: GatewayDriverRemoveResult["sandboxOutcome"];
+      try {
+        sandboxOutcome = await this.client.deleteSandbox(fresh.sandboxName, {
+          requestId: options.idempotencyKey ?? `t3-remove:${environmentId}`,
+        });
+      } catch (cause) {
+        throw new OpenShellGatewayDriverError({
+          reason: "gateway",
+          message: `Deleting sandbox ${fresh.sandboxName} failed; the sandbox is kept and removal can be retried.`,
+          cause,
+        });
+      }
+      await this.index.remove(environmentId);
+      return {
+        environmentId,
+        outcome: "completed" as const,
+        ...(drain === undefined ? {} : { drain }),
+        sandboxOutcome,
+      };
+    });
   }
 
   async status(

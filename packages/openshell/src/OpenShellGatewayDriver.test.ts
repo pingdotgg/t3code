@@ -506,6 +506,112 @@ describe("OpenShellGatewayDriver.spawn", () => {
 });
 
 describe("OpenShellGatewayDriver.remove", () => {
+  it("serializes concurrent removals on one sandbox into a single drain", async () => {
+    const { client, recording } = fakeClient();
+    const { executor, calls } = fakeExecutor();
+    const index = memoryFleetWorkerIndex();
+    // Gate the delete on both removes having read the row, so the second one
+    // truly races the first; the notifier is event-driven, not a spin.
+    let indexReads = 0;
+    let notifyReads: ((count: number) => void) | null = null;
+    const countingIndex: typeof index = {
+      ...index,
+      get: async (id) => {
+        indexReads += 1;
+        notifyReads?.(indexReads);
+        return await index.get(id);
+      },
+    };
+    const readsAtLeast = (count: number): Promise<void> =>
+      indexReads >= count
+        ? Promise.resolve()
+        : new Promise((resolve) => {
+            notifyReads = (seen) => {
+              if (seen >= count) resolve();
+            };
+          });
+    const slowClient: OpenShellGatewayClient = {
+      ...client,
+      deleteSandbox: async (name, options) => {
+        await readsAtLeast(3);
+        return await client.deleteSandbox(name, options);
+      },
+    };
+    const driver = makeDriver({
+      client: slowClient,
+      settings: DEFAULT_SETTINGS,
+      drainExecutor: executor,
+      index: countingIndex,
+    });
+    const spawned = await spawnEphemeral(driver);
+    const [first, second] = await Promise.all([
+      driver.remove(spawned.environmentId, { idempotencyKey: "rm-1" }),
+      driver.remove(spawned.environmentId, { idempotencyKey: "rm-2" }),
+    ]);
+
+    const completed = [first, second].filter((r) => r.outcome === "completed");
+    const refused = [first, second].filter((r) => r.outcome === "refused");
+    expect(completed).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    expect(refused[0]?.reason).toBe("unknown_worker");
+    expect(calls).toHaveLength(1);
+    expect(recording.deleteCalls).toHaveLength(1);
+    expect(await index.get(spawned.environmentId)).toBeNull();
+  });
+
+  it("a removal blocks a re-pairing of the same sandbox until the row is gone", async () => {
+    const { client } = fakeClient();
+    const { executor, calls } = fakeExecutor();
+    const index = memoryFleetWorkerIndex();
+    const { registrar } = fakeRegistrar();
+    const driver = makeDriver({
+      client,
+      settings: DEFAULT_SETTINGS,
+      registrar,
+      drainExecutor: executor,
+      index,
+    });
+    const spawned = await spawnEphemeral(driver, "req-1");
+    let deleted = false;
+    const patched: OpenShellGatewayClient = {
+      ...client,
+      get: async (name) =>
+        deleted
+          ? null
+          : { name, sandboxId: `sbx-${name}`, phase: "Ready", labels: {}, createdAt: NOW },
+      deleteSandbox: async (name, options) => {
+        deleted = true;
+        return await client.deleteSandbox(name, options);
+      },
+    };
+    const racingDriver = makeDriver({
+      client: patched,
+      settings: DEFAULT_SETTINGS,
+      registrar,
+      drainExecutor: executor,
+      index,
+    });
+
+    const [, spawnOutcome] = await Promise.all([
+      racingDriver.remove(spawned.environmentId, { idempotencyKey: "rm-1" }),
+      spawnEphemeral(racingDriver, "req-1").then(
+        (r) => ({ ok: true as const, r }),
+        (cause) => ({ ok: false as const, cause }),
+      ),
+    ]);
+
+    expect(calls).toHaveLength(1);
+    // The re-pairing either ran fully first (row then removed) or saw the
+    // sandbox deleted under the lock and failed typed; it must never leave a
+    // row behind for a sandbox that was removed.
+    if (spawnOutcome.ok) {
+      expect(await index.get(spawnOutcome.r.environmentId)).toBeNull();
+    } else {
+      expect(spawnOutcome.cause).toMatchObject({ reason: "pairing" });
+      expect(await index.get(spawned.environmentId)).toBeNull();
+    }
+  });
+
   it("completes only after the drain acked, then deletes the sandbox", async () => {
     const { client, recording } = fakeClient();
     const { executor, calls } = fakeExecutor();
