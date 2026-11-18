@@ -975,6 +975,55 @@ Sources:
 - `scripts/build-desktop-artifact.ts`, `scripts/sign-macos-local.ts`.
 - `apps/web/src/lib/serverReturnHref.ts`.
 
+### i18n and the app name
+
+Upstream translates the UI with GT (`docs/internals/i18n.md`): `<T>`, `gt()` and `msg()`
+in source, hand-written catalogs in `apps/{web,mobile,desktop}/src/i18n/translations`.
+Conn renames the app, so **copy never names it literally**:
+
+- Write `{appName}` in the message and pass `{ appName: appName() }` from
+  `@t3tools/shared/appName`. Inside `<T>`, write `<Var>{appName()}</Var>`. Desktop main
+  code passes `appBrand.name`.
+- `appName()` reads the desktop bridge's branding in the renderer, so module-level
+  `msg()` constants get Conn's name. Mobile sets it from the Expo config in
+  `apps/mobile/src/lib/installAppName.ts`, imported by `index.ts` before `App`. Default:
+  `T3 Code`.
+- Every locale keeps `{appName}` where upstream's translation said "T3 Code" (German
+  compounds: `{appName}-Server`).
+- Strings that must stay literal (legacy directory and keychain names, file markers,
+  lookup keys, OpenAI's fixed wording, upstream's issue title) carry
+  `// oxlint-disable-next-line t3code/no-hardcoded-app-name -- <why>`. Comparisons with
+  `"T3 Code"` are allowed.
+
+The gate, in CI and in the nightly run:
+
+- Lint rule `t3code/no-hardcoded-app-name` (`oxlint-plugin-t3code`) fails on "T3 Code"
+  in string literals, templates and JSX text under `apps/{web,mobile,desktop}/src` and
+  `packages/{client-runtime,shared}/src`, tests excluded. Comments are not checked.
+- `vp run brand:check` (`scripts/check-conn-brand.ts`) fails on "T3 Code" or "T3-Code"
+  anywhere in the 30 catalogs. CI runs it after the i18n catalog check.
+
+Fork copy: fork screens kept English when upstream adopted GT (2026-11-18). The files in
+the `no-untranslated-copy: "warn"` override in `vite.config.ts` warn instead of failing
+(914 strings). Wrap a screen's copy when you touch it and drop the file from the list.
+
+Resolving an i18n conflict on a sync:
+
+1. Take upstream's wrapping (`<T>`, `gt()`, `msg()`, `resolve`/`m` parameters) and put
+   Conn's logic back inside it. Wrap new fork strings the same way.
+2. A hunk that only differs by the app name: take upstream's side, then rewrite its
+   "T3 Code" to `{appName}`.
+3. Never hand-merge catalogs. Take upstream's, run `vp run i18n:generate` in
+   `apps/web`, `apps/mobile` and `apps/desktop`, then copy each new `{appName}` key's
+   translations from the old key with the same English text ("T3 Code" becomes
+   `{appName}`; in JSX entries the name becomes the `Var` node and the `i`/`k`
+   numbers shift).
+4. `vp run i18n:check`, `vp run brand:check` and `vp lint` must pass.
+
+Sources: `packages/shared/src/appName.ts`, `apps/mobile/src/lib/installAppName.ts`,
+`oxlint-plugin-t3code/rules/no-hardcoded-app-name.ts`, `scripts/check-conn-brand.ts`,
+`scripts/conn-brand.ts`, `vite.config.ts` (the two lint overrides).
+
 ### Mobile home bar and filter
 
 On iPhone, the bottom toolbar holds Settings, a Threads / Pulls / Search group
@@ -1413,8 +1462,9 @@ Sources:
    `apps/web/src/icons/connIcons.test.ts`,
    `apps/server/src/mcp/toolkits/connForkPreviewCopy.test.ts`,
    `apps/web/src/components/sidebar/connShellSidebar.test.ts` and
-   `apps/desktop/src/window/DesktopWindow.test.ts`. Run `vp i` first: merges change
-   dependencies. When the web typecheck reports a Lucide name missing from
+   `apps/desktop/src/window/DesktopWindow.test.ts`. Run `vp run i18n:check` and
+   `vp run brand:check` ([i18n and the app name](#i18n-and-the-app-name)). Run `vp i`
+   first: merges change dependencies. When the web typecheck reports a Lucide name missing from
    `apps/web/src/icons/lucide-react.ts`, add a line for it (the Lucide icon and
    the closest Phosphor icon). New SF Symbol names in the mobile thread feed
    stay SF Symbols until they get an entry in
@@ -1574,6 +1624,29 @@ Merge of upstream `9e32c95576` (139 commits). Decisions worth keeping in mind:
   (`packages/source-control-gitlab`), Azure DevOps
   (`packages/source-control-azure-devops`), Android (`AppSymbol.android.tsx`),
   Windows PATH probe (#37632), Forgejo/Gitea links (#37703).
+
+### Upstream sync: 2026-11-18
+
+Merge of upstream `055b44919e` (171 commits, through #37893: GT translation of the whole
+app). 133 files conflicted. Decisions worth keeping in mind:
+
+- GT: upstream's wrapping everywhere, with Conn's logic inside; the app name goes through
+  `{appName}` (see [i18n and the app name](#i18n-and-the-app-name)). Catalogs were
+  regenerated and translations ported, not merged.
+- `routeTree.gen.ts` regenerated with `@tanstack/router-generator`; `pnpm-lock.yaml` by
+  `vp i` with the pins above (ffi-rs 1.3.7, playwright-core 1.60.0).
+- `apps/server/src/server.ts`: upstream added two `Layer.provide` steps (issues); the
+  `layerMakeRoutes` pipe is at Effect's 20-step limit with Conn's layers, so the issue
+  service is provided to the thread issue service in one step.
+- Mobile: upstream moved the composer into `components/ComposerSurface.tsx` (#37040);
+  Conn's Dynamic Type editor, `expandedToolbarReserve` and gutter moved with it. The
+  Issues tab icon `git.issue` falls back to SF Symbol `smallcircle.filled.circle`.
+- Settings search: upstream's `useSearchableSetting()` hook; Conn's rows use it.
+- Web icons: `AtSign` and `Link2Off` added to `apps/web/src/icons/lucide-react.ts`.
+- Out of scope, taken as upstream without build or test: Android (widgets, native
+  controls, `.android.tsx` screens), Windows and WSL (#38163, #38104, #38096, #38072,
+  #38043), GitLab (#38383, #38101), Azure DevOps (#38387, #38069, #38019, #38018),
+  Forgejo (#38211), Bitbucket, Linux desktop (`scripts/linux-glibc.ts`).
 
 ### Vendored dependency patches
 
