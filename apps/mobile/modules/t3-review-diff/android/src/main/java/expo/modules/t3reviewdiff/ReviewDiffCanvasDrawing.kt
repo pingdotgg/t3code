@@ -402,7 +402,7 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   @Suppress("LongParameterList")
   fun drawCode(
     canvas: Canvas,
-    content: String,
+    row: DiffRow,
     tokens: List<DiffToken>?,
     codeX: Float,
     baseline: Float,
@@ -417,12 +417,16 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       canvas.restore()
       return
     }
-    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(content, null, 0)) else tokens
+    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(row.content, null, 0)) else tokens
     var line = 0
     var x = codeX
     var column = 0
-    runs.forEach { run ->
-      configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
+    splitAtNote(runs, row.noteStart).forEach { (run, note) ->
+      configureCodePaint(
+        if (note) theme.warningText else run.color ?: theme.text,
+        run.fontStyle,
+        style,
+      )
       var start = 0
       while (start < run.content.length) {
         while (line + 1 < lines.starts.size && lines.starts[line + 1] <= column + start) {
@@ -434,13 +438,30 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
         if (lineBaseline + textPaint.fontMetrics.descent >= canvas.clipBounds.top &&
           lineBaseline + textPaint.fontMetrics.ascent <= canvas.clipBounds.bottom
         ) {
+          val segmentWidth = textPaint.measureText(run.content, start, end)
+          fillNote(canvas, note, x, x + segmentWidth, lineBaseline)
           canvas.drawText(run.content, start, end, x, lineBaseline, textPaint)
-          x += textPaint.measureText(run.content, start, end)
+          x += segmentWidth
         }
         start = end
       }
       column += run.content.length
     }
+  }
+
+  fun noticeColor(row: DiffRow): Int =
+    if (row.tone == "warning") theme.warningText else theme.mutedText
+
+  fun noticeFill(row: DiffRow): Int =
+    if (row.tone == "warning") theme.warningBackground else theme.background
+
+  /** Fills behind a segment of a cut line's note; other segments are left alone. */
+  private fun fillNote(canvas: Canvas, note: Boolean, left: Float, right: Float, baseline: Float) {
+    if (!note) return
+    backgroundPaint.color = theme.warningBackground
+    val metrics = textPaint.fontMetrics
+    val top = baseline + metrics.ascent
+    canvas.drawRect(left, top, right, baseline + metrics.descent, backgroundPaint)
   }
 
   fun drawFileHeaderPathScrollFades(
@@ -530,5 +551,26 @@ private object ReviewDiffTypefaces {
     "medium", "semibold", "semi-bold" -> medium
     "bold", "heavy", "black" -> bold
     else -> regular
+  }
+}
+
+/** Splits color runs where a cut line's note starts; the flag marks the note's runs. */
+private fun splitAtNote(runs: List<DiffToken>, noteStart: Int?): List<Pair<DiffToken, Boolean>> {
+  if (noteStart == null) return runs.map { it to false }
+  return buildList {
+    var offset = 0
+    for (run in runs) {
+      val end = offset + run.content.length
+      when {
+        end <= noteStart -> add(run to false)
+        offset >= noteStart -> add(run to true)
+        else -> {
+          val cut = noteStart - offset
+          add(run.copy(content = run.content.substring(0, cut)) to false)
+          add(run.copy(content = run.content.substring(cut)) to true)
+        }
+      }
+      offset = end
+    }
   }
 }

@@ -3,6 +3,7 @@ import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { T, useGT, Var } from "gt-react-native";
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { NativeStackScreenOptions } from "../../../native/StackHeader";
@@ -25,6 +26,7 @@ type GitCommitSheetProps = StaticScreenProps<{
 }>;
 
 export function GitCommitSheet(_props: GitCommitSheetProps) {
+  const gt = useGT();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const android = Platform.OS === "android";
@@ -72,7 +74,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const actions = (
     <View className="gap-2">
       <Button
-        label="Commit changes"
+        label={gt("Commit changes")}
         icon="checkmark"
         tone="primary"
         fullWidth
@@ -80,7 +82,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
         onPress={() => void runCommitAction(false)}
       />
       <Button
-        label="Commit on a new branch"
+        label={gt("Commit on a new branch")}
         icon="arrow.branch"
         tone="text"
         fullWidth
@@ -100,10 +102,10 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   );
   const header = (
     <SheetHeader
-      title="Commit changes"
-      subtitle={gitStatus.data?.refName ?? "(detached HEAD)"}
+      title={gt("Commit changes")}
+      subtitle={gitStatus.data?.refName ?? gt("(detached HEAD)")}
       onCancel={() => navigation.goBack()}
-      accessibilityLabel="Cancel commit"
+      accessibilityLabel={gt("Cancel commit")}
     />
   );
 
@@ -111,36 +113,47 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     <>
       {isDefaultRef ? (
         <Text className="text-sm text-warning-foreground">
-          You’re on the default branch. You can create a new branch when committing.
+          <T>You’re on the default branch. You can create a new branch when committing.</T>
         </Text>
       ) : null}
       <View className="gap-2">
-        <Text className="text-sm font-t3-medium text-foreground">Commit message</Text>
+        <Text className="text-sm font-t3-medium text-foreground">
+          <T>Commit message</T>
+        </Text>
         <TextInput
           multiline
-          accessibilityLabel="Commit message"
+          accessibilityLabel={gt("Commit message")}
           value={dialogCommitMessage}
           onChangeText={setDialogCommitMessage}
-          placeholder="Describe your changes…"
+          placeholder={gt("Describe your changes…")}
           textAlignVertical="top"
           className="min-h-24 rounded-xl bg-subtle px-4 py-3 text-base"
         />
         <Text className="text-xs text-foreground-muted">
-          Leave empty to generate a message automatically.
+          <T>Leave empty to generate a message automatically.</T>
         </Text>
       </View>
       <View>
         <View className="flex-row items-center justify-between gap-2 pb-2">
           <View className="flex-1 gap-1">
-            <Text className="text-base font-t3-bold text-foreground">Changed files</Text>
+            <Text className="text-base font-t3-bold text-foreground">
+              <T>Changed files</T>
+            </Text>
             <Text className="text-xs text-foreground-muted">
-              {selectedFiles.length} of {allFiles.length} selected · +
-              {formatDiffCount(selectedInsertions)} −{formatDiffCount(selectedDeletions)}
+              <T>
+                <Var>{selectedFiles.length}</Var> of <Var>{allFiles.length}</Var> selected · +
+                <Var>{formatDiffCount(selectedInsertions)}</Var> −
+                <Var>{formatDiffCount(selectedDeletions)}</Var>
+              </T>
             </Text>
           </View>
           {allFiles.length > 0 ? (
             <Button
-              label={allSelected ? "Deselect all" : "Select all"}
+              label={
+                allSelected
+                  ? gt("Deselect all")
+                  : gt("Select all", { $context: "selects every changed file to commit" })
+              }
               tone="text"
               onPress={() =>
                 setExcludedFiles(
@@ -151,7 +164,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           ) : null}
         </View>
         {allFiles.length === 0 ? (
-          <Text className="py-4 text-sm text-foreground-muted">No changed files to commit.</Text>
+          <Text className="py-4 text-sm text-foreground-muted">
+            <T>No changed files to commit.</T>
+          </Text>
         ) : (
           allFiles.map((file) => {
             const included = !excludedFiles.has(file.path);

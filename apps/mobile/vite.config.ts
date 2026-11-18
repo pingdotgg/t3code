@@ -44,6 +44,7 @@ const reactTests = [
   "src/state/use-selected-thread-git-state.test.tsx",
   "src/features/terminal/useTerminalExitNavigation.test.tsx",
   "src/features/threads/use-thread-list-now.test.tsx",
+  "src/features/threads/use-composer-command-menu.select.test.tsx",
   "src/features/threads/useThreadListV2.test.tsx",
   "src/features/home/home-list-options.test.tsx",
   "src/features/home/home-route-visibility.test.tsx",
@@ -66,7 +67,41 @@ const babel: {
 const babelConfig = require("./babel.config.js")({ cache: () => {} });
 const testPlatform = process.env.T3_MOBILE_TEST_PLATFORM === "android" ? "android" : "ios";
 
+// gt-react-native loads react-native and its hooks need <GTProvider>; tests get GT's core set up the way gt-react's initializeGTSPA does, which renders English without a provider.
+const gtTestModule = "\0gt-react-native";
+const gtReactNativeEntry = require.resolve("gt-react-native");
+const gtTestConfig = JSON.stringify({ defaultLocale: require("./gt.config.json").defaultLocale });
+const gtTestModuleCode = `
+import { I18nStore, ReactI18nCache, initializeI18nConfig, setI18nStore, setReactI18nCache } from "@generaltranslation/react-core/pure";
+import { ReadonlyConditionStore, createConditionStoreSingleton } from "gt-i18n/internal";
+const config = ${gtTestConfig};
+initializeI18nConfig(config, "SPA");
+setReactI18nCache(new ReactI18nCache(config));
+createConditionStoreSingleton().setConditionStore(new ReadonlyConditionStore({ locale: config.defaultLocale }));
+setI18nStore(new I18nStore());
+export * from "@generaltranslation/react-core/components";
+export * from "@generaltranslation/react-core/hooks";
+export * from "@generaltranslation/react-core/pure";
+export const initializeGT = () => {};
+export const GTProvider = (props) => props.children;
+`;
+
 export default defineConfig({
+  plugins: [
+    {
+      name: "gt-react-native-test",
+      enforce: "pre",
+      resolveId(source, importer) {
+        if (source === "gt-react-native") return gtTestModule;
+        if (importer === gtTestModule) {
+          return this.resolve(source, gtReactNativeEntry, { skipSelf: true });
+        }
+      },
+      load(id) {
+        if (id === gtTestModule) return gtTestModuleCode;
+      },
+    },
+  ],
   test: {
     hookTimeout: 60_000,
     testTimeout: 60_000,
