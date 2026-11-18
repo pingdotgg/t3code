@@ -12,6 +12,7 @@ import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as LocalDeviceHost from "./LocalDeviceHost.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -619,7 +620,12 @@ describe("AgentDevice startup", () => {
 
 // regression: #37867 adb's connect-then-fork probe hangs under WSL mirrored networking
 describe("adb server prewarm", () => {
-  const withSdk = Effect.fn("withSdk")(function* (platform: NodeJS.Platform, portOccupied = false) {
+  const withSdk = Effect.fn("withSdk")(function* (
+    platform: NodeJS.Platform,
+    portOccupied = false,
+    environment: NodeJS.ProcessEnv = {},
+    beforeAdbSpawn = Effect.void,
+  ) {
     const fs = yield* FileSystem.FileSystem;
     const canListen = yield* Ref.make(!portOccupied);
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-adb-prewarm-" });
@@ -633,9 +639,12 @@ describe("adb server prewarm", () => {
         () => Effect.die("Starting the hub must not start the agent daemon"),
         processOutput(0),
         undefined,
-        { HOME: home, PATH: "" },
+        { HOME: home, PATH: "", ...environment },
         platform,
-        (spawned) => (spawned.args.includes("nodaemon") ? Ref.set(canListen, false) : Effect.void),
+        (spawned) =>
+          spawned.args.includes("nodaemon")
+            ? Effect.andThen(beforeAdbSpawn, Ref.set(canListen, false))
+            : Effect.void,
         { ...NetService.make(), canListenOnHost: () => Ref.get(canListen) },
       )),
     };
@@ -654,6 +663,27 @@ describe("adb server prewarm", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("continues hub startup when the adb spawn stalls", () =>
+    Effect.gen(function* () {
+      const spawning = yield* Deferred.make<void>();
+      const ready = yield* Effect.forkChild(
+        withSdk(
+          "linux",
+          false,
+          {},
+          Effect.andThen(Deferred.succeed(spawning, undefined), Effect.never),
+        ),
+      );
+      yield* Deferred.await(spawning);
+      yield* TestClock.adjust("2 seconds");
+      const { host, spawns } = yield* Fiber.join(ready);
+      expect(spawns.some((spawn) => spawn.args.includes("nodaemon"))).toBe(true);
+      expect(spawns.length).toBeGreaterThan(1);
+      expect(yield* host.current).not.toBeNull();
+      yield* host.stop;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("leaves the port alone when something already listens on it", () =>
     Effect.gen(function* () {
       const { spawns } = yield* withSdk("linux", true);
@@ -662,9 +692,14 @@ describe("adb server prewarm", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("does not run on macOS", () =>
+  it.effect.each([
+    ["darwin", {}],
+    ["linux", { ADB_SERVER_SOCKET: "tcp:127.0.0.1:5038" }],
+    ["linux", { ANDROID_ADB_SERVER_PORT: "5038" }],
+    ["linux", { ANDROID_ADB_SERVER_ADDRESS: "192.0.2.1" }],
+  ] as const)("skips prewarm on %s with endpoint overrides %j", ([platform, environment]) =>
     Effect.gen(function* () {
-      const { spawns } = yield* withSdk("darwin");
+      const { spawns } = yield* withSdk(platform, false, environment);
       expect(spawns.some((spawn) => spawn.args.includes("nodaemon"))).toBe(false);
       expect(spawns.length).toBeGreaterThan(0);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
