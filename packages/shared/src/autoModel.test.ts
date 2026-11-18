@@ -23,7 +23,7 @@ const effortCapabilities = {
       id: "effort",
       label: "Effort",
       type: "select" as const,
-      options: ["low", "medium", "high"].map((id) => ({ id, label: id })),
+      options: ["low", "medium", "high", "xhigh"].map((id) => ({ id, label: id })),
     },
   ],
 };
@@ -82,9 +82,9 @@ describe("resolveAutoModelSelection", () => {
       resolveAutoModelSelection({ selection: auto("high"), providers, now })?.selection,
     ).toEqual({
       instanceId: "claudeAuto",
-      model: "claude-fable-5-2",
+      model: "claude-opus-5-5",
       options: [
-        { id: "effort", value: "high" },
+        { id: "effort", value: "xhigh" },
         { id: "auto", value: "high" },
       ],
     });
@@ -283,7 +283,7 @@ describe("resolveAutoModelSelection", () => {
         providers,
         now,
       })?.selection.model;
-    expect(pick("auto-high")).toBe("claude-fable-5-2");
+    expect(pick("auto-high")).toBe("claude-opus-5-5");
     expect(pick("auto-medium")).toBe("claude-opus-5-5");
     expect(pick("auto-low")).toBe("claude-sonnet-5-5");
     expect(isAutoModelSlug("auto-low")).toBe(true);
