@@ -1046,6 +1046,16 @@ export function emptyProjection(
   };
 }
 
+// A provider session can serve many threads (Codex shares one app server), so its
+// status changes are not activity in any one of them.
+function isProviderSessionLifecycleEvent(event: OrchestrationV2DomainEvent): boolean {
+  return (
+    event.type === "provider-session.attached" ||
+    event.type === "provider-session.updated" ||
+    event.type === "provider-session.detached"
+  );
+}
+
 export function applyToProjection(
   projection: OrchestrationV2ThreadProjection,
   event: OrchestrationV2DomainEvent,
@@ -1170,11 +1180,13 @@ export function applyToProjection(
     case "provider-session.updated":
       return {
         ...base,
+        thread: projection.thread,
         providerSessions: upsertById(base.providerSessions, event.payload),
       };
     case "provider-session.detached":
       return {
         ...base,
+        thread: projection.thread,
         providerSessions: base.providerSessions.filter(
           (session) => session.id !== event.payload.providerSessionId,
         ),
@@ -3473,7 +3485,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.model-selection-updated" &&
             event.type !== "thread.provider-switched" &&
             event.type !== "thread.guest-share-updated" &&
-            event.type !== "thread.history-trimmed"
+            event.type !== "thread.history-trimmed" &&
+            !isProviderSessionLifecycleEvent(event)
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
             yield* sql`
