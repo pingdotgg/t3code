@@ -783,9 +783,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "activity-panel-auto-open",
-    title: "Open the Activity panel when the agent starts",
+    title: msg("Open the Activity panel when the agent starts"),
     to: "/settings/diffs",
-    searchTerms: ["activity progress plan status automatically open right panel agent working"],
+    searchTerms: [
+      msg("activity progress plan status automatically open right panel agent working"),
+    ],
   },
   {
     id: "skills-in-slash-menu",

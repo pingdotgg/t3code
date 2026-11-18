@@ -408,13 +408,13 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
         : []),
       {
         id: "git-activity",
-        title: "Activity",
+        title: gt("Activity"),
         icon: "list.number",
         disabled: props.hasThread === false,
         subtitle:
           props.hasThread === false
-            ? "Available after the first message"
-            : "What the agent is doing, finished, and changed",
+            ? gt("Available after the first message")
+            : gt("What the agent is doing, finished, and changed"),
         onPress: model.openActivity,
       },
       {

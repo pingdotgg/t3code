@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import {
   deriveProviderSubagentStatus,
@@ -45,10 +46,6 @@ export interface ActivityPanelApprovals {
 const VISIBLE_DONE_STEPS = 8;
 const ROW_CLASS = "flex items-start gap-2 rounded-md px-2 py-1 text-left text-sm";
 
-function plural(count: number, noun: string) {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
-
 function Section(props: {
   title: string;
   count: ReactNode;
@@ -75,49 +72,84 @@ function Section(props: {
 
 /** The one answer the panel exists for: where is the agent, and does it need me? */
 function StatusBanner(props: { summary: ActivitySummary; approvals: ActivityPanelApprovals }) {
+  const gt = useGT();
   const { summary, approvals } = props;
   const approval = summary.phase === "waiting" ? approvals.pending[0] : undefined;
   const { phase, plan, touchedTotals, failedCount } = summary;
 
   let Icon = CircleCheckIcon;
   let iconClass = "text-success";
-  let title = "Finished";
+  let title = gt("Finished");
   const details: string[] = [];
   if (phase === "waiting") {
     Icon = ClockIcon;
     iconClass = "text-warning";
-    title = summary.now ?? "Waiting for you";
-    details.push("Paused until you respond");
+    title = summary.now ?? gt("Waiting for you");
+    details.push(gt("Paused until you respond"));
   } else if (phase === "running") {
     Icon = CircleDotIcon;
     iconClass = "text-primary";
-    title = summary.now ?? "Working";
+    title = summary.now ?? gt("Working");
     if (plan)
       details.push(
-        `Step ${Math.min(plan.completed + 1, plan.steps.length)} of ${plan.steps.length}`,
+        gt("Step {step} of {total}", {
+          step: Math.min(plan.completed + 1, plan.steps.length),
+          total: plan.steps.length,
+        }),
       );
   } else if (summary.outcome === "failed") {
     Icon = CircleXIcon;
     iconClass = "text-destructive-foreground";
-    title = failedCount > 0 ? "Finished with errors" : "Run failed";
-    if (failedCount > 0) details.push(`${plural(failedCount, "step")} failed`);
-    if (plan) details.push(`${plan.completed} of ${plural(plan.steps.length, "step")}`);
-    if (touchedTotals.files > 0) details.push(`${plural(touchedTotals.files, "file")} changed`);
+    title = failedCount > 0 ? gt("Finished with errors") : gt("Run failed");
+    if (failedCount > 0)
+      details.push(
+        gt("{count, plural, one {{count} step failed} other {{count} steps failed}}", {
+          count: failedCount,
+        }),
+      );
+    if (plan)
+      details.push(
+        gt(
+          "{count, plural, one {{completed} of {count} step} other {{completed} of {count} steps}}",
+          { completed: plan.completed, count: plan.steps.length },
+        ),
+      );
+    if (touchedTotals.files > 0)
+      details.push(
+        gt("{count, plural, one {{count} file changed} other {{count} files changed}}", {
+          count: touchedTotals.files,
+        }),
+      );
   } else {
     if (summary.outcome === "incomplete" && plan) {
       Icon = CircleAlertIcon;
       iconClass = "text-warning";
-      title = "Stopped with steps left";
-      details.push(`${plan.completed} of ${plural(plan.steps.length, "step")} done`);
+      title = gt("Stopped with steps left");
+      details.push(
+        gt(
+          "{count, plural, one {{completed} of {count} step done} other {{completed} of {count} steps done}}",
+          { completed: plan.completed, count: plan.steps.length },
+        ),
+      );
     } else if (plan) {
-      details.push(`${plan.completed} of ${plural(plan.steps.length, "step")}`);
+      details.push(
+        gt(
+          "{count, plural, one {{completed} of {count} step} other {{completed} of {count} steps}}",
+          { completed: plan.completed, count: plan.steps.length },
+        ),
+      );
     }
     if (summary.outcome === "stopped") {
       Icon = CircleAlertIcon;
       iconClass = "text-warning";
-      title = "Stopped";
+      title = gt("Stopped");
     }
-    if (touchedTotals.files > 0) details.push(`${plural(touchedTotals.files, "file")} changed`);
+    if (touchedTotals.files > 0)
+      details.push(
+        gt("{count, plural, one {{count} file changed} other {{count} files changed}}", {
+          count: touchedTotals.files,
+        }),
+      );
   }
 
   return (
@@ -139,7 +171,9 @@ function StatusBanner(props: { summary: ActivitySummary; approvals: ActivityPane
         </div>
         {summary.lastActivityAt ? (
           <span className="text-xs text-foreground/70">
-            Updated <RelativeTime timestamp={summary.lastActivityAt} />
+            <T>
+              Updated <RelativeTime timestamp={summary.lastActivityAt} />
+            </T>
           </span>
         ) : null}
         {approval ? <ApprovalRequest approval={approval} approvals={approvals} /> : null}
@@ -149,6 +183,7 @@ function StatusBanner(props: { summary: ActivitySummary; approvals: ActivityPane
 }
 
 function ApprovalRequest(props: { approval: PendingApproval; approvals: ActivityPanelApprovals }) {
+  const gt = useGT();
   const { approval, approvals } = props;
   const canRespond = approval.responseCapability === "live";
   const others = approvals.pending.length - 1;
@@ -175,35 +210,41 @@ function ApprovalRequest(props: { approval: PendingApproval; approvals: Activity
         </div>
       ) : (
         <span className="text-xs text-warning">
-          Provider process is gone. Interrupt or restart the run to respond.
+          <T>Provider process is gone. Interrupt or restart the run to respond.</T>
         </span>
       )}
       {others > 0 ? (
-        <span className="text-2xs text-muted-foreground">{others} more waiting after this</span>
+        <span className="text-2xs text-muted-foreground">
+          {gt("{count} more waiting after this", { count: others })}
+        </span>
       ) : null}
     </div>
   );
 }
 
 function PlanSection(props: { plan: ActivityPlan }) {
+  const gt = useGT();
   const { steps, completed } = props.plan;
   const complete = steps.length > 0 && completed === steps.length;
   return (
     <Section
       // Remounts when the plan completes, so a finished plan folds the same live as on reopen.
       key={complete ? "complete" : "open"}
-      title="Plan"
-      count={`${completed} of ${steps.length}`}
+      title={gt("Plan")}
+      count={gt("{completed} of {total}", { completed, total: steps.length })}
       // A finished plan is already summarised by the banner; keep its steps one click away.
       defaultExpanded={!complete}
     >
       <div
         role="progressbar"
-        aria-label="Plan progress"
+        aria-label={gt("Plan progress")}
         aria-valuemin={0}
         aria-valuemax={steps.length}
         aria-valuenow={completed}
-        aria-valuetext={`${completed} of ${plural(steps.length, "step")}`}
+        aria-valuetext={gt(
+          "{count, plural, one {{completed} of {count} step} other {{completed} of {count} steps}}",
+          { completed, count: steps.length },
+        )}
         className="mx-2 mb-1.5 h-1 overflow-hidden rounded-full bg-border"
       >
         <div
@@ -221,14 +262,14 @@ function PlanSection(props: { plan: ActivityPlan }) {
             )}
           >
             {step.status === "completed" ? (
-              <CheckIcon aria-label="Done" className="mt-0.5 size-3.5 shrink-0" />
+              <CheckIcon aria-label={gt("Done")} className="mt-0.5 size-3.5 shrink-0" />
             ) : step.status === "running" ? (
               <CircleDotIcon
-                aria-label="In progress"
+                aria-label={gt("In progress")}
                 className="mt-0.5 size-3.5 shrink-0 text-primary"
               />
             ) : (
-              <CircleIcon aria-label="Not started" className="mt-0.5 size-3.5 shrink-0" />
+              <CircleIcon aria-label={gt("Not started")} className="mt-0.5 size-3.5 shrink-0" />
             )}
             <span className="min-w-0 break-words">{step.text}</span>
           </li>
@@ -239,13 +280,14 @@ function PlanSection(props: { plan: ActivityPlan }) {
 }
 
 function DoneSection(props: { summary: ActivitySummary }) {
+  const gt = useGT();
   const [showAll, setShowAll] = useState(false);
   const { done } = props.summary;
   if (done.length === 0) return null;
   const hidden = showAll ? 0 : Math.max(0, done.length - VISIBLE_DONE_STEPS);
   return (
     <Section
-      title="Done this turn"
+      title={gt("Done this turn")}
       count={String(done.length)}
       // With a plan the same progress is already above; the log is for looking things up.
       defaultExpanded={props.summary.plan === null}
@@ -261,7 +303,10 @@ function DoneSection(props: { summary: ActivitySummary }) {
                 "w-full cursor-pointer text-2xs text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
               )}
             >
-              Show {hidden} earlier {hidden === 1 ? "step" : "steps"}
+              {gt(
+                "{count, plural, one {Show {count} earlier step} other {Show {count} earlier steps}}",
+                { count: hidden },
+              )}
             </button>
           </li>
         ) : null}
@@ -271,10 +316,10 @@ function DoneSection(props: { summary: ActivitySummary }) {
             className={cn(ROW_CLASS, step.failed ? "text-destructive-foreground" : undefined)}
           >
             {step.failed ? (
-              <XIcon aria-label="Failed" className="mt-0.5 size-3.5 shrink-0" />
+              <XIcon aria-label={gt("Failed")} className="mt-0.5 size-3.5 shrink-0" />
             ) : (
               <CheckIcon
-                aria-label="Done"
+                aria-label={gt("Done")}
                 className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
               />
             )}
@@ -290,12 +335,13 @@ function TouchedSection(props: {
   summary: ActivitySummary;
   onOpenFile: (relativePath: string) => void;
 }) {
+  const gt = useGT();
   const { resolvedTheme } = useTheme();
   const { touched, touchedTotals } = props.summary;
   if (touched.length === 0) return null;
   return (
     <Section
-      title="Files touched"
+      title={gt("Files touched")}
       count={
         <>
           {touchedTotals.files}
@@ -333,7 +379,9 @@ function TouchedSection(props: {
                 {file.path.slice(file.path.lastIndexOf("/") + 1)}
               </span>
               {!file.openable ? (
-                <span className="shrink-0 text-2xs text-muted-foreground">Outside workspace</span>
+                <span className="shrink-0 text-2xs text-muted-foreground">
+                  {gt("Outside workspace")}
+                </span>
               ) : file.additions === null && file.deletions === null ? null : (
                 <span className="shrink-0 text-xs tabular-nums">
                   <span className="text-success">+{file.additions ?? 0}</span>{" "}
@@ -355,6 +403,8 @@ export function ActivityPanel(props: {
   onOpenFile: (relativePath: string) => void;
   approvals: ActivityPanelApprovals;
 }) {
+  const messages = useMessages();
+  const gt = useGT();
   const visibleItems = useQuietThreadVisibleTurnItems(props.threadRef);
   const structure = useQuietThreadProjection(props.threadRef);
   const runtime = structure === null ? null : deriveThreadStructureRuntime(structure.projection);
@@ -368,6 +418,7 @@ export function ActivityPanel(props: {
     runActive,
     runtime?.activeRunId ?? null,
     subagent?.status ?? runtime?.status ?? null,
+    messages,
   );
 
   // Before the thread loads there are no items, which would read as "Nothing to show yet".
@@ -384,10 +435,12 @@ export function ActivityPanel(props: {
     return (
       <Empty>
         <EmptyHeader>
-          <EmptyTitle>Nothing to show yet</EmptyTitle>
+          <EmptyTitle>{gt("Nothing to show yet")}</EmptyTitle>
           <EmptyDescription>
-            Progress appears here while the agent works: what it is doing, what it finished, and
-            which files it changed.
+            <T>
+              Progress appears here while the agent works: what it is doing, what it finished, and
+              which files it changed.
+            </T>
           </EmptyDescription>
         </EmptyHeader>
       </Empty>

@@ -1773,12 +1773,14 @@ export function DiffsSettingsPanel() {
           }
         />
         <SettingsRow
-          {...searchableSetting("activity-panel-auto-open")}
-          description="Show what the agent is doing, what it finished, and which files it changed as soon as a turn starts. Not used on narrow windows."
+          {...setting("activity-panel-auto-open")}
+          description={gt(
+            "Show what the agent is doing, what it finished, and which files it changed as soon as a turn starts. Not used on narrow windows.",
+          )}
           resetAction={
             settings.activityPanelAutoOpen !== DEFAULT_UNIFIED_SETTINGS.activityPanelAutoOpen ? (
               <SettingResetButton
-                label="Activity panel auto-open"
+                ariaLabel={gt("Reset activity panel auto-open to default")}
                 onClick={() =>
                   updateSettings({
                     activityPanelAutoOpen: DEFAULT_UNIFIED_SETTINGS.activityPanelAutoOpen,
@@ -1793,7 +1795,7 @@ export function DiffsSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ activityPanelAutoOpen: Boolean(checked) })
               }
-              aria-label="Open the Activity panel when the agent starts"
+              aria-label={gt("Open the Activity panel when the agent starts")}
             />
           }
         />

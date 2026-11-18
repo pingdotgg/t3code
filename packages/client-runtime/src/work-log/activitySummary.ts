@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type { ThreadStructureRuntime, ThreadStructureVisibleTurnItem } from "../state/models.ts";
 import { turnItemIsWorkspacePreparation } from "../state/turnItemPresentation.ts";
 import {
@@ -136,42 +138,64 @@ function meaningfulTitle(title: string | null | undefined): string | null {
   return trimmed && trimmed.toLowerCase() !== "tool" ? trimmed : null;
 }
 
-function labelFor(item: ActivityItem, workspaceRoot: string | null): string | null {
+function labelFor(
+  item: ActivityItem,
+  workspaceRoot: string | null,
+  resolve: MFunctionType,
+): string | null {
   // Labels we write ourselves read in the present tense while the step is still going.
   const live = item.status === "running" || item.status === "pending";
   switch (item.type) {
     case "command_execution":
       return (
         trimLabel(withoutRoot(meaningfulTitle(item.title) ?? item.input, workspaceRoot)) ||
-        (live ? "Running a command" : "Ran a command")
+        (live ? resolve(msg("Running a command")) : resolve(msg("Ran a command")))
       );
     case "file_change":
-      return `${live ? "Editing" : "Edited"} ${basename(item.fileName)}`;
+      return resolve(
+        live
+          ? msg("Editing {file}", { file: basename(item.fileName) })
+          : msg("Edited {file}", { file: basename(item.fileName) }),
+      );
     case "file_search":
       return withoutRoot(
         item.title ??
           (item.pattern
-            ? `${live ? "Searching" : "Searched"} ${trimLabel(item.pattern)}`
+            ? resolve(
+                live
+                  ? msg("Searching {pattern}", { pattern: trimLabel(item.pattern) })
+                  : msg("Searched {pattern}", { pattern: trimLabel(item.pattern) }),
+              )
             : live
-              ? "Searching files"
-              : "Searched files"),
+              ? resolve(msg("Searching files"))
+              : resolve(msg("Searched files"))),
         workspaceRoot,
       );
     case "web_search":
-      return item.title ?? (live ? "Searching the web" : "Searched the web");
+      return (
+        item.title ?? (live ? resolve(msg("Searching the web")) : resolve(msg("Searched the web")))
+      );
     case "dynamic_tool": {
       const title = meaningfulTitle(item.title);
-      return title ? withoutRoot(title, workspaceRoot) : live ? "Using a tool" : "Used a tool";
+      return title
+        ? withoutRoot(title, workspaceRoot)
+        : live
+          ? resolve(msg("Using a tool"))
+          : resolve(msg("Used a tool"));
     }
     case "subagent":
-      return item.title ?? (live ? "Running a subagent" : "Ran a subagent");
+      return (
+        item.title ?? (live ? resolve(msg("Running a subagent")) : resolve(msg("Ran a subagent")))
+      );
     case "approval_request":
-      return "Waiting for your approval";
+      return resolve(msg("Waiting for your approval"));
     case "user_input_request":
-      return "Waiting for your answer";
+      return resolve(msg("Waiting for your answer"));
     // An error the provider is retrying is not the end of the run.
     case "error":
-      return item.retry === undefined ? trimLabel(item.failure.message) || "Run failed" : null;
+      return item.retry === undefined
+        ? trimLabel(item.failure.message) || resolve(msg("Run failed"))
+        : null;
     case "todo_list":
     case "assistant_message":
       return null;
@@ -211,6 +235,7 @@ export function deriveActivitySummary(
   /** The run in progress, which can exist before it has any item. */
   activeRunId: ActivityItem["runId"] = null,
   runStatus: ThreadStructureRuntime["status"] | "pending" | null = null,
+  resolve: MFunctionType = mFallback,
 ): ActivitySummary {
   const latestRunId = activeRunId ?? items.findLast((item) => item.runId !== null)?.runId ?? null;
   const runItems = items.filter((item) => item.runId === latestRunId).filter(isActivityItem);
@@ -244,7 +269,7 @@ export function deriveActivitySummary(
       }
     }
 
-    const label = labelFor(item, workspaceRoot);
+    const label = labelFor(item, workspaceRoot, resolve);
     if (label === null) continue;
     if (item.status === "running" || item.status === "pending") {
       runningLabel = label;

@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react-native";
 import {
   deriveActivitySummary,
   type ActivitySummary,
@@ -37,10 +38,6 @@ export type ThreadActivityRouteParams = {
 };
 
 const VISIBLE_DONE_STEPS = 8;
-
-function plural(count: number, noun: string) {
-  return `${count} ${noun}${count === 1 ? "" : "s"}`;
-}
 
 function StepRow(props: {
   readonly icon: AppSymbolName;
@@ -98,54 +95,89 @@ function StepRow(props: {
 
 /** The one answer the screen exists for: where is the agent, and does it need me? */
 function StatusBanner(props: { readonly summary: ActivitySummary }) {
+  const gt = useGT();
   const { summary } = props;
   const { phase, plan, touchedTotals, failedCount } = summary;
 
   let icon: AppSymbolName = "checkmark.circle";
   let tint = "accent-icon";
-  let title = "Finished";
+  let title = gt("Finished");
   const details: string[] = [];
   if (phase === "waiting") {
     icon = "clock";
     tint = "accent-warning-foreground";
-    title = summary.now ?? "Waiting for you";
-    details.push("Paused until you respond");
+    title = summary.now ?? gt("Waiting for you");
+    details.push(gt("Paused until you respond"));
   } else if (phase === "running") {
     icon = "circle.inset.filled";
     tint = "accent-icon";
-    title = summary.now ?? "Working";
+    title = summary.now ?? gt("Working");
     if (plan) {
       details.push(
-        `Step ${Math.min(plan.completed + 1, plan.steps.length)} of ${plan.steps.length}`,
+        gt("Step {step} of {total}", {
+          step: Math.min(plan.completed + 1, plan.steps.length),
+          total: plan.steps.length,
+        }),
       );
     }
   } else if (summary.outcome === "failed") {
     icon = "xmark.circle.fill";
     tint = "accent-danger-foreground";
-    title = failedCount > 0 ? "Finished with errors" : "Run failed";
-    if (failedCount > 0) details.push(`${plural(failedCount, "step")} failed`);
-    if (plan) details.push(`${plan.completed} of ${plural(plan.steps.length, "step")}`);
-    if (touchedTotals.files > 0) details.push(`${plural(touchedTotals.files, "file")} changed`);
+    title = failedCount > 0 ? gt("Finished with errors") : gt("Run failed");
+    if (failedCount > 0)
+      details.push(
+        gt("{count, plural, one {{count} step failed} other {{count} steps failed}}", {
+          count: failedCount,
+        }),
+      );
+    if (plan)
+      details.push(
+        gt(
+          "{count, plural, one {{completed} of {count} step} other {{completed} of {count} steps}}",
+          { completed: plan.completed, count: plan.steps.length },
+        ),
+      );
+    if (touchedTotals.files > 0)
+      details.push(
+        gt("{count, plural, one {{count} file changed} other {{count} files changed}}", {
+          count: touchedTotals.files,
+        }),
+      );
   } else {
     if (summary.outcome === "incomplete" && plan) {
       icon = "exclamationmark.circle";
       tint = "accent-warning-foreground";
-      title = "Stopped with steps left";
-      details.push(`${plan.completed} of ${plural(plan.steps.length, "step")} done`);
+      title = gt("Stopped with steps left");
+      details.push(
+        gt(
+          "{count, plural, one {{completed} of {count} step done} other {{completed} of {count} steps done}}",
+          { completed: plan.completed, count: plan.steps.length },
+        ),
+      );
     } else if (plan) {
-      details.push(`${plan.completed} of ${plural(plan.steps.length, "step")}`);
+      details.push(
+        gt(
+          "{count, plural, one {{completed} of {count} step} other {{completed} of {count} steps}}",
+          { completed: plan.completed, count: plan.steps.length },
+        ),
+      );
     }
     if (summary.outcome === "stopped") {
       icon = "exclamationmark.circle";
       tint = "accent-warning-foreground";
-      title = "Stopped";
+      title = gt("Stopped");
     }
-    if (touchedTotals.files > 0) details.push(`${plural(touchedTotals.files, "file")} changed`);
+    if (touchedTotals.files > 0)
+      details.push(
+        gt("{count, plural, one {{count} file changed} other {{count} files changed}}", {
+          count: touchedTotals.files,
+        }),
+      );
   }
 
   // iOS has no live regions, so say when the run's state changes, not on every step.
   const phaseKey = `${phase}:${summary.outcome}`;
-  const spoken = phase === "running" ? "Working" : title;
+  const spoken = phase === "running" ? gt("Working") : title;
   const announcedPhaseKey = useRef(phaseKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells VoiceOver about a change outside React
   useEffect(() => {
@@ -180,7 +212,9 @@ function StatusBanner(props: { readonly summary: ActivitySummary }) {
           {summary.lastActivityAt ? (
             <>
               {details.length > 0 ? " · " : null}
-              Updated <RelativeTime timestamp={summary.lastActivityAt} />
+              <T>
+                Updated <RelativeTime timestamp={summary.lastActivityAt} />
+              </T>
             </>
           ) : null}
         </Text>
@@ -190,6 +224,8 @@ function StatusBanner(props: { readonly summary: ActivitySummary }) {
 }
 
 export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivityRouteParams>) {
+  const messages = useMessages();
+  const gt = useGT();
   const navigation = useNavigation();
   const isAndroid = Platform.OS === "android";
   const insets = useSafeAreaInsets();
@@ -221,6 +257,7 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
     runActive,
     runtime?.activeRunId ?? null,
     subagent?.status ?? runtime?.status ?? null,
+    messages,
   );
 
   const handleBack = () => {
@@ -257,22 +294,26 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
       <NativeStackScreenOptions
         options={{
           headerShown: !isAndroid,
-          headerTitle: "Activity",
-          title: "Activity",
+          headerTitle: gt("Activity"),
+          title: gt("Activity"),
         }}
       />
-      {isAndroid ? <AppBar embedded title="Activity" onBack={handleBack} /> : null}
+      {isAndroid ? <AppBar embedded title={gt("Activity")} onBack={handleBack} /> : null}
       {structure === null ? (
-        // Before the thread loads there are no items and no run, which would read as "Stopped".
+        // Before the thread loads there are no items and no run, which would read as gt("Stopped").
         <View className="flex-1 items-center justify-center px-4">
           {threadDeleted ? (
             <EmptyState
               variant="plain"
-              title="This thread was deleted"
-              detail="There is no activity to show."
+              title={gt("This thread was deleted")}
+              detail={gt("There is no activity to show.")}
             />
           ) : threadError !== null ? (
-            <EmptyState variant="plain" title="Could not load this thread" detail={threadError} />
+            <EmptyState
+              variant="plain"
+              title={gt("Could not load this thread")}
+              detail={threadError}
+            />
           ) : (
             <AppActivityIndicator colorClassName="accent-icon-muted" />
           )}
@@ -281,8 +322,10 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
         <View className="flex-1 justify-center px-4">
           <EmptyState
             variant="plain"
-            title="Nothing to show yet"
-            detail="Progress appears here while the agent works: what it is doing, what it finished, and which files it changed."
+            title={gt("Nothing to show yet")}
+            detail={gt(
+              "Progress appears here while the agent works: what it is doing, what it finished, and which files it changed.",
+            )}
           />
         </View>
       ) : (
@@ -293,7 +336,12 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
         >
           <StatusBanner summary={summary} />
           {summary.plan ? (
-            <ListSection title={`Plan · ${summary.plan.completed} of ${summary.plan.steps.length}`}>
+            <ListSection
+              title={gt("Plan · {completed} of {total}", {
+                completed: summary.plan.completed,
+                total: summary.plan.steps.length,
+              })}
+            >
               {summary.plan.steps.map((step) => (
                 <StepRow
                   key={step.id}
@@ -304,17 +352,19 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
                   muted={step.status !== "running"}
                   spokenStatus={
                     step.status === "completed"
-                      ? "done"
+                      ? gt("done")
                       : step.status === "running"
-                        ? "in progress"
-                        : "not started"
+                        ? gt("in progress")
+                        : gt("not started")
                   }
                 />
               ))}
             </ListSection>
           ) : null}
           {summary.touched.length > 0 ? (
-            <ListSection title={`Files touched · ${summary.touchedTotals.files}`}>
+            <ListSection
+              title={gt("Files touched · {count}", { count: summary.touchedTotals.files })}
+            >
               {summary.touched.flatMap((folder) =>
                 folder.files.map((file) => (
                   <StepRow
@@ -327,7 +377,7 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
                         ? file.additions === null && file.deletions === null
                           ? undefined
                           : `+${file.additions ?? 0} -${file.deletions ?? 0}`
-                        : "Outside workspace"
+                        : gt("Outside workspace")
                     }
                     {...(file.openable ? { onPress: () => openFile(file.path) } : {})}
                   />
@@ -336,10 +386,13 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
             </ListSection>
           ) : null}
           {summary.done.length > 0 ? (
-            <ListSection title={`Done this turn · ${summary.done.length}`}>
+            <ListSection title={gt("Done this turn · {count}", { count: summary.done.length })}>
               {hiddenDone > 0 ? (
                 <Text textRole="footnote" className="px-4 py-3 text-foreground-muted">
-                  {plural(hiddenDone, "earlier step")} not shown
+                  {gt(
+                    "{count, plural, one {{count} earlier step not shown} other {{count} earlier steps not shown}}",
+                    { count: hiddenDone },
+                  )}
                 </Text>
               ) : null}
               {summary.done.slice(hiddenDone).map((step) => (
@@ -348,7 +401,7 @@ export function ThreadActivityRouteScreen(props: StaticScreenProps<ThreadActivit
                   icon={step.failed ? "xmark" : "checkmark"}
                   tint={step.failed ? "accent-danger-foreground" : "accent-icon-muted"}
                   label={step.label}
-                  {...(step.failed ? { spokenStatus: "failed" } : {})}
+                  {...(step.failed ? { spokenStatus: gt("failed") } : {})}
                 />
               ))}
             </ListSection>
