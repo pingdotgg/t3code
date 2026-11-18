@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as NodeNet from "node:net";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -51,6 +50,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     command: string;
     args: ReadonlyArray<CommandLine.Word>;
   }) => Effect.Effect<void>,
+  net = NetService.make(),
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -84,7 +84,12 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     yield* fs.writeFileString(path.join(stateDir, "daemon.json"), JSON.stringify(previousDaemon));
   }
   const host = yield* LocalDeviceHost.make().pipe(
-    Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        ServerConfig.layerTest(baseDir, baseDir),
+        Layer.succeed(NetService.NetService, net),
+      ),
+    ),
     Effect.provideService(HostProcess.Environment, environment ?? { HOME: baseDir, PATH: "" }),
     Effect.provideService(HostProcess.IsExecutable, false),
     Effect.provideService(HostProcess.Platform, platform),
@@ -614,14 +619,9 @@ describe("AgentDevice startup", () => {
 
 // regression: #37867 adb's connect-then-fork probe hangs under WSL mirrored networking
 describe("adb server prewarm", () => {
-  const withSdk = Effect.fn("withSdk")(function* (
-    platform: NodeJS.Platform,
-    onSpawn?: (spawned: {
-      command: string;
-      args: ReadonlyArray<CommandLine.Word>;
-    }) => Effect.Effect<void>,
-  ) {
+  const withSdk = Effect.fn("withSdk")(function* (platform: NodeJS.Platform, portOccupied = false) {
     const fs = yield* FileSystem.FileSystem;
+    const canListen = yield* Ref.make(!portOccupied);
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-adb-prewarm-" });
     for (const tool of ["platform-tools/adb", "emulator/emulator"]) {
       yield* fs.makeDirectory(`${home}/Android/Sdk/${tool.split("/")[0]}`, { recursive: true });
@@ -635,35 +635,15 @@ describe("adb server prewarm", () => {
         undefined,
         { HOME: home, PATH: "" },
         platform,
-        onSpawn,
+        (spawned) => (spawned.args.includes("nodaemon") ? Ref.set(canListen, false) : Effect.void),
+        { ...NetService.make(), canListenOnHost: () => Ref.get(canListen) },
       )),
-    };
-  });
-
-  // The test clock never advances `Effect.sleep`, so the fixture's spawned "adb server"
-  // really listens on 5037: the prewarm's poll then sees the port taken on its first
-  // round instead of waiting for its deadline.
-  const listenWhenSpawned = Effect.fn("listenWhenSpawned")(function* () {
-    let server: NodeNet.Server | null = null;
-    return {
-      onSpawn: (spawned: { command: string; args: ReadonlyArray<CommandLine.Word> }) =>
-        Effect.sync(() => {
-          if (spawned.args.includes("nodaemon")) {
-            server = NodeNet.createServer().listen(5037, "127.0.0.1");
-          }
-        }),
-      closeListener: Effect.sync(() => server?.close()),
     };
   });
 
   it.effect("starts the adb server before the hub on Linux", () =>
     Effect.gen(function* () {
-      const { home, closeListener, host, spawns } = yield* listenWhenSpawned().pipe(
-        Effect.flatMap(({ onSpawn, closeListener }) =>
-          Effect.map(withSdk("linux", onSpawn), (fixture) => ({ ...fixture, closeListener })),
-        ),
-      );
-      yield* Effect.addFinalizer(() => closeListener);
+      const { home, host, spawns } = yield* withSdk("linux");
       const path = yield* Path.Path;
       expect(spawns.length).toBeGreaterThan(1);
       expect(spawns[0]).toMatchObject({
@@ -676,15 +656,7 @@ describe("adb server prewarm", () => {
 
   it.effect("leaves the port alone when something already listens on it", () =>
     Effect.gen(function* () {
-      yield* Effect.acquireRelease(
-        Effect.callback<NodeNet.Server>((resume) => {
-          const server = NodeNet.createServer();
-          server.once("error", (cause) => resume(Effect.die(cause)));
-          server.listen(5037, "127.0.0.1", () => resume(Effect.succeed(server)));
-        }),
-        (server) => Effect.sync(() => server.close()),
-      );
-      const { spawns } = yield* withSdk("linux");
+      const { spawns } = yield* withSdk("linux", true);
       expect(spawns.some((spawn) => spawn.args.includes("nodaemon"))).toBe(false);
       expect(spawns.length).toBeGreaterThan(0);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
