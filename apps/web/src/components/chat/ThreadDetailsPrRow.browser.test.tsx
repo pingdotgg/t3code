@@ -254,14 +254,13 @@ it("opens the pull request's link menu on right click instead of the card's", as
           status={null}
           project={null}
           label="Test PR"
-          openAriaLabel="Open PR"
           onOpen={vi.fn()}
         />
       </div>,
     );
   });
   for (const target of [
-    screen.container.querySelector('[aria-label="Open PR"]')!,
+    screen.container.querySelector('[aria-label="Pull request #1, open: Test PR"]')!,
     [...screen.container.querySelectorAll("span")].find((span) => span.textContent === "#1")!,
   ]) {
     const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 7 });
