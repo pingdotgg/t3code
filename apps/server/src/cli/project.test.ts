@@ -548,6 +548,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           physicalProject.title,
         );
         yield* runCli(["project", "remove", physicalProject.id, "--base-dir", baseDir]);
+        yield* withProjectService(baseDir, (projects) =>
+          projects.update({
+            commandId: CommandId.make("project-cli-archive-legacy-alias"),
+            projectId: project.id,
+            archived: true,
+          }),
+        );
+        yield* runCli(["project", "add", aliasPath, "--base-dir", baseDir]);
+        const restored = (yield* readProjects(baseDir)).projects;
+        assert.lengthOf(restored, 1);
+        assert.equal(restored[0]?.id, project.id);
+        assert.isNull(restored[0]?.archivedAt);
         yield* runCli(["project", "rename", aliasPath, "Legacy", "--base-dir", baseDir]);
         assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Legacy");
         yield* runCli(["project", "remove", `${aliasPath}${NodePath.sep}.`, "--base-dir", baseDir]);

@@ -503,9 +503,11 @@ const projectAddCommand = Command.make("add", {
         ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
       }) {
         const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
-        const existingProject = snapshot.projects.find(
-          (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
-        );
+        const target = yield* findActiveProjectTarget({
+          snapshot,
+          identifier: flags.workspaceRoot,
+        }).pipe(Effect.catchTags({ ProjectNotFoundError: () => Effect.undefined }));
+        const existingProject = snapshot.projects.find((project) => project.id === target?.id);
         // Re-adding an archived project's folder restores it, matching the clients.
         if (existingProject?.archivedAt != null) {
           const title = Option.isSome(flags.title)
