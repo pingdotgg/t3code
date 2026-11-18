@@ -32,7 +32,11 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  useClientSettingsHydrated,
+  useEnvironmentIdentificationMode,
+} from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -423,6 +427,7 @@ export function AppSidebarLayout({
 }) {
   const gt = useGT();
   const historySwipeNavigation = useClientSettings((settings) => settings.historySwipeNavigation);
+  const settingsHydrated = useClientSettingsHydrated();
   const sidebarArea = workspaceAreaProps("sidebar", 0, gt("Threads"));
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
@@ -500,7 +505,9 @@ export function AppSidebarLayout({
         {children}
         <BackgroundThreadAnnouncer />
         <SidebarControl showSidebar={showSidebar} />
-        {isElectron && historySwipeNavigation ? <HistorySwipeNavigation /> : null}
+        {isElectron && settingsHydrated && historySwipeNavigation ? (
+          <HistorySwipeNavigation />
+        ) : null}
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
   );

@@ -23,13 +23,19 @@ vi.mock("../env", () => ({ isElectron: true }));
 vi.mock("./Sidebar", () => ({ default: () => null }));
 vi.mock("./BackgroundThreadAnnouncer", () => ({ BackgroundThreadAnnouncer: () => null }));
 vi.mock("./sidebar/SidebarChrome", () => ({ SidebarBrandWidthProbe: () => null }));
+const storedSettings = vi.hoisted(() => ({ current: Promise.resolve<unknown>(null) }));
+
 vi.mock("../localApi", () => ({
   ensureLocalApi: () => ({
-    persistence: { setClientSettings: async () => undefined },
+    persistence: {
+      getClientSettings: () => storedSettings.current,
+      setClientSettings: async () => undefined,
+    },
   }),
 }));
 
 function setup(historySwipeNavigation: boolean) {
+  storedSettings.current = Promise.resolve(null);
   __resetClientSettingsPersistenceForTests();
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, historySwipeNavigation });
 }
@@ -75,6 +81,30 @@ describe("desktop history swipe navigation", () => {
       expect(navigate).toHaveBeenCalledOnce();
     },
   );
+
+  it("keeps swipes off until the saved settings load", async () => {
+    const saved = Promise.withResolvers<unknown>();
+    storedSettings.current = saved.promise;
+    __resetClientSettingsPersistenceForTests();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    using _available = vi.spyOn(window.navigation, "canGoBack", "get").mockReturnValue(true);
+    await using _screen = await render(<AppSidebarLayout>Thread</AppSidebarLayout>);
+    using navigate = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+
+    await act(() => {
+      wheel(-140);
+      wheel(0);
+    });
+    expect(navigate).not.toHaveBeenCalled();
+
+    saved.resolve({ historySwipeNavigation: false });
+    await act(() => saved.promise);
+    await act(() => {
+      wheel(-140);
+      wheel(0);
+    });
+    expect(navigate).not.toHaveBeenCalled();
+  });
 });
 
 describe("sidebar toggle shortcut", () => {
