@@ -135,7 +135,7 @@ function usePullRequestReact(params: PullRequestParams, subjectId?: string) {
 export function PullRequestReactions(props: { readonly params: PullRequestParams }) {
   const target = pullRequestTarget(props.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
-  const activity = usePullRequestActivity(params);
+  const activity = usePullRequestActivity(props.params);
   const { canReact } = usePullRequestPermissions(props.params, detail.data);
   const reactions = activity.data?.reactions ?? [];
   const onReact = usePullRequestReact(props.params);

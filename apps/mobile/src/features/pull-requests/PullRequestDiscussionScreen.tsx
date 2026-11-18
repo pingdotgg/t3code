@@ -43,7 +43,7 @@ export function PullRequestDiscussionScreen({
 }: StaticScreenProps<PullRequestParams & { readonly discussionId: string }>) {
   return (
     <Discussion
-      key={`${pullRequestReviewKey(route.params)}:${route.params.discussionId}`}
+      key={`${pullRequestReviewKey(route.params, detail.data?.viewer ?? null)}:${route.params.discussionId}`}
       params={route.params}
     />
   );
@@ -153,7 +153,10 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     });
   const comments = [
     ...new Map(
-      [...extra, ...(thread?.comments ?? [])].map((comment) => [comment.id, comment]),
+      [...(activity.data ? extra : []), ...(thread?.comments ?? [])].map((comment) => [
+        comment.id,
+        comment,
+      ]),
     ).values(),
   ].sort((left, right) => compareTimestamps(left.createdAt, right.createdAt));
   const scrollRef = useRef<ScrollViewInstance>(null);

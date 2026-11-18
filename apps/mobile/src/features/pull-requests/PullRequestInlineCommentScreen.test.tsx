@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("../../lib/uuid", () => ({ uuidv4: () => "generated" }));
 vi.mock("./usePullRequestDiff", () => ({
+  usePullRequestActivity: () => ({ data: null }),
   pullRequestTarget: (params: object) => ({ environmentId: "env", input: params }),
 }));
 vi.mock("./pullRequestDiffComments", () => ({ reviewPositionLabel: () => "Line 1" }));
