@@ -416,6 +416,9 @@ Follow an agent's file link to read a report or other file outside the workspace
 These files open read-only. An HTML file outside the workspace cannot load scripts,
 styles, or images from neighboring files.
 
+On macOS, right-click a file link and choose **Reveal in Finder** to locate the
+original file. T3 Code shows an error if the file has moved or been deleted.
+
 ## HTML and PDF files in the file viewer
 
 On web and desktop, HTML and PDF files open as rendered pages. Switch an HTML
