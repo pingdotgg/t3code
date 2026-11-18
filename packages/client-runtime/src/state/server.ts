@@ -1648,6 +1648,13 @@ export function createServerEnvironmentAtoms<R, E>(
       refreshIntervalMs: 5_000,
       idleTtlMs: 0,
     }),
+    usageBudget: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:usage-budget",
+      tag: WS_METHODS.serverGetUsageBudget,
+      staleTimeMs: 5_000,
+      refreshIntervalMs: 5_000,
+      idleTtlMs: 0,
+    }),
     scheduledTaskWebhookDeliveries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:scheduled-task:webhook-deliveries",
       tag: WS_METHODS.scheduledTasksListWebhookDeliveries,

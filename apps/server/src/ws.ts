@@ -1,4 +1,5 @@
-import { GitCommandError, OrchestrationDispatchCommandError } from "@t3tools/contracts";
+import { GitCommandError, OrchestrationDispatchCommandError, UsageBudgetError } from "@t3tools/contracts";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
 import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
@@ -265,6 +266,7 @@ import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
 import type { TelemetryOwner } from "./telemetry/Identify.ts";
+import { readUsageBudget } from "./usage/usageBudget.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
@@ -1591,6 +1593,7 @@ export const layerWsRpc = (
       const databaseStorage = yield* DatabaseStorage.DatabaseStorage;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const hostEnvironment = yield* HostProcess.Environment;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
@@ -2878,6 +2881,14 @@ export const layerWsRpc = (
           resourceTelemetry.readHistory(input),
         [WS_METHODS.serverGetUsageSummary]: (input) => usage.readSummary(input),
         [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
+        [WS_METHODS.serverGetUsageBudget]: (_input) =>
+          serverSettings.getSettings.pipe(
+            Effect.mapError(
+              (cause) => new UsageBudgetError({ detail: "settings are unreadable", cause }),
+            ),
+            Effect.flatMap((settings) => readUsageBudget(settings.usageBudgetCommand)),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          ),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),

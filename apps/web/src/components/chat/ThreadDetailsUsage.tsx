@@ -47,7 +47,7 @@ export interface ThreadDetailsUsageInput {
   readonly contextWindow: ContextWindowSnapshot | null;
 }
 
-type UsageTone = "error" | "warning" | null;
+export type UsageTone = "error" | "warning" | null;
 
 function limitTone(left: number): UsageTone {
   if (left <= 10) return "error";
@@ -115,8 +115,20 @@ function InstanceRows({
   return limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />);
 }
 
-/** The thread's context window. The bar fills as context is used; the tick marks auto-compaction. */
-export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
+export interface ContextWindowMeter {
+  readonly fill: number | null;
+  readonly tone: UsageTone;
+  readonly tick: number | null;
+  readonly value: string;
+  readonly ariaValue: string;
+  readonly tooltip: ReactNode;
+}
+
+/** The context window as a bar that fills as context is used, with a tick at auto-compaction. */
+export function useContextWindowMeter(usage: ContextWindowSnapshot): ContextWindowMeter {
+  const gt = useGT();
+  const m = useMessages();
+  const locale = useLocale();
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used =
     maxTokens !== null && usage.usedPercentage !== null
@@ -127,10 +139,44 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
     maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
       ? (threshold / maxTokens) * 100
       : null;
-  const gt = useGT();
-  const m = useMessages();
-  const locale = useLocale();
   const usedTokens = formatContextWindowTokens(usage.usedTokens);
+  return {
+    fill: used,
+    tone: used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null,
+    tick,
+    value:
+      maxTokens !== null ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}` : usedTokens,
+    ariaValue:
+      used !== null ? gt("{used}% used", { used }) : gt("{usedTokens} tokens used", { usedTokens }),
+    tooltip: (
+      <>
+        <span className="text-foreground">
+          {used !== null
+            ? gt("Context: {used}% used", { used })
+            : gt("Context: {usedTokens} tokens used", { usedTokens })}
+        </span>
+        {maxTokens !== null ? (
+          <span className="text-muted-foreground">
+            {gt("{used} of {max} tokens", {
+              used: usage.usedTokens.toLocaleString(locale),
+              max: maxTokens.toLocaleString(locale),
+            })}
+          </span>
+        ) : null}
+        {threshold !== null && threshold > 0 ? (
+          <span className="text-muted-foreground">
+            {formatContextWindowCompactionMessage(threshold, m)}
+          </span>
+        ) : null}
+      </>
+    ),
+  };
+}
+
+/** The thread's context window. */
+export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
+  const gt = useGT();
+  const meter = useContextWindowMeter(usage);
   return (
     <ThreadDetailsSection
       headingId="thread-details-context-heading"
@@ -140,42 +186,13 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
         <UsageRow
           label={gt("Context", { $context: "context window row label" })}
-          fill={used}
-          tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
-          tick={tick}
+          fill={meter.fill}
+          tone={meter.tone}
+          tick={meter.tick}
           muted
-          value={
-            maxTokens !== null
-              ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}`
-              : usedTokens
-          }
-          ariaValue={
-            used !== null
-              ? gt("{used}% used", { used })
-              : gt("{usedTokens} tokens used", { usedTokens })
-          }
-          tooltip={
-            <>
-              <span className="text-foreground">
-                {used !== null
-                  ? gt("Context: {used}% used", { used })
-                  : gt("Context: {usedTokens} tokens used", { usedTokens })}
-              </span>
-              {maxTokens !== null ? (
-                <span className="text-muted-foreground">
-                  {gt("{used} of {max} tokens", {
-                    used: usage.usedTokens.toLocaleString(locale),
-                    max: maxTokens.toLocaleString(locale),
-                  })}
-                </span>
-              ) : null}
-              {threshold !== null && threshold > 0 ? (
-                <span className="text-muted-foreground">
-                  {formatContextWindowCompactionMessage(threshold, m)}
-                </span>
-              ) : null}
-            </>
-          }
+          value={meter.value}
+          ariaValue={meter.ariaValue}
+          tooltip={meter.tooltip}
         />
       </div>
     </ThreadDetailsSection>
@@ -336,44 +353,13 @@ function UsageRow({
         <span className="max-w-28 truncate text-muted-foreground group-hover:text-foreground">
           {label}
         </span>
-        {fill !== null ? (
-          <span className="relative h-[3px] rounded-full bg-muted-foreground/30 dark:bg-muted-foreground/20">
-            {fill > 0 ? (
-              <span
-                className={cn(
-                  "absolute inset-y-0 left-0 rounded-full",
-                  tone === "error"
-                    ? "bg-error"
-                    : tone === "warning"
-                      ? "bg-warning"
-                      : muted
-                        ? "bg-muted-foreground"
-                        : "bg-foreground/80",
-                )}
-                style={{ width: `max(${fill}%, 6px)` }}
-              />
-            ) : null}
-            {tick !== null ? (
-              <span
-                aria-hidden
-                className="absolute -top-[3px] h-[9px] w-px -translate-x-1/2 bg-foreground/75"
-                style={{ left: `clamp(0.5px, ${tick}%, calc(100% - 0.5px))` }}
-              />
-            ) : null}
-          </span>
-        ) : null}
+        {fill !== null ? <UsageBar fill={fill} tone={tone} tick={tick} muted={muted} /> : null}
         <span
           className={cn(
             // Text-only rows span the bar column so they never widen the shared value column.
             "text-end font-medium tabular-nums",
             fill === null && "col-span-2",
-            tone === "error"
-              ? "text-error-foreground"
-              : tone === "warning"
-                ? "text-warning-foreground"
-                : fill === null
-                  ? "text-muted-foreground"
-                  : "text-foreground/80",
+            usageValueTone(tone, fill === null ? "text-muted-foreground" : "text-foreground/80"),
           )}
         >
           {value}
@@ -388,4 +374,60 @@ function UsageRow({
       </TooltipPopup>
     </Tooltip>
   );
+}
+
+/** A hairline bar filled from 0 to 100, with an optional tick marker. */
+export function UsageBar({
+  fill,
+  tone,
+  tick = null,
+  muted = false,
+  className,
+}: {
+  readonly fill: number;
+  readonly tone: UsageTone;
+  readonly tick?: number | null;
+  readonly muted?: boolean;
+  readonly className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "relative h-[3px] rounded-full bg-muted-foreground/30 dark:bg-muted-foreground/20",
+        className,
+      )}
+    >
+      {fill > 0 ? (
+        <span
+          className={cn(
+            "absolute inset-y-0 left-0 rounded-full",
+            tone === "error"
+              ? "bg-error"
+              : tone === "warning"
+                ? "bg-warning"
+                : muted
+                  ? "bg-muted-foreground"
+                  : "bg-foreground/80",
+          )}
+          style={{ width: `max(${Math.min(fill, 100)}%, 6px)` }}
+        />
+      ) : null}
+      {tick !== null ? (
+        <span
+          aria-hidden
+          className="absolute -top-[3px] h-[9px] w-px -translate-x-1/2 bg-foreground/75"
+          style={{ left: `clamp(0.5px, ${tick}%, calc(100% - 0.5px))` }}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+/** The text color for a value shown beside a usage bar. */
+export function usageValueTone(tone: UsageTone, neutral: string): string {
+  return tone === "error"
+    ? "text-error-foreground"
+    : tone === "warning"
+      ? "text-warning-foreground"
+      : neutral;
 }

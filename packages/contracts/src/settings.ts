@@ -1623,6 +1623,10 @@ export const ServerSettings = Schema.Struct({
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /** The program and arguments that print a `UsageBudgetStatus` as JSON; empty turns the usage bar off. */
+  usageBudgetCommand: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   textGenerators: Schema.Record(ProviderInstanceId, TextGeneratorConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -2019,6 +2023,7 @@ export const ServerSettingsPatch = Schema.Struct({
   usageLimitSources: Schema.optionalKey(
     Schema.Record(UsageLimitSourceId, Schema.NullOr(UsageLimitSourceConfig)),
   ),
+  usageBudgetCommand: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   // Merge per entry like usageLimitSources; null removes an entry.
   textGenerators: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, Schema.NullOr(TextGeneratorConfig)),

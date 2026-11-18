@@ -31,6 +31,7 @@ const pendingRpcAckRequests = new Map<string, PendingRpcAckRequest>();
 // lasts as long as the user takes on the forge.
 const untrackedRpcAckMethods = new Set<string>([
   WS_METHODS.serverGetUsageSummary,
+  WS_METHODS.serverGetUsageBudget,
   WS_METHODS.serverReportClientActivity,
   WS_METHODS.sourceControlSignInWait,
 ]);
