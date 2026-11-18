@@ -4316,6 +4316,10 @@
     }
   ],
   "e9b38212eb281365": "Compacting…",
+  "c2a1a89542ebde4e": "Pending",
+  "a01f46873734540d": "In progress",
+  "a04783b448042f1a": "Completed",
+  "f8bc5631f05189ec": "Cancelled",
   "e49d80b76b38931e": "Agent",
   "ff3e8c9011c8bf04": "Effort",
   "7a709deb4103b08b": "Reasoning effort",

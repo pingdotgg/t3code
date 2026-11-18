@@ -1,17 +1,20 @@
+import { msg, useMessages } from "gt-react";
+
 import { cn } from "~/lib/utils";
 import type { GrokTodoStep } from "../../grokTodoPlan";
 
 const STATUS: Record<GrokTodoStep["status"], { readonly mark: string; readonly label: string }> = {
-  pending: { mark: "○", label: "Pending" },
-  running: { mark: "◉", label: "In progress" },
-  completed: { mark: "✓", label: "Completed" },
-  cancelled: { mark: "–", label: "Cancelled" },
+  pending: { mark: "○", label: msg("Pending", { $context: "task status" }) },
+  running: { mark: "◉", label: msg("In progress", { $context: "task status" }) },
+  completed: { mark: "✓", label: msg("Completed", { $context: "task status" }) },
+  cancelled: { mark: "–", label: msg("Cancelled", { $context: "task status" }) },
 };
 
 export function TodoChecklist(props: {
   readonly steps: ReadonlyArray<GrokTodoStep>;
   readonly className?: string;
 }) {
+  const m = useMessages();
   return (
     <ul className={cn("space-y-0.5 text-sm", props.className)}>
       {props.steps.map((step) => (
@@ -26,7 +29,7 @@ export function TodoChecklist(props: {
                 : "min-w-0 text-foreground"
             }
           >
-            <span className="sr-only">{`${STATUS[step.status].label}: `}</span>
+            <span className="sr-only">{`${m(STATUS[step.status].label)}: `}</span>
             {step.text}
           </span>
         </li>
