@@ -235,7 +235,7 @@ function ComposerFileAttachment(
           className={
             props.compact
               ? "items-center justify-center bg-subtle"
-              : "items-center justify-center gap-1 bg-subtle px-2"
+              : "items-center justify-center gap-1 bg-subtle px-2 pb-4"
           }
           style={style}
         >
