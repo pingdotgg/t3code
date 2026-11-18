@@ -360,7 +360,8 @@ export const make: Effect.Effect<
       decode: decodeAs(decodeTypes),
     }).pipe(Effect.map((types) => types.value));
 
-  // Each `az` call costs seconds of startup, and a project's states rarely change.
+  // Each `az` call costs seconds of startup, so the pages after a list's first reuse the states it
+  // read. A first page reads them again, which is how a refresh sees a workflow changed since.
   const listClosedStates = yield* Cache.makeWith(
     (key: string) => {
       const [cwd, organization, project] = JSON.parse(key) as [string, string, string];
@@ -614,7 +615,7 @@ export const make: Effect.Effect<
       const dateField = created ? "[System.CreatedDate]" : "[System.ChangedDate]";
       return yield* scoped("listIssues", input).pipe(
         Effect.flatMap((scope) =>
-          Cache.get(
+          (cursor === undefined ? Cache.refresh : Cache.get)(
             listClosedStates,
             JSON.stringify([input.cwd, scope.organization, scope.project]),
           ).pipe(Effect.map((closed) => ({ scope, closed }))),
