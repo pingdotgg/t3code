@@ -1997,9 +1997,9 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  // Copilot flattens MCP titles and reports kind "read" for MCP calls and glob; its native
-  // tool.execution_start event carries the real identity.
-  it.effect("keeps Copilot's MCP and search tool identity instead of calling them file reads", () =>
+  // Copilot flattens MCP titles and reports kind "read" for MCP calls and glob ("other" for rg);
+  // its native tool.execution_start event carries the real identity.
+  it.effect.each(["glob", "rg"])("keeps Copilot's MCP and %s identity", (toolName) =>
     Effect.gen(function* () {
       const sessionId = "copilot-session";
       const executionStart = (data: Record<string, unknown>) => ({
@@ -2058,7 +2058,7 @@ describe("AcpRegistryAdapterV2", () => {
           }),
           executionStart({
             toolCallId: "native-search",
-            toolName: "glob",
+            toolName,
             toolTitle: "Finding files",
             arguments: { pattern: "*.ts", paths: ["/workspace"] },
           }),
@@ -2066,7 +2066,7 @@ describe("AcpRegistryAdapterV2", () => {
             sessionUpdate: "tool_call",
             toolCallId: "native-search",
             title: "Finding files matching *.ts",
-            kind: "read",
+            kind: toolName === "rg" ? "other" : "read",
             status: "completed",
             rawInput: { pattern: "*.ts", paths: ["/workspace"] },
             locations: [{ path: "/workspace" }],
