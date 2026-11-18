@@ -12,8 +12,8 @@ const servers = THREAD_DETAILS_ITEMS.find((item) => item.id === "servers")!;
 
 describe("thread details items", () => {
   it.each([
-    { legacy: false, items: {}, usage: true, context: true },
-    { legacy: true, items: {}, usage: true, context: true },
+    { legacy: false, items: {}, usage: false, context: true },
+    { legacy: true, items: {}, usage: false, context: true },
     { legacy: true, items: { usage: false }, usage: false, context: true },
     {
       legacy: false,
@@ -21,7 +21,7 @@ describe("thread details items", () => {
       usage: true,
       context: false,
     },
-  ])("shows Usage and Context by default and preserves explicit choices: %o", (row) => {
+  ])("hides Usage, shows Context by default, and preserves explicit choices: %o", (row) => {
     const visibility = resolveThreadDetailsVisibility({
       threadDetailsItems: row.items,
       threadDetailsUsageEnabled: row.legacy,
@@ -33,8 +33,8 @@ describe("thread details items", () => {
 
   it("stores only choices that differ from the default", () => {
     const legacyOn = { threadDetailsItems: {}, threadDetailsUsageEnabled: true };
-    expect(setThreadDetailsItem(legacyOn, usage, false)).toEqual({ usage: false });
-    expect(setThreadDetailsItem(legacyOn, usage, true)).toEqual({});
+    expect(setThreadDetailsItem(legacyOn, usage, true)).toEqual({ usage: true });
+    expect(setThreadDetailsItem(legacyOn, usage, false)).toEqual({});
 
     const hidden = { threadDetailsItems: { servers: false }, threadDetailsUsageEnabled: false };
     expect(setThreadDetailsItem(hidden, servers, true)).toEqual({});

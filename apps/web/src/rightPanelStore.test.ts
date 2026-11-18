@@ -715,12 +715,12 @@ describe("rightPanelStore", () => {
         useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
         refA,
       ),
-    ).toEqual({ inlineOpen: true, popoverOpen: false });
+    ).toEqual({ inlineOpen: false, popoverOpen: false });
   });
 
-  it("opens fresh inline details while leaving the popover closed", () => {
+  it("starts fresh threads with inline details and the popover closed", () => {
     expect(selectThreadPanelVisibility({}, refA)).toEqual({
-      inlineOpen: true,
+      inlineOpen: false,
       popoverOpen: false,
     });
   });
@@ -733,7 +733,7 @@ describe("rightPanelStore", () => {
     await reloadRightPanelStore();
     const visibility = useRightPanelStore.getState().threadPanelVisibilityByThreadKey;
     expect(selectThreadPanelVisibility(visibility, refA)).toEqual({
-      inlineOpen: false,
+      inlineOpen: true,
       popoverOpen: false,
     });
     expect(selectThreadPanelVisibility(visibility, refB)).toEqual({
