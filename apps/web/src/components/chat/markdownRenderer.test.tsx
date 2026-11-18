@@ -14,7 +14,6 @@ const urlTransform = (url: string) => `${url}#seen`;
 
 describe("createMarkdownRenderer", () => {
   const renderer = createMarkdownRenderer({
-    fastParse: true,
     remarkPlugins: CHAT_MARKDOWN_REMARK_PLUGINS,
     rehypePlugins: CHAT_MARKDOWN_REHYPE_PLUGINS,
     components: {},
@@ -65,7 +64,6 @@ describe("createMarkdownRenderer", () => {
     for (let end = 1; end <= reply.length; end++) {
       const source = reply.slice(0, end);
       const streamed = createMarkdownRenderer({
-        fastParse: true,
         remarkPlugins: [...CHAT_MARKDOWN_REMARK_PLUGINS, incremental],
         rehypePlugins: CHAT_MARKDOWN_REHYPE_PLUGINS,
         components: {},

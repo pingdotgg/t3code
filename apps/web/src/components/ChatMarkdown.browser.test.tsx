@@ -24,13 +24,13 @@ vi.mock(import("../markdown/fastMarkdownSetting"), async (original) => ({
   FAST_MARKDOWN: true,
 }));
 const parsedSources = vi.hoisted(() => [] as string[]);
-vi.mock(import("../markdown/parseMarkdown"), async (original) => {
+vi.mock(import("../markdown/wordsHast"), async (original) => {
   const actual = await original();
   return {
     ...actual,
-    parseMarkdown: (source, options) => {
+    wordsHast: (source, options) => {
       parsedSources.push(source);
-      return actual.parseMarkdown(source, options);
+      return actual.wordsHast(source, options);
     },
   };
 });

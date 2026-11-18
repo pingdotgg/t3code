@@ -62,8 +62,8 @@ export function rehypeTextDirection() {
   };
 }
 
-/** The top-level half of rehypeTextDirection, for trees whose inline code is already isolated. */
-export function blockTextDirections(tree: HastNode) {
+/** Each top-level block's direction, from its prose; an RTL letter decides as textDirection does. */
+function blockTextDirections(tree: HastNode) {
   for (const block of tree.children ?? []) {
     if (block.type !== "element" || block.tagName === "pre") continue;
     const dir = scriptOf(block) === "rtl" ? textDirection(proseText(block)) : scriptOf(block);

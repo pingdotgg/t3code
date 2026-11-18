@@ -82,7 +82,7 @@ function FastMarkdownRow() {
   return (
     <SettingsRow
       {...searchableSetting("fast-markdown")}
-      description="Render Markdown in chat and pull requests with a faster renderer built into T3 Code. Long threads open and stream with less work. Switching reloads the window."
+      description="Render Markdown in chat and pull requests with a faster renderer. Long threads open and stream with less work. Switching reloads the window."
       control={
         <Switch
           checked={FAST_MARKDOWN}

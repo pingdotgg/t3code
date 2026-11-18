@@ -1098,6 +1098,9 @@ importers:
       '@pierre/trees':
         specifier: 1.0.0-beta.6
         version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
+      '@pierre/words':
+        specifier: file:deps/pierre-words-0.2.2-t3.1-c7964dc5.tgz
+        version: file:apps/web/deps/pierre-words-0.2.2-t3.1-c7964dc5.tgz(@pierre/highlights@0.5.1)(react@19.3.0)
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
@@ -1197,9 +1200,6 @@ importers:
       hast-util-to-jsx-runtime:
         specifier: ^2.3.6
         version: 2.3.6(supports-color@8.1.1)
-      hastscript:
-        specifier: ^9.0.1
-        version: 9.0.1
       heic-to:
         specifier: ^1.5.2
         version: 1.5.2
@@ -6419,6 +6419,18 @@ packages:
     peerDependencies:
       react: ^18.3.1 || ^19.0.0
       react-dom: ^18.3.1 || ^19.0.0
+
+  '@pierre/words@file:apps/web/deps/pierre-words-0.2.2-t3.1-c7964dc5.tgz':
+    resolution: {integrity: sha512-Ja7SFkbMxO8JPOlGtACp9+71NNeSIKpdbdKVulPrJ/PeFrwocHVCs+V/OCTQLdUX8wfPJSWs3ahL1bnPMhKYHA==, tarball: file:apps/web/deps/pierre-words-0.2.2-t3.1-c7964dc5.tgz}
+    version: 0.2.2-t3.1
+    peerDependencies:
+      '@pierre/highlights': '>=0.5.1'
+      react: ^18.3.1 || ^19.0.0
+    peerDependenciesMeta:
+      '@pierre/highlights':
+        optional: true
+      react:
+        optional: true
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
@@ -16498,6 +16510,11 @@ snapshots:
       - '@pierre/theme'
       - '@shikijs/themes'
       - shiki
+
+  '@pierre/words@file:apps/web/deps/pierre-words-0.2.2-t3.1-c7964dc5.tgz(@pierre/highlights@0.5.1)(react@19.3.0)':
+    optionalDependencies:
+      '@pierre/highlights': 0.5.1
+      react: 19.3.0
 
   '@pinojs/redact@0.4.0': {}
 

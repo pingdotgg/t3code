@@ -1,10 +1,7 @@
 import { copySnapshot as copySnapshotToClipboard } from "./copySnapshot";
 import { InlineAudioPreview } from "../files/InlineAudioPreview";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
-import {
-  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-  remarkEnableOrderedListNumbers,
-} from "@t3tools/shared/markdownPipeline";
+import { CHAT_USER_MESSAGE_REMARK_PLUGINS } from "@t3tools/shared/markdownPipeline";
 import { findRevealRef } from "./markdownFindContext";
 import {
   type EnvironmentId,
@@ -1228,11 +1225,6 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   );
 });
 
-const USER_MESSAGE_REMARK_PLUGINS = [
-  ...CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-  remarkEnableOrderedListNumbers,
-];
-
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   renderContextReference?: (reference: ChatMarkdownContextReference) => ReactNode;
@@ -1252,7 +1244,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       className="text-message-foreground user-message-markdown"
       lineBreaks
       parseRawHtml={false}
-      extraRemarkPlugins={USER_MESSAGE_REMARK_PLUGINS}
+      extraRemarkPlugins={CHAT_USER_MESSAGE_REMARK_PLUGINS}
       renderContextReference={props.renderContextReference}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
     />

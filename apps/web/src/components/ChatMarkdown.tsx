@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
+  CHAT_USER_MESSAGE_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   decodeMarkdownLinkEscapes,
@@ -203,7 +204,7 @@ import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
 import { FAST_MARKDOWN } from "../markdown/fastMarkdownSetting";
-import { chatRenderHast } from "../markdown/chatHast";
+import { wordsHast, type WordsHastOptions } from "../markdown/wordsHast";
 import {
   type MarkdownIslandOptions,
   renderHastWithIslands,
@@ -1847,8 +1848,27 @@ function withExtraPlugins(shared: PluggableList, extra: PluggableList): Pluggabl
   return combined;
 }
 
-const directHastFor = (rehypePlugins: PluggableList) =>
-  rehypePlugins === CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS ? chatRenderHast : undefined;
+const WORDS_OPTIONS = new Map<PluggableList, WordsHastOptions>();
+for (const [key, shared] of Object.entries(CHAT_MARKDOWN_REMARK_PLUGIN_SETS)) {
+  const math = key.startsWith("math");
+  const breaks = key === "breaks" || key === "mathBreaks";
+  WORDS_OPTIONS.set(shared, { math, breaks, singleTilde: true, listNumbers: false });
+  WORDS_OPTIONS.set(withExtraPlugins(shared, CHAT_USER_MESSAGE_REMARK_PLUGINS), {
+    math,
+    breaks,
+    singleTilde: false,
+    listNumbers: true,
+  });
+}
+
+/** Words renders the shared plugin sets; other plugins still need remark. */
+function sourceHastFor(remarkPlugins: PluggableList, rehypePlugins: PluggableList) {
+  const options = WORDS_OPTIONS.get(remarkPlugins);
+  if (!FAST_MARKDOWN || !options || rehypePlugins !== CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS) {
+    return undefined;
+  }
+  return (text: string) => wordsHast(text, options);
+}
 
 const markdownRenderers = new WeakMap<
   PluggableList,
@@ -1861,10 +1881,9 @@ function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: Pluggable
   let renderer = byRehype.get(rehypePlugins);
   if (!renderer) {
     renderer = createMarkdownRenderer({
-      fastParse: FAST_MARKDOWN,
       remarkPlugins,
       rehypePlugins,
-      directHast: directHastFor(rehypePlugins),
+      sourceHast: sourceHastFor(remarkPlugins, rehypePlugins),
       components: CHAT_MARKDOWN_COMPONENTS,
       urlTransform: markdownUrlTransform,
     });
@@ -2002,10 +2021,9 @@ const MarkdownSource = memo(function MarkdownSource({
   const render = shared
     ? markdownRenderer(remarkPlugins, rehypePlugins)
     : createMarkdownRenderer({
-        fastParse: FAST_MARKDOWN,
         remarkPlugins,
         rehypePlugins,
-        directHast: directHastFor(rehypePlugins),
+        sourceHast: sourceHastFor(remarkPlugins, rehypePlugins),
         components: CHAT_MARKDOWN_COMPONENTS,
         urlTransform: markdownUrlTransform,
       });

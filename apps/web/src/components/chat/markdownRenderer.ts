@@ -9,18 +9,15 @@ import remarkRehype from "remark-rehype";
 import { type PluggableList, unified } from "unified";
 import { VFile } from "vfile";
 
-import { remarkFastParse } from "../../markdown/remarkFastParse";
 import { remarkParseWithoutUnusedSyntax } from "./markdownSyntaxGates";
 
 export type MarkdownUrlTransform = (url: string, key: string, node: Element) => string;
 
 interface MarkdownRendererOptions {
-  /** Parse with parseMarkdown and build hast with `directHast`, instead of micromark and the rehype plugins. */
-  readonly fastParse: boolean;
   readonly remarkPlugins: PluggableList;
   readonly rehypePlugins: PluggableList;
-  /** Builds what `rehypePlugins` would, or null to run them. */
-  readonly directHast?: ((tree: MdastRoot) => Root | null) | undefined;
+  /** Builds what the plugins would, straight from the source; null to run them. */
+  readonly sourceHast?: ((text: string) => Root | null) | undefined;
   readonly components: Partial<Components>;
   readonly urlTransform: MarkdownUrlTransform;
 }
@@ -55,17 +52,15 @@ function remember(key: string, entry: Rendered) {
 
 /** Renders markdown as react-markdown does, with one processor per plugin set. */
 export function createMarkdownRenderer({
-  fastParse,
   remarkPlugins,
   rehypePlugins,
   components,
   urlTransform,
-  directHast,
+  sourceHast,
 }: MarkdownRendererOptions) {
   const remark = unified()
     .use(remarkParse)
     .use(remarkParseWithoutUnusedSyntax)
-    .use(fastParse ? [remarkFastParse] : [])
     .use(remarkPlugins)
     .freeze();
   const rehype = unified()
@@ -73,8 +68,10 @@ export function createMarkdownRenderer({
     .use(rehypePlugins)
     .freeze();
   const toHast = (file: VFile): Root => {
+    const direct = sourceHast?.(String(file.value));
+    if (direct) return direct;
     const mdast = remark.runSync(remark.parse(file), file) as MdastRoot;
-    return (fastParse && directHast?.(mdast)) || (rehype.runSync(mdast as never, file) as Root);
+    return rehype.runSync(mdast as never, file) as Root;
   };
   const keyPrefix = `${nextRendererId++}\u0000`;
 

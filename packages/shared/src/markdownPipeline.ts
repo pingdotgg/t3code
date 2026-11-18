@@ -20,7 +20,10 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "./markdownGithubAlerts.ts";
 import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
-import { remarkKeepOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
+import {
+  remarkEnableOrderedListNumbers,
+  remarkKeepOrderedListNumbers,
+} from "./markdownOrderedListNumbers.ts";
 import {
   CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
   remarkCodexDirectives,
@@ -84,7 +87,7 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
 // Whole tags, attributes, and comments, so closing-anchor text inside them never counts as a tag.
 const RAW_HTML_TAG_PATTERN = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
 
-export function rehypePreserveBareAnchorPlaceholders() {
+function rehypePreserveBareAnchorPlaceholders() {
   return (tree: MarkdownImageHastNode) => {
     const anchors: Array<MarkdownImageHastNode | null> = [];
     let rawTextTag: string | undefined;
@@ -185,7 +188,7 @@ export function rehypePreserveImageSourceMeta() {
 const IMAGE_SRC_PROTOCOLS = [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"];
 
 // The sanitizer compares schemes case-sensitively, so lowercase accepted editor links first.
-export function normalizeLocalEditorHref(href: string): string {
+function normalizeLocalEditorHref(href: string): string {
   try {
     const url = new URL(href);
     return isLocalEditorFileUrl(url) ? url.href : href;
@@ -285,6 +288,12 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
 // Appended after the base list, this reconfigures its remark-gfm entry; ~~double~~ still strikes.
 export const CHAT_USER_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   [remarkGfm, { singleTilde: false }],
+];
+
+/** What a sent user message adds: the composer's tildes and list numbers. */
+export const CHAT_USER_MESSAGE_REMARK_PLUGINS: PluggableList = [
+  ...CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  remarkEnableOrderedListNumbers,
 ];
 
 // Start tags an HTML parser closes an open `<p>` for.
