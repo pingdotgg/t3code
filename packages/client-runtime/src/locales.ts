@@ -8,6 +8,7 @@ const NATIVE_LANGUAGE_NAMES: Readonly<Record<string, string>> = {
   fr: "Français",
   ja: "日本語",
   ko: "한국어",
+  nb: "Norsk bokmål",
   "pt-BR": "Português (Brasil)",
   ru: "Русский",
   sv: "Svenska",
@@ -21,9 +22,13 @@ export function nativeLanguageName(locale: string): string {
 // Our `zh` is Simplified, so Traditional tags only match an exact locale.
 const TRADITIONAL_CHINESE = /^zh[-_](hant|tw|hk|mo)\b/;
 
+// Our `nb` is Norwegian Bokmål; hosts that still report the macrolanguage `no` mean Bokmål.
+const LANGUAGE_ALIASES: Readonly<Record<string, string>> = { no: "nb" };
+
 function matchSupportedLocale(tag: string, supported: ReadonlyArray<string>): string | undefined {
   const normalized = tag.trim().toLowerCase();
-  const language = normalized.split(/[-_]/)[0];
+  const base = normalized.split(/[-_]/)[0] ?? normalized;
+  const language = LANGUAGE_ALIASES[base] ?? base;
   const exact = supported.find((locale) => locale.toLowerCase() === normalized);
   if (exact || TRADITIONAL_CHINESE.test(normalized)) return exact;
   return supported.find((locale) => locale.toLowerCase() === language);
