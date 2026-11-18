@@ -29,9 +29,13 @@ export function attachmentUploadError(cause: unknown): AttachmentUploadError {
 }
 
 export type AttachmentUploadStatus =
-  | { readonly status: "uploading"; readonly progress: number }
+  /** `retrying` marks an upload started again after it failed. */
+  | { readonly status: "uploading"; readonly progress: number; readonly retrying?: true }
   | { readonly status: "ready" }
   | { readonly status: "failed"; readonly reason: string };
+
+const uploading = (progress: number, retry: boolean): AttachmentUploadStatus =>
+  retry ? { status: "uploading", progress, retrying: true } : { status: "uploading", progress };
 
 /** Equal by key; the request rides along for the upload. */
 class UploadKey<Request> implements Equal.Equal {
@@ -78,7 +82,8 @@ export function createAttachmentUploadRegistry<Request>(options: {
       previous === status ||
       (previous?.status === "uploading" &&
         status?.status === "uploading" &&
-        previous.progress === status.progress)
+        previous.progress === status.progress &&
+        previous.retrying === status.retrying)
     )
       return;
     const next = { ...statuses };
@@ -105,17 +110,20 @@ export function createAttachmentUploadRegistry<Request>(options: {
     if (owners.get(key) === owner) setStatus(key, status);
   };
 
-  const transfer = (key: UploadKey<Request>, owner: object) => {
+  // Keys whose failed upload `restart` dropped; the next upload of each is a retry.
+  const retrying = new Set<string>();
+  const transfer = (key: UploadKey<Request>, owner: object, retry: boolean) => {
     const request = key.request!;
     return Effect.suspend(() => {
       if (statuses[key.id]?.status !== "uploading") {
-        setOwnStatus(owner, key.id, { status: "uploading", progress: 0 });
+        setOwnStatus(owner, key.id, uploading(0, retry));
       }
       return options.upload(request, (progress) =>
-        setOwnStatus(owner, key.id, {
-          status: "uploading",
-          progress: Math.floor(Math.max(0, Math.min(1, progress)) * 20) / 20,
-        }),
+        setOwnStatus(
+          owner,
+          key.id,
+          uploading(Math.floor(Math.max(0, Math.min(1, progress)) * 20) / 20, retry),
+        ),
       );
     }).pipe(
       Semaphore.withPermits(permitsFor(options.environmentId(request)), 1),
@@ -134,7 +142,8 @@ export function createAttachmentUploadRegistry<Request>(options: {
         lookup: Effect.fn("AttachmentUploads.lookup")(function* (key: UploadKey<Request>) {
           const owner = {};
           owners.set(key.id, owner);
-          setStatus(key.id, { status: "uploading", progress: 0 });
+          const retry = retrying.delete(key.id);
+          setStatus(key.id, uploading(0, retry));
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
               setOwnStatus(owner, key.id, undefined);
@@ -142,7 +151,7 @@ export function createAttachmentUploadRegistry<Request>(options: {
             }),
           );
           // Starts in the holder's call, so an upload begins as soon as something holds it.
-          const fiber = yield* Effect.forkScoped(transfer(key, owner), {
+          const fiber = yield* Effect.forkScoped(transfer(key, owner, retry), {
             startImmediately: true,
           });
           running.set(key.id, fiber);
@@ -194,6 +203,7 @@ export function createAttachmentUploadRegistry<Request>(options: {
 
   /** Drops the key's upload and starts it again for whatever `sync` holds. */
   function restart(key: string) {
+    if (statuses[key]?.status === "failed") retrying.add(key);
     invalidate(key);
     synced.get(key)?.();
     synced.delete(key);
