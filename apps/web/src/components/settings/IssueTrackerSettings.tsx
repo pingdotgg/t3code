@@ -2,17 +2,16 @@ import { useAtomValue } from "@effect/atom-react";
 import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useState, type ElementType } from "react";
 import type {
   EnvironmentId,
   IssueTrackerConnection,
   IssueTrackerConnectionList,
-  ProjectId,
 } from "@t3tools/contracts";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
-import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { LinearIcon } from "../Icons";
 import { cn } from "~/lib/utils";
@@ -24,6 +23,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Skeleton } from "../ui/skeleton";
 import { SecretInput } from "./SecretInput";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { useSettingsScope } from "./SettingsScopeContext";
 import { searchableSetting } from "./settingsSearch";
 
 type TrackerIcon = ElementType<{ className?: string }>;
@@ -35,26 +35,41 @@ const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
 
 const UNBOUND = "";
 
+type EnvironmentBindings = ReadonlyMap<EnvironmentId, IssueTrackerConnectionList["bindings"]>;
+
+const bindingsAcrossEnvironmentsAtom = Atom.family((environmentIdsKey: string) => {
+  const environmentIds = JSON.parse(environmentIdsKey) as ReadonlyArray<EnvironmentId>;
+  return Atom.make((get): EnvironmentBindings => {
+    const bindings = new Map<EnvironmentId, IssueTrackerConnectionList["bindings"]>();
+    for (const environmentId of environmentIds) {
+      const result = get(issueTrackerEnvironment.connections({ environmentId, input: {} }));
+      const data = AsyncResult.getOrElse(result, () => null);
+      if (data !== null) bindings.set(environmentId, data.bindings);
+    }
+    return bindings;
+  }).pipe(Atom.withLabel(`web-settings-issue-tracker-bindings:${environmentIdsKey}`));
+});
+
 /**
- * Standalone issue trackers for one environment: connect each with a credential, and bind the
- * environment's projects to one of the tracker's scopes so their issues list beside the git
- * host's. Generic over the trackers the server reports; nothing here names Linear but its icon.
+ * Standalone issue trackers for the environments in scope: connect each with a credential, and
+ * bind projects to one of the tracker's scopes so their issues list beside the git host's. The
+ * first environment supplies what is shown; every write reaches all of them. Generic over the
+ * trackers the server reports; nothing here names Linear but its icon.
  */
 export function IssueTrackerSettings({
-  environmentId,
-  environmentSuffix,
+  environmentIds,
 }: {
-  readonly environmentId: EnvironmentId;
-  readonly environmentSuffix: string;
+  readonly environmentIds: readonly [EnvironmentId, ...EnvironmentId[]];
 }) {
-  const title = `Issue trackers${environmentSuffix}`;
+  const environmentId = environmentIds[0];
+  const bindings = useAtomValue(bindingsAcrossEnvironmentsAtom(JSON.stringify(environmentIds)));
   const query = useEnvironmentQuery(
     issueTrackerEnvironment.connections({ environmentId, input: {} }),
   );
   const trackers = query.data?.trackers ?? [];
   if (query.data === null && query.isPending) {
     return (
-      <SettingsSection id={searchableSetting("issue-trackers").id} title={title}>
+      <SettingsSection id={searchableSetting("issue-trackers").id} title="Issue trackers">
         <div className="grid gap-3 px-4 py-3">
           <Skeleton className="h-4 w-40" />
           <Skeleton className="h-8 w-full" />
@@ -64,7 +79,7 @@ export function IssueTrackerSettings({
   }
   if (query.data === null && query.error !== null) {
     return (
-      <SettingsSection id={searchableSetting("issue-trackers").id} title={title}>
+      <SettingsSection id={searchableSetting("issue-trackers").id} title="Issue trackers">
         <SettingsRow
           title="Could not load issue trackers"
           description={query.error}
@@ -79,14 +94,14 @@ export function IssueTrackerSettings({
   }
   if (trackers.length === 0) return null;
   return (
-    <SettingsSection id={searchableSetting("issue-trackers").id} title={title}>
+    <SettingsSection id={searchableSetting("issue-trackers").id} title="Issue trackers">
       {trackers.map((tracker) => (
         <TrackerRow
           // Drafts belong to one environment; switching must not carry them over.
           key={`${tracker.tracker}-${environmentId}`}
-          environmentId={environmentId}
+          environmentIds={environmentIds}
           tracker={tracker}
-          bindings={query.data?.bindings ?? {}}
+          bindings={bindings}
         />
       ))}
     </SettingsSection>
@@ -94,14 +109,15 @@ export function IssueTrackerSettings({
 }
 
 function TrackerRow({
-  environmentId,
+  environmentIds,
   tracker,
   bindings,
 }: {
-  readonly environmentId: EnvironmentId;
+  readonly environmentIds: readonly [EnvironmentId, ...EnvironmentId[]];
   readonly tracker: IssueTrackerConnection;
-  readonly bindings: IssueTrackerConnectionList["bindings"];
+  readonly bindings: EnvironmentBindings;
 }) {
+  const environmentId = environmentIds[0];
   const Icon = TRACKER_ICONS[tracker.tracker];
   const canEdit = useAtomValue(issueTrackerEnvironment.connect.permissionAtom(environmentId));
   const connect = useAtomCommand(issueTrackerEnvironment.connect, {
@@ -114,19 +130,24 @@ function TrackerRow({
   const submit = async (token: string | null) => {
     setBusy(true);
     setFailure(null);
-    const result = await connect({
-      environmentId,
-      input: { tracker: tracker.tracker, token },
-    });
+    const results = await Promise.all(
+      environmentIds.map((target) =>
+        connect({ environmentId: target, input: { tracker: tracker.tracker, token } }),
+      ),
+    );
     setBusy(false);
-    if (result._tag === "Success") return;
-    const error = squashAtomCommandFailure(result);
+    const failed = results.find((result) => result._tag !== "Success");
+    if (failed === undefined) return;
+    const error = squashAtomCommandFailure(failed);
     setFailure(error instanceof Error ? error.message : "The request failed.");
   };
 
   const inputId = `issue-tracker-${tracker.tracker}-${environmentId}`;
   const usable = tracker.connected && tracker.account !== null;
-  const summary = issueTrackerSummary(tracker, bindings);
+  const summary = issueTrackerSummary(
+    tracker,
+    Object.assign({}, ...bindings.values()) as IssueTrackerConnectionList["bindings"],
+  );
 
   return (
     <div className="first:rounded-t-xl last:rounded-b-xl transition-colors hover:bg-muted/20">
@@ -224,7 +245,7 @@ function TrackerRow({
               />
               {usable ? (
                 <ProjectBindings
-                  environmentId={environmentId}
+                  environmentIds={environmentIds}
                   tracker={tracker}
                   bindings={bindings}
                 />
@@ -237,32 +258,47 @@ function TrackerRow({
   );
 }
 
-/** One picker per project of this environment: which of the tracker's scopes it reads, if any. */
+/**
+ * One picker per project in scope. Bindings are keyed by each machine's own project id, so a
+ * project checked out on several environments is bound on each of them.
+ */
 function ProjectBindings({
-  environmentId,
+  environmentIds,
   tracker,
   bindings,
 }: {
-  readonly environmentId: EnvironmentId;
+  readonly environmentIds: readonly EnvironmentId[];
   readonly tracker: IssueTrackerConnection;
-  readonly bindings: IssueTrackerConnectionList["bindings"];
+  readonly bindings: EnvironmentBindings;
 }) {
-  const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  const { groups } = useSettingsScope();
+  const projects = groups.flatMap((group) => {
+    const members = group.memberProjects.filter((member) =>
+      environmentIds.includes(member.environmentId),
+    );
+    return members.length === 0
+      ? []
+      : [{ key: group.projectKey, title: group.displayName, members }];
+  });
   const bind = useAtomCommand(issueTrackerEnvironment.bindProject, {
     label: `bind project to ${tracker.displayName}`,
   });
-  const [pending, setPending] = useState<ProjectId | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
   if (projects.length === 0 || tracker.scopes.length === 0) return null;
 
-  const change = async (projectId: ProjectId, scope: string) => {
-    setPending(projectId);
-    await bind({
-      environmentId,
-      input: {
-        projectId,
-        binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
-      },
-    });
+  const change = async (project: (typeof projects)[number], scope: string) => {
+    setPending(project.key);
+    await Promise.all(
+      project.members.map((member) =>
+        bind({
+          environmentId: member.environmentId,
+          input: {
+            projectId: member.id,
+            binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
+          },
+        }),
+      ),
+    );
     setPending(null);
   };
 
@@ -273,19 +309,21 @@ function ProjectBindings({
         description={`Pick the ${tracker.displayName} ${tracker.scopeNoun} whose issues each project lists beside its repository's own.`}
       />
       {projects.map((project) => {
-        const bound = bindings[project.id];
+        const bound = project.members
+          .map((member) => bindings.get(member.environmentId)?.[member.id])
+          .find((binding) => binding?.tracker === tracker.tracker);
         // A project bound to another tracker keeps that binding; this picker shows it unbound.
         const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
         return (
           <SettingsRow
-            key={project.id}
+            key={project.key}
             title={project.title}
             control={
               <Select
                 value={value}
-                disabled={pending === project.id}
+                disabled={pending === project.key}
                 onValueChange={(next) => {
-                  if (next !== null) void change(project.id, next);
+                  if (next !== null) void change(project, next);
                 }}
               >
                 <SelectTrigger
