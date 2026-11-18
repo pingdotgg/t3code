@@ -532,8 +532,13 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       Effect.asVoid,
     );
 
-  const emitClientProtocolError = (error: AcpError.AcpError) =>
-    Queue.offer(clientQueue, {
+  // onTermination may close the RpcClient's scope, which interrupts pending requests,
+  // so wait until a running client loop has failed them with the termination error.
+  let activeClientRuns = 0;
+  let terminationMessage: RpcMessage.FromServerEncoded | undefined;
+  const terminationDelivered = yield* Deferred.make<void>();
+  const emitClientProtocolError = (error: AcpError.AcpError) => {
+    const message: RpcMessage.FromServerEncoded = {
       _tag: "ClientProtocolError",
       error: new RpcClientError.RpcClientError({
         reason: new RpcClientError.RpcClientDefect({
@@ -541,7 +546,26 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
           cause: error,
         }),
       }),
-    }).pipe(Effect.asVoid);
+    };
+    terminationMessage = message;
+    return Queue.offer(clientQueue, message).pipe(
+      Effect.andThen(
+        Effect.suspend(() =>
+          activeClientRuns === 0 ? Effect.void : Deferred.await(terminationDelivered),
+        ),
+      ),
+    );
+  };
+
+  // Stdout can close, or a write can fail, before the exit status is readable; use a live-clock diagnostic grace period.
+  const processExitOr = (fallback: AcpError.AcpError) =>
+    options.terminationError === undefined
+      ? Effect.succeed(fallback)
+      : options.terminationError.pipe(
+          Effect.timeoutOption("250 millis"),
+          Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+          Effect.map(Option.getOrElse(() => fallback)),
+        );
 
   const handleTermination = (classify: () => Effect.Effect<AcpError.AcpError>) =>
     Ref.modify(terminationHandled, (handled) => {
@@ -867,16 +891,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
         return handleTermination(() => Effect.succeed(normalized));
       },
       onSuccess: () =>
-        handleTermination(() => {
-          const ended = new AcpError.AcpInputStreamEndedError({});
-          if (!options.terminationError) return Effect.succeed(ended);
-          // Stdout can close without process exit; use a live-clock diagnostic grace period.
-          return options.terminationError.pipe(
-            Effect.timeoutOption("250 millis"),
-            Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
-            Effect.map(Option.getOrElse(() => ended)),
-          );
-        }),
+        handleTermination(() => processExitOr(new AcpError.AcpInputStreamEndedError({}))),
     }),
     Effect.forkScoped,
   );
@@ -951,7 +966,7 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
             Effect.andThen(
               Cause.hasInterruptsOnly(cause)
                 ? Effect.void
-                : handleTermination(() => Effect.succeed(error)),
+                : handleTermination(() => processExitOr(error)),
             ),
           );
         },
@@ -988,9 +1003,22 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   // Protocol loops and per-message sends share the caller's operation span.
   const clientProtocol = RpcClient.Protocol.of({
     run: Effect.fnUntraced(function* (_clientId, f) {
+      activeClientRuns += 1;
       return yield* Stream.fromQueue(clientQueue).pipe(
-        Stream.runForEach((message) => f(message)),
+        Stream.runForEach((message) =>
+          message === terminationMessage
+            ? f(message).pipe(Effect.ensuring(Deferred.succeed(terminationDelivered, undefined)))
+            : f(message),
+        ),
         Effect.forever,
+        Effect.ensuring(
+          Effect.suspend(() => {
+            activeClientRuns -= 1;
+            return activeClientRuns === 0 && terminationMessage !== undefined
+              ? Deferred.succeed(terminationDelivered, undefined)
+              : Effect.void;
+          }),
+        ),
       );
     }),
     send: Effect.fnUntraced(function* (_clientId, request) {

@@ -1047,8 +1047,10 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
           ),
         stderr: () => Sink.drain,
       });
+      const exited = new AcpError.AcpProcessExitedError({ signal: "SIGABRT" });
       const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
         stdio,
+        terminationError: Effect.succeed(exited),
         serverRequestMethods: new Set(),
         onOutgoingResponseFailure: (requestId) => Queue.offer(failures, requestId),
         onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
@@ -1068,7 +1070,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.isUndefined(current.pollUnsafe());
       assert.isUndefined(queued.pollUnsafe());
       yield* Deferred.succeed(releaseFailure, undefined);
-      assert.instanceOf(yield* Deferred.await(terminated), AcpError.AcpTransportError);
+      assert.strictEqual(yield* Deferred.await(terminated), exited);
       yield* Fiber.join(current);
       yield* Fiber.join(queued);
       yield* send("future");
@@ -1290,11 +1292,17 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       const handle = yield* makeHandle({ ACP_MOCK_EXIT_IMMEDIATELY_CODE: "7" });
       const firstMessage = yield* Deferred.make<unknown>();
       const termination = yield* Deferred.make<AcpError.AcpError>();
+      const deliveredBeforeTermination = yield* Ref.make(false);
       const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
         stdio: makeChildStdio(handle),
         terminationError: makeTerminationError(handle),
         serverRequestMethods: new Set(),
-        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
+        onTermination: (error) =>
+          Deferred.isDone(firstMessage).pipe(
+            Effect.flatMap((delivered) => Ref.set(deliveredBeforeTermination, delivered)),
+            Effect.andThen(Deferred.succeed(termination, error)),
+            Effect.asVoid,
+          ),
       });
 
       yield* transport.clientProtocol
@@ -1303,6 +1311,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
 
       const message = yield* Deferred.await(firstMessage);
       const exitError = yield* Deferred.await(termination);
+      assert.isTrue(yield* Ref.get(deliveredBeforeTermination));
       assert.instanceOf(exitError, AcpError.AcpProcessExitedError);
       assert.equal((exitError as AcpError.AcpProcessExitedError).code, 7);
       assert.equal((message as { readonly _tag?: string })._tag, "ClientProtocolError");
@@ -1315,6 +1324,93 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       assert.equal(defect.message, "ACP protocol terminated.");
       assert.instanceOf(defect.cause, AcpError.AcpProcessExitedError);
       assert.equal((defect.cause as AcpError.AcpProcessExitedError).code, 7);
+    }),
+  );
+
+  it.effect("waits for a restarted client loop to deliver the termination error", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const terminated = yield* Deferred.make<void>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onTermination: () => Deferred.succeed(terminated, undefined).pipe(Effect.asVoid),
+      });
+      const offerResponse = (id: number) =>
+        Queue.offer(
+          input,
+          encoder.encode(`${encodeUnknownJsonString({ jsonrpc: "2.0", id, result: {} })}\n`),
+        );
+
+      const firstReceived = yield* Deferred.make<void>();
+      const first = yield* transport.clientProtocol
+        .run(0, () => Deferred.succeed(firstReceived, undefined).pipe(Effect.asVoid))
+        .pipe(Effect.forkScoped);
+      yield* offerResponse(1);
+      yield* Deferred.await(firstReceived);
+      yield* Fiber.interrupt(first);
+
+      const secondReady = yield* Deferred.make<void>();
+      const terminationReceived = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      yield* transport.clientProtocol
+        .run(0, (message) =>
+          message._tag === "ClientProtocolError"
+            ? Deferred.succeed(terminationReceived, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+              )
+            : Deferred.succeed(secondReady, undefined).pipe(Effect.asVoid),
+        )
+        .pipe(Effect.forkScoped);
+      yield* offerResponse(2);
+      yield* Deferred.await(secondReady);
+      yield* Queue.end(input);
+
+      yield* Deferred.await(terminationReceived);
+      assert.isFalse(yield* Deferred.isDone(terminated));
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(terminated);
+    }),
+  );
+
+  it.effect("finishes termination when an older of two client loops delivers it", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const terminated = yield* Deferred.make<void>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onTermination: () => Deferred.succeed(terminated, undefined).pipe(Effect.asVoid),
+      });
+      const offerResponse = (id: number) =>
+        Queue.offer(
+          input,
+          encoder.encode(`${encodeUnknownJsonString({ jsonrpc: "2.0", id, result: {} })}\n`),
+        );
+      const blockingLoop = (ready: Deferred.Deferred<void>, release: Deferred.Deferred<void>) =>
+        transport.clientProtocol
+          .run(0, (message) =>
+            message._tag === "ClientProtocolError"
+              ? Effect.void
+              : Deferred.succeed(ready, undefined).pipe(Effect.andThen(Deferred.await(release))),
+          )
+          .pipe(Effect.forkScoped);
+
+      const olderReady = yield* Deferred.make<void>();
+      const releaseOlder = yield* Deferred.make<void>();
+      yield* blockingLoop(olderReady, releaseOlder);
+      yield* offerResponse(1);
+      yield* Deferred.await(olderReady);
+      const newerReady = yield* Deferred.make<void>();
+      const releaseNewer = yield* Deferred.make<void>();
+      yield* blockingLoop(newerReady, releaseNewer);
+      yield* offerResponse(2);
+      yield* Deferred.await(newerReady);
+      yield* Deferred.succeed(releaseOlder, undefined);
+      yield* Queue.end(input);
+
+      yield* Deferred.await(terminated);
+      yield* Deferred.succeed(releaseNewer, undefined);
     }),
   );
 
@@ -1349,12 +1445,17 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         ACP_MOCK_MALFORMED_OUTPUT_EXIT_CODE: "23",
       });
       const terminationCalls = yield* Ref.make(0);
+      const terminated = yield* Deferred.make<void>();
       const firstMessage = yield* Deferred.make<unknown>();
       const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
         stdio: makeChildStdio(handle),
         terminationError: makeTerminationError(handle),
         serverRequestMethods: new Set(),
-        onTermination: () => Ref.update(terminationCalls, (count) => count + 1),
+        onTermination: () =>
+          Ref.update(terminationCalls, (count) => count + 1).pipe(
+            Effect.andThen(Deferred.succeed(terminated, undefined)),
+            Effect.asVoid,
+          ),
       });
 
       yield* transport.clientProtocol
@@ -1362,6 +1463,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         .pipe(Effect.forkScoped);
 
       const message = yield* Deferred.await(firstMessage);
+      yield* Deferred.await(terminated);
       assert.equal(yield* Ref.get(terminationCalls), 1);
       assert.equal((message as { readonly _tag?: string })._tag, "ClientProtocolError");
       const defect = (message as { readonly error: { readonly reason: unknown } }).error.reason as {
