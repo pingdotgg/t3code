@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import {
   descriptionDraftInForce,
@@ -9,11 +10,13 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { PullRequestDetail } from "@t3tools/contracts";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { AsyncResult } from "effect/reactivity";
+import { useGT } from "gt-react-native";
 import { useRef, useState } from "react";
 import * as Dialog from "../../components/ui/Dialog";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
+import { m } from "../../i18n/messages";
 
 /** The description with checkbox ticks shown before the host confirms them. */
 export function usePullRequestDescription(
@@ -22,6 +25,7 @@ export function usePullRequestDescription(
   canEdit: boolean,
 ) {
   const target = pullRequestTarget(params);
+  const gt = useGT();
   const update = useAtomCommand(composerPullRequests.update, { reportFailure: false });
   const refreshDetail = useAtomRefresh(composerPullRequests.detail(target));
   const reading = useAtomValue(composerPullRequests.detailReadVersion(target));
@@ -45,8 +49,10 @@ export function usePullRequestDescription(
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(
-        "Could not save the description",
-        cause instanceof Error ? cause.message : "Try again.",
+        gt("Could not save the description"),
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("Try again."),
       );
     }
     if (savesRunning.current === 0) refreshDetail();

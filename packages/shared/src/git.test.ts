@@ -379,6 +379,13 @@ describe("sanitizeFeatureBranchName", () => {
       "fix/anadir-validacion-del-cafe",
     );
   });
+
+  it("keeps words with letters that have no Unicode decomposition whole", () => {
+    expect(sanitizeFeatureBranchName("Größe der Straße korrigieren")).toBe(
+      "feature/grosse-der-strasse-korrigieren",
+    );
+    expect(sanitizeFeatureBranchName("fix/Đặt tên")).toBe("fix/dat-ten");
+  });
 });
 
 describe("resolveAutoFeatureBranchName", () => {
