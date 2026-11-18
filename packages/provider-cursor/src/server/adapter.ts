@@ -1188,9 +1188,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           yield* publishBackgroundShells(providerThreadId);
           // Nobody waits to hear about a shell the agent or a Stop killed.
           if (shell.stopped) return;
-          // The run that started it is still going, so the agent can read the result itself.
+          // The run that started it is still working, so the agent can read the result itself.
           const turn = yield* Ref.get(activeTurn);
-          if (turn !== null && !turn.finalized && turn.input.runId === started.runId) return;
+          if (
+            turn !== null &&
+            !turn.finalized &&
+            !turn.turnEnded &&
+            turn.input.runId === started.runId
+          ) {
+            return;
+          }
           yield* continuationRequests.offer({
             threadId: turnInput.threadId,
             providerThreadId,

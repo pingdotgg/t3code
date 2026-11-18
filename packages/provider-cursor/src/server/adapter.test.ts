@@ -2256,7 +2256,7 @@ describe("CursorAdapterV2", () => {
                 send: (input) =>
                   Effect.gen(function* () {
                     report = input.onBackgroundShell!;
-                    for (const id of ["7", "8"]) {
+                    for (const id of ["6", "7", "8"]) {
                       yield* report({
                         ...shell(id),
                         type: "started",
@@ -2266,11 +2266,22 @@ describe("CursorAdapterV2", () => {
                     return {
                       agentId: "native-cursor-background",
                       runId: "native-cursor-run",
-                      wait: Effect.succeed({
-                        id: "native-cursor-run",
-                        requestId: "native-request",
-                        status: "finished" as const,
-                        durationMs: 1,
+                      // Shell 6 exits after the agent's turn ended, before the run settles.
+                      wait: Effect.gen(function* () {
+                        yield* input.onDelta!({ type: "turn-ended" }).pipe(Effect.orDie);
+                        yield* report({
+                          ...shell("6"),
+                          type: "ended",
+                          stopped: false,
+                          exitCode: 0,
+                          outputPath: undefined,
+                        });
+                        return {
+                          id: "native-cursor-run",
+                          requestId: "native-request",
+                          status: "finished" as const,
+                          durationMs: 1,
+                        };
                       }),
                       cancel: Effect.void,
                     };
@@ -2416,6 +2427,18 @@ describe("CursorAdapterV2", () => {
             notification,
           })),
           [
+            {
+              threadId,
+              providerThreadId: providerThread.id,
+              delivery: "message_text",
+              detail: "Background command completed (exit 0): sleep 6",
+              notification: {
+                source: { kind: "command" },
+                outcome: "completed",
+                summary: 'Command "sleep 6" finished (exit 0)',
+                detail: "sleep 6",
+              },
+            },
             {
               threadId,
               providerThreadId: providerThread.id,
