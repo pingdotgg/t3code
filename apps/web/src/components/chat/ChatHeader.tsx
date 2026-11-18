@@ -353,7 +353,11 @@ export const ChatHeader = memo(function ChatHeader({
           )}
           {parentThreadLink && parentTabId === null ? (
             <>
-              <ParentThreadLink link={parentThreadLink} onOpenThread={onOpenThread} />
+              <ParentThreadLink
+                environmentId={activeThreadEnvironmentId}
+                link={parentThreadLink}
+                onOpenThread={onOpenThread}
+              />
               <ParentThreadLinkSeparator />
             </>
           ) : null}
@@ -518,9 +522,11 @@ function ParentThreadLinkSeparator() {
 
 /** A subagent thread's way back to its parent when it has no tab in this pane. */
 function ParentThreadLink({
+  environmentId,
   link,
   onOpenThread,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly link: { threadId: ThreadId; title: string };
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
