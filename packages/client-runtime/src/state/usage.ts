@@ -1,4 +1,12 @@
-import type { EnvironmentId, UsageModelFilter, UsageSummaryInput } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ExecutionEnvironmentCapabilities,
+  ThreadId,
+  UsageModelFilter,
+  UsageSummaryInput,
+} from "@t3tools/contracts";
+import { makeWindow } from "@t3tools/shared/usageFormat";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import type { AtomRegistry } from "effect/reactivity";
 
@@ -15,6 +23,50 @@ export function usageSummaryInput(
   modelFilter: UsageModelFilter | undefined,
 ): UsageSummaryInput {
   return modelFilter === undefined ? input : { ...input, modelFilter };
+}
+
+/**
+ * The usage query for one thread, from the day it was created. Null for a server that would
+ * ignore `threadId` and answer with every thread's usage.
+ */
+export function threadUsageSummaryInput(input: {
+  readonly threadId: ThreadId;
+  readonly createdAt: DateTime.Utc;
+  readonly capabilities: Pick<ExecutionEnvironmentCapabilities, "usageThreadFilter"> | undefined;
+  readonly now?: DateTime.Utc;
+}): UsageSummaryInput | null {
+  if (input.capabilities?.usageThreadFilter !== true) return null;
+  const { untilDay: today, timeZone } = makeWindow(
+    1,
+    input.now === undefined ? undefined : DateTime.toDateUtc(input.now),
+  );
+  const createdDay = makeWindow(1, DateTime.toDateUtc(input.createdAt)).untilDay;
+  return {
+    sinceDay: createdDay,
+    // A viewer whose clock trails the server's can see a thread created "tomorrow".
+    untilDay: createdDay < today ? today : createdDay,
+    timeZone,
+    threadId: input.threadId,
+  };
+}
+
+/**
+ * Decides when to read a thread's usage again. A turn's last records reach the transcript as it
+ * ends, and a read in flight at that moment may have scanned before them, so that read's answer
+ * is followed by another.
+ */
+export function makeTurnEndRefresh(): (lastTurnEndMs: number, waiting: boolean) => boolean {
+  // The latest turn end that the read in flight, or the answer in hand, began after.
+  let readAfter: number | null = null;
+  return (lastTurnEndMs, waiting) => {
+    if (readAfter === null) {
+      readAfter = lastTurnEndMs;
+      return false;
+    }
+    if (waiting || readAfter === lastTurnEndMs) return false;
+    readAfter = lastTurnEndMs;
+    return true;
+  };
 }
 
 const limitsRefreshAfter = new Map<EnvironmentId, number>();

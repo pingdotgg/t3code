@@ -1,4 +1,6 @@
 import {
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadProjection,
   type ProviderInstanceConfig,
   ProviderInstanceId,
   USAGE_CONTRACT_VERSION,
@@ -30,6 +32,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { formatMalformedUsageWarning } from "@t3tools/shared/usageFormat";
 import * as ServerConfig from "../config.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { BUILT_IN_USAGE_DRIVERS, type BuiltInUsageReadersEnv } from "../provider/builtInDrivers.ts";
 import type { ProviderDriver } from "@t3tools/provider-core/server/driver";
@@ -39,7 +42,12 @@ import type {
   TranscriptUsageFormat,
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
-import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import {
+  canonicalModelFilter,
+  resolveModelAliases,
+  UsageAggregator,
+  type UsageSessions,
+} from "./usageAggregation.ts";
 import {
   createOverrideRateTable,
   isUnlistedModel,
@@ -156,6 +164,22 @@ const decodeCachedSources = Schema.decodeUnknownOption(
   }),
 );
 
+/** A summary request once its thread, if any, is resolved to sessions. */
+type UsageScanInput = Omit<UsageSummaryInput, "threadId">;
+
+/** Where a thread's usage is recorded: the native conversations of its provider threads. */
+function threadUsageSessions(records: {
+  readonly thread: Pick<OrchestrationV2ThreadProjection["thread"], "createdAt">;
+  readonly providerThreads: ReadonlyArray<Pick<OrchestrationV2ProviderThread, "nativeThreadRef">>;
+}): UsageSessions {
+  return {
+    ids: new Set(
+      records.providerThreads.flatMap((thread) => thread.nativeThreadRef?.nativeId ?? []),
+    ),
+    sinceTimeMs: DateTime.toEpochMillis(records.thread.createdAt),
+  };
+}
+
 export class UsageService extends Context.Service<
   UsageService,
   {
@@ -190,6 +214,7 @@ export const make = Effect.gen(function* () {
       return id;
     });
   const hostname = yield* HostProcess.Hostname;
+  const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
@@ -823,9 +848,10 @@ export const make = Effect.gen(function* () {
   });
 
   const scanSummary = Effect.fn("UsageService.scanSummary")(function* (
-    input: UsageSummaryInput,
+    input: UsageScanInput,
     settings: ServerSettingsValue,
     provisional: boolean,
+    sessions: UsageSessions | undefined,
   ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
@@ -1007,6 +1033,7 @@ export const make = Effect.gen(function* () {
       modelAliases,
       rateModel: (provider, model) => providerRateModels.get(provider)?.(model),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
+      ...(sessions === undefined ? {} : { sessions }),
     });
 
     const windowEndMs =
@@ -1187,23 +1214,25 @@ export const make = Effect.gen(function* () {
   });
 
   const readWindow = Effect.fn("UsageService.readWindow")(function* (
-    input: UsageSummaryInput,
+    input: UsageScanInput,
     settings: ServerSettingsValue,
     provisional: boolean,
+    sessions: UsageSessions | undefined,
   ) {
-    const { summary, fromMemory } = yield* scanSummary(input, settings, provisional);
+    const { summary, fromMemory } = yield* scanSummary(input, settings, provisional, sessions);
     // With nothing marked refreshing the client would keep a saved answer as final.
     return fromMemory && !summary.sources.some((source) => source.refreshing === true)
-      ? (yield* scanSummary(input, settings, false)).summary
+      ? (yield* scanSummary(input, settings, false, sessions)).summary
       : summary;
   });
 
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
 
   const scanKey = (
-    input: UsageSummaryInput,
+    input: UsageScanInput,
     settings: ServerSettingsValue,
     provisional: boolean,
+    sessions: UsageSessions | undefined,
   ): string =>
     JSON.stringify([
       input.timeZone,
@@ -1216,17 +1245,32 @@ export const make = Effect.gen(function* () {
       input.awaitRefresh === true,
       provisional,
       input.modelFilter ?? null,
+      sessions === undefined ? null : [[...sessions.ids].sort(), sessions.sinceTimeMs],
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (
     requested: UsageSummaryInput,
   ) {
-    const { modelFilter: requestedFilter, ...unfiltered } = requested;
+    const { modelFilter: requestedFilter, threadId, ...unfiltered } = requested;
+    const sessions =
+      threadId === undefined
+        ? undefined
+        : yield* projectionStore.getThreadRecords(threadId, ["providerThreads"]).pipe(
+            Effect.map(threadUsageSessions),
+            Effect.mapError(
+              (cause) =>
+                new UsageReadError({
+                  reason: "scanFailed",
+                  detail: "Could not read the thread's provider sessions",
+                  cause,
+                }),
+            ),
+          );
     const modelFilter = canonicalModelFilter(requestedFilter);
     const input = modelFilter === undefined ? unfiltered : { ...unfiltered, modelFilter };
     const settings = yield* readSettings;
     const provisional = input.provisional === true && input.awaitRefresh !== true;
-    const key = scanKey(input, settings, provisional);
+    const key = scanKey(input, settings, provisional, sessions);
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const existing = inflightScans.get(key);
@@ -1237,7 +1281,7 @@ export const make = Effect.gen(function* () {
         inflightScans.set(key, created);
         // Detach so caller departure cannot cancel shared scans; finished scans warm the cache.
         // Register writes before releasing waiters, but start writing after delivering their summary.
-        yield* readWindow(input, settings, provisional).pipe(
+        yield* readWindow(input, settings, provisional, sessions).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
               Effect.andThen(Exit.isSuccess(exit) ? schedulePersist : Effect.void),

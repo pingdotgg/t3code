@@ -1,17 +1,24 @@
 import {
   EnvironmentId,
+  ThreadId,
   UsageDay,
   USAGE_CONTRACT_VERSION,
   type UsageModelFilter,
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../connection/presentation.ts";
-import { refreshUsage, refreshUsageLimits } from "./usage.ts";
+import {
+  makeTurnEndRefresh,
+  refreshUsage,
+  refreshUsageLimits,
+  threadUsageSummaryInput,
+} from "./usage.ts";
 
 const input = {
   sinceDay: UsageDay.make("2026-09-05"),
@@ -203,5 +210,58 @@ describe("limits refresh cooldown", () => {
     expect(await first).toBe("old limits");
     expect(await manual).toBe("old limits");
     expect(newCheck).not.toHaveBeenCalled();
+  });
+});
+
+describe("threadUsageSummaryInput", () => {
+  const threadId = ThreadId.make("thread-1");
+  const capabilities = { usageThreadFilter: true };
+  const createdAt = DateTime.makeUnsafe("2026-09-03T08:15:00.000Z");
+  const now = DateTime.makeUnsafe("2026-09-05T12:00:00Z");
+
+  it("asks for the thread's usage from the day it was created", () => {
+    expect(threadUsageSummaryInput({ threadId, createdAt, capabilities, now })).toMatchObject({
+      sinceDay: "2026-09-03",
+      untilDay: "2026-09-05",
+      threadId,
+    });
+  });
+
+  it("asks nothing of a server that would answer with every thread's usage", () => {
+    expect(threadUsageSummaryInput({ threadId, createdAt, capabilities: {}, now })).toBeNull();
+    expect(
+      threadUsageSummaryInput({ threadId, createdAt, capabilities: undefined, now }),
+    ).toBeNull();
+  });
+
+  it("keeps the creation day in the window when the viewer's clock trails the server's", () => {
+    expect(
+      threadUsageSummaryInput({
+        threadId,
+        createdAt,
+        capabilities,
+        now: DateTime.makeUnsafe("2026-09-01T12:00:00Z"),
+      }),
+    ).toMatchObject({ sinceDay: "2026-09-03", untilDay: "2026-09-03" });
+  });
+});
+
+describe("makeTurnEndRefresh", () => {
+  it("reads again when a turn ends after the answer in hand", () => {
+    const shouldRefresh = makeTurnEndRefresh();
+    expect(shouldRefresh(100, true)).toBe(false);
+    expect(shouldRefresh(100, false)).toBe(false);
+    expect(shouldRefresh(200, false)).toBe(true);
+    expect(shouldRefresh(200, true)).toBe(false);
+    expect(shouldRefresh(200, false)).toBe(false);
+  });
+
+  it("follows a read that a turn end overtook with one more", () => {
+    const shouldRefresh = makeTurnEndRefresh();
+    expect(shouldRefresh(100, true)).toBe(false);
+    // The turn ends while the first read is still scanning.
+    expect(shouldRefresh(200, true)).toBe(false);
+    expect(shouldRefresh(200, false)).toBe(true);
+    expect(shouldRefresh(200, false)).toBe(false);
   });
 });
