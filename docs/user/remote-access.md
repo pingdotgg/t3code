@@ -294,7 +294,9 @@ link in a chat. It opens the page in the phone's own browser view, at the same
 `localhost` address, so it scrolls and responds to touch natively. Like the
 desktop app, it never opens a server on the phone itself. The streamed tab
 stays where it was, and agents keep using it. Each host keeps its own cookies
-and site data on the phone.
+and site data on the phone. On iPhone and iPad the page runs under a stand-in
+address while the address bar shows `localhost`, so browser features that need
+a secure page, such as the clipboard or service workers, aren't available there.
 
 The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it

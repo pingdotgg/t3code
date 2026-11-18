@@ -65,8 +65,7 @@ private func socksReply(_ code: UInt8) -> Data { Data([5, code, 0, 1, 0, 0, 0, 0
 private func isLoopbackName(_ name: String) -> Bool {
   let name = name.lowercased()
   if name == "localhost" || name.hasSuffix(".localhost") { return true }
-  // TEMPORARY probe: a name WebKit does not treat as loopback, to see whether devices proxy it.
-  if name == "t3-loopback.test" { return true }
+  if name == T3Loopback.standInHost { return true }
   if let address = IPv4Address(name) { return address.rawValue.first == 127 }
   if let address = IPv6Address(name) { return address.isLoopback }
   return false
@@ -111,6 +110,9 @@ private final class T3SocksConnection {
   private var greeted = false
   private var tunnel: URLSessionWebSocketTask?
   private var closed = false
+  // Plain HTTP only: the page names the stand-in host, the environment's servers expect localhost.
+  private var toServer = T3HostSwap(from: T3Loopback.standInHost, to: "localhost")
+  private var toPage = T3HostSwap(from: "localhost", to: T3Loopback.standInHost)
 
   init(
     connection: NWConnection,
@@ -206,12 +208,22 @@ private final class T3SocksConnection {
         if !self.received.isEmpty {
           let early = Data(self.received)
           self.received = []
-          tunnel.send(.data(early)) { _ in }
+          tunnel.send(.data(self.swapToServer(early))) { _ in }
         }
         self.pumpToTunnel(tunnel)
         self.pumpFromTunnel(tunnel)
       }
     }
+  }
+
+  /// The page's first bytes decide: a TLS handshake is left alone, anything else is plain HTTP.
+  private func swapToServer(_ data: Data) -> Data {
+    if !toServer.isDecided {
+      let plain = data.first != 0x16
+      toServer.decide(plain)
+      toPage.decide(plain)
+    }
+    return toServer.isEnabled ? toServer.apply(data) : data
   }
 
   // Each direction asks for the next chunk only after the previous one is written, so a slow
@@ -221,6 +233,7 @@ private final class T3SocksConnection {
       [weak self] data, _, isComplete, error in
       guard let self, !closed else { return }
       if let data, !data.isEmpty {
+        let data = swapToServer(data)
         tunnel.send(.data(data)) { [weak self] error in
           self?.queue.async {
             guard let self, !self.closed else { return }
@@ -253,7 +266,7 @@ private final class T3SocksConnection {
           @unknown default: data = Data()
           }
           self.connection.send(
-            content: data,
+            content: self.toPage.isEnabled ? self.toPage.apply(data) : data,
             completion: .contentProcessed { [weak self] error in
               self?.queue.async {
                 guard let self, !self.closed else { return }
@@ -264,6 +277,41 @@ private final class T3SocksConnection {
         }
       }
     }
+  }
+}
+
+/// Swaps one string for another of the same length within each chunk. Holding back a partial
+/// match could stall a reply ending in its first letters, so one split across chunks is missed;
+/// the Host header always arrives whole.
+struct T3HostSwap {
+  private let from: [UInt8]
+  private let to: [UInt8]
+  private(set) var isDecided = false
+  private(set) var isEnabled = false
+
+  init(from: String, to: String) {
+    self.from = Array(from.utf8)
+    self.to = Array(to.utf8)
+    precondition(self.from.count == self.to.count, "a swap must keep message lengths")
+  }
+
+  mutating func decide(_ enabled: Bool) {
+    isDecided = true
+    isEnabled = enabled
+  }
+
+  func apply(_ data: Data) -> Data {
+    var bytes = [UInt8](data)
+    var index = 0
+    while index + from.count <= bytes.count {
+      if bytes[index..<(index + from.count)].elementsEqual(from) {
+        bytes.replaceSubrange(index..<(index + from.count), with: to)
+        index += from.count
+      } else {
+        index += 1
+      }
+    }
+    return Data(bytes)
   }
 }
 
