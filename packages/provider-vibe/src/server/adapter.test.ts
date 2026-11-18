@@ -660,10 +660,19 @@ describe("Vibe adapter against an in-memory app-server", () => {
                         {
                           method: "history/entryUpdated",
                           params: {
+                            eventId: 9,
+                            sessionId: "native-session",
+                            entryId: "older-turn-1",
+                            patch: [{ op: "append", path: "/content/0/text", value: " done" }],
+                          },
+                        },
+                        {
+                          method: "history/entryUpdated",
+                          params: {
                             eventId: 10,
                             sessionId: "native-session",
                             entryId: "answer-turn-1",
-                            patch: [{ op: "append", path: "/content/0/text", value: " duplicate" }],
+                            patch: [{ op: "append", path: "/content/0/text", value: "lo" }],
                           },
                         },
                         {
@@ -773,15 +782,23 @@ describe("Vibe adapter against an in-memory app-server", () => {
         expect(
           (yield* Effect.flip(runtime.resumeThread({ providerThread, runtimePolicy })))._tag,
         ).toBe("ProviderAdapterProtocolError");
-        yield* notify("history/entryAdded", { entry: answer("turn-1", "Hello", "in_progress") });
-        expect((yield* takeEvent("message.updated")).message.text).toBe("Hello");
+        yield* notify("history/entryAdded", {
+          entry: { ...answer("turn-1", "Older", "in_progress"), id: "older-turn-1" },
+        });
+        expect((yield* takeEvent("message.updated")).message.text).toBe("Older");
+        yield* notify("history/entryAdded", { entry: answer("turn-1", "Hel", "in_progress") });
+        expect((yield* takeEvent("message.updated")).message.text).toBe("Hel");
         historyFailure = "buffered-terminal";
         expect(
           (yield* Effect.flip(runtime.resumeThread({ providerThread, runtimePolicy })))._tag,
         ).toBe("ProviderAdapterProtocolError");
         let finalMessage = (yield* takeEvent("message.updated")).message;
         while (finalMessage.streaming) finalMessage = (yield* takeEvent("message.updated")).message;
-        expect(finalMessage.text).toBe("Hello world");
+        expect(finalMessage.text).toBe("Older done");
+        expect((yield* takeEvent("message.updated")).message).toMatchObject({
+          text: "Hello world",
+          streaming: false,
+        });
         expect((yield* takeEvent("provider_turn.updated")).providerTurn).toMatchObject({
           id: first.id,
           nodeId: input(1).rootNodeId,
@@ -878,6 +895,82 @@ describe("Vibe adapter against an in-memory app-server", () => {
           status: "completed",
         });
         expect(yield* takeEvent("turn.terminal")).toMatchObject({ runOrdinal: 4 });
+      }).pipe(Effect.provide(layerTest)),
+    ),
+  );
+
+  it.effect("recovers buffered final updates when a same-session resume retry is rejected", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let resumeAttempts = 0;
+        const sessionId = "native-session";
+        const turnId = "tracked-turn";
+        const vibe = yield* openFakeVibe((method) => {
+          if (method === "session/history/list") {
+            return { error: { code: "unavailable", message: "History read failed" } };
+          }
+          if (method !== "session/resume") return undefined;
+          resumeAttempts++;
+          if (resumeAttempts === 1) {
+            return { result: { state: { session: { id: sessionId }, eventId: 5 } } };
+          }
+          return {
+            error: { code: "conflict", message: "Resume rejected" },
+            notifications: [
+              {
+                method: "history/entryAdded",
+                params: {
+                  sessionId,
+                  eventId: 6,
+                  entry: {
+                    id: "tracked-answer",
+                    type: "message",
+                    role: "assistant",
+                    turnId,
+                    generationStatus: "in_progress",
+                    content: [{ type: "text", text: "Tracked" }],
+                  },
+                },
+              },
+              {
+                method: "history/entryUpdated",
+                params: {
+                  sessionId: "different-session",
+                  eventId: 7,
+                  entryId: "tracked-answer",
+                  patch: [{ op: "append", path: "/content/0/text", value: " wrong" }],
+                },
+              },
+              {
+                method: "history/entryUpdated",
+                params: {
+                  sessionId,
+                  eventId: 8,
+                  entryId: "tracked-answer",
+                  patch: [{ op: "append", path: "/content/0/text", value: " answer" }],
+                },
+              },
+              { method: "turn/completed", params: { sessionId, turn: { id: turnId } } },
+            ],
+          };
+        });
+        yield* vibe.notify("turn/started", { turn: { id: turnId } });
+        const { providerTurn } = yield* vibe.takeEvent("provider_turn.updated");
+
+        const resume = vibe.runtime.resumeThread({ providerThread: vibe.providerThread });
+        expect((yield* Effect.flip(resume))._tag).toBe("ProviderAdapterProtocolError");
+        expect((yield* Effect.flip(resume))._tag).toBe("ProviderAdapterProtocolError");
+
+        expect((yield* vibe.takeEvent("message.updated")).message.text).toBe("Tracked");
+        expect((yield* vibe.takeEvent("message.updated")).message.text).toBe("Tracked answer");
+        expect((yield* vibe.takeEvent("message.updated")).message).toMatchObject({
+          text: "Tracked answer",
+          streaming: false,
+        });
+        expect(yield* vibe.takeEvent("turn.terminal")).toMatchObject({
+          status: "completed",
+          providerTurnId: providerTurn.id,
+        });
       }).pipe(Effect.provide(layerTest)),
     ),
   );
