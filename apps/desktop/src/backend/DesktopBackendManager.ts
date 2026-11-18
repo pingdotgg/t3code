@@ -576,6 +576,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
       secret: options.bootstrap.desktopBootstrapSecret,
       events: options.desktopBrowserStream,
       onCommand: options.onDesktopBrowserCommand,
+      distro: options.runningDistro,
     }).pipe(Effect.forkScoped);
   }
   if (options.captureOutput) {

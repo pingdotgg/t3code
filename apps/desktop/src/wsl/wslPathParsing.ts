@@ -59,6 +59,13 @@ export function wslUncPathToLinuxPath(windowsPath: string): string | null {
   return `/${rest.split("\\").filter(Boolean).join("/")}`;
 }
 
+/** Windows reaches drives WSL mounts by their letter, and everything else through the distro share. */
+export function wslLinuxPathToWindowsPath(distroName: string, linuxPath: string): string {
+  const drive = /^\/mnt\/([a-z])(?:\/(.*))?$/i.exec(linuxPath);
+  if (drive) return `${drive[1]!.toUpperCase()}:\\${(drive[2] ?? "").replaceAll("/", "\\")}`;
+  return `\\\\wsl.localhost\\${distroName}${linuxPath.replaceAll("/", "\\")}`;
+}
+
 function resolveWslHomeUncPath(config: WslConfig, distros: readonly WslDistro[]): string | null {
   const distroName = config.distro ?? distros.find((distro) => distro.isDefault)?.name ?? null;
   return distroName ? `\\\\wsl.localhost\\${distroName}\\home` : null;
