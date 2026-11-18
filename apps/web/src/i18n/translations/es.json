@@ -3275,10 +3275,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "en el ordenador que abrió esta página"
-      ]
+      "c": [" ", "en el ordenador que abrió esta página"]
     }
   ],
   "e0740b2e9ec8ebf7": [
@@ -3290,10 +3287,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(whoever runs it gets this access)"
-      ]
+      "c": [" ", "(whoever runs it gets this access)"]
     }
   ],
   "c54cc9c75db9dc58": "Aprueba solo un inicio de sesión que acabes de iniciar.",

@@ -3275,10 +3275,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(이 페이지를 연 컴퓨터)"
-      ]
+      "c": [" ", "(이 페이지를 연 컴퓨터)"]
     }
   ],
   "e0740b2e9ec8ebf7": [
@@ -3290,10 +3287,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(whoever runs it gets this access)"
-      ]
+      "c": [" ", "(whoever runs it gets this access)"]
     }
   ],
   "c54cc9c75db9dc58": "방금 시작한 로그인만 승인하세요.",

@@ -115,10 +115,12 @@ export function createProjectEnvironmentAtoms<R, E>(
           registry.set(atom, null);
       }),
     execute: (input) =>
-      fileMetadata.seedAfterRead(request(WS_METHODS.projectsReadFile, input), (result, isCurrent) =>
-        result.exists === false
-          ? Effect.void
-          : fileMetadata.rememberFile(input.cwd, result, isCurrent),
+      fileMetadata.seedAfterRead(
+        request(WS_METHODS.projectsReadFile, input),
+        (result, isCurrent) =>
+          result.exists === false
+            ? Effect.void
+            : fileMetadata.rememberFile(input.cwd, result, isCurrent),
       ),
   });
   const projectConcurrency = {

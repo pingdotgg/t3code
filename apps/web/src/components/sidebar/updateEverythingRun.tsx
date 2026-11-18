@@ -85,10 +85,11 @@ export function retryFailedUpdateRunServers(
     options: { readonly quiet: boolean },
   ) => Promise<ServerUpdateOutcome>,
 ): void {
-  const failed = (appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? []).flatMap((machine) =>
-    machine.result === "failed" && machine.server !== null
-      ? [{ target: machine.server, providerFailure: machine.providerFailure }]
-      : [],
+  const failed = (appAtomRegistry.get(updateEverythingRunAtom)?.machines ?? []).flatMap(
+    (machine) =>
+      machine.result === "failed" && machine.server !== null
+        ? [{ target: machine.server, providerFailure: machine.providerFailure }]
+        : [],
   );
   const pending: typeof failed = [];
   for (const entry of failed) {

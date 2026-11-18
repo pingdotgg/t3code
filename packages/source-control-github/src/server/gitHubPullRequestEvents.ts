@@ -137,21 +137,19 @@ export const make = Effect.gen(function* () {
     Stream.unwrap(
       Effect.gen(function* () {
         const held = yield* rest.credential(host, { personal });
-        const response = yield* (
-          httpClient
-            .execute(
-              HttpClientRequest.get(eventsUrl).pipe(
-                HttpClientRequest.setHeaders({
-                  accept: "text/event-stream",
-                  "x-github-api-version": "2022-11-28",
-                  "user-agent": "t3code",
-                  authorization: `Bearer ${Redacted.value(held.token)}`,
-                }),
-              ),
-            )
-            // Client spans would carry the subscription URL.
-            .pipe(Effect.provideService(HttpClient.TracerDisabledWhen, () => true))
-        );
+        const response = yield* httpClient
+          .execute(
+            HttpClientRequest.get(eventsUrl).pipe(
+              HttpClientRequest.setHeaders({
+                accept: "text/event-stream",
+                "x-github-api-version": "2022-11-28",
+                "user-agent": "t3code",
+                authorization: `Bearer ${Redacted.value(held.token)}`,
+              }),
+            ),
+          )
+          // Client spans would carry the subscription URL.
+          .pipe(Effect.provideService(HttpClient.TracerDisabledWhen, () => true));
         if (response.status === 403 || response.status === 404) {
           return Stream.succeed<Ending>(held.source === "app" ? "personal" : "stop");
         }

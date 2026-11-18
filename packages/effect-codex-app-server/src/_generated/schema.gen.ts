@@ -53340,15 +53340,13 @@ export const V2ModelVerificationNotification = Schema.Struct({
   verifications: Schema.Array(V2ModelVerificationNotification__ModelVerification),
 }).annotate({ title: "ModelVerificationNotification" });
 
-export type V2NullableGetAccountRateLimitsParams =
-  V2NullableGetAccountRateLimitsParams__GetAccountRateLimitsParams | null;
+export type V2NullableGetAccountRateLimitsParams = V2NullableGetAccountRateLimitsParams__GetAccountRateLimitsParams | null;
 export const V2NullableGetAccountRateLimitsParams = Schema.Union([
   V2NullableGetAccountRateLimitsParams__GetAccountRateLimitsParams,
   Schema.Null,
 ]).annotate({ title: "Nullable_GetAccountRateLimitsParams" });
 
-export type V2NullableGetAccountTokenUsageParams =
-  V2NullableGetAccountTokenUsageParams__GetAccountTokenUsageParams | null;
+export type V2NullableGetAccountTokenUsageParams = V2NullableGetAccountTokenUsageParams__GetAccountTokenUsageParams | null;
 export const V2NullableGetAccountTokenUsageParams = Schema.Union([
   V2NullableGetAccountTokenUsageParams__GetAccountTokenUsageParams,
   Schema.Null,

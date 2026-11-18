@@ -3279,10 +3279,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "位于打开此页面的计算机上"
-      ]
+      "c": [" ", "位于打开此页面的计算机上"]
     }
   ],
   "e0740b2e9ec8ebf7": [
@@ -3294,10 +3291,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(whoever runs it gets this access)"
-      ]
+      "c": [" ", "(whoever runs it gets this access)"]
     }
   ],
   "c54cc9c75db9dc58": "请只批准你刚刚发起的登录。",

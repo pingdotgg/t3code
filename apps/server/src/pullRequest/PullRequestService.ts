@@ -2764,20 +2764,21 @@ export const make = Effect.gen(function* () {
           );
         }
         return viewerPermissionsOf(project, input, "labelCandidates").pipe(
-          Effect.flatMap((viewer): Effect.Effect<PullRequestLabelCandidateList, PullRequestError> =>
-            viewer.labels === false
-              ? Effect.fail(
-                  new PullRequestOperationError({
-                    operation: "labelCandidates",
-                    detail: LABEL_CHANGE_REFUSAL,
-                  }),
-                )
-              : list({
-                  cwd: project.project.workspaceRoot,
-                  repository: project.repository,
-                  host: project.host,
-                  number: input.number,
-                }).pipe(Effect.mapError(toPullRequestError("labelCandidates"))),
+          Effect.flatMap(
+            (viewer): Effect.Effect<PullRequestLabelCandidateList, PullRequestError> =>
+              viewer.labels === false
+                ? Effect.fail(
+                    new PullRequestOperationError({
+                      operation: "labelCandidates",
+                      detail: LABEL_CHANGE_REFUSAL,
+                    }),
+                  )
+                : list({
+                    cwd: project.project.workspaceRoot,
+                    repository: project.repository,
+                    host: project.host,
+                    number: input.number,
+                  }).pipe(Effect.mapError(toPullRequestError("labelCandidates"))),
           ),
         );
       }),
