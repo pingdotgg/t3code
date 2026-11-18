@@ -7,6 +7,7 @@ import {
   type OrchestrationV2TurnItem,
   type PeerLinkRequestAnswerInput,
   type PeerLinkName,
+  type PeerLinkRequestFailureReason,
   type PeerLinkSummary,
   resolveEnvironmentMachineKind,
   type ServerConfig,
@@ -415,11 +416,19 @@ export function linkRequestAnswerInput(
 }
 
 /** Failures whose message is written for the user and never echoes the request payload. */
-const USER_FACING_FAILURE_TAGS = new Set([
-  "PeerLinkRequestError",
-  "EnvironmentAuthorizationError",
-  "PeerPairingCodeError",
-]);
+const USER_FACING_FAILURE_TAGS = new Set(["EnvironmentAuthorizationError", "PeerPairingCodeError"]);
+
+const GENERIC_FAILURE = msg("Could not answer the request. Try again.");
+
+/** The contract's English reasons, in the client's languages. */
+const LINK_REQUEST_FAILURE_MESSAGES: Record<PeerLinkRequestFailureReason, string> = {
+  load_failed: msg("Could not load the link request."),
+  not_found: msg("This link request no longer exists."),
+  already_answered: msg("This link request was already answered."),
+  link_gone: msg("That link was removed or expired. Link the machine again."),
+  record_failed: msg("Could not update the link request."),
+  unknown: GENERIC_FAILURE,
+};
 
 /**
  * Inline error copy for a failed answer. Only known errors pass their message
@@ -434,11 +443,14 @@ export function linkRequestFailureMessage(
     typeof failure === "object" &&
     failure !== null &&
     "_tag" in failure &&
-    failure._tag === "PeerLinkRequestError" &&
-    "reason" in failure &&
-    failure.reason === "link_gone"
+    failure._tag === "PeerLinkRequestError"
   ) {
-    return resolve(msg("That link was removed or expired. Link the machine again."));
+    const reason = "reason" in failure ? failure.reason : undefined;
+    return resolve(
+      typeof reason === "string" && reason in LINK_REQUEST_FAILURE_MESSAGES
+        ? LINK_REQUEST_FAILURE_MESSAGES[reason as PeerLinkRequestFailureReason]
+        : GENERIC_FAILURE,
+    );
   }
   if (
     typeof failure === "object" &&
@@ -452,5 +464,5 @@ export function linkRequestFailureMessage(
   ) {
     return errorDisplayMessage(failure, resolve) ?? failure.message;
   }
-  return resolve(msg("Could not answer the request. Try again."));
+  return resolve(GENERIC_FAILURE);
 }

@@ -569,10 +569,20 @@ describe("linkRequestTarget", () => {
 });
 
 describe("linkRequestFailureMessage", () => {
-  it("passes through only known user-facing errors", () => {
+  it("names every answer failure in the client's words, and nothing it does not know", () => {
+    const named = (reason: string) =>
+      linkRequestFailureMessage({ _tag: "PeerLinkRequestError", reason, message: "server copy" });
+    expect(named("not_found")).toBe("This link request no longer exists.");
+    expect(named("already_answered")).toBe("This link request was already answered.");
+    expect(named("load_failed")).toBe("Could not load the link request.");
+    expect(named("record_failed")).toBe("Could not update the link request.");
+    expect(named("link_gone")).toBe("That link was removed or expired. Link the machine again.");
+    // A reason from a newer server, or none at all, never shows the server's English.
+    expect(named("unknown")).toBe("Could not answer the request. Try again.");
+    expect(named("link_frozen")).toBe("Could not answer the request. Try again.");
     expect(
-      linkRequestFailureMessage({ _tag: "PeerLinkRequestError", message: "Already answered." }),
-    ).toBe("Already answered.");
+      linkRequestFailureMessage({ _tag: "EnvironmentAuthorizationError", message: "No scope." }),
+    ).toBe("No scope.");
     expect(linkRequestFailureMessage({ _tag: "SchemaError", message: "code=abc" })).toBe(
       "Could not answer the request. Try again.",
     );

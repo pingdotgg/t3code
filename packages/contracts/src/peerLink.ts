@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { AuthEnvironmentScope, AuthMcpClientAccess } from "./auth.ts";
@@ -243,13 +244,15 @@ const PEER_LINK_REQUEST_FAILURE_MESSAGES = {
   already_answered: "This link request was already answered.",
   link_gone: "That link was removed or expired. Link the machine again.",
   record_failed: "Could not update the link request.",
+  unknown: "Could not answer the request. Try again.",
 } as const;
 
+/** A reason this version does not know, from a newer server, decodes as `unknown`. */
 export const PeerLinkRequestFailureReason = Schema.Literals(
   Object.keys(PEER_LINK_REQUEST_FAILURE_MESSAGES) as Array<
     keyof typeof PEER_LINK_REQUEST_FAILURE_MESSAGES
   >,
-);
+).pipe(Schema.catchDecoding(() => Effect.succeedSome("unknown" as const)));
 export type PeerLinkRequestFailureReason = typeof PeerLinkRequestFailureReason.Type;
 
 /**
