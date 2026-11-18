@@ -87,6 +87,15 @@ const SETTINGS_SEARCH_TERMS = {
     "thread behavior",
   ],
   SettingsFollowUp: ["follow-ups", "queue", "steer", "while the agent is running"],
+  SettingsComputerUse: [
+    "computer use",
+    "computer",
+    "control another computer",
+    "remote control",
+    "desktop",
+    "approvals",
+    "accessibility",
+  ],
   SettingsArchive: ["archive", "archived", "restore", "unarchive"],
   SettingsProviderAccounts: [
     "provider accounts",

@@ -81,7 +81,8 @@ export function FloatingWorkingControl(props: {
   const extensionStatus = props.extensionStatus ?? null;
   const extensionOnly = props.status?.kind === "extension";
   const useGlass = NATIVE_LIQUID_GLASS_SUPPORTED && !extensionOnly;
-  const action = props.status?.kind === "stop" ? props.status.action : null;
+  const action =
+    props.status?.kind === "stop" || props.status?.kind === "computer" ? props.status.action : null;
   const [agentsWidth, setAgentsWidth] = useState(0);
   const hasQueue = props.queuedCount > 0;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
@@ -185,7 +186,9 @@ export function FloatingWorkingControl(props: {
             key={
               props.status.kind === "extension"
                 ? props.status.kind
-                : `${props.status.kind}:${props.status.label}`
+                : props.status.kind === "computer"
+                  ? `${props.status.kind}:${props.status.label}:${props.status.approvalsOff}`
+                  : `${props.status.kind}:${props.status.label}`
             }
             status={props.status}
             onLayout={handleLabelLayout}
@@ -453,6 +456,31 @@ function FloatingStatusLabel(props: {
         <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
           {props.status.label}
         </Text>
+      </StatusLabelRow>
+    );
+  }
+  if (props.status.kind === "computer") {
+    return (
+      <StatusLabelRow
+        key="computer"
+        accessibilityLabel={props.status.accessibilityLabel}
+        className="gap-2"
+        onLayout={props.onLayout}
+      >
+        <SymbolView
+          name="desktopcomputer"
+          size={13}
+          tintColorClassName="accent-foreground"
+          type="monochrome"
+        />
+        <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
+          {props.status.label}
+        </Text>
+        {props.status.approvalsOff ? (
+          <Text className="shrink font-sans text-xs text-warning-foreground" numberOfLines={1}>
+            approvals off
+          </Text>
+        ) : null}
       </StatusLabelRow>
     );
   }

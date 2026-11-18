@@ -12,6 +12,7 @@ import {
 import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { useThreadComputerApproval } from "../../state/computer";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -841,8 +842,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const selected = props.selected === true;
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
-  const rawStatus = resolveThreadListV2Status(thread);
-  const status = resolveThreadListV2RowStatus(thread);
+  const computerApproval = useThreadComputerApproval(thread.environmentId, thread.id);
+  // A computer task's tap marks the thread's row the same way a provider's approval does.
+  const statusThread = computerApproval ? { ...thread, hasPendingApprovals: true } : thread;
+  const rawStatus = resolveThreadListV2Status(statusThread);
+  const status = resolveThreadListV2RowStatus(statusThread);
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
