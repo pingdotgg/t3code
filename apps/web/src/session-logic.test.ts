@@ -764,6 +764,23 @@ describe("V2 session presentation", () => {
         todoOnly,
       ).entries.map((entry) => entry.id),
     ).toEqual([todo.id, laterTool.id]);
+
+    for (const status of ["failed", "cancelled", "interrupted"] as const) {
+      const unsuccessfulTool = { ...laterTool, runId, status, output: "Todo update did not apply" };
+      const input = {
+        visibleTurnItems: [visible(todo, 0), visible(unsuccessfulTool, 1)],
+        optimisticMessages: [],
+      };
+      expect(deriveTimelineEntriesFromVisibleTurnItems(input).map((entry) => entry.id)).toEqual([
+        todo.id,
+        unsuccessfulTool.id,
+      ]);
+      expect(
+        deriveTimelineEntriesFromVisibleTurnItemsWithState(input, todoOnly).entries.map(
+          (entry) => entry.id,
+        ),
+      ).toEqual([todo.id, unsuccessfulTool.id]);
+    }
   });
 
   it("waits for a dispatched turn item before adding queued input to the timeline", () => {

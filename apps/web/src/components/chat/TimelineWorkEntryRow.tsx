@@ -27,7 +27,7 @@ import {
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { claudeSkillInvocation } from "@t3tools/shared/toolActivity";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { memo, use, useState, type KeyboardEvent } from "react";
+import { memo, use, useState, type KeyboardEvent, type ComponentProps } from "react";
 import {
   workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
@@ -50,7 +50,7 @@ import {
 import { cn } from "~/lib/utils";
 import type { MessageResolver } from "~/i18n/messages";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
-import { FetchedToolOutput, V2ItemInspector } from "./V2ItemInspector";
+import { FetchedToolOutput, useFetchedTurnItem, V2ItemInspector } from "./V2ItemInspector";
 import { TodoChecklist } from "./TodoChecklist";
 import { grokTodoStepsFromTool, isGrokTodoWriteTool } from "../../grokTodoPlan";
 import { SubagentNotificationLink } from "./V2LifecycleRow";
@@ -403,6 +403,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
   const isReasoning = workEntry.itemType === "reasoning";
   const projectedTurnItem = workEntry.projectedItem?.item;
+  const grokTodoItem =
+    projectedTurnItem?.type === "dynamic_tool" && isGrokTodoWriteTool(projectedTurnItem)
+      ? workEntry.projectedItem
+      : undefined;
   const todoSteps =
     projectedTurnItem?.type === "todo_list"
       ? projectedTurnItem.steps
@@ -703,13 +707,31 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ) : null}
     </WorkLogRow>
   );
-  if (todoSteps.length === 0) return row;
+  if (todoSteps.length === 0 && !grokTodoItem) return row;
   return (
     <>
       {row}
-      <TodoChecklist className="ms-8 mt-1" steps={todoSteps} />
+      {grokTodoItem ? (
+        <GrokTodoChecklist
+          projectedItem={grokTodoItem}
+          environmentId={ctx.activeThreadEnvironmentId}
+          source={ctx.turnItemSource}
+        />
+      ) : (
+        <TodoChecklist className="ms-8 mt-1" steps={todoSteps} />
+      )}
     </>
   );
+}
+
+function GrokTodoChecklist({
+  projectedItem,
+  environmentId,
+  source,
+}: Pick<ComponentProps<typeof V2ItemInspector>, "projectedItem" | "environmentId" | "source">) {
+  const { item } = useFetchedTurnItem(projectedItem, environmentId, source);
+  const steps = item.type === "dynamic_tool" ? grokTodoStepsFromTool(item) : [];
+  return steps.length > 0 ? <TodoChecklist className="ms-8 mt-1" steps={steps} /> : null;
 }
 
 function QuestionAnswerHistory({

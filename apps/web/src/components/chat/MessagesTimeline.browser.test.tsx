@@ -2375,6 +2375,15 @@ it("shows a Grok todo_write tool's steps and keeps its omitted output expandable
   if (source?.item.type !== "dynamic_tool" || reply?.item.type !== "assistant_message") {
     throw new Error("Expected fixture tool and reply");
   }
+  environmentQuery.error = null;
+  environmentQuery.data = {
+    item: {
+      ...source.item,
+      output: {
+        TodosUpdated: { todos: [{ content: "Reinstall the CLI", status: "in_progress" }] },
+      },
+    },
+  };
   const entries = deriveTimelineEntriesFromVisibleTurnItems({
     visibleTurnItems: [
       prompt!,
@@ -2386,8 +2395,8 @@ it("shows a Grok todo_write tool's steps and keeps its omitted output expandable
           toolName: "todo_write",
           input: {
             variant: "TodoWrite",
-            merge: false,
-            todos: [{ id: "1", content: "Reinstall the CLI", status: "in_progress" }],
+            merge: true,
+            todos: [{ id: "1", content: null, status: "in_progress" }],
           },
           output: undefined,
           outputOmitted: true,

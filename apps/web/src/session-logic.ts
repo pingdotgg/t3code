@@ -569,6 +569,7 @@ function omitSupersededGrokTodoTools(
   return entries.filter((entry) => {
     const row = entry.kind === "work" ? entry.entry.projectedItem : undefined;
     if (row?.item.type !== "dynamic_tool" || !isGrokTodoWriteTool(row.item)) return true;
+    if (["failed", "cancelled", "interrupted"].includes(row.item.status)) return true;
     return !runsWithTodoList.has(runKey(row));
   });
 }
