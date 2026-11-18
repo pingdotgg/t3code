@@ -1185,6 +1185,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             links={thread.issues ?? []}
             threadRef={threadRef}
             compact={false}
+            mountScope="sidebar-tooltip"
             onOpen={() => {
               if (!props.isRouteThread) onThreadActivate(threadRef);
             }}

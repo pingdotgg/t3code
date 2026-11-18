@@ -547,7 +547,12 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
                   <h2 className="px-2 py-1 text-xs font-medium text-muted-foreground">
                     <T>Issues</T>
                   </h2>
-                  <ThreadDetailsIssueRows links={issues} threadRef={threadRef} compact={false} />
+                  <ThreadDetailsIssueRows
+                    links={issues}
+                    threadRef={threadRef}
+                    compact={false}
+                    mountScope="linked-items"
+                  />
                 </section>
                 {linkCount > 0 ? (
                   <h2 className="mt-2 border-t border-border/60 px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">

@@ -26,16 +26,18 @@ function LinkedIssueRow({
   link,
   threadRef,
   compact,
+  mountScope,
   onOpen,
 }: {
   link: ThreadIssueLink;
   threadRef: ScopedThreadRef;
   compact: boolean;
+  mountScope: "thread-details" | "linked-items" | "sidebar-tooltip";
   onOpen: (() => void) | undefined;
 }) {
   const gt = useGT();
   const configs = useServerConfigs();
-  const detail = useLinkedIssueDetail(threadRef.environmentId, link, "linked-items");
+  const detail = useLinkedIssueDetail(threadRef.environmentId, link, mountScope);
   const trackerPresentation = issueTrackerPresentation(link.tracker);
   const state = detail === null ? null : issueStatePresentation(detail.state);
   const Icon = state?.Icon ?? IssueGlyph.issue;
@@ -143,11 +145,13 @@ export function ThreadDetailsIssueRows({
   links,
   threadRef,
   compact = true,
+  mountScope = "thread-details",
   onOpen,
 }: {
   links: ReadonlyArray<ThreadIssueLink>;
   threadRef: ScopedThreadRef;
   compact?: boolean;
+  mountScope?: "thread-details" | "linked-items" | "sidebar-tooltip";
   onOpen?: () => void;
 }) {
   return links.map((link) => (
@@ -156,6 +160,7 @@ export function ThreadDetailsIssueRows({
       link={link}
       threadRef={threadRef}
       compact={compact}
+      mountScope={mountScope}
       onOpen={onOpen}
     />
   ));
