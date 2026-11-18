@@ -198,6 +198,7 @@ function serializeBlockquote(quote: Element, inTableCell: boolean, marker = ""):
 
 function serializeInsight(insight: Element, inTableCell: boolean): string {
   const body = serializeQuoteBody(insight, inTableCell);
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- markdown written to the clipboard
   return `★ Insight ${"─".repeat(37)}\n${body ? `${body}\n` : ""}${"─".repeat(49)}\n\n`;
 }
 

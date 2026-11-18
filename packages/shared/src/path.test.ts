@@ -60,6 +60,7 @@ describe("resolvePastedPath", () => {
     ["over a selection", "/Users/me/old", "'/Users/me/My Code'", "/Users/me/My Code"],
     ["after a prefilled folder", "~/", "~/'/Users/me/My Code'", "/Users/me/My Code"],
     ["plain, after a prefilled folder", "~/", "~//Users/me/code", "/Users/me/code"],
+    ["backslash home, after a folder", "~/", "~/~\\folder\\ child", "~/~\\folder\\ child"],
     ["after a Windows folder", "C:\\Users\\", 'C:\\Users\\"D:\\My Code"', "D:\\My Code"],
     ["a shell's quoted apostrophe", "", "'/Users/me/Bob'\\''s Work'", "/Users/me/Bob's Work"],
     ["after a clone destination", "~/code/repo", "~/code/repo'/a b'", "/a b"],
