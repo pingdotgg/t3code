@@ -2555,7 +2555,7 @@ index 77dce59689..5414b263f3 100644
        setMultipleModelSelections,
        routeKind,
 diff --git a/apps/web/src/components/chat/ComposerControlsBar.tsx b/apps/web/src/components/chat/ComposerControlsBar.tsx
-index 302330f291..3a03f9da0c 100644
+index 0688cdfe2b..5c71a797aa 100644
 --- a/apps/web/src/components/chat/ComposerControlsBar.tsx
 +++ b/apps/web/src/components/chat/ComposerControlsBar.tsx
 @@ -1,5 +1,6 @@
@@ -2564,8 +2564,8 @@ index 302330f291..3a03f9da0c 100644
 +import { AgentPicker, AgentPickerMenuContent } from "./AgentPicker";
  import type { ProviderInstanceEntry } from "../../providerInstances";
  import { type AppModelOption } from "../../modelSelection";
- import { CircleAlertIcon } from "lucide-react";
-@@ -17,6 +18,8 @@ import {
+ import { useGT, useMessages } from "gt-react";
+@@ -18,6 +19,8 @@ import {
    type ProviderInstanceId,
    type RuntimeMode,
    type ServerProvider,
@@ -2574,7 +2574,7 @@ index 302330f291..3a03f9da0c 100644
  } from "@t3tools/contracts";
  import type { EffortDisplay } from "@t3tools/contracts/settings";
  import { cn } from "~/lib/utils";
-@@ -86,6 +89,11 @@ export function ComposerControlsBar(props: {
+@@ -87,6 +90,11 @@ export function ComposerControlsBar(props: {
    onModelPickerOpenChange: (open: boolean) => void;
    modelPickerIconClassName: string | undefined;
    getModelDisabledReason: ChatComposerProps["getModelDisabledReason"];
@@ -2586,7 +2586,7 @@ index 302330f291..3a03f9da0c 100644
  }) {
    const {
      environmentId,
-@@ -130,6 +138,11 @@ export function ComposerControlsBar(props: {
+@@ -131,6 +139,11 @@ export function ComposerControlsBar(props: {
      onModelPickerOpenChange,
      modelPickerIconClassName,
      getModelDisabledReason,
@@ -2614,17 +2614,17 @@ index 0000000000..959f047b35
 +  });
 +});
 diff --git a/apps/web/src/components/chat/ThreadRelationshipIcon.tsx b/apps/web/src/components/chat/ThreadRelationshipIcon.tsx
-index c007ac03c2..0ab9edc926 100644
+index 0324962b59..0dda1fcddd 100644
 --- a/apps/web/src/components/chat/ThreadRelationshipIcon.tsx
 +++ b/apps/web/src/components/chat/ThreadRelationshipIcon.tsx
-@@ -38,6 +38,8 @@ export function threadRelationshipStatusLabel(status: string | null): string {
-       return "Superseded";
+@@ -47,6 +47,8 @@ export function threadRelationshipStatusLabel(
+       return resolve(msg("Superseded", { $context: "agent status" }));
      case "idle":
-       return "Idle";
+       return resolve(msg("Idle", { $context: "agent status" }));
 +    case "unavailable":
-+      return "Unavailable";
++      return resolve(msg("Unavailable", { $context: "agent status" }));
      default:
-       return "Unknown";
+       return resolve(msg("Unknown", { $context: "agent status" }));
    }
 diff --git a/apps/web/src/components/chat/ThreadRelationshipsControl.tsx b/apps/web/src/components/chat/ThreadRelationshipsControl.tsx
 index 95c6d8f096..c73e56a3ba 100644
@@ -2698,16 +2698,18 @@ index 1afe53a944..402bf92570 100644
                        interactionMode: DEFAULT_INTERACTION_MODE,
                        branch: activeThreadBranch,
 diff --git a/apps/web/src/components/chat/useMultipleModelSend.ts b/apps/web/src/components/chat/useMultipleModelSend.ts
-index ccea237896..5fa75eff4f 100644
+index 9b9827ed8c..eebd0d48ed 100644
 --- a/apps/web/src/components/chat/useMultipleModelSend.ts
 +++ b/apps/web/src/components/chat/useMultipleModelSend.ts
-@@ -1,4 +1,5 @@
+@@ -2,6 +2,7 @@ import { msg } from "gt-react";
+ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+ import { m } from "~/i18n/messages";
  import {
 +  type AgentId,
    type EnvironmentId,
    type ModelSelection,
    type RuntimeMode,
-@@ -89,6 +90,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
+@@ -92,6 +93,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
      project,
      branch,
      selections,
@@ -2715,7 +2717,7 @@ index ccea237896..5fa75eff4f 100644
      targets,
      sendSnapshot,
      createdAt,
-@@ -102,6 +104,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
+@@ -106,6 +108,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
      readonly project: EnvironmentProject;
      readonly branch: string;
      readonly selections: ReadonlyArray<ModelSelection>;
@@ -2723,7 +2725,7 @@ index ccea237896..5fa75eff4f 100644
      readonly targets: ReadonlyArray<MultipleModelTarget>;
      readonly sendSnapshot: ComposerSendSnapshot;
      readonly createdAt: string;
-@@ -181,6 +184,8 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
+@@ -190,6 +193,8 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                        projectId: project.id,
                        title,
                        modelSelection: target.selection,
@@ -2733,22 +2735,23 @@ index ccea237896..5fa75eff4f 100644
                        interactionMode: DEFAULT_INTERACTION_MODE,
                        branch,
 diff --git a/apps/web/src/components/settings/ProjectDefaultsSettings.tsx b/apps/web/src/components/settings/ProjectDefaultsSettings.tsx
-index 97c9ca0483..e0f0fd2373 100644
+index 49d9774553..7d6622a398 100644
 --- a/apps/web/src/components/settings/ProjectDefaultsSettings.tsx
 +++ b/apps/web/src/components/settings/ProjectDefaultsSettings.tsx
-@@ -1,5 +1,11 @@
+@@ -1,6 +1,12 @@
 +import { useMemo } from "react";
 +import { useAtomValue } from "@effect/atom-react";
 +import * as Option from "effect/Option";
 +import { AsyncResult, Atom } from "effect/reactivity";
+ import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
  import {
    DEFAULT_SERVER_SETTINGS,
 +  type AgentId,
 +  type AgentSummary,
    type ModelSelection,
    type WorktreeSubmodules,
-   managedRuntimeModeDenial,
-@@ -15,16 +21,23 @@ import {
+ } from "@t3tools/contracts";
+@@ -16,16 +22,23 @@ import {
  } from "../../modelSelection";
  import { providerInstanceEntriesFor } from "../../providerInstances";
  import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
@@ -2771,8 +2774,8 @@ index 97c9ca0483..e0f0fd2373 100644
 +import { RefreshIcon } from "../ui/refresh-icon";
  import { resolveDefaultModelSettingsPresentation } from "./ProjectDefaultsSettings.logic";
  import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
- import { searchableSetting } from "./settingsSearch";
-@@ -55,6 +68,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
+ import { useSearchableSetting } from "./settingsSearch";
+@@ -59,6 +72,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
    const updateSettings = useUpdateScopedSettings();
    const navigate = useNavigate();
    const { environments } = useEnvironments();
@@ -2780,7 +2783,7 @@ index 97c9ca0483..e0f0fd2373 100644
    const providersByEnvironment = useEnvironmentProviders();
    const representative = target
      ? environments.find((environment) => environment.environmentId === target.environmentId)
-@@ -63,6 +77,18 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
+@@ -67,6 +81,18 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
      (representative?.serverConfig
        ? providersByEnvironment.get(representative.environmentId)
        : undefined) ?? EMPTY_SERVER_PROVIDERS;
@@ -2797,9 +2800,9 @@ index 97c9ca0483..e0f0fd2373 100644
 +      : null,
 +  );
    const entries = providerInstanceEntriesFor(providers, settings, target?.projectId ?? null);
-   const presentation = resolveDefaultModelSettingsPresentation({
-     entries,
-@@ -105,6 +131,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
+   const presentation = resolveDefaultModelSettingsPresentation(
+     {
+@@ -112,6 +138,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
    const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
    const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
    const modelSource = useScopedSettingSource(["defaultModelSelection"]);
@@ -2808,7 +2811,7 @@ index 97c9ca0483..e0f0fd2373 100644
    const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
    const unavailable = connectedEnvironments.length === 0;
    const effective = target
-@@ -125,6 +153,126 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
+@@ -136,6 +164,126 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
      updateSettings({ defaultModelSelection: value });
    };
  
@@ -2935,7 +2938,7 @@ index 97c9ca0483..e0f0fd2373 100644
    const modelRow = (
      <SettingsRow
        serverScoped
-@@ -197,6 +345,53 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
+@@ -221,6 +369,53 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
        }
      />
    );
@@ -3072,17 +3075,18 @@ index 89a96f120d..61ad3210a7 100644
  
  On web and desktop, select text within one assistant response and choose
 diff --git a/packages/client-runtime/src/operations/commands.ts b/packages/client-runtime/src/operations/commands.ts
-index 50717d0caf..d939d605af 100644
+index ce64335922..746a0a7702 100644
 --- a/packages/client-runtime/src/operations/commands.ts
 +++ b/packages/client-runtime/src/operations/commands.ts
-@@ -1,5 +1,6 @@
+@@ -2,6 +2,7 @@ import { msg } from "gt-i18n";
+ import { translatableMessage } from "../errors/translatable.ts";
  import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
  import {
 +  type AgentId,
    type ThreadLinkedPullRequest,
    CommandId,
    CheckpointId,
-@@ -85,6 +86,7 @@ export interface CreateThreadInput extends CommandMetadata {
+@@ -87,6 +88,7 @@ export interface CreateThreadInput extends CommandMetadata {
    readonly projectId: ProjectId;
    readonly title: string;
    readonly modelSelection: ModelSelection;
@@ -3090,7 +3094,7 @@ index 50717d0caf..d939d605af 100644
    readonly runtimeMode: RuntimeMode;
    readonly interactionMode: ProviderInteractionMode;
    readonly branch: string | null;
-@@ -162,6 +164,9 @@ interface StartThreadBootstrap {
+@@ -164,6 +166,9 @@ interface StartThreadBootstrap {
      readonly projectId: ProjectId;
      readonly title: string;
      readonly modelSelection: ModelSelection;
@@ -3100,7 +3104,7 @@ index 50717d0caf..d939d605af 100644
      readonly runtimeMode: RuntimeMode;
      readonly interactionMode: ProviderInteractionMode;
      readonly branch: string | null;
-@@ -477,6 +482,7 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
+@@ -483,6 +488,7 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
      projectId: input.projectId,
      title: input.title,
      modelSelection: input.modelSelection,
@@ -3108,7 +3112,7 @@ index 50717d0caf..d939d605af 100644
      runtimeMode: input.runtimeMode,
      interactionMode: input.interactionMode,
      branch: input.branch,
-@@ -793,6 +799,10 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
+@@ -799,6 +805,10 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
        title: input.titleSeed ?? thread.title,
        generateTitle: input.titleSeed !== undefined,
        modelSelection: input.modelSelection ?? thread.modelSelection,
@@ -3119,7 +3123,7 @@ index 50717d0caf..d939d605af 100644
        runtimeMode: input.runtimeMode,
        interactionMode: input.interactionMode,
        workspaceStrategy,
-@@ -801,6 +811,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
+@@ -807,6 +817,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
          text: input.message.text,
          ...(context ? { context } : {}),
          attachments,
@@ -3472,7 +3476,7 @@ index 44e9aa8290..26216cdbe7 100644
    ),
  });
 diff --git a/packages/contracts/src/orchestratorMcp.ts b/packages/contracts/src/orchestratorMcp.ts
-index 15038aa9e0..16e3db7cd1 100644
+index d7c607744d..00a82a9858 100644
 --- a/packages/contracts/src/orchestratorMcp.ts
 +++ b/packages/contracts/src/orchestratorMcp.ts
 @@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
@@ -3483,10 +3487,10 @@ index 15038aa9e0..16e3db7cd1 100644
  import {
    ContextTransferId,
    EnvironmentId,
-@@ -171,6 +172,12 @@ export type OrchestratorMcpTerminalDelegatedTaskStatus =
- export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
-   task: OrchestratorMcpPrompt,
-   target: Schema.optional(OrchestratorMcpTarget),
+@@ -174,6 +175,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
+   target: Schema.optional(
+     Schema.Union([OrchestratorMcpTarget, Schema.fromJsonString(OrchestratorMcpTarget)]),
+   ),
 +  targetAgentId: Schema.optional(
 +    AgentId.annotate({
 +      description:
@@ -3496,7 +3500,7 @@ index 15038aa9e0..16e3db7cd1 100644
    title: Schema.optional(OrchestratorMcpTitle),
    role: Schema.optional(OrchestratorMcpTaskRole),
    isolation: Schema.optional(
-@@ -687,6 +694,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
+@@ -694,6 +701,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
    runtimeMode: RuntimeMode,
    interactionMode: ProviderInteractionMode,
    providers: Schema.Array(OrchestratorMcpProviderCapability),

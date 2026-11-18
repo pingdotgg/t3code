@@ -169,6 +169,9 @@ jobs:
               || "$patch_commit" == "1bb59c3810"* ]]; then
               # Upstream rewrote this test file; keep its version while replaying the implementation.
               git cherry-pick -X ours "$patch_commit"
+            elif [[ "$patch_commit" == "928b4493bc"* ]]; then
+              # Upstream relabelled the Model field; keep its markup while replaying the effort picker.
+              git cherry-pick -X ours "$patch_commit"
             else
               git cherry-pick "$patch_commit"
             fi
