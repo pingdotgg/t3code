@@ -13,7 +13,6 @@ import {
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
-import { observeResize } from "~/lib/observeResize";
 
 // A release outside the window can skip `mouseup`, so the next button-free
 // `mousemove` also counts.
@@ -53,17 +52,6 @@ export function TimelineMinimap({
 }) {
   const gt = useGT();
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const [frame, setFrame] = useState<{ left: number; height: number } | null>(null);
-  const measureFrame = (anchor: HTMLDivElement | null) => {
-    if (!anchor) return;
-    return observeResize([scrollNode, anchor], () => {
-      const left = scrollNode.getBoundingClientRect().left - anchor.getBoundingClientRect().left;
-      const height = scrollNode.clientHeight;
-      setFrame((current) =>
-        current?.left === left && current.height === height ? current : { left, height },
-      );
-    });
-  };
 
   const pressedOnStripRef = useRef(false);
   const [passThrough, setPassThrough] = useState(false);
@@ -115,14 +103,13 @@ export function TimelineMinimap({
   const minimap = (
     <div
       className={cn(
-        "group/minimap pointer-events-none absolute bottom-0 w-18",
+        "group/minimap pointer-events-none absolute bottom-0 left-[calc(50%-50cqw)] h-[100cqh] w-18",
         hasPersistentGutter
           ? "opacity-100"
           : "hidden opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100 [@media(pointer:fine)]:block",
       )}
       data-testid="timeline-minimap"
       data-persistent-gutter={hasPersistentGutter ? "true" : "false"}
-      style={frame ?? undefined}
     >
       <div className="relative h-full w-full select-none">
         <div
@@ -250,9 +237,7 @@ export function TimelineMinimap({
   return (
     <>
       {createPortal(
-        <div ref={measureFrame} className="pointer-events-none sticky bottom-0 z-40 h-0">
-          {minimap}
-        </div>,
+        <div className="pointer-events-none sticky bottom-0 z-40 h-0">{minimap}</div>,
         scrollNode,
       )}
       {activeItem ? (
