@@ -38,6 +38,24 @@ describe("RPC authorization scopes", () => {
     expect(new Set(Object.keys(RPC_REQUIRED_SCOPES))).toEqual(new Set(WsRpcGroup.requests.keys()));
   });
 
+  it.each([
+    [WS_METHODS.issuesList, AuthOrchestrationReadScope],
+    [WS_METHODS.issuesDetail, AuthOrchestrationReadScope],
+    [WS_METHODS.issuesComments, AuthOrchestrationReadScope],
+    [WS_METHODS.issuesTemplates, AuthOrchestrationReadScope],
+    [WS_METHODS.issuesCandidates, AuthOrchestrationReadScope],
+    [WS_METHODS.issuesCreate, AuthSourceControlWriteScope],
+    [WS_METHODS.issuesComment, AuthSourceControlWriteScope],
+    [WS_METHODS.issuesUpdate, AuthSourceControlWriteScope],
+    [WS_METHODS.issuesSetState, AuthSourceControlWriteScope],
+    [WS_METHODS.issuesReact, AuthSourceControlWriteScope],
+    [WS_METHODS.issueTrackersList, AuthOrchestrationReadScope],
+    [WS_METHODS.issueTrackersConnect, AuthSettingsWriteScope],
+    [WS_METHODS.issueTrackersBindProject, AuthSettingsWriteScope],
+  ] as const)("requires %s to be scoped to %s", (method, scope) => {
+    expect(requiredScopeForRpcMethod(method)).toBe(scope);
+  });
+
   it("keeps webhook delivery logs, which hold request bodies, behind operate scope", () => {
     for (const method of [
       WS_METHODS.scheduledTasksListWebhookDeliveries,
@@ -146,9 +164,14 @@ describe("RPC scope middleware", () => {
   );
 });
 
-it.effect("allows issue reads but requires a source-control grant before commenting", () =>
+it.effect("requires separate grants for reading issues, commenting and managing trackers", () =>
   Effect.gen(function* () {
-    const tested = [WS_METHODS.issuesList, WS_METHODS.issuesComment] as const;
+    const tested = [
+      WS_METHODS.issuesList,
+      WS_METHODS.issuesComment,
+      WS_METHODS.issueTrackersConnect,
+      WS_METHODS.issueTrackersBindProject,
+    ] as const;
     const group = WsRpcGroup.omit(
       ...[...WsRpcGroup.requests.keys()].filter(
         (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
@@ -164,6 +187,12 @@ it.effect("allows issue reads but requires a source-control grant before comment
         Effect.sync(() => {
           comments.push(body);
         }),
+      ),
+      group.toLayerHandler(WS_METHODS.issueTrackersConnect, () =>
+        Effect.die("Tracker connection handler ran without settings permission"),
+      ),
+      group.toLayerHandler(WS_METHODS.issueTrackersBindProject, () =>
+        Effect.die("Tracker binding handler ran without settings permission"),
       ),
     );
     const reader = yield* RpcTest.makeClient(group).pipe(
@@ -194,6 +223,24 @@ it.effect("allows issue reads but requires a source-control grant before comment
     );
     yield* writer[WS_METHODS.issuesComment](comment);
     expect(comments).toEqual(["Repro attached."]);
+    expect(
+      yield* writer[WS_METHODS.issueTrackersConnect]({
+        tracker: IssueTrackerKind.make("linear"),
+        token: null,
+      }).pipe(Effect.flip),
+    ).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthSettingsWriteScope,
+    });
+    expect(
+      yield* writer[WS_METHODS.issueTrackersBindProject]({
+        projectId: comment.projectId,
+        binding: null,
+      }).pipe(Effect.flip),
+    ).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthSettingsWriteScope,
+    });
   }).pipe(Effect.scoped),
 );
 
