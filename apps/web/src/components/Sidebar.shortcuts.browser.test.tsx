@@ -43,6 +43,7 @@ vi.mock(import("~/state/server"), async (original) => {
   const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
   const keybindings = compileResolvedKeybindingsConfig([
     { key: "mod+shift+]", command: "thread.next", when: "!previewFocus && !previewOpen" },
+    { key: "mod+shift+[", command: "thread.previous" },
     { key: "mod+1", command: "thread.jump.1", when: "!previewFocus" },
   ]);
   return { ...actual, primaryServerKeybindingsAtom: Atom.make(keybindings) };
@@ -131,6 +132,7 @@ it("numbers an unsent draft at the top of the sidebar first", async () => {
   });
   const draftRow = page.getByTestId("sidebar-draft-row");
   await expect.element(draftRow).toBeVisible();
+  await expect.element(page.getByText(`Thread ${thread.id}`).first()).toBeVisible();
 
   let now = Date.parse("2026-01-01T00:00:00.000Z");
   using _clock = vi.spyOn(Date, "now").mockImplementation(() => (now += 1000));
@@ -139,5 +141,12 @@ it("numbers an unsent draft at the top of the sidebar first", async () => {
   await vi.waitFor(() => expect(document.querySelector("[data-jump-hint]")).not.toBeNull());
   expect(draftRow.element().querySelector("[data-jump-hint]")).not.toBeNull();
   await userEvent.keyboard("1{/Control}");
+  await vi.waitFor(() => expect(router.history.location.pathname).toBe(`/draft/${draftId}`));
+  await userEvent.keyboard("{Control>}{Shift>}]{/Shift}{/Control}");
+  await vi.waitFor(() =>
+    expect(router.history.location.pathname).toBe(`/${ENVIRONMENT_ID}/${thread.id}`),
+  );
+  await expect.element(draftRow).not.toHaveAttribute("aria-current");
+  await userEvent.keyboard("{Control>}{Shift>}[[{/Shift}{/Control}");
   await vi.waitFor(() => expect(router.history.location.pathname).toBe(`/draft/${draftId}`));
 });

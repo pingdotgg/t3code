@@ -136,8 +136,8 @@ In a thread, `rightPanelOpen` is true while its right panel is open; the default
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
 desktop app. Unknown keys evaluate to `false`.
 
-`mod+1` through `mod+9` jump to the first nine threads, and to models while the
-model picker is open. The thread jumps do not run while the model picker is open.
+`mod+1` through `mod+9` jump to the first nine rows of the sidebar, unsent
+drafts included, and to models while the model picker is open. The thread jumps do not run while the model picker is open.
 Those defaults use `isDesktop` so they do not steal the
 browser's tab-switch shortcuts. Remove that condition in Settings if you want
 the same jumps in a browser.

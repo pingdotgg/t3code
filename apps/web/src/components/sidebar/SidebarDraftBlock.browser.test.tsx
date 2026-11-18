@@ -6,7 +6,21 @@ import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../test/render";
 import { formatAssistantCitationForComposer } from "../../composer-logic";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
-import { SidebarDraftBlock } from "./SidebarDraftBlock";
+import { SidebarDraftBlock, useSidebarDraftIds } from "./SidebarDraftBlock";
+
+function ListedDraftBlock() {
+  return (
+    <SidebarDraftBlock
+      draftIds={useSidebarDraftIds(null, null)}
+      jumpLabels={null}
+      projectByKey={new Map()}
+      projectDisplayNameByKey={new Map()}
+      routeDraftId={null}
+      onNavigateToDraft={vi.fn()}
+      onDraftContextMenu={vi.fn()}
+    />
+  );
+}
 
 it("keeps draft previews current through edits, promotion and removal", async () => {
   const initial = useComposerDraftStore.getState();
@@ -26,14 +40,7 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   await using screen = await render(
     <Profiler id="draft-block" onRender={onRender}>
       <ul>
-        <SidebarDraftBlock
-          projectByKey={new Map()}
-          projectDisplayNameByKey={new Map()}
-          scopedProjectKeys={null}
-          routeDraftId={null}
-          onNavigateToDraft={vi.fn()}
-          onDraftContextMenu={vi.fn()}
-        />
+        <ListedDraftBlock />
       </ul>
     </Profiler>,
   );
