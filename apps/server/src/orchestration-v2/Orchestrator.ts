@@ -16382,6 +16382,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             DateTime.toEpochMillis(input.snoozedUntil) <= DateTime.toEpochMillis(now)
           )
             return;
+          const shell = yield* projectionStore
+            .getThreadShell(input.threadId)
+            .pipe(
+              Effect.mapError(
+                (cause) => new OrchestratorProjectionError({ threadId: input.threadId, cause }),
+              ),
+            );
+          if (shell?.pendingRuntimeRequest != null) return;
           yield* dispatchWithReceiptEffect({
             type: "thread.snooze",
             commandId: input.commandId,

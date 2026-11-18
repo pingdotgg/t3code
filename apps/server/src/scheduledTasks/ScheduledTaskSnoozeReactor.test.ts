@@ -10,6 +10,7 @@ import {
   RuntimeRequestId,
   ScheduledTaskId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as DateTime from "effect/DateTime";
@@ -90,6 +91,7 @@ const completeTurn = Effect.fn("test.completeTurn")(function* (
     startedAt?: string | null;
     queueAnother?: boolean;
     pendingQuestion?: boolean;
+    pendingLink?: boolean;
     sendBeforeHandle?: boolean;
     snoozeBeforeComplete?: boolean;
   } = {},
@@ -149,6 +151,34 @@ const completeTurn = Effect.fn("test.completeTurn")(function* (
     });
   }
   const events: OrchestrationV2DomainEvent[] = [];
+  if (options.pendingLink === true) {
+    events.push({
+      id: EventId.make("event:scheduled-snooze-link"),
+      type: "turn-item.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("item:scheduled-snooze-link"),
+        threadId,
+        runId: run.id,
+        nodeId: run.rootNodeId!,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        type: "link_request",
+        status: "waiting",
+        title: "Link laptop",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        reason: "Link laptop",
+        linkStatus: "pending",
+      },
+    });
+  }
   if (options.pendingQuestion === true) {
     events.push({
       id: EventId.make("event:scheduled-snooze-question"),
@@ -257,6 +287,7 @@ it.effect.each([
   { name: "the run is the task's own", setting: true, fromTask: true },
   { name: "another run is still queued", setting: true, queueAnother: true },
   { name: "the turn ended on a question", setting: true, pendingQuestion: true },
+  { name: "a link card awaits the user", setting: true, pendingLink: true },
   { name: "a message arrives before the snooze", setting: true, sendBeforeHandle: true },
 ])("leaves the thread awake when $name", (scenario) =>
   Effect.gen(function* () {
