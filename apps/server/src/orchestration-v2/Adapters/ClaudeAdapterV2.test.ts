@@ -3156,6 +3156,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
     providerTurnOrdinal: number,
     nativeThreadHasTurns?: boolean,
     importedNativeThreadId?: string,
+    importedTranscript = true,
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -3165,7 +3166,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
         const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-claude-v2-session-identity-",
         });
-        if (importedNativeThreadId !== undefined) {
+        if (importedNativeThreadId !== undefined && importedTranscript) {
           // An unreadable copy in another project must not hide the readable one.
           yield* fileSystem.makeDirectory(
             path.join(attachmentsDir, "projects", "-other", `${importedNativeThreadId}.jsonl`),
@@ -3319,6 +3320,15 @@ describe("ClaudeAdapterV2 native session identity", () => {
       assert.equal(openedQueries.length, 1);
       assert.equal(openedQueries[0]?.options.resume, "imported-native-session");
       assert.equal(openedQueries[0]?.options.sessionId, undefined);
+    }),
+  );
+
+  it.effect("does not open an empty session for an imported session whose transcript is gone", () =>
+    Effect.gen(function* () {
+      const opened = yield* openTurnWithOrdinal(1, false, "imported-native-session", false).pipe(
+        Effect.exit,
+      );
+      assert.isTrue(Exit.isFailure(opened));
     }),
   );
 });
