@@ -2277,10 +2277,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // The open thread's row stays in view: when it first renders and on every
   // navigation. Rows above can still grow after the first paint, so the list
   // re-reveals on resize until the user touches it; after that their scroll
-  // position is left alone.
-  const routeRowRendered =
-    routeRowThreadKey !== null &&
-    sidebarListItems.some((item) => item.kind === "thread" && item.key === routeRowThreadKey);
+  // position is left alone. A row that changes section (a turn ends, an approval
+  // arrives) moves elsewhere in the list, so the reveal follows it there.
+  const routeRowSection =
+    sidebarListItems.flatMap((item) =>
+      item.kind === "thread" && item.key === routeRowThreadKey ? [item.section] : [],
+    )[0] ?? null;
+  const routeRowRendered = routeRowSection !== null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the active row visible as layout changes until the user scrolls.
   useEffect(() => {
     if (routeRowThreadKey === null || !routeRowRendered || isSearchingThreads) return;
@@ -2309,7 +2312,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       release();
       for (const type of userInput) viewport.removeEventListener(type, release);
     };
-  }, [isSearchingThreads, routeReveal, routeRowRendered, routeRowThreadKey]);
+  }, [isSearchingThreads, routeReveal, routeRowRendered, routeRowSection, routeRowThreadKey]);
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
   const dragActivationY = dragState?.activationY;
