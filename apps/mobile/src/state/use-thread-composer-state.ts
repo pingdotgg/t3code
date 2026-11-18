@@ -767,9 +767,7 @@ export function useThreadComposerState(input: {
             const error = squashAtomCommandFailure(started);
             Dialog.alert(
               m(msg("Side chat not started")),
-              error instanceof Error
-                ? error.message
-                : m(msg("Your message is back in the composer.")),
+              error instanceof Error ? error.message : m(msg("Could not start a side chat.")),
             );
           }
         }

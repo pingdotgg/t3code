@@ -4596,7 +4596,6 @@
   "6d00220bfee72afd": "Not connected: message not sent",
   "f62c43120e8c60e7": "Reconnecting to the environment. Try again once it is connected.",
   "74e7e5c0536cda02": "Side chat not started",
-  "be6231ac5b08f35e": "Side chats take text only",
   "faf9ee0a28119e10": "Remove the attachments and context, then send it again.",
   "1778ba2f32077b39": "Update this server before starting multiple models.",
   "736caccf2954a7f5": "Choose models and a base branch",
