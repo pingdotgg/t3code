@@ -532,6 +532,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? [gt("Working section")]
       : []),
+    ...(settings.sidebarCompactThreadCards !== DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadCards
+      ? ["Compact thread cards"]
+      : []),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? [gt("Auto-settle inactive threads")]
       : []),
@@ -719,6 +722,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarCompactThreadCards: DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadCards,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -962,6 +966,37 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label={gt("Working section")}
+            />
+          }
+        />
+        <SettingsRow
+          {...setting("compact-thread-cards")}
+          description={
+            <T>
+              Drop the branch line from sidebar cards. Environment and provider icons move next to
+              the project name, and PRs next to the title. Hover a card for the details.
+            </T>
+          }
+          resetAction={
+            settings.sidebarCompactThreadCards !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadCards ? (
+              <SettingResetButton
+                label="compact thread cards"
+                onClick={() =>
+                  updateSettings({
+                    sidebarCompactThreadCards: DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadCards,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarCompactThreadCards}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarCompactThreadCards: Boolean(checked) })
+              }
+              aria-label={gt("Compact thread cards")}
             />
           }
         />

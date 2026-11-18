@@ -129,6 +129,7 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
+import { useClientSettings } from "../../hooks/useSettings";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -204,6 +205,7 @@ function terminalProcessLabel(count: number, resolve: MessageResolver): string {
 function SidebarProviderStack(props: {
   thread: SidebarThreadSummary;
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
+  compact?: boolean;
 }) {
   const stack = resolveThreadProviderStack(props.thread);
   const currentInstanceId = stack[stack.length - 1]!;
@@ -222,7 +224,7 @@ function SidebarProviderStack(props: {
       acpRegistryIconUrl={currentEntry.acpRegistryIconUrl}
       showBadge={showInstanceBadge}
       size="compact"
-      iconClassName="opacity-60"
+      iconClassName={props.compact ? "size-3 opacity-60" : "opacity-60"}
     />
   );
   if (stack.length === 1) {
@@ -862,6 +864,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const isRemote = thread.environmentId !== props.currentEnvironmentId;
   const showsScratchMachine = !checkoutThread.branch && props.scratchMachineLabel !== null;
+  const compactCard =
+    useClientSettings((settings) => settings.sidebarCompactThreadCards) && variant === "card";
 
   const detailsTooltip = (
     <SidebarThreadTooltip
@@ -1247,7 +1251,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     </div>
   );
-  const titleLineIcons = metaLineEmpty ? (
+  const compactHeaderIcons = compactCard ? (
+    <span
+      aria-hidden
+      className="inline-flex shrink-0 items-center gap-1 text-sidebar-muted-foreground/70"
+    >
+      {isRemote || showsScratchMachine ? (
+        <EnvironmentMachineIcon kind={props.environmentMachine} className="size-3" />
+      ) : null}
+      <SidebarProviderStack
+        thread={thread}
+        providerEntryByInstanceId={props.providerEntryByInstanceId}
+        compact
+      />
+    </span>
+  ) : null;
+  const titleLineIcons = compactCard ? (
+    <>
+      {terminalStatusIcon}
+      {prBadge}
+    </>
+  ) : metaLineEmpty ? (
     <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
       {remoteMachineIcon}
       <SidebarProviderStack
@@ -1472,7 +1496,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       // that have not rendered yet, so a hint off by a pixel lands it a pixel short per row above.
       className={cn(
         "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
-        metaLineEmpty && "[contain-intrinsic-size:auto_60px]",
+        (metaLineEmpty || compactCard) && "[contain-intrinsic-size:auto_60px]",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -1500,7 +1524,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <div
             className={cn(
               "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
-              metaLineEmpty && "h-auto",
+              (metaLineEmpty || compactCard) && "h-auto",
             )}
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
@@ -1513,13 +1537,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {pinIndicator}
               {props.projectDisplayName ? (
                 <span
-                  className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}
+                  className={cn(
+                    "min-w-0 truncate font-normal text-secondary-label text-xs",
+                    !compactCard && "flex-1",
+                  )}
                 >
                   {props.projectDisplayName}
                 </span>
-              ) : (
+              ) : compactCard ? null : (
                 <span className="flex-1" />
               )}
+              {compactHeaderIcons}
+              {compactCard ? <span className="flex-1" /> : null}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
@@ -1669,7 +1698,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : null}
               {titleLineIcons}
             </div>
-            {metaLine}
+            {compactCard ? null : metaLine}
           </div>
         </TooltipTrigger>
         {detailsTooltip}

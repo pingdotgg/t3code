@@ -488,6 +488,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
+    id: "compact-thread-cards",
+    title: msg("Compact thread cards"),
+    to: "/settings/general",
+    searchTerms: ["sidebar dense smaller hide branch worktree provider environment row"],
+  },
+  {
     id: "boring-sidebar",
     title: msg("Boring sidebar (group by project)"),
     to: "/settings/labs",
