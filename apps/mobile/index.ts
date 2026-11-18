@@ -1,6 +1,9 @@
 // Must stay first: the render counter and behavior probe wrap the DevTools hook before any React commit.
 import "./src/features/development/render-counter-entry";
 import "./src/features/development/behavior-probe-entry";
+// Before any GT module initializes: GT captures Intl when it loads and validates locales with
+// APIs Hermes lacks. observe.ts can load GT through the persistence graph.
+import "./src/i18n/intl-polyfills";
 // Next, so errors thrown while the rest of the app loads are recorded too.
 import "./src/features/observability/observe";
 import { registerRootComponent } from "expo";
@@ -8,8 +11,6 @@ import "react-native-gesture-handler";
 import { LogBox } from "react-native";
 import { featureFlags } from "react-native-screens";
 
-// Before any GT module initializes: GT validates locales with Intl APIs that Hermes lacks.
-import "./src/i18n/intl-polyfills";
 import App from "./src/App";
 
 // Enables iOS FormSheet sizing for nested native stacks in non-fitToContents sheets.

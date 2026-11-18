@@ -44,8 +44,8 @@ if (!crashReportingAvailable) {
   void setCrashReportsEnabled(false);
 } else {
   // Observe keeps its last configuration across launches; configuring it off while the setting
-  // loads would drop the last session's native crash. Imported lazily so the persistence graph
-  // never runs ahead of the imports `index.ts` orders first.
+  // loads would drop the last session's native crash. Release builds have no split bundles, so
+  // Metro evaluates this import synchronously, ahead of the rest of `index.ts`.
   const changedSinceLoad = () => latestConfiguration !== 0;
   void import("../../persistence/imperative")
     .then(({ loadPreferences }) => loadPreferences())
