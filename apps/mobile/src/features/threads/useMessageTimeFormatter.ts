@@ -3,6 +3,7 @@ import { requireNativeModule } from "expo";
 import { useLocale } from "gt-react-native";
 import { useEffect, useMemo, useState } from "react";
 import { AppState, Platform } from "react-native";
+import { readSystemLocales } from "../../i18n/locales";
 import { createMessageTimeFormatter } from "./messageTimestamp";
 
 function systemUses24HourClock() {
@@ -22,11 +23,7 @@ export function useMessageTimeFormatter() {
   }, []);
   const locale = useLocale();
   return useMemo(
-    () =>
-      createMessageTimeFormatter(
-        is24Hour,
-        formattingLocale(locale, new Intl.DateTimeFormat().resolvedOptions().locale),
-      ),
+    () => createMessageTimeFormatter(is24Hour, formattingLocale(locale, readSystemLocales())),
     [is24Hour, locale],
   );
 }

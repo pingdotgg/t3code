@@ -44,8 +44,22 @@ export function resolveLocale(
   return fallback;
 }
 
-/** Locale for dates and times: the system's own variant when it speaks the UI language. */
-export function formattingLocale(uiLocale: string, systemLocale: string): string {
-  const language = (tag: string) => tag.toLowerCase().split(/[-_]/)[0];
-  return language(systemLocale) === language(uiLocale) ? systemLocale : uiLocale;
+/** Prefer a compatible system variant, then use the system region for a bare UI language. */
+export function formattingLocale(uiLocale: string, systemLocales: ReadonlyArray<string>): string {
+  const ui = new Intl.Locale(uiLocale);
+  const compatible = [uiLocale, ui.language];
+  let region: string | undefined;
+  for (const tag of systemLocales) {
+    let system: Intl.Locale;
+    try {
+      system = new Intl.Locale(tag.trim().replaceAll("_", "-"));
+    } catch {
+      continue;
+    }
+    region ??= system.region;
+    if (matchSupportedLocale(system.baseName, compatible)) return system.baseName;
+  }
+  if (ui.region || !region) return uiLocale;
+  const regional = new Intl.Locale(uiLocale, { region }).baseName;
+  return matchSupportedLocale(regional, compatible) ? regional : uiLocale;
 }

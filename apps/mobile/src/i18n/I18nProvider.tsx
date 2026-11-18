@@ -4,10 +4,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { GTProvider, initializeGT, useLocale } from "gt-react-native";
 import { useDeferredValue, useEffect, type ReactNode } from "react";
-import { Platform, TurboModuleRegistry, View, type TurboModule } from "react-native";
+import { View } from "react-native";
 
 import { mobilePreferencesAtom } from "../state/preferences";
-import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
+import { DEFAULT_LOCALE, readSystemLocales, SUPPORTED_LOCALES } from "./locales";
 import { setActiveLocale } from "./messages";
 
 // Committed catalogs, so forks and offline installs never reach GT's CDN. English is the source.
@@ -32,22 +32,6 @@ initializeGT({
   // Loaded catalogs never go stale; GT's default 60 s expiry would only reload the same file.
   cacheExpiryTime: null,
 });
-
-// Read the device languages from gt-react-native's own native module: GT's getLocale() prefers
-// the last locale passed to GTProvider, which it persists, so it can't express "system".
-function readSystemLocales(): ReadonlyArray<string> {
-  try {
-    const locales =
-      TurboModuleRegistry.get<{ getNativeLocales(): string[] } & TurboModule>(
-        "GtReactNative",
-      )?.getNativeLocales() ?? [];
-    // On iOS the first entry is NSLocale.currentLocale, whose language is the app's bundle
-    // localization (English only), not the user's; preferredLanguages follow it.
-    return Platform.OS === "ios" ? locales.slice(1) : locales;
-  } catch {
-    return [];
-  }
-}
 
 export function useLanguagePreference(): string {
   const preferences = useAtomValue(mobilePreferencesAtom);
