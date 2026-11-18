@@ -52,6 +52,19 @@ async function settled(router: AnyRouter, navigation: Promise<void>) {
 }
 
 describe("main app return location", () => {
+  it("closes Usage without leaving the current document when the app started with history", async () => {
+    await using screen = await render(<ReturnControls />, { router: "/" });
+    const router = screen.router!;
+    await settled(router, router.navigate({ href: THREAD_PATH }));
+    using _tracking = { [Symbol.dispose]: startMainAppLocationTracking(router) };
+    using go = vi.spyOn(router.history, "go");
+
+    await settled(router, router.navigate({ href: "/usage" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close modal" }));
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe(THREAD_PATH));
+    expect(go).not.toHaveBeenCalled();
+  });
+
   it("returns to the thread without re-opening the quote source it was opened at", async () => {
     await using screen = await render(<ReturnControls />, { router: THREAD_PATH });
     const router = screen.router!;

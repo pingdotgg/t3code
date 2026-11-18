@@ -361,14 +361,12 @@ describe("project organization", () => {
     "offers No project (archived: %s) no removal and only a way out of archive",
     async (archived, action) => {
       setup();
-      state.projects = [
-        {
-          ...state.projects[0]!,
-          title: "No project",
-          isScratch: true,
-          archivedAt: archived ? "2026-01-02T00:00:00.000Z" : null,
-        },
-      ];
+      state.projects = state.projects.map((project) => ({
+        ...project,
+        title: "No project",
+        isScratch: true,
+        archivedAt: archived ? "2026-01-02T00:00:00.000Z" : null,
+      }));
       await using _screen = await mountPanel();
       expect(page.getByRole("button", { name: /^Remove/ }).query()).toBeNull();
       expect(page.getByRole("button", { name: /archive$/i }).query()?.textContent ?? null).toBe(

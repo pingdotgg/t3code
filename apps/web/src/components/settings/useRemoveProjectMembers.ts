@@ -1,6 +1,8 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { planProjectRemoval } from "@t3tools/client-runtime/state/projects";
 import { mapAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
+import { useGT } from "gt-react";
+import { m as resolveMessage } from "../../i18n/messages";
 import { useNavigate } from "@tanstack/react-router";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -24,11 +26,14 @@ export function useRemoveProjectMembers({
   group,
   allMembers,
   hasOtherMembers,
+  navigateAfterRemoval = true,
 }: {
   group: SidebarProjectSnapshot;
   allMembers: ReadonlyArray<SidebarProjectGroupMember>;
   hasOtherMembers: boolean;
+  navigateAfterRemoval?: boolean;
 }) {
+  const gt = useGT();
   const navigate = useNavigate({ from: "/settings" });
   const threads = useThreadShells();
   const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
@@ -36,23 +41,26 @@ export function useRemoveProjectMembers({
   });
 
   return async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
-    if (checkProjectAccess(members, "Failed to remove project")) return;
+    if (checkProjectAccess(members, gt("Failed to remove project"))) return;
     const api = readLocalApi();
     if (!api) return;
 
-    const { projectThreads, isWholeGroup, confirmationMessage } = planProjectRemoval({
-      members,
-      groupMemberCount: group.memberProjects.length,
-      hasOtherMembers,
-      displayName: group.displayName,
-      threads,
-      unloadedThreadCount: readUnloadedThreadCount(members, threads),
-    });
+    const { projectThreads, isWholeGroup, confirmationMessage } = planProjectRemoval(
+      {
+        members,
+        groupMemberCount: group.memberProjects.length,
+        hasOtherMembers,
+        displayName: group.displayName,
+        threads,
+        unloadedThreadCount: readUnloadedThreadCount(members, threads),
+      },
+      resolveMessage,
+    );
     const confirmed = await settlePromise(() =>
       api.dialogs.confirm(confirmationMessage, { variant: "destructive" }),
     );
     if (confirmed._tag === "Failure" || !confirmed.value) return;
-    if (checkProjectAccess(members, "Failed to remove project")) return;
+    if (checkProjectAccess(members, gt("Failed to remove project"))) return;
 
     const draftStore = useComposerDraftStore.getState();
     const remainingMember = allMembers.find(
@@ -63,7 +71,7 @@ export function useRemoveProjectMembers({
         ),
     );
     for (const member of members) {
-      if (checkProjectAccess([member], "Failed to remove project")) return;
+      if (checkProjectAccess([member], gt("Failed to remove project"))) return;
       const memberThreads = projectThreads.filter(
         (thread) => thread.environmentId === member.environmentId && thread.projectId === member.id,
       );
@@ -78,7 +86,7 @@ export function useRemoveProjectMembers({
         () => undefined,
       );
       if (result._tag === "Failure") {
-        reportProjectFailure(`Failed to remove "${member.title}"`, result);
+        reportProjectFailure(gt('Failed to remove "{title}"', { title: member.title }), result);
         return;
       }
       const projectRef = scopeProjectRef(member.environmentId, member.id);
@@ -100,7 +108,7 @@ export function useRemoveProjectMembers({
       draftStore.clearProjectDraftThreadId(projectRef);
     }
 
-    if (isWholeGroup && !hasOtherMembers) {
+    if (navigateAfterRemoval && isWholeGroup && !hasOtherMembers) {
       void navigate({
         to: "/settings/projects",
         search: ({ machine }) => ({ project: undefined, machine, checkout: undefined }),

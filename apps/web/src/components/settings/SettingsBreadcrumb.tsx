@@ -1,4 +1,4 @@
-import { msg, useMessages } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 
 import {
   WorkspaceBreadcrumb,
@@ -26,6 +26,7 @@ function normalizePathname(pathname: string) {
 }
 
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
+  const gt = useGT();
   const m = useMessages();
   const scope = useOptionalSettingsScope();
   const sectionLabel = settingsBreadcrumbLabel(pathname);
@@ -33,7 +34,7 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
     normalizePathname(pathname) === "/settings/projects" ? scope?.search.project : undefined;
 
   return (
-    <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
+    <WorkspaceBreadcrumb ariaLabel={gt("Settings breadcrumb")}>
       {sectionLabel ? (
         <>
           <WorkspaceBreadcrumbItem>{m(SETTINGS_LABEL)}</WorkspaceBreadcrumbItem>

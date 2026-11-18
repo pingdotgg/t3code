@@ -48,6 +48,7 @@ export function ProjectRowMenu({
     group: members.length > 0 ? scopeProjectSettingsGroup(group, members) : group,
     allMembers,
     hasOtherMembers,
+    navigateAfterRemoval: false,
   });
   const [isBusy, setIsBusy] = useState(false);
   if (!canOrganize && !canRemove) return null;
