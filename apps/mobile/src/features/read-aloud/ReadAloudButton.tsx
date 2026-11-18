@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { DEFAULT_READ_ALOUD_SETTINGS } from "@t3tools/contracts";
+import { useGT } from "gt-react-native";
 import { Pressable } from "react-native";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -29,14 +30,15 @@ export function ReadAloudButton({
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Loading the environment's local model while replies are on screen hides its startup from the first click.
   useEffect(() => warmReadAloud(settings), [settings]);
+  const gt = useGT();
   if (settings.provider === "off") return null;
   const active = state.id === id;
   const stoppable = active && (state.status === "playing" || state.status === "loading");
   const label = stoppable
-    ? "Stop reading"
+    ? gt("Stop reading")
     : active && state.status === "paused"
-      ? "Resume reading"
-      : "Read aloud";
+      ? gt("Resume reading")
+      : gt("Read aloud");
   return (
     <Pressable
       accessibilityRole="button"
@@ -49,7 +51,7 @@ export function ReadAloudButton({
         else await readAloudController.start(id, text, settings);
         const result = readAloudController.getSnapshot();
         if (result.id === id && result.status === "error")
-          Dialog.alert("Could not read aloud", result.error);
+          Dialog.alert(gt("Could not read aloud"), result.error);
       }}
     >
       <SymbolView

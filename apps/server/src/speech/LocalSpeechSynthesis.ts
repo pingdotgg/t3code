@@ -561,21 +561,16 @@ const make = Effect.gen(function* () {
   const link = Effect.fn("LocalSpeechSynthesis.link")(function* (source: string) {
     if (!runtimeFile)
       return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
-    const linkedBefore = yield* Effect.forEach(LOCAL_SYNTHESIS_MODELS, (model) =>
-      store.isReady(model.file),
-    );
     const linked = yield* exclusive(
       store
         .link(LOCAL_SYNTHESIS_MODELS.flatMap(modelFiles), source)
         .pipe(Effect.mapError(installFailed)),
     );
-    const linkedAfter = yield* Effect.forEach(LOCAL_SYNTHESIS_MODELS, (model) =>
-      store.isReady(model.file),
-    );
-    const model = linked.length
-      ? (LOCAL_SYNTHESIS_MODELS.find((_, index) => linkedAfter[index] && !linkedBefore[index]) ??
-        LOCAL_SYNTHESIS_MODELS.find((_, index) => linkedAfter[index]))
-      : undefined;
+    // File ids name repositories, which several models share.
+    const isLinked = (file: SpeechModelStore.ModelFile) =>
+      linked.some((entry) => entry.filename === file.filename);
+    const owners = LOCAL_SYNTHESIS_MODELS.filter((model) => modelFiles(model).some(isLinked));
+    const model = owners.find((entry) => isLinked(entry.file)) ?? owners[0];
     if (!model) return yield* new LocalSynthesisInstallError({ reason: "not-found" });
     const missing = yield* Effect.filter(modelFiles(model), (file) =>
       store.isReady(file).pipe(Effect.map((fileReady) => !fileReady)),

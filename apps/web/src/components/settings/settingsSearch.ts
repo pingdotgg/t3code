@@ -581,9 +581,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "read-aloud",
-    title: "Read aloud",
+    title: msg("Read aloud"),
     to: "/settings/voice",
-    searchTerms: ["tts text to speech speak read aloud OpenAI Grok OpenRouter voice playback"],
+    searchTerms: [
+      msg("tts text to speech speak read aloud OpenAI Grok OpenRouter ElevenLabs voice playback"),
+    ],
   },
   {
     id: "voice-microphone",

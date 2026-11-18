@@ -14,6 +14,7 @@ import {
   type SecretProviderId,
   type SettingsSecretValue,
 } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
@@ -58,6 +59,7 @@ export function ReadAloudKeyDialog({
   const id = environment.environmentId;
   const name = READ_ALOUD_LABELS[provider];
   const company = CLOUD_SPEECH_PROVIDER_NAMES[provider];
+  const gt = useGT();
   const formId = useId();
   const prepared = Option.getOrNull(usePreparedConnection(id));
   const canUse = useEnvironmentScope(id, AuthOrchestrationOperateScope);
@@ -98,7 +100,7 @@ export function ReadAloudKeyDialog({
       if (thenEnable) onEnable();
       close();
     } catch {
-      setError("Couldn’t save this change. Check your connection and try again.");
+      setError(gt("Couldn’t save this change. Check your connection and try again."));
     }
     setBusy(false);
   };
@@ -114,27 +116,39 @@ export function ReadAloudKeyDialog({
         <DialogHeader>
           <DialogTitle>
             {remove
-              ? `Remove the ${company} key?`
+              ? gt("Remove the {company} key?", { company })
               : active
-                ? `Manage ${company} key`
-                : `Read replies aloud with ${name}?`}
+                ? gt("Manage {company} key", { company })
+                : gt("Read replies aloud with {name}?", { name })}
           </DialogTitle>
           <DialogDescription>
             {remove
-              ? `Everyone using ${company} for dictation or read aloud on ${environment.label} will lose access.`
-              : `Replies you play are sent to ${company} through ${environment.label}, which bills its API key. The key is shared with dictation.`}
+              ? gt(
+                  "Everyone using {company} for dictation or read aloud on {environment} will lose access.",
+                  { company, environment: environment.label },
+                )
+              : gt(
+                  "Replies you play are sent to {company} through {environment}, which bills its API key. The key is shared with dictation.",
+                  { company, environment: environment.label },
+                )}
           </DialogDescription>
         </DialogHeader>
         {!remove && (
           <DialogPanel>
             {!connected ? (
-              <p>Connect to {environment.label} to continue.</p>
+              <p>
+                <T>
+                  Connect to <Var>{environment.label}</Var> to continue.
+                </T>
+              </p>
             ) : AsyncResult.isFailure(presence) && saved === undefined ? (
               <Button size="sm" variant="outline" onClick={refresh}>
-                Retry loading API key
+                <T>Retry loading API key</T>
               </Button>
             ) : saved === undefined ? (
-              <p role="status">Checking for an API key…</p>
+              <p role="status">
+                <T>Checking for an API key…</T>
+              </p>
             ) : editingKey ? (
               <form
                 id={formId}
@@ -144,13 +158,15 @@ export function ReadAloudKeyDialog({
                   if (credential !== undefined) void saveKey(credential, !active);
                 }}
               >
-                <Label htmlFor="read-aloud-cloud-key">API key</Label>
+                <Label htmlFor="read-aloud-cloud-key">
+                  <T>API key</T>
+                </Label>
                 <div className="flex min-w-0 items-start gap-2">
                   {sources.length > 0 && (
                     <SecretSourceSelect
                       value={sourceId}
                       sources={sources}
-                      label={`${company} API key`}
+                      label={gt("{company} API key", { company })}
                       disabled={busy}
                       onValueChange={(next) => {
                         setSourceId(next);
@@ -164,7 +180,7 @@ export function ReadAloudKeyDialog({
                       <Input
                         key={sourceId}
                         id="read-aloud-cloud-key"
-                        aria-label={`${company} API key reference`}
+                        aria-label={gt("{company} API key reference", { company })}
                         autoFocus
                         placeholder={source?.referencePlaceholder}
                         value={draft}
@@ -176,9 +192,9 @@ export function ReadAloudKeyDialog({
                     ) : (
                       <SecretInput
                         id="read-aloud-cloud-key"
-                        aria-label={`${company} API key`}
+                        aria-label={gt("{company} API key", { company })}
                         autoFocus
-                        placeholder="Enter API key"
+                        placeholder={gt("Enter API key")}
                         value={draft}
                         configured={saved}
                         disabled={busy}
@@ -191,18 +207,26 @@ export function ReadAloudKeyDialog({
                 <p className="text-sm text-muted-foreground">
                   {draft.trim() && !credential
                     ? (source?.invalidReferenceMessage ??
-                      "Enter an API key, not a URL or secret reference.")
+                      gt("Enter an API key, not a URL or secret reference."))
                     : active
-                      ? "Updating the key keeps read aloud on."
-                      : `Anyone with access to ${environment.label} can bill this key.`}
+                      ? gt("Updating the key keeps read aloud on.")
+                      : gt("Anyone with access to {environment} can bill this key.", {
+                          environment: environment.label,
+                        })}
                 </p>
               </form>
             ) : !saved ? (
-              <p>Ask an administrator on {environment.label} to add an API key.</p>
+              <p>
+                <T>
+                  Ask an administrator on <Var>{environment.label}</Var> to add an API key.
+                </T>
+              </p>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Uses the API key saved on {environment.label}. This choice applies only to this
-                device.
+                <T>
+                  Uses the API key saved on <Var>{environment.label}</Var>. This choice applies only
+                  to this device.
+                </T>
               </p>
             )}
           </DialogPanel>
@@ -222,12 +246,12 @@ export function ReadAloudKeyDialog({
                 disabled={busy}
                 onClick={() => setRemove(true)}
               >
-                Remove key…
+                <T>Remove key…</T>
               </Button>
             </div>
           )}
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={close}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           {connected &&
             (remove ? (
@@ -238,11 +262,11 @@ export function ReadAloudKeyDialog({
                 disabled={busy}
                 onClick={() => void saveKey(null, false)}
               >
-                Remove key
+                <T>Remove key</T>
               </Button>
             ) : editingKey ? (
               <Button type="submit" form={formId} size="sm" disabled={busy || !credential}>
-                {active ? "Save key" : "Save and enable"}
+                {active ? gt("Save key") : gt("Save and enable")}
               </Button>
             ) : saved && !active ? (
               <Button
@@ -253,7 +277,9 @@ export function ReadAloudKeyDialog({
                   close();
                 }}
               >
-                Use {name}
+                <T>
+                  Use <Var>{name}</Var>
+                </T>
               </Button>
             ) : null)}
         </DialogFooter>

@@ -4,6 +4,8 @@ import {
   type ReadAloudSettings,
 } from "@t3tools/contracts";
 import { readAloudText, splitReadAloudText } from "@t3tools/shared/read-aloud";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 const WARM_INTERVAL_MS = 4 * 60_000;
 
@@ -39,6 +41,7 @@ export function createReadAloudController(
     settings: ReadAloudSettings,
     signal: AbortSignal,
   ) => Promise<SpeechPlayback>,
+  resolve: MFunctionType = mFallback,
 ) {
   type State = {
     id: string | null;
@@ -126,7 +129,7 @@ export function createReadAloudController(
       } catch {
         if (active === owner) {
           stop();
-          publish({ id, status: "error", error: "Could not resume speech." });
+          publish({ id, status: "error", error: resolve(msg("Could not resume speech.")) });
         }
       }
     },
@@ -178,7 +181,8 @@ export function createReadAloudController(
         publish({
           id,
           status: "error",
-          error: error instanceof Error ? error.message : "Could not read this response.",
+          error:
+            error instanceof Error ? error.message : resolve(msg("Could not read this response.")),
         });
       }
     },

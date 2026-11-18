@@ -213,7 +213,9 @@ it.effect("links a verified model file from another folder and never deletes it"
     expect(yield* h.store.link([h.model], impostor)).toEqual([]);
     expect(yield* h.store.linkedFrom(h.model)).toBeUndefined();
 
-    expect(yield* h.store.link([h.model, voice], elsewhere)).toEqual([h.model.id, voice.id]);
+    expect(new Set(yield* h.store.link([h.model, voice], elsewhere))).toEqual(
+      new Set([h.model, voice]),
+    );
     expect(yield* h.store.installedPath(voice)).toBeDefined();
     expect(yield* h.store.linkedFrom(h.model)).toBe(existing);
     expect(yield* h.store.installedPath(h.model)).toBe(h.stale);

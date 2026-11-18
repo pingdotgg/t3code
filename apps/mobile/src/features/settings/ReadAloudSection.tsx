@@ -3,6 +3,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import * as Speech from "expo-speech";
+import { useGT } from "gt-react-native";
 import { ScrollView, TextInput, View } from "react-native";
 import {
   AuthSettingsWriteScope,
@@ -34,6 +35,7 @@ import { runSpeech } from "../voice-input/voiceDestination";
 import { readAloudController } from "../read-aloud/playback";
 
 export function ReadAloudSection() {
+  const gt = useGT();
   const preferences = useAtomValue(mobilePreferencesAtom);
   const update = useAtomSet(updateMobilePreferencesAtom);
   const settings = AsyncResult.isSuccess(preferences)
@@ -57,13 +59,17 @@ export function ReadAloudSection() {
     key: string;
     version: number;
     catalog: SpeechSynthesisCatalog;
-    error: string;
-  }>({ key: "", version: -1, catalog: EMPTY_SPEECH_SYNTHESIS_CATALOG, error: "" });
+    failed: boolean;
+  }>({ key: "", version: -1, catalog: EMPTY_SPEECH_SYNTHESIS_CATALOG, failed: false });
   const catalog =
     catalogState.key === catalogKey ? catalogState.catalog : EMPTY_SPEECH_SYNTHESIS_CATALOG;
   const catalogError =
     catalogState.key === catalogKey && catalogState.version === catalogVersion
-      ? catalogState.error || catalog.error || ""
+      ? catalogState.failed
+        ? gt(
+            "Could not load speech models. Check the environment connection and speech server setup.",
+          )
+        : catalog.error || ""
       : "";
   const model = settings.model || catalog.defaultModel;
   const [voices, setVoices] = useState<Speech.Voice[]>([]);
@@ -104,7 +110,12 @@ export function ReadAloudSection() {
     void runSpeech(getSpeechSynthesisModels(prepared, settings.provider), abort.signal).then(
       (value) => {
         if (!abort.signal.aborted)
-          setCatalogState({ key: catalogKey, version: catalogVersion, catalog: value, error: "" });
+          setCatalogState({
+            key: catalogKey,
+            version: catalogVersion,
+            catalog: value,
+            failed: false,
+          });
       },
       () => {
         if (!abort.signal.aborted)
@@ -112,8 +123,7 @@ export function ReadAloudSection() {
             key: catalogKey,
             version: catalogVersion,
             catalog: EMPTY_SPEECH_SYNTHESIS_CATALOG,
-            error:
-              "Could not load speech models. Check the environment connection and speech server setup.",
+            failed: true,
           });
       },
     );
@@ -124,9 +134,11 @@ export function ReadAloudSection() {
   }, [prepared, settings.provider, catalogKey, catalogVersion]);
   const selectedModel = catalog.models.find((entry) => entry.id === model);
   const install = settings.provider === "local" ? selectedModel?.install : undefined;
-  const [installing, setInstalling] = useState(false);
+  // Keyed by environment and model, so switching models mid-download doesn't move the spinner.
+  const installKey = JSON.stringify([settings.environmentId, selectedModel?.id]);
+  const [installing, setInstalling] = useState<string | null>(null);
   const downloading =
-    installing || install?.state === "downloading" || install?.state === "verifying";
+    installing === installKey || install?.state === "downloading" || install?.state === "verifying";
   // Waits for the catalog request in flight; refreshing again would abort it.
   const refreshing = catalogState.version !== catalogVersion;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Poll the environment's download progress while it runs.
@@ -137,7 +149,8 @@ export function ReadAloudSection() {
   }, [downloading, refreshing]);
   const changeInstall = (action: "download" | "cancel" | "remove") => {
     if (!prepared || !selectedModel) return;
-    setInstalling(action === "download");
+    const requestKey = installKey;
+    if (action === "download") setInstalling(requestKey);
     setError("");
     void runSpeech(
       action === "download"
@@ -151,12 +164,15 @@ export function ReadAloudSection() {
         () =>
           setError(
             action === "download"
-              ? "Could not download the model. Check the environment's connection and disk space."
-              : "Could not change the model. Try again.",
+              ? gt(
+                  "Could not download the model. Check the environment’s connection and disk space.",
+                )
+              : gt("Could not change the model. Try again."),
           ),
       )
       .finally(() => {
-        if (action === "download") setInstalling(false);
+        if (action === "download")
+          setInstalling((current) => (current === requestKey ? null : current));
         setCatalogVersion((value) => value + 1);
       });
   };
@@ -175,17 +191,24 @@ export function ReadAloudSection() {
   return (
     <>
       <ListSection
-        title="Read aloud"
-        footer="Hosted providers receive response text through your selected environment, use API billing, and share keys with dictation. A local model runs on that environment. Playback stops when you leave the thread."
+        title={gt("Read aloud")}
+        footer={gt(
+          "Hosted providers receive response text through your selected environment, use API billing, and share keys with dictation. A local model runs on that environment. Playback stops when you leave the thread.",
+        )}
       >
         <ListActionRow
-          label="Speech provider"
+          label={gt("Speech provider")}
           detail={
             settings.provider === "local"
-              ? (providerEnvironment?.label ?? "Unavailable environment")
-              : settings.provider === "off" || settings.provider === "system"
-                ? READ_ALOUD_LABELS[settings.provider]
-                : `${READ_ALOUD_LABELS[settings.provider]} via ${providerEnvironment?.label ?? "unavailable environment"}`
+              ? (providerEnvironment?.label ?? gt("Unavailable environment"))
+              : settings.provider === "off"
+                ? gt("Off", { $context: "read aloud disabled" })
+                : settings.provider === "system"
+                  ? gt("System voices")
+                  : gt("{provider} via {environment}", {
+                      provider: READ_ALOUD_LABELS[settings.provider],
+                      environment: providerEnvironment?.label ?? gt("unavailable environment"),
+                    })
           }
           onPress={() => {
             setSheet("source");
@@ -197,50 +220,52 @@ export function ReadAloudSection() {
               catalog.supportsModelSelection &&
               catalog.models.length > 0 && (
                 <ListActionRow
-                  label="Speech model"
-                  detail={selectedModel?.name || model || "Choose a model"}
+                  label={gt("Speech model")}
+                  detail={selectedModel?.name || model || gt("Choose a model")}
                   onPress={() => setSheet("model")}
                 />
               )}
             {(settings.provider === "system" ||
               (catalog.supportsVoiceSelection && catalog.models.length > 0)) && (
               <ListActionRow
-                label="Voice"
+                label={gt("Voice", { $context: "the speaker voice used to read text aloud" })}
                 detail={
                   voiceChoices.find((voice) => voice.id === settings.voice)?.name ||
                   settings.voice ||
-                  "Default"
+                  gt("Default", { $context: "default voice" })
                 }
                 onPress={() => setSheet("voice")}
               />
             )}
             <ListActionRow
-              label="Speed"
-              detail={`${settings.speed}×`}
+              label={gt("Speed")}
+              detail={gt("{speed}×", { speed: settings.speed })}
               onPress={() =>
                 change({ speed: settings.speed >= 1.5 ? 0.75 : settings.speed + 0.25 })
               }
             />
             <ListToggleRow
-              label="Background playback"
+              label={gt("Background playback")}
               value={settings.backgroundPlayback}
               onValueChange={(backgroundPlayback) => change({ backgroundPlayback })}
             />
             <ListToggleRow
-              label="Skip code blocks"
+              label={gt("Skip code blocks")}
               value={settings.skipCodeBlocks}
               onValueChange={(skipCodeBlocks) => change({ skipCodeBlocks })}
             />
             <ListActionRow
               label={
-                state.id === "preview" && state.status !== "error" ? "Stop preview" : "Play preview"
+                state.id === "preview" && state.status !== "error"
+                  ? gt("Stop preview")
+                  : gt("Play preview")
               }
               onPress={() =>
                 state.id === "preview" && state.status !== "error"
                   ? readAloudController.stop()
                   : void readAloudController.start(
                       "preview",
-                      "This is T3 Code. Your agent's response is ready to read aloud.",
+                      gt("This is T3 Code. Your agent’s response is ready to read aloud."),
                       settings,
                     )
               }
@@ -250,30 +275,32 @@ export function ReadAloudSection() {
       </ListSection>
       {install && prepared && selectedModel && (
         <ListSection
-          title="Local model"
-          footer="Runs on the selected environment, so replies are read without leaving it."
+          title={gt("Local model")}
+          footer={gt("Runs on the selected environment, so replies are read without leaving it.")}
         >
           {downloading ? (
             <ListActionRow
-              label={`Cancel ${selectedModel.name} download`}
+              label={gt("Cancel {name} download", { name: selectedModel.name })}
               detail={
-                install.state === "verifying" ? "Verifying…" : `${installProgress}% downloaded`
+                install.state === "verifying"
+                  ? gt("Verifying…")
+                  : gt("{percent}% downloaded", { percent: installProgress })
               }
               disabled={!canManage}
               onPress={() => changeInstall("cancel")}
             />
           ) : install.state === "installed" ? (
             <ListActionRow
-              label={`Remove ${selectedModel.name}`}
-              detail="Installed"
+              label={gt("Remove {name}", { name: selectedModel.name })}
+              detail={gt("Installed")}
               tone="danger"
               disabled={!canManage}
               onPress={() => changeInstall("remove")}
             />
           ) : (
             <ListActionRow
-              label={`Download ${selectedModel.name}`}
-              detail={`${Math.round(install.size / 1024 / 1024)} MB`}
+              label={gt("Download {name}", { name: selectedModel.name })}
+              detail={gt("{size} MB", { size: Math.round(install.size / 1024 / 1024) })}
               disabled={!canManage}
               onPress={() => changeInstall("download")}
             />
@@ -282,12 +309,12 @@ export function ReadAloudSection() {
       )}
       {cloud && prepared && canManage && (
         <ListSection
-          title="Speech API key"
-          footer="Leave this empty to keep using the key already saved for dictation."
+          title={gt("Speech API key")}
+          footer={gt("Leave this empty to keep using the key already saved for dictation.")}
         >
           <View className="gap-3 p-4">
             <TextInput
-              accessibilityLabel="Read-aloud API key"
+              accessibilityLabel={gt("Read-aloud API key")}
               secureTextEntry
               autoCapitalize="none"
               autoCorrect={false}
@@ -296,7 +323,7 @@ export function ReadAloudSection() {
               onChangeText={setKey}
             />
             <Button
-              label="Save key"
+              label={gt("Save key")}
               size="compact"
               disabled={!key.trim()}
               onPress={() => {
@@ -314,13 +341,13 @@ export function ReadAloudSection() {
                   },
                   () => {
                     if (requestVersion === keyRequestVersion.current)
-                      setError("Could not save the API key.");
+                      setError(gt("Could not save the API key."));
                   },
                 );
               }}
             />
             <Button
-              label="Remove shared API key"
+              label={gt("Remove shared API key")}
               size="compact"
               onPress={() => {
                 if (!catalog.apiKeyProvider) return;
@@ -335,7 +362,7 @@ export function ReadAloudSection() {
                   },
                   () => {
                     if (requestVersion === keyRequestVersion.current)
-                      setError("Could not remove the API key.");
+                      setError(gt("Could not remove the API key."));
                   },
                 );
               }}
@@ -351,7 +378,11 @@ export function ReadAloudSection() {
       {sheet && (
         <Sheet
           title={
-            sheet === "source" ? "Speech provider" : sheet === "model" ? "Speech model" : "Voice"
+            sheet === "source"
+              ? gt("Speech provider")
+              : sheet === "model"
+                ? gt("Speech model")
+                : gt("Voice", { $context: "the speaker voice used to read text aloud" })
           }
           onClose={() => setSheet(null)}
         >
@@ -362,7 +393,11 @@ export function ReadAloudSection() {
                   {(["off", "system"] as const).map((provider) => (
                     <ListChoiceRow
                       key={provider}
-                      label={READ_ALOUD_LABELS[provider]}
+                      label={
+                        provider === "off"
+                          ? gt("Off", { $context: "read aloud disabled" })
+                          : gt("System voices")
+                      }
                       selected={settings.provider === provider}
                       onPress={() => {
                         change({ provider, model: "", voice: "", environmentId: null });
@@ -372,7 +407,7 @@ export function ReadAloudSection() {
                   ))}
                 </ListSection>
                 {environments.length > 0 && (
-                  <ListSection title="On an environment">
+                  <ListSection title={gt("On an environment")}>
                     {environments.map((environment) => (
                       <ListChoiceRow
                         key={environment.environmentId}
@@ -397,7 +432,7 @@ export function ReadAloudSection() {
                 {environments.map((environment) => (
                   <ListSection
                     key={environment.environmentId}
-                    title={`Cloud via ${environment.label}`}
+                    title={gt("Cloud via {environment}", { environment: environment.label })}
                   >
                     {CloudSpeechProvider.literals.map((provider) => (
                       <ListChoiceRow
@@ -428,7 +463,7 @@ export function ReadAloudSection() {
                     key={model.id}
                     label={model.name}
                     {...(model.install && model.id === catalog.defaultModel
-                      ? { description: "Recommended" }
+                      ? { description: gt("Recommended") }
                       : {})}
                     selected={(settings.model || catalog.defaultModel) === model.id}
                     onPress={() => {
@@ -443,8 +478,8 @@ export function ReadAloudSection() {
                 {voiceChoices.length === 0 && (
                   <View className="p-4">
                     <TextInput
-                      accessibilityLabel="Read-aloud voice"
-                      placeholder="Default voice"
+                      accessibilityLabel={gt("Read-aloud voice")}
+                      placeholder={gt("Default voice")}
                       value={settings.voice}
                       onChangeText={(voice) => change({ voice })}
                       autoCapitalize="none"
@@ -454,7 +489,7 @@ export function ReadAloudSection() {
                   </View>
                 )}
                 <ListChoiceRow
-                  label="Default"
+                  label={gt("Default", { $context: "default voice" })}
                   selected={!settings.voice}
                   onPress={() => {
                     change({ voice: "" });

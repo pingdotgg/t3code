@@ -89,7 +89,7 @@ it.effect("links a model file already on this machine instead of downloading it"
         link: (models, source) =>
           Effect.sync(() => {
             linked = source === "~/models";
-            return linked ? models.map((model) => model.id) : [];
+            return linked ? models : [];
           }),
         isReady: () => Effect.sync(() => linked),
         linkedFrom: () => Effect.sync(() => (linked ? "/Users/me/models/model.gguf" : undefined)),
@@ -105,6 +105,29 @@ it.effect("links a model file already on this machine instead of downloading it"
             linkedFrom: "/Users/me/models/model.gguf",
           });
           expect(download).not.toHaveBeenCalled();
+        }),
+    );
+  }),
+);
+
+it.effect("completes the model a linked file belongs to, not another installed model", () =>
+  Effect.gen(function* () {
+    let linked: ReadonlyArray<SpeechModelStore.ModelFile> = [];
+    const downloaded: Array<string> = [];
+    yield* withService(
+      {
+        download: (file) => Effect.sync(() => (downloaded.push(file.filename), "/unused")),
+        link: (files) =>
+          Effect.sync(
+            () => (linked = files.filter((file) => file.filename.endsWith("-alba.safetensors"))),
+          ),
+        isReady: (file) =>
+          Effect.sync(() => file.filename.startsWith("supertonic") || linked.includes(file)),
+      },
+      (service) =>
+        Effect.gen(function* () {
+          yield* service.link("~/voices");
+          expect(downloaded).toContain("PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf");
         }),
     );
   }),

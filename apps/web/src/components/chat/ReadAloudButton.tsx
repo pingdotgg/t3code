@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
+import { useGT } from "gt-react";
 import { PlayIcon, SquareIcon, Volume2Icon } from "lucide-react";
 import { useClientSettings } from "../../hooks/useSettings";
 import { readAloudController, warmReadAloud } from "../../speech/readAloud";
@@ -14,14 +15,15 @@ export function ReadAloudButton({ id, text }: { id: string; text: string }) {
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Loading the environment's local model while replies are on screen hides its startup from the first click.
   useEffect(() => warmReadAloud(settings), [settings]);
+  const gt = useGT();
   if (settings.provider === "off") return null;
   const active = state.id === id;
   const stoppable = active && (state.status === "playing" || state.status === "loading");
   const label = stoppable
-    ? "Stop reading"
+    ? gt("Stop reading")
     : active && state.status === "paused"
-      ? "Resume reading"
-      : "Read aloud";
+      ? gt("Resume reading")
+      : gt("Read aloud");
   const Icon = stoppable
     ? SquareIcon
     : active && state.status === "paused"
@@ -44,7 +46,7 @@ export function ReadAloudButton({ id, text }: { id: string; text: string }) {
               if (result.id === id && result.status === "error")
                 toastManager.add({
                   type: "error",
-                  title: "Could not read aloud",
+                  title: gt("Could not read aloud"),
                   description: result.error,
                 });
             }}
@@ -55,7 +57,7 @@ export function ReadAloudButton({ id, text }: { id: string; text: string }) {
       />
       <TooltipPopup>
         {active && state.status === "loading"
-          ? "Cancel speech generation"
+          ? gt("Cancel speech generation")
           : active && state.error
             ? state.error
             : label}

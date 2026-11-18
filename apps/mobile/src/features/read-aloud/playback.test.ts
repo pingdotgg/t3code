@@ -184,6 +184,45 @@ it("removes lock-screen playback when recording takes audio focus", async () => 
   }
 });
 
+it("keeps a reply resumable when recording takes focus while playback activates", async () => {
+  const activating = Promise.withResolvers<void>();
+  const activated = Promise.withResolvers<void>();
+  vi.mocked(setAudioModeAsync).mockImplementationOnce(async () => {
+    activating.resolve();
+    await activated.promise;
+  });
+  vi.mocked(createAudioPlayer).mockReturnValue({
+    play: vi.fn(),
+    pause: vi.fn(),
+    release: vi.fn(),
+    setPlaybackRate: vi.fn(),
+    setActiveForLockScreen: vi.fn(),
+    addListener: vi.fn(),
+  } as unknown as ReturnType<typeof createAudioPlayer>);
+  const settled = Promise.withResolvers<string>();
+  const unsubscribe = readAloudController.subscribe(() => {
+    const { status } = readAloudController.getSnapshot();
+    if (status === "playing" || status === "error") settled.resolve(status);
+  });
+  void readAloudController.start("cloud", "reply", {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "openai",
+    environmentId: EnvironmentId.make("host"),
+  });
+  await activating.promise;
+  const recorder = acquireAudioSession("recording");
+  try {
+    expect(readAloudController.getSnapshot().status).toBe("paused");
+    activated.resolve();
+    await readAloudController.resume();
+    expect(await settled.promise).toBe("playing");
+  } finally {
+    unsubscribe();
+    readAloudController.stop();
+    await releaseAudioSession(recorder);
+  }
+});
+
 it("cancels Android default speech while the native engine initializes", async () => {
   using _os = vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
   const loading = Promise.withResolvers<void>();

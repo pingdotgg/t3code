@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import {
   createReadAloudController,
   createReadAloudWarmup,
@@ -91,8 +92,7 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
   return {
     play: async () => {
       if (pauseInBackground(settings)) return;
-      await session.play();
-      if (!session.requested) throw new Error("Finish recording before reading aloud.");
+      if (!(await session.play())) throw new Error("Finish recording before reading aloud.");
     },
     pause: () => session.pause(),
     stop: () => {
@@ -205,8 +205,7 @@ export const readAloudController = createReadAloudController(async (text, settin
       if (pauseInBackground(settings)) return;
       if (settings.backgroundPlayback)
         player.setActiveForLockScreen(true, { title: "T3 Code", artist: "Read aloud" });
-      await session.play();
-      if (!session.requested) throw new Error("Finish recording before reading aloud.");
+      if (!(await session.play())) throw new Error("Finish recording before reading aloud.");
     },
     pause: () => session.pause(),
     stop: () => {
@@ -217,4 +216,4 @@ export const readAloudController = createReadAloudController(async (text, settin
     },
     finished,
   };
-});
+}, m);

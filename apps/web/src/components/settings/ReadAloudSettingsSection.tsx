@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { T, useGT, Var } from "gt-react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -22,7 +23,11 @@ import {
   type SpeechSynthesisCatalog,
   type SpeechSynthesisProvider,
 } from "@t3tools/contracts";
-import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
+import {
+  getClientSettings,
+  useClientSettings,
+  updateClientSettings,
+} from "../../hooks/useSettings";
 import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
@@ -65,6 +70,7 @@ function LocalSpeechModel({
   recommended,
   refreshing,
   onSelect,
+  onDownloaded,
   onChanged,
 }: {
   prepared: PreparedConnection;
@@ -74,8 +80,10 @@ function LocalSpeechModel({
   /** A catalog request is in flight; polling waits for it rather than aborting it. */
   refreshing: boolean;
   onSelect: () => void;
+  onDownloaded: () => void;
   onChanged: () => void;
 }) {
+  const gt = useGT();
   const canManage = useEnvironmentScope(prepared.environmentId, AuthSettingsWriteScope);
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState("");
@@ -92,19 +100,21 @@ function LocalSpeechModel({
     setRequesting(true);
     setError("");
     try {
-      await runEnvironmentSpeech(
+      const catalog = await runEnvironmentSpeech(
         action === "download"
           ? downloadSpeechSynthesisModel(prepared, model.id)
           : action === "cancel"
             ? cancelSpeechSynthesisModelDownload(prepared, model.id)
             : removeSpeechSynthesisModel(prepared, model.id),
       );
-      if (action === "download") onSelect();
+      // A cancelled download also resolves, with the model still downloadable.
+      const installed = catalog.models.find((entry) => entry.id === model.id)?.install?.state;
+      if (action === "download" && installed === "installed") onDownloaded();
     } catch {
       setError(
         action === "download"
-          ? "Could not download the model. Check the environment's connection and disk space."
-          : "Could not change the model. Try again.",
+          ? gt("Could not download the model. Check the environment’s connection and disk space.")
+          : gt("Could not change the model. Try again."),
       );
     }
     setRequesting(false);
@@ -123,24 +133,28 @@ function LocalSpeechModel({
             {recommended && (
               <Badge variant="outline">
                 <StarIcon className="mr-1 size-3" />
-                Recommended
+                {gt("Recommended")}
               </Badge>
             )}
           </div>
           <p className="mt-0.5 text-xs leading-normal text-muted-foreground">
-            {model.description} {formatSize(install.size)}
-            {install.state === "installed" ? "." : " download."}
+            {model.description}{" "}
+            {install.state === "installed"
+              ? gt("{size}.", { size: formatSize(install.size) })
+              : gt("{size} download.", { size: formatSize(install.size) })}
           </p>
           {install.linkedFrom && (
             <p className="mt-0.5 break-all text-2xs text-muted-foreground">
-              Using your file at {install.linkedFrom}
+              <T>
+                Using your file at <Var>{install.linkedFrom}</Var>
+              </T>
             </p>
           )}
           {downloading && (
             <div className="mt-2">
               <div
                 role="progressbar"
-                aria-label={`${model.name} download progress`}
+                aria-label={gt("{name} download progress", { name: model.name })}
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={Math.round(progress)}
@@ -153,8 +167,8 @@ function LocalSpeechModel({
               </div>
               <p className="mt-1 text-2xs text-muted-foreground">
                 {install.state === "verifying"
-                  ? "Verifying download…"
-                  : `${Math.round(progress)}% downloaded`}
+                  ? gt("Verifying download…")
+                  : gt("{percent}% downloaded", { percent: Math.round(progress) })}
               </p>
             </div>
           )}
@@ -169,7 +183,7 @@ function LocalSpeechModel({
             <Button
               size="icon-sm"
               variant="outline"
-              aria-label={`Cancel ${model.name} download`}
+              aria-label={gt("Cancel {name} download", { name: model.name })}
               disabled={!canManage}
               onClick={() => void run("cancel")}
             >
@@ -183,16 +197,16 @@ function LocalSpeechModel({
               onClick={() => void run("download")}
             >
               <DownloadIcon />
-              Download
+              <T>Download</T>
             </Button>
           ) : selected ? (
             <Button size="sm" variant="secondary" disabled>
               <CheckIcon />
-              Selected
+              <T>Selected</T>
             </Button>
           ) : (
             <Button size="sm" variant="outline" onClick={onSelect}>
-              Use model
+              <T>Use model</T>
             </Button>
           )}
           {install.state === "installed" && (
@@ -202,8 +216,8 @@ function LocalSpeechModel({
               disabled={!canManage || requesting}
               aria-label={
                 install.linkedFrom
-                  ? `Stop using your ${model.name} file; the file stays on disk`
-                  : `Delete ${model.name}`
+                  ? gt("Stop using your {name} file; the file stays on disk", { name: model.name })
+                  : gt("Delete {name}", { name: model.name })
               }
               onClick={() => void run("remove")}
             >
@@ -224,6 +238,7 @@ function LocalSpeechModelLink({
   prepared: PreparedConnection;
   onChanged: () => void;
 }) {
+  const gt = useGT();
   const canManage = useEnvironmentScope(prepared.environmentId, AuthSettingsWriteScope);
   const canReadFiles = useEnvironmentScope(prepared.environmentId, AuthFilesystemReadScope);
   const [path, setPath] = useState("");
@@ -240,7 +255,7 @@ function LocalSpeechModelLink({
         void runEnvironmentSpeech(linkSpeechSynthesisModels(prepared, path))
           .then(
             () => setPath(""),
-            () => setError("No speech model file was found at that path."),
+            () => setError(gt("No speech model file was found at that path.")),
           )
           .finally(() => {
             setLinking(false);
@@ -251,8 +266,8 @@ function LocalSpeechModelLink({
       <div className="w-full min-w-0 flex-1">
         <Input
           size="compact"
-          aria-label="Path to a model file or folder already on this environment"
-          placeholder="Already downloaded elsewhere? Paste the model file or folder path"
+          aria-label={gt("Path to a model file or folder already on this environment")}
+          placeholder={gt("Already downloaded elsewhere? Paste the model file or folder path")}
           value={path}
           onChange={(event) => setPath(event.target.value)}
         />
@@ -263,13 +278,14 @@ function LocalSpeechModelLink({
         )}
       </div>
       <Button type="submit" size="sm" variant="outline" disabled={linking || !path.trim()}>
-        Use existing
+        <T>Use existing</T>
       </Button>
     </form>
   );
 }
 
 export function ReadAloudSettingsSection() {
+  const gt = useGT();
   const settings = useClientSettings((value) => value.readAloud);
   const { environments } = useEnvironments();
 
@@ -285,13 +301,17 @@ export function ReadAloudSettingsSection() {
     key: string;
     version: number;
     catalog: SpeechSynthesisCatalog;
-    error: string;
-  }>({ key: "", version: -1, catalog: EMPTY_SPEECH_SYNTHESIS_CATALOG, error: "" });
+    failed: boolean;
+  }>({ key: "", version: -1, catalog: EMPTY_SPEECH_SYNTHESIS_CATALOG, failed: false });
   const catalog =
     catalogState.key === catalogKey ? catalogState.catalog : EMPTY_SPEECH_SYNTHESIS_CATALOG;
   const error =
     catalogState.key === catalogKey && catalogState.version === catalogVersion
-      ? catalogState.error || catalog.error || ""
+      ? catalogState.failed
+        ? gt(
+            "Could not load speech models. Check the selected environment and provider configuration.",
+          )
+        : catalog.error || ""
       : "";
   const model = settings.model || catalog.defaultModel;
   const localModels =
@@ -332,7 +352,12 @@ export function ReadAloudSettingsSection() {
     ).then(
       (result) => {
         if (!abort.signal.aborted)
-          setCatalogState({ key: catalogKey, version: catalogVersion, catalog: result, error: "" });
+          setCatalogState({
+            key: catalogKey,
+            version: catalogVersion,
+            catalog: result,
+            failed: false,
+          });
       },
       () => {
         if (!abort.signal.aborted)
@@ -340,8 +365,7 @@ export function ReadAloudSettingsSection() {
             key: catalogKey,
             version: catalogVersion,
             catalog: EMPTY_SPEECH_SYNTHESIS_CATALOG,
-            error:
-              "Could not load speech models. Check the selected environment and provider configuration.",
+            failed: true,
           });
       },
     );
@@ -368,20 +392,28 @@ export function ReadAloudSettingsSection() {
     (entry) => entry.environmentId === settings.environmentId,
   );
   return (
-    <SettingsSection id="read-aloud-section" title="Read aloud">
+    <SettingsSection id="read-aloud-section" title={gt("Read aloud")}>
       <SettingsSearchTarget id="read-aloud">
         <SettingsRow
-          title="Speech provider"
+          title={gt("Speech provider")}
           description={
             keyMissing && cloudProvider ? (
               <span className="text-destructive">
-                {selectedEnvironment?.label ?? "This environment"} has no{" "}
-                {CLOUD_SPEECH_PROVIDER_NAMES[cloudProvider]} API key. Add one with the key button.
+                {selectedEnvironment
+                  ? gt("{environment} has no {company} API key. Add one with the key button.", {
+                      environment: selectedEnvironment.label,
+                      company: CLOUD_SPEECH_PROVIDER_NAMES[cloudProvider],
+                    })
+                  : gt("This environment has no {company} API key. Add one with the key button.", {
+                      company: CLOUD_SPEECH_PROVIDER_NAMES[cloudProvider],
+                    })}
               </span>
             ) : remote && error ? (
               <span className="text-destructive">{error}</span>
             ) : (
-              "Read completed replies with the play button beside Copy. Hosted providers receive the response text through the selected environment; a local model runs on it."
+              gt(
+                "Read completed replies with the play button beside Copy. Hosted providers receive the response text through the selected environment; a local model runs on it.",
+              )
             )
           }
           control={
@@ -415,7 +447,7 @@ export function ReadAloudSettingsSection() {
               >
                 <SelectTrigger
                   size="sm"
-                  aria-label="Read-aloud provider"
+                  aria-label={gt("Read-aloud provider")}
                   className="w-auto min-w-0 max-w-72"
                 >
                   <SelectValue>
@@ -427,14 +459,16 @@ export function ReadAloudSettingsSection() {
                       )}
                       <span className="truncate">
                         {settings.provider === "local"
-                          ? (selectedEnvironment?.label ?? "Chosen environment (unavailable)")
-                          : READ_ALOUD_LABELS[settings.provider]}
-                        {remote && settings.provider !== "local" && (
-                          <span className="text-muted-foreground">
-                            {" via "}
-                            {selectedEnvironment?.label ?? "unavailable environment"}
-                          </span>
-                        )}
+                          ? (selectedEnvironment?.label ?? gt("Chosen environment (unavailable)"))
+                          : remote
+                            ? gt("{provider} via {environment}", {
+                                provider: READ_ALOUD_LABELS[settings.provider],
+                                environment:
+                                  selectedEnvironment?.label ?? gt("unavailable environment"),
+                              })
+                            : settings.provider === "system"
+                              ? gt("System voices")
+                              : gt("Off", { $context: "read aloud disabled" })}
                       </span>
                     </span>
                   </SelectValue>
@@ -443,21 +477,25 @@ export function ReadAloudSettingsSection() {
                   <SelectItem value="off">
                     <span className="flex items-center gap-2">
                       <SpeechProviderIcon provider="off" />
-                      Off
+                      {gt("Off", { $context: "read aloud disabled" })}
                     </span>
                   </SelectItem>
                   <SelectGroup>
-                    <SelectGroupLabel>On this device</SelectGroupLabel>
+                    <SelectGroupLabel>
+                      <T>On this device</T>
+                    </SelectGroupLabel>
                     <SelectItem value="system">
                       <span className="flex items-center gap-2">
                         <SpeechProviderIcon provider="system" />
-                        System voices
+                        {gt("System voices")}
                       </span>
                     </SelectItem>
                   </SelectGroup>
                   {environments.length > 0 && (
                     <SelectGroup>
-                      <SelectGroupLabel>On an environment</SelectGroupLabel>
+                      <SelectGroupLabel>
+                        <T>On an environment</T>
+                      </SelectGroupLabel>
                       {environments.map((environment) => (
                         <SelectItem
                           key={environment.environmentId}
@@ -473,12 +511,19 @@ export function ReadAloudSettingsSection() {
                   )}
                   {environments.map((environment) => (
                     <SelectGroup key={environment.environmentId}>
-                      <SelectGroupLabel>Cloud via {environment.label}</SelectGroupLabel>
+                      <SelectGroupLabel>
+                        <T>
+                          Cloud via <Var>{environment.label}</Var>
+                        </T>
+                      </SelectGroupLabel>
                       {CloudSpeechProvider.literals.map((provider) => (
                         <SelectItem
                           key={provider}
                           value={`${provider}:${environment.environmentId}`}
-                          aria-label={`${READ_ALOUD_LABELS[provider]} via ${environment.label}`}
+                          aria-label={gt("{provider} via {environment}", {
+                            provider: READ_ALOUD_LABELS[provider],
+                            environment: environment.label,
+                          })}
                         >
                           <span className="flex items-center gap-2">
                             <SpeechProviderIcon provider={provider} />
@@ -489,7 +534,7 @@ export function ReadAloudSettingsSection() {
                     </SelectGroup>
                   ))}
                   {remote && !selectedEnvironment && (
-                    <SelectItem value={source}>Chosen environment (unavailable)</SelectItem>
+                    <SelectItem value={source}>{gt("Chosen environment (unavailable)")}</SelectItem>
                   )}
                 </SelectPopup>
               </Select>
@@ -501,7 +546,7 @@ export function ReadAloudSettingsSection() {
                         size="icon-sm"
                         type="button"
                         variant="ghost"
-                        aria-label="Manage read-aloud key"
+                        aria-label={gt("Manage read-aloud key")}
                         onClick={() =>
                           setPendingCloud({
                             provider: cloudProvider,
@@ -513,7 +558,9 @@ export function ReadAloudSettingsSection() {
                       </Button>
                     }
                   />
-                  <TooltipPopup>Manage key</TooltipPopup>
+                  <TooltipPopup>
+                    <T>Manage key</T>
+                  </TooltipPopup>
                 </Tooltip>
               )}
             </div>
@@ -547,14 +594,16 @@ export function ReadAloudSettingsSection() {
         <>
           {prepared && localModels.length > 0 && (
             <SettingsRow
-              title="Models"
-              description="Downloaded once to the selected environment, which reads replies without the text leaving it."
+              title={gt("Models")}
+              description={gt(
+                "Downloaded once to the selected environment, which reads replies without the text leaving it.",
+              )}
               className="@container/voice-models"
             >
               <div
                 className="mt-3 mb-2 divide-y divide-border/60 rounded-lg border border-border/60"
                 role="region"
-                aria-label="Read-aloud models"
+                aria-label={gt("Read-aloud models")}
               >
                 {localModels.map((entry) => (
                   <LocalSpeechModel
@@ -565,6 +614,17 @@ export function ReadAloudSettingsSection() {
                     recommended={entry.id === catalog.defaultModel}
                     refreshing={catalogState.version !== catalogVersion}
                     onSelect={() => change({ model: entry.id, voice: "" })}
+                    onDownloaded={() => {
+                      // Settings may have moved on while the model downloaded.
+                      const current = getClientSettings().readAloud;
+                      if (
+                        current.provider === "local" &&
+                        current.environmentId === prepared.environmentId
+                      )
+                        void updateClientSettings({
+                          readAloud: { ...current, model: entry.id, voice: "" },
+                        });
+                    }}
                     onChanged={refreshCatalog}
                   />
                 ))}
@@ -574,8 +634,8 @@ export function ReadAloudSettingsSection() {
           )}
           {cloudProvider && catalog.supportsModelSelection && catalog.models.length > 0 && (
             <SettingsRow
-              title="Speech model"
-              description="Choose a speech model from the provider catalog."
+              title={gt("Speech model")}
+              description={gt("Choose a speech model from the provider catalog.")}
               control={
                 <Select
                   value={model}
@@ -583,11 +643,11 @@ export function ReadAloudSettingsSection() {
                     if (value) change({ model: value, voice: "" });
                   }}
                 >
-                  <SelectTrigger size="sm" aria-label="Read-aloud model">
+                  <SelectTrigger size="sm" aria-label={gt("Read-aloud model")}>
                     <SelectValue>
                       {catalog.models.find((entry) => entry.id === model)?.name ||
                         model ||
-                        "Choose a model"}
+                        gt("Choose a model")}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -604,8 +664,8 @@ export function ReadAloudSettingsSection() {
           {(settings.provider === "system" ||
             (catalog.supportsVoiceSelection && catalog.models.length > 0)) && (
             <SettingsRow
-              title="Voice"
-              description="An empty value uses the provider's default voice."
+              title={gt("Voice", { $context: "the speaker voice used to read text aloud" })}
+              description={gt("An empty value uses the provider’s default voice.")}
               control={
                 voices.length ? (
                   <Select
@@ -614,13 +674,16 @@ export function ReadAloudSettingsSection() {
                       if (value) change({ voice: value === "default" ? "" : value });
                     }}
                   >
-                    <SelectTrigger size="sm" aria-label="Read-aloud voice">
+                    <SelectTrigger size="sm" aria-label={gt("Read-aloud voice")}>
                       <SelectValue>
-                        {voices.find((entry) => entry.id === settings.voice)?.name || "Default"}
+                        {voices.find((entry) => entry.id === settings.voice)?.name ||
+                          gt("Default", { $context: "default voice" })}
                       </SelectValue>
                     </SelectTrigger>
                     <SelectPopup align="end" alignItemWithTrigger={false}>
-                      <SelectItem value="default">Default</SelectItem>
+                      <SelectItem value="default">
+                        {gt("Default", { $context: "default voice" })}
+                      </SelectItem>
                       {voices.map((voice) => (
                         <SelectItem key={voice.id} value={voice.id}>
                           {voice.name}
@@ -630,8 +693,8 @@ export function ReadAloudSettingsSection() {
                   </Select>
                 ) : (
                   <Input
-                    aria-label="Read-aloud voice"
-                    placeholder="Default voice"
+                    aria-label={gt("Read-aloud voice")}
+                    placeholder={gt("Default voice")}
                     value={settings.voice}
                     onChange={(event) => change({ voice: event.target.value })}
                   />
@@ -640,8 +703,8 @@ export function ReadAloudSettingsSection() {
             />
           )}
           <SettingsRow
-            title="Speed"
-            description="Playback speed."
+            title={gt("Speed")}
+            description={gt("Playback speed.")}
             control={
               <Select
                 value={String(settings.speed)}
@@ -649,7 +712,7 @@ export function ReadAloudSettingsSection() {
                   if (value) change({ speed: Number(value) });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Read-aloud speed">
+                <SelectTrigger size="sm" aria-label={gt("Read-aloud speed")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectPopup>
@@ -663,22 +726,24 @@ export function ReadAloudSettingsSection() {
             }
           />
           <SettingsRow
-            title="Skip code blocks"
-            description="Read the prose and inline identifiers without narrating fenced code blocks."
+            title={gt("Skip code blocks")}
+            description={gt(
+              "Read the prose and inline identifiers without narrating fenced code blocks.",
+            )}
             control={
               <Switch
-                aria-label="Skip code blocks when reading"
+                aria-label={gt("Skip code blocks when reading")}
                 checked={settings.skipCodeBlocks}
                 onCheckedChange={(skipCodeBlocks) => change({ skipCodeBlocks })}
               />
             }
           />
           <SettingsRow
-            title="Preview"
+            title={gt("Preview", { $context: "noun, a sample of the voice" })}
             description={
               state.id === "read-aloud-preview" && state.error
                 ? state.error
-                : "Play a short sample using the selected speech provider."
+                : gt("Play a short sample using the selected speech provider.")
             }
             control={
               <Button
@@ -689,14 +754,14 @@ export function ReadAloudSettingsSection() {
                     ? readAloudController.stop()
                     : void readAloudController.start(
                         "read-aloud-preview",
-                        "This is T3 Code. Your agent's response is ready to read aloud.",
+                        gt("This is T3 Code. Your agent’s response is ready to read aloud."),
                         settings,
                       )
                 }
               >
                 {state.id === "read-aloud-preview" && state.status !== "error"
-                  ? "Stop preview"
-                  : "Play preview"}
+                  ? gt("Stop preview")
+                  : gt("Play preview")}
               </Button>
             }
           />

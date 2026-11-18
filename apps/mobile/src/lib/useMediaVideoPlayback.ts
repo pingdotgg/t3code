@@ -9,7 +9,7 @@ import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "./videoAudioSe
 export function useMediaVideoPlayback(
   player: VideoPlayer,
   options: { readonly paused: boolean; readonly visible?: boolean },
-  playback: { play(): Promise<void>; pause(): void },
+  playback: { play(): Promise<unknown>; pause(): void },
 ) {
   const focused = useIsFocused();
   const fullscreenVideoOpen = useFullscreenVideoOpen();

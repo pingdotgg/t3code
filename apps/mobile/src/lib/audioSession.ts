@@ -141,14 +141,16 @@ export function createAudioPlaybackSession(
     get requested() {
       return token !== null;
     },
+    /** False when another owner refused playback; losing focus later pauses instead. */
     async play(prepare?: () => Promise<void>) {
       const current = token ?? acquire();
-      if (!current) return;
+      if (!current) return false;
       try {
         await prepare?.();
-        if (!(await activateAudioSession(current, nativePlayback, backgroundPlayback))) return;
-        if (token !== current || !isAudioSessionOwner(current)) return;
+        if (!(await activateAudioSession(current, nativePlayback, backgroundPlayback))) return true;
+        if (token !== current || !isAudioSessionOwner(current)) return true;
         player.play();
+        return true;
       } catch (error) {
         if (token === current) pause("stop");
         throw error;

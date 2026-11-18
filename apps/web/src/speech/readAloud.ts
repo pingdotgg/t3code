@@ -1,3 +1,4 @@
+import { m } from "~/i18n/messages";
 import { speechSpeedAppliedByProvider, type SpeechSynthesisCatalog } from "@t3tools/contracts";
 import {
   createReadAloudController,
@@ -108,4 +109,4 @@ export const readAloudController = createReadAloudController(async (text, settin
     },
     finished,
   };
-});
+}, m);

@@ -60,12 +60,12 @@ export class SpeechModelStore extends Context.Service<
     >;
     /**
      * Installs catalog files already on this machine as symlinks, never copies.
-     * `source` is a file or a folder to search; returns the ids it installed.
+     * `source` is a file or a folder to search; returns the files it installed.
      */
     readonly link: (
       models: ReadonlyArray<ModelFile>,
       source: string,
-    ) => Effect.Effect<ReadonlyArray<string>, PlatformError>;
+    ) => Effect.Effect<ReadonlyArray<ModelFile>, PlatformError>;
     /** The outside file a linked model points at. */
     readonly linkedFrom: (model: ModelFile) => Effect.Effect<string | undefined>;
     /** Removes T3 Code's file or link; a linked file itself is left in place. */
@@ -286,7 +286,7 @@ const make = Effect.gen(function* () {
           linked.add(model);
         }
       }
-      return [...linked].map((model) => model.id);
+      return [...linked];
     },
   );
 
