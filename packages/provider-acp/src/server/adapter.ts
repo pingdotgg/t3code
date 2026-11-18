@@ -1702,6 +1702,7 @@ interface ActiveAcpSubagent {
   readonly parentProviderThreadId: ProviderThreadId;
   childSessionId: string | null;
   assistantText: string;
+  hasSyntheticResultMessage: boolean;
   readonly assistantMessages: Map<string, string>;
   // Messages whose latest text waits for a delayed flush.
   readonly pendingAssistantMessages: Set<string>;
@@ -2039,6 +2040,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           input.runtimePolicy;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
+        // Keep one settled owner so late full results can enrich its existing child rows.
+        const completedSubagentTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
         // Keyed by the agent's steer id; an injection can arrive before its send returns.
         const steerInjections = new Map<string, Deferred.Deferred<void>>();
         const steerInjection = (steerId: string) => {
@@ -3166,8 +3169,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           if (text.length === 0 && mode === "append") return;
           const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:message:${messageId ?? "result"}`;
+          // Unidentified native chunks share the fallback result slot.
+          if (messageId == null || messageId === "result") {
+            subagent.hasSyntheticResultMessage = false;
+          }
           const previous = subagent.assistantMessages.get(nativeItemId);
           const messageText = mode === "replace" ? text : `${previous ?? ""}${text}`;
+
           subagent.assistantMessages.set(nativeItemId, messageText);
           subagent.assistantText = messageText;
           if (mode === "append" && previous !== undefined) {
@@ -3400,7 +3408,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             existing !== undefined &&
             existing.task.status === update.status &&
             updateIsTerminal &&
-            existing.terminalStatusProjected
+            existing.terminalStatusProjected &&
+            (update.result === null || update.result === existing.task.result)
           ) {
             return;
           }
@@ -3453,7 +3462,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             model: update.model?.trim() || existing?.task.model || null,
             status: taskStatus,
             result: update.result ?? existing?.task.result ?? null,
-            completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
+            completedAt: acpSubagentStatusIsTerminal(taskStatus)
+              ? (existing?.task.completedAt ?? now)
+              : null,
             updatedAt: now,
           };
           const subagent: ActiveAcpSubagent = existing ?? {
@@ -3466,6 +3477,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             parentProviderThreadId: context.input.providerThread.id,
             childSessionId: null,
             assistantText: "",
+            hasSyntheticResultMessage: false,
             assistantMessages: new Map(),
             pendingAssistantMessages: new Set(),
             childItemOrdinals: new Map(),
@@ -3571,21 +3583,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
 
           yield* flushSubagentAssistant(subagent);
+          const previousResultMessage = subagent.hasSyntheticResultMessage
+            ? subagent.assistantMessages.get(`${nativeTaskId}:message:result`)
+            : undefined;
           // A failed child's result explains the failure; it is not the child's reply.
           if (
             taskStatus !== "running" &&
             reported.status !== "failed" &&
-            subagent.assistantText.length === 0 &&
-            update.result !== null
+            update.result !== null &&
+            (subagent.assistantText.length === 0 ||
+              (previousResultMessage !== undefined && previousResultMessage !== update.result))
           ) {
-            yield* emitSubagentAssistant(subagent, update.result);
+            yield* emitSubagentAssistant(subagent, update.result, "replace");
+            subagent.hasSyntheticResultMessage = true;
           }
           const result = update.result ?? subagent.task.result ?? (subagent.assistantText || null);
           subagent.task = {
             ...subagent.task,
             status: taskStatus,
             result,
-            completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
+            completedAt: acpSubagentStatusIsTerminal(taskStatus)
+              ? (subagent.task.completedAt ?? now)
+              : null,
             updatedAt: now,
           };
           const providerThreadId = subagent.task.providerThreadId;
@@ -3693,6 +3712,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // A new execution replaces its result; live ownership transfers keep their progress.
             child.subagent.task = { ...child.subagent.task, result: null };
             child.subagent.assistantText = "";
+            child.subagent.hasSyntheticResultMessage = false;
             child.subagent.assistantMessages.clear();
             child.subagent.pendingAssistantMessages.clear();
           }
@@ -5146,6 +5166,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         let applyFinalizedActiveTurnSubagentTerminal: (
           context: ActiveAcpTurn,
           notification: EffectAcpSchema.SessionNotification,
+          enrichOnly?: boolean,
         ) => Effect.Effect<boolean> = () => Effect.succeed(false);
 
         const projectAgentTerminalUpdate = Effect.fnUntraced(function* (
@@ -5376,6 +5397,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             return;
           }
+          const completed = yield* Ref.get(completedSubagentTurn);
+          if (
+            !(yield* Ref.get(stoppedRunQuarantine)) &&
+            completed !== null &&
+            completed !== context &&
+            completed.nativeThreadId === (yield* Ref.get(activeSessionId)) &&
+            (yield* applyFinalizedActiveTurnSubagentTerminal(completed, notification, true))
+          )
+            return;
           if (yield* followNativeChild(notification, context)) return;
           if (
             followsAgentWorkState &&
@@ -5534,6 +5564,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (wakeOutcome.stopProcessing) {
               return;
             }
+            if (completed?.subagentsBySessionId.has(notification.sessionId)) return;
             if (
               notification.sessionId !==
               ((yield* Ref.get(loadingSessionId)) ?? (yield* Ref.get(activeSessionId)))
@@ -6510,16 +6541,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         applyFinalizedActiveTurnSubagentTerminal = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           notification: EffectAcpSchema.SessionNotification,
+          enrichOnly = false,
         ) {
           if (flavor.extractSubagentUpdate === undefined) return false;
+          const active = yield* Ref.get(activeTurn);
 
           const applyTerminal = Effect.fnUntraced(function* (
             subagent: ActiveAcpSubagent,
             update: AcpAdapterV2SubagentUpdate,
           ) {
             if (!acpSubagentStatusIsTerminal(update.status)) return false;
+            if (enrichOnly && !acpSubagentStatusIsTerminal(subagent.task.status)) return false;
             if (acpSubagentStatusIsTerminal(subagent.task.status)) {
-              if (subagent.terminalStatusProjected || context.finalizedStatus !== "completed") {
+              if (
+                context.finalizedStatus !== "completed" ||
+                (subagent.terminalStatusProjected &&
+                  (update.result === null || update.result === subagent.task.result))
+              ) {
                 return true;
               }
             }
@@ -6546,6 +6584,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ) {
                 continue;
               }
+              if (
+                enrichOnly &&
+                active !== null &&
+                active !== context &&
+                (active.subagents.has(subagentUpdate.nativeTaskId) ||
+                  !context.subagents.has(subagentUpdate.nativeTaskId))
+              )
+                continue;
               const subagent =
                 context.subagents.get(subagentUpdate.nativeTaskId) ??
                 (subagentUpdate.childSessionId === null
@@ -6566,6 +6612,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (yield* applyTerminal(subagent, subagentUpdate)) return true;
             }
           }
+
+          if (enrichOnly && active !== null && active !== context) return false;
 
           if (
             sessionUpdate.sessionUpdate === "user_message_chunk" &&
@@ -7530,6 +7578,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
                 yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
                 yield* Ref.set(carryoverSubagents, null);
+                yield* Ref.set(completedSubagentTurn, null);
                 yield* Ref.set(suppressPostSettleMonitorPrompt, false);
                 yield* Ref.set(lastTurnRoute, null);
               }),
@@ -7595,6 +7644,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const mcpContext = yield* readMcpContext(threadId);
           const activationOptions = acpMcpActivation(mcpContext);
           prepareTerminalEnvironment(mcpContext, sessionId);
+          yield* Ref.set(completedSubagentTurn, null);
           yield* Ref.set(loadingSessionId, sessionId);
           const activated = yield* Effect.gen(function* () {
             return canLoadSession
@@ -8041,6 +8091,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(detachedBackgroundCommands, new Map());
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
               yield* Ref.set(carryoverSubagents, null);
+              yield* Ref.set(completedSubagentTurn, null);
               yield* Ref.set(lastTurnRoute, null);
             }),
           );
@@ -8222,6 +8273,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
+          yield* Ref.set(
+            completedSubagentTurn,
+            settledStatus === "completed" && !directStopQuarantine && context.subagents.size > 0
+              ? context
+              : null,
+          );
           yield* Ref.set(activeTurn, null);
           if (settledStatus === "completed" && !directStopQuarantine) {
             yield* detachBackgroundCommands(context);
@@ -9792,6 +9849,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       snapshotInput.providerThread.appThreadId,
                     );
                     prepareTerminalEnvironment(mcpContext, sessionId);
+                    yield* Ref.set(completedSubagentTurn, null);
                     yield* Ref.set(loadingSessionId, sessionId);
                     const activated = yield* runtime
                       .loadSession(sessionId, acpMcpActivation(mcpContext))
