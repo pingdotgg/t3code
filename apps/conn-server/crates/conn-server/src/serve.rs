@@ -48,6 +48,9 @@ pub struct ServeOptions {
     pub session_idle: Option<Duration>,
     /// `--sdk-host`. Read by `main` when it builds the Claude provider.
     pub sdk_host: Option<PathBuf>,
+    /// `--managed-provision`: serve managed callers on a second ingress
+    /// (`crate::managed`).
+    pub managed_provision: Option<PathBuf>,
 }
 
 impl ServeOptions {
@@ -96,6 +99,7 @@ impl ServeOptions {
             desktop,
             session_idle: args.session_idle,
             sdk_host: args.sdk_host,
+            managed_provision: args.managed_provision,
         }
     }
 }
@@ -126,7 +130,19 @@ pub async fn serve_with_instances(
         desktop,
         session_idle,
         sdk_host: _,
+        managed_provision,
     } = options;
+    // A managed target never starts on partial input.
+    let provision = match managed_provision {
+        Some(path) => Some(or_exit(
+            or_exit(
+                tokio::task::spawn_blocking(move || crate::managed::Provision::load(&path)).await,
+                "cannot read the managed provisioning",
+            ),
+            "managed provisioning refused",
+        )),
+        None => None,
+    };
     let _ownership = match home::acquire_ownership(&state_dir) {
         Ok(lock) => lock,
         Err(OwnershipError::Owned) => {
@@ -305,8 +321,13 @@ pub async fn serve_with_instances(
     crate::methods::provider::start_status_refresh(&state.deps);
     // `model-manifest.json`, fetched and cached as the T3 server's provider checks do.
     crate::model_manifest::start(state_dir.clone(), environment.clone());
-    if !is_desktop {
-        // One code, valid 24 hours, spent by the first device that pairs.
+    let managed_server = match provision {
+        Some(provision) => Some(start_managed(provision, &environment, &state).await),
+        None => None,
+    };
+    if !is_desktop && managed_server.is_none() {
+        // One code, valid 24 hours, spent by the first device that pairs. A managed target
+        // shows none: its native ingress is the restricted fixture path.
         match auth.issue_pairing_code(None, auth::STARTUP_PAIRING_CODE_TTL_MS) {
             Ok(pairing) => println!("pairingUrl: {}/pair#token={}", runtime.origin, pairing.code),
             Err(error) => eprintln!("conn-server: could not issue a pairing code: {error}"),
@@ -336,6 +357,9 @@ pub async fn serve_with_instances(
             let _ = tokio::time::timeout(Duration::from_secs(2), &mut server).await;
         }
     }
+    if let Some(managed) = managed_server {
+        managed.abort();
+    }
     // Shells and provider processes end with their whole process groups, so nothing they
     // started outlives the server.
     terminals.shutdown().await;
@@ -346,6 +370,53 @@ pub async fn serve_with_instances(
         // A failure exit also restarts units with Restart=on-failure.
         std::process::exit(1);
     }
+}
+
+/// Binds the managed ingress and starts its authority, probe, lease, ACK and notice tasks.
+/// Exits when the provisioning names another environment than this state directory's.
+async fn start_managed(
+    provision: crate::managed::Provision,
+    environment: &Environment,
+    state: &crate::AppState,
+) -> tokio::task::JoinHandle<()> {
+    use crate::managed::{self, gateway::Gateway};
+    if provision.environment_id != environment.environment_id() {
+        eprintln!("conn-server: managed provisioning names another environment");
+        std::process::exit(1);
+    }
+    let gateway: Arc<dyn Gateway> = Arc::new(or_exit(
+        managed::gateway::HttpsGateway::new(&provision),
+        "managed gateway",
+    ));
+    let tls = or_exit(managed::gateway::lab_tls(&provision.ca_pem), "managed CA");
+    let shared = managed::Shared::new(provision.environment_id.clone(), provision.generation);
+    shared.spawn(gateway.clone());
+    tokio::spawn(managed::notices::run(
+        shared.clone(),
+        gateway.clone(),
+        tls,
+        provision.generation,
+    ));
+    let listener = match tokio::net::TcpListener::bind(provision.listen).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!(
+                "conn-server: cannot listen on {} (managed): {error}",
+                provision.listen
+            );
+            std::process::exit(1);
+        }
+    };
+    if let Ok(addr) = listener.local_addr() {
+        println!("managed ingress on http://{addr}");
+    }
+    let ingress = managed::ingress::Managed::new(shared, gateway, provision.preview_tabs);
+    let app = managed::ingress::router(state.clone(), ingress);
+    tokio::spawn(async move {
+        if let Err(error) = managed::conn::serve(listener, app).await {
+            eprintln!("conn-server: managed ingress: {error}");
+        }
+    })
 }
 
 /// A start-up step that failed: print why and exit with status 1 instead of a panic.

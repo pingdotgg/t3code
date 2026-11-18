@@ -13,6 +13,15 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
 `tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.
 
+## Managed access, target side (item 4)
+
+`serve --managed-provision <file>` serves Orbit callers on a separate managed ingress and
+enforces Orbit's "Managed grant revocation" contract: Gateway introspection bound to the
+caller's TCP peer, ordered revisions with ACKs, an exact-edge fence of RPC sockets, streams,
+HTTP reads and preview viewers, and fail-closed loss of authority (probe 1 s, lease 3 s).
+`docs/managed-access.md` has the design, the lab measurements and the open readings. Proven
+against a fake Gateway on loopback; not yet against a lab Gateway. Legacy peer links stay.
+
 ## Orbit Instance facts at startup
 
 Conn Server reads Orbit’s existing `/etc/orbit/instance` at startup and publishes the optional

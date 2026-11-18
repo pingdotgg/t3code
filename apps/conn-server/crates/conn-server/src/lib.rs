@@ -11,6 +11,7 @@ pub mod http;
 pub mod instances;
 pub mod keybindings;
 pub mod limits;
+pub mod managed;
 pub mod methods;
 pub mod model_manifest;
 mod project;

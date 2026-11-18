@@ -543,3 +543,109 @@ async fn a_byte_windowed_chunk_holds_at_most_the_window_of_events() {
     );
     assert_eq!(values(&frames, 1).len(), 5);
 }
+
+/// A gate the test closes by hand.
+struct TestGate {
+    open: std::sync::atomic::AtomicBool,
+    closed: tokio::sync::watch::Sender<bool>,
+}
+
+impl TestGate {
+    fn new(open: bool) -> Arc<Self> {
+        Arc::new(Self {
+            open: std::sync::atomic::AtomicBool::new(open),
+            closed: tokio::sync::watch::channel(!open).0,
+        })
+    }
+
+    fn close(&self) {
+        self.open.store(false, Ordering::SeqCst);
+        let _ = self.closed.send(true);
+    }
+}
+
+impl Gate for TestGate {
+    fn state(&self) -> GateState {
+        if self.open.load(Ordering::SeqCst) {
+            GateState::Open
+        } else {
+            GateState::Closed
+        }
+    }
+
+    fn changed(&self) -> futures_core::future::BoxFuture<'static, ()> {
+        Box::pin(std::future::pending())
+    }
+
+    fn closed(&self) -> futures_core::future::BoxFuture<'static, ()> {
+        let mut closed = self.closed.subscribe();
+        Box::pin(async move {
+            let _ = closed.wait_for(|c| *c).await;
+        })
+    }
+}
+
+/// Managed access: a fence ends a running stream at once with a policy close, and no chunk
+/// the stream queued after it reaches the socket.
+#[tokio::test(start_paused = true)]
+async fn a_closed_gate_ends_the_session_and_sends_no_queued_frame() {
+    let mut table = MethodTable::new();
+    let producer = Producer::default();
+    producer.register(&mut table, "orchestration.subscribeShell", usize::MAX - 1);
+    let gate = TestGate::new(true);
+    let mut client = Client::connect(
+        table,
+        SessionOptions {
+            gate: Some(SessionGate(gate.clone())),
+            ..options()
+        },
+    );
+    client.request(1, "orchestration.subscribeShell", json!({}));
+    let frames = client.frames().await;
+    assert!(!chunks(&frames, 1).is_empty());
+    let dropped = producer.on_drop();
+    // The producer has more queued; the gate closes before the client acks.
+    gate.open.store(false, Ordering::SeqCst);
+    client.ack(1);
+    assert_eq!(client.drain().await, vec![Sent::Close(CLOSE_POLICY)]);
+    gate.close();
+    assert!(dropped.await.is_ok(), "the stream's producer was dropped");
+}
+
+/// A gate that is already closed when a request arrives refuses the dispatch: the handler
+/// never runs. This is the fence that lands during the upgrade.
+#[tokio::test(start_paused = true)]
+async fn a_closed_gate_refuses_dispatch() {
+    let mut table = MethodTable::new();
+    let producer = Producer::default();
+    producer.register(&mut table, "orchestration.subscribeShell", 5);
+    let gate = TestGate::new(true);
+    let mut client = Client::connect(
+        table,
+        SessionOptions {
+            gate: Some(SessionGate(gate.clone())),
+            ..options()
+        },
+    );
+    settle().await;
+    gate.open.store(false, Ordering::SeqCst);
+    client.request(1, "orchestration.subscribeShell", json!({}));
+    assert_eq!(client.drain().await, vec![Sent::Close(CLOSE_POLICY)]);
+    assert_eq!(producer.produced.load(Ordering::SeqCst), 0);
+}
+
+/// The gate's close signal ends an idle session without any frame or call.
+#[tokio::test(start_paused = true)]
+async fn a_gate_close_ends_an_idle_session() {
+    let gate = TestGate::new(true);
+    let mut client = Client::connect(
+        MethodTable::new(),
+        SessionOptions {
+            gate: Some(SessionGate(gate.clone())),
+            ..options()
+        },
+    );
+    settle().await;
+    gate.close();
+    assert_eq!(client.drain().await, vec![Sent::Close(CLOSE_POLICY)]);
+}

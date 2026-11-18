@@ -645,6 +645,7 @@ async fn ws(
             principal: Some(Arc::new(principal)),
             ..CallContext::default()
         },
+        gate: None,
     };
     let table = state.table.clone();
     let auth = state.auth;

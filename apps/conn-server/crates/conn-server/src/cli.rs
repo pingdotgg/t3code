@@ -30,7 +30,8 @@ usage:
   conn-server [serve] [--host <host>] [--port <port>] [--listen <host:port>]
               [--base-dir <dir>] [--state-dir <dir>] [--project <dir>]... [--label <name>]
               [--mode web|desktop] [--bootstrap-fd <fd>] [--no-browser]
-              [--session-idle-timeout <minutes>] [--sdk-host <path>] [<cwd>]
+              [--session-idle-timeout <minutes>] [--sdk-host <path>]
+              [--managed-provision <file>] [<cwd>]
   conn-server pair [--scopes <list>] [--ttl <ttl>] [--label <label>]
   conn-server auth pairing create [--scopes <list>] [--ttl <ttl>] [--label <label>] [--base-url <url>] [--json]
   conn-server auth pairing list [--json]
@@ -73,6 +74,8 @@ pub struct ServeArgs {
     pub session_idle: Option<std::time::Duration>,
     /// `--sdk-host`: where the SDK host is. `None`: found by the provider.
     pub sdk_host: Option<PathBuf>,
+    /// `--managed-provision`: the protected input of a managed target (`managed/provision.rs`).
+    pub managed_provision: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -436,6 +439,7 @@ fn serve_args(args: &Args, state_dir: PathBuf) -> Result<Command, String> {
         "--log-ws-events",
         "--session-idle-timeout",
         "--sdk-host",
+        "--managed-provision",
     ])?;
     let subcommand = args.positionals.first().map(String::as_str);
     let positional_cwd = match subcommand {
@@ -510,6 +514,7 @@ fn serve_args(args: &Args, state_dir: PathBuf) -> Result<Command, String> {
         bootstrap_fd,
         session_idle,
         sdk_host: args.value("--sdk-host").map(PathBuf::from),
+        managed_provision: args.value("--managed-provision").map(PathBuf::from),
     }))
 }
 

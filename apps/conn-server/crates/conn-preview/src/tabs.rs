@@ -12,7 +12,7 @@ use tokio::time::Instant;
 mod profiles;
 mod viewer;
 pub use crate::screencast::Frame as ViewerFrame;
-pub use viewer::{Output as ViewerOutput, Viewer};
+pub use viewer::{ADMISSION_REFUSED, Output as ViewerOutput, Viewer};
 
 const HOST_IDLE: Duration = Duration::from_secs(5 * 60);
 

@@ -184,6 +184,21 @@ impl MethodTable {
         );
     }
 
+    /// A table with only the methods named in `allow`, and the same disconnect handlers. The
+    /// managed ingress serves each profile from one: a method outside it answers "not
+    /// supported", as an unregistered method does.
+    pub fn restricted(&self, allow: &[&str]) -> MethodTable {
+        MethodTable {
+            handlers: self
+                .handlers
+                .iter()
+                .filter(|(tag, _)| allow.contains(tag))
+                .map(|(tag, handler)| (*tag, handler.clone()))
+                .collect(),
+            disconnect: self.disconnect.clone(),
+        }
+    }
+
     /// The handler for `tag`, or `None` when the method is not supported.
     pub fn get(&self, tag: &str) -> Option<&Handler> {
         self.handlers.get(tag)

@@ -57,6 +57,16 @@ rustix = { workspace = true, features = ["process", "event", "fs"] }
 futures-core = "0.3"
 # Parses the Orbit Instance URL the same way the TypeScript server does. Already in the graph.
 url = "2"
+# Managed access (`src/managed/`): the Gateway's target routes over HTTPS with the lab Orbit CA
+# only, and its Reverb notices over a WebSocket. All of these are already in the tree, at these
+# versions, through axum and conn-source-control; no new crate is built.
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+http-body-util = "0.1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 
 [dev-dependencies]
 conn-support = { workspace = true, features = ["test-util"] }

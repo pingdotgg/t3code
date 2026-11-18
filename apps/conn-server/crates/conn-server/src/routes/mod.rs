@@ -9,7 +9,7 @@ use crate::AppState;
 mod assets;
 mod hooks;
 pub mod mcp;
-mod preview;
+pub(crate) mod preview;
 mod pull_requests;
 
 pub fn router() -> Router<AppState> {
