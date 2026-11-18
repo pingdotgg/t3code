@@ -173,7 +173,7 @@ export function WorktreeBaseBranchPicker({
               value={itemValue}
               onClick={() => selectItem(itemValue)}
             >
-              <span className="truncate">Use &quot;{trimmedQuery}&quot;</span>
+              <span className="truncate">{gt('Use "{ref}"', { ref: trimmedQuery })}</span>
             </ComboboxItem>
           );
         }

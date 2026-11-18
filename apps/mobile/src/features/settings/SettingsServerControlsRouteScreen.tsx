@@ -472,11 +472,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   {projectSelected ? (
                     <SettingsRow
                       icon="arrow.triangle.branch"
-                      label="Base branch"
+                      label={gt("Base branch")}
                       value={
                         isMixed("newWorktreesBaseBranch")
-                          ? "Mixed"
-                          : uniform("newWorktreesBaseBranch") || "Repository default"
+                          ? gt("Mixed")
+                          : uniform("newWorktreesBaseBranch") || gt("Repository default")
                       }
                       disabled={disabledFor("newWorktreesBaseBranch")}
                       onPress={() => navigation.navigate("SettingsWorktreeBaseBranch")}

@@ -1,6 +1,7 @@
 import { useNavigation } from "@react-navigation/native";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
+import { useGT } from "gt-react-native";
 import { useState } from "react";
 
 import { useEnvironmentsWithScope } from "../../state/session";
@@ -15,6 +16,7 @@ import {
 import { useSettingsWriter } from "./useSettingsWriter";
 
 export function WorktreeBaseBranchPickerRouteScreen() {
+  const gt = useGT();
   const navigation = useNavigation();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const members = projectGroups.find((group) => group.key === selectedProjectKey)?.members ?? [];
@@ -52,7 +54,7 @@ export function WorktreeBaseBranchPickerRouteScreen() {
 
   return (
     <BranchPickerScreen
-      title="Base branch"
+      title={gt("Base branch")}
       project={project}
       branches={visibleBranches}
       selectedBranchName={value ?? ""}
@@ -61,7 +63,7 @@ export function WorktreeBaseBranchPickerRouteScreen() {
       loading={
         query.trim() !== debouncedQuery.trim() || (branches.isPending && branches.data === null)
       }
-      error={project ? branches.error : "Choose a project to list its branches."}
+      error={project ? branches.error : gt("Choose a project to list its branches.")}
       refreshing={branches.isFetchingNextPage}
       hasMore={branches.data?.nextCursor != null}
       onRefresh={branches.refresh}
@@ -69,7 +71,7 @@ export function WorktreeBaseBranchPickerRouteScreen() {
       selectionDisabled={!canWrite}
       onSelect={(branch) => select(branch.name)}
       defaultOption={{
-        title: "Repository default",
+        title: gt("Repository default"),
         selected: value === "",
         onSelect: () => select(""),
       }}

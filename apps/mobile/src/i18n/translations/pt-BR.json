@@ -5200,5 +5200,9 @@
   "ad208e3e32c85029": "Ocultar todas",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
-  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem."
+  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
+  "a4d45e701fd1ecd6": "Padrão do repositório",
+  "4bd759216dc953fc": "Escolha um projeto para listar suas branches.",
+  "16adc6c497760dc9": "A branch, tag ou commit de origem dos novos worktrees, como dev. Deixe vazio para usar a branch padrão do repositório.",
+  "a136ae2ffe6eeb7c": "Branch base para novos worktrees"
 }

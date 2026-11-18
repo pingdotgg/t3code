@@ -5206,5 +5206,9 @@
   "ad208e3e32c85029": "Alle ausblenden",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
-  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt."
+  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
+  "a4d45e701fd1ecd6": "Repository-Standard",
+  "4bd759216dc953fc": "Wähle ein Projekt, um seine Branches aufzulisten.",
+  "16adc6c497760dc9": "Der Branch, Tag oder Commit, von dem neue Worktrees starten, etwa dev. Leer lassen, um den Standardbranch des Repositorys zu verwenden.",
+  "a136ae2ffe6eeb7c": "Basisbranch für neue Worktrees"
 }

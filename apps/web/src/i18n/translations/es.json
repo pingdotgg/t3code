@@ -12087,5 +12087,12 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
+  "4bd759216dc953fc": "Elige un proyecto para ver sus ramas.",
+  "4b908ff6bee82250": "Usar \"{ref}\"",
+  "ae1db3a86b9b495a": "La rama desde la que parten los nuevos worktrees, como dev. Puedes elegir otra rama para cada hilo.",
+  "ba91614d241ab3e5": "Restablecer la rama base predeterminada",
+  "a136ae2ffe6eeb7c": "Rama base para nuevos worktrees",
+  "a4d45e701fd1ecd6": "Predeterminada del repositorio",
+  "8058cd2d1c61c1e3": "nuevos worktrees iniciar rama predeterminada dev main base referencia"
 }

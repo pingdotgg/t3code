@@ -12092,5 +12092,12 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
+  "4bd759216dc953fc": "Choisissez un projet pour afficher ses branches.",
+  "4b908ff6bee82250": "Utiliser \"{ref}\"",
+  "ae1db3a86b9b495a": "La branche de départ des nouveaux worktrees, par exemple dev. Vous pouvez toujours choisir une autre branche pour chaque fil.",
+  "ba91614d241ab3e5": "Réinitialiser la branche de base par défaut",
+  "a136ae2ffe6eeb7c": "Branche de base des nouveaux worktrees",
+  "a4d45e701fd1ecd6": "Valeur par défaut du dépôt",
+  "8058cd2d1c61c1e3": "nouveaux worktrees démarrer branche par défaut dev main base référence"
 }

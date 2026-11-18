@@ -12099,5 +12099,12 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "4bd759216dc953fc": "Välj ett projekt för att visa dess grenar.",
+  "4b908ff6bee82250": "Använd \"{ref}\"",
+  "ae1db3a86b9b495a": "Grenen som nya worktrees utgår från, till exempel dev. Du kan fortfarande välja en annan gren för varje tråd.",
+  "ba91614d241ab3e5": "Återställ basgrenen till standard",
+  "a136ae2ffe6eeb7c": "Basgren för nya worktrees",
+  "a4d45e701fd1ecd6": "Kodförrådets standard",
+  "8058cd2d1c61c1e3": "nya worktrees starta standardgren dev main bas referens"
 }

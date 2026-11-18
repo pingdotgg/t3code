@@ -12092,5 +12092,12 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "4bd759216dc953fc": "Wähle ein Projekt, um seine Branches aufzulisten.",
+  "4b908ff6bee82250": "\"{ref}\" verwenden",
+  "ae1db3a86b9b495a": "Der Branch, von dem neue Worktrees starten, etwa dev. Du kannst für jeden Thread weiterhin einen anderen Branch wählen.",
+  "ba91614d241ab3e5": "Basisbranch auf Standard zurücksetzen",
+  "a136ae2ffe6eeb7c": "Basisbranch für neue Worktrees",
+  "a4d45e701fd1ecd6": "Repository-Standard",
+  "8058cd2d1c61c1e3": "neue Worktrees starten Standardbranch dev main Basis Ref"
 }

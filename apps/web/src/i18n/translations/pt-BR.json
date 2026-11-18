@@ -12091,5 +12091,12 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
+  "4bd759216dc953fc": "Escolha um projeto para listar suas branches.",
+  "4b908ff6bee82250": "Usar \"{ref}\"",
+  "ae1db3a86b9b495a": "A branch de origem dos novos worktrees, como dev. Você ainda pode escolher outra branch para cada conversa.",
+  "ba91614d241ab3e5": "Redefinir a branch base para o padrão",
+  "a136ae2ffe6eeb7c": "Branch base para novos worktrees",
+  "a4d45e701fd1ecd6": "Padrão do repositório",
+  "8058cd2d1c61c1e3": "novos worktrees iniciar branch padrão dev main base referência"
 }

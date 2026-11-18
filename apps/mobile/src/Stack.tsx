@@ -193,6 +193,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsScheduledTaskNew: msg("New scheduled task"),
   SettingsScheduledTaskEdit: msg("Edit scheduled task"),
   SettingsScheduledTaskBranch: msg("Base branch"),
+  SettingsWorktreeBaseBranch: msg("Base branch"),
   SettingsScheduledTaskThread: msg("Destination"),
   SettingsClientStorage: msg("Client Storage"),
   SettingsDiagnostics: msg("Diagnostics"),
@@ -385,7 +386,7 @@ const SETTINGS_SCREENS = {
   }),
   SettingsWorktreeBaseBranch: createNativeStackScreen({
     screen: WorktreeBaseBranchPickerRouteScreen,
-    options: settingsPage("Base branch"),
+    options: settingsPage(),
   }),
   SettingsScheduledTaskThread: createNativeStackScreen({
     screen: ScheduledTaskThreadPickerRouteScreen,

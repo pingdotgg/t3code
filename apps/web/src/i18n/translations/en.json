@@ -12101,5 +12101,12 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide"
+  "9e91e9a77b664e4e": "Could not start a review guide",
+  "4bd759216dc953fc": "Choose a project to list its branches.",
+  "4b908ff6bee82250": "Use \"{ref}\"",
+  "ae1db3a86b9b495a": "The branch new worktrees start from, such as dev. You can still pick another branch for each thread.",
+  "ba91614d241ab3e5": "Reset base branch to default",
+  "a136ae2ffe6eeb7c": "Base branch for new worktrees",
+  "a4d45e701fd1ecd6": "Repository default",
+  "8058cd2d1c61c1e3": "new worktrees start from default branch dev main base ref"
 }

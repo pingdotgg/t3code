@@ -5206,5 +5206,9 @@
   "ad208e3e32c85029": "Dölj alla",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
-  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid."
+  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "a4d45e701fd1ecd6": "Kodförrådets standard",
+  "4bd759216dc953fc": "Välj ett projekt för att visa dess grenar.",
+  "16adc6c497760dc9": "Grenen, taggen eller committen som nya worktrees utgår från, till exempel dev. Lämna tomt för att använda kodförrådets standardgren.",
+  "a136ae2ffe6eeb7c": "Basgren för nya worktrees"
 }

@@ -859,10 +859,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "worktree-base-branch",
-    title: "Base branch",
+    title: msg("Base branch"),
     to: "/settings/worktrees",
     scope: "project-defaults",
-    searchTerms: ["new worktrees start from default branch dev main base ref"],
+    searchTerms: [msg("new worktrees start from default branch dev main base ref")],
   },
   {
     id: "start-from-origin",

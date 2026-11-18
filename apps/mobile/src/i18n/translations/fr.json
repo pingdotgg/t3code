@@ -5200,5 +5200,9 @@
   "ad208e3e32c85029": "Tout masquer",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
-  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours."
+  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
+  "a4d45e701fd1ecd6": "Valeur par défaut du dépôt",
+  "4bd759216dc953fc": "Choisissez un projet pour afficher ses branches.",
+  "16adc6c497760dc9": "La branche, le tag ou le commit de départ des nouveaux worktrees, par exemple dev. Laissez vide pour utiliser la branche par défaut du dépôt.",
+  "a136ae2ffe6eeb7c": "Branche de base des nouveaux worktrees"
 }

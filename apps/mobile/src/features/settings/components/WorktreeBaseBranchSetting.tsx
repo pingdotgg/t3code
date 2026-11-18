@@ -1,4 +1,5 @@
 import type { ServerSettingsPatch } from "@t3tools/contracts";
+import { useGT } from "gt-react-native";
 import { useEffect, useEffectEvent, useRef } from "react";
 import { View } from "react-native";
 
@@ -9,6 +10,7 @@ export function WorktreeBaseBranchSetting(props: {
   disabled: boolean;
   onChange: (patch: ServerSettingsPatch) => void;
 }) {
+  const gt = useGT();
   // Save on exit too: Android Back hides the keyboard without ending editing.
   const draft = useRef<{ text: string; over: string | null } | null>(null);
   const save = () => {
@@ -26,19 +28,20 @@ export function WorktreeBaseBranchSetting(props: {
   useEffect(() => () => saveOnExit(), []);
   return (
     <View className="gap-2 px-4 py-3">
-      <Text className="text-sm text-foreground">Base branch</Text>
+      <Text className="text-sm text-foreground">{gt("Base branch")}</Text>
       <Text className="text-sm text-foreground-muted">
-        The branch, tag, or commit new worktrees start from, such as dev. Leave empty to use the
-        repository’s default branch.
+        {gt(
+          "The branch, tag, or commit new worktrees start from, such as dev. Leave empty to use the repository’s default branch.",
+        )}
       </Text>
       <AppTextInput
         key={props.value}
-        accessibilityLabel="Base branch for new worktrees"
+        accessibilityLabel={gt("Base branch for new worktrees")}
         onChangeText={(text) => {
           draft.current = { text, over: props.value };
         }}
         defaultValue={props.value ?? ""}
-        placeholder={props.value === null ? "Mixed" : "Repository default"}
+        placeholder={props.value === null ? gt("Mixed") : gt("Repository default")}
         editable={!props.disabled}
         autoCapitalize="none"
         autoCorrect={false}

@@ -22,6 +22,8 @@ import {
 } from "./useScopedSettings";
 
 function BaseBranchRow() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const { scope, target } = useSettingsScope();
   const updateSettings = useUpdateScopedSettings();
@@ -38,11 +40,13 @@ function BaseBranchRow() {
       serverScoped
       settingKeys={["newWorktreesBaseBranch"]}
       {...searchableSetting("worktree-base-branch")}
-      description="The branch new worktrees start from, such as dev. You can still pick another branch for each thread."
+      description={gt(
+        "The branch new worktrees start from, such as dev. You can still pick another branch for each thread.",
+      )}
       resetAction={
         mixed || settings.newWorktreesBaseBranch !== "" ? (
           <SettingResetButton
-            label="base branch"
+            ariaLabel={gt("Reset base branch to default")}
             onClick={() => updateSettings({ newWorktreesBaseBranch: "" })}
           />
         ) : null
@@ -51,14 +55,14 @@ function BaseBranchRow() {
         <div className="w-48">
           <WorktreeBaseBranchPicker
             key={`${member?.environmentId}:${member?.workspaceRoot}`}
-            aria-label="Base branch for new worktrees"
+            aria-label={gt("Base branch for new worktrees")}
             environmentId={member?.environmentId ?? null}
             cwd={member?.workspaceRoot ?? null}
             value={mixed ? "" : settings.newWorktreesBaseBranch}
-            emptyLabel={mixed ? "Mixed" : "Repository default"}
+            emptyLabel={mixed ? gt("Mixed") : gt("Repository default")}
             onValueChange={(newWorktreesBaseBranch) => updateSettings({ newWorktreesBaseBranch })}
             startFromOrigin={settings.newWorktreesStartFromOrigin}
-            defaultOption={{ label: "Repository default" }}
+            defaultOption={{ label: gt("Repository default") }}
             allowCustomRef
           />
         </div>
