@@ -14,6 +14,7 @@ import {
   type PullRequestReaction,
   type PullRequestReactionContent,
   type PullRequestReviewerCandidate,
+  type PullRequestReviewDecision,
   type PullRequestReviewThread,
   type PullRequestViewerPermissions,
 } from "@t3tools/contracts";
@@ -713,4 +714,21 @@ export function checksStateOf(
   if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
   if (statuses.has("pending") || statuses.has("action-required")) return "pending";
   return statuses.has("success") ? "passing" : null;
+}
+
+export function reviewDecisionOf(
+  reviews: typeof GitCafeReviews.Type,
+): PullRequestReviewDecision | null | undefined {
+  if (reviews.next !== null) return undefined;
+  const latest = new Map<string, (typeof reviews.items)[number]>();
+  for (const review of reviews.items) {
+    if (review.verdict === "comment") continue;
+    const previous = latest.get(review.author.actorId);
+    if (previous === undefined || review.createdAt >= previous.createdAt) {
+      latest.set(review.author.actorId, review);
+    }
+  }
+  const current = [...latest.values()].filter((review) => review.dismissedAt === null);
+  if (current.some((review) => review.verdict === "request_changes")) return "changes-requested";
+  return current.some((review) => review.verdict === "approve") ? "approved" : null;
 }
