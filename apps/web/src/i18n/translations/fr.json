@@ -112,6 +112,7 @@
   "fc34e41fa0315912": "{names} a réagi avec l’emoji yeux",
   "0c982111ac348e9f": "Vous",
   "766ea446df1695f7": "Répondez à la question pour modifier les messages en file d’attente",
+  "fad5c2d0045da806": "Ce message en file d’attente a changé depuis que vous avez commencé à le modifier. Annulez votre modification pour voir la nouvelle version.",
   "257dc29de5b1f1f7": "Contexte, sans code",
   "edb97296086ba31e": "{count, plural, one {{count} fichier} other {{count} fichiers}}",
   "556df31b330166ff": "Saisissez un nom pour cette vue.",

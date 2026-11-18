@@ -112,6 +112,7 @@
   "fc34e41fa0315912": "{names} reacted with eyes emoji",
   "0c982111ac348e9f": "You",
   "766ea446df1695f7": "Answer the question to edit queued messages",
+  "fad5c2d0045da806": "This queued message changed since you started editing it. Cancel your edit to see the new version.",
   "257dc29de5b1f1f7": "Context, no code",
   "edb97296086ba31e": "{count, plural, one {{count} file} other {{count} files}}",
   "556df31b330166ff": "Enter a name for this view.",

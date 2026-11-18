@@ -112,6 +112,7 @@
   "fc34e41fa0315912": "{names} hat mit „Augen“ reagiert",
   "0c982111ac348e9f": "Du",
   "766ea446df1695f7": "Beantworte die Frage, um Nachrichten in der Warteschlange zu bearbeiten",
+  "fad5c2d0045da806": "Diese Nachricht in der Warteschlange hat sich geändert, seit du mit der Bearbeitung begonnen hast. Brich deine Bearbeitung ab, um die neue Version zu sehen.",
   "257dc29de5b1f1f7": "Kontext, kein Code",
   "edb97296086ba31e": "{count, plural, one {{count} Datei} other {{count} Dateien}}",
   "556df31b330166ff": "Gib einen Namen für diese Ansicht ein.",

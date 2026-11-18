@@ -545,6 +545,40 @@ describe("useQueuedRunEdit", () => {
     },
   );
 
+  it("expects the text the queued message had when the edit began, then the text it saved", async () => {
+    const { hook } = setup();
+    let finishSave: (result: { readonly _tag: "Success" }) => void = () => {};
+    mocks.editQueuedRun.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishSave = resolve;
+      }),
+    );
+    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
+    const messages = [{ id: MessageId.make("message-1"), text: "original" }];
+    await using _screen = await render(view(THREAD_A, "queued", hook, messages));
+    await beginChangedEdit(hook);
+    // Not inside act(): act would hold the draft change until the save settles.
+    const saved = requireHook(hook).saveEdit(savedContent("changed"), () => {});
+    await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
+    await act(() =>
+      useComposerDraftStore.getState().setPrompt(requireHook(hook).draftTarget, "newer"),
+    );
+    finishSave({ _tag: "Success" });
+    await act(() => saved);
+    expect(requireHook(hook).isEditing).toBe(true);
+
+    await act(() => requireHook(hook).saveEdit(savedContent("newer"), () => {}));
+
+    expect(
+      mocks.editQueuedRun.mock.calls.map(
+        ([call]) => (call as { readonly input: { readonly expectedText?: string } }).input,
+      ),
+    ).toEqual([
+      expect.objectContaining({ text: "changed", expectedText: "original" }),
+      expect.objectContaining({ text: "newer", expectedText: "changed" }),
+    ]);
+  });
+
   it("leaves a newer edit alone when a save from before navigation finishes", async () => {
     const { hook } = setup();
     let finishSave: (result: { readonly _tag: "Success" }) => void = () => {};

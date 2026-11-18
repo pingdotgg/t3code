@@ -11783,6 +11783,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Queued run ${queuedRun.id} has no user message.`,
       });
     }
+    if (command.expectedText !== undefined && command.expectedText !== queuedMessage.text) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "This queued message changed since you started editing it.",
+      });
+    }
     if (
       queuedMessage.delegatedCompletion !== undefined ||
       queuedMessage.notification !== undefined

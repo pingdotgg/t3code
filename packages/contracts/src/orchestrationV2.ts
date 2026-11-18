@@ -3508,6 +3508,8 @@ export const OrchestrationV2Command = Schema.Union([
     text: Schema.String,
     // Replaces all attachments; absent preserves them for older clients editing text.
     attachments: Schema.optional(Schema.Array(ChatAttachment)),
+    // The text the edit began from; a different stored text means another client changed it.
+    expectedText: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     type: Schema.Literal("queued-run.merge"),

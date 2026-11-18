@@ -10750,6 +10750,41 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       );
       assert.isUndefined(editedItem, "editing queue state must not create a timeline turn item");
 
+      assert.deepInclude(
+        yield* Effect.flip(
+          orchestrator.dispatch({
+            type: "queued-run.edit",
+            commandId: CommandId.make("runtime-layer-queued-edit-stale"),
+            threadId,
+            runId: queuedRun.id,
+            text: "Edit begun before the update.",
+            expectedText: "Original queued text.",
+          }),
+        ),
+        {
+          _tag: "OrchestratorCommandRejectedError",
+          cause: "This queued message changed since you started editing it.",
+        },
+      );
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).messages,
+        afterEdit.messages,
+      );
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make("runtime-layer-queued-edit-current"),
+        threadId,
+        runId: queuedRun.id,
+        text: "Edit begun from the current text.",
+        expectedText: "Updated queued text.",
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).messages.find(
+          (message) => message.id === queuedRun.userMessageId,
+        )?.text,
+        "Edit begun from the current text.",
+      );
+
       yield* orchestrator.dispatch({
         type: "queued-run.edit",
         commandId: CommandId.make("runtime-layer-queued-edit-attachments"),

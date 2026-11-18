@@ -79,6 +79,28 @@ export function queuedRunEditBlockedReason(
     : null;
 }
 
+/**
+ * Why a save failed when the queued message no longer has the text its edit began
+ * from, because another client edited or combined it, or null when it still does.
+ */
+export function queuedRunEditStaleReason(
+  input: {
+    readonly expectedText: string | undefined;
+    readonly currentText: string | undefined;
+  },
+  resolve: MFunctionType = mFallback,
+): string | null {
+  return input.expectedText !== undefined &&
+    input.currentText !== undefined &&
+    input.currentText !== input.expectedText
+    ? resolve(
+        msg(
+          "This queued message changed since you started editing it. Cancel your edit to see the new version.",
+        ),
+      )
+    : null;
+}
+
 interface ExitWatch<E> {
   readonly runs: QueuedRunsAtom;
   readonly runId: RunId;

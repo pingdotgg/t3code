@@ -5,6 +5,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   makeQueuedRunEditStore,
   makeQueuedRunsAtom,
+  queuedRunEditStaleReason,
 } from "@t3tools/client-runtime/queued-run-edit";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
@@ -80,6 +81,8 @@ interface EditingQueuedRun {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
+  /** The stored text the edit began from, so a save can't overwrite another client's change. */
+  readonly expectedText?: string | undefined;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext | undefined;
   /** Removing a server attachment changes the message even when the draft looks untouched. */
@@ -114,7 +117,7 @@ async function submitQueuedRunEdit(input: {
   readonly content: QueuedRunEditContent;
   readonly editQueuedRun: ReturnType<typeof useEditQueuedRunCommand>;
   readonly draftChanged: () => boolean;
-}): Promise<string | null> {
+}): Promise<{ readonly error: string } | { readonly error: null; readonly savedText: string }> {
   const { environmentId, draftTarget, editing, content } = input;
   const editText = content.prompt.trim();
   const newAttachments = [...content.images, ...content.files];
@@ -148,7 +151,9 @@ async function submitQueuedRunEdit(input: {
       uploadFiles,
     });
     if (input.draftChanged())
-      return m(msg("Draft changed while preparing this message. Review it and save again."));
+      return {
+        error: m(msg("Draft changed while preparing this message. Review it and save again.")),
+      };
     // The edit draft owns thread and machine mentions, so a chip removed while editing is dropped.
     const keptRecords = (editing.context?.records ?? []).filter(
       (record) =>
@@ -171,12 +176,14 @@ async function submitQueuedRunEdit(input: {
           attachmentId: uploads[editing.existingAttachments.length + index]?.id ?? attachment.id,
         })),
       })?.records ?? [];
+    const text = restoreAttachmentOnlyBootstrapPrompt(editText, uploads.length > 0);
     const result = await input.editQueuedRun({
       environmentId,
       input: {
         threadId: editing.threadId,
         runId: editing.runId,
-        text: restoreAttachmentOnlyBootstrapPrompt(editText, uploads.length > 0),
+        text,
+        ...(editing.expectedText === undefined ? {} : { expectedText: editing.expectedText }),
         edit: {
           messageId: editing.messageId,
           attachments: uploads,
@@ -193,9 +200,19 @@ async function submitQueuedRunEdit(input: {
         },
       },
     });
-    return result._tag === "Failure" ? m(msg("Could not save the edited queued message.")) : null;
+    if (result._tag !== "Failure") return { error: null, savedText: text };
+    const currentText = appAtomRegistry
+      .get(environmentThreadDetails.quietThreadAtom({ environmentId, threadId: editing.threadId }))
+      ?.projection.messages.find((message) => message.id === editing.messageId)?.text;
+    return {
+      error:
+        queuedRunEditStaleReason({ expectedText: editing.expectedText, currentText }, m) ??
+        m(msg("Could not save the edited queued message.")),
+    };
   } catch (error) {
-    return thrownErrorMessage(error, m) ?? m(msg("Could not save the edited queued message."));
+    return {
+      error: thrownErrorMessage(error, m) ?? m(msg("Could not save the edited queued message.")),
+    };
   }
 }
 
@@ -261,9 +278,10 @@ export function useQueuedRunEdit(input: {
     if (editing !== null && editing.runId !== request.runId) clearEditDraft(editing.runId);
     const target = queuedRunEditDraftId(routeThreadRef, request.runId);
     const sentText = stripAttachmentOnlyBootstrapPrompt(request.text);
-    const context = serverProjection?.messages.find(
-      (message) => message.id === request.messageId,
-    )?.context;
+    const message = serverProjection?.messages.find(
+      (candidate) => candidate.id === request.messageId,
+    );
+    const context = message?.context;
     const referenced = new Set(collectInlineContextIds(sentText));
     const records = (context?.records ?? []).filter((record) => referenced.has(record.contextId));
     // A reply shows above the composer while its message is edited, not as a chip in the text.
@@ -290,6 +308,7 @@ export function useQueuedRunEdit(input: {
         runId: request.runId,
         messageId: request.messageId,
         originalText: text,
+        expectedText: message?.text,
         existingAttachments: request.attachments,
         context,
       },
@@ -420,7 +439,7 @@ export function useQueuedRunEdit(input: {
         draftBeforeSave,
         useComposerDraftStore.getState().getComposerDraft(draftTarget),
       );
-    const error = await submitQueuedRunEdit({
+    const saved = await submitQueuedRunEdit({
       environmentId,
       draftTarget,
       editing,
@@ -428,14 +447,14 @@ export function useQueuedRunEdit(input: {
       editQueuedRun: editQueuedRunCommand,
       draftChanged,
     });
-    const changedAfterSave = error === null && draftChanged();
+    const changedAfterSave = saved.error === null && draftChanged();
     setThreadError(
       editing.threadId,
       changedAfterSave
         ? m(msg("The earlier edit was saved. Review your newer changes and save again."))
-        : error,
+        : saved.error,
     );
-    const current = finishSave(error === null && !changedAfterSave);
+    const current = finishSave(saved.error === null && !changedAfterSave);
     if (!current) {
       // A failed save can recover into the thread draft; a newer edit can also retain resources.
       const drafts = Object.values(useComposerDraftStore.getState().draftsByThreadKey);
@@ -457,8 +476,13 @@ export function useQueuedRunEdit(input: {
       }
       return;
     }
-    if (error !== null) return;
-    if (changedAfterSave) return;
+    if (saved.error !== null) return;
+    if (changedAfterSave) {
+      queuedRunEdits.update(editKey, (edit) =>
+        edit.runId === editing.runId ? { ...edit, expectedText: saved.savedText } : edit,
+      );
+      return;
+    }
     releaseDraftAttachments(newAttachments);
     promptRef.current = "";
     clearEditDraft(editing.runId);
