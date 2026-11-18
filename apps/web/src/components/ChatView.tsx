@@ -955,7 +955,7 @@ export default function ChatView(props: ChatViewProps) {
     if (workflowRun !== null) {
       return {
         title: `${workflowRun.workflow} · ${workflowRun.step}`,
-        relation: { label: "Step of the workflow run", actionLabel: "Open run" },
+        relation: { label: gt("Step of the workflow run"), actionLabel: gt("Open run") },
         open: (): void => {
           void navigate({
             to: "/workflows",

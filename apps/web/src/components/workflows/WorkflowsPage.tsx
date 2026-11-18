@@ -1,6 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { T, useGT } from "gt-react";
 import { FileCode2Icon } from "lucide-react";
 import { lazy, Suspense, useState, type MouseEvent } from "react";
 
@@ -47,6 +48,7 @@ export interface WorkflowsSearch {
 export function WorkflowsPage() {
   const search = useSearch({ from: "/_chat/workflows" });
   const navigate = useNavigate();
+  const gt = useGT();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const connectedIds = useConnectedEnvironmentIds();
   const { environments } = useEnvironments();
@@ -83,7 +85,7 @@ export function WorkflowsPage() {
     const path = `${directory}/${search.file}`;
     const target = { environmentId, filePath: path, workspaceRoot: undefined };
     void api.contextMenu
-      .show([{ id: COPY_PATH, label: "Copy path" }, ...fileMenu.buildItems(target)], {
+      .show([{ id: COPY_PATH, label: gt("Copy path") }, ...fileMenu.buildItems(target)], {
         x: event.clientX,
         y: event.clientY,
       })
@@ -118,7 +120,7 @@ export function WorkflowsPage() {
             reserveNativeControls={threadRef === null}
             className="border-b"
           >
-            <WorkspaceBreadcrumb ariaLabel="Workflows breadcrumb" className="flex-1">
+            <WorkspaceBreadcrumb ariaLabel={gt("Workflows breadcrumb")} className="flex-1">
               <WorkspaceBreadcrumbItem current={!editing}>
                 {editing ? (
                   <button
@@ -126,10 +128,14 @@ export function WorkflowsPage() {
                     onClick={() => go({ ...env, ...run })}
                     className="inline-flex min-w-0 max-w-full cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   >
-                    <WorkspaceBreadcrumbText>Workflows</WorkspaceBreadcrumbText>
+                    <WorkspaceBreadcrumbText>
+                      <T>Workflows</T>
+                    </WorkspaceBreadcrumbText>
                   </button>
                 ) : (
-                  <h1 className="truncate">Workflows</h1>
+                  <h1 className="truncate">
+                    <T>Workflows</T>
+                  </h1>
                 )}
               </WorkspaceBreadcrumbItem>
               {editing ? (
@@ -139,14 +145,18 @@ export function WorkflowsPage() {
                   </WorkspaceBreadcrumbSeparator>
                   <WorkspaceBreadcrumbItem current={search.file === undefined}>
                     {search.file === undefined ? (
-                      <h1 className="truncate">Definitions</h1>
+                      <h1 className="truncate">
+                        <T context="workflow definition files">Definitions</T>
+                      </h1>
                     ) : (
                       <button
                         type="button"
                         onClick={() => openDefinitions(null)}
                         className="inline-flex min-w-0 max-w-full cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                       >
-                        <WorkspaceBreadcrumbText>Definitions</WorkspaceBreadcrumbText>
+                        <WorkspaceBreadcrumbText>
+                          <T context="workflow definition files">Definitions</T>
+                        </WorkspaceBreadcrumbText>
                       </button>
                     )}
                   </WorkspaceBreadcrumbItem>
@@ -174,7 +184,10 @@ export function WorkflowsPage() {
                   if (value !== null) select({ env: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Environment">
+                <SelectTrigger
+                  size="sm"
+                  aria-label={gt("Environment", { $context: "a T3 Code server to pick" })}
+                >
                   <SelectValue>
                     {connected.find((environment) => environment.environmentId === environmentId)
                       ?.label ?? environmentId}
@@ -195,20 +208,20 @@ export function WorkflowsPage() {
             {environmentId === null || editing ? null : (
               <Button size="sm" variant="outline" onClick={() => openDefinitions(null)}>
                 <FileCode2Icon />
-                Definitions
+                <T context="workflow definition files">Definitions</T>
               </Button>
             )}
           </WorkspacePageHeader>
           {environmentId === null ? (
             <WorkflowsEmpty
-              title="No environment connected"
-              description="Connect an environment to see its workflow runs."
+              title={gt("No environment connected")}
+              description={gt("Connect an environment to see its workflow runs.")}
             />
           ) : editing ? (
             <Suspense
               fallback={
                 <p className="p-6 text-sm text-muted-foreground" role="status">
-                  Loading the editor…
+                  <T>Loading the editor…</T>
                 </p>
               }
             >
@@ -248,7 +261,7 @@ export function WorkflowsPage() {
         </div>
         {threadRef === null ? null : (
           <aside
-            aria-label="Agent transcript"
+            aria-label={gt("Agent transcript")}
             className="min-h-0 w-full shrink-0 bg-background md:w-1/2 md:max-w-2xl md:border-s"
           >
             <WorkflowThreadPane

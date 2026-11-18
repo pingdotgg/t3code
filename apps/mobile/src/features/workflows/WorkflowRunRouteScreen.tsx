@@ -19,6 +19,7 @@ import {
 } from "@t3tools/client-runtime/workflows";
 import { EnvironmentId, ThreadId, type WorkflowQuestion } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { T, Var, useGT, useMessages } from "gt-react-native";
 import { useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -96,12 +97,17 @@ function BeatCard(props: {
   const summary = workflowAgentSummary(beat);
   const answer = beat.kind === "ask" ? workflowAnswer(beat.result) : null;
   const running = beat.status === "running";
+  const gt = useGT();
   if (beat.kind !== "agent" && child === null && answer === null) {
     return (
       <Text className="px-1 text-xs text-foreground-muted">
-        {beat.name}
-        {running ? " · under way" : beat.status === "failed" ? " · failed" : ""}
-        {beat.kind === "sleep" && running && beat.detail !== null ? " · sleeping" : ""}
+        {running
+          ? beat.kind === "sleep" && beat.detail !== null
+            ? gt("{step} · under way · sleeping", { step: beat.name })
+            : gt("{step} · under way", { step: beat.name })
+          : beat.status === "failed"
+            ? gt("{step} · failed", { step: beat.name })
+            : beat.name}
       </Text>
     );
   }
@@ -117,13 +123,18 @@ function BeatCard(props: {
             beat.status === "failed" ? "text-danger-foreground" : "text-foreground-muted",
           )}
         >
-          {running ? "Working" : beat.status === "failed" ? "Failed" : "Done"}
+          {running
+            ? gt("Working", { $context: "workflow step status" })
+            : beat.status === "failed"
+              ? gt("Failed", { $context: "workflow step status" })
+              : gt("Done", { $context: "workflow step status" })}
         </Text>
       </View>
       {answer === null ? null : (
         <Text className="text-sm text-foreground">
-          Answered {answer.choice}
-          {answer.reason === null ? "" : `: ${answer.reason}`}
+          {answer.reason === null
+            ? gt("Answered {choice}", { choice: answer.choice })
+            : gt("Answered {choice}: {reason}", { choice: answer.choice, reason: answer.reason })}
         </Text>
       )}
       {child === null ? null : (
@@ -145,12 +156,20 @@ function BeatCard(props: {
           {thread === null ? null : (
             <Button
               size="compact"
-              label={running ? "Watch live" : "Transcript"}
+              label={
+                running
+                  ? gt("Watch live")
+                  : gt("Transcript", { $context: "button, opens the agent's conversation" })
+              }
               onPress={() => props.onOpenThread(thread)}
             />
           )}
           {child === null ? null : (
-            <Button size="compact" label="Open run" onPress={() => props.onOpenRun(child.runId)} />
+            <Button
+              size="compact"
+              label={gt("Open run")}
+              onPress={() => props.onOpenRun(child.runId)}
+            />
           )}
         </View>
       )}
@@ -166,6 +185,7 @@ function QuestionCard(props: {
 }) {
   const { question } = props;
   const view = readWorkflowQuestion(question);
+  const gt = useGT();
   const [busy, setBusy] = useState<string | null>(null);
   const answer = useAtomCommand(serverEnvironment.answerWorkflowQuestion, {
     label: "workflow answer",
@@ -179,15 +199,22 @@ function QuestionCard(props: {
       input: { runId: question.runId, name: question.name, choice },
     });
     setBusy(null);
-    reportFailure("Could not send the answer", result);
+    reportFailure(gt("Could not send the answer"), result);
   };
   const thread = question.thread;
   return (
     <Card tone="input">
       <View className="flex-row items-center gap-2">
-        <Text className="font-t3-medium text-xs text-primary">Input</Text>
+        <Text className="font-t3-medium text-xs text-primary">
+          {gt("Input", { $context: "workflow question: the run waits on a person" })}
+        </Text>
         <Text className="text-xs text-foreground-muted">
-          asked <RelativeTime timestamp={question.askedAt} />
+          <T>
+            asked{" "}
+            <Var>
+              <RelativeTime timestamp={question.askedAt} />
+            </Var>
+          </T>
         </Text>
       </View>
       <Text className="font-t3-medium text-base text-foreground">{view.title}</Text>
@@ -209,14 +236,14 @@ function QuestionCard(props: {
         {thread === null ? null : (
           <Button
             tone="text"
-            label="Ask the agent first"
+            label={gt("Ask the agent first")}
             onPress={() => props.onOpenThread(thread)}
           />
         )}
       </View>
       {props.canAnswer ? null : (
         <Text className="text-xs text-foreground-muted">
-          This connection can read runs but not answer them.
+          <T>This connection can read runs but not answer them.</T>
         </Text>
       )}
     </Card>
@@ -228,6 +255,8 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
   const { run } = node;
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const gt = useGT();
+  const m = useMessages();
   const detail = useEnvironmentQuery(
     serverEnvironment.workflowRun({ environmentId, input: { runId: run.runId } }),
   );
@@ -249,19 +278,19 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
     setBusy(true);
     const result = await resume(target);
     setBusy(false);
-    reportFailure("Could not resume the run", result);
+    reportFailure(gt("Could not resume the run"), result);
   };
   const cancelRun = () =>
-    Dialog.alert("Cancel this run?", "Its agents stop and the run cannot be resumed.", [
-      { text: "Keep it", style: "cancel" },
+    Dialog.alert(gt("Cancel this run?"), gt("Its agents stop and the run cannot be resumed."), [
+      { text: gt("Keep it"), style: "cancel" },
       {
-        text: "Cancel run",
+        text: gt("Cancel run"),
         style: "destructive",
         onPress: () => {
           setBusy(true);
           void cancel(target).then((result) => {
             setBusy(false);
-            reportFailure("Could not cancel the run", result);
+            reportFailure(gt("Could not cancel the run"), result);
           });
         },
       },
@@ -276,7 +305,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
   const openRun = (runId: string) =>
     navigation.dispatch(StackActions.push("WorkflowRun", { environmentId, runId }));
 
-  const state = workflowRunState(node);
+  const state = workflowRunState(node, m);
   const steps = detail.data?.steps;
   // The run's own clock: a finished step's times are fixed, and one under way ends at its start
   // until the next answer from the server, which is exact enough for an order of cards.
@@ -335,21 +364,28 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
         <View className="flex-row items-center gap-2">
           <WorkflowChip name={run.workflow} />
           <Text className="text-xs text-foreground-muted">
-            {run.workflow} · started <RelativeTime timestamp={run.startedAt} />
+            <T>
+              <Var>{run.workflow}</Var> · started{" "}
+              <Var>
+                <RelativeTime timestamp={run.startedAt} />
+              </Var>
+            </T>
           </Text>
         </View>
       </View>
       {run.status === "paused" ? (
         <Card tone="failed">
-          <Text className="font-t3-medium text-sm text-danger-foreground">Paused</Text>
-          <Text className="text-sm text-foreground">{run.detail ?? "A step failed."}</Text>
+          <Text className="font-t3-medium text-sm text-danger-foreground">
+            {gt("Paused", { $context: "workflow run status" })}
+          </Text>
+          <Text className="text-sm text-foreground">{run.detail ?? gt("A step failed.")}</Text>
           <Text className="text-xs text-foreground-muted">
             {run.resumesAt === null
-              ? "It waits for you to resume it."
-              : "It tries again by itself, or resume it now."}
+              ? gt("It waits for you to resume it.")
+              : gt("It tries again by itself, or resume it now.")}
           </Text>
           <Button
-            label="Resume now"
+            label={gt("Resume now")}
             tone="primary"
             disabled={busy || !canOperate}
             loading={busy}
@@ -359,7 +395,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
       ) : null}
       {feed === null ? (
         <Text className="px-1 text-sm text-foreground-muted">
-          {detail.error ?? "Loading the run's steps…"}
+          {detail.error ?? gt("Loading the run's steps…")}
         </Text>
       ) : (
         feed.map((row) =>
@@ -373,7 +409,9 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
             </Text>
           ) : row.kind === "together" ? (
             <View key={`together:${row.beats[0]?.name}`} className="gap-2">
-              <Text className="px-1 text-xs text-foreground-muted">At the same time</Text>
+              <Text className="px-1 text-xs text-foreground-muted">
+                <T>At the same time</T>
+              </Text>
               {row.beats.map(card)}
             </View>
           ) : (
@@ -386,10 +424,10 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
         <Card>
           <Text className="font-t3-medium text-sm text-foreground">
             {run.status === "completed"
-              ? "Finished"
+              ? gt("Finished", { $context: "how a workflow run ended" })
               : run.status === "stopped"
-                ? "Stopped"
-                : "Cancelled"}
+                ? gt("Stopped", { $context: "how a workflow run ended" })
+                : gt("Cancelled", { $context: "how a workflow run ended" })}
           </Text>
           {run.status !== "completed" && run.detail !== null ? (
             <Text className="text-sm text-foreground-secondary">{run.detail}</Text>
@@ -408,7 +446,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
             ))}
         </Card>
       ) : canOperate ? (
-        <Button tone="text" label="Cancel run" disabled={busy} onPress={cancelRun} />
+        <Button tone="text" label={gt("Cancel run")} disabled={busy} onPress={cancelRun} />
       ) : null}
     </ScreenScrollView>
   );
@@ -419,12 +457,13 @@ export function WorkflowRunRouteScreen({ route }: StaticScreenProps<WorkflowRunP
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
   const snapshot = live.data;
+  const gt = useGT();
   if (snapshot === null) {
     return (
       <EmptyState
         variant="plain"
-        title={live.error === null ? "Loading the run…" : "Could not load the run"}
-        detail={live.error ?? "One moment."}
+        title={live.error === null ? gt("Loading the run…") : gt("Could not load the run")}
+        detail={live.error ?? gt("One moment.")}
       />
     );
   }
@@ -436,8 +475,8 @@ export function WorkflowRunRouteScreen({ route }: StaticScreenProps<WorkflowRunP
     return (
       <EmptyState
         variant="plain"
-        title="This run is not in the list"
-        detail="It may be older than the runs this server still lists."
+        title={gt("This run is not in the list")}
+        detail={gt("It may be older than the runs this server still lists.")}
       />
     );
   }

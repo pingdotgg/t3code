@@ -317,6 +317,31 @@
   "476ca970255eaea4": "公開 URL を使うには、この環境を T3 Connect にリンクしてください。",
   "6b80f5b38a8f9950": "このアドレスを呼び出せるのはこのコンピューターだけです。公開 URL を使うには T3 Connect をリンクしてください。",
   "c5a7b1d3891dd0b8": "この環境のアドレスに到達できる場所ならどこでも動作します (Tailscale や独自のプロキシ経由など)。公開 URL を使うには T3 Connect をリンクしてください。",
+  "3669395daf36fd33": "No longer registered on this server",
+  "fe513cf316e796e3": "Runs as part of other workflows",
+  "ccf00b97925efab3": "Started by hand",
+  "421e585eb092b07b": "Starts on {triggers}",
+  "468ba9a8d3489368": "Input",
+  "834ca879c14c167b": "Working",
+  "582d6df7dfab86fb": "Paused",
+  "ea6583ce92507ee3": "Sleeping",
+  "7ea8cb8af281ce93": "Waiting",
+  "1347868f2523140e": "Done",
+  "57d76c4614054271": "Stopped",
+  "b2074e9bd23049a6": "Cancelled",
+  "5bb7401807ee2fb5": "Asks: {question} and {more} more",
+  "9e4286183d5f9e34": "Asks: {question}",
+  "474c18d001bd6717": "A step failed",
+  "d3890f4eb1508781": "Running its own steps",
+  "3e7ced10c9482af0": "{step} is working",
+  "237e1bcb1cf1bdec": "Sleeping at {step}",
+  "3f7b17ac5a20c8d2": "Runs {run}",
+  "0306f5f324b8aaa5": "{count} runs under way",
+  "e8fd779b84a202a2": "Waiting",
+  "b6d55657e1a027b8": "Waiting for {step}",
+  "e942562a42aede34": "Finished",
+  "26b2b9727fe11289": "Ended early",
+  "dd6f32213f162fca": "{count} at once",
   "1bb995dcec481554": "{host} でこのデバイスを承認してください。コード {verificationCode} が表示されています。",
   "8696a33219944832": "WebSocket の認可証明を作成できませんでした。",
   "5678f133a8631f7d": "クラウドのサインインが変更されました。環境を認可するには、もう一度サインインしてください。",
@@ -1633,6 +1658,8 @@
   "2e995206e087c3fc": "接続または保留中の入力が解決してから、返信してください。",
   "604ec3067171a0d7": "会話",
   "d6182a057ea12624": "親スレッド",
+  "f2d8537c33cc55a5": "Step of the workflow run",
+  "ba8337dca3232880": "Open run",
   "30fa4a764d11ae42": "{name} をダウンロードできませんでした",
   "4952f87dc98191a7": "添付ファイルを利用できません。",
   "2fd6d178493fb407": "現在のターンを中断できませんでした。",
@@ -11196,92 +11223,6 @@
   ],
   "625f25278bc683ba": "選択した環境 (利用不可)",
   "e69e34d4f44d4136": "組み込み",
-  "2dadb2359422121c": "Workflows",
-  "062365c7d1847970": "Reconnect {label} to see its workflow runs.",
-  "5459bf696a187c26": "Could not load workflow runs",
-  "4e788b164525693e": "Loading workflow runs…",
-  "8fb530f35f7911c1": "Waiting on you",
-  "8dc50c37b456e04e": "Runs",
-  "56c48c1f220f2754": "Could not answer the question",
-  "a3c43735e1a81498": "Reason for {title}",
-  "d761f6eb9feea969": "Reason (optional)",
-  "aa74114af894767f": "Invoked by another run",
-  "e39f89c909df4db0": "Could not resume the run",
-  "865f034346b82f47": "Cancel {title}? Its agents stop and the run cannot be resumed.",
-  "6bc75632fd9c9136": "Could not cancel the run",
-  "0f36db603d7a3942": "Steps of {title}",
-  "816f0dc2442994be": "Result of {title}",
-  "daac63db9c9166ca": "{count} attempts",
-  "87e102285375a6c3": "Connect an environment to see its workflow runs.",
-  "fdb57f733a52f0bb": "No workflow runs",
-  "9a5ef256972d1e86": [
-    "Workflows are off on this server, or none has run yet. Start the server with",
-    " ",
-    {
-      "t": "code",
-      "i": 1,
-      "c": "T3CODE_WORKFLOWS"
-    },
-    " set to a definitions file to turn them on.",
-    " ",
-    {
-      "t": "a",
-      "i": 2,
-      "c": "Read the guide"
-    }
-  ],
-  "0a7a3f154faa350d": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " · asked",
-    " ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    }
-  ],
-  "b013fcdd19c27076": "retired",
-  "f92d9132f7b85d1a": "Loading steps…",
-  "3165ff13ecdf5cb1": "No steps yet.",
-  "3d9761e81798fcd8": "Resume",
-  "9b5df864942c7460": "Cancel run",
-  "8c303e8335acb135": [
-    "started",
-    " ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "4251367c9246918e": [
-    "started",
-    " ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " ",
-    "· took ",
-    {
-      "i": 2,
-      "k": "_gt_value_2",
-      "v": "v"
-    }
-  ],
-  "67fcd8dbf6107fa4": [
-    "Thread in environment ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
   "ae0b91ed52736998": "ベースブランチが追跡しているリモートブランチの最新コミットを使用します (名前が異なる場合も含む)。それ以外の場合は origin 上の同名ブランチを使用します。そのリモートブランチがない場合はローカルブランチを使用します。",
   "81f82840d9589bc9": "「新しいワークツリーをリモートから開始」をデフォルトにリセット",
   "f68e05c50f67ab91": "デフォルトで新しいワークツリーをリモートから開始",
@@ -11625,11 +11566,12 @@
   "8d7631ea8e21d4f8": "ショートカットを押してください…",
   "d39dd343104c5458": "ショートカットを変更",
   "9c73aa0c2e2b4e7d": "ショートカットを選択",
-  "9ccdcb71520274a8": "Waiting on {detail}",
   "300a948f90c4d75c": "戻る",
   "2a50e229df85d553": "進む",
   "8aa6404c8018ea67": "T3 Code ホーム",
+  "9429b3fbbce72132": "{label}, {count} waiting on you",
   "8e9626aa27cb188a": "Issue",
+  "2dadb2359422121c": "Workflows",
   "9d2fc1003e82feb1": "使用量",
   "20283eb1dd6119f9": "{count, plural, other {{count} 個の添付ファイル}}",
   "ffedb03b620f97a9": "未送信の下書き",
@@ -12009,6 +11951,224 @@
   "2cddd6095abc734a": "7 日間",
   "53493056306708cf": "30 日間",
   "c719359d18d37ad3": "90 日間",
+  "c0ba3f6756b09f30": "Unsaved changes",
+  "6914e22d357f0ad6": "Saved and running",
+  "aff389354a031d6f": "The file on disk does not load. The last version that did keeps running.",
+  "ddb37138df660942": "Not saved. Nothing changed on the server.",
+  "6ef4db489e40e39e": "Could not save",
+  "3dcedb736d20aae5": "Could not read the workflow files",
+  "b09f4df8d76ae8ea": "Delete {file}? The workflows it defines can no longer be started.",
+  "407c228d7da0b7df": "Not deleted. Nothing changed on the server.",
+  "1a6aa10f3cc14fff": "These files do not fit together. What ran before keeps running.",
+  "259312516a1dbe6f": "File name",
+  "2f48ab2aa0586853": "Defines no workflows",
+  "ba5adfa37b55b8c5": [
+    "Line ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ":"
+  ],
+  "d94eb9ab3201b641": "Delete",
+  "84c900d1ae72adc6": "Save",
+  "5912d817be03247a": "The file changed on disk while you were editing. Saving replaces that change.",
+  "0b1e6f5608826387": "Load the file and drop my changes",
+  "f47b4c06aeb77c1c": "Loading the workflow files…",
+  "4353bfd401d58f87": [
+    "Every file in",
+    " ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    " ",
+    "defines workflows. A change to one is picked up without a restart."
+  ],
+  "0c165251a06f10f1": "New file",
+  "8e97cf734b4463e7": "Create",
+  "2ec0d5108fd6cebe": "No workflows yet. Make the first file here, or ask an agent to write one in that folder.",
+  "5601350626e8cfe9": "Does not load",
+  "644eafa9048b62df": "{count, plural, =1 {1st try} =2 {2nd try} =3 {3rd try} other {{count}th try}}",
+  "e39f89c909df4db0": "Could not resume the run",
+  "865f034346b82f47": "Cancel {title}? Its agents stop and the run cannot be resumed.",
+  "6bc75632fd9c9136": "Could not cancel the run",
+  "ded70e75de6404ba": "Back to the list of runs",
+  "04b050b0329f0ac8": "took {duration}",
+  "aff78e1774818ff4": "{duration} so far",
+  "156ec271d49ddd70": "What happened",
+  "64e50329dcfdd5b0": "Finished",
+  "350162e7cc1ebea4": "Stopped",
+  "3cc43f1dbf3f8e0c": "Cancelled",
+  "9a03d8a9afc60387": "Steps so far",
+  "34f59bbbead0b97f": "{names} and {count} more",
+  "9c91322e7f32e640": "nobody answered {step} in {duration}",
+  "442b927cd2ab5aae": "Answered",
+  "7ea9e02ffe638f22": "{step} · after {duration}",
+  "e80b32cb988b74d7": "slept {duration} at {step}",
+  "6df72bc21dd307e9": "Sleeping",
+  "dad469b3d9017cd3": "{step} · wakes in {duration}",
+  "32231436191ca918": "{step} · about to wake",
+  "7695476e9db3420b": "waited {duration} for {step}",
+  "8d99d4970be2721b": "Waiting",
+  "3182fbc4ab0e38fd": "for {step} · {duration} so far",
+  "c76124517af28686": "running for {duration}",
+  "61f391d7101fd170": "{step} failed",
+  "151af44a817bfe57": "working for {duration}",
+  "89102905bf09b0e8": "Watch live",
+  "bdf338cdff4118f0": "Transcript",
+  "271649d67233a8c2": "Show all of it",
+  "811e7e992f9ff820": "cannot go on until its workflow version is registered again",
+  "4d4cdf035e98dd57": "waits for you to resume it",
+  "eb5b21dd224a5941": "tries again by itself in {duration}",
+  "6ab3dfa749fde477": "about to try again by itself",
+  "44b6463aa70aa14c": "Why it paused",
+  "882a25e9084ae1b2": "Paused",
+  "cf25e7169ab0eb7a": "Paused at {step}",
+  "56c48c1f220f2754": "Could not answer the question",
+  "a3c43735e1a81498": "Reason for {title}",
+  "bfad234f016cfa3f": "Why, in a sentence. It goes with whichever answer you pick.",
+  "004c41aff9c97873": "Runs",
+  "4dc0c244a2419f6c": [
+    "Part of ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8c303e8335acb135": [
+    "started",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8bffb377e2a6a7de": "its version is no longer registered",
+  "9b5df864942c7460": "Cancel run",
+  "f92d9132f7b85d1a": "Loading steps…",
+  "e0e907364fc15e41": "At the same time",
+  "6ebc59f64c761a49": "Nothing yet.",
+  "a759dccd157d7dae": [
+    "You said",
+    " ",
+    {
+      "t": "span",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    "."
+  ],
+  "593b425188346781": [
+    "You said",
+    " ",
+    {
+      "t": "span",
+      "i": 1,
+      "c": {
+        "i": 2,
+        "k": "_gt_value_2",
+        "v": "v"
+      }
+    },
+    ": ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    }
+  ],
+  "c98009be9a273b31": "Open run",
+  "c8eb9be36d4d51ad": [
+    "Thread on ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "f981b5df9b9fd25f": "Resume now",
+  "8cebd63fc4c967d5": "Only the failed step runs again; what finished before it is kept.",
+  "292e1df552ffb14b": "Input",
+  "a812f51e970740f1": [
+    "asked",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    "· the run waits for you"
+  ],
+  "02dfe6c63fd0b8a1": "Add a reason",
+  "19abd94828a3bdbc": "Ask the agent first",
+  "a18721fa8f328361": "Needs you",
+  "bbf24e7920c1e86b": "Running",
+  "8d6e18d2ad832db6": "All",
+  "f25af5332ffc3734": "Nothing waits on you.",
+  "c3f0119b8d6231f8": "Nothing is running.",
+  "33028dfc1229eaa6": "No runs yet.",
+  "5459bf696a187c26": "Could not load workflow runs",
+  "b9aae2f7cdb1a379": "No workflow runs yet",
+  "8f15f66e545af7c0": "Which runs",
+  "b6409289e0c9a4dd": "Workflow",
+  "035cb02ca1ae4952": "All {count} workflows",
+  "46d614fa7b4bf1e5": "Workflow runs",
+  "1c635faa2fb45b8b": "Has not run yet.",
+  "2400254d362de84d": "Loading workflow runs…",
+  "783e616cb0476c17": [
+    "A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one under",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Definitions"
+    },
+    ", or ask an agent to.",
+    " ",
+    {
+      "t": "a",
+      "i": 2,
+      "c": "Read the guide"
+    }
+  ],
+  "cae5c3205c01d062": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "A workflow file has a problem."
+    },
+    " ",
+    "The last version that did keeps running."
+  ],
+  "ed8ce6ebc73dc12d": "Open the file",
+  "5d8d278ff828102d": "All workflows",
+  "39459da07479f482": "Agent",
+  "1e25265f2758fce3": "Open as a full thread",
+  "7783d914a4670f44": "Close transcript",
+  "c512071143a5ba32": "This thread is no longer there.",
+  "ed169d23683fb6ac": "Loading the thread…",
+  "290e0ab40b87dc17": "Workflows breadcrumb",
+  "683dd9831e54edc0": "Environment",
+  "8f6589c9e0ac5d4e": "No environment connected",
+  "744127f8dfad7d22": "Connect an environment to see its workflow runs.",
+  "87df46e106c4a277": "Agent transcript",
+  "2d6107cb78382d08": "Workflows",
+  "16f7df687349b399": "Definitions",
+  "f0a212aadfe1257b": "Loading the editor…",
   "8367779e149f723b": "プライマリ環境へのリクエストが {operation} 中に失敗しました (HTTP {status})。",
   "c5cd027743a2b5a6": "ペアリングトークンが無効です。トークンを確認して、もう一度お試しください。",
   "0e4b49c8203aae81": "ブートストラップ後、認証済みセッションの待機がタイムアウトしました。",
