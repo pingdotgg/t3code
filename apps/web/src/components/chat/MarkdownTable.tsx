@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useRef, type ComponentProps } from "react";
 
@@ -20,13 +21,14 @@ const TABLE_COPY_SERIALIZERS: Record<TableCopyFormat, (table: Element) => string
 };
 
 export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
+  const gt = useGT();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const { copyToClipboard, isCopied: copied } = useCopyToClipboard<TableCopyFormat>({
     timeout: 1200,
     onError: (cause, format) =>
       reportMarkdownActionFailure({ operation: "copy-table", format }, cause),
   });
-  const copyLabel = copied ? "Copied" : "Copy table";
+  const copyLabel = copied ? gt("Copied") : gt("Copy table");
 
   const handleCopy = (format: TableCopyFormat) => {
     const table = containerRef.current?.querySelector("table");
@@ -68,9 +70,15 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
             <TooltipPopup side="top">{copyLabel}</TooltipPopup>
           </Tooltip>
           <MenuPopup align="end">
-            <MenuItem onClick={() => handleCopy("markdown")}>Copy as Markdown</MenuItem>
-            <MenuItem onClick={() => handleCopy("csv")}>Copy as CSV</MenuItem>
-            <MenuItem onClick={() => handleCopy("html")}>Copy as HTML</MenuItem>
+            <MenuItem onClick={() => handleCopy("markdown")}>
+              <T>Copy as Markdown</T>
+            </MenuItem>
+            <MenuItem onClick={() => handleCopy("csv")}>
+              <T>Copy as CSV</T>
+            </MenuItem>
+            <MenuItem onClick={() => handleCopy("html")}>
+              <T>Copy as HTML</T>
+            </MenuItem>
           </MenuPopup>
         </Menu>
       </div>
