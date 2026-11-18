@@ -1,11 +1,20 @@
 import { useAtomValue } from "@effect/atom-react";
-import { serverUpdateStateAtom } from "@t3tools/client-runtime/state/server";
+import { AVAILABLE_CONNECTION_STATE } from "@t3tools/client-runtime/connection";
+import {
+  nudgeReconnectDuringUpdateRestart,
+  serverUpdateStateAtom,
+} from "@t3tools/client-runtime/state/server";
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { AsyncResult, Atom } from "effect/reactivity";
+import * as Stream from "effect/Stream";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { msg } from "gt-react";
 
 import { APP_VERSION } from "~/branding";
+import { environmentCatalog } from "~/connection/catalog";
+import { m } from "~/i18n/messages";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { desktopUpdateStateAtom } from "~/state/desktopUpdate";
 import { serverEnvironment } from "~/state/server";
@@ -114,7 +123,7 @@ export function retryFailedUpdateRunServers(
           ? providerFailure
           : outcome.status === "failed"
             ? outcome.message
-            : "Could not start the update",
+            : m(msg("Could not start the update")),
         { serverUpdated: outcome.status === "updated" },
       ),
     );
@@ -308,12 +317,13 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      stopReconnectNudge();
       queueMicrotask(() => unsubscribe());
       appAtomRegistry.set(stateAtom, { status: "idle" });
       releaseState();
       settleUpdateRunMachine(server.environmentId, failure);
       if (failure === null) updatedServers += 1;
-      else failures.push(`${server.label}: ${failure}`);
+      else failures.push(m(msg("{machine}: {failure}", { machine: server.label, failure })));
       remaining -= 1;
       if (remaining === 0) {
         showUpdateEverythingResult({
@@ -326,8 +336,24 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
       }
     };
     const timer = setTimeout(
-      () => settle(`Not back after ${HANDOFF_TIMEOUT_MS / 60_000} minutes`),
+      () =>
+        settle(
+          m(msg("Not back after {minutes} minutes", { minutes: HANDOFF_TIMEOUT_MS / 60_000 })),
+        ),
       server.startedAt + HANDOFF_TIMEOUT_MS - Date.now(),
+    );
+    const stopReconnectNudge = Effect.runCallback(
+      nudgeReconnectDuringUpdateRestart({
+        stateChanges: AtomRegistry.toStream(
+          appAtomRegistry,
+          environmentCatalog.stateAtom(server.environmentId),
+        ).pipe(
+          Stream.map((state) => AsyncResult.getOrElse(state, () => AVAILABLE_CONNECTION_STATE)),
+        ),
+        retryNow: Effect.promise(() =>
+          environmentCatalog.retryNow.run(appAtomRegistry, server.environmentId),
+        ).pipe(Effect.asVoid),
+      }),
     );
     const unsubscribe = appAtomRegistry.subscribe(
       serverEnvironment.configValueAtom(server.environmentId),
@@ -359,8 +385,13 @@ export function startDesktopUpdateLaunchNotice(): () => void {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Update did not apply",
-          description: `T3 Code is still on ${APP_VERSION}. Install ${notAppliedVersion} again from the update button.`,
+          title: m(msg("Update did not apply")),
+          description: m(
+            msg("T3 Code is still on {current}. Install {version} again from the update button.", {
+              current: APP_VERSION,
+              version: notAppliedVersion,
+            }),
+          ),
         }),
       );
     },
