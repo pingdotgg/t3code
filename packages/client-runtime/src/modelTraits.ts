@@ -1,8 +1,4 @@
-import type {
-  ModelSelection,
-  ProviderDriverKind,
-  ProviderOptionDescriptor,
-} from "@t3tools/contracts";
+import type { ModelSelection, ProviderOptionDescriptor } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
@@ -10,11 +6,27 @@ import {
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
 import { REASONING_EFFORT_OPTION_IDS } from "./state/threadExecution.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
-export const REASONING_SELECT_DESCRIPTOR_IDS: ReadonlySet<string> = new Set([
+const REASONING_DESCRIPTOR_IDS: ReadonlySet<string> = new Set([
   ...REASONING_EFFORT_OPTION_IDS,
   "thinking",
 ]);
+
+/** The model's reasoning control: a known effort id, or a select its agent marked as reasoning. */
+export function isReasoningControl(descriptor: ProviderOptionDescriptor): boolean {
+  return (
+    (descriptor.type === "select" && descriptor.role === "reasoning") ||
+    REASONING_DESCRIPTOR_IDS.has(descriptor.id)
+  );
+}
+
+export function isReasoningSelect(
+  descriptor: ProviderOptionDescriptor,
+): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> {
+  return descriptor.type === "select" && isReasoningControl(descriptor);
+}
 
 export function replaceDescriptorCurrentValue(
   descriptors: ReadonlyArray<ProviderOptionDescriptor>,
@@ -95,35 +107,41 @@ export function getTraitSelectChange(
   };
 }
 
-export function buildTraitsTriggerDisplay(input: {
-  provider: ProviderDriverKind;
-  descriptors: ReadonlyArray<ProviderOptionDescriptor>;
-  primarySelectDescriptorId: string | null;
-  ultrathinkPromptControlled: boolean;
-  modelSelection?: ModelSelection | null;
-  reportedModelSelection?: ModelSelection | null | undefined;
-}): {
+export function buildTraitsTriggerDisplay(
+  input: {
+    descriptors: ReadonlyArray<ProviderOptionDescriptor>;
+    primarySelectDescriptorId: string | null;
+    ultrathinkPromptControlled: boolean;
+    modelSelection?: ModelSelection | null;
+    reportedModelSelection?: ModelSelection | null | undefined;
+  },
+  resolve: MFunctionType = mFallback,
+): {
   label: string;
   /** "Fast" or "Ultrafast" when a speed option is on. */
   speedLabel: string | null;
-  /** Labels other than reasoning and speed, such as context window or thinking. */
-  otherLabels: ReadonlyArray<string>;
+  ultracode: boolean;
 } {
   let fastModeFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
+  let ultracodeLabelIndex = -1;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       speedLabel = descriptor.currentValue === true ? "Fast" : null;
-      fastModeFallbackLabel = speedLabel ?? "Normal";
+      fastModeFallbackLabel =
+        speedLabel ?? resolve(msg("Normal", { $context: "model speed tier" }));
       continue;
     }
-    if (
-      input.provider === "codex" &&
-      descriptor.id === "serviceTier" &&
-      descriptor.type === "select"
-    ) {
+    if (descriptor.id === "ultracode" && descriptor.type === "boolean") {
+      if (descriptor.currentValue === true) {
+        ultracodeLabelIndex = labels.length;
+        labels.push(descriptor.label);
+      }
+      continue;
+    }
+    if (descriptor.id === "serviceTier" && descriptor.type === "select") {
       const currentValue = getProviderOptionCurrentValue(descriptor);
       const fastTier = descriptor.options.find(({ label }) => label === "Fast");
       const ultrafastTier = descriptor.options.find(({ label }) => label === "Ultrafast");
@@ -139,7 +157,8 @@ export function buildTraitsTriggerDisplay(input: {
               ? "Fast"
               : null;
         fastModeFallbackLabel =
-          descriptor.options.find(({ id }) => id === currentValue)?.label ?? "Normal";
+          descriptor.options.find(({ id }) => id === currentValue)?.label ??
+          resolve(msg("Normal", { $context: "model speed tier" }));
         continue;
       }
     }
@@ -147,27 +166,25 @@ export function buildTraitsTriggerDisplay(input: {
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
         ? "Ultrathink"
         : descriptor.type === "boolean"
-          ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
-          : getProviderOptionCurrentLabel(
+          ? descriptor.currentValue === true
+            ? resolve(msg("{label} On", { label: descriptor.label }))
+            : resolve(msg("{label} Off", { label: descriptor.label }))
+          : (getProviderOptionCurrentLabel(
               descriptor,
               input.modelSelection,
               input.reportedModelSelection,
-            );
+            ) ?? (descriptor.id === "thinking" ? descriptor.label : null));
     if (typeof label === "string" && label.length > 0) {
-      if (
-        reasoningLabelIndex === -1 &&
-        descriptor.type === "select" &&
-        REASONING_SELECT_DESCRIPTOR_IDS.has(descriptor.id)
-      ) {
+      if (reasoningLabelIndex === -1 && isReasoningSelect(descriptor)) {
         reasoningLabelIndex = labels.length;
       }
       labels.push(label);
     }
   }
 
-  const otherLabels = labels.filter((_, index) => index !== reasoningLabelIndex);
+  const ultracode = ultracodeLabelIndex >= 0;
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
-    return { label: fastModeFallbackLabel, speedLabel, otherLabels };
+    return { label: fastModeFallbackLabel, speedLabel, ultracode };
   }
   if (speedLabel) {
     if (reasoningLabelIndex >= 0) {
@@ -176,5 +193,5 @@ export function buildTraitsTriggerDisplay(input: {
       labels.push(speedLabel);
     }
   }
-  return { label: labels.join(" · "), speedLabel, otherLabels };
+  return { label: labels.join(" · "), speedLabel, ultracode };
 }

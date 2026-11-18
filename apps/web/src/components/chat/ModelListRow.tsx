@@ -1,4 +1,5 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
 import { getDisplayModelName } from "./providerIconUtils";
@@ -34,6 +35,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   disabledReason?: string | null;
   onToggleFavorite: (instanceId: ProviderInstanceId, slug: string) => void;
 }) {
+  const gt = useGT();
   const model = {
     slug: props.slug,
     name: props.name,
@@ -67,11 +69,19 @@ export const ModelListRow = memo(function ModelListRow(props: {
         badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
       />
       <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
-        <div className="min-w-0 truncate text-sm font-normal leading-snug">
+        <div
+          className="min-w-0 truncate text-sm font-normal leading-snug"
+          // Names the row in full on hover only when it is cut off.
+          onPointerEnter={(event) => {
+            const name = event.currentTarget;
+            name.title = name.scrollWidth > name.clientWidth ? getDisplayModelName(model) : "";
+          }}
+        >
           {getDisplayModelName(model)}
           {/* The logo is decorative, so name the provider for screen readers. */}
           <span className="sr-only">, {props.providerDisplayName}</span>
         </div>
+        {props.isSelected ? <CheckIcon className="size-3.5 shrink-0" aria-hidden="true" /> : null}
         {props.subProvider ? (
           <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
             {props.subProvider}
@@ -80,27 +90,25 @@ export const ModelListRow = memo(function ModelListRow(props: {
         {props.showNewBadge ? (
           <span
             className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
-            aria-label="New model"
+            aria-label={gt("New model")}
           >
-            New
+            {gt("New", { $context: "badge on a newly added model" })}
           </span>
         ) : null}
         {props.unavailable ? (
           <Badge variant="outline" size="sm">
-            Unavailable
+            <T context="badge on a model that cannot be selected">Unavailable</T>
           </Badge>
         ) : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
-        {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}
         <Tooltip>
           <TooltipTrigger
             render={
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                className="-mr-1 shrink-0"
                 onClick={(event) => {
                   event.stopPropagation();
                   props.onToggleFavorite(props.instanceId, props.slug);
@@ -109,7 +117,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                   event.stopPropagation();
                 }}
                 disabled={Boolean(props.disabledReason)}
-                aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+                aria-label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
               >
                 <StarIcon
                   className={cn(
@@ -123,14 +131,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
             }
           />
           <TooltipPopup side="top" align="center">
-            {props.isFavorite ? "Remove from favorites" : "Add to favorites"}
+            {props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
           </TooltipPopup>
         </Tooltip>
-        {/* Last, and always reserved, so stars and the check keep fixed columns. */}
-        <CheckIcon
-          className={cn("size-3.5", !props.isSelected && "invisible")}
-          aria-hidden="true"
-        />
+        {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}
       </div>
     </ComboboxItem>
   );

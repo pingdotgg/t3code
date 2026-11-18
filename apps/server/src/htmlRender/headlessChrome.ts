@@ -105,6 +105,15 @@ const decodeLogEntryAdded = Schema.decodeUnknownOption(
   }),
 );
 
+const clipConsoleText = (text: string) => {
+  if (text.length <= MAX_CONSOLE_TEXT_CHARS) return text;
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = text.charCodeAt(MAX_CONSOLE_TEXT_CHARS - 1);
+  const end =
+    last >= 0xd800 && last <= 0xdbff ? MAX_CONSOLE_TEXT_CHARS - 1 : MAX_CONSOLE_TEXT_CHARS;
+  return `${text.slice(0, end)}…`;
+};
+
 const remoteObjectText = (value: typeof RemoteObject.Type) =>
   typeof value.value === "string"
     ? value.value
@@ -173,7 +182,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   readonly profileDirectory: string;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const proxyPort = yield* publicProxy.pipe(
+  const proxy = yield* publicProxy.pipe(
     Effect.mapError(
       (cause) => new HtmlRenderBrowserError({ reason: "the preview proxy could not start", cause }),
     ),
@@ -192,7 +201,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
           "--hide-scrollbars",
           "--mute-audio",
           "--block-new-web-contents",
-          `--proxy-server=socks5://127.0.0.1:${proxyPort}`,
+          `--proxy-server=socks5://127.0.0.1:${proxy.port}`,
           // Loopback would otherwise skip the proxy.
           "--proxy-bypass-list=<-loopback>",
           // WebRTC would otherwise send UDP, which no proxy carries.
@@ -315,11 +324,9 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       page.omittedConsoleMessages += 1;
       return yield* Effect.void;
     }
-    const text = consoleMessage.text.replaceAll(PAGE_URL, PAGE_NAME);
     page.consoleMessages.push({
       level: consoleMessage.level,
-      text:
-        text.length > MAX_CONSOLE_TEXT_CHARS ? `${text.slice(0, MAX_CONSOLE_TEXT_CHARS)}…` : text,
+      text: clipConsoleText(consoleMessage.text.replaceAll(PAGE_URL, PAGE_NAME)),
     });
     return yield* Effect.void;
   });
@@ -411,10 +418,17 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     );
   });
 
+  // Chrome's default context can stall Fetch interception during navigation.
+  const { browserContextId } = yield* send(
+    "Target.createBrowserContext",
+    {},
+    Schema.Struct({ browserContextId: Schema.String }),
+  );
+
   const openPage = Effect.fnUntraced(function* (width: number, appearance: ThemeAppearance) {
     const { targetId } = yield* send(
       "Target.createTarget",
-      { url: "about:blank" },
+      { url: "about:blank", browserContextId },
       Schema.Struct({ targetId: Schema.String }),
     );
     const { sessionId } = yield* send(
@@ -530,7 +544,16 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     return { load, screenshot, consoleMessages, close };
   });
 
-  return { openPage };
+  // Each capture opens one page per browser, so this note belongs to that page alone.
+  const fakeIpNote = (): ReadonlyArray<ConsoleMessage> =>
+    [...proxy.fakeIpHosts].map(([host, address]) => ({
+      level: "warning",
+      text: clipConsoleText(
+        `DNS returned blocked 198.18.0.0/15 addresses, which may come from Clash or Mihomo fake-IP DNS. Inline the resource, add its host to fake-ip-filter, or switch DNS to redir-host. Affected host: ${host} (${address})`,
+      ),
+    }));
+
+  return { openPage, fakeIpNote };
 });
 
 const scratchDirectory = Effect.gen(function* () {
@@ -566,7 +589,12 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
     const contentHeight = yield* page.load(pageBody(input.html), input.urlFragment);
     const capturedHeight = Math.max(1, Math.min(contentHeight, MAX_CAPTURE_HEIGHT));
     const png = yield* page.screenshot(capturedHeight);
-    return { png, contentHeight, capturedHeight, consoleMessages: page.consoleMessages() };
+    return {
+      png,
+      contentHeight,
+      capturedHeight,
+      consoleMessages: [...page.consoleMessages(), ...browser.fakeIpNote()],
+    };
   },
   Effect.scoped,
   Effect.timeoutOrElse({

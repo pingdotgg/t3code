@@ -8,6 +8,7 @@ import { useUpdateEverything } from "./useUpdateEverything";
 const mocks = vi.hoisted(() => ({
   updateProviders: vi.fn(),
   updateServer: vi.fn(),
+  stageServerUpdate: vi.fn(),
   remoteCount: 0,
 }));
 
@@ -20,7 +21,7 @@ vi.mock("~/state/environments", () => ({
       serverConfig: {
         environment: {
           serverVersion: "0.0.1",
-          capabilities: { serverSelfUpdate: "boot-service" },
+          capabilities: { serverSelfUpdate: "boot-service", serverUpdateStaging: true },
         },
         settings: { continueThreadsAfterServerUpdate: false },
       },
@@ -32,8 +33,12 @@ vi.mock("~/state/session", () => ({
     Atom.make(Array.from({ length: mocks.remoteCount }, () => null)),
 }));
 vi.mock("~/state/server", () => ({
+  serverEnvironment: { stageServerUpdate: {} },
   environmentUpdateStatesAtom: () =>
     Atom.make(Array.from({ length: mocks.remoteCount }, () => ({ status: "idle" }))),
+}));
+vi.mock("~/state/use-atom-command", () => ({
+  useAtomCommand: () => mocks.stageServerUpdate,
 }));
 vi.mock("../ProviderUpdatesAction", () => ({
   useProviderUpdates: () => ({
@@ -62,6 +67,7 @@ vi.mock("./updateEverythingRun", () => ({
 function setup(remoteCount = 0) {
   mocks.updateProviders.mockReset().mockResolvedValue([]);
   mocks.updateServer.mockReset().mockResolvedValue({ status: "updated" });
+  mocks.stageServerUpdate.mockReset().mockResolvedValue(undefined);
   mocks.remoteCount = remoteCount;
 }
 
@@ -124,6 +130,7 @@ describe("useUpdateEverything provider selection", () => {
       await act(() => screen.container.querySelector<HTMLButtonElement>("button")!.click());
       expect(mocks.updateProviders).toHaveBeenCalledTimes(calls);
       expect(mocks.updateServer).toHaveBeenCalledTimes(remote);
+      expect(mocks.stageServerUpdate).toHaveBeenCalledTimes(calls > 0 ? remote : 0);
       expect(mocks.updateServer.mock.calls.map(([target]) => target.environmentId)).toEqual(
         Array.from({ length: remote }, (_, index) => `remote-${index}`),
       );

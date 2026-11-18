@@ -1,11 +1,34 @@
-import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScopedProjectRef,
+  SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
   resolveScratchProjectScopeKey,
   type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
+import { msg } from "gt-react";
+
 import type { Project } from "./types";
+
+export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
+  repository: msg("Group by repository", { $context: "sidebar project grouping mode" }),
+  repository_path: msg("Group by repository path", { $context: "sidebar project grouping mode" }),
+  separate: msg("Keep separate", { $context: "sidebar project grouping mode" }),
+};
+
+export function withProjectGroupingOverride(
+  overrides: Readonly<Record<string, SidebarProjectGroupingMode>> | undefined,
+  overrideKey: string,
+  selection: SidebarProjectGroupingMode | "inherit",
+): Record<string, SidebarProjectGroupingMode> {
+  const next = { ...overrides };
+  if (selection === "inherit") delete next[overrideKey];
+  else next[overrideKey] = selection;
+  return next;
+}
 
 export type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
 
@@ -218,10 +241,8 @@ export function buildSidebarProjectPickerEntries(input: {
 
     return [{ group, targetProject, isPreferred }];
   });
-  // The preferred project leads the unpinned ones; pinned projects stay first.
+  // The current project leads, even ahead of pinned projects.
   const preferred = entries.find((entry) => entry.isPreferred);
-  if (!preferred || preferred.group.pinned) return entries;
-  const rest = entries.filter((entry) => entry !== preferred);
-  const pinnedCount = rest.filter((entry) => entry.group.pinned).length;
-  return [...rest.slice(0, pinnedCount), preferred, ...rest.slice(pinnedCount)];
+  if (!preferred) return entries;
+  return [preferred, ...entries.filter((entry) => entry !== preferred)];
 }

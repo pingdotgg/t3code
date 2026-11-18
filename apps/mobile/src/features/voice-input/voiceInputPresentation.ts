@@ -1,4 +1,7 @@
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export type VoiceComposerPresentation = {
   readonly leadingAction: "cancel" | null;
@@ -12,6 +15,7 @@ export type VoiceComposerPresentation = {
 export function resolveVoiceComposerPresentation(
   state: VoiceInputState,
   elapsedSeconds: number,
+  resolve: MessageResolver = m,
 ): VoiceComposerPresentation {
   switch (state.phase) {
     case "idle":
@@ -38,7 +42,7 @@ export function resolveVoiceComposerPresentation(
         trailingAction: "confirm",
         showsSend: false,
         statusKind: "active",
-        statusLabel: "Preparing",
+        statusLabel: resolve(msg("Preparing", { $context: "voice input status" })),
         confirmationEnabled: false,
       };
     case "recording": {
@@ -48,17 +52,22 @@ export function resolveVoiceComposerPresentation(
         trailingAction: "confirm",
         showsSend: false,
         statusKind: "active",
-        statusLabel: `Recording ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`,
+        statusLabel: resolve(
+          msg("Recording {time}", {
+            time: `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`,
+          }),
+        ),
         confirmationEnabled: true,
       };
     }
     case "transcribing":
+    case "post-processing":
       return {
         leadingAction: "cancel",
         trailingAction: "confirm",
         showsSend: false,
         statusKind: "active",
-        statusLabel: "Transcribing",
+        statusLabel: resolve(msg("Transcribing", { $context: "voice input status" })),
         confirmationEnabled: false,
       };
   }

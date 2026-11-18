@@ -50,9 +50,7 @@ export default function DeployTerminal({
   title?: string;
   bare?: boolean;
 }) {
-  const [mode, setMode] = useState<"idle" | "plan" | "deploy" | "destroy">(
-    "idle",
-  );
+  const [mode, setMode] = useState<"idle" | "plan" | "deploy" | "destroy">("idle");
   const [cmd, setCmd] = useState("");
   const [caret, setCaret] = useState(false);
   const [header, setHeader] = useState<{
@@ -96,10 +94,7 @@ export default function DeployTerminal({
       setRows([]);
       for (const r of RESOURCES) {
         if (aborted()) return;
-        setRows((rs) => [
-          ...rs,
-          { ...r, action, status: "ready" as RowStatus },
-        ]);
+        setRows((rs) => [...rs, { ...r, action, status: "ready" as RowStatus }]);
         await sleep(perRowMs);
       }
     };
@@ -191,15 +186,13 @@ export default function DeployTerminal({
       }
     };
 
-    run();
+    void run();
     return () => {
       cancelRef.current = true;
     };
   }, []);
 
-  const anyInFlight = rows.some(
-    (r) => r.status === "creating" || r.status === "deleting",
-  );
+  const anyInFlight = rows.some((r) => r.status === "creating" || r.status === "deleting");
   const spinner = useSpinner(anyInFlight);
   const accent = MODE_ACCENT[mode]!;
 
@@ -249,16 +242,10 @@ export default function DeployTerminal({
           >
             {icon}
           </span>
-          <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
-            {r.id}
-          </span>
-          <span
-            style={{ color: "var(--alc-code-comment)" }}
-          >{` (${r.type})`}</span>
+          <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{r.id}</span>
+          <span style={{ color: "var(--alc-code-comment)" }}>{` (${r.type})`}</span>
           {bindingCount > 0 && (
-            <span
-              style={{ color: "var(--alc-code-type)" }}
-            >{` (${bindingCount} bindings)`}</span>
+            <span style={{ color: "var(--alc-code-type)" }}>{` (${bindingCount} bindings)`}</span>
           )}
           {statusWord && (
             <span
@@ -274,10 +261,7 @@ export default function DeployTerminal({
         </div>
         {bindingCount > 0 &&
           r.bindings.map((b) => (
-            <div
-              key={`${r.id}-${b}`}
-              style={{ minHeight: "1.55em", whiteSpace: "pre" }}
-            >
+            <div key={`${r.id}-${b}`} style={{ minHeight: "1.55em", whiteSpace: "pre" }}>
               <span style={{ width: "1.2em", display: "inline-block" }}> </span>
               <span
                 style={{
@@ -305,9 +289,7 @@ export default function DeployTerminal({
       bare={bare}
     >
       <Line>
-        <span style={{ color: accent, transition: "color 280ms ease" }}>
-          ${" "}
-        </span>
+        <span style={{ color: accent, transition: "color 280ms ease" }}>$ </span>
         {cmd}
         {caret && <span style={{ color: "var(--alc-fg-invert)" }}>▍</span>}
       </Line>
@@ -345,21 +327,13 @@ export default function DeployTerminal({
           <Line>
             {proceed === "confirmed" ? (
               <>
-                <span style={{ color: accent, transition: "color 200ms ease" }}>
-                  {"◉ Yes "}
-                </span>
-                <span style={{ color: "var(--alc-code-comment)" }}>
-                  {"○ No"}
-                </span>
+                <span style={{ color: accent, transition: "color 200ms ease" }}>{"◉ Yes "}</span>
+                <span style={{ color: "var(--alc-code-comment)" }}>{"○ No"}</span>
               </>
             ) : (
               <>
-                <span style={{ color: "var(--alc-fg-invert)" }}>
-                  {"◉ Yes "}
-                </span>
-                <span style={{ color: "var(--alc-code-comment)" }}>
-                  {"○ No"}
-                </span>
+                <span style={{ color: "var(--alc-fg-invert)" }}>{"◉ Yes "}</span>
+                <span style={{ color: "var(--alc-code-comment)" }}>{"○ No"}</span>
               </>
             )}
           </Line>
@@ -369,20 +343,14 @@ export default function DeployTerminal({
         <>
           <Line> </Line>
           <Line>
-            <span style={{ color: accent, transition: "color 280ms ease" }}>
-              ✓{" "}
-            </span>
+            <span style={{ color: accent, transition: "color 280ms ease" }}>✓ </span>
             <span>{summary.verb} in </span>
-            <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>
-              {summary.secs}s
-            </span>
+            <span style={{ color: "var(--alc-fg-invert)", fontWeight: 600 }}>{summary.secs}s</span>
           </Line>
           {summary.url && (
             <Line>
               <span style={{ color: "var(--alc-code-comment)" }}>{"  → "}</span>
-              <span style={{ color: accent, transition: "color 280ms ease" }}>
-                {summary.url}
-              </span>
+              <span style={{ color: accent, transition: "color 280ms ease" }}>{summary.url}</span>
             </Line>
           )}
         </>

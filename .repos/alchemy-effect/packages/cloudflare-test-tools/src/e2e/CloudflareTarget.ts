@@ -3,14 +3,11 @@ import {
   type DeployTarget,
   type DeployTargetServer,
 } from "@alchemy.run/frontend-frameworks/core";
-import * as Miniflare from "../miniflare/miniflare.ts";
-import {
-  moduleTypeFromExtension,
-  type MiniflareModule,
-} from "../miniflare/miniflare-module.ts";
 import * as Effect from "effect/Effect";
 import { cast } from "effect/Function";
 import * as Path from "effect/Path";
+import { moduleTypeFromExtension, type MiniflareModule } from "../miniflare/miniflare-module.ts";
+import * as Miniflare from "../miniflare/miniflare.ts";
 import type * as Options from "./Options.ts";
 
 /**
@@ -39,9 +36,7 @@ const ASSETS_ONLY_STUB: MiniflareModule = {
   contents: `export default { fetch: () => new Response("assets-only build: no user worker — a request reached the stub, so asset routing is misconfigured", { status: 500 }) }`,
 };
 
-export const makeCloudflareTarget = (
-  config: Options.CloudflareTargetOptions,
-): CloudflareTarget =>
+export const makeCloudflareTarget = (config: Options.CloudflareTargetOptions): CloudflareTarget =>
   makeDeployTarget({
     platform: "cloudflare",
     config,
@@ -63,10 +58,7 @@ export const makeCloudflareTarget = (
             return {
               path: module.name,
               type,
-              contents: module.content as
-                | string
-                | Uint8Array<ArrayBuffer>
-                | undefined,
+              contents: module.content as string | Uint8Array<ArrayBuffer> | undefined,
             };
           },
         );
@@ -76,8 +68,7 @@ export const makeCloudflareTarget = (
         // asset layer (`has_user_worker: false`) — fixtures don't hand-roll
         // stubs.
         const resolvedModules = modules ?? preview.modules;
-        const assetsOnly =
-          resolvedModules === undefined || resolvedModules.length === 0;
+        const assetsOnly = resolvedModules === undefined || resolvedModules.length === 0;
         const instance = yield* Effect.acquireDisposable(
           Effect.promise(
             async () =>
@@ -106,10 +97,9 @@ export const makeCloudflareTarget = (
           url: instance.url.toString(),
           // miniflare's Response type differs nominally from the DOM's; the
           // harness has always cast across this boundary.
-          fetch: cast<
-            Miniflare.MiniflareInstance["fetch"],
-            DeployTargetServer["fetch"]
-          >(instance.fetch),
+          fetch: cast<Miniflare.MiniflareInstance["fetch"], DeployTargetServer["fetch"]>(
+            instance.fetch.bind(instance),
+          ),
         };
       }),
   });

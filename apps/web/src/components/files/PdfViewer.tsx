@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   useEffect,
   useEffectEvent,
@@ -7,11 +8,14 @@ import {
   type CSSProperties,
 } from "react";
 import { TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
+import { msg, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 import { ChevronDownIcon, ChevronUpIcon, MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
 import { Input } from "~/components/ui/input";
 import { observeResize } from "~/lib/observeResize";
 import { FileSurfaceAction, FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
 import { readBoundedDocument } from "./readBoundedDocument";
+import { previewErrorText } from "./previewFailureMessages";
 import { openPdf } from "./pdfDocument";
 import {
   currentPdfPage,
@@ -21,6 +25,7 @@ import {
   pdfPageScrollTop,
   pdfPageText,
   pdfPageWidth,
+  pdfRestoredScrollTop,
   PDF_MAX_ZOOM,
   PDF_MIN_ZOOM,
   stepPdfZoom,
@@ -30,6 +35,11 @@ import "./pdfViewer.css";
 
 const MAX_PAGES = 2000;
 const MAX_FIND_TEXT = 4 * 1024 * 1024;
+
+const MAX_POSITIONS = 50;
+type PdfPosition = PdfViewState & { width: number; ratios: readonly number[] };
+// Thread switches unmount the preview; retain only the most recent documents.
+const positions = new Map<string, PdfPosition>();
 
 export type PdfViewState = {
   page: number;
@@ -46,6 +56,7 @@ function PdfPage(props: {
   onSize: (index: number, ratio: number) => void;
   onError: (error: string) => void;
 }) {
+  const gt = useGT();
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
   const { document: pdf, index, width, onSize, onError } = props;
@@ -88,7 +99,7 @@ function PdfPage(props: {
       await Promise.all([paint.promise, layer.render()]);
     })().catch((cause: unknown) => {
       if (!cancelled)
-        onError(cause instanceof Error ? cause.message : "This PDF page could not render.");
+        onError(thrownErrorMessage(cause, m) ?? m(msg("This PDF page could not render.")));
     });
     return () => {
       cancelled = true;
@@ -117,7 +128,11 @@ function PdfPage(props: {
   }, [props.query]);
   return (
     <>
-      <canvas ref={canvas} aria-label={`Page ${index + 1}`} className="block h-full w-full" />
+      <canvas
+        ref={canvas}
+        aria-label={gt("Page {number}", { number: String(index + 1) })}
+        className="block h-full w-full"
+      />
       <div ref={text} data-pdf-text-layer />
     </>
   );
@@ -126,16 +141,21 @@ function PdfPage(props: {
 export default function PdfViewer(props: {
   src: string;
   title: string;
+  positionKey?: string;
   initialView?: PdfViewState;
   onViewChange?: (view: PdfViewState) => void;
 }) {
+  const gt = useGT();
+  const [savedPosition] = useState(() =>
+    props.positionKey === undefined ? undefined : positions.get(props.positionKey),
+  );
   const [initialView] = useState<PdfViewState>(
-    () => props.initialView ?? { page: 0, offset: 0, zoom: null, left: 0 },
+    () => savedPosition ?? props.initialView ?? { page: 0, offset: 0, zoom: null, left: 0 },
   );
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
-  const [ratios, setRatios] = useState<number[]>([]);
+  const [ratios, setRatios] = useState<readonly number[]>([]);
   const [zoom, setZoom] = useState(initialView.zoom);
   const [pageWidth, setPageWidth] = useState(612);
   const [viewport, setViewport] = useState({ width: 600, height: 800 });
@@ -155,7 +175,7 @@ export default function PdfViewer(props: {
     let disposed = false;
     let task: ReturnType<typeof openPdf> | undefined;
     const timeout = setTimeout(() => {
-      setError("This PDF took too long to load. Try again.");
+      setError(m(msg("This PDF took too long to load. Try again.")));
       controller.abort();
       void task?.destroy();
     }, 30_000);
@@ -170,7 +190,9 @@ export default function PdfViewer(props: {
         task = openPdf(bytes);
         const document = await task.promise;
         if (document.numPages > MAX_PAGES)
-          throw new Error("Preview limited to 2,000 pages. Save this PDF to read it in full.");
+          throw new Error(
+            m(msg("Preview limited to 2,000 pages. Save this PDF to read it in full.")),
+          );
         const first = (await document.getPage(1)).getViewport({ scale: 1 });
         const sizes = await Promise.all(
           Array.from({ length: Math.min(initialPage + 1, document.numPages) }, async (_, index) => {
@@ -181,16 +203,18 @@ export default function PdfViewer(props: {
         if (controller.signal.aborted) return;
         setPageWidth(first.width);
         setRatios(
-          Array.from(
-            { length: document.numPages },
-            (_, index) => sizes[index] ?? first.height / first.width,
-          ),
+          savedPosition?.ratios.length === document.numPages
+            ? savedPosition.ratios
+            : Array.from(
+                { length: document.numPages },
+                (_, index) => sizes[index] ?? first.height / first.width,
+              ),
         );
         setPdf(document);
       })
       .catch((cause: unknown) => {
         if (!disposed && !controller.signal.aborted)
-          setError(cause instanceof Error ? cause.message : "Unable to open PDF.");
+          setError(previewErrorText(cause, m(msg("Unable to open PDF."))));
       })
       .finally(() => clearTimeout(timeout));
     return () => {
@@ -199,7 +223,7 @@ export default function PdfViewer(props: {
       clearTimeout(timeout);
       void task?.destroy();
     };
-  }, [props.src, revision, initialPage]);
+  }, [props.src, revision, initialPage, savedPosition]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the PDF viewport before paint and observe resizes for fit-width sizing and visible-page selection.
   useLayoutEffect(() => {
     const node = scroll.current;
@@ -222,24 +246,31 @@ export default function PdfViewer(props: {
   const jumpToPage = useEffectEvent((index: number) => {
     scroll.current?.scrollTo({ top: pdfPageScrollTop(offsets, index) });
   });
-  const saveView = (node: HTMLDivElement) => {
+  const saveView = (node: HTMLDivElement, notify = true) => {
     const page = currentPdfPage(offsets, ratios.length, node.scrollTop);
-    props.onViewChange?.({
+    if (!pdf) return;
+    const view = {
       page,
       offset: Math.max(0, node.scrollTop - (offsets[page]! - 16)),
       zoom,
       left: node.scrollLeft,
-    });
+    };
+    if (notify) props.onViewChange?.(view);
+    if (props.positionKey !== undefined) {
+      positions.delete(props.positionKey);
+      positions.set(props.positionKey, { ...view, width, ratios });
+      const oldest = positions.keys().next();
+      if (positions.size > MAX_POSITIONS && !oldest.done) positions.delete(oldest.value);
+    }
   };
   const restoreView = useEffectEvent(() => {
     const node = scroll.current;
     if (!pdf || !node) return;
-    const page = Math.min(initialPage, pdf.numPages - 1);
     node.scrollTo({
-      top:
-        offsets[page]! - 16 + Math.min(initialView.offset, Math.max(0, width * ratios[page]! - 1)),
+      top: pdfRestoredScrollTop(ratios, width, initialView, savedPosition?.width),
       left: initialView.left,
     });
+    setScrollTop(node.scrollTop);
     saveView(node);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the saved PDF scroll position after the loaded document's page layout commits.
@@ -262,18 +293,19 @@ export default function PdfViewer(props: {
     const anchor = zoomAnchor.current;
     zoomAnchor.current = null;
     const node = scroll.current;
-    if (!anchor || !node) return;
-    if (anchor.width !== width) {
+    if (!node || !pdf) return;
+    if (anchor && anchor.width !== width) {
       node.scrollTo({
         top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
       });
     }
-    saveView(node);
+    saveView(node, anchor !== null);
   });
+  const firstMatch = matches[0];
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Scroll to the first asynchronous search result after its measured page offsets have committed.
   useLayoutEffect(() => {
-    if (matches.length) jumpToPage(matches[0]!);
-  }, [matches]);
+    if (firstMatch !== undefined) jumpToPage(firstMatch);
+  }, [firstMatch]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Debounce pdf.js text extraction and cancel obsolete searches when the query or document changes.
   useEffect(() => {
     if (!pdf || !query.trim()) {
@@ -292,18 +324,23 @@ export default function PdfViewer(props: {
         const sizes: number[] = [];
         let size = 0;
         for (let index = 0; index < pdf.numPages; index++) {
-          if (cancelled) return;
           const page = await pdf.getPage(index + 1);
           const pageSize = page.getViewport({ scale: 1 });
           sizes.push(pageSize.height / pageSize.width);
           const content = await page.getTextContent();
+          if (cancelled) return;
           const text = pdfPageText(content.items);
           size += text.length;
           if (size > MAX_FIND_TEXT)
             throw new Error(
-              "This PDF has too much text to search. Save it to search in another app.",
+              m(msg("This PDF has too much text to search. Save it to search in another app.")),
             );
-          if (pdfFindIncludes(text, query)) found.push(index);
+          if (!pdfFindIncludes(text, query)) continue;
+          found.push(index);
+          if (found.length > 1) continue;
+          // Pages up to the first hit are measured, so its jump lands before the scan finishes.
+          setRatios((old) => [...sizes, ...old.slice(sizes.length)]);
+          setMatches([index]);
         }
         if (cancelled) return;
         setRatios(sizes);
@@ -311,7 +348,7 @@ export default function PdfViewer(props: {
       })()
         .catch((cause: unknown) => {
           if (!cancelled)
-            setFindError(cause instanceof Error ? cause.message : "Could not search this PDF.");
+            setFindError(thrownErrorMessage(cause, m) ?? m(msg("Could not search this PDF.")));
         })
         .finally(() => {
           if (!cancelled) setFinding(false);
@@ -326,41 +363,49 @@ export default function PdfViewer(props: {
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-2 py-1 text-xs">
         <span className="mr-auto px-1 tabular-nums" aria-live="polite">
-          {pdf ? `${current + 1} / ${pdf.numPages} pages` : "PDF"}
+          {pdf
+            ? gt(
+                "{count, plural, one {{current} / {count} page} other {{current} / {count} pages}}",
+                {
+                  count: pdf.numPages,
+                  current: String(current + 1),
+                },
+              )
+            : "PDF"}
         </span>
         <FileSurfaceAction
-          label="Previous page"
+          label={gt("Previous page")}
           disabled={!pdf || current === 0}
           onPress={() => showPage(current - 1)}
         >
           <ChevronUpIcon className="size-3.5" />
         </FileSurfaceAction>
         <FileSurfaceAction
-          label="Next page"
+          label={gt("Next page")}
           disabled={!pdf || current + 1 >= pdf.numPages}
           onPress={() => showPage(current + 1)}
         >
           <ChevronDownIcon className="size-3.5" />
         </FileSurfaceAction>
         <FileSurfaceAction
-          label="Zoom out"
+          label={gt("Zoom out")}
           disabled={scale <= PDF_MIN_ZOOM}
           onPress={() => changeZoom(stepPdfZoom(scale, -1))}
         >
           <MinusIcon className="size-3.5" />
         </FileSurfaceAction>
         <span className="min-w-14 text-center tabular-nums">
-          {zoom === null ? "Fit width" : `${Math.round(scale * 100)}%`}
+          {zoom === null ? gt("Fit width") : `${Math.round(scale * 100)}%`}
         </span>
         <FileSurfaceAction
-          label="Zoom in"
+          label={gt("Zoom in")}
           disabled={scale >= PDF_MAX_ZOOM}
           onPress={() => changeZoom(stepPdfZoom(scale, 1))}
         >
           <PlusIcon className="size-3.5" />
         </FileSurfaceAction>
         <FileSurfaceAction
-          label="Fit width"
+          label={gt("Fit width")}
           onPress={() => {
             changeZoom(null);
             scroll.current?.scrollTo({ left: 0 });
@@ -373,8 +418,8 @@ export default function PdfViewer(props: {
             ref={find}
             size="compact"
             type="search"
-            aria-label="Find in PDF"
-            placeholder="Find in PDF"
+            aria-label={gt("Find in PDF")}
+            placeholder={gt("Find in PDF")}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -387,11 +432,11 @@ export default function PdfViewer(props: {
           <>
             <span role="status">
               {finding
-                ? "Searching…"
+                ? gt("Searching…")
                 : (findError ?? `${matches.length ? match + 1 : 0}/${matches.length}`)}
             </span>
             <FileSurfaceAction
-              label="Next matching page"
+              label={gt("Next matching page")}
               disabled={!matches.length}
               onPress={() => {
                 const next = (match + 1) % matches.length;

@@ -1,3 +1,4 @@
+import * as Fly from "@alchemy.run/fly";
 /**
  * Fly.io Tigris bucket attached to an HTTP Service.
  *
@@ -5,7 +6,6 @@
  * over the S3 API.
  */
 import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
 import * as Effect from "effect/Effect";
 import Api from "./src/api.ts";
 import { Data } from "./src/shared.ts";

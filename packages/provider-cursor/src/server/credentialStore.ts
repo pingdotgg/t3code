@@ -1,5 +1,6 @@
 import type { SdkCredentialStore } from "@cursor/sdk";
 import { ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -57,8 +58,7 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
         credentials.get.pipe(
           Effect.flatMap(
             Option.match({
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off - The SDK credential API requires undefined, not void.
-              onNone: () => Effect.succeed(undefined),
+              onNone: () => Effect.undefined,
               onSome: (bytes) =>
                 decodeCredentials(new TextDecoder().decode(bytes)).pipe(
                   Effect.orElseSucceed(() => undefined),
@@ -89,4 +89,23 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
     clear: () => runPromise(credentials.remove),
   };
   return { store, binding: credentials.binding };
+});
+
+/** The unexpired API key from this instance's T3 sign-in, read without loading the SDK. */
+export const readStoredCursorApiKey = Effect.fn("readStoredCursorApiKey")(function* (
+  instanceId: ProviderInstanceId,
+) {
+  const stored = yield* (yield* (yield* ProviderHost.ProviderHost).credentials(
+    "cursor",
+    instanceId,
+  )).get;
+  if (Option.isNone(stored)) return undefined;
+  const credentials = yield* decodeCredentials(new TextDecoder().decode(stored.value)).pipe(
+    Effect.option,
+  );
+  if (Option.isNone(credentials)) return undefined;
+  const { apiKey, apiKeyExpiresAtMs } = credentials.value;
+  return apiKeyExpiresAtMs === undefined || apiKeyExpiresAtMs > (yield* Clock.currentTimeMillis)
+    ? apiKey
+    : undefined;
 });

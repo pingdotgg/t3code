@@ -16,12 +16,15 @@ import { CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINK_REVOKED } from "../cloud/conf
 import { hasCloudPublicConfig } from "../cloud/publicConfig.ts";
 import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import * as ServerConfig from "../config.ts";
+import * as ManagedLimits from "../policy/managedLimits.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import {
   connectSubcommands,
   disconnectCloud,
   headlessFlag,
   linkEnvironmentForConnect,
+  requireConnectAllowed,
   runCloudCommand,
   waitForReachability,
 } from "./connect.ts";
@@ -39,7 +42,7 @@ interface Setup {
   /** T3 Connect revoked the link; `t3 connect` links again. */
   readonly connectRevoked: boolean;
   readonly lan: boolean;
-  /** An installed service with no T3CODE_LAN keeps the old default: on. */
+  /** An installed service with no T3CODE_LAN or T3CODE_HOST keeps the old default: on. */
   readonly lanFromOldDefault: boolean;
   readonly host: string | undefined;
 }
@@ -76,12 +79,14 @@ const readSetup = Effect.fn("cli.up.read_setup")(function* () {
         revoked: connectRevoked,
       })
     : null;
+  // Another home's service doesn't read this home's service.env.
+  const servesThisHome = service.installed && service.otherBaseDir === undefined;
   return {
     service,
     connect,
     connectRevoked,
-    lan: Option.getOrElse(lan, () => service.installed),
-    lanFromOldDefault: Option.isNone(lan) && service.installed,
+    lan: Option.getOrElse(lan, () => servesThisHome),
+    lanFromOldDefault: Option.isNone(lan) && servesThisHome && entries.T3CODE_HOST === undefined,
     host: entries.T3CODE_HOST,
   } satisfies Setup;
 });
@@ -120,8 +125,34 @@ const CHOICES = {
   lan: { title: "Local network", description: "LAN and tailnet. Pairing code required." },
 } satisfies Record<Route, { readonly title: string; readonly description: string }>;
 
-const formatSetup = (setup: Setup) => {
+/** The commands hints name, run with the caller's --base-dir and launcher. */
+const resolveHints = Effect.fn("cli.up.resolve_hints")(function* (baseDir: Option.Option<string>) {
+  const baseDirArgs = Option.match(baseDir, {
+    onNone: () => [],
+    onSome: (dir) => ["--base-dir", dir],
+  });
+  const command = (subcommand: string, args: ReadonlyArray<string> = []) =>
+    Effect.map(resolveHostCliCommand(subcommand, [...baseDirArgs, ...args]), (r) => r.command);
+  return {
+    run: yield* command(""),
+    pair: yield* command("pair"),
+    up: yield* command("up"),
+    upNoLan: yield* command("up", ["--no-lan"]),
+    connect: yield* command("connect"),
+  };
+});
+type Hints = Effect.Success<ReturnType<typeof resolveHints>>;
+
+const formatSetup = (setup: Setup, hints: Hints) => {
   const { service } = setup;
+  // This home's access settings reach no service, so only the service is shown.
+  if (service.otherBaseDir !== undefined) {
+    return [
+      `  ${"Service".padEnd(15)}installed for another T3 home · ${service.otherBaseDir}`,
+      "",
+      `Pass \`${BootService.formatBootServiceBaseDirOption(service.otherBaseDir)}\` to manage it.`,
+    ].join("\n");
+  }
   const rows: ReadonlyArray<readonly [string, string]> = [
     [
       "Service",
@@ -139,7 +170,7 @@ const formatSetup = (setup: Setup) => {
             setup.connect
               ? "on · your T3 account"
               : setup.connectRevoked
-                ? "off · link revoked. Run `t3 connect`."
+                ? `off · link revoked. Run \`${hints.connect}\`.`
                 : "off",
           ] as const,
         ]),
@@ -159,7 +190,7 @@ const formatSetup = (setup: Setup) => {
       ? ["Anyone on your LAN or tailnet can reach the port. A pairing code is the only lock."]
       : []),
     ...(setup.lanFromOldDefault
-      ? ["Older installs keep LAN access on. Turn it off: `t3 up --no-lan`."]
+      ? [`Older installs keep LAN access on. Turn it off: \`${hints.upNoLan}\`.`]
       : []),
   ];
   return [
@@ -168,18 +199,18 @@ const formatSetup = (setup: Setup) => {
   ].join("\n");
 };
 
-const formatNextSteps = (routes: Routes, serviceInstalled: boolean) =>
+const formatNextSteps = (routes: Routes, serviceInstalled: boolean, hints: Hints) =>
   [
     ...(routes.connect
       ? ["On your other device, sign in to T3 Connect with the same account."]
       : []),
-    ...(routes.lan ? ["Run `t3 pair`. Use the code on your other device."] : []),
+    ...(routes.lan ? [`Run \`${hints.pair}\`. Use the code on your other device.`] : []),
     ...(routes.connect || routes.lan
       ? []
       : [
           serviceInstalled
             ? "Remote access is off. T3 Code still runs here in the background."
-            : "Remote access is off. Run `t3` to use T3 Code here.",
+            : `Remote access is off. Run \`${hints.run}\` to use T3 Code here.`,
         ]),
   ].join("\n");
 
@@ -194,7 +225,19 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
 }) {
   const { baseDir } = yield* ServerConfig.ServerConfig;
   const service = yield* BootService.BootService;
+  const baseDirArgs = Option.match(flags.baseDir, {
+    onNone: () => [],
+    onSome: (dir) => ["--base-dir", dir],
+  });
+  const hints = yield* resolveHints(flags.baseDir);
   const before = yield* readSetup();
+  // Before any question or write: install would refuse only after both.
+  if (before.service.otherBaseDir !== undefined) {
+    return yield* new BootService.BootServiceOtherBaseDirError({
+      installedBaseDir: before.service.otherBaseDir,
+      baseDir,
+    });
+  }
   if (before.connect === null && Option.getOrElse(flags.connect, () => false)) {
     return yield* new CliError.UserError({
       cause: "connect",
@@ -212,7 +255,8 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   const interactive = !flags.yes && interactiveTerminal();
   let routes = plan.routes;
   if (plan.ask.length > 0 && interactive) {
-    if (before.service.installed) yield* Console.log(`Current setup\n${formatSetup(before)}\n`);
+    if (before.service.installed)
+      yield* Console.log(`Current setup\n${formatSetup(before, hints)}\n`);
     const picked = yield* Prompt.run(
       Prompt.MultiSelect({
         message: "Allow connections through:",
@@ -236,13 +280,20 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       }, or use --yes for the default. See \`t3 up --help\`.`,
     });
   }
+  if (routes.connect && !current.connect) yield* requireConnectAllowed;
+  if (routes.lan && !current.lan) {
+    const policy = yield* ManagedPolicy.ManagedPolicy;
+    if (!ManagedLimits.allowsRemoteClients(policy)) {
+      return yield* ManagedLimits.refuseRemoteClients(policy);
+    }
+  }
   // Nothing to run in the background, but a route left on still gets turned off.
   if (!before.service.installed && !routes.connect && !routes.lan) {
     if (current.connect || before.connectRevoked) {
       yield* disconnectCloud({ clearAuthorization: false });
     }
     if (current.lan) yield* CliService.writeServiceEnv(baseDir, { T3CODE_LAN: "false" });
-    return yield* Console.log(formatNextSteps(routes, false));
+    return yield* Console.log(formatNextSteps(routes, false, hints));
   }
   const { installedVersion } = before.service;
   const newer =
@@ -317,7 +368,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
 
   const printServeCommand = Effect.fn(function* (reason: string) {
     const { command } = yield* resolveHostCliCommand("serve", [
-      ...Option.match(flags.baseDir, { onNone: () => [], onSome: (dir) => ["--base-dir", dir] }),
+      ...baseDirArgs,
       // Explicit either way, so a T3CODE_LAN in the shell cannot override the choice.
       routes.lan ? "--lan" : "--no-lan",
     ]);
@@ -353,7 +404,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
       // The old service still runs, so a foreground server would clash with it.
       yield* restoreServiceEnv;
       yield* Console.log(
-        `Service setup failed: ${result.failed} Fix that, then run \`t3 up\` again.`,
+        `Service setup failed: ${result.failed} Fix that, then run \`${hints.up}\` again.`,
       );
     } else if ("failed" in result) {
       yield* printServeCommand(`Service setup failed: ${result.failed}`);
@@ -372,7 +423,8 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
           }),
         ).pipe(Effect.catchTags({ QuitError: () => Effect.succeed(false) })));
       if (!confirmed) {
-        yield* Console.log("Run `t3 service restart` to turn T3 Connect off.");
+        const { command } = yield* resolveHostCliCommand("service restart", baseDirArgs);
+        yield* Console.log(`Run \`${command}\` to turn T3 Connect off.`);
       } else {
         if (!interactive && !stopped) {
           yield* Console.log("Restarting T3 Code. Running agent turns will stop.");
@@ -383,7 +435,7 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
         }
         if (outcome === "skipped") {
           yield* Console.log(
-            "The installed service runs another T3 home, so it was not restarted. Pass its --base-dir.",
+            "The installed service was not restarted. Run `t3 service status` to see why.",
           );
         }
         started = outcome === "restarted";
@@ -395,9 +447,10 @@ const setUp = Effect.fn("cli.up")(function* (flags: {
   const after = yield* readSetup();
   yield* Console.log(
     // From what took effect: a failed service step can undo a choice.
-    `\nThis machine\n${formatSetup(after)}\n\n${formatNextSteps(
+    `\nThis machine\n${formatSetup(after, hints)}\n\n${formatNextSteps(
       { connect: after.connect === true, lan: after.lan },
       after.service.installed,
+      hints,
     )}`,
   );
 });
@@ -462,6 +515,7 @@ const setupJson = (setup: Setup) =>
         supported: setup.service.supported,
         installed: setup.service.installed,
         installedVersion: setup.service.installedVersion ?? null,
+        otherBaseDir: setup.service.otherBaseDir ?? null,
       },
       connect:
         setup.connect === null ? null : { enabled: setup.connect, revoked: setup.connectRevoked },
@@ -500,10 +554,12 @@ export const statusCommand = Command.make("status", {
           ),
         ),
       );
+      if (flags.json) return yield* Console.log(setupJson(setup));
+      const hints = yield* resolveHints(flags.baseDir);
       yield* Console.log(
-        flags.json
-          ? setupJson(setup)
-          : `This machine\n${formatSetup(setup)}\n\nChange access: \`t3 up\`.`,
+        setup.service.otherBaseDir !== undefined
+          ? `This machine\n${formatSetup(setup, hints)}`
+          : `This machine\n${formatSetup(setup, hints)}\n\nChange access: \`${hints.up}\`.`,
       );
     }),
   ),

@@ -29,6 +29,7 @@ const sentThreadOpens = new Map<string, number>();
 // When this client last opened each thread, sent or not, so recent threads
 // follow quick switches the server merges.
 const localThreadOpens = new Map<string, number>();
+let localThreadOpensVersion = 0;
 /**
  * Records that this client opened a thread, and says whether to send the open
  * to the server now.
@@ -36,6 +37,7 @@ const localThreadOpens = new Map<string, number>();
 export function claimThreadOpen(environmentId: EnvironmentId, threadId: string, now: number) {
   const key = `${environmentId}:${threadId}`;
   localThreadOpens.set(key, now);
+  localThreadOpensVersion += 1;
   if (now - (sentThreadOpens.get(key) ?? Number.NEGATIVE_INFINITY) < THREAD_OPEN_DEDUPE_MS) {
     return false;
   }
@@ -50,6 +52,11 @@ export interface EnvironmentThreadSearchMatch extends OrchestrationThreadSearchM
 export interface ThreadSearchResultsState {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly isLoading: boolean;
+  /**
+   * Every environment asked failed to answer, so an empty result says nothing about matches. One
+   * environment failing beside another that answered still counts as an answer.
+   */
+  readonly failed: boolean;
   /** Rows of matching older settled threads, which shells that omit them do not hold. */
   readonly rows: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -119,7 +126,7 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
     Atom.make((get): ThreadSearchResultsState => {
       const parsedKey = parseThreadSearchKey(key);
       if (Option.isNone(parsedKey)) {
-        return { matches: [], isLoading: false, rows: EMPTY_SEARCH_ROWS };
+        return { matches: [], isLoading: false, failed: false, rows: EMPTY_SEARCH_ROWS };
       }
 
       const [environmentIds, query, scope = {}] = parsedKey.value;
@@ -129,6 +136,8 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
       const matches: EnvironmentThreadSearchMatch[] = [];
       const rows: Array<ThreadSearchResultsState["rows"][number]> = [];
       let isLoading = false;
+      let asked = 0;
+      let failures = 0;
 
       for (const environmentId of environmentIds) {
         const before = options.olderSettledBefore
@@ -150,6 +159,8 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
           }),
         );
         isLoading ||= result.waiting;
+        asked += 1;
+        if (AsyncResult.isFailure(result)) failures += 1;
         const value = AsyncResult.getOrElse(result, () => null);
         if (value !== null) {
           matches.push(...value.matches.map((match) => ({ ...match, environmentId })));
@@ -162,7 +173,12 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
         }
       }
 
-      return { matches, isLoading, rows: rows.length === 0 ? EMPTY_SEARCH_ROWS : rows };
+      return {
+        matches,
+        isLoading,
+        failed: asked > 0 && failures === asked,
+        rows: rows.length === 0 ? EMPTY_SEARCH_ROWS : rows,
+      };
     }).pipe(Atom.withLabel(`${options.labelPrefix}:${key}`)),
   );
   const rowsAtom = Atom.family((rowsKey: string) => {
@@ -209,14 +225,42 @@ export function threadSearchSubject(
   projectTitle: string | null | undefined,
   environmentLabel?: string | null,
 ): ThreadSearchSubject {
-  // What the user wrote, not agent wakes or task notices in the user role. A
-  // thread the user never wrote in counts from its creation; an older server
-  // omits the field, so the latest user-role message stands in.
-  const authored = thread.latestUserAuthoredMessageAt;
-  const activityAt =
-    authored === undefined
-      ? getThreadSortTimestamp(thread, "updated_at")
-      : Date.parse(authored ?? thread.createdAt);
+  // A keystroke ranks the same shells again, so a subject is built once per shell.
+  const cached = subjectCache.get(thread);
+  if (
+    cached !== undefined &&
+    cached.projectTitle === projectTitle &&
+    cached.environmentLabel === environmentLabel &&
+    cached.opensVersion === localThreadOpensVersion
+  ) {
+    return cached.subject;
+  }
+  const subject = buildThreadSearchSubject(thread, projectTitle, environmentLabel);
+  subjectCache.set(thread, {
+    projectTitle,
+    environmentLabel,
+    opensVersion: localThreadOpensVersion,
+    subject,
+  });
+  return subject;
+}
+
+const subjectCache = new WeakMap<
+  ThreadSearchShell,
+  {
+    readonly projectTitle: string | null | undefined;
+    readonly environmentLabel: string | null | undefined;
+    readonly opensVersion: number;
+    readonly subject: ThreadSearchSubject;
+  }
+>();
+
+function buildThreadSearchSubject(
+  thread: ThreadSearchShell,
+  projectTitle: string | null | undefined,
+  environmentLabel: string | null | undefined,
+): ThreadSearchSubject {
+  const activityAt = getThreadSortTimestamp(thread, "updated_at");
   const localOpenedAt = localThreadOpens.get(`${thread.environmentId}:${thread.id}`) ?? 0;
   return {
     id: thread.id,

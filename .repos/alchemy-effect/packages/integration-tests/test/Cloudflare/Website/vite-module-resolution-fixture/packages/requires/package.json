@@ -1,0 +1,19 @@
+{
+  "name": "@playground/module-resolution-requires",
+  "version": "1.0.0",
+  "private": true,
+  "exports": {
+    "./ext": {
+      "default": "./ext.js",
+      "types": "./ext.d.ts"
+    },
+    "./no-ext": {
+      "default": "./no-ext.js",
+      "types": "./no-ext.d.ts"
+    },
+    "./json": {
+      "default": "./json.js",
+      "types": "./json.d.ts"
+    }
+  }
+}

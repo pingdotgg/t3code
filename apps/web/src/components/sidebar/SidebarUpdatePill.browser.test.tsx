@@ -5,6 +5,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { act, render } from "../../../test/render";
 import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import type { UpdateEverythingRow } from "./updateEverything.logic";
 
 const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => {
     hasUpdates: false,
     hasProviderUpdates: false,
     hasAppUpdates: false,
+    rows: [] as ReadonlyArray<UpdateEverythingRow>,
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -51,7 +53,7 @@ vi.mock("./useUpdateEverything", async () => {
         version: null,
         providerCount:
           mocks.hasProviderUpdates && options?.includeProviderUpdates !== false ? 1 : 0,
-        rows: [],
+        rows: mocks.rows,
         restarts: [],
       };
     },
@@ -85,12 +87,23 @@ const RELEASE_NOTES: DesktopUpdateState["releaseNotes"] = [
 
 function setup(
   update: DesktopUpdateState | null,
-  { hasUpdates = false, hasProviderUpdates = false, hasAppUpdates = false } = {},
+  {
+    hasUpdates = false,
+    hasProviderUpdates = false,
+    hasAppUpdates = false,
+    rows = [],
+  }: {
+    hasUpdates?: boolean;
+    hasProviderUpdates?: boolean;
+    hasAppUpdates?: boolean;
+    rows?: ReadonlyArray<UpdateEverythingRow>;
+  } = {},
 ) {
   mocks.update = update;
   mocks.hasUpdates = hasUpdates;
   mocks.hasProviderUpdates = hasProviderUpdates;
   mocks.hasAppUpdates = hasAppUpdates;
+  mocks.rows = rows;
 }
 
 function publish(update: DesktopUpdateState | null) {
@@ -119,8 +132,19 @@ describe("SidebarUpdatePill release notes", () => {
     await userEvent.tab();
     expect(releaseNotes()).toBeNull();
 
-    await publish(nightlyUpdate(RELEASE_NOTES));
-    await vi.waitFor(() => expect(releaseNotes()).not.toBeNull());
+    await publish(
+      nightlyUpdate([
+        {
+          version: "0.0.50-nightly.2",
+          items: ["**One-time tasks.** Pick a date."],
+          totalItems: 1,
+          stats: "3 changes from 2 contributors",
+          footer: "Plus 2 more bug fixes.",
+        },
+      ]),
+    );
+    await expect.element(page.getByText("One-time tasks.", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Plus 2 more bug fixes.")).toBeVisible();
   });
 });
 
@@ -208,5 +232,23 @@ describe("SidebarUpdatePill update everything", () => {
 
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => expect(document.activeElement).toBe(button.element()));
+  });
+
+  it("exposes the machines as a table with each value in its column", async () => {
+    const label = "DESKTOP-WORKSTATION-UPSTAIRS";
+    setup(null, {
+      hasUpdates: true,
+      rows: [{ environmentId: null, label, app: "this-app", skipped: null, providers: ["Claude"] }],
+    });
+    await using screen = await render(<SidebarUpdatePill />);
+    await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
+
+    const table = page.getByRole("table");
+    await expect.element(table.getByRole("columnheader", { name: "Machine" })).toBeVisible();
+    await expect.element(table.getByRole("columnheader", { name: "T3 Code" })).toBeVisible();
+    await expect.element(table.getByRole("columnheader", { name: "Providers" })).toBeVisible();
+    const row = table.getByRole("row", { name: new RegExp(label) });
+    await expect.element(row.getByRole("cell", { name: label, exact: true })).toBeVisible();
+    await expect.element(row.getByRole("cell", { name: "Claude", exact: true })).toBeVisible();
   });
 });

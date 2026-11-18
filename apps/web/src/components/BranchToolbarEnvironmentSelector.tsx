@@ -7,6 +7,7 @@ import { primaryServerKeybindingsAtom } from "../state/server";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { PlusIcon, ScaleIcon } from "lucide-react";
 import { memo } from "react";
+import { T, useGT } from "gt-react";
 
 import { ADD_TO_MACHINE_LABEL_CLASS, type EnvironmentOption } from "./BranchToolbar.logic";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -44,6 +45,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   onEnvironmentChange,
   onAddToMachine,
 }: BranchToolbarEnvironmentSelectorProps) {
+  const gt = useGT();
   const composerFloatingLayerProps = useComposerMenuProps();
   const shortcutLabel = shortcutLabelForCommand(
     useAtomValue(primaryServerKeybindingsAtom),
@@ -54,13 +56,13 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
 
   const environmentItems = [
     ...(onAutoEnvironment
-      ? [{ value: AUTO_VALUE, label: autoEnvironmentLabel ?? "Auto balance" }]
+      ? [{ value: AUTO_VALUE, label: autoEnvironmentLabel ?? gt("Auto balance") }]
       : []),
     ...availableEnvironments.map((env) => ({
       value: environmentValue(env.environmentId),
       label: env.label,
     })),
-    ...(onAddToMachine ? [{ value: ADD_MACHINE_VALUE, label: "Add to another machine" }] : []),
+    ...(onAddToMachine ? [{ value: ADD_MACHINE_VALUE, label: gt("Add to another machine") }] : []),
   ];
 
   // Match the xs control's height and padding: the composer strip has no min-height,
@@ -68,20 +70,20 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   if (envLocked || (onEnvironmentChange === undefined && onAddToMachine === undefined)) {
     const lockedRow = (
       <span
-        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
+        className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
         data-composer-context-control
       >
         <EnvironmentMachineIcon
           kind={activeEnvironment?.machine ?? "server"}
           className="size-3 shrink-0"
         />
-        <ComposerContextLabel>{activeEnvironment?.label ?? "Run on"}</ComposerContextLabel>
+        <ComposerContextLabel>{activeEnvironment?.label ?? gt("Run on")}</ComposerContextLabel>
       </span>
     );
     return (
       <Tooltip>
         <TooltipTrigger render={lockedRow} />
-        <TooltipPopup>{activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>{activeEnvironment?.label ?? gt("Run on")}</TooltipPopup>
       </Tooltip>
     );
   }
@@ -107,7 +109,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             <ComposerSelectControl
               size="xs"
               className="min-w-0 max-w-full"
-              aria-label="Run on"
+              aria-label={gt("Run on")}
               data-composer-shortcut="composer.host"
               data-composer-context-control
             />
@@ -126,13 +128,15 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
           </ComposerContextLabel>
         </TooltipTrigger>
         <TooltipPopup>
-          {autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}
+          {autoEnvironmentLabel ?? activeEnvironment?.label ?? gt("Run on")}
           {shortcutLabel ? ` · ${shortcutLabel}` : null}
         </TooltipPopup>
       </Tooltip>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
-          <SelectGroupLabel>Run on</SelectGroupLabel>
+          <SelectGroupLabel>
+            <T>Run on</T>
+          </SelectGroupLabel>
           {onAutoEnvironment && (
             <SelectItem
               value={AUTO_VALUE}
@@ -142,7 +146,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             >
               <span className="inline-flex items-center gap-1.5">
                 <ScaleIcon className="size-3" aria-hidden="true" />
-                {autoEnvironmentLabel ?? "Auto balance"}
+                {autoEnvironmentLabel ?? gt("Auto balance")}
               </span>
             </SelectItem>
           )}
@@ -162,7 +166,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             <SelectItem value={ADD_MACHINE_VALUE}>
               <span className={ADD_TO_MACHINE_LABEL_CLASS}>
                 <PlusIcon aria-hidden="true" className="size-3" />
-                Add to another machine
+                <T>Add to another machine</T>
               </span>
             </SelectItem>
           ) : null}

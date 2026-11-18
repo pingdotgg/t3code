@@ -3,18 +3,17 @@
  * factory `virtual:vinext-cache-adapters` calls as
  * `({ env, options }) => CacheHandler`.
  *
- * Speaks RESP through `connect` from `alchemy/Redis` — the same client
+ * Speaks RESP through `connect` from `@alchemy.run/redis` — the same client
  * Fly/Railway `*RedisHttp` layers use. One process-lifetime connection
  * per URL. Prerender artifacts are seeded into Redis in the background.
  */
-import { connect, type Connection } from "alchemy/Redis";
-import type { Arg, Reply } from "alchemy/Redis";
+import { connect, type Connection } from "@alchemy.run/redis";
+import type { Arg, Reply } from "@alchemy.run/redis";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Scope from "effect/Scope";
 import { makeDataCacheHandler, type DataCacheStore } from "./handler.ts";
-import { readEnvString } from "./shared.ts";
 import { seedStoreFromPrerenderLogged } from "./seed.ts";
+import { readEnvString } from "./shared.ts";
 
 export interface RedisAdapterOptions extends Record<string, unknown> {
   /** Env var holding the Redis URL. @default "REDIS_URL" */
@@ -27,14 +26,10 @@ export interface RedisAdapterOptions extends Record<string, unknown> {
 
 const DEFAULT_URL_ENV = "REDIS_URL";
 
-const asBulk = (reply: Reply): string | null =>
-  typeof reply === "string" ? reply : null;
+const asBulk = (reply: Reply): string | null => (typeof reply === "string" ? reply : null);
 
-const send = (
-  connection: Connection,
-  command: string,
-  args: readonly Arg[] = [],
-): Promise<Reply> => Effect.runPromise(connection.send(command, args));
+const send = (connection: Connection, command: string, args: readonly Arg[] = []): Promise<Reply> =>
+  Effect.runPromise(connection.send(command, args));
 
 const connections = new Map<string, Promise<Connection>>();
 
@@ -42,9 +37,7 @@ const open = (url: string): Promise<Connection> => {
   const existing = connections.get(url);
   if (existing) return existing;
   const scope = Scope.makeUnsafe();
-  const created = Effect.runPromise(
-    connect(url).pipe(Effect.provide(Layer.succeed(Scope.Scope, scope))),
-  );
+  const created = Effect.runPromise(connect(url).pipe(Effect.provideService(Scope.Scope, scope)));
   connections.set(url, created);
   created.catch(() => connections.delete(url));
   return created;
@@ -55,10 +48,7 @@ const redisStore = (connection: Connection): DataCacheStore => ({
     return asBulk(await send(connection, "GET", [key])) ?? undefined;
   },
   async putText(key, value, ttlMs) {
-    const args: Arg[] =
-      ttlMs !== undefined && ttlMs > 0
-        ? [key, value, "PX", ttlMs]
-        : [key, value];
+    const args: Arg[] = ttlMs !== undefined && ttlMs > 0 ? [key, value, "PX", ttlMs] : [key, value];
     await send(connection, "SET", args);
   },
   async delete(key) {
@@ -91,11 +81,7 @@ const createRedisDataCacheAdapter = ({
     async get(key: string, ctx?: Record<string, unknown>) {
       return (handler ?? (await ready)).get(key, ctx);
     },
-    async set(
-      key: string,
-      data: Record<string, unknown> | null,
-      ctx?: Record<string, unknown>,
-    ) {
+    async set(key: string, data: Record<string, unknown> | null, ctx?: Record<string, unknown>) {
       return (handler ?? (await ready)).set(key, data, ctx);
     },
     async revalidateTag(tags: string | Array<string>) {

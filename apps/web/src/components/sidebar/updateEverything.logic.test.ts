@@ -84,6 +84,63 @@ describe("collectServerUpdateTargets", () => {
       ["manual", "needs a manual update"],
     ]);
   });
+
+  it("does not offer a Nightly build to a Stable desktop app, whose own feed has nothing newer", () => {
+    const { targets, skipped } = collectServerUpdateTargets(
+      [machine("stable-desktop", "0.1.9", "desktop-managed")],
+      "0.1.10-nightly.20261116.4761",
+    );
+
+    expect(targets.map((target) => target.serverLabel)).toEqual([]);
+    expect(skipped.map((entry) => [entry.label, entry.reason])).toEqual([
+      ["stable-desktop", "on the stable channel"],
+    ]);
+  });
+
+  it("skips servers whose policy refuses the update, with the policy's message", () => {
+    const managed = (
+      id: string,
+      updates: { mode: "off" } | { mode: "auto"; allowNightly: false },
+      selfUpdate: "boot-service" | "desktop-managed" = "boot-service",
+    ) => {
+      const base = machine(id, "0.0.40", selfUpdate);
+      return {
+        ...base,
+        serverConfig: {
+          ...base.serverConfig!,
+          managedPolicy: { organization: "Example Corp", lockedSettings: [], limits: { updates } },
+        },
+      };
+    };
+    const machines = [
+      managed("off", { mode: "off" }),
+      managed("no-nightly", { mode: "auto", allowNightly: false }),
+      // A desktop app updates from its own feed, whatever track this app is on.
+      managed("desktop-no-nightly", { mode: "auto", allowNightly: false }, "desktop-managed"),
+    ];
+
+    expect(
+      collectServerUpdateTargets(machines, "0.0.50").skipped.map((entry) => [
+        entry.label,
+        entry.reason,
+      ]),
+    ).toEqual([["off", "Example Corp manages T3 Code updates."]]);
+    expect(
+      collectServerUpdateTargets(
+        machines.map((entry) => ({
+          ...entry,
+          serverConfig: {
+            ...entry.serverConfig,
+            environment: {
+              ...entry.serverConfig.environment,
+              serverVersion: "0.0.49-nightly.20261027.1",
+            },
+          },
+        })),
+        "0.0.50-nightly.20261028.1",
+      ).skipped.map((entry) => entry.label),
+    ).toEqual(["off", "no-nightly"]);
+  });
 });
 
 describe("collectChannelSwitchTargets", () => {
@@ -154,6 +211,18 @@ describe("collectChannelSwitchTargets", () => {
     ]);
   });
 
+  const managedHost = (base: UpdateEverythingMachine): UpdateEverythingMachine => ({
+    ...base,
+    serverConfig: {
+      ...base.serverConfig!,
+      managedPolicy: {
+        organization: "Example Corp",
+        lockedSettings: [],
+        limits: { updates: { mode: "auto", allowNightly: false } },
+      },
+    },
+  });
+
   it("moves stable hosts to nightly only when nightly knows their database", () => {
     const nightly = { channel: "nightly" as const, version: NIGHTLY, databaseMigration: 72 };
     const { targets, skipped } = collectChannelSwitchTargets(
@@ -171,6 +240,8 @@ describe("collectChannelSwitchTargets", () => {
           },
         }),
         machine("current", NIGHTLY, "boot-service"),
+        // The server refuses a track its policy rules out, so the dialog skips it up front.
+        managedHost(host(machine("no-nightly", "0.1.2", "boot-service"), 70)),
       ],
       nightly,
     );
@@ -184,6 +255,10 @@ describe("collectChannelSwitchTargets", () => {
         `its database has changes ${NIGHTLY} does not support yet; stay on Stable until Nightly has them`,
       ],
       ["old-desktop", "needs a newer desktop app"],
+      [
+        "no-nightly",
+        "Example Corp manages T3 Code updates. Only stable releases can be installed.",
+      ],
     ]);
   });
 });
@@ -194,7 +269,7 @@ describe("localSwitchBlockReason", () => {
     const nightly = "0.1.4-nightly.20261027.3796";
 
     const windows = { connected: true, databaseMigration: 69 };
-    expect(localSwitchBlockReason(nightly, stable, [windows], 1)).toBeNull();
+    expect(localSwitchBlockReason(nightly, stable, [windows], 1, true)).toBeNull();
     // A WSL server's newer migration blocks the reinstall that would restart it.
     expect(
       localSwitchBlockReason(
@@ -202,17 +277,31 @@ describe("localSwitchBlockReason", () => {
         stable,
         [windows, { connected: true, databaseMigration: 72 }],
         2,
+        true,
       ),
     ).toContain("does not support yet");
     // A WSL backend still starting has no client entry, so its database is unchecked.
-    expect(localSwitchBlockReason(nightly, stable, [windows], 2)).toBe(
-      "its server is not connected, so its database cannot be checked",
+    expect(localSwitchBlockReason(nightly, stable, [windows], 2, true)).toBe(
+      "This app cannot switch: its server is not connected, so its database cannot be checked.",
     );
     // A cached head from a disconnected server proves nothing.
     expect(
-      localSwitchBlockReason(nightly, stable, [{ connected: false, databaseMigration: 69 }], 1),
-    ).toBe("its server is not connected, so its database cannot be checked");
-    expect(localSwitchBlockReason("0.1.3", stable, [], 1)).toBeNull();
+      localSwitchBlockReason(
+        nightly,
+        stable,
+        [{ connected: false, databaseMigration: 69 }],
+        1,
+        true,
+      ),
+    ).toBe(
+      "This app cannot switch: its server is not connected, so its database cannot be checked.",
+    );
+    expect(localSwitchBlockReason("0.1.3", stable, [], 1, true)).toBeNull();
+    // A primary backend still starting has no entry or bootstrap yet, unless Local environment is off.
+    expect(localSwitchBlockReason(nightly, stable, [], 0, true)).toBe(
+      "This app cannot switch: its server is not connected, so its database cannot be checked.",
+    );
+    expect(localSwitchBlockReason(nightly, stable, [], 0, false)).toBeNull();
   });
 });
 
@@ -270,6 +359,50 @@ describe("runUpdateEverything", () => {
 
     expect(calls).toEqual(["providers", "servers"]);
     expect(result.localReady).toBe(false);
+  });
+
+  it("stages servers while providers install and updates each once its own stage settles", async () => {
+    const calls: string[] = [];
+    const [slow, fast] = [EnvironmentId.make("slow"), EnvironmentId.make("fast")];
+    let finishProviders = () => {};
+    let failSlowStage = () => {};
+    const providers = new Promise<void>((resolve) => (finishProviders = resolve));
+    const run = runUpdateEverything({
+      updateProviders: () => {
+        calls.push("providers");
+        return providers.then(() => {
+          calls.push("providers done");
+        });
+      },
+      stageServers: () => {
+        calls.push("stage");
+        return new Map([
+          [slow, new Promise((_, reject) => (failSlowStage = () => reject(new Error("failed"))))],
+          [fast, Promise.resolve()],
+        ]);
+      },
+      updateServers: (staged) => {
+        calls.push("servers");
+        return Promise.all(
+          [slow, fast].map(async (id) => {
+            await staged.get(id);
+            calls.push(`server ${id}`);
+            if (id === fast) failSlowStage();
+          }),
+        );
+      },
+    });
+    finishProviders();
+    await run;
+
+    expect(calls).toEqual([
+      "stage",
+      "providers",
+      "providers done",
+      "servers",
+      "server fast",
+      "server slow",
+    ]);
   });
 });
 
