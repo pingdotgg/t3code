@@ -1,4 +1,5 @@
 import type * as DateTime from "effect/DateTime";
+import { msg } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentProject,
@@ -44,6 +45,7 @@ import {
 } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 import { waitForAtomValue } from "./waitForAtomValue";
+import { m } from "../i18n/messages";
 
 const EMPTY_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
 const EMPTY_VISIBLE_TURN_ITEMS: ReadonlyArray<OrchestrationV2ProjectedTurnItem> = Object.freeze([]);
@@ -320,7 +322,7 @@ export function waitForProject(
     let unsubscribe: (() => void) | null = null;
     const timeout = setTimeout(() => {
       unsubscribe?.();
-      reject(new Error("The project did not appear in the desktop app."));
+      reject(new Error(m(msg("The project did not appear in the desktop app."))));
     }, timeoutMs);
     const finish = (project: EnvironmentProject | null) => {
       if (project === null) return;
@@ -558,6 +560,7 @@ export function readResponseSubagents(
           }),
         )
         ?.title.trim() ||
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- subagent title stored in the reply record sent to the agent
       "Agent",
   }));
 }

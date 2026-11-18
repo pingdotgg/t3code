@@ -6,6 +6,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { T, useGT } from "gt-react";
 import {
   BotIcon,
   ChevronDownIcon,
@@ -35,6 +36,7 @@ export function ThreadEntryPinsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const gt = useGT();
   const threadRef = { environmentId: props.environmentId, threadId: props.threadId };
   const pins = useThreadEntryPins(threadRef);
   const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
@@ -49,7 +51,7 @@ export function ThreadEntryPinsPanel(props: {
   return (
     <ThreadDetailsSection
       headingId="thread-details-entry-pins-heading"
-      title="Pinned items"
+      title={gt("Pinned items")}
       showHeading={false}
     >
       <div className="flex flex-col">
@@ -62,7 +64,7 @@ export function ThreadEntryPinsPanel(props: {
         >
           <PinIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
           <span className={cn("min-w-0 flex-1 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-            Pinned items
+            <T>Pinned items</T>
           </span>
           <span className="text-xs text-muted-foreground tabular-nums">{pins.length}</span>
           <ChevronDownIcon
@@ -86,14 +88,16 @@ export function ThreadEntryPinsPanel(props: {
                           size="icon-xs"
                           variant="ghost"
                           part="icon"
-                          aria-label={`Unpin ${PIN_KIND_NAMES[pin.kind]}`}
+                          aria-label={unpinLabel(pin.kind, gt)}
                           onClick={() => void setEntryPin(pin.entryId, false)}
                         >
                           <PinOffIcon className="size-3.5" />
                         </ThreadDetailsControl>
                       }
                     />
-                    <TooltipPopup>Unpin</TooltipPopup>
+                    <TooltipPopup>
+                      {gt("Unpin", { $context: "verb, unpin a timeline entry" })}
+                    </TooltipPopup>
                   </Tooltip>
                 ) : null}
               </li>
@@ -112,19 +116,43 @@ const PIN_KIND_ICONS = {
   proposed_plan: ClipboardListIcon,
 } satisfies Record<OrchestrationV2ThreadEntryPinKind, unknown>;
 
-const PIN_KIND_NAMES: Record<OrchestrationV2ThreadEntryPinKind, string> = {
-  user_message: "your message",
-  assistant_message: "assistant message",
-  html_render: "visual",
-  proposed_plan: "plan",
-};
+function unpinLabel(kind: OrchestrationV2ThreadEntryPinKind, gt: ReturnType<typeof useGT>): string {
+  switch (kind) {
+    case "user_message":
+      return gt("Unpin your message");
+    case "assistant_message":
+      return gt("Unpin assistant message");
+    case "html_render":
+      return gt("Unpin visual");
+    case "proposed_plan":
+      return gt("Unpin plan");
+  }
+}
+
+function revealLabel(
+  kind: OrchestrationV2ThreadEntryPinKind,
+  excerpt: string,
+  gt: ReturnType<typeof useGT>,
+): string {
+  switch (kind) {
+    case "user_message":
+      return gt("Go to your message: {excerpt}", { excerpt });
+    case "assistant_message":
+      return gt("Go to assistant message: {excerpt}", { excerpt });
+    case "html_render":
+      return gt("Go to visual: {excerpt}", { excerpt });
+    case "proposed_plan":
+      return gt("Go to plan: {excerpt}", { excerpt });
+  }
+}
 
 function PinnedEntryRow(props: {
   readonly pin: OrchestrationV2ThreadEntryPin;
   readonly onReveal: () => void;
 }) {
+  const gt = useGT();
   const KindIcon = PIN_KIND_ICONS[props.pin.kind];
-  const excerpt = props.pin.label || "Empty message";
+  const excerpt = props.pin.label || gt("Empty message");
   return (
     <Tooltip>
       <TooltipTrigger
@@ -134,7 +162,7 @@ function PinnedEntryRow(props: {
             variant="ghost"
             part="row"
             className="min-w-0 flex-1"
-            aria-label={`Go to ${PIN_KIND_NAMES[props.pin.kind]}: ${excerpt}`}
+            aria-label={revealLabel(props.pin.kind, excerpt, gt)}
             onClick={props.onReveal}
           >
             <KindIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />

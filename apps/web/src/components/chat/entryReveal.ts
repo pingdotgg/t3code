@@ -3,10 +3,12 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
 import { use, useState } from "react";
 
 import { TimelineRowCtx } from "./timelineRowContext";
 
+import { m } from "../../i18n/messages";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { toastManager } from "../ui/toast";
@@ -109,7 +111,7 @@ export async function revealThreadEntry(ref: ScopedThreadRef, entryId: string) {
     },
   });
   if (!found) {
-    toastManager.add({ type: "error", title: "Could not load the pinned item" });
+    toastManager.add({ type: "error", title: m(msg("Could not load the pinned item")) });
     return;
   }
   const previous = appAtomRegistry.get(entryRevealRequestAtom);

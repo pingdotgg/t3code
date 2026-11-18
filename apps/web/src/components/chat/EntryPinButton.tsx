@@ -1,7 +1,9 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { msg, useGT } from "gt-react";
 import { PinIcon, PinOffIcon } from "lucide-react";
 import { use } from "react";
 
+import { m } from "../../i18n/messages";
 import { useThreadEntryPins } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -21,7 +23,10 @@ export function useSetEntryPin(threadRef: ScopedThreadRef | null) {
       input: { threadId: threadRef.threadId, entryId, pinned },
     });
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: pinned ? "Could not pin" : "Could not unpin" });
+      toastManager.add({
+        type: "error",
+        title: pinned ? m(msg("Could not pin")) : m(msg("Could not unpin")),
+      });
     }
   };
 }
@@ -39,9 +44,12 @@ export function EntryPinButton(props: {
   readonly entryId: string;
   readonly variant?: "ghost-muted" | "glass";
 }) {
+  const gt = useGT();
   const pin = useTimelineEntryPin(props.entryId);
   if (pin === null) return null;
-  const label = pin.pinned ? "Unpin" : "Pin";
+  const label = pin.pinned
+    ? gt("Unpin", { $context: "verb, unpin a timeline entry" })
+    : gt("Pin", { $context: "verb, pin a timeline entry" });
 
   return (
     <Tooltip>
