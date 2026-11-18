@@ -252,6 +252,15 @@ it.effect(
     const sent: ThreadManagement.ThreadManagementSendInput[] = [];
     const dispatched: Array<Record<string, unknown>> = [];
     let projectionReads = 0;
+    // The thread's finished turns; a continuation follows the latest one.
+    const finishedRun = (ordinal: number) =>
+      ({
+        id: `run-goal-loop-${ordinal}`,
+        ordinal,
+        requestedAt: DateTime.add(NOW, { minutes: ordinal }),
+        status: "completed",
+      }) as unknown as OrchestrationV2ThreadProjection["runs"][number];
+    let runs = [finishedRun(1)];
     const testLayer = layerWith({ continueGoals: Effect.sync(() => on) }).pipe(
       Layer.provide(
         Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -265,13 +274,13 @@ it.effect(
           getThreadProjection: () =>
             Effect.sync(() => {
               projectionReads += 1;
-              return threadProjection();
+              return { ...threadProjection(), runs };
             }),
           getThreadShell: () => Effect.succeed(shell),
           dispatch: (command) =>
             Effect.sync(() => {
               dispatched.push(command);
-              // What the orchestrator does with the pause the loop asks for.
+              // What the orchestrator does with the loop updates it is asked for.
               if (command.type === "thread.goal.loop" && command.action === "sync") {
                 shell = {
                   ...shell,
@@ -291,21 +300,22 @@ it.effect(
         }),
       ),
     );
+    const paused = [
+      {
+        type: "thread.notice.record",
+        notification: {
+          summary: "Goal paused. T3 Code did not wake the agent (switched off in Settings)",
+          detail: expect.stringContaining("resume the goal"),
+        },
+      },
+      { type: "thread.goal.loop", action: "sync", state: "paused" },
+    ];
 
     return Effect.gen(function* () {
       const service = yield* GoalLoopService;
       yield* service.runDueWork;
       expect(sent).toHaveLength(0);
-      expect(dispatched).toMatchObject([
-        {
-          type: "thread.notice.record",
-          notification: {
-            summary: "Goal paused. T3 Code did not wake the agent (switched off in Settings)",
-            detail: expect.stringContaining("resume the goal"),
-          },
-        },
-        { type: "thread.goal.loop", action: "sync", state: "paused" },
-      ]);
+      expect(dispatched).toMatchObject(paused);
       expect(shell.goalLoop?.state).toBe("paused");
 
       // Paused loops are not visited, and switching back on starts nothing by itself.
@@ -317,11 +327,33 @@ it.effect(
       expect(dispatched).toHaveLength(2);
       expect(sent).toHaveLength(0);
 
-      // The owner resumes: the loop is idle again and the next check continues it.
-      shell = { ...shell, goalLoop: { ...shell.goalLoop!, state: "idle" } };
+      // Still off, the owner resumes: that one turn is sent.
+      on = false;
+      shell = {
+        ...shell,
+        goalLoop: {
+          ...shell.goalLoop!,
+          state: "idle",
+          updatedAt: DateTime.add(NOW, { minutes: 5 }),
+        },
+      };
       yield* service.runDueWork;
       expect(sent).toHaveLength(1);
       expect(sent[0]).toMatchObject({ text: GOAL_CONTINUE_MESSAGE });
+      expect(shell.goalLoop?.state).toBe("running");
+
+      // That turn finishes: the loop pauses again with one more row and sends nothing further.
+      runs = [finishedRun(1), finishedRun(6)];
+      const before = dispatched.length;
+      yield* service.runDueWork;
+      yield* service.runDueWork;
+      expect(sent).toHaveLength(1);
+      expect(dispatched.slice(before)).toMatchObject(paused);
+      expect(shell.goalLoop?.state).toBe("paused");
+      const noticeIds = dispatched
+        .filter((command) => command.type === "thread.notice.record")
+        .map((command) => command.commandId);
+      expect(new Set(noticeIds).size).toBe(2);
     }).pipe(Effect.provide(testLayer));
   },
 );

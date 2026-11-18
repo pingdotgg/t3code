@@ -194,12 +194,16 @@ const make = Effect.fn("GoalLoopService.make")(function* (options: {
       return;
     }
 
-    // Checked before the iteration advances. The loop is paused, so resuming is the owner's
-    // action and later checks skip this thread.
-    if (!(yield* options.continueGoals ?? Effect.succeed(true))) {
+    // Off stops only the turn that would follow a finished run on its own: a goal the owner set,
+    // resumed or continued still gets its one turn. Checked before the iteration advances; the
+    // loop is paused, so later checks skip this thread until the owner acts.
+    const followsFinishedRun = projection.runs.some((run) => run.id === plan.key);
+    if (followsFinishedRun && !(yield* options.continueGoals ?? Effect.succeed(true))) {
+      // Keyed by the loop's own state as well, so a pause after each resumed turn is a new command.
+      const key = `${thread.id}:${plan.key}:${DateTime.formatIso(loop.updatedAt)}`;
       yield* threads.dispatch({
         type: "thread.notice.record",
-        commandId: CommandId.make(`server:goal-not-continued:${thread.id}:${plan.key}`),
+        commandId: CommandId.make(`server:goal-not-continued:${key}`),
         threadId: thread.id,
         notification: suppressedWakeNotice(
           "Goal paused",
@@ -208,7 +212,7 @@ const make = Effect.fn("GoalLoopService.make")(function* (options: {
       });
       yield* threads.dispatch({
         type: "thread.goal.loop",
-        commandId: CommandId.make(`server:goal-paused-by-setting:${thread.id}:${plan.key}`),
+        commandId: CommandId.make(`server:goal-paused-by-setting:${key}`),
         threadId: thread.id,
         action: "sync",
         state: "paused",
