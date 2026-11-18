@@ -69,6 +69,11 @@ export const SCENARIOS = [
     name: "Grok task list",
     file: "./dev-replay/grok_todo_transcript.ndjson",
   },
+  {
+    id: "command-output",
+    name: "Command output",
+    file: "./dev-replay/command_output_transcript.ndjson",
+  },
 ] as const;
 
 // Session setup and vendor state stay out: they would replace the replay agent's own models.
