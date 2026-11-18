@@ -50,6 +50,8 @@ Workers merge their own PRs. Nobody re-verifies a merged PR. When something on m
 
 ## Dispatcher
 
+A server can run `queue.sh --loop <project-folder>...` as a daemon (Settings > Daemons) instead of a maestro thread; it requeues and dispatches without a model.
+
 Runs only in the maestro thread. There are no loops and no sleeps: each tick runs once and the turn ends. Spend as few tokens as you can: a tick with nothing to reap, requeue, dispatch or report ends with no message at all. A tick runs when:
 
 - the thread starts or the master nudges it;

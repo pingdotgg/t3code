@@ -3200,4 +3200,36 @@ it.layer(
       expect(missingEvents).toEqual([]);
     }),
   );
+
+  it.effect("keeps an exited terminal's history when reopened with keepHistory", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const runUntilExit = Effect.fn("test.runUntilExit")(function* (index: number) {
+        const process = ptyAdapter.processes[index]!;
+        const output = yield* Deferred.make<void>();
+        const exited = yield* Deferred.make<void>();
+        const unsubscribe = yield* manager.subscribe((event) =>
+          event.type === "output"
+            ? Deferred.succeed(output, undefined).pipe(Effect.asVoid)
+            : event.type === "exited"
+              ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        );
+        process.emitData(`run ${index}\n`);
+        yield* Deferred.await(output);
+        process.emitExit({ exitCode: 1, signal: 0 });
+        yield* Deferred.await(exited);
+        unsubscribe();
+      });
+
+      yield* manager.open(openInput());
+      yield* runUntilExit(0);
+      const kept = yield* manager.open(openInput(), { keepHistory: true });
+      expect(kept.status).toBe("running");
+      expect(kept.history).toBe("run 0\n");
+
+      yield* runUntilExit(1);
+      expect((yield* manager.open(openInput())).history).toBe("");
+    }),
+  );
 });

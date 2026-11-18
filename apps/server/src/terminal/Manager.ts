@@ -177,8 +177,10 @@ export class TerminalCwdRecovery extends Context.Reference<
 export class TerminalManager extends Context.Service<
   TerminalManager,
   {
+    /** `keepHistory` keeps an ended session's output when it starts again. */
     readonly open: (
       input: TerminalOpenInput,
+      options?: { readonly keepHistory?: boolean },
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
     readonly getShell: (input: TerminalObserveInput) => Effect.Effect<string, TerminalError>;
@@ -3242,6 +3244,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   const openWithWorkspaceLease = Effect.fn("terminal.openLocked")(function* (
     requestedInput: TerminalOpenInput,
+    keepHistory = false,
   ) {
     const terminalId = requestedInput.terminalId;
     yield* assertValidCwd(requestedInput.cwd);
@@ -3343,8 +3346,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     } else if (liveSession.status === "exited" || liveSession.status === "error") {
       liveSession.runtimeEnv = nextRuntimeEnv;
       liveSession.worktreePath = nextWorktreePath;
-      liveSession.history.clear();
-      liveSession.pendingHistoryControlSequence = "";
+      if (!keepHistory) {
+        liveSession.history.clear();
+        liveSession.pendingHistoryControlSequence = "";
+      }
       liveSession.pendingProcessEvents = [];
       liveSession.pendingProcessEventIndex = 0;
       liveSession.processEventDrainRunning = false;
@@ -3372,16 +3377,18 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return snapshot(liveSession);
   });
 
-  const openLocked = (input: TerminalOpenInput) =>
+  const openLocked = (input: TerminalOpenInput, keepHistory?: boolean) =>
     withWorkspaceLease(
       path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input),
+      openWithWorkspaceLease(input, keepHistory),
     );
 
-  const open: TerminalManager["Service"]["open"] = (input) =>
+  const open: TerminalManager["Service"]["open"] = (input, options) =>
     withThreadLock(
       input.threadId,
-      resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
+      resolveLaunchInputEnvironment(input).pipe(
+        Effect.flatMap((resolved) => openLocked(resolved, options?.keepHistory)),
+      ),
     );
 
   const getShell = Effect.fn("terminal.getShell")(function* (input: TerminalObserveInput) {

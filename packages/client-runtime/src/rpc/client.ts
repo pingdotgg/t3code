@@ -7,6 +7,7 @@ import {
   withI18nMessage,
 } from "../errors/translatable.ts";
 import {
+  DAEMON_WS_METHODS,
   EnvironmentAuthorizationError,
   clientRpcRequiredScopes,
   authScopeRequiredResponse,
@@ -70,6 +71,7 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.subscribeServerConfig
   | typeof WS_METHODS.subscribeServerLifecycle
   | typeof WS_METHODS.scheduledTasksSubscribe
+  | typeof DAEMON_WS_METHODS.subscribe
   | typeof WS_METHODS.serverGetStorageCleanupReport
   | typeof WS_METHODS.serverGetDatabaseStorage
   | typeof WS_METHODS.subscribeTerminalMetadata
