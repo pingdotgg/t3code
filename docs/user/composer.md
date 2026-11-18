@@ -6,7 +6,7 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
-Pasting 32 KB (about 32,000 characters) or more of text adds that fragment as a
+Pasting 32 KiB (about 32,768 characters) or more of text adds that fragment as a
 text-file attachment so the agent can inspect it without filling the model
 context. To turn shorter pastes into attachments, choose 1 KB or 5 KB under
 **Settings → Chat → Large paste threshold** on web and desktop, or **Settings →

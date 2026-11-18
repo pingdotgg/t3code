@@ -57,10 +57,15 @@ export function pastedTextThresholdLabel(
   resolve: MFunctionType = mFallback,
 ) {
   return resolve(
-    msg("{kilobytes} KB (~{characters, number} chars)", {
-      kilobytes: Math.floor(thresholdBytes / 1000),
-      characters: thresholdBytes,
-    }),
+    thresholdBytes % 1024 === 0
+      ? msg("{kibibytes} KiB (~{characters, number} chars)", {
+          kibibytes: thresholdBytes / 1024,
+          characters: thresholdBytes,
+        })
+      : msg("{kilobytes} KB (~{characters, number} chars)", {
+          kilobytes: Math.floor(thresholdBytes / 1000),
+          characters: thresholdBytes,
+        }),
   );
 }
 

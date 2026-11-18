@@ -306,6 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, one {Tried to start {started} review guide, {failed} failed} other {Tried to start {started} review guides, {failed} failed}}",
   "672850007e49cfb6": "{started, plural, one {Started {started} review guide} other {Started {started} review guides}}",
   "5dce4a54eaffeccf": "{started, plural, one {Tried to start {started} review guide} other {Tried to start {started} review guides}}",
+  "de2c541d89da7d2d": "{kibibytes} KiB (~{characters, number} chars)",
   "c62d732adb53f0ab": "{kilobytes} KB (~{characters, number} chars)",
   "420bea546d5f8802": "Thread copied",
   "2efb2dd3bf170f67": "Failed to copy thread",

@@ -306,6 +306,7 @@
   "1b659e38a50d9bc5": "{started, plural, one {Försökte starta {started} granskningsguide, {failed} misslyckades} other {Försökte starta {started} granskningsguider, {failed} misslyckades}}",
   "672850007e49cfb6": "{started, plural, one {Startade {started} granskningsguide} other {Startade {started} granskningsguider}}",
   "5dce4a54eaffeccf": "{started, plural, one {Försökte starta {started} granskningsguide} other {Försökte starta {started} granskningsguider}}",
+  "de2c541d89da7d2d": "{kibibytes} KiB (~{characters, number} tecken)",
   "c62d732adb53f0ab": "{kilobytes} kB (~{characters, number} tecken)",
   "420bea546d5f8802": "Tråden kopierades",
   "2efb2dd3bf170f67": "Det gick inte att kopiera tråden",
