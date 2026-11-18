@@ -143,6 +143,9 @@ export function ElectronBrowserHost() {
             tabId={snapshot.tabId}
             runtimeTabId={runtimeTabId}
             initialUrl={url}
+            initialUrlLoaded={
+              snapshot.navStatus._tag === "Success" || snapshot.navStatus._tag === "LoadFailed"
+            }
             viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
             pictureInPicture={pictureInPicture}
             profileId={snapshot.profileId}

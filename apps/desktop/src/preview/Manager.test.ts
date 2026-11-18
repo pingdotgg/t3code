@@ -1714,11 +1714,17 @@ describe("PreviewManager", () => {
     let audible = false;
     let audibleAfterFirstRead = false;
     let audibleReads = 0;
+    let destroyed = false;
     return {
       setAudioMuted,
       emitAudioState: (next: boolean) => {
         audible = next;
         listeners.get("audio-state-changed")?.({ audible: next } as never);
+      },
+      /** Electron destroys a guest without a final audio-state change. */
+      destroy: () => {
+        destroyed = true;
+        listeners.get("destroyed")?.();
       },
       /** Simulate playback starting during attach before the tab owns the guest and can receive its events. */
       startPlayingAfterFirstRead: () => {
@@ -1726,7 +1732,7 @@ describe("PreviewManager", () => {
       },
       wc: {
         id,
-        isDestroyed: () => false,
+        isDestroyed: () => destroyed,
         isDevToolsOpened: () => false,
         getType: () => "webview",
         getURL: () => "https://example.com",
@@ -1746,6 +1752,9 @@ describe("PreviewManager", () => {
         }),
         off: vi.fn((event: string) => {
           listeners.delete(event);
+        }),
+        once: vi.fn((event: string, listener: (...args: never[]) => void) => {
+          listeners.set(event, listener);
         }),
         ipc: { on: vi.fn(), off: vi.fn() },
         send: webviewSend,
@@ -1812,6 +1821,33 @@ describe("PreviewManager", () => {
 
         expect(states.length).toBe(publishedBefore);
         expect(states.at(-1)?.audible).toBe(false);
+      }),
+    ),
+  );
+
+  effectIt.effect("stops showing sound for a tab whose guest was destroyed", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const guest = makeAudioWebContents(42);
+        fromId.mockReturnValue(guest.wc);
+        const states: PreviewManager.PreviewTabState[] = [];
+
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            states.push(state);
+          }),
+        );
+        yield* manager.prepareWebview(guest.wc);
+        yield* manager.createTab("tab_audio_destroyed");
+        yield* manager.registerWebview("tab_audio_destroyed", 42);
+        guest.emitAudioState(true);
+        yield* Effect.yieldNow;
+        expect(states.at(-1)?.audible).toBe(true);
+
+        guest.destroy();
+        yield* Effect.yieldNow;
+
+        expect(states.at(-1)).toMatchObject({ tabId: "tab_audio_destroyed", audible: false });
       }),
     ),
   );
