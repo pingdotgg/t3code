@@ -575,7 +575,7 @@ async fn unavailable_actions_and_guide_generation_return_typed_refusals() {
         let detail = if enabled {
             "This server cannot generate review guides yet."
         } else {
-            "Review guides are off. Turn them on in Settings → Source Control."
+            "Review guides are off. Turn them on in Settings → Source control & issues."
         };
         assert!(
             matches!(error, Failure::Fail(ref value) if value["_tag"] == "PullRequestOperationError" && value["operation"] == "generateReviewGuide" && value["detail"] == detail),
@@ -1235,7 +1235,7 @@ async fn repository_list_errors_use_t3s_repository_text_and_access_hint() {
         .expect("partial list");
     assert_eq!(
         result["errors"][0]["message"],
-        "a/b could not be read. Your gh login can't see it. Give it access, or save a token in Settings → Source Control."
+        "a/b could not be read. Your gh login can't see it. Give it access, or save a token in Settings → Source control & issues."
     );
     status.store(503, Ordering::Relaxed);
     panel

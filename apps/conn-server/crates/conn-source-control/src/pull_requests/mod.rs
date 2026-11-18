@@ -20,7 +20,7 @@ mod stack;
 mod tests;
 static CLI_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 static HTTP_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
-const UNAUTHENTICATED: &str = "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.";
+const UNAUTHENTICATED: &str = "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source control & issues.";
 const MISSING: &str = "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.";
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum Error {

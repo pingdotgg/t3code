@@ -335,7 +335,7 @@ impl Panel {
         operation_error(
             "generateReviewGuide",
             if off {
-                "Review guides are off. Turn them on in Settings → Source Control."
+                "Review guides are off. Turn them on in Settings → Source control & issues."
             } else {
                 "This server cannot generate review guides yet."
             },

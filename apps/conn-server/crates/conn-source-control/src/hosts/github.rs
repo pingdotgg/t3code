@@ -236,7 +236,7 @@ pub fn parse_auth(output: &ProbeOutput, settings: &HostSettings<'_>) -> SourceCo
             None,
             Some(&fallback.host),
             Some(
-                "Every GitHub host gh is signed in to is turned off in Settings → Source Control.",
+                "Every GitHub host gh is signed in to is turned off in Settings → Source control & issues.",
             ),
         ));
     }
@@ -578,13 +578,13 @@ impl CredentialSource {
     pub(crate) fn access_hint(self) -> &'static str {
         match self {
             Self::Settings => {
-                "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control."
+                "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source control & issues."
             }
             Self::Environment => {
                 "The server's environment token can't see it. Give it access, or unset it."
             }
             Self::Gh => {
-                "Your gh login can't see it. Give it access, or save a token in Settings → Source Control."
+                "Your gh login can't see it. Give it access, or save a token in Settings → Source control & issues."
             }
         }
     }
@@ -778,7 +778,7 @@ pub async fn discover(ctx: DiscoveryContext<'_>) -> SourceControlProviderDiscove
             None,
             Some("github.com"),
             Some(&if saved.is_some() {
-                "GitHub refused the token saved in Settings. Replace or remove it in Settings → Source Control.".to_owned()
+                "GitHub refused the token saved in Settings. Replace or remove it in Settings → Source control & issues.".to_owned()
             } else {
                 format!(
                     "GitHub refused the token in {token_source}. Replace it, or unset it to use `gh auth login`."
@@ -811,10 +811,10 @@ pub(crate) async fn api_json(
         let detail = match e {
             CredentialError::CliMissing => "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.".into(),
             CredentialError::NotSignedIn => match ctx.settings.host(KIND).host_account(host) {
-                Some(account)=>format!("No GitHub credential for {account} on {host}: run `gh auth login --hostname {host}` for that account or pick another in Settings → Source Control."),
+                Some(account)=>format!("No GitHub credential for {account} on {host}: run `gh auth login --hostname {host}` for that account or pick another in Settings → Source control & issues."),
                 None=>format!("No GitHub credential for {host}: run `gh auth login --hostname {host}`."),
             },
-            CredentialError::HostDisabled => format!("GitHub host {host} is turned off in Settings → Source Control."),
+            CredentialError::HostDisabled => format!("GitHub host {host} is turned off in Settings → Source control & issues."),
             CredentialError::CliFailed => format!("The GitHub CLI could not hand over a credential for {host}. Check `gh auth status` on the server."),
             CredentialError::Unresolved(e) => e,
         }; crate::repository::HostFailure::new(detail)
@@ -1020,7 +1020,7 @@ mod tests {
         assert_eq!(
             auth.detail,
             some(
-                "Every GitHub host gh is signed in to is turned off in Settings → Source Control."
+                "Every GitHub host gh is signed in to is turned off in Settings → Source control & issues."
             ),
             "detail"
         );
