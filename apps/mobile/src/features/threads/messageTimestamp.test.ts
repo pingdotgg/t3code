@@ -1,7 +1,30 @@
-import { formattingLocales } from "@t3tools/client-runtime/locales";
+import { resolveLocale, SYSTEM_LANGUAGE } from "@t3tools/client-runtime/locales";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { DEFAULT_LOCALE, readDeviceLocales, SUPPORTED_LOCALES } from "../../i18n/locales";
 import { createMessageTimeFormatter } from "./messageTimestamp";
+import { useMessageTimeFormatter } from "./useMessageTimeFormatter";
+
+const mocks = vi.hoisted(() => ({
+  platform: vi.fn<() => "android" | "ios">(),
+  nativeLocales: vi.fn<() => string[]>(),
+  languagePreference: vi.fn<() => string>(),
+  activeLocale: vi.fn<() => string>(),
+}));
+
+vi.mock("react-native", () => ({
+  Platform: {
+    get OS() {
+      return mocks.platform();
+    },
+  },
+  TurboModuleRegistry: { get: () => ({ getNativeLocales: mocks.nativeLocales }) },
+}));
+vi.mock("expo", () => ({ requireNativeModule: () => ({ is24HourFormat: () => true }) }));
+vi.mock("gt-react-native", () => ({ useLocale: mocks.activeLocale }));
+vi.mock("../../i18n/I18nProvider", () => ({ useLanguagePreference: mocks.languagePreference }));
 
 function mockDeviceLocale(deviceLocale: string) {
   const DateTimeFormat = Intl.DateTimeFormat;
@@ -91,12 +114,27 @@ describe("createMessageTimeFormatter", () => {
   });
 
   it.each([
-    { deviceLocale: "en_GB", preferredLanguages: ["en-US"] },
-    { deviceLocale: "nl-NL", preferredLanguages: ["nl-NL", "en-US"] },
-  ])("uses the date order for $deviceLocale when English is active", (testCase) => {
-    const locales = formattingLocales("en", testCase.preferredLanguages, testCase.deviceLocale);
-    const format = createMessageTimeFormatter(true, locales);
-    const june = new Date(2026, 5, 1, 20, 0).getTime();
-    expect(format(new Date(2026, 2, 5, 15, 7).toISOString(), june)).toBe("05/03 15:07");
+    { platform: "ios", nativeLocales: ["en_GB@calendar=gregorian", "en-US"], preference: "en" },
+    { platform: "android", nativeLocales: ["nl-NL", "en-US"], preference: SYSTEM_LANGUAGE },
+    { platform: "android", nativeLocales: ["nl-NL", "en-US"], preference: "en" },
+  ] as const)("keeps the device date order on $platform with $preference language", (testCase) => {
+    using _deviceLocale = mockDeviceLocale("en-US");
+    mocks.platform.mockReturnValue(testCase.platform);
+    mocks.nativeLocales.mockReturnValue([...testCase.nativeLocales]);
+    mocks.languagePreference.mockReturnValue(testCase.preference);
+    mocks.activeLocale.mockReturnValue(
+      resolveLocale(
+        testCase.preference,
+        readDeviceLocales().preferredLanguages,
+        SUPPORTED_LOCALES,
+        DEFAULT_LOCALE,
+      ),
+    );
+    function Timestamp() {
+      const format = useMessageTimeFormatter();
+      const june = new Date(2026, 5, 1, 20, 0).getTime();
+      return format(new Date(2026, 2, 5, 15, 7).toISOString(), june);
+    }
+    expect(renderToStaticMarkup(createElement(Timestamp))).toMatch(/^05\/03 /);
   });
 });

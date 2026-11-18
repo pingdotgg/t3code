@@ -46,15 +46,15 @@ export function resolveLocale(
 
 function parseSystemLocale(tag: string): Intl.Locale | undefined {
   try {
-    // iOS locale identifiers can contain underscores and ICU keywords such as @calendar.
-    return new Intl.Locale(tag.trim().replace(/@.*$/, "").replaceAll("_", "-"));
+    return new Intl.Locale(tag);
   } catch {
     return undefined;
   }
 }
 
 /**
- * Locales for Intl formatters: a compatible system variant or region first, then the UI locale,
+ * Locales for Intl formatters from normalized language tags. Keep an explicit UI region;
+ * otherwise prefer a compatible system variant or region, with the UI locale as a fallback
  * since Hermes on Android formats a tag ICU lacks (such as de-US) in the device locale.
  */
 export function formattingLocales(
@@ -63,6 +63,7 @@ export function formattingLocales(
   regionalLocale?: string,
 ): ReadonlyArray<string> {
   const ui = new Intl.Locale(uiLocale);
+  if (ui.region) return [uiLocale];
   const compatible = [uiLocale, ui.language];
   const preferredRegion = regionalLocale ? parseSystemLocale(regionalLocale)?.region : undefined;
   let region: string | undefined;
@@ -78,10 +79,9 @@ export function formattingLocales(
   }
   const locale = variant ?? uiLocale;
   const formattingRegion = preferredRegion ?? (variant ? undefined : region);
-  const regional =
-    ui.region || !formattingRegion
-      ? locale
-      : new Intl.Locale(locale, { region: formattingRegion }).baseName;
+  const regional = formattingRegion
+    ? new Intl.Locale(locale, { region: formattingRegion }).baseName
+    : locale;
   const preferred = matchSupportedLocale(regional, compatible) ? regional : locale;
   return preferred === uiLocale ? [uiLocale] : [preferred, uiLocale];
 }

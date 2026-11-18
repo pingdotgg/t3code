@@ -16,9 +16,13 @@ export function readDeviceLocales() {
   } catch {
     // The native module is optional.
   }
+  const regionalLocale = locales[0];
+  if (Platform.OS !== "ios") {
+    return { regionalLocale, preferredLanguages: locales };
+  }
+  // iOS puts its region setting first as an NSLocale identifier, ahead of its language tags.
   return {
-    regionalLocale: locales[0],
-    // On iOS, NSLocale.currentLocale gets its language from the app bundle. Preferred languages follow it.
-    preferredLanguages: Platform.OS === "ios" ? locales.slice(1) : locales,
+    regionalLocale: regionalLocale?.trim().replace(/@.*$/, "").replaceAll("_", "-"),
+    preferredLanguages: locales.slice(1),
   };
 }
