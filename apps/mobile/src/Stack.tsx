@@ -97,6 +97,7 @@ import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnv
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
 import { SettingsLanguageRouteScreen } from "./features/settings/SettingsLanguageRouteScreen";
 import {
+  SettingsComputerUseRouteScreen,
   SettingsEnvironmentMaintenanceRouteScreen,
   SettingsThreadsRouteScreen,
   SettingsWorktreesRouteScreen,
@@ -222,6 +223,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsThreadsRouteScreen,
     linking: "settings/thread-preferences",
     options: settingsPage("Threads"),
+  }),
+  SettingsComputerUse: createNativeStackScreen({
+    screen: SettingsComputerUseRouteScreen,
+    linking: "settings/computer-use",
+    options: settingsPage("Computer use"),
   }),
   SettingsAbout: createNativeStackScreen({
     screen: SettingsAboutRouteScreen,

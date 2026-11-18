@@ -3,6 +3,7 @@ import {
   type ComputerApproval,
   type ComputerSnapshot,
   type ComputerTaskView,
+  type ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -60,6 +61,31 @@ export function computerPendingApprovals(
   return snapshot.approvals.filter(
     (approval) =>
       approval.state === "pending" && DateTime.toEpochMillis(approval.expiresAt) > nowMs,
+  );
+}
+
+/** The task this thread started that is still running, or null. A computer runs one task at a time. */
+export function computerThreadTask(
+  snapshot: ComputerSnapshot,
+  threadId: ThreadId,
+): ComputerTaskView | null {
+  return (
+    snapshot.tasks.find((task) => task.threadId === threadId && task.status === "running") ?? null
+  );
+}
+
+/** The taps one thread's computer tasks still wait for, so its screen can ask for them. */
+export function computerThreadApprovals(
+  snapshot: ComputerSnapshot,
+  threadId: ThreadId,
+  nowMs: number,
+): ReadonlyArray<ComputerApproval> {
+  const threadTaskIds = new Set(
+    snapshot.tasks.flatMap((task) => (task.threadId === threadId ? [task.taskId] : [])),
+  );
+  if (threadTaskIds.size === 0) return [];
+  return computerPendingApprovals(snapshot, nowMs).filter((approval) =>
+    threadTaskIds.has(approval.binding.taskId),
   );
 }
 

@@ -1,4 +1,4 @@
-import { computerPendingApprovals } from "@t3tools/client-runtime/state/computer";
+import { computerThreadApprovals } from "@t3tools/client-runtime/state/computer";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import { useNowAfter } from "../../hooks/useDeadline";
@@ -19,11 +19,7 @@ export function ThreadComputerApprovals({
   const nowMs = useNowAfter(nextComputerDeadline(snapshot));
   const environment = useEnvironment(threadRef?.environmentId ?? null);
   if (threadRef === null) return null;
-  const waiting = computerPendingApprovals(snapshot, nowMs).filter(
-    (approval) =>
-      snapshot.tasks.find((task) => task.taskId === approval.binding.taskId)?.threadId ===
-      threadRef.threadId,
-  );
+  const waiting = computerThreadApprovals(snapshot, threadRef.threadId, nowMs);
   if (waiting.length === 0) return null;
   return (
     <div className="mb-2 flex flex-col gap-2">
