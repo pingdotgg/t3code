@@ -2373,6 +2373,10 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.serverMutateAgentLibrary]: (input) =>
           serverSettings.mutateAgentLibrary(input.operations),
+        [WS_METHODS.serverRevealComputerGrounderKey]: () =>
+          serverSettings.getSettings.pipe(
+            Effect.map((settings) => ({ apiKey: settings.computerGrounder?.apiKey ?? "" })),
+          ),
         [WS_METHODS.serverSearchAcpRegistry]: (input) =>
           acpRegistryCatalog
             .search(input)

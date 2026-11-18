@@ -1376,6 +1376,10 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:get-agent-skills",
       tag: WS_METHODS.serverGetAgentSkills,
     }),
+    revealComputerGrounderKey: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:reveal-computer-grounder-key",
+      tag: WS_METHODS.serverRevealComputerGrounderKey,
+    }),
     mutateAgentLibrary: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:mutate-agent-library",
       tag: WS_METHODS.serverMutateAgentLibrary,

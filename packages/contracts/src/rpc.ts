@@ -84,7 +84,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { SecretSourceCheckResult } from "./settingsSecretValue.ts";
+import { SecretSourceCheckResult, SettingsSecretValue } from "./settingsSecretValue.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
   ProviderAuthCancelInput,
@@ -655,6 +655,7 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverGetAgentSkills: "server.getAgentSkills",
+  serverRevealComputerGrounderKey: "server.revealComputerGrounderKey",
   serverMutateAgentLibrary: "server.mutateAgentLibrary",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverCheckSecretSource: "server.checkSecretSource",
@@ -1145,6 +1146,13 @@ const WsSubscribeTailnetDevicesRpc = Rpc.make(WS_METHODS.subscribeTailnetDevices
 const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
   success: ServerSettings,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+/** The decision endpoint's key as stored, so a client can share it with its other devices. */
+const WsServerRevealComputerGrounderKeyRpc = Rpc.make(WS_METHODS.serverRevealComputerGrounderKey, {
+  payload: Schema.Struct({}),
+  success: Schema.Struct({ apiKey: SettingsSecretValue }),
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
@@ -2634,6 +2642,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetStorageCleanupReportRpc,
   WsServerGetDatabaseStorageRpc,
   WsServerGetSettingsRpc,
+  WsServerRevealComputerGrounderKeyRpc,
   WsServerReclaimDatabaseSpaceRpc,
   WsServerClearWorktreeSharedPathRpc,
   WsServerGetThreadHistoryTrimRpc,

@@ -95,6 +95,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverUpdateAgentGateway]: AuthAccessWriteScope,
   [WS_METHODS.serverRevealAgentGatewayToken]: AuthAccessWriteScope,
   [WS_METHODS.serverRotateAgentGatewayToken]: AuthAccessWriteScope,
+  // Reads a stored credential, as revealing the gateway token does.
+  [WS_METHODS.serverRevealComputerGrounderKey]: AuthAccessWriteScope,
   // A push carries only thread titles and states that a reader already sees.
   [WS_METHODS.pushRegistrationsRegister]: AuthOrchestrationReadScope,
   [WS_METHODS.pushRegistrationsUnregister]: AuthOrchestrationReadScope,

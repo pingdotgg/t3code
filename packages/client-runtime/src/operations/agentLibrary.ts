@@ -8,10 +8,12 @@ import {
   type AgentLibrary,
   type AgentLibraryOperation,
   type AgentSkill,
+  type ComputerGrounderConfig,
   type EnvironmentId,
   type ExecutionEnvironmentCapabilities,
   type McpGatewayProfile,
   type ServerSettingsPatch,
+  type SettingsSecretValue,
 } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Effect from "effect/Effect";
@@ -377,20 +379,19 @@ const libraryFingerprint = (library: AgentLibraryInput | undefined) =>
   ]);
 
 /**
- * Sends each target's patch once until it fails or that target's library changes. An older
- * server that drops part of a patch (an exact-name repeat) would otherwise get it on every pass.
+ * Sends each target's write once until it fails or its key changes. An older server that drops
+ * part of a patch (an exact-name repeat) would otherwise get it on every pass.
  */
-export function createAgentLibrarySyncGate() {
+function createSyncGate<T extends { readonly environmentId: EnvironmentId }>() {
   const inFlight = new Set<string>();
   const delivered = new Map<string, string>();
   return {
-    take(plan: AgentLibrarySyncPlan, sources: ReadonlyArray<AgentLibrarySource>) {
+    take(targets: ReadonlyArray<T>, keyOf: (target: T) => string) {
       for (const environmentId of delivered.keys())
-        if (!plan.targets.some((target) => target.environmentId === environmentId))
+        if (!targets.some((target) => target.environmentId === environmentId))
           delivered.delete(environmentId);
-      const keyed = plan.targets.flatMap((target) => {
-        const own = sources.find((source) => source.environmentId === target.environmentId);
-        const key = JSON.stringify([target.patch, libraryFingerprint(own?.library)]);
+      const keyed = targets.flatMap((target) => {
+        const key = keyOf(target);
         const id = `${target.environmentId}:${key}`;
         return inFlight.has(id) || delivered.get(target.environmentId) === key
           ? []
@@ -408,6 +409,138 @@ export function createAgentLibrarySyncGate() {
         },
       };
     },
+  };
+}
+
+/** Agent library patches go out once per change of the target's library. */
+export function createAgentLibrarySyncGate() {
+  const gate = createSyncGate<AgentLibrarySyncTarget>();
+  return {
+    take: (plan: AgentLibrarySyncPlan, sources: ReadonlyArray<AgentLibrarySource>) =>
+      gate.take(plan.targets, (target) => {
+        const own = sources.find((source) => source.environmentId === target.environmentId);
+        return JSON.stringify([target.patch, libraryFingerprint(own?.library)]);
+      }),
+  };
+}
+
+export interface ComputerGrounderSource {
+  readonly environmentId: EnvironmentId;
+  readonly computerGrounder: ComputerGrounderConfig | null;
+  readonly computerGrounderSetAt: string;
+  readonly capabilities: Pick<ExecutionEnvironmentCapabilities, "computerGrounderSync"> | undefined;
+  readonly live: boolean;
+}
+
+export interface ComputerGrounderSyncPlan {
+  readonly computerGrounder: ComputerGrounderConfig | null;
+  readonly computerGrounderSetAt: string;
+  /** Holds the key, which clients see redacted; absent when the winner has none or a reference. */
+  readonly keyFrom?: EnvironmentId;
+  readonly targets: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
+}
+
+export function computerGrounderSources(
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly connection: { readonly phase: string };
+    readonly serverConfig?: {
+      readonly settings: Pick<ComputerGrounderSource, "computerGrounder" | "computerGrounderSetAt">;
+      readonly environment: { readonly capabilities: ComputerGrounderSource["capabilities"] };
+    } | null;
+  }>,
+): ReadonlyArray<ComputerGrounderSource> {
+  return environments.flatMap((environment) =>
+    environment.serverConfig
+      ? [
+          {
+            environmentId: environment.environmentId,
+            computerGrounder: environment.serverConfig.settings.computerGrounder,
+            computerGrounderSetAt: environment.serverConfig.settings.computerGrounderSetAt,
+            capabilities: environment.serverConfig.environment.capabilities,
+            live: environment.connection.phase === "connected",
+          },
+        ]
+      : [],
+  );
+}
+
+const grounderFingerprint = (source: ComputerGrounderSource) =>
+  JSON.stringify([source.computerGrounderSetAt, source.computerGrounder]);
+
+/**
+ * The latest decision endpoint save, set or cleared, and the devices still holding another. Saves
+ * from before sharing carry no time, so a configured one beats an empty one, then the lowest id.
+ */
+export function planComputerGrounderSync(
+  sources: ReadonlyArray<ComputerGrounderSource>,
+): ComputerGrounderSyncPlan {
+  const syncing = sources
+    .filter((source) => source.capabilities?.computerGrounderSync === true)
+    .sort(
+      (a, b) =>
+        b.computerGrounderSetAt.localeCompare(a.computerGrounderSetAt) ||
+        Number(b.computerGrounder !== null) - Number(a.computerGrounder !== null) ||
+        a.environmentId.localeCompare(b.environmentId),
+    );
+  const winner = syncing[0];
+  if (winner === undefined)
+    return { computerGrounder: null, computerGrounderSetAt: "", targets: [] };
+  const apiKey = winner.computerGrounder?.apiKey;
+  const keyFrom =
+    typeof apiKey === "string" && apiKey.length > 0 ? winner.environmentId : undefined;
+  const reachable = keyFrom === undefined || winner.live;
+  return {
+    computerGrounder: winner.computerGrounder,
+    computerGrounderSetAt: winner.computerGrounderSetAt,
+    ...(keyFrom === undefined ? {} : { keyFrom }),
+    targets: reachable
+      ? syncing
+          .filter(
+            (source) => source.live && grounderFingerprint(source) !== grounderFingerprint(winner),
+          )
+          .map(({ environmentId }) => ({ environmentId }))
+      : [],
+  };
+}
+
+export interface ComputerGrounderSyncIo {
+  readonly revealKey: (environmentId: EnvironmentId) => Promise<SettingsSecretValue | undefined>;
+  /** Resolves whether the target accepted the patch. */
+  readonly replicate: (
+    environmentId: EnvironmentId,
+    patch: ServerSettingsPatch,
+  ) => Promise<boolean>;
+}
+
+export async function runComputerGrounderSync(
+  plan: ComputerGrounderSyncPlan,
+  io: ComputerGrounderSyncIo,
+): Promise<boolean> {
+  if (plan.targets.length === 0) return true;
+  const apiKey = plan.keyFrom === undefined ? undefined : await io.revealKey(plan.keyFrom);
+  if (plan.keyFrom !== undefined && apiKey === undefined) return false;
+  const patch: ServerSettingsPatch = {
+    computerGrounder:
+      plan.computerGrounder && apiKey !== undefined
+        ? { ...plan.computerGrounder, apiKey }
+        : plan.computerGrounder,
+    computerGrounderSetAt: plan.computerGrounderSetAt,
+  };
+  const results = await Promise.all(
+    plan.targets.map(({ environmentId }) => io.replicate(environmentId, patch)),
+  );
+  return results.every(Boolean);
+}
+
+/** Decision endpoint writes go out once per save. */
+export function createComputerGrounderSyncGate() {
+  const gate = createSyncGate<ComputerGrounderSyncPlan["targets"][number]>();
+  return {
+    take: (plan: ComputerGrounderSyncPlan) =>
+      gate.take(plan.targets, () =>
+        JSON.stringify([plan.computerGrounderSetAt, plan.computerGrounder]),
+      ),
   };
 }
 

@@ -486,6 +486,41 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("stamps each decision endpoint save and keeps the latest of replicated ones", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const jev = { kind: "jev" as const, baseUrl: "", model: "", apiKey: "jev_key" };
+      const saved = yield* settings.updateSettings({
+        computerGrounder: jev,
+        computerGrounderSetAt: "2000-01-01T00:00:00.000Z",
+      });
+      assert.notEqual(saved.computerGrounderSetAt, "2000-01-01T00:00:00.000Z");
+      assert.equal(saved.computerGrounder?.apiKey, "jev_key");
+      const later = "9999-01-01T00:00:00.000Z";
+      const custom = {
+        kind: "systemone" as const,
+        baseUrl: "https://studio.test",
+        model: "jev",
+        apiKey: "local",
+      };
+      const replicated = yield* settings.updateSettings(
+        { computerGrounder: custom, computerGrounderSetAt: later },
+        true,
+      );
+      assert.deepEqual(replicated.computerGrounder, custom);
+      assert.equal(replicated.computerGrounderSetAt, later);
+      const stale = yield* settings.updateSettings(
+        { computerGrounder: jev, computerGrounderSetAt: saved.computerGrounderSetAt },
+        true,
+      );
+      assert.deepEqual(stale.computerGrounder, custom);
+      // A local save always beats what it has seen, so clearing replicates as the newest write.
+      const cleared = yield* settings.updateSettings({ computerGrounder: null });
+      assert.isNull(cleared.computerGrounder);
+      assert.isTrue(cleared.computerGrounderSetAt > later);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("owns skill revisions and retains deletion tombstones across stale replicas", () =>
     Effect.gen(function* () {
       const settings = yield* ServerSettingsModule.ServerSettingsService;
