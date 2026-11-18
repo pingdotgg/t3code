@@ -2294,7 +2294,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect.each(["running", "exited", "timeout", "held"] as const)(
+  it.effect.each(["running", "exited", "timeout", "held", "sync"] as const)(
     "marks a shell OpenCode started on its own before T3 runs the wake, shell %s",
     (shell) =>
       Effect.gen(function* () {
@@ -2333,7 +2333,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             {
               ...tool,
               content: [{ type: "text", text: "Launched" }],
-              metadata: { shellID },
+              // A foreground shell's result already carries its exit.
+              metadata: shell === "sync" ? { shellID, exit: 0 } : { shellID },
               executed: false,
             },
             undefined,
@@ -2370,7 +2371,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             sessionID: SESSION,
             model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
           }),
-          ...Array.from({ length: shell === "held" ? 2 : 1 }, () => [
+          ...Array.from({ length: shell === "held" ? 2 : shell === "sync" ? 0 : 1 }, () => [
             out("shell.output", "<any>"),
             reply("shell.output", {
               location: { directory: WORK },
@@ -2423,6 +2424,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           }),
           { matched: shell === "running" ? [shellID] : [] },
         );
+        if (shell === "sync") return;
         yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
         if (shell === "running") return assert.isTrue(yield* Deferred.await(marked));
         // A shell that ended before the wake ran never holds the thread.

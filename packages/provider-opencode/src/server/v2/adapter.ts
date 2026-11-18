@@ -1011,7 +1011,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           wake.events.some(
             (event) =>
               event.type === "session.tool.success" &&
-              stringField(event.data.metadata, "shellID") === taskId,
+              stringField(event.data.metadata, "shellID") === taskId &&
+              event.data.metadata?.["exit"] === undefined &&
+              event.data.metadata?.["signal"] === undefined &&
+              event.data.metadata?.["timeout"] !== true,
           ),
         );
     const wakeLaunchingShell = (state: ThreadState, taskId: string) => {
