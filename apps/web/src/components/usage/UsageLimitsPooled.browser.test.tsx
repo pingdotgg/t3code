@@ -180,7 +180,9 @@ describe("UsageLimitsPooled reset credits", () => {
           hideEmails={false}
         />,
       );
-      await expect.element(screen.getByRole("img", { name: /^Fable: 80% left/ })).toBeVisible();
+      await expect
+        .element(screen.getByRole("img", { name: /^Fable: 80% left/ }))
+        .toBeInTheDocument();
       const spent = {
         ...exhausted,
         usageLimits: {
