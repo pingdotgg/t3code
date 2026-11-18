@@ -10,6 +10,7 @@ import {
   type ThreadPullRequestStack,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import {
   threadPullRequestKeyOf,
   normalizeThreadPullRequestKey,
@@ -42,11 +43,13 @@ const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 // Every server polls every open linked pull request, and most of them sit untouched for days.
 // One nobody has updated for QUIET_AFTER_MS is read on the quiet cadence instead of each sweep;
 // requested refreshes, watches and a host CLI's merge command still read it at once.
-const QUIET_AFTER_MS = 30 * 60 * 1_000;
-const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
+export const QUIET_AFTER_MS = 30 * 60 * 1_000;
+export const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
 // A pull request closed this long ago is rarely reopened, so the sweep stops reading it, as it
 // does merged ones. A reader that sees it open, or a requested refresh, still reads it at once.
 const CLOSED_FINAL_AFTER_MS = 24 * 60 * 60 * 1_000;
+// A link whose host read failed waits a sweep, then twice as long after each further failure.
+const FAILED_READ_BACKOFF_MS = 60 * 1_000;
 
 const isChangeRequestCloseCommand = (command: string) =>
   sourceControlDefinitions.definitions.some(
@@ -72,6 +75,11 @@ const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
 );
 const createCommandCount = (code: string) =>
   CREATE_COMMANDS.reduce((count, { run }) => count + [...code.matchAll(run)].length, 0);
+// A push, directly or through a stack tool, that can start checks on a linked pull request.
+const PUSH_COMMAND = new RegExp(
+  `${COMMAND_START}(?:git(?:\\s+-[cC]\\s+\\S+)*\\s+push|gh\\s+stack\\s+(?:push|submit)|cafe\\s+stack\\s+submit|jj\\s+git\\s+push)(?=$|[\\s;&|)])`,
+  "u",
+);
 
 // Codex runs each command as `/bin/zsh -lc <script>`, quoting the script in pieces such as
 // `"a "'`b`'" c"`.
@@ -134,6 +142,8 @@ function shellSegments(script: string): ReadonlyArray<string> {
 const shellCode = (script: string) =>
   script.replace(HEREDOC_BODY, "<<").replace(QUOTED_OR_COMMENT, "''");
 
+const isPushCommand = (input: string) => PUSH_COMMAND.test(shellCode(shellScript(input)));
+
 type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>;
 
 /**
@@ -183,6 +193,19 @@ interface LinkEntry {
   readonly link: ThreadPullRequestLink;
 }
 
+const referenceOf = ({ thread, link }: LinkEntry) => ({
+  projectId: thread.projectId,
+  host: normalizeThreadPullRequestKey(link).host,
+  repository: link.repository,
+  number: link.number,
+});
+
+/** Pauses and batching both belong to a project's host. */
+const pauseKeyOf = (entry: LinkEntry) => {
+  const { projectId, host } = referenceOf(entry);
+  return `${projectId}\0${host}`;
+};
+
 /** Another layer of the stack `url` belongs to, in its host's canonical shape. */
 function siblingChangeRequestUrl(url: string, number: number): string | null {
   if (!Number.isSafeInteger(number) || number < 1) return null;
@@ -214,6 +237,7 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
     ...(summary.reviewDecision === undefined ? {} : { reviewDecision: summary.reviewDecision }),
     ...(summary.checksState === undefined ? {} : { checksState: summary.checksState }),
     ...(summary.mergeability === undefined ? {} : { mergeability: summary.mergeability }),
+    ...(summary.rebaseRequired === undefined ? {} : { rebaseRequired: summary.rebaseRequired }),
   };
 }
 
@@ -262,7 +286,8 @@ function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boole
     left.changedFiles === right.changedFiles &&
     (left.reviewDecision ?? null) === (right.reviewDecision ?? null) &&
     (left.checksState ?? null) === (right.checksState ?? null) &&
-    left.mergeability === right.mergeability
+    left.mergeability === right.mergeability &&
+    left.rebaseRequired === right.rebaseRequired
   );
 }
 
@@ -346,12 +371,15 @@ export const make = Effect.gen(function* () {
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
-  // Group keys the host answered not-found for; they are read on the slow cadence until found.
+  const failedReads = new Map<string, { readonly retryAtMs: number; readonly backoffMs: number }>();
+  // Group keys the host answered not-found for, or this server cannot read (no CLI, signed out,
+  // unsupported host); they are read on the slow cadence until a read succeeds.
   const missing = new Set<string>();
   // Pause per project and host because credentials are project-specific; leave paused PRs due until reset.
   const pausedUntil = new Map<string, number>();
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
+    if ((failedReads.get(key)?.retryAtMs ?? 0) > nowMs) return false;
     if (requested.has(key)) return true;
     const active = entries.filter((entry) => isUnsettled(entry.thread));
     if (active.length === 0) return false;
@@ -401,12 +429,17 @@ export const make = Effect.gen(function* () {
 
     // A host-level refresh reaches every project, each retaining its own pending retry.
     for (const [key, entries] of groups) {
-      if (pendingRequests.has(threadPullRequestKeyOf(entries[0]!.link))) requested.add(key);
+      if (!pendingRequests.has(threadPullRequestKeyOf(entries[0]!.link))) continue;
+      requested.add(key);
+      // A new request reads at once; a failure after it backs off further, not from the start.
+      const failed = failedReads.get(key);
+      if (failed !== undefined) failedReads.set(key, { ...failed, retryAtMs: nowMs });
     }
     pendingRequests.clear();
 
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
+    for (const key of failedReads.keys()) if (!groups.has(key)) failedReads.delete(key);
     for (const key of missing) if (!groups.has(key)) missing.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
@@ -478,12 +511,7 @@ export const make = Effect.gen(function* () {
 
     const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;
-      const ref = {
-        projectId: first.thread.projectId,
-        host: normalizeThreadPullRequestKey(first.link).host,
-        repository: first.link.repository,
-        number: first.link.number,
-      };
+      const ref = referenceOf(first);
       const refreshRequested = requested.has(key);
       // A held merged summary is served without asking the host, so a snapshot still missing its
       // merge time has to drop it or the slow-cadence re-read would hand back the same gap.
@@ -495,9 +523,10 @@ export const make = Effect.gen(function* () {
       if (invalidated) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false }).pipe(
         Effect.tapError((error) =>
-          error.reason === "not-found"
+          error.reason === "not-found" || error._tag === "PullRequestUnavailableError"
             ? Effect.sync(() => {
-                // Not-found is a host answer: it consumes the refresh and starts the backoff.
+                // Not-found, or a host this server cannot read, won't change by asking again
+                // next sweep: it consumes the refresh and starts the backoff.
                 missing.add(key);
                 lastSyncedAt.set(key, nowMs);
                 requested.delete(key);
@@ -579,6 +608,7 @@ export const make = Effect.gen(function* () {
       }
       // The host answered, so the cadence clock ticks even if a dispatch below is rejected.
       lastSyncedAt.set(key, nowMs);
+      failedReads.delete(key);
       requested.delete(key);
       yield* Effect.forEach(
         entries,
@@ -604,6 +634,13 @@ export const make = Effect.gen(function* () {
           const retryAt = rateLimitRetryAt(cause);
           if (retryAt !== undefined) {
             pausedUntil.set(pauseKey, Math.max(retryAt, pausedUntil.get(pauseKey) ?? 0));
+          } else {
+            const previous = failedReads.get(key);
+            const backoffMs =
+              previous === undefined
+                ? FAILED_READ_BACKOFF_MS
+                : Math.min(previous.backoffMs * 2, SLOW_SYNC_INTERVAL_MS);
+            failedReads.set(key, { retryAtMs: nowMs + backoffMs, backoffMs });
           }
           const reason = skipReason(cause);
           const skip = skips.get(reason);
@@ -612,25 +649,63 @@ export const make = Effect.gen(function* () {
           return Effect.void;
         }),
       );
+    const pools = {
+      // Wider than one summary batch, so reads that finish their cache checks at different
+      // times still share batches.
+      batched: { width: 100, reads: yield* Semaphore.make(100) },
+      // One read per pull request, often a CLI process, so these keep the narrower width.
+      unbatched: { width: 25, reads: yield* Semaphore.make(25) },
+    };
+    const isPaused = (pauseKey: string, atMs: number) => (pausedUntil.get(pauseKey) ?? 0) > atMs;
+    // Judged once a slot is free, so a stack retry a sibling flags meanwhile still counts, and
+    // pauses set during the sweep apply at once.
+    const readIfDue = (
+      key: string,
+      entries: ReadonlyArray<LinkEntry>,
+      pauseKey: string,
+      reads: Semaphore.Semaphore,
+    ) =>
+      reads.withPermits(1)(
+        Effect.suspend(() =>
+          isDue(key, entries, nowMs)
+            ? Clock.currentTimeMillis.pipe(
+                Effect.flatMap((startedAtMs) =>
+                  isPaused(pauseKey, startedAtMs) ? Effect.void : readGroup(key, entries, pauseKey),
+                ),
+              )
+            : Effect.void,
+        ),
+      );
+    const groupsByHost = Map.groupBy(
+      Array.from(groups).filter(([key]) => scope === "all" || requested.has(key)),
+      ([, entries]) => pauseKeyOf(entries[0]!),
+    );
     yield* Effect.forEach(
-      groups,
-      ([key, entries]) => {
-        if (!((scope === "all" || requested.has(key)) && isDue(key, entries, nowMs))) {
+      groupsByHost,
+      ([pauseKey, hostGroups]) => {
+        // A host paused or with nothing due skips the lookup. Stack retries only flag groups on
+        // the flagging group's own host, so nothing on it becomes due this sweep.
+        if (
+          isPaused(pauseKey, nowMs) ||
+          !hostGroups.some(([key, entries]) => isDue(key, entries, nowMs))
+        ) {
           return Effect.void;
         }
-        const first = entries[0]!;
-        const pauseKey = `${first.thread.projectId}\0${normalizeThreadPullRequestKey(first.link).host}`;
-        // Check pauses at each read so changes during the sweep apply immediately.
-        return Clock.currentTimeMillis.pipe(
-          Effect.flatMap((startedAtMs) =>
-            (pausedUntil.get(pauseKey) ?? 0) > startedAtMs
-              ? Effect.void
-              : readGroup(key, entries, pauseKey),
-          ),
+        return pullRequests.batchesReads(referenceOf(hostGroups[0]![1][0]!)).pipe(
+          Effect.flatMap((batches) => {
+            const { width, reads } = batches ? pools.batched : pools.unbatched;
+            return Effect.forEach(
+              hostGroups,
+              ([key, entries]) => readIfDue(key, entries, pauseKey, reads),
+              {
+                concurrency: width,
+                discard: true,
+              },
+            );
+          }),
         );
       },
-      // Match summary batch width so GitHub reads coalesce into one request.
-      { concurrency: 25, discard: true },
+      { concurrency: "unbounded", discard: true },
     );
     for (const [reason, { count, key }] of skips) {
       yield* Effect.logWarning("pull request sync skipped", { count, key, reason });
@@ -711,10 +786,49 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // A push can start new checks, so the thread's watches forget whether checks were running and
+  // hold the thread until they read the pull request again. The run is still going, so the
+  // thread never shows as done in between.
+  const reopenWatchedChecks = Effect.fn("PullRequestSyncReactor.reopenWatchedChecks")(
+    function* (threadId: ThreadId, item: CommandExecution) {
+      if (isOrchestrationV2WorkActive(item.status) || !isPushCommand(item.input)) return;
+      const threads = yield* projections.getThreadsWithPullRequests(threadId);
+      const answered = threads.some((thread) =>
+        (thread.pullRequests ?? []).some((link) => link.watch?.checksPending !== undefined),
+      );
+      if (!answered) return;
+      yield* engine.dispatch({
+        type: "thread.pull-request-watch.checks-reopen",
+        // Stable per command, so a repeated settlement clears an answer read since only once.
+        commandId: CommandId.make(`server:pr-push-checks:${threadId}:${item.id}`),
+        threadId,
+      });
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCause(
+          logSkipped("reopening a watch's checks after a push failed", { threadId }),
+        ),
+      ),
+  );
+
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",
   )(function* () {
     const events = engine.streamDomainEvents;
+    // Linking and reopening dispatch under the thread's lock, so a busy thread delays only its
+    // own reactions. Refreshes queue with them, so each thread's reactions keep event order.
+    const threadReactions = yield* KeyedLock.makeRunner<ThreadId>();
+    const inThreadOrder = <E>(threadId: ThreadId, reaction: Effect.Effect<void, E>) =>
+      threadReactions.run(
+        threadId,
+        // The reactions log their own failures, so this sees only defects and shutdown.
+        Effect.catchCause(reaction, (cause) =>
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.interrupt
+            : Effect.logWarning("pull request sync reaction failed", { threadId, cause }),
+        ),
+      );
     const stateChanges = Stream.merge(
       yield* pullRequests.subscribeStateChanges,
       yield* git.subscribePullRequestStateChanges,
@@ -741,20 +855,28 @@ export const make = Effect.gen(function* () {
           case "turn-item.updated": {
             const item = event.payload;
             if (item.type !== "command_execution") return Effect.void;
-            const linked = linkCreatedChangeRequests(event.threadId, item);
-            if (!isChangeRequestCloseCommand(item.input)) return linked;
-            const ended = closeCommands.get(event.threadId) ?? new Set<string>();
-            closeCommands.set(event.threadId, ended);
-            if (isOrchestrationV2WorkActive(item.status) || ended.has(item.id)) return linked;
-            ended.add(item.id);
-            return Effect.andThen(linked, refreshUnmergedLinks(event.threadId));
+            let reaction = Effect.andThen(
+              linkCreatedChangeRequests(event.threadId, item),
+              reopenWatchedChecks(event.threadId, item),
+            );
+            const active = isOrchestrationV2WorkActive(item.status);
+            if (isChangeRequestCloseCommand(item.input)) {
+              const ended = closeCommands.get(event.threadId) ?? new Set<string>();
+              closeCommands.set(event.threadId, ended);
+              if (!active && !ended.has(item.id)) {
+                ended.add(item.id);
+                reaction = Effect.andThen(reaction, refreshUnmergedLinks(event.threadId));
+              }
+            }
+            // Every reaction skips a running command, so only an ended one forks.
+            return active ? Effect.void : inThreadOrder(event.threadId, reaction);
           }
           // Settled threads are not swept, so read their links once to settle with fresh status.
           case "thread.settled":
-            return refreshUnmergedLinks(event.threadId);
+            return inThreadOrder(event.threadId, refreshUnmergedLinks(event.threadId));
           case "run.updated":
             return isTerminalRunStatus(event.payload.status) && closeCommands.delete(event.threadId)
-              ? refreshUnmergedLinks(event.threadId)
+              ? inThreadOrder(event.threadId, refreshUnmergedLinks(event.threadId))
               : Effect.void;
           default:
             return Effect.void;

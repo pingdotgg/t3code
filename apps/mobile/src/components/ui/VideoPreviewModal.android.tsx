@@ -1,4 +1,6 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { videoMimeType } from "@t3tools/shared/video";
+import { T, useGT, useMessages } from "gt-react-native";
 import { Modal, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -26,6 +28,7 @@ interface PlaybackState {
   readonly uri: string | null;
   readonly resolvePlaybackUri?: () => Promise<string | null>;
   readonly unavailable: boolean;
+  readonly unavailableDetail?: string | undefined;
   readonly error: string | null;
   readonly actionsSource: MediaActionsSource | undefined;
 }
@@ -35,6 +38,7 @@ function useMediaPlayback(source: MediaVideoPreviewSource): PlaybackState {
   const resource = "resource" in source ? source.resource : null;
   const connection = usePreparedConnection(environmentId);
   const asset = useAssetUrlState(environmentId, resource);
+  const gt = useGT();
   const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource);
   const uri = mediaVideoPreviewUri(source, asset._tag === "Success" ? asset.url : null);
   return {
@@ -46,16 +50,24 @@ function useMediaPlayback(source: MediaVideoPreviewSource): PlaybackState {
       uri === null &&
       environmentId !== null &&
       (connection._tag === "None" || asset._tag === "Failure"),
+    unavailableDetail:
+      asset._tag === "Failure" && asset.reason === "missing-file-access"
+        ? gt("This connection cannot read host files. Pair again with a new link to view it.")
+        : undefined,
     error: null,
     actionsSource: source.actionsSource,
   };
 }
 
 function useLocalPlayback(source: LocalVideoPreviewSource): PlaybackState {
+  const gt = useGT();
+  const messages = useMessages();
   const { attachment } = source;
   const preview = useLocalAttachmentPreview(attachment);
   const { uri } = preview;
-  const error = preview.error ? preview.error.message || "Could not load this video." : null;
+  const error = preview.error
+    ? errorDisplayMessage(preview.error, messages) || gt("Could not load this video.")
+    : null;
   const mimeType = videoMimeType(attachment) ?? attachment.mimeType;
   return {
     uri,
@@ -99,6 +111,7 @@ function OpenVideoPreviewModal(props: {
   readonly playback: PlaybackState;
   readonly onRequestClose: () => void;
 }) {
+  const gt = useGT();
   const { playback } = props;
   const insets = useSafeAreaInsets();
   const mediaActions = useMediaActions(playback.actionsSource, props.onRequestClose);
@@ -119,13 +132,15 @@ function OpenVideoPreviewModal(props: {
         <MediaPreviewHeader
           title={props.name}
           media={mediaActions}
-          closeAccessibilityLabel="Close video"
+          closeAccessibilityLabel={gt("Close video")}
           onClose={props.onRequestClose}
         />
         {playback.uri === null && !playback.unavailable ? (
           <View className="flex-1 items-center justify-center gap-3 px-6">
             <AppActivityIndicator color="#ffffff" />
-            <AppText className="text-sm text-white/80">Loading video...</AppText>
+            <AppText className="text-sm text-white/80">
+              <T>Loading video...</T>
+            </AppText>
           </View>
         ) : (
           <MediaVideoPlayer
@@ -134,6 +149,7 @@ function OpenVideoPreviewModal(props: {
             name={props.name}
             thumbnailKey={props.thumbnailKey}
             unavailable={playback.unavailable}
+            unavailableDetail={playback.unavailableDetail}
             paused={mediaActions.sharing}
             expanded
             autoPlay
@@ -146,13 +162,13 @@ function OpenVideoPreviewModal(props: {
         ) : null}
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Save or share video"
+          accessibilityLabel={gt("Save or share video")}
           disabled={playback.uri === null || mediaActions.sharing}
           onPress={mediaActions.share}
           className="mx-4 my-3 min-h-12 items-center justify-center rounded-xl bg-white/15 px-4"
         >
           <AppText className="font-t3-medium text-base text-white">
-            {mediaActions.sharing ? "Opening share sheet..." : "Save or share video"}
+            {mediaActions.sharing ? gt("Opening share sheet...") : gt("Save or share video")}
           </AppText>
         </Pressable>
       </View>
