@@ -287,9 +287,12 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             // Publish the boundary first so resuming clients take a snapshot, never a partial replay.
             yield* writeMetadata(EVENT_LOG_PRUNED_THROUGH, throughSequence, now);
           }
+          // Written before the deletes: a pass cut short still advances the boundary a day later.
+          yield* writeMetadata(EVENT_LOG_PRUNE_MARK, head, now);
           deletedEventCount += yield* pruneEvents(throughSequence, head, betweenPages);
+        } else if (mark === undefined) {
+          yield* writeMetadata(EVENT_LOG_PRUNE_MARK, head, now);
         }
-        if (mark === undefined || markIsDue) yield* writeMetadata(EVENT_LOG_PRUNE_MARK, head, now);
 
         const legacy = yield* pruneImportedLegacyHistory(
           head,
