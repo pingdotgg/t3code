@@ -1,5 +1,6 @@
 ---
 import Search from "@astrojs/starlight/components/Search.astro";
+import { activeTab } from "../../docs-tabs";
 import Logo from "./Logo.astro";
 
 interface Props {
@@ -8,13 +9,18 @@ interface Props {
    * is no Starlight sidebar — so every control stays in the top bar on all
    * viewports. Docs pages render this as Starlight's `Header` override and
    * leave it unset; there the GitHub/Discord links are dropped on mobile (they
-   * live in the hamburger menu footer) while the theme toggle stays in the top
-   * bar (see the `.alc-nav--docs` mobile rule below).
+   * live in the hamburger menu footer; see the `.alc-nav--docs` mobile rule
+   * below).
    */
   marketing?: boolean;
 }
 
 const { marketing = false } = Astro.props;
+const current = marketing ? undefined : activeTab(Astro.url.pathname).label;
+const metaLink = (label: string) => [
+  "alc-nav__link",
+  { "alc-nav__link--active": current === label },
+];
 ---
 
 <nav class:list={["alc-nav", { "alc-nav--docs": !marketing }]}>
@@ -27,8 +33,15 @@ const { marketing = false } = Astro.props;
     <Search />
   </div>
   <a href="/getting-started" class="alc-nav__link alc-nav__link--docs">Docs</a>
-  <a href="/blog" class="alc-nav__link">Blog</a>
-  <a href="/compare" class="alc-nav__link">Compare</a>
+  {
+    !marketing && (
+      <a href="/providers" class:list={metaLink("Reference")}>
+        Reference
+      </a>
+    )
+  }
+  <a href="/blog" class:list={metaLink("Blog")}>Blog</a>
+  <a href="/compare" class:list={metaLink("Compare")}>Compare</a>
   <a
     href="https://github.com/alchemy-run/alchemy"
     class="alc-nav__link alc-nav__link--icon"
@@ -53,47 +66,6 @@ const { marketing = false } = Astro.props;
     </svg>
     <span class="alc-nav__link-text">Discord</span>
   </a>
-  <button
-    type="button"
-    class="alc-nav__theme-toggle"
-    aria-label="Toggle color theme"
-    title="Toggle color theme"
-    data-theme-toggle
-  >
-    {/* Sun — shown in dark mode (click → light) */}
-    <svg
-      class="alc-theme-icon alc-theme-icon--sun"
-      aria-hidden="true"
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.75"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    >
-      <circle cx="12" cy="12" r="4"></circle>
-      <path
-        d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
-      ></path>
-    </svg>
-    {/* Moon — shown in light mode (click → dark) */}
-    <svg
-      class="alc-theme-icon alc-theme-icon--moon"
-      aria-hidden="true"
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.75"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-    >
-      <path d="M21 12.79A9 9 0 1 1 11.21 3a7 7 0 0 0 9.79 9.79z"></path>
-    </svg>
-  </button>
 </nav>
 
 <style>
@@ -171,41 +143,6 @@ const { marketing = false } = Astro.props;
     border-radius: 4px;
     padding: 1px 5px;
   }
-  .alc-nav__theme-toggle {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    border: 1px solid var(--alc-hairline-2);
-    border-radius: 8px;
-    background: transparent;
-    color: var(--alc-fg-2);
-    cursor: pointer;
-    font: inherit;
-    transition:
-      color var(--alc-dur) var(--alc-ease),
-      border-color var(--alc-dur) var(--alc-ease),
-      background-color var(--alc-dur) var(--alc-ease);
-  }
-  .alc-nav__theme-toggle:hover {
-    color: var(--alc-accent-deep);
-    border-color: var(--alc-accent-40);
-    background: var(--alc-bg-elev-1);
-  }
-  .alc-nav__theme-toggle:focus-visible {
-    outline: 2px solid var(--alc-accent-40);
-    outline-offset: 2px;
-  }
-  .alc-theme-icon {
-    display: block;
-  }
-  /* Show one icon per mode. Default (no [data-theme] yet, before pre-paint
-     script runs) shows the moon — matches the historical light bias. */
-  .alc-theme-icon--sun { display: none; }
-  :global([data-theme="dark"]) .alc-theme-icon--sun { display: block; }
-  :global([data-theme="dark"]) .alc-theme-icon--moon { display: none; }
   .alc-nav__link {
     color: var(--alc-fg-2);
     text-decoration: none;
@@ -214,13 +151,16 @@ const { marketing = false } = Astro.props;
   .alc-nav__link:hover {
     color: var(--alc-accent-deep);
   }
+  .alc-nav__link--active {
+    color: var(--alc-accent-deep);
+  }
   .alc-nav__link--icon {
     display: inline-flex;
     align-items: center;
     gap: 6px;
   }
 
-  /* Collapse search to an icon-only button (matching the theme toggle) —
+  /* Collapse search to an icon-only button —
      docs pages have no other search entry point, so it must stay reachable. */
   @media (max-width: 880px) {
     .alc-nav__search {
@@ -249,25 +189,30 @@ const { marketing = false } = Astro.props;
   @media (max-width: 480px) {
     .alc-nav { gap: 12px; }
   }
-  /* On phones, Docs, Blog, Compare and the icons don't all fit. Docs is
-     the one to drop: the hero CTA and the footer both lead there. */
+  /* On phones every link stays: the gaps, text and wordmark shrink so
+     Docs, Blog, Compare and the icons fit down to 320px. */
   @media (max-width: 460px) {
     .alc-nav { gap: 10px; }
-    .alc-nav__link--docs { display: none; }
+    .alc-nav__link { font-size: 13.5px; }
+    /* The wordmark's size is an inline style (Logo's size prop). */
+    .alc-nav__brand :global(.alc-logo__word) { font-size: 20px !important; }
   }
   @media (max-width: 380px) {
-    .alc-nav { gap: 6px; }
-    /* The wordmark's size is an inline style (Logo's size prop). */
-    .alc-nav__brand :global(.alc-logo__word) { font-size: 19px !important; }
+    .alc-nav { gap: 7px; }
+    .alc-nav__link { font-size: 13px; }
+    .alc-nav__brand :global(.alc-logo__word) { font-size: 17px !important; }
+  }
+  /* The narrowest phones keep the mark and drop the wordmark. */
+  @media (max-width: 350px) {
+    .alc-nav__brand :global(.alc-logo__word) { display: none; }
   }
   /*
    * Docs pages render this nav inside Starlight's fixed `<header>`, which
    * reserves room on the right for the floating hamburger button and shows a
-   * mobile menu (with theme select + social icons in its footer) below the
+   * mobile menu (with social icons in its footer) below the
    * `md` (50rem) breakpoint. Packing every control into the top bar too made it
    * overflow past that reserved area and slide under the hamburger. Below 50rem
-   * we drop just the GitHub/Discord links — they live in the hamburger menu —
-   * but keep the theme toggle in the top bar so it stays one tap away. The
+   * we drop just the GitHub/Discord links — they live in the hamburger menu. The
    * docs gutter is also trimmed on mobile (see `--sl-nav-pad-x` in custom.css)
    * to make room. Marketing pages have no hamburger/menu, so they keep every
    * control (see `marketing`).
@@ -446,20 +391,3 @@ const { marketing = false } = Astro.props;
   }
 </style>
 
-<script is:inline>
-  (() => {
-    const button = document.querySelector("[data-theme-toggle]");
-    if (!button) return;
-    const STORAGE_KEY = "starlight-theme";
-    button.addEventListener("click", () => {
-      const current = document.documentElement.dataset.theme === "dark"
-        ? "dark"
-        : "light";
-      const next = current === "dark" ? "light" : "dark";
-      document.documentElement.dataset.theme = next;
-      try {
-        localStorage.setItem(STORAGE_KEY, next);
-      } catch {}
-    });
-  })();
-</script>

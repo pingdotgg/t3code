@@ -82,8 +82,7 @@ interface EmailSendResult {
  * present in the submitted email.
  */
 function synthesizeMessageId(senderEmail: string): string {
-  const alphabet =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   const bytes = crypto.getRandomValues(new Uint8Array(36));
   const id = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
   const domain = senderEmail.slice(senderEmail.lastIndexOf("@") + 1);
@@ -175,11 +174,7 @@ export class SendEmailBinding extends WorkerEntrypoint<SendEmailEnv> {
       body = new Uint8Array(content);
     } else {
       // ArrayBufferView
-      body = new Uint8Array(
-        content.buffer,
-        content.byteOffset,
-        content.byteLength,
-      );
+      body = new Uint8Array(content.buffer, content.byteOffset, content.byteLength);
     }
 
     const fileName = `${crypto.randomUUID()}.${extension}`;
@@ -199,36 +194,26 @@ export class SendEmailBinding extends WorkerEntrypoint<SendEmailEnv> {
       throw new Error(`email to ${to} not allowed`);
     }
 
-    if (
-      allowedDestinationAddresses !== undefined &&
-      !allowedDestinationAddresses.includes(to)
-    ) {
+    if (allowedDestinationAddresses !== undefined && !allowedDestinationAddresses.includes(to)) {
       throw new Error(`email to ${to} not allowed`);
     }
   }
 
   private checkSenderAllowed(from: string): void {
     const { allowedSenderAddresses } = this.props;
-    if (
-      allowedSenderAddresses !== undefined &&
-      !allowedSenderAddresses.includes(from)
-    ) {
+    if (allowedSenderAddresses !== undefined && !allowedSenderAddresses.includes(from)) {
       throw new Error(`email from ${from} not allowed`);
     }
   }
 
   /** Type guard to check if argument is an EmailMessage (has RAW_EMAIL key). */
-  private isEmailMessage(
-    arg: LocalEmailMessage | MessageBuilder,
-  ): arg is LocalEmailMessage {
+  private isEmailMessage(arg: LocalEmailMessage | MessageBuilder): arg is LocalEmailMessage {
     return RAW_EMAIL in arg;
   }
 
   /** Validates recipients against the binding configuration. */
   private validateRecipients(recipients: string | Array<string>): void {
-    const recipientArray = Array.isArray(recipients)
-      ? recipients
-      : [recipients];
+    const recipientArray = Array.isArray(recipients) ? recipients : [recipients];
     for (const recipient of recipientArray) {
       this.checkDestinationAllowed(recipient);
     }
@@ -246,9 +231,7 @@ export class SendEmailBinding extends WorkerEntrypoint<SendEmailEnv> {
     this.validateRecipients(toEmails);
   }
 
-  async send(
-    emailMessageOrBuilder: LocalEmailMessage | MessageBuilder,
-  ): Promise<EmailSendResult> {
+  async send(emailMessageOrBuilder: LocalEmailMessage | MessageBuilder): Promise<EmailSendResult> {
     // Check if this is an EmailMessage (has RAW_EMAIL key) or MessageBuilder
     if (this.isEmailMessage(emailMessageOrBuilder)) {
       // Original EmailMessage API - validate and parse MIME
@@ -257,9 +240,7 @@ export class SendEmailBinding extends WorkerEntrypoint<SendEmailEnv> {
       this.validateRecipients(emailMessage.to);
 
       const rawEmail: ReadableStream<Uint8Array> = emailMessage[RAW_EMAIL];
-      const rawEmailBuffer = new Uint8Array(
-        await new Response(rawEmail).arrayBuffer(),
-      );
+      const rawEmailBuffer = new Uint8Array(await new Response(rawEmail).arrayBuffer());
 
       let parsedEmail: Email;
 
@@ -278,9 +259,7 @@ export class SendEmailBinding extends WorkerEntrypoint<SendEmailEnv> {
 
       let emailHeaders: Headers;
       try {
-        emailHeaders = new Headers(
-          parsedEmail.headers.map((header) => [header.key, header.value]),
-        );
+        emailHeaders = new Headers(parsedEmail.headers.map((header) => [header.key, header.value]));
       } catch (e) {
         const error = e as Error;
         throw new Error(`could not parse email: ${error.message}`, {
@@ -298,9 +277,7 @@ export class SendEmailBinding extends WorkerEntrypoint<SendEmailEnv> {
 
       const file = await this.storeFile(rawEmailBuffer, "eml");
 
-      console.log(
-        `send_email binding called with the following message:\n  ${file}`,
-      );
+      console.log(`send_email binding called with the following message:\n  ${file}`);
 
       return { messageId: synthesizeMessageId(emailMessage.from) };
     } else {
@@ -328,11 +305,7 @@ export class SendEmailBinding extends WorkerEntrypoint<SendEmailEnv> {
           const extMatch = attachment.filename.match(/\.([^.]+)$/);
           const extension = extMatch ? extMatch[1] : "bin";
 
-          const filePath = await this.storeFile(
-            attachment.content,
-            extension,
-            "attachment",
-          );
+          const filePath = await this.storeFile(attachment.content, extension, "attachment");
           files.push(
             `Attachment (${attachment.disposition}): ${attachment.filename} -> ${filePath}`,
           );
@@ -342,9 +315,7 @@ export class SendEmailBinding extends WorkerEntrypoint<SendEmailEnv> {
       // Format and log the message details with file paths
       const formatted = formatMessageBuilder(builder);
       const fileInfo = files.length > 0 ? `\n\n${files.join("\n")}` : "";
-      console.log(
-        `send_email binding called with MessageBuilder:\n${formatted}${fileInfo}`,
-      );
+      console.log(`send_email binding called with MessageBuilder:\n${formatted}${fileInfo}`);
 
       return {
         messageId: synthesizeMessageId(extractEmailAddress(builder.from)),

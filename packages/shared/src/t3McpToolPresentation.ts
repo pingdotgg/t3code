@@ -55,6 +55,8 @@ export type T3McpToolSummaryAction =
   | "environment-link"
   | "environment-unlink"
   | "environment-update"
+  | "theme-read"
+  | "theme-set"
   | "attachment-prepare"
   | "attachment-discard"
   | "attachment-send"
@@ -65,10 +67,19 @@ export type T3McpToolSummaryAction =
   | "unwatch-pr"
   | "write-pr-guides"
   | "read-pr-guide"
+  | "list-issues"
+  | "read-issue"
+  | "create-issue"
+  | "comment-issue"
+  | "set-issue-state"
+  | "link-issue"
+  | "unlink-issue"
+  | "list-thread-issues"
   | "browser"
   | "device"
   | "html-preview"
-  | "html-render";
+  | "html-render"
+  | "send-to-user";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -141,6 +152,17 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "read-pr-guide",
     "pull-request",
   ),
+  list_issues: tool(["List", "Listing", "Listed", "issues"], "list-issues"),
+  read_issue: tool(["Read", "Reading", "Read", "an issue"], "read-issue"),
+  create_issue: tool(["File", "Filing", "Filed", "an issue"], "create-issue"),
+  comment_on_issue: tool(
+    ["Comment on", "Commenting on", "Commented on", "an issue"],
+    "comment-issue",
+  ),
+  set_issue_state: tool(["Change", "Changing", "Changed", "an issue's state"], "set-issue-state"),
+  link_issue: tool(["Link", "Linking", "Linked", "an issue"], "link-issue"),
+  unlink_issue: tool(["Unlink", "Unlinking", "Unlinked", "an issue"], "unlink-issue"),
+  list_thread_issues: tool(["Check", "Checking", "Checked", "linked issues"], "list-thread-issues"),
   orchestrator_capabilities: tool(
     ["Get", "Getting", "Got", "orchestration capabilities"],
     "capabilities",
@@ -354,6 +376,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",
   ),
+  t3_theme_read: tool(["Read", "Reading", "Read", "themes"], "theme-read"),
+  t3_theme_set: tool(["Set", "Setting", "Set", "the theme"], "theme-set"),
   t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project thread"], "thread-create"),
   t3_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),
   t3_project_read: tool(["Read", "Reading", "Read", "a project"], "project-read"),
@@ -372,6 +396,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
+  send_to_user: tool(["Send", "Sending", "Sent", "a message"], "send-to-user"),
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));
@@ -380,8 +405,24 @@ function normalizeT3McpToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
 
-// ACP tool prefixes vary; match loosely but require a known display-name entry.
+// Timelines resolve every work row's tool name on each update; names repeat across updates.
+// ACP titles can carry whole commands, so long labels are parsed but not kept.
+const toolNameCache = new Map<string, string | null>();
+const TOOL_NAME_CACHE_LIMIT = 10_000;
+const TOOL_NAME_CACHE_MAX_KEY_LENGTH = 256;
+
 function resolveT3McpToolName(value: string): string | null {
+  if (value.length > TOOL_NAME_CACHE_MAX_KEY_LENGTH) return parseT3McpToolName(value);
+  const cached = toolNameCache.get(value);
+  if (cached !== undefined) return cached;
+  const name = parseT3McpToolName(value);
+  if (toolNameCache.size >= TOOL_NAME_CACHE_LIMIT) toolNameCache.clear();
+  toolNameCache.set(value, name);
+  return name;
+}
+
+// ACP tool prefixes vary; match loosely but require a known display-name entry.
+function parseT3McpToolName(value: string): string | null {
   const label = normalizeT3McpToolLabel(value);
   const mcpMatch = /^mcp__(?<server>.+?)__(?<tool>.+)$/i.exec(label);
   if (mcpMatch?.groups) {

@@ -1,0 +1,100 @@
+---
+title: Roles
+description: Create Postgres roles on a Neon branch with Neon.Role — separate logins for your app and your migrations, with passwords as Redacted outputs.
+---
+
+Every Neon project starts with one owner role. Use `Neon.Role` to give
+your app, your migrations, and your teammates their own logins.
+
+:::caution
+Every role has the same access as the owner. It can read and write all
+data, create databases and roles, and bypass row-level security.
+:::
+
+## Create a login role
+
+Pass the branch the role lives on:
+
+```typescript
+const app = yield* Neon.Role("App", { branch });
+
+app.roleName; // "myapp_app_dev_x7k2..."
+app.password; // Redacted<string>
+```
+
+The generated name uses underscores, so it works unquoted in SQL. The
+password stays the same on every deploy and never prints in logs or plan
+output.
+
+## Name the role
+
+Set `name` when other code or SQL refers to the role:
+
+```typescript
+const migrator = yield* Neon.Role("Migrator", { branch, name: "migrator" });
+```
+
+Changing `name` replaces the role. The old role is deleted and you get a
+new password.
+
+## Use the project's default branch
+
+Pass `project` instead of `branch` to put the role on the default branch:
+
+```typescript
+const migrator = yield* Neon.Role("Migrator", { project, name: "migrator" });
+```
+
+## Connect as the role
+
+Swap the role into the branch's origin. Here it feeds Hyperdrive:
+
+```typescript
+const origin = Output.all(branch.origin, app.roleName, app.password).pipe(
+  Output.map(([origin, user, password]) => ({ ...origin, user, password: password! })),
+);
+
+const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", { origin });
+```
+
+The host, port, and database come from the branch; the user and password
+come from the role.
+
+## Group roles
+
+Set `noLogin` for a role that owns objects but never connects:
+
+```typescript
+const owner = yield* Neon.Role("Owner", {
+  branch,
+  name: "app_owner",
+  noLogin: true,
+});
+```
+
+Its `password` is `undefined`. Grant it to login roles with SQL so they can act as it:
+
+```sql
+GRANT app_owner TO migrator;
+```
+
+Switching `noLogin` on or off replaces the role.
+
+## Adopt an existing role
+
+A role created in the console is refused until you adopt it:
+
+```typescript
+const reporting = yield* Neon.Role("Reporting", {
+  project,
+  name: "reporting",
+}).pipe(adopt(true));
+```
+
+`reporting.password` is the role's current password. If Neon no longer
+stores it, the password is reset.
+
+:::note
+Every prop and attribute is on the [Role API reference](/providers/neon/role).
+For the branch's own connection outputs, see [Connections](/neon/data/connections).
+:::

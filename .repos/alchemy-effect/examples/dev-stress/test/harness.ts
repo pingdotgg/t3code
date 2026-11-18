@@ -18,13 +18,7 @@ export const EXAMPLE_ROOT = path.resolve(import.meta.dirname, "..");
  * signals reach the actual CLI process whose scope teardown kills the exec
  * child and the provider sidecars.
  */
-export const ALCHEMY_BIN = path.join(
-  EXAMPLE_ROOT,
-  "node_modules",
-  "alchemy",
-  "bin",
-  "alchemy.js",
-);
+export const ALCHEMY_BIN = path.join(EXAMPLE_ROOT, "node_modules", "alchemy", "bin", "alchemy.js");
 
 /** Entries never copied into a scratch project. */
 const SKIP_COPY = new Set([
@@ -161,19 +155,15 @@ export class DevServer {
     this.stage = options.stage;
     this.logPath = path.join(options.cwd, "dev-stress.log");
     this.logStream = fs.createWriteStream(this.logPath, { flags: "a" });
-    this.proc = spawn(
-      "bun",
-      [ALCHEMY_BIN, "dev", "--stage", options.stage],
-      {
-        cwd: options.cwd,
-        // Own process group so teardown can deliver Ctrl-C to the whole
-        // tree (CLI + `--watch` exec child + provider sidecars) the way a
-        // terminal would.
-        detached: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: hermeticEnv(options.env),
-      },
-    );
+    this.proc = spawn("bun", [ALCHEMY_BIN, "dev", "--stage", options.stage], {
+      cwd: options.cwd,
+      // Own process group so teardown can deliver Ctrl-C to the whole
+      // tree (CLI + `--watch` exec child + provider sidecars) the way a
+      // terminal would.
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: hermeticEnv(options.env),
+    });
     const pump = (stream: NodeJS.ReadableStream | null) =>
       stream?.on("data", (chunk: Buffer) => {
         const text = chunk.toString();
@@ -289,20 +279,14 @@ export class DevServer {
 
   /** Extract a plain value for `key` from the stack outputs the CLI printed. */
   outputValue(key: string): string | undefined {
-    const matches = this.output.match(
-      new RegExp(`${key}:\\s*['\"]?([^\\s'\",]+)`, "g"),
-    );
+    const matches = this.output.match(new RegExp(`${key}:\\s*['\"]?([^\\s'\",]+)`, "g"));
     // The newest print wins: outputs are re-printed on every re-apply.
-    return matches
-      ?.at(-1)
-      ?.match(new RegExp(`${key}:\\s*['\"]?([^\\s'\",]+)`))?.[1];
+    return matches?.at(-1)?.match(new RegExp(`${key}:\\s*['\"]?([^\\s'\",]+)`))?.[1];
   }
 
   /** Extract a URL for `key` from the stack outputs the CLI printed. */
   outputUrl(key: string): string | undefined {
-    const matches = this.output.match(
-      new RegExp(`${key}:\\s*['"]?(http[^\\s'",]+)`, "g"),
-    );
+    const matches = this.output.match(new RegExp(`${key}:\\s*['"]?(http[^\\s'",]+)`, "g"));
     // The newest print wins: outputs are re-printed on every re-apply.
     return matches?.at(-1)?.match(/(http[^\s'",]+)/)?.[1];
   }
@@ -344,9 +328,7 @@ export class DevServer {
    */
   patchRegion(relative: string, name: string, body: string): void {
     const source = this.read(relative);
-    const pattern = new RegExp(
-      `([ \\t]*// <<${name}>>\\n)[\\s\\S]*?([ \\t]*// <<\\/${name}>>)`,
-    );
+    const pattern = new RegExp(`([ \\t]*// <<${name}>>\\n)[\\s\\S]*?([ \\t]*// <<\\/${name}>>)`);
     if (!pattern.test(source)) {
       throw new Error(`region <<${name}>> not found in ${relative}`);
     }
@@ -380,16 +362,12 @@ export class DevServer {
 
   /** Tear the stack's local resources down out of band. */
   destroyStack(timeoutMs = 180_000): void {
-    spawnSync(
-      "bun",
-      [ALCHEMY_BIN, "destroy", "--stage", this.stage, "--yes"],
-      {
-        cwd: this.cwd,
-        stdio: process.env.DEBUG ? "inherit" : "ignore",
-        timeout: timeoutMs,
-        env: hermeticEnv(),
-      },
-    );
+    spawnSync("bun", [ALCHEMY_BIN, "destroy", "--stage", this.stage, "--yes"], {
+      cwd: this.cwd,
+      stdio: process.env.DEBUG ? "inherit" : "ignore",
+      timeout: timeoutMs,
+      env: hermeticEnv(),
+    });
   }
 }
 
@@ -413,7 +391,10 @@ export const fetchWithDeadline = (
   init?: RequestInit,
   timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<Response> =>
-  fetch(url, { ...init, signal: init?.signal ?? AbortSignal.timeout(timeoutMs) });
+  fetch(url, {
+    ...init,
+    signal: init?.signal ?? AbortSignal.timeout(timeoutMs),
+  });
 
 /** Bounded poll for a (possibly async) producer to yield a value. */
 export const pollUntil = async <T>(
@@ -510,10 +491,4 @@ export const waitForJson = async <T>(
 };
 
 /** `http://localhost:<port>` */
-export const at = (port: number, path = "/"): URL =>
-  new URL(path, `http://localhost:${port}`);
-
-/** Docker gate — floci (the AWS emulator) and Containers both need it. */
-export const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 30_000 })
-    .status === 0;
+export const at = (port: number, path = "/"): URL => new URL(path, `http://localhost:${port}`);

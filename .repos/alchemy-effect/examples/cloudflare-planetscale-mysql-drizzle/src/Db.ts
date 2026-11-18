@@ -1,7 +1,7 @@
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Drizzle from "@alchemy.run/drizzle";
+import * as Planetscale from "@alchemy.run/planetscale";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Drizzle from "alchemy/Drizzle";
-import * as Planetscale from "alchemy/Planetscale";
 import * as Effect from "effect/Effect";
 
 /**
@@ -55,14 +55,12 @@ export const PlanetscaleDb = Effect.gen(function* () {
   return { database, branch, password };
 });
 
-export const Hyperdrive: Effect.Effect<
-  Cloudflare.Hyperdrive.Connection,
-  never,
-  any
-> = Effect.gen(function* () {
-  const { password } = yield* PlanetscaleDb;
-  return yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
-    origin: password.origin,
-    caching: { disabled: true },
-  });
-});
+export const Hyperdrive: Effect.Effect<Cloudflare.Hyperdrive.Connection, never, any> = Effect.gen(
+  function* () {
+    const { password } = yield* PlanetscaleDb;
+    return yield* Cloudflare.Hyperdrive.Connection("app-hyperdrive", {
+      origin: password.origin,
+      caching: { disabled: true },
+    });
+  },
+);

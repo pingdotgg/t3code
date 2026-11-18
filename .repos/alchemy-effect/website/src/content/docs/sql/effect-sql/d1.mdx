@@ -3,7 +3,7 @@ title: D1
 description: SQL.D1 wraps a bound D1 database in an @effect/sql-d1 client — tagged-template queries with typed errors over the native binding.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 export const deps = `@effect/sql-d1`;
 
@@ -12,22 +12,9 @@ binding. Queries are Effects: they carry `SqlError` in the error
 channel, participate in interruption, and trace like everything else
 in your program.
 
-Install the driver — an optional peer of alchemy:
+Install the driver:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${deps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${deps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${deps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${deps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={deps} />
 
 ## Connect
 
@@ -36,15 +23,15 @@ Declare the database, bind it with
 
 ```typescript
 // src/db.ts
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 
 export const Database = Cloudflare.D1.Database("Database");
 ```
 
 ```typescript
 // src/api.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as SQL from "alchemy/SQL/D1";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as SQL from "@alchemy.run/cloudflare/D1/SQL";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { Database } from "./db.ts";

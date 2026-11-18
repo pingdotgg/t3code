@@ -1,9 +1,7 @@
 /** @effect-diagnostics anyUnknownInErrorContext:off */
 import * as Effect from "effect/Effect";
 
-type Op =
-  | { kind: "get"; prop: PropertyKey }
-  | { kind: "call"; args: unknown[] };
+type Op = { kind: "get"; prop: PropertyKey } | { kind: "call"; args: unknown[] };
 
 interface ChainState {
   readonly cached: Effect.Effect<unknown, any, any>;
@@ -119,8 +117,7 @@ const replayArg = (
  * is itself a deferred proxy — is replayed against the same resolved root
  * before the outer call runs, so synchronous fragment helpers compose.
  */
-export const proxyChain = <T>(cached: Effect.Effect<T, any, any>): T =>
-  chain(cached) as T;
+export const proxyChain = <T>(cached: Effect.Effect<T, any, any>): T => chain(cached) as T;
 
 /**
  * Property reads the Effect runtime uses as *brand probes* — `symbol` keys
@@ -135,17 +132,12 @@ export const proxyChain = <T>(cached: Effect.Effect<T, any, any>): T =>
  * lacks the key; the `has` trap keeps `in`-based probes correct too.
  */
 const isBrandProbe = (prop: PropertyKey): boolean =>
-  typeof prop === "symbol" ||
-  (typeof prop === "string" && prop.startsWith("~effect/"));
+  typeof prop === "symbol" || (typeof prop === "string" && prop.startsWith("~effect/"));
 
-const chain = (
-  cached: Effect.Effect<unknown, any, any>,
-  ops: ReadonlyArray<Op> = [],
-): unknown => {
+const chain = (cached: Effect.Effect<unknown, any, any>, ops: ReadonlyArray<Op> = []): unknown => {
   const effect = Effect.flatMap(
     cached,
-    (root) =>
-      replay(root, ops, cached) as Effect.Effect<unknown, unknown, unknown>,
+    (root) => replay(root, ops, cached) as Effect.Effect<unknown, unknown, unknown>,
   );
   const proxy = new Proxy(function () {}, {
     get(_, prop) {
