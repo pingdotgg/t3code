@@ -590,6 +590,8 @@ export interface ProviderAdapterV2SteerInput {
   readonly message: ProviderAdapterV2TurnMessage;
   /** The selection sent with the message when it differs from the running turn's. */
   readonly modelSelection?: ModelSelection;
+  /** The thread's MCP app notes; the adapter sends those the agent has not seen yet. */
+  readonly appContext?: ProviderAdapterV2TurnInput["appContext"];
 }
 
 export interface ProviderAdapterV2InterruptInput {
