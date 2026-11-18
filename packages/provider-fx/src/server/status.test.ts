@@ -275,6 +275,29 @@ describe("checkFxProviderStatus", () => {
       assert.equal(unknown.draft.auth.status, "unknown");
     }),
   );
+
+  // A ready snapshot drops models it does not list, so only a real listing may report ready.
+  it.effect("treats `fx models` output without ids as a failed listing", () =>
+    Effect.gen(function* () {
+      const outputs = (gatewayModels: string) => ({
+        " status --json": status("fx login"),
+        "gateway status --json": status("fx login"),
+        "gateway models --json": gatewayModels,
+        "codex status --json": status("chatgpt subscription"),
+        "codex models --json": models(["gpt-5.5"]),
+        "grok status --json": status("missing"),
+      });
+      const reshaped = yield* check(outputs(JSON.stringify({ kind: "models", models: [] })));
+      assert.equal(reshaped.draft.status, "warning");
+      assert.deepEqual(
+        reshaped.draft.models.map((model) => model.slug),
+        ["default", "codex:gpt-5.5"],
+      );
+
+      const empty = yield* check(outputs(models([])));
+      assert.equal(empty.draft.status, "ready");
+    }),
+  );
 });
 
 describe("readFxDefaultChoice", () => {

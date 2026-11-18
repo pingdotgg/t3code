@@ -34,6 +34,7 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
   providerProbeEnvironment,
+  resolveProviderProbeTimeoutMs,
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
 
@@ -174,7 +175,7 @@ const readFxCli = (
   cwd?: string,
 ) =>
   runFxCli(settings, args, environment, cwd).pipe(
-    Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+    Effect.timeoutOption(resolveProviderProbeTimeoutMs("fx", AUTH_PROBE_TIMEOUT_MS, environment)),
     Effect.map(Option.filter((output) => output.code === 0)),
     Effect.map(Option.map((output) => output.stdout)),
     Effect.orElseSucceed(() => Option.none<string>()),
@@ -194,9 +195,7 @@ const FxStatus = Schema.fromJsonString(
   }),
 );
 const decodeFxStatus = Schema.decodeUnknownOption(FxStatus);
-const FxModels = Schema.fromJsonString(
-  Schema.Struct({ ids: Schema.optional(Schema.Array(Schema.String)) }),
-);
+const FxModels = Schema.fromJsonString(Schema.Struct({ ids: Schema.Array(Schema.String) }));
 const decodeFxModels = Schema.decodeUnknownOption(FxModels);
 const FxProfileSettings = Schema.fromJsonString(
   Schema.Struct({
@@ -262,7 +261,7 @@ const probeFxBackend = Effect.fn("probeFxBackend")(function* (
       ? undefined
       : Option.getOrUndefined(
           Option.flatMap(yield* readFxCli(settings, ["models", "--json"], env), decodeFxModels),
-        )?.ids?.flatMap((id) => nonEmptyTrimmed(id) ?? []);
+        )?.ids.flatMap((id) => nonEmptyTrimmed(id) ?? []);
   return {
     id: backend.id,
     name: backend.name,
@@ -300,7 +299,9 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
 
   const probeEnvironment = providerProbeEnvironment(environment);
   const versionResult = yield* runFxCli(settings, ["--version"], probeEnvironment).pipe(
-    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("fx", VERSION_PROBE_TIMEOUT_MS, environment),
+    ),
     Effect.result,
   );
   if (Result.isFailure(versionResult) || Option.isNone(versionResult.success)) {
@@ -343,7 +344,10 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
   const defaultBackend = backends.find(
     (backend) => backend.id === fxStatusBackend(status?.model_source),
   );
-  const usable = backends.find((backend) => backend.signedIn !== false && backend.models?.length);
+  // A ready snapshot replaces the model list, so every backend that may be signed in must have listed.
+  const listed = backends.filter((backend) => backend.signedIn !== false);
+  const listingFailed =
+    listed.length === 0 || listed.some((backend) => backend.models === undefined);
   const signedIn = backends.find((backend) => backend.signedIn === true);
   const statusAuth = fxAuth(status?.auth);
   const auth: ServerProviderAuth =
@@ -363,7 +367,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
               status: "warning" as const,
               message: `fx's default backend, ${defaultBackend.name}, is signed out. Pick a model on another backend or sign in.`,
             }
-          : usable === undefined
+          : listingFailed
             ? {
                 status: "warning" as const,
                 message:

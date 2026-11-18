@@ -1,4 +1,10 @@
-import type { AuthClientMetadata, AuthClientSession, AuthPairingLink } from "@t3tools/contracts";
+import type {
+  AuthClientMetadata,
+  AuthClientSession,
+  AuthConnectDevice,
+  AuthConnectDeviceRequest,
+  AuthPairingLink,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import type { IssuedBearerSession, IssuedPairingLink } from "./auth/EnvironmentAuth.ts";
@@ -188,5 +194,47 @@ export function formatSessionList(
         ].join(newline),
       )
       .join(`${newline}${newline}`) + newline
+  );
+}
+
+export function formatConnectDeviceList(
+  devices: {
+    readonly waiting: ReadonlyArray<AuthConnectDeviceRequest>;
+    readonly trusted: ReadonlyArray<AuthConnectDevice>;
+  },
+  options?: {
+    readonly json?: boolean;
+  },
+): string {
+  if (options?.json) {
+    return `${JSON.stringify(
+      {
+        waiting: devices.waiting,
+        trusted: devices.trusted.map((device) => ({
+          ...device,
+          approvedAt: toIsoString(device.approvedAt),
+        })),
+      },
+      null,
+      2,
+    )}${newline}`;
+  }
+  const describe = (client: AuthClientMetadata | undefined) =>
+    client ? formatClientMetadata(client) : "unlabeled client";
+  return (
+    [
+      devices.waiting.length === 0
+        ? "No devices are waiting for approval."
+        : "Waiting for approval:",
+      ...devices.waiting.map(
+        (request) => `  ${request.verificationCode}  ${describe(request.client)}`,
+      ),
+      "",
+      devices.trusted.length === 0 ? "No trusted T3 Connect devices." : "Trusted:",
+      ...devices.trusted.map(
+        (device) =>
+          `  ${device.verificationCode}  ${describe(device.client)}  since ${toIsoString(device.approvedAt)}`,
+      ),
+    ].join(newline) + newline
   );
 }
