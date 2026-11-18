@@ -2225,8 +2225,8 @@ export function ThreadsSettingsPanel() {
             searchId="t3-goal-continuation"
             description={
               <T>
-                Off stops T3 Code sending the next goal turn. The goal waits until you send a
-                message or turn this back on. The thread shows a row instead.
+                Off pauses a goal after each turn instead of sending the next one. Resume the goal
+                to run one more turn. The thread shows a row when it pauses.
               </T>
             }
           />

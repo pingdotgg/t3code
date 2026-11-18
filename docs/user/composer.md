@@ -424,8 +424,8 @@ own CLI, and some from the model provider.
   sent by T3 Code. Under **Settings → Threads → Automatic additions**, four **T3 Code:**
   switches turn off the wake when a delegated task finishes, when it asks a question, on pull
   request updates, and goal continuation. With a switch off, T3 Code starts no turn; the thread
-  shows a row saying it did not wake the agent, with what the wake would have said. A goal
-  then waits until you send a message or turn the switch back on. Idle compaction and restart
+  shows a row saying it did not wake the agent, with what the wake would have said. With
+  goal continuation off, a goal pauses after each turn; resume it to run one more. Idle compaction and restart
   continuation keep their own settings.
 - **Messages from other threads.** An agent can send a message into another thread. Set
   **T3 Code: messages from other threads** to **Block** to refuse messages from threads

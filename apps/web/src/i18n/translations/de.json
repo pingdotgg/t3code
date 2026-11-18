@@ -52,7 +52,7 @@
   "178a09a0a0d2d3fc": "Aus: T3 Code startet keinen Turn, wenn eine delegierte Aufgabe endet. Der Agent greift das Ergebnis nicht von selbst auf. Der Thread zeigt stattdessen eine Zeile.",
   "e80356699a864ffc": "Aus: T3 Code startet keinen Turn, wenn eine delegierte Aufgabe eine Frage stellt. Die Aufgabe wartet, bis Sie oder der Agent antworten. Der Thread zeigt stattdessen eine Zeile.",
   "802bd82c5918b2fb": "Aus: T3 Code startet keinen Turn für Checks, Reviews und Kommentare eines beobachteten Pull Requests. Der Agent reagiert nicht darauf. Der Thread zeigt stattdessen eine Zeile.",
-  "bf5f03534b4e1baf": "Aus: T3 Code sendet den nächsten Ziel-Turn nicht. Das Ziel wartet, bis Sie eine Nachricht senden oder dies wieder einschalten. Der Thread zeigt stattdessen eine Zeile.",
+  "f80b33c5d513898d": "Aus: Ein Ziel wird nach jedem Turn pausiert, statt den nächsten zu senden. Setzen Sie das Ziel fort, um einen weiteren Turn auszuführen. Der Thread zeigt eine Zeile, wenn es pausiert.",
   "391688683a299243": "Die Agenten-CLI fügt Anweisungsdateien, Speicher, Hook-Ausgaben und Systemhinweise hinzu. Für Claude Code zeigt der Thread, was hinzugefügt wurde, und die Schalter unten deaktivieren einzelne Elemente für danach gestartete Sitzungen.",
   "19105e41598b38c7": "Aus: Claude Code sendet keine CLAUDE.md-Dateien und deren Importe mehr, auch nicht Ihre globale. Der Agent arbeitet dann ohne Ihre Projektregeln.",
   "96333a24b2cf1732": "Aus: Die Speicheranweisungen werden aus dem System-Prompt von Claude Code entfernt. Der Agent liest und speichert keine Erinnerungen mehr.",

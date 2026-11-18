@@ -194,17 +194,26 @@ const make = Effect.fn("GoalLoopService.make")(function* (options: {
       return;
     }
 
-    // Checked before the iteration advances, so the goal stays where it is and continues from
-    // here once the switch is back on. The id is this turn's, so every later check records nothing new.
+    // Checked before the iteration advances. The loop is paused, so resuming is the owner's
+    // action and later checks skip this thread.
     if (!(yield* options.continueGoals ?? Effect.succeed(true))) {
       yield* threads.dispatch({
         type: "thread.notice.record",
         commandId: CommandId.make(`server:goal-not-continued:${thread.id}:${plan.key}`),
         threadId: thread.id,
         notification: suppressedWakeNotice(
-          "Goal not continued",
-          `${GOAL_CONTINUE_MESSAGE}\n\nTo continue, send a message or turn goal continuation back on in Settings.`,
+          "Goal paused",
+          `${GOAL_CONTINUE_MESSAGE}\n\nTo continue, resume the goal. It pauses again after each turn while goal continuation is off in Settings.`,
         ),
+      });
+      yield* threads.dispatch({
+        type: "thread.goal.loop",
+        commandId: CommandId.make(`server:goal-paused-by-setting:${thread.id}:${plan.key}`),
+        threadId: thread.id,
+        action: "sync",
+        state: "paused",
+        reason: "Goal continuation is switched off in Settings",
+        goalLoopGuard: { updatedAt: loop.updatedAt },
       });
       return;
     }

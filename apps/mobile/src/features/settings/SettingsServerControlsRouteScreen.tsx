@@ -495,7 +495,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       "t3GoalContinuation",
                       projectSelected
                         ? "Environment-wide setting. Select All projects to change it."
-                        : "Off stops the next goal turn. The goal waits until you send a message or turn this back on.",
+                        : "Off pauses a goal after each turn instead of sending the next one. Resume the goal to run one more turn.",
                     )}
                     value={uniform("t3GoalContinuation")}
                     disabled={disabledFor("t3GoalContinuation")}

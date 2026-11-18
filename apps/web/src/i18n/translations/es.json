@@ -52,7 +52,7 @@
   "178a09a0a0d2d3fc": "Desactivado, T3 Code no inicia un turno cuando termina una tarea delegada. El agente no recogerá el resultado por sí solo. El hilo muestra una fila en su lugar.",
   "e80356699a864ffc": "Desactivado, T3 Code no inicia un turno cuando una tarea delegada hace una pregunta. La tarea espera hasta que tú o el agente la respondan. El hilo muestra una fila en su lugar.",
   "802bd82c5918b2fb": "Desactivado, T3 Code no inicia un turno por las comprobaciones, revisiones y comentarios de un pull request vigilado. El agente no reaccionará a ellos. El hilo muestra una fila en su lugar.",
-  "bf5f03534b4e1baf": "Desactivado, T3 Code no envía el siguiente turno del objetivo. El objetivo espera hasta que envíes un mensaje o vuelvas a activar esto. El hilo muestra una fila en su lugar.",
+  "f80b33c5d513898d": "Desactivado, un objetivo se pausa después de cada turno en lugar de enviar el siguiente. Reanuda el objetivo para ejecutar un turno más. El hilo muestra una fila cuando se pausa.",
   "391688683a299243": "La CLI del agente añade archivos de instrucciones, memoria, salida de hooks y recordatorios del sistema. Para Claude Code, el hilo muestra lo que añadió, y los interruptores de abajo desactivan elementos en las sesiones iniciadas después.",
   "19105e41598b38c7": "Desactivado, Claude Code deja de enviar los archivos CLAUDE.md y lo que importan, incluido el global. El agente trabaja entonces sin las reglas de tu proyecto.",
   "96333a24b2cf1732": "Desactivado, se quitan las instrucciones de memoria del prompt del sistema de Claude Code. El agente deja de leer y guardar recuerdos.",

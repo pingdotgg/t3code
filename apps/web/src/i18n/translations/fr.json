@@ -52,7 +52,7 @@
   "178a09a0a0d2d3fc": "Désactivé, T3 Code ne démarre pas de tour lorsqu’une tâche déléguée se termine. L’agent ne récupérera pas le résultat de lui-même. Le fil affiche une ligne à la place.",
   "e80356699a864ffc": "Désactivé, T3 Code ne démarre pas de tour lorsqu’une tâche déléguée pose une question. La tâche attend que vous ou l’agent y répondiez. Le fil affiche une ligne à la place.",
   "802bd82c5918b2fb": "Désactivé, T3 Code ne démarre pas de tour pour les vérifications, revues et commentaires d’une pull request surveillée. L’agent n’y réagira pas. Le fil affiche une ligne à la place.",
-  "bf5f03534b4e1baf": "Désactivé, T3 Code n’envoie pas le tour suivant de l’objectif. L’objectif attend que vous envoyiez un message ou réactiviez ceci. Le fil affiche une ligne à la place.",
+  "f80b33c5d513898d": "Désactivé, un objectif se met en pause après chaque tour au lieu d’envoyer le suivant. Reprenez l’objectif pour exécuter un tour de plus. Le fil affiche une ligne lorsqu’il se met en pause.",
   "391688683a299243": "La CLI de l’agent ajoute les fichiers d’instructions, la mémoire, la sortie des hooks et les rappels système. Pour Claude Code, le fil affiche ce qu’il a ajouté, et les interrupteurs ci-dessous désactivent des éléments pour les sessions démarrées ensuite.",
   "19105e41598b38c7": "Désactivé, Claude Code n’envoie plus les fichiers CLAUDE.md ni ce qu’ils importent, y compris votre fichier global. L’agent travaille alors sans les règles de votre projet.",
   "96333a24b2cf1732": "Désactivé, les instructions de mémoire sont retirées du prompt système de Claude Code. L’agent ne lit plus et n’enregistre plus de souvenirs.",

@@ -52,7 +52,7 @@
   "178a09a0a0d2d3fc": "Off stops T3 Code starting a turn when a delegated task finishes. The agent will not pick up the result on its own. The thread shows a row instead.",
   "e80356699a864ffc": "Off stops T3 Code starting a turn when a delegated task asks a question. The task waits until you or the agent answer it. The thread shows a row instead.",
   "802bd82c5918b2fb": "Off stops T3 Code starting a turn for a watched pull request's checks, reviews and comments. The agent will not react to them. The thread shows a row instead.",
-  "bf5f03534b4e1baf": "Off stops T3 Code sending the next goal turn. The goal waits until you send a message or turn this back on. The thread shows a row instead.",
+  "f80b33c5d513898d": "Off pauses a goal after each turn instead of sending the next one. Resume the goal to run one more turn. The thread shows a row when it pauses.",
   "391688683a299243": "The agent CLI adds instruction files, memory, hook output and system reminders. For Claude Code, the thread shows what it added, and the switches below turn items off for sessions started afterwards.",
   "19105e41598b38c7": "Off stops Claude Code sending CLAUDE.md files and what they import, including your global one. The agent then works without your project rules.",
   "96333a24b2cf1732": "Off removes the memory instructions from Claude Code's system prompt. The agent no longer reads or saves memories.",

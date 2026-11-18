@@ -244,56 +244,84 @@ it.effect("dispatches a recoverable continuation with native agent/server proven
   }).pipe(Effect.provide(testLayer));
 });
 
-it.effect("records one row and sends nothing while goal continuation is switched off", () => {
-  let on = false;
-  const sent: ThreadManagement.ThreadManagementSendInput[] = [];
-  const dispatched: Array<{ readonly type: string; readonly commandId: string }> = [];
-  const shell = threadShell();
-  const testLayer = layerWith({ continueGoals: Effect.sync(() => on) }).pipe(
-    Layer.provide(
-      Layer.mock(ThreadManagement.ThreadManagementService)({
-        getShellSnapshot: () =>
-          Effect.succeed({
-            schemaVersion: 1,
-            snapshotSequence: 1,
-            threads: [shell],
-            archivedThreads: [],
-          }),
-        getThreadProjection: () => Effect.succeed(threadProjection()),
-        getThreadShell: () => Effect.succeed(shell),
-        dispatch: (command) => {
-          dispatched.push(command);
-          return Effect.succeed({} as never);
-        },
-        sendToThread: (input) => {
-          sent.push(input);
-          return Effect.die("stop after capture");
-        },
-      }),
-    ),
-  );
+it.effect(
+  "pauses the goal with one row when continuation is switched off, until the owner resumes",
+  () => {
+    let on = false;
+    let shell = threadShell();
+    const sent: ThreadManagement.ThreadManagementSendInput[] = [];
+    const dispatched: Array<Record<string, unknown>> = [];
+    let projectionReads = 0;
+    const testLayer = layerWith({ continueGoals: Effect.sync(() => on) }).pipe(
+      Layer.provide(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getShellSnapshot: () =>
+            Effect.succeed({
+              schemaVersion: 1,
+              snapshotSequence: 1,
+              threads: [shell],
+              archivedThreads: [],
+            }),
+          getThreadProjection: () =>
+            Effect.sync(() => {
+              projectionReads += 1;
+              return threadProjection();
+            }),
+          getThreadShell: () => Effect.succeed(shell),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command);
+              // What the orchestrator does with the pause the loop asks for.
+              if (command.type === "thread.goal.loop" && command.action === "sync") {
+                shell = {
+                  ...shell,
+                  goalLoop: {
+                    ...shell.goalLoop!,
+                    state: command.state ?? shell.goalLoop!.state,
+                    iterations: command.iterations ?? shell.goalLoop!.iterations,
+                  },
+                };
+              }
+              return {} as never;
+            }),
+          sendToThread: (input) => {
+            sent.push(input);
+            return Effect.die("stop after capture");
+          },
+        }),
+      ),
+    );
 
-  return Effect.gen(function* () {
-    const service = yield* GoalLoopService;
-    yield* service.runDueWork;
-    yield* service.runDueWork;
-    expect(sent).toHaveLength(0);
-    // Both checks name the same command, which the orchestrator records once; the loop never advanced.
-    expect(dispatched.map((command) => command.type)).toEqual([
-      "thread.notice.record",
-      "thread.notice.record",
-    ]);
-    expect(new Set(dispatched.map((command) => command.commandId)).size).toBe(1);
-    expect(dispatched[0]).toMatchObject({
-      notification: {
-        summary: "Goal not continued. T3 Code did not wake the agent (switched off in Settings)",
-        detail: expect.stringContaining("send a message or turn goal continuation back on"),
-      },
-    });
+    return Effect.gen(function* () {
+      const service = yield* GoalLoopService;
+      yield* service.runDueWork;
+      expect(sent).toHaveLength(0);
+      expect(dispatched).toMatchObject([
+        {
+          type: "thread.notice.record",
+          notification: {
+            summary: "Goal paused. T3 Code did not wake the agent (switched off in Settings)",
+            detail: expect.stringContaining("resume the goal"),
+          },
+        },
+        { type: "thread.goal.loop", action: "sync", state: "paused" },
+      ]);
+      expect(shell.goalLoop?.state).toBe("paused");
 
-    on = true;
-    yield* service.runDueWork;
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ text: GOAL_CONTINUE_MESSAGE });
-  }).pipe(Effect.provide(testLayer));
-});
+      // Paused loops are not visited, and switching back on starts nothing by itself.
+      const reads = projectionReads;
+      yield* service.runDueWork;
+      on = true;
+      yield* service.runDueWork;
+      expect(projectionReads).toBe(reads);
+      expect(dispatched).toHaveLength(2);
+      expect(sent).toHaveLength(0);
+
+      // The owner resumes: the loop is idle again and the next check continues it.
+      shell = { ...shell, goalLoop: { ...shell.goalLoop!, state: "idle" } };
+      yield* service.runDueWork;
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({ text: GOAL_CONTINUE_MESSAGE });
+    }).pipe(Effect.provide(testLayer));
+  },
+);
