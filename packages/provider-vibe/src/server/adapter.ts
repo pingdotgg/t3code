@@ -14,7 +14,7 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { vibeCallback, vibeQuestionResult } from "./callbacks.ts";
+import { refuseVibeCallback, vibeCallback, vibeQuestionResult } from "./callbacks.ts";
 import type { VibeSettings } from "../settings.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -817,11 +817,11 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         });
       }
       const callback = vibeCallback(params);
-      if (!callback) return { accepted: false };
+      if (!callback) return refuseVibeCallback(params);
       const projection = projectCallback(callback);
       const callbackSessionId = callback.sessionId ?? sessionIdOf();
       if (state.adoptingThread) {
-        if (!callbackSessionId) return { accepted: false };
+        if (!callbackSessionId) return refuseVibeCallback(params);
         state.adoptingThread.push({
           replay: projection,
           cancel: client
@@ -867,7 +867,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         Effect.suspend(() =>
           acceptsEvents()
             ? onServerRequest(client, method, params)
-            : Effect.succeed<unknown>({ accepted: false }),
+            : Effect.succeed<unknown>(refuseVibeCallback(params)),
         ),
       );
       yield* client.awaitTermination.pipe(
@@ -944,7 +944,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         connection.closing ||
         (connection.planMode !== undefined && planMode !== connection.planMode)
       ) {
-        if (state.activeTurn || state.startingRun) {
+        if (connection.attachedSessionId !== undefined && (state.activeTurn || state.startingRun)) {
           return yield* new ProviderAdapter.ProviderAdapterProtocolError({
             driver: VIBE_PROVIDER,
             detail: "Let the active Vibe turn finish before switching interaction mode.",
@@ -969,35 +969,39 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         ...agent,
       };
       const attached = connection;
-      attached.attachedSessionId = undefined;
       attached.planMode = planMode;
-      const started = nativeId
-        ? yield* Effect.mapError(
-            attached.client.sessionResume({ sessionId: nativeId, agentConfig, historyLimit: 500 }),
-            protocolError,
-          )
-        : yield* Effect.mapError(
-            attached.client.sessionStart({
-              agentConfig,
-              ...(ensureInput.title ? { title: ensureInput.title } : {}),
-              ...(ensureInput.modelSelection.model
-                ? {
-                    model: resolveVibeModelId(ensureInput.modelSelection.model),
-                    sessionOnly: true,
-                  }
-                : {}),
-              ...(getModelSelectionStringOptionValue(ensureInput.modelSelection, "thinking") !==
-              undefined
-                ? {
-                    reasoningEffort: getModelSelectionStringOptionValue(
-                      ensureInput.modelSelection,
-                      "thinking",
-                    ),
-                  }
-                : {}),
-            }),
-            protocolError,
-          );
+      const open = nativeId
+        ? attached.client.sessionResume({ sessionId: nativeId, agentConfig, historyLimit: 500 })
+        : attached.client.sessionStart({
+            agentConfig,
+            ...(ensureInput.title ? { title: ensureInput.title } : {}),
+            ...(ensureInput.modelSelection.model
+              ? {
+                  model: resolveVibeModelId(ensureInput.modelSelection.model),
+                  sessionOnly: true,
+                }
+              : {}),
+            ...(getModelSelectionStringOptionValue(ensureInput.modelSelection, "thinking") !==
+            undefined
+              ? {
+                  reasoningEffort: getModelSelectionStringOptionValue(
+                    ensureInput.modelSelection,
+                    "thinking",
+                  ),
+                }
+              : {}),
+          });
+      const started = yield* open.pipe(
+        Effect.tapError((cause) =>
+          Effect.sync(() => {
+            if (cause._tag !== "VibeAppServerRequestError" || cause.code === "terminated") {
+              attached.attachedSessionId = undefined;
+            }
+          }),
+        ),
+        Effect.mapError(protocolError),
+      );
+      attached.attachedSessionId = undefined;
       const nativeThreadId = started.state.session.id;
       const retainedHistory = nativeId ? yield* readAllHistoryEntries(nativeThreadId) : [];
       const nativeTurns = started.state.turns ?? [];
@@ -1018,7 +1022,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         ownerNodeId: ensureInput.existingProviderThread?.ownerNodeId ?? null,
         nativeThreadRef: nativeRef(nativeThreadId),
         nativeConversationHeadRef: null,
-        status: "idle",
+        status: state.activeTurn ? "active" : "idle",
         firstRunOrdinal: ensureInput.existingProviderThread?.firstRunOrdinal ?? null,
         lastRunOrdinal: ensureInput.existingProviderThread?.lastRunOrdinal ?? null,
         handoffIds: [],
@@ -1049,6 +1053,17 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         yield* onNotification("turn/started", { sessionId: nativeThreadId, turn: runningTurn });
       }
       for (const event of bufferedNotifications) yield* event.replay;
+      const settledTurn = nativeTurns.find(
+        (turn) =>
+          turn.id === state.activeTurn?.nativeTurnId &&
+          (turn.status === "completed" ||
+            turn.status === "failed" ||
+            turn.status === "interrupted" ||
+            turn.status === "cancelled"),
+      );
+      if (settledTurn) {
+        yield* onNotification("turn/completed", { sessionId: nativeThreadId, turn: settledTurn });
+      }
       attached.attachedSessionId = nativeThreadId;
       return state.thread ?? thread;
     });
@@ -1065,6 +1080,10 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           Effect.onExit((exit) => {
             if (Exit.isSuccess(exit)) return Effect.void;
             return Effect.gen(function* () {
+              if (connection.attachedSessionId !== undefined) {
+                for (const event of notifications) yield* event.replay;
+                return;
+              }
               state.adoptingThread = undefined;
               const outcomes = yield* Effect.forEach(
                 notifications,
@@ -1129,12 +1148,6 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
     const startTurn: ProviderAdapter.ProviderAdapterV2SessionRuntime["startTurn"] = Effect.fn(
       "VibeAdapterV2.startTurn",
     )(function* (turnInput) {
-      if (state.activeTurn || state.startingRun) {
-        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-          driver: VIBE_PROVIDER,
-          detail: "Wait for the active Vibe turn to finish before starting another.",
-        });
-      }
       if (
         connection.attachedSessionId === undefined ||
         (turnInput.runtimePolicy.interactionMode === "plan") !== state.planMode
@@ -1144,6 +1157,12 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           existingProviderThread: turnInput.providerThread,
           runtimePolicy: turnInput.runtimePolicy,
           modelSelection: turnInput.modelSelection,
+        });
+      }
+      if (state.activeTurn || state.startingRun) {
+        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+          driver: VIBE_PROVIDER,
+          detail: "Wait for the active Vibe turn to finish before starting another.",
         });
       }
       const nativeSessionId = connection.attachedSessionId;

@@ -583,6 +583,10 @@ describe("Vibe adapter against an in-memory app-server", () => {
         );
         expect(modelWrites).toBe(1);
         expect(starts).toBe(1);
+        failNextResume = true;
+        expect(
+          (yield* Effect.flip(runtime.resumeThread({ providerThread, runtimePolicy })))._tag,
+        ).toBe("ProviderAdapterProtocolError");
         yield* notify("turn/interrupted", { turn: { id: "turn-1" } });
         expect((yield* takeEvent("provider_turn.updated")).providerTurn).toMatchObject({
           id: first.id,
@@ -657,7 +661,7 @@ describe("Vibe adapter against an in-memory app-server", () => {
           ))._tag,
         ).toBe("ProviderAdapterProtocolError");
         yield* runtime.startTurn(input(4));
-        expect(resumedAgents).toHaveLength(4);
+        expect(resumedAgents).toHaveLength(5);
         expect(resumedAgents.at(-1)).toMatchObject({ agent: "accept-edits" });
       }).pipe(Effect.provide(layerTest)),
     ),
@@ -857,6 +861,23 @@ describe("Vibe adapter against an in-memory app-server", () => {
             callbackId: "recovered-1",
             output: { type: "approval", decision: { type: "cancel_turn" } },
           },
+        });
+
+        yield* vibe.send({
+          jsonrpc: "2.0",
+          id: 599,
+          method: "callback/call",
+          params: {
+            callback: {
+              callbackId: "late-approval",
+              sessionId: "native-session",
+              detail: { kind: "approval" },
+            },
+          },
+        });
+        expect(yield* Queue.take(vibe.responses)).toMatchObject({
+          id: 599,
+          result: { callbackId: "late-approval", accepted: false },
         });
 
         for (const attempt of [2, 3]) {

@@ -11,6 +11,11 @@ const record = (value: unknown): Record<string, unknown> | undefined =>
 const text = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim() ? value : undefined;
 
+export function refuseVibeCallback(params: unknown) {
+  const callbackId = text(record(record(params)?.["callback"])?.["callbackId"]);
+  return callbackId === undefined ? { accepted: false } : { callbackId, accepted: false };
+}
+
 export function vibeCallback(params: unknown) {
   const request = record(params);
   const callback = record(request?.["callback"]);
