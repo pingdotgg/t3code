@@ -325,6 +325,11 @@ describe("question answer paths", () => {
       "AC",
     ],
     [
+      "tracked deletion table",
+      String.raw`{\rtf1\ansi\trowd\cellx1000\cellx2000\intbl A\deleted\cell\deleted0 B\cell\deleted\row\deleted0 C\cell}`,
+      "A\tB\t\nC",
+    ],
+    [
       "document breaks",
       String.raw`{\rtf1\ansi\sectd\cols2\pard North quota: 120\column South quota: 240\page East quota: 360\sect\sectd\pard West quota: 480\par}`,
       "North quota: 120\nSouth quota: 240\nEast quota: 360\nWest quota: 480",

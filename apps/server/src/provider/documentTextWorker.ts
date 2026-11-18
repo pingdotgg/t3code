@@ -496,9 +496,12 @@ function* rtf(source: string): Generator<string, void> {
         } else if (control === "u") {
           if (!hidden()) yield String.fromCharCode(value < 0 ? value + 65536 : value);
           fallback = state.uc;
-        } else if (!hidden() && ["par", "line", "row", "sect", "page", "column"].includes(control))
+        } else if (!hidden() && ["par", "line", "sect", "page", "column"].includes(control))
           yield "\n";
-        else if (!hidden() && ["tab", "cell"].includes(control)) yield "\t";
+        else if (!hidden() && control === "tab") yield "\t";
+        // Table structure survives tracked deletions; only the deleted cell text is dropped.
+        else if (!state.skip && control === "row") yield "\n";
+        else if (!state.skip && control === "cell") yield "\t";
         else if (!hidden() && symbols.has(control)) yield symbols.get(control)!;
       } else {
         i++;
