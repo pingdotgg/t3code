@@ -1,6 +1,6 @@
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
-import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
+import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import {
   issueAssigneeHeld,
   issueAssigneesAfterPicks,
@@ -37,9 +37,11 @@ import {
   UserPlusIcon,
   UsersIcon,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { useContext, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { m } from "~/i18n/messages";
 import { issueEnvironment, refreshIssueLists } from "~/state/issues";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
@@ -48,6 +50,7 @@ import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -90,6 +93,7 @@ function IssueThreadLinkButton({
   issue: Pick<IssueDetail, "url" | "displayKey" | "title">;
   threadRef: ScopedThreadRef;
 }) {
+  const gt = useGT();
   const thread = useThreadShell(threadRef.environmentId === environmentId ? threadRef : null);
   const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const link = useAtomCommand(threadEnvironment.linkIssue, { reportFailure: false });
@@ -118,8 +122,11 @@ function IssueThreadLinkButton({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: linked ? "Could not unlink the issue" : "Could not link the issue",
-        description: readableFailure(squashAtomCommandFailure(result), "The server refused it."),
+        title: linked ? m(msg("Could not unlink the issue")) : m(msg("Could not link the issue")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The server refused it.")),
+        ),
       });
     }
   };
@@ -130,7 +137,7 @@ function IssueThreadLinkButton({
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label={linked ? "Unlink from thread" : "Link to thread"}
+            aria-label={linked ? gt("Unlink from thread") : gt("Link to thread")}
             aria-pressed={linked}
             disabled={pending || reference.host === undefined}
             onClick={() => void toggle()}
@@ -143,7 +150,9 @@ function IssueThreadLinkButton({
           <Link2Icon aria-hidden className="size-3.5" />
         )}
       </TooltipTrigger>
-      <TooltipPopup>{linked ? "Unlink from this thread" : "Link to this thread"}</TooltipPopup>
+      <TooltipPopup>
+        {linked ? <T>Unlink from this thread</T> : <T>Link to this thread</T>}
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -195,6 +204,7 @@ function IssueLabelPicker({
   allowed: boolean;
   disabledReason: string;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [picks, setPicks] = useState(noIssuePicks<IssueLabelCandidate>);
@@ -235,30 +245,33 @@ function IssueLabelPicker({
       setPicks((latest) => issuePicksAfterFailedWrite(latest, sent));
       toastManager.add({
         type: "error",
-        title: "Could not change labels",
-        description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
+        title: m(msg("Could not change labels")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The tracker refused it.")),
+        ),
       });
     });
   };
   return (
     <PullRequestCandidatePicker
       icon={<TagIcon className="size-3.5" />}
-      label="Change labels"
+      label={gt("Change labels")}
       allowed={allowed}
       disabledReason={disabledReason}
       open={open}
       onOpenChange={onOpenChange}
       query={query}
       onQueryChange={setQuery}
-      searchLabel="Search labels"
+      searchLabel={gt("Search labels")}
       isPending={candidatesQuery.isPending && candidatesQuery.data === null}
       error={candidatesQuery.data === null ? candidatesQuery.error : null}
       candidates={candidates}
-      emptyLabel="This tracker has no labels."
-      noMatchLabel="No label matches that."
-      errorLabel="The labels could not be read."
+      emptyLabel={gt("This tracker has no labels.")}
+      noMatchLabel={gt("No label matches that.")}
+      errorLabel={gt("The labels could not be read.")}
       truncated={candidatesQuery.data?.truncated === true}
-      truncatedLabel="More labels exist than are listed here."
+      truncatedLabel={gt("More labels exist than are listed here.")}
       candidateKey={(candidate) => candidate.name}
       onSelect={(candidate) =>
         setPicks({
@@ -283,7 +296,10 @@ function IssueLabelPicker({
               ) : null}
             </span>
             {isSelected(draft, candidate.name, applied.has(candidate.name)) ? (
-              <CheckIcon aria-label="Applied" className="size-3.5 shrink-0" />
+              <CheckIcon
+                aria-label={gt("Applied", { $context: "label is applied to the issue" })}
+                className="size-3.5 shrink-0"
+              />
             ) : null}
           </>
         );
@@ -305,6 +321,7 @@ function IssueAssigneePicker({
   allowed: boolean;
   disabledReason: string;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [picks, setPicks] = useState(noIssuePicks<IssueAssigneeCandidate>);
@@ -344,30 +361,33 @@ function IssueAssigneePicker({
       setPicks((latest) => issuePicksAfterFailedWrite(latest, sent));
       toastManager.add({
         type: "error",
-        title: "Could not change assignees",
-        description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
+        title: m(msg("Could not change assignees")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The tracker refused it.")),
+        ),
       });
     });
   };
   return (
     <PullRequestCandidatePicker
       icon={<UserPlusIcon className="size-3.5" />}
-      label="Change assignees"
+      label={gt("Change assignees")}
       allowed={allowed}
       disabledReason={disabledReason}
       open={open}
       onOpenChange={onOpenChange}
       query={query}
       onQueryChange={setQuery}
-      searchLabel="Search people"
+      searchLabel={gt("Search people")}
       isPending={candidatesQuery.isPending && candidatesQuery.data === null}
       error={candidatesQuery.data === null ? candidatesQuery.error : null}
       candidates={candidates}
-      emptyLabel="Nobody can be assigned here."
-      noMatchLabel="Nobody matches that."
-      errorLabel="The people could not be read."
+      emptyLabel={gt("Nobody can be assigned here.")}
+      noMatchLabel={gt("Nobody matches that.")}
+      errorLabel={gt("The people could not be read.")}
       truncated={candidatesQuery.data?.truncated === true}
-      truncatedLabel="More people exist than are listed here."
+      truncatedLabel={gt("More people exist than are listed here.")}
       candidateKey={(candidate) => candidate.id}
       onSelect={(candidate) =>
         setPicks({
@@ -385,7 +405,10 @@ function IssueAssigneePicker({
         <>
           <PullRequestActorLabel actor={candidate} tooltip={false} className="min-w-0 flex-1" />
           {isSelected(draft, candidate.id, issueAssigneeHeld(detail, candidate)) ? (
-            <CheckIcon aria-label="Assigned" className="size-3.5 shrink-0" />
+            <CheckIcon
+              aria-label={gt("Assigned", { $context: "person is assigned to the issue" })}
+              className="size-3.5 shrink-0"
+            />
           ) : null}
         </>
       )}
@@ -412,7 +435,11 @@ function LinkedPullRequestRow({
       <PullRequestStateGlyph state={link.state} isDraft={link.isDraft} />
       <span className="min-w-0 flex-1 truncate text-sm">{link.title}</span>
       <PullRequestMetaLine className="shrink-0 text-xs text-muted-foreground">
-        {link.closesIssue ? <span>Closes this issue</span> : null}
+        {link.closesIssue ? (
+          <span>
+            <T>Closes this issue</T>
+          </span>
+        ) : null}
         <span className="tabular-nums">
           {link.repository.toLowerCase() === scope.toLowerCase() ? "" : link.repository}#
           {link.number}
@@ -448,9 +475,13 @@ export function IssueDetailPanel({
   /** Opens a linked change request beside this one; absent, the link goes to the host. */
   onSelectPullRequest?: ((reference: PullRequestRef) => void) | undefined;
 }) {
-  const detailQuery = useEnvironmentQuery(
-    issueEnvironment.detail({ environmentId, input: reference }),
-  );
+  const gt = useGT();
+  const messages = useMessages();
+  const detailAtom = issueEnvironment.detail({ environmentId, input: reference });
+  const detailQuery = useEnvironmentQuery(detailAtom);
+  const registry = useContext(RegistryContext);
+  const [pager] = useState(() => createIssueCommentPager(detailAtom));
+  const { comments, nextCursor, loadingOlder, canLoadOlder } = useAtomValue(pager.view);
   const detail = detailQuery.data;
   const canWrite = useAtomValue(issueEnvironment.comment.permissionAtom(environmentId));
   const projects = useProjects();
@@ -458,13 +489,7 @@ export function IssueDetailPanel({
     projects.find((p) => p.environmentId === environmentId && p.id === reference.projectId)
       ?.workspaceRoot ?? "";
 
-  const [older, setOlder] = useState<{
-    readonly seed: string | null;
-    readonly comments: ReadonlyArray<IssueComment>;
-    readonly cursor: string | null;
-  } | null>(null);
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
-  const [loadingOlder, setLoadingOlder] = useState(false);
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
   const [editing, setEditing] = useState<"title" | "body" | null>(null);
@@ -476,7 +501,7 @@ export function IssueDetailPanel({
     if (detailQuery.error !== null && !detailQuery.isPending) {
       return (
         <PullRequestsUnavailableState
-          title="Could not load this issue"
+          title={gt("Could not load this issue")}
           error={detailQuery.error}
           onRetry={detailQuery.refresh}
         />
@@ -485,16 +510,12 @@ export function IssueDetailPanel({
     return <IssueDetailGhost seed={listEntry} />;
   }
 
-  // Older pages are tied to the cursor the detail was read with; a refreshed detail starts over.
-  const olderComments = older?.seed === detail.commentsCursor ? older.comments : [];
-  const nextCursor = older?.seed === detail.commentsCursor ? older.cursor : detail.commentsCursor;
-  const comments = prependIssueComments(detail.comments, olderComments);
   const timeline: ReadonlyArray<TimelineItem> = [
     ...comments.map((c): TimelineItem => ({ kind: "comment", at: c.createdAt, comment: c })),
     ...detail.events.map((e): TimelineItem => ({ kind: "event", at: e.createdAt, event: e })),
   ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 
-  const access = issueWriteAccess(detail, canWrite);
+  const access = issueWriteAccess(detail, canWrite, messages);
   const { blocked } = access;
   const canComment = access.comment;
   const canEdit = access.edit;
@@ -506,22 +527,12 @@ export function IssueDetailPanel({
   const currentState = issueStatePresentation(detail.state);
 
   const loadOlder = async () => {
-    if (nextCursor === null || loadingOlder) return;
-    setLoadingOlder(true);
-    const result = await loadComments({
-      environmentId,
-      input: { ...reference, cursor: nextCursor },
-    });
-    setLoadingOlder(false);
-    if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Older comments could not be read" });
-      return;
+    const failure = await pager.loadOlder(registry, (cursor) =>
+      loadComments({ environmentId, input: { ...reference, cursor } }),
+    );
+    if (failure) {
+      toastManager.add({ type: "error", title: m(msg("Older comments could not be read")) });
     }
-    setOlder({
-      seed: detail.commentsCursor,
-      comments: prependIssueComments(olderComments, result.value.comments),
-      cursor: result.value.nextCursor,
-    });
   };
 
   const save = async (patch: { title?: string; body?: string }) => {
@@ -531,8 +542,11 @@ export function IssueDetailPanel({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: "The issue could not be updated",
-        description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
+        title: m(msg("The issue could not be updated")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The tracker refused it.")),
+        ),
       });
       return;
     }
@@ -551,8 +565,11 @@ export function IssueDetailPanel({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: "The state could not be changed",
-        description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
+        title: m(msg("The state could not be changed")),
+        description: readableFailure(
+          squashAtomCommandFailure(result),
+          m(msg("The tracker refused it.")),
+        ),
       });
       return;
     }
@@ -573,7 +590,7 @@ export function IssueDetailPanel({
             <Button
               size="xs"
               variant="outline"
-              aria-label={`Issue state, ${currentState.label}`}
+              aria-label={gt("Issue state, {state}", { state: currentState.label })}
               disabled={changingState}
             />
           }
@@ -621,7 +638,10 @@ export function IssueDetailPanel({
             </span>
             <InlineButton
               className={cn("shrink-0 font-medium", currentState.toneClassName)}
-              aria-label={`Open ${detail.displayKey} on ${tracker.providerName}`}
+              aria-label={gt("Open {issue} on {provider}", {
+                issue: detail.displayKey,
+                provider: tracker.providerName,
+              })}
               render={<a href={detail.url} target="_blank" rel="noopener noreferrer" />}
             >
               {detail.displayKey}
@@ -640,17 +660,22 @@ export function IssueDetailPanel({
             <Button
               size="icon-xs"
               variant="ghost"
-              aria-label="Refresh issue"
+              aria-label={gt("Refresh issue")}
               disabled={detailQuery.isPending}
-              onClick={() => {
-                // Older pages are cached under the cursor, which a refresh can hand back unchanged.
-                setOlder(null);
-                detailQuery.refresh();
-              }}
+              onClick={() => void pager.refresh(registry, detailQuery.refresh)}
             >
               <RefreshIcon size="sm" refreshing={detailQuery.isPending} />
             </Button>
           </PullRequestDetailTitleRow>
+
+          {detailQuery.error !== null && !detailQuery.isPending ? (
+            <div className="mt-2">
+              <Alert variant="error">
+                <AlertTitle>{gt("Could not refresh this issue")}</AlertTitle>
+                <AlertDescription>{detailQuery.error}</AlertDescription>
+              </Alert>
+            </div>
+          ) : null}
 
           {editing === "title" ? (
             <form
@@ -664,7 +689,7 @@ export function IssueDetailPanel({
             >
               <Input
                 autoFocus
-                aria-label="Issue title"
+                aria-label={gt("Issue title")}
                 value={titleDraft}
                 disabled={saving}
                 onChange={(event) => setTitleDraft(event.target.value)}
@@ -673,7 +698,7 @@ export function IssueDetailPanel({
                 }}
               />
               <Button type="submit" size="sm" disabled={saving}>
-                Save
+                <T>Save</T>
               </Button>
               <Button
                 type="button"
@@ -682,7 +707,7 @@ export function IssueDetailPanel({
                 disabled={saving}
                 onClick={() => setEditing(null)}
               >
-                Cancel
+                <T>Cancel</T>
               </Button>
             </form>
           ) : (
@@ -692,7 +717,7 @@ export function IssueDetailPanel({
               </h2>
               {canEdit ? (
                 <PullRequestEditButton
-                  aria-label="Edit title"
+                  aria-label={gt("Edit title")}
                   onClick={() => {
                     setTitleDraft(detail.title);
                     setEditing("title");
@@ -704,18 +729,32 @@ export function IssueDetailPanel({
 
           <PullRequestMetaLine className="mt-2 min-h-5 text-xs text-muted-foreground">
             <PullRequestActorLabel actor={detail.author} />
-            <span>opened {formatRelativeTimeLabel(detail.createdAt)}</span>
+            <span>
+              <T>
+                opened <Var>{formatRelativeTimeLabel(detail.createdAt, undefined, messages)}</Var>
+              </T>
+            </span>
             {detail.closedAt ? (
-              <span>closed {formatRelativeTimeLabel(detail.closedAt)}</span>
+              <span>
+                <T>
+                  closed <Var>{formatRelativeTimeLabel(detail.closedAt, undefined, messages)}</Var>
+                </T>
+              </span>
             ) : null}
-            {detail.writable ? null : <span>Read-only</span>}
+            {detail.writable ? null : (
+              <span>
+                <T>Read-only</T>
+              </span>
+            )}
           </PullRequestMetaLine>
 
           <div className="mt-4 space-y-2">
-            <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label="Labels">
+            <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label={gt("Labels")}>
               <span className="flex min-w-0 flex-wrap items-center gap-1">
                 {detail.labels.length === 0 ? (
-                  <span className="text-muted-foreground">None</span>
+                  <span className="text-muted-foreground">
+                    <T context="no labels">None</T>
+                  </span>
                 ) : (
                   detail.labels.map((label) => (
                     <PullRequestLabelChip
@@ -733,16 +772,18 @@ export function IssueDetailPanel({
                     detail={detail}
                     allowed={canLabel}
                     disabledReason={
-                      blocked ?? "Changing labels needs triage access on this tracker."
+                      blocked ?? gt("Changing labels needs triage access on this tracker.")
                     }
                   />
                 ) : null}
               </span>
             </PullRequestMetaRow>
-            <PullRequestMetaRow icon={<UsersIcon className="size-3.5" />} label="Assignees">
+            <PullRequestMetaRow icon={<UsersIcon className="size-3.5" />} label={gt("Assignees")}>
               <span className="flex min-w-0 flex-wrap items-center gap-1.5">
                 {detail.assignees.length === 0 ? (
-                  <span className="text-muted-foreground">None</span>
+                  <span className="text-muted-foreground">
+                    <T context="no assignees">None</T>
+                  </span>
                 ) : (
                   detail.assignees.map((actor) => (
                     <PullRequestActorLabel key={actor.login} actor={actor} />
@@ -755,7 +796,7 @@ export function IssueDetailPanel({
                     detail={detail}
                     allowed={canAssign}
                     disabledReason={
-                      blocked ?? "Changing assignees needs triage access on this tracker."
+                      blocked ?? gt("Changing assignees needs triage access on this tracker.")
                     }
                   />
                 ) : null}
@@ -766,12 +807,12 @@ export function IssueDetailPanel({
 
         <PullRequestSection
           key={`description:${detail.url}`}
-          title="Description"
+          title={gt("Description")}
           keepMounted
           actions={
             canEdit && editing !== "body" ? (
               <PullRequestEditButton
-                aria-label="Edit description"
+                aria-label={gt("Edit description")}
                 onClick={() => setEditing("body")}
               />
             ) : null
@@ -784,7 +825,7 @@ export function IssueDetailPanel({
                 cwd={cwd}
                 environmentId={environmentId}
                 threadRef={threadRef}
-                label="Description"
+                label={gt("Description")}
                 completionScope={null}
                 saving={saving}
                 allowEmpty
@@ -793,7 +834,9 @@ export function IssueDetailPanel({
               />
             ) : (
               <PullRequestMarkdown
-                text={detail.body.trim().length > 0 ? detail.body : "_No description provided._"}
+                text={
+                  detail.body.trim().length > 0 ? detail.body : gt("_No description provided._")
+                }
                 cwd={cwd}
                 environmentId={environmentId}
                 threadRef={threadRef}
@@ -811,7 +854,7 @@ export function IssueDetailPanel({
         </PullRequestSection>
 
         {detail.linkedPullRequests.length > 0 ? (
-          <PullRequestSection key={`linked:${detail.url}`} title="Linked pull requests">
+          <PullRequestSection key={`linked:${detail.url}`} title={gt("Linked pull requests")}>
             <div className="flex flex-col gap-1">
               {detail.linkedPullRequests.map((link) => (
                 <LinkedPullRequestRow
@@ -837,7 +880,11 @@ export function IssueDetailPanel({
 
         <PullRequestSection
           key={`activity:${detail.url}`}
-          title={detail.commentCount > 0 ? `Activity (${detail.commentCount})` : "Activity"}
+          title={
+            detail.commentCount > 0
+              ? gt("Activity ({count})", { count: detail.commentCount })
+              : gt("Activity")
+          }
         >
           <div className="flex flex-col gap-3">
             {nextCursor !== null ? (
@@ -845,14 +892,16 @@ export function IssueDetailPanel({
                 size="sm"
                 variant="outline"
                 className="self-start"
-                disabled={loadingOlder}
+                disabled={!canLoadOlder}
                 onClick={() => void loadOlder()}
               >
-                {loadingOlder ? "Loading…" : "Load older comments"}
+                {loadingOlder ? <T>Loading…</T> : <T>Load older comments</T>}
               </Button>
             ) : null}
             {timeline.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nothing has happened here yet.</p>
+              <p className="text-sm text-muted-foreground">
+                <T>Nothing has happened here yet.</T>
+              </p>
             ) : null}
             {timeline.map((item) =>
               item.kind === "comment" ? (
@@ -869,10 +918,12 @@ export function IssueDetailPanel({
                           <a href={item.comment.url} target="_blank" rel="noopener noreferrer" />
                         }
                       >
-                        {formatRelativeTimeLabel(item.comment.createdAt)}
+                        {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
                       </InlineButton>
                     ) : (
-                      <span>{formatRelativeTimeLabel(item.comment.createdAt)}</span>
+                      <span>
+                        {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
+                      </span>
                     )}
                   </PullRequestMetaLine>
                   <PullRequestCommentBody
@@ -897,8 +948,8 @@ export function IssueDetailPanel({
                   className="px-1 text-xs text-muted-foreground"
                 >
                   <PullRequestActorLabel actor={item.event.actor} />
-                  <span>{issueEventSentence(item.event)}</span>
-                  <span>{formatRelativeTimeLabel(item.event.createdAt)}</span>
+                  <span>{issueEventSentence(item.event, messages)}</span>
+                  <span>{formatRelativeTimeLabel(item.event.createdAt, undefined, messages)}</span>
                 </PullRequestMetaLine>
               ),
             )}
@@ -910,7 +961,7 @@ export function IssueDetailPanel({
         <IssueCommentComposer
           environmentId={environmentId}
           reference={reference}
-          blocked={canComment ? null : (blocked ?? "You cannot comment here.")}
+          blocked={canComment ? null : (blocked ?? gt("You cannot comment here."))}
         />
       ) : null}
     </div>

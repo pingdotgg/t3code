@@ -219,34 +219,50 @@ describe("AzureDevOpsIssueTracker", () => {
       const fs = yield* FileSystem.FileSystem;
       const bodies: string[] = [];
       const hydrated: string[] = [];
+      let typeReads = 0;
       const api = yield* AzureDevOpsIssueTracker.make.pipe(
         Effect.provide(
           Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
-            execute: ({ args }) =>
-              args[args.indexOf("--resource") + 1] === "wiql"
-                ? fs.readFileString(args[args.indexOf("--in-file") + 1]!).pipe(
-                    Effect.orDie,
-                    Effect.map((body) => {
-                      bodies.push(body);
-                      return TestSourceControlHost.processOutput(
-                        encode({ workItems: [{ id: 9 }, { id: 7 }, { id: 3 }] }),
-                      );
-                    }),
-                  )
-                : Effect.sync(() => {
-                    if (args[args.indexOf("--resource") + 1] !== "workitems") {
-                      return TestSourceControlHost.processOutput(answer(args));
-                    }
-                    hydrated.push(args.find((arg) => arg.startsWith("ids=")) ?? "");
-                    // The page as REST answers it: an envelope, in an order of its own.
-                    return TestSourceControlHost.processOutput(
-                      encode({ count: 2, value: [WORK_ITEM, { ...WORK_ITEM, id: 9 }] }),
-                    );
+            execute: ({ args }) => {
+              const resource = args[args.indexOf("--resource") + 1];
+              if (resource === "workitems") {
+                // `az devops invoke` resolves `wit/workitems` to the create route
+                // (`.../workitems/${type}`) and fails before sending anything.
+                return Effect.fail(
+                  new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+                    operation: "execute",
+                    command: "az",
+                    cwd: "/w",
+                    argumentCount: args.length,
+                    cause: "KeyError: 'type'",
                   }),
+                );
+              }
+              if (resource !== "wiql" && resource !== "workitemsbatch") {
+                if (resource === "workitemtypes") typeReads += 1;
+                return Effect.succeed(TestSourceControlHost.processOutput(answer(args)));
+              }
+              return fs.readFileString(args[args.indexOf("--in-file") + 1]!).pipe(
+                Effect.orDie,
+                Effect.map((body) => {
+                  if (resource === "wiql") {
+                    bodies.push(body);
+                    return TestSourceControlHost.processOutput(
+                      encode({ workItems: [{ id: 9 }, { id: 7 }, { id: 3 }] }),
+                    );
+                  }
+                  hydrated.push((JSON.parse(body) as { ids: number[] }).ids.join(","));
+                  // The page as REST answers it: an envelope, in an order of its own.
+                  return TestSourceControlHost.processOutput(
+                    encode({ count: 2, value: [WORK_ITEM, { ...WORK_ITEM, id: 9 }] }),
+                  );
+                }),
+              );
+            },
           }),
         ),
       );
-      const page = yield* api.listIssues({
+      const list = api.listIssues({
         cwd: "/w",
         host: "dev.azure.com",
         scope: "acme/Web App",
@@ -259,11 +275,16 @@ describe("AzureDevOpsIssueTracker", () => {
         limit: 2,
         cursor: "2026-07-01T00:00:00Z|7",
       });
+      const page = yield* list;
+      yield* list;
       // The rows come back in WIQL's order, and the cursor is the last one of the page.
-      expect(hydrated).toEqual(["ids=9,7"]);
+      expect(hydrated).toEqual(["9,7", "9,7"]);
       expect(page.items.map((item) => item.key)).toEqual(["9", "7"]);
       expect(page.nextCursor).toBe("2026-07-01T00:00:00Z|7");
-      expect(bodies).toHaveLength(1);
+      // Each `az` call costs seconds, so a second list reuses the project's states.
+      expect(typeReads).toBe(1);
+      expect(bodies).toHaveLength(2);
+      expect(bodies[1]).toBe(bodies[0]);
       expect(bodies[0]).toContain("AND [System.State] NOT IN ('shipped')");
       const { query } = JSON.parse(bodies[0]!) as { query: string };
       // Mentions cannot be asked for over REST, so the filter sends no clause for them.
@@ -274,6 +295,15 @@ describe("AzureDevOpsIssueTracker", () => {
           " ORDER BY [System.CreatedDate] DESC, [System.Id] DESC",
       );
     }).pipe(Effect.provide(NodeFileSystem.layer)),
+  );
+
+  it.effect("names the viewer without a request that a sign-in could refuse", () =>
+    Effect.gen(function* () {
+      const api = yield* tracker((args) => {
+        throw new Error(`unexpected az invocation ${args.join(" ")}`);
+      });
+      expect(yield* api.getViewer({ cwd: "/w", host: "dev.azure.com" })).toBe("@Me");
+    }),
   );
 
   it.effect("refuses a scope that is not organization/project without a request", () =>
