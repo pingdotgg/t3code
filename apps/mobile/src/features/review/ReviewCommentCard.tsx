@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react-native";
 import { memo, useMemo, useState } from "react";
 import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
 import { ScrollView, StyleSheet, Text as NativeText, View, type ColorValue } from "react-native";
@@ -50,6 +51,7 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
   readonly colors: ReviewCommentColors;
 }) {
   const { codeSurface, nativeReviewDiffStyle } = useAppearanceCodeSurface();
+  const messages = useMessages();
   const markdownStyles = useMarkdownPreviewStyles();
   const { themeAppearance: appearanceScheme, themeId } = useAppearancePreferences();
   const appTheme = useUniwindTheme();
@@ -57,8 +59,8 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
   const NativeReviewDiffView = useScreenReaderEnabled() ? null : nativeReviewDiffView;
   const patch = useMemo(() => buildReviewCommentPatch(props.comment), [props.comment]);
   const parsedDiff = useMemo(
-    () => buildReviewParsedDiff(patch, `thread-review-comment:${props.comment.id}`),
-    [patch, props.comment.id],
+    () => buildReviewParsedDiff(patch, `thread-review-comment:${props.comment.id}`, messages),
+    [patch, props.comment.id, messages],
   );
   const nativeReviewDiffData = useMemo(() => buildNativeReviewDiffData(parsedDiff), [parsedDiff]);
   const compactNativeRows = useMemo(() => {

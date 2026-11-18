@@ -39,7 +39,7 @@ import * as ProviderLatestVersions from "./ProviderLatestVersions.ts";
 const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const PROBE_TIMEOUT_MS = 10_000;
 const PROBE_MAX_BYTES = 256 * 1_024;
-const MISE_WRAPPER_MAX_BYTES = 16 * 1_024;
+const WRAPPER_SCRIPT_MAX_BYTES = 16 * 1_024;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
 const MAINTENANCE_CAPABILITIES_CACHE_TTL = Duration.hours(1);
@@ -1067,20 +1067,21 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
   },
 );
 
-const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
-  context: ProviderMaintenanceResolutionContext,
-) {
+/** The command's text when it is small enough to be a wrapper script, else "". */
+const readWrapperScript = Effect.fn("readWrapperScript")(function* (commandPath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const size = yield* fileSystem.stat(context.realCommandPath).pipe(
+  const size = yield* fileSystem.stat(commandPath).pipe(
     Effect.map((info) => Number(info.size)),
     Effect.orElseSucceed(() => Infinity),
   );
-  if (size > MISE_WRAPPER_MAX_BYTES) {
-    return false;
-  }
-  const script = yield* fileSystem
-    .readFileString(context.realCommandPath)
-    .pipe(Effect.orElseSucceed(() => ""));
+  if (size > WRAPPER_SCRIPT_MAX_BYTES) return "";
+  return yield* fileSystem.readFileString(commandPath).pipe(Effect.orElseSucceed(() => ""));
+});
+
+const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
+  context: ProviderMaintenanceResolutionContext,
+) {
+  const script = yield* readWrapperScript(context.realCommandPath);
   return script.startsWith("#!") && /\bmise\s+(?:x|exec)\b/.test(script);
 });
 
@@ -1108,22 +1109,29 @@ const resolveMacPortsOwner = Effect.fn("resolveMacPortsOwner")(function* (
   return /^[\w.+-]+$/.test(name) ? name : "";
 });
 
-// Volta bin links only identify its shim; the package image proves ownership.
+// Volta bin entries only identify its shim; the package image proves ownership.
+// POSIX links point at `volta-shim`; Windows Volta 2 writes `volta run %~n0 %*` scripts.
 const isVoltaPackageInstall = Effect.fn("isVoltaPackageInstall")(function* (
   context: ProviderMaintenanceResolutionContext,
   packageName: string,
 ) {
   const path = yield* Path.Path;
-  if (
-    path.basename(normalizeCommandPath(context.realCommandPath)).replace(/\.exe$/, "") !==
-    "volta-shim"
-  ) {
-    return false;
-  }
+  const fileSystem = yield* FileSystem.FileSystem;
   const voltaHome = path.dirname(path.dirname(context.resolvedCommandPath));
   const packageDir = path.join(voltaHome, "tools", "image", "packages", ...packageName.split("/"));
-  const fileSystem = yield* FileSystem.FileSystem;
-  return yield* fileSystem.exists(packageDir).pipe(Effect.orElseSucceed(() => false));
+  if (!(yield* fileSystem.exists(packageDir).pipe(Effect.orElseSucceed(() => false)))) {
+    return false;
+  }
+  if (/^volta-shim(?:\.exe)?$/.test(path.basename(normalizeCommandPath(context.realCommandPath)))) {
+    return true;
+  }
+  const script = (yield* readWrapperScript(context.realCommandPath))
+    .replace(/\r\n/g, "\n")
+    .replace(/\n$/, "");
+  return (
+    script === "@echo off\nvolta run %~n0 %*" ||
+    script === '#!/bin/bash\nvolta run "$(basename $0)" "$@"'
+  );
 });
 
 const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (

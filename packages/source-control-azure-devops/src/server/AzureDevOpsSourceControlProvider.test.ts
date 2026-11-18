@@ -53,15 +53,15 @@ it.effect("names the remote's repository when reading the default branch", () =>
   );
   return Effect.gen(function* () {
     const provider = yield* AzureDevOpsSourceControlProvider.make;
-    for (const [remoteUrl, repository] of [
-      ["https://acme@dev.azure.com/acme/project/_git/My%20Repo", "My Repo"],
-      ["https://dev.azure.com/acme/project/_git/My%20Repo?view=x#readme", "My Repo"],
-      ["https://acme.visualstudio.com/DefaultCollection/project/_git/My%20Repo/", "My Repo"],
-      ["git@ssh.dev.azure.com:v3/acme/project/My%20Repo", "My Repo"],
-      ["ssh://git@ssh.dev.azure.com/v3/acme/project/My%20Repo", "My Repo"],
-      ["https://dev.azure.com/acme/project/_git/service.git", "service.git"],
-      ["https://dev.azure.com/acme/project/_git/-repo", "-repo"],
-      ["https://dev.azure.com/acme/project/_git/%40.env", null],
+    for (const [remoteUrl, repository, scoped] of [
+      ["https://acme@dev.azure.com/acme/project/_git/My%20Repo", "My Repo", true],
+      ["https://dev.azure.com/acme/project/_git/My%20Repo?view=x#readme", "My Repo", false],
+      ["https://acme.visualstudio.com/DefaultCollection/project/_git/My%20Repo/", "My Repo", false],
+      ["git@ssh.dev.azure.com:v3/acme/project/My%20Repo", "My Repo", true],
+      ["ssh://git@ssh.dev.azure.com/v3/acme/project/My%20Repo", "My Repo", true],
+      ["https://dev.azure.com/acme/project/_git/service.git", "service.git", true],
+      ["https://dev.azure.com/acme/project/_git/-repo", "-repo", true],
+      ["https://dev.azure.com/acme/project/_git/%40.env", null, false],
     ] as const) {
       run.mockClear();
       const branch = yield* provider.getDefaultBranch({
@@ -82,11 +82,10 @@ it.effect("names the remote's repository when reading the default branch", () =>
         continue;
       }
       assert.strictEqual(branch, "master", remoteUrl);
-      assert.include(
-        [...(run.mock.calls[0]?.[0].args ?? [])],
-        `--repository=${repository}`,
-        remoteUrl,
-      );
+      const args = [...(run.mock.calls.find(([input]) => input.command !== "git")?.[0].args ?? [])];
+      assert.include(args, `--repository=${repository}`, remoteUrl);
+      // The selected remote names the project, not the checkout's primary remote.
+      if (scoped) assert.include(args, "--project=project", remoteUrl);
     }
   }).pipe(Effect.provide(AzureDevOpsCli.layer.pipe(Layer.provideMerge(support))));
 });
