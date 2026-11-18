@@ -481,7 +481,7 @@ interface CursorBackgroundShell {
 }
 
 // The SDK kills an agent's background shells when its run ends and reports their exit to no one.
-// patches/@cursor__sdk@1.3.1.patch offers each new one to this hook; true keeps it past the run.
+// The @cursor/sdk patch offers each new one to this hook; true keeps it past the run.
 const BACKGROUND_SHELL_HOOK = Symbol.for("@cursor/sdk.backgroundShell");
 const backgroundShellListeners = new Map<string, (event: CursorBackgroundShellEvent) => void>();
 
