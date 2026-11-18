@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { PullRequestMarkdown } from "../PullRequestMarkdown";
 import type { PullRequestReviewGuide } from "@t3tools/contracts";
 import { reviewGuideStopProgress } from "@t3tools/client-runtime/review-guide-tour";
@@ -30,6 +31,7 @@ export function GuideOutline({
     | ((paths: ReadonlyArray<string>, viewed: boolean) => void)
     | undefined;
 }) {
+  const gt = useGT();
   const reviewedChapters = guide.stops.filter(
     (stop) => reviewGuideStopProgress(stop, isViewed).reviewed,
   ).length;
@@ -37,19 +39,22 @@ export function GuideOutline({
     <View>
       <View className="mb-2 flex-row items-center justify-between">
         <Text className="text-xs text-foreground-muted">
-          {reviewedChapters} of {guide.stops.length} chapters reviewed
+          {gt("{reviewed} of {total} chapters reviewed", {
+            reviewed: reviewedChapters,
+            total: guide.stops.length,
+          })}
         </Text>
         <View className="flex-row items-center">
           <GuideViewOptionsButton />
           {onRewrite ? (
             <Menu
-              title="Guide actions"
-              actions={[{ id: "rewrite", title: "Rewrite guide", image: "arrow.clockwise" }]}
+              title={gt("Guide actions")}
+              actions={[{ id: "rewrite", title: gt("Rewrite guide"), image: "arrow.clockwise" }]}
               onPressAction={() => onRewrite()}
             >
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Guide actions"
+                accessibilityLabel={gt("Guide actions")}
                 className="h-11 w-11 items-center justify-center rounded-lg active:bg-grouped-card"
               >
                 <SymbolView name="ellipsis" size={20} tintColorClassName="accent-icon-muted" />
@@ -82,7 +87,10 @@ export function GuideOutline({
           >
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Chapter ${position + 1}: ${stop.title}`}
+              accessibilityLabel={gt("Chapter {position}: {title}", {
+                position: position + 1,
+                title: stop.title,
+              })}
               onPress={() => onOpen(position)}
               className="min-h-11 flex-row items-start gap-2 active:opacity-60"
             >
@@ -121,7 +129,7 @@ export function GuideOutline({
                   </View>
                 </View>
                 {stop.attention ? (
-                  <Text className="text-xs text-warning-foreground">Look closely</Text>
+                  <Text className="text-xs text-warning-foreground">{gt("Look closely")}</Text>
                 ) : null}
                 {stop.summary ? (
                   <Text numberOfLines={3} className="mt-1 text-sm leading-5 text-foreground-muted">
@@ -134,7 +142,11 @@ export function GuideOutline({
               <Pressable
                 accessibilityRole="checkbox"
                 accessibilityState={{ checked: progress.reviewed, disabled: !onSetChapterViewed }}
-                accessibilityLabel={`Mark chapter ${position + 1} ${progress.reviewed ? "unreviewed" : "reviewed"}`}
+                accessibilityLabel={
+                  progress.reviewed
+                    ? gt("Mark chapter {position} unreviewed", { position: position + 1 })
+                    : gt("Mark chapter {position} reviewed", { position: position + 1 })
+                }
                 disabled={!onSetChapterViewed}
                 className="min-h-11 flex-row items-center gap-2"
                 onPress={() => onSetChapterViewed?.(progress.paths, !progress.reviewed)}
@@ -149,11 +161,14 @@ export function GuideOutline({
                   />
                 </View>
                 <Text className="text-xs text-foreground-muted">
-                  {progress.reviewedCount} of {progress.paths.length} files reviewed
+                  {gt("{reviewed} of {total} files reviewed", {
+                    reviewed: progress.reviewedCount,
+                    total: progress.paths.length,
+                  })}
                 </Text>
               </Pressable>
             ) : (
-              <Text className="py-2 text-xs text-foreground-muted">Context, no code</Text>
+              <Text className="py-2 text-xs text-foreground-muted">{gt("Context, no code")}</Text>
             )}
             <GuideFiles
               paths={progress.paths}

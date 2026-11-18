@@ -1,3 +1,4 @@
+import { T } from "gt-react-native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useEffect, useEffectEvent, useRef } from "react";
@@ -75,7 +76,9 @@ export function PullRequestGuideContent({
   return (
     <Animated.View layout={PR_ROW_LAYOUT} className="w-full max-w-[760px] self-center">
       {!state.enabled ? (
-        <Text>Review guides are disabled for this server.</Text>
+        <Text>
+          <T>Review guides are disabled for this server.</T>
+        </Text>
       ) : (
         <>
           {guide ? (

@@ -1,10 +1,14 @@
+import { m as resolveMessage } from "../../i18n/messages";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AsyncResult } from "effect/reactivity";
 import { PullRequestCommentForm } from "./PullRequestCommentForm";
 import { useAtomRefresh } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { PullRequestReviewVerdict } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { useFocusEffect } from "@react-navigation/native";
 import { Alert, Pressable, View } from "react-native";
@@ -31,6 +35,7 @@ import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff"
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 
 function useActionSubmission(params: PullRequestParams) {
+  const gt = useGT();
   const navigation = useNavigation();
   const target = pullRequestTarget(params);
   const refreshDetail = useAtomRefresh(
@@ -57,8 +62,8 @@ function useActionSubmission(params: PullRequestParams) {
       const cause = squashAtomCommandFailure(result);
       setError(
         cause instanceof Error
-          ? cause.message
-          : "The provider could not complete this action. Try again.",
+          ? (errorDisplayMessage(cause, resolveMessage) ?? cause.message)
+          : gt("The provider could not complete this action. Try again."),
       );
     }
   };
@@ -66,11 +71,11 @@ function useActionSubmission(params: PullRequestParams) {
 }
 
 const VERDICTS = [
-  { value: "comment", title: "Comment" },
-  { value: "approve", title: "Approve" },
+  { value: "comment", title: msg("Comment", { $context: "review verdict" }) },
+  { value: "approve", title: msg("Approve", { $context: "review verdict" }) },
   {
     value: "request-changes",
-    title: "Request changes",
+    title: msg("Request changes"),
   },
 ] as const;
 
@@ -78,6 +83,8 @@ export function PullRequestReviewSheet({
   route,
 }: StaticScreenProps<PullRequestParams & { readonly mode: "review" | "comment" }>) {
   const params = route.params;
+  const gt = useGT();
+  const m = useMessages();
   const target = pullRequestTarget(params);
   const result = useEnvironmentQuery(
     composerPullRequests.detail({ ...target, input: { ...target.input, allowStale: false } }),
@@ -129,15 +136,17 @@ export function PullRequestReviewSheet({
       if (pendingLocalSave) {
         if (!store.isReady() || !(await store.flush()))
           throw new Error(
-            "The review was submitted, but this device could not save the cleared draft. Retry saving without submitting again.",
+            gt(
+              "The review was submitted, but this device could not save the cleared draft. Retry saving without submitting again.",
+            ),
           );
         setPendingLocalSave(false);
         return;
       }
       if (!canSubmit || !store.isReady())
-        throw new Error("Add your feedback and check your permissions before submitting.");
+        throw new Error(gt("Add your feedback and check your permissions before submitting."));
       if (!setReviewDraftBusy(store.scope, true))
-        throw new Error("Wait for the pending comment to finish saving.");
+        throw new Error(gt("Wait for the pending comment to finish saving."));
       return await (async () => {
         const submitted = store.draft;
         const submittedComments = store.comments;
@@ -175,7 +184,9 @@ export function PullRequestReviewSheet({
         if (!(await store.flush())) {
           setPendingLocalSave(true);
           throw new Error(
-            "The review was submitted, but this device could not save the cleared draft. Retry saving without submitting again.",
+            gt(
+              "The review was submitted, but this device could not save the cleared draft. Retry saving without submitting again.",
+            ),
           );
         }
       })().finally(async () => {
@@ -185,10 +196,10 @@ export function PullRequestReviewSheet({
   const verdictMenu =
     reviewing && offered.length > 1 ? (
       <Menu
-        title="Review verdict"
+        title={gt("Review verdict")}
         actions={offered.map((option) => ({
           id: option.value,
-          title: option.title,
+          title: m(option.title),
           state: option.value === verdict?.value ? ("on" as const) : ("off" as const),
         }))}
         onPressAction={({ nativeEvent }) => {
@@ -198,19 +209,27 @@ export function PullRequestReviewSheet({
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Review verdict: ${verdict?.title ?? "Comment"}`}
+          accessibilityLabel={gt("Review verdict: {verdict}", {
+            verdict: verdict ? m(verdict.title) : gt("Comment", { $context: "review verdict" }),
+          })}
           disabled={submission.busy}
           className="h-11 flex-row items-center gap-1.5 rounded-full border border-border-subtle px-3.5 active:opacity-70"
         >
-          <Text className="text-xs font-t3-bold">{verdict?.title ?? "Comment"}</Text>
+          <Text className="text-xs font-t3-bold">
+            {verdict ? m(verdict.title) : gt("Comment", { $context: "review verdict" })}
+          </Text>
           <SymbolView name="chevron.down" size={11} tintColorClassName="accent-icon-muted" />
         </Pressable>
       </Menu>
     ) : null;
   return (
     <SheetContent
-      title={reviewing ? "Submit review" : "Add comment"}
-      subtitle={`#${params.number}${reviewing && result.data?.headSha ? ` · reviewing ${result.data.headSha.slice(0, 7)}` : ` · ${params.repository}`}`}
+      title={reviewing ? gt("Submit review") : gt("Add comment")}
+      subtitle={`#${params.number} · ${
+        reviewing && result.data?.headSha
+          ? gt("reviewing {sha}", { sha: result.data.headSha.slice(0, 7) })
+          : params.repository
+      }`}
       busy={submission.busy || uploading}
       compact
       footer={
@@ -219,7 +238,7 @@ export function PullRequestReviewSheet({
           <View className="flex-1" />
           <Button
             tone="text"
-            label="Cancel"
+            label={gt("Cancel")}
             disabled={submission.busy}
             onPress={() => navigation.goBack()}
           />
@@ -227,14 +246,14 @@ export function PullRequestReviewSheet({
             tone={reviewing ? "primary" : "secondary"}
             label={
               pendingLocalSave
-                ? "Retry saving"
+                ? gt("Retry saving")
                 : submission.busy
                   ? reviewing
-                    ? "Submitting…"
-                    : "Posting…"
+                    ? gt("Submitting…")
+                    : gt("Posting…")
                   : reviewing
-                    ? "Submit review"
-                    : "Comment"
+                    ? gt("Submit review")
+                    : gt("Comment")
             }
             loading={submission.busy}
             disabled={
@@ -251,27 +270,31 @@ export function PullRequestReviewSheet({
       {store.legacyDraftAvailable ? (
         <View className="gap-2 rounded-2xl bg-grouped-card p-4">
           <Text className="text-sm text-foreground-muted">
-            Earlier drafts on this device have no account information. Restore them only if you
-            wrote them for {store.scope.viewer}.
+            {gt(
+              "Earlier drafts on this device have no account information. Restore them only if you wrote them for {viewer}.",
+              { viewer: store.scope.viewer ?? "" },
+            )}
           </Text>
           <Button
             tone="text"
-            label="Restore my earlier drafts"
+            label={gt("Restore my earlier drafts")}
             disabled={submission.busy || store.busy}
             onPress={() =>
               Alert.alert(
-                `Restore drafts for ${store.scope.viewer}?`,
-                "Only continue if you wrote these earlier drafts for this account. They will become available to this account on this device.",
+                gt("Restore drafts for {viewer}?", { viewer: store.scope.viewer ?? "" }),
+                gt(
+                  "Only continue if you wrote these earlier drafts for this account. They will become available to this account on this device.",
+                ),
                 [
-                  { text: "Cancel", style: "cancel" },
+                  { text: gt("Cancel"), style: "cancel" },
                   {
-                    text: "I wrote these drafts",
+                    text: gt("I wrote these drafts"),
                     onPress: () => {
                       void store.recoverLegacyDraft().then((saved) => {
                         if (!saved)
                           Alert.alert(
-                            "Could not restore the drafts",
-                            "The earlier drafts are kept on this device. Try again.",
+                            gt("Could not restore the drafts"),
+                            gt("The earlier drafts are kept on this device. Try again."),
                           );
                       });
                     },
@@ -286,24 +309,24 @@ export function PullRequestReviewSheet({
         <View className="gap-2">
           <Text className="text-sm text-danger-foreground">{store.activityError}</Text>
           <Button
-            label="Retry loading pending review"
+            label={gt("Retry loading pending review")}
             tone="text"
             onPress={store.refreshActivity}
           />
         </View>
       ) : null}
       <Text className="px-4 text-xs text-foreground-muted">
-        {reviewing ? "Summary" : "Comment"}
+        {reviewing ? gt("Summary") : gt("Comment", { $context: "noun, field label" })}
       </Text>
       <PullRequestCommentForm
         params={params}
-        label={reviewing ? "Review summary" : "Comment"}
+        label={reviewing ? gt("Review summary") : gt("Comment", { $context: "noun, field label" })}
         placeholder={
           reviewing
             ? summaryRequired
-              ? "Summary required to request changes…"
-              : "Summarize your review…"
-            : "Leave a comment"
+              ? gt("Summary required to request changes…")
+              : gt("Summarize your review…")
+            : gt("Leave a comment")
         }
         editable={store.ready && !submission.busy && !store.busy}
         value={body}
@@ -315,8 +338,10 @@ export function PullRequestReviewSheet({
       {reviewing && store.comments.length ? (
         <View className="gap-2">
           <Text className="text-xs text-foreground-muted">
-            {store.comments.length} pending line{" "}
-            {store.comments.length === 1 ? "comment" : "comments"} will post with this review
+            {gt(
+              "{count, plural, one {{count} pending line comment will post with this review} other {{count} pending line comments will post with this review}}",
+              { count: store.comments.length },
+            )}
           </Text>
           {store.comments.map((draft) => (
             <View key={draft.id} className="gap-1 rounded-[20px] bg-grouped-card p-4">
@@ -350,15 +375,15 @@ export function PullRequestReviewSheet({
                 className="gap-1"
               >
                 <Text className="font-mono text-xs text-foreground-muted">
-                  {draft.path} · {reviewPositionLabel(draft.position, draft.startPosition)}
+                  {draft.path} · {reviewPositionLabel(draft.position, draft.startPosition, m)}
                 </Text>
                 <Text numberOfLines={3} className="text-sm">
                   {draft.body}
                 </Text>
                 <Text className="text-2xs text-foreground-muted">
                   {draft.headSha !== result.data?.headSha
-                    ? "Branch changed · Tap to choose a new line"
-                    : "Tap to edit"}
+                    ? gt("Branch changed · Tap to choose a new line")
+                    : gt("Tap to edit")}
                 </Text>
               </Pressable>
             </View>
@@ -367,14 +392,21 @@ export function PullRequestReviewSheet({
       ) : null}
       {reviewing && stale ? (
         <Text className="text-sm text-danger-foreground">
-          The branch changed since you wrote a comment. Choose its current line before submitting.
+          <T>
+            The branch changed since you wrote a comment. Choose its current line before submitting.
+          </T>
         </Text>
       ) : null}
       {reviewing && !canSubmitComments ? (
         <Text className="text-sm text-danger-foreground">
-          You can no longer submit line comments on this{" "}
-          {sourceControlClients.get(result.data?.provider).changeRequest.singular}. Your drafts are
-          kept here.
+          {gt(
+            "You can no longer submit line comments on this {term, select, mr {merge request} cr {change request} other {pull request}}. Your drafts are kept here.",
+            {
+              term: changeRequestTermKind(
+                sourceControlClients.get(result.data?.provider).changeRequest,
+              ),
+            },
+          )}
         </Text>
       ) : null}
       {submission.error || result.error || store.error ? (

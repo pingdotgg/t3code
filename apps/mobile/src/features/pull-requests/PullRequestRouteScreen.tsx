@@ -16,6 +16,7 @@ import {
   resolvePullRequestAnchorRange,
   resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
+import { T, useGT, useMessages, Var } from "gt-react-native";
 import { pullRequestFileChapters } from "./pullRequestFileChapters";
 import { Chip } from "../../components/ui/Chip";
 import { Toolbar } from "../../components/ui/Toolbar";
@@ -32,7 +33,7 @@ import { PullRequestCommentsSheet } from "./PullRequestCommentsSheet";
 import { PullRequestCommitPicker } from "./PullRequestCommitPicker";
 import { ReviewChapterNavigation } from "../review/ReviewChapterNavigation";
 import { reviewFileGroup, type ReviewFileGroup } from "@t3tools/shared/reviewFileClassification";
-import { reviewCommentRange, reviewPositionLabel } from "@t3tools/client-runtime/review-selection";
+import { reviewCommentRange } from "@t3tools/client-runtime/review-selection";
 import {
   orderReviewFiles,
   isReviewFileVisible,
@@ -72,7 +73,11 @@ import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
 import { usePullRequestDescription } from "./usePullRequestDescription";
 import { usePullRequestAction } from "./usePullRequestAction";
-import { annotatePullRequestDiff, reviewPosition } from "./pullRequestDiffComments";
+import {
+  annotatePullRequestDiff,
+  reviewPosition,
+  reviewPositionLabel,
+} from "./pullRequestDiffComments";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import {
   handlePullRequestDiffDebugEvent,
@@ -167,25 +172,30 @@ import { PullRequestStackCard } from "./PullRequestStackCard";
 import { usePullRequestStack, type PullRequestStackState } from "./usePullRequestStack";
 import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFallback";
 import { pullRequestFileJumpScope, subscribePullRequestFileJump } from "./pullRequestFileJump";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();
+  const messages = useMessages();
   const result = useEnvironmentQuery(composerPullRequests.activity(requestTarget(params)));
   const filtered = result.data ? filterPullRequestActivity(result.data, filter) : null;
   const rows = (() => {
     if (!filtered) return [];
-    const rows = pullRequestTimelineRows(filtered.activity, params, navigation, filter.newestFirst);
+    const rows = pullRequestTimelineRows(
+      filtered.activity,
+      params,
+      navigation,
+      filter.newestFirst,
+      messages,
+    );
     if (!rows.length)
       rows.push({
         key: "empty",
         date: "",
         content: (
           <Text className="py-6 text-sm text-foreground-muted">
-            No activity matches these filters.
+            <T>No activity matches these filters.</T>
           </Text>
         ),
       });
@@ -231,7 +241,9 @@ function PullRequestIdentity(props: {
   readonly params: PullRequestParams;
 }) {
   const { pr } = props;
-  const status = pullRequestStatus({ state: pr.state, isDraft: pr.isDraft === true });
+  const gt = useGT();
+  const messages = useMessages();
+  const status = pullRequestStatus({ state: pr.state, isDraft: pr.isDraft === true }, messages);
   return (
     <View className="gap-3">
       <View className="flex-row flex-wrap items-center gap-2">
@@ -246,7 +258,9 @@ function PullRequestIdentity(props: {
         <PullRequestDiffStats additions={pr.additions ?? 0} deletions={pr.deletions ?? 0} compact />
         {"changedFiles" in pr && pr.changedFiles !== undefined ? (
           <Text className="text-2xs text-foreground-muted">
-            {pr.changedFiles} {pr.changedFiles === 1 ? "file" : "files"}
+            {gt("{count, plural, one {{count} file} other {{count} files}}", {
+              count: pr.changedFiles,
+            })}
           </Text>
         ) : (
           <View className="h-3 w-12 rounded bg-subtle-strong" />
@@ -258,16 +272,22 @@ function PullRequestIdentity(props: {
       <View className="flex-row items-center gap-2">
         <PullRequestAvatar actor={pr.author ?? null} size={20} />
         <Text className="min-w-0 flex-1 text-xs font-t3-medium" numberOfLines={1}>
-          {pr.author?.login ?? "Unknown author"}
+          {pr.author?.login ?? gt("Unknown author")}
         </Text>
         <Text className="shrink text-right text-2xs text-foreground-muted" numberOfLines={1}>
-          Updated <RelativeTime timestamp={pr.updatedAt} /> ago
+          <T>
+            Updated{" "}
+            <Var>
+              <RelativeTime timestamp={pr.updatedAt} />
+            </Var>{" "}
+            ago
+          </T>
         </Text>
       </View>
       <View className="flex-row items-start gap-1.5">
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Copy base branch ${pr.baseBranch}`}
+          accessibilityLabel={gt("Copy base branch {branch}", { branch: pr.baseBranch })}
           onPress={() => void Clipboard.setStringAsync(pr.baseBranch)}
           className="min-w-0 shrink active:opacity-70"
           hitSlop={8}
@@ -279,7 +299,7 @@ function PullRequestIdentity(props: {
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Copy head branch ${pr.headBranch}`}
+          accessibilityLabel={gt("Copy head branch {branch}", { branch: pr.headBranch })}
           onPress={() => void Clipboard.setStringAsync(pr.headBranch)}
           className="min-w-0 shrink active:opacity-70"
           hitSlop={8}
@@ -296,6 +316,7 @@ function PullRequestLabels(props: {
   readonly params: PullRequestParams;
 }) {
   const navigation = useNavigation();
+  const gt = useGT();
   const connected = usePullRequestConnected(props.params.environmentId);
   const canWrite = useAtomValue(
     composerPullRequests.setLabels.permissionAtom(requestTarget(props.params).environmentId),
@@ -328,10 +349,14 @@ function PullRequestLabels(props: {
       })}
       {editable ? (
         <Chip
-          label={props.pr.labels.length ? "Edit" : "Add labels"}
+          label={
+            props.pr.labels.length
+              ? gt("Edit", { $context: "verb, edit labels" })
+              : gt("Add labels")
+          }
           icon="tag"
           size="small"
-          accessibilityLabel="Edit labels"
+          accessibilityLabel={gt("Edit labels")}
           onPress={() => navigation.navigate("PullRequestLabels", props.params)}
         />
       ) : null}
@@ -396,6 +421,8 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
   const returnToList = useAndroidWorkspaceBack();
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
+  const gt = useGT();
+  const messages = useMessages();
   const insets = useSafeAreaInsets();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   const contentTopInset = useContentTopInset();
@@ -572,8 +599,11 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
     pr &&
     action.confirm(
       "delete-branch",
-      pullRequestActionLabel("delete-branch", terminology),
-      `Delete ${pr.headBranch} from ${pr.headRepositoryNameWithOwner ?? pr.repository}? Local branches and worktrees are not changed.`,
+      pullRequestActionLabel("delete-branch", terminology, messages),
+      gt("Delete {branch} from {repository}? Local branches and worktrees are not changed.", {
+        branch: pr.headBranch,
+        repository: pr.headRepositoryNameWithOwner ?? pr.repository,
+      }),
     );
   const stack = usePullRequestStack(params, pr);
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(requestTarget(params)));
@@ -613,16 +643,23 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
         <PullRequestComposerNotice bottomInset={toolbarHeight + 8} />
         <AppBar
           title={`#${params.number}`}
-          subtitle={connected ? params.repository : `${params.repository} · Offline`}
+          subtitle={
+            connected
+              ? params.repository
+              : gt("{repository} · Offline", { repository: params.repository })
+          }
           onBack={layout.usesSplitView ? undefined : returnToList}
           menus={[
             {
-              title: `${capitalizeTerm(terminology.singular)} actions`,
+              title: gt(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} actions",
+                { term: changeRequestTermKind(terminology) },
+              ),
               icon: "ellipsis",
               items: [
                 {
                   id: "comments",
-                  title: "Comments",
+                  title: gt("Comments"),
                   icon: "text.bubble",
                   onPress: () => setCommentsOpen(true),
                 },
@@ -630,7 +667,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                   ? [
                       {
                         id: "submit-review",
-                        title: "Submit review",
+                        title: gt("Submit review"),
                         icon: "text.bubble",
                         onPress: () =>
                           navigation.navigate("PullRequestReview", { ...params, mode: "review" }),
@@ -641,7 +678,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                   ? [
                       {
                         id: "add-comment",
-                        title: "Add comment",
+                        title: gt("Add comment"),
                         icon: "plus.bubble",
                         onPress: () =>
                           navigation.navigate("PullRequestReview", { ...params, mode: "comment" }),
@@ -652,17 +689,17 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                   ? [
                       {
                         id: "edit-title",
-                        title: "Edit title",
+                        title: gt("Edit title"),
                         icon: "pencil",
                         onPress: () =>
                           navigation.navigate("PullRequestEdit", { ...params, field: "title" }),
                       },
                       {
                         id: "edit-description",
-                        title: "Edit description",
+                        title: gt("Edit description"),
                         icon: "doc.text",
                         disabled: description.pending,
-                        subtitle: description.pending ? "Saving…" : undefined,
+                        subtitle: description.pending ? gt("Saving…") : undefined,
                         onPress: () =>
                           navigation.navigate("PullRequestEdit", { ...params, field: "body" }),
                       },
@@ -672,7 +709,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                   ? [
                       {
                         id: "maintainer-edits",
-                        title: "Allow edits from maintainers",
+                        title: gt("Allow edits from maintainers"),
                         icon: "pencil",
                         selected: maintainerEdits.value,
                         disabled: maintainerEdits.saving,
@@ -685,19 +722,19 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                   ? [
                       {
                         id: "open-on-provider",
-                        title: openOnProviderLabel(identity.provider),
+                        title: openOnProviderLabel(identity.provider, messages),
                         icon: "arrow.up.right",
                         onPress: () => void Linking.openURL(identity.url),
                       },
                       {
                         id: "copy-link",
-                        title: "Copy link",
+                        title: gt("Copy link"),
                         icon: "link",
                         onPress: () => copyPullRequestLink(identity),
                       },
                       {
                         id: "share",
-                        title: "Share…",
+                        title: gt("Share…"),
                         icon: "square.and.arrow.up",
                         onPress: () => sharePullRequestLink(identity),
                       },
@@ -707,7 +744,7 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                   ? [
                       {
                         id: "state",
-                        title: pullRequestActionLabel(stateAction, terminology),
+                        title: pullRequestActionLabel(stateAction, terminology, messages),
                         icon: PR_ACTION_ICONS[stateAction],
                         destructive: stateAction === "close",
                         onPress: runStateAction,
@@ -718,15 +755,15 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                   ? [
                       {
                         id: "delete-branch",
-                        title: pullRequestActionLabel("delete-branch", terminology),
+                        title: pullRequestActionLabel("delete-branch", terminology, messages),
                         icon: PR_ACTION_ICONS["delete-branch"],
                         destructive: true,
                         disabled: !action.available("delete-branch"),
                         subtitle: action.busy
-                          ? "Deleting…"
+                          ? gt("Deleting…")
                           : connected
                             ? pr.headBranch
-                            : "Reconnect to delete this branch.",
+                            : gt("Reconnect to delete this branch."),
                         onPress: confirmDeleteBranch,
                       },
                     ]
@@ -770,17 +807,17 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                         {Platform.OS !== "ios" || section === tab ? (
                           <Tabs
                             options={[
-                              { value: "overview", label: "Overview" },
+                              { value: "overview", label: gt("Overview") },
                               ...(guidesEnabled
                                 ? [
                                     {
                                       value: "guide" as const,
-                                      label: "Guide",
+                                      label: gt("Guide", { $context: "review guide tab" }),
                                     },
                                   ]
                                 : []),
-                              { value: "activity", label: "Activity" },
-                              { value: "diff", label: "Code" },
+                              { value: "activity", label: gt("Activity") },
+                              { value: "diff", label: gt("Code") },
                             ]}
                             selected={section}
                             onSelect={selectSection}
@@ -995,17 +1032,17 @@ function PullRequestRouteContent({ route }: StaticScreenProps<PullRequestParams>
                               {Platform.OS !== "ios" || section === tab ? (
                                 <Tabs
                                   options={[
-                                    { value: "overview", label: "Overview" },
+                                    { value: "overview", label: gt("Overview") },
                                     ...(guidesEnabled
                                       ? [
                                           {
                                             value: "guide" as const,
-                                            label: "Guide",
+                                            label: gt("Guide", { $context: "review guide tab" }),
                                           },
                                         ]
                                       : []),
-                                    { value: "activity", label: "Activity" },
-                                    { value: "diff", label: "Code" },
+                                    { value: "activity", label: gt("Activity") },
+                                    { value: "diff", label: gt("Code") },
                                   ]}
                                   selected={section}
                                   onSelect={selectSection}
@@ -1045,17 +1082,18 @@ type PullRequestFileRouteProps = StaticScreenProps<
 >;
 
 export function PullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
+  const gt = useGT();
   const navigation =
     useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList, "PullRequestFile">>();
   const ready = usePullRequestDiffEntry(navigation);
   if (ready)
     return <PullRequestFileRouteContent key={props.route.params.commit ?? "all"} {...props} />;
-  const title = props.route.params.commit ? "Commit changes" : "Changes";
+  const title = props.route.params.commit ? gt("Commit changes") : gt("Changes");
   return (
     <View className="flex-1 bg-screen">
       <AppBar title={title} onBack={() => navigation.goBack()} />
       <View className="flex-1 items-center justify-center">
-        <AppActivityIndicator accessibilityLabel="Loading changes" />
+        <AppActivityIndicator accessibilityLabel={gt("Loading changes")} />
       </View>
     </View>
   );
@@ -1085,6 +1123,8 @@ export function PullRequestDiffContent({
 }) {
   const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
+  const gt = useGT();
+  const messages = useMessages();
   const insets = useSafeAreaInsets();
   const contentTopInset = useContentTopInset();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
@@ -1275,6 +1315,7 @@ export function PullRequestDiffContent({
         staleDiff || commit ? [] : reviewDraft.threads,
         commit ? [] : reviewDraft.comments,
         diffHead.sha ?? undefined,
+        messages,
       ),
     [
       baseData,
@@ -1284,6 +1325,7 @@ export function PullRequestDiffContent({
       diffHead.sha,
       staleDiff,
       commit,
+      messages,
     ],
   );
   const viewedIds = data.files.filter((file) => viewed.isViewed(file.path)).map((file) => file.id);
@@ -1520,18 +1562,18 @@ export function PullRequestDiffContent({
     ? [
         {
           id: "comments-only",
-          title: "Files with unresolved comments",
+          title: gt("Files with unresolved comments"),
           state: commentsOnly ? ("on" as const) : ("off" as const),
         },
         {
           id: "hide-reviewed",
-          title: "Hide reviewed files",
+          title: gt("Hide reviewed files"),
           state: hideReviewed ? ("on" as const) : ("off" as const),
           attributes: { disabled: !viewed.supported },
         },
         {
           id: "group-files",
-          title: "Group by file type",
+          title: gt("Group by file type"),
           state: groupByType ? ("on" as const) : ("off" as const),
         },
       ]
@@ -1600,19 +1642,19 @@ export function PullRequestDiffContent({
   const displayOptions = [
     {
       id: "wrap",
-      label: "Wrap lines",
+      label: gt("Wrap lines"),
       checked: appearance.codeWordBreak,
       onChange: setCodeWordBreak,
     },
     {
       id: "whitespace",
-      label: "Hide whitespace changes",
+      label: gt("Hide whitespace changes"),
       checked: ignoreWhitespace,
       onChange: setIgnoreWhitespace,
     },
     {
       id: "tests",
-      label: "Hide test files",
+      label: gt("Hide test files"),
       checked: filter.hideTestFiles,
       onChange: () => toggleTestFiles(),
     },
@@ -1624,7 +1666,7 @@ export function PullRequestDiffContent({
       onChange: () => changeViewingOption(action.id),
     })),
   ];
-  const title = commit ? "Commit changes" : "Changes";
+  const title = commit ? gt("Commit changes") : gt("Changes");
   const seekingFile = !targetFile && result.nextCursor !== null;
   const loadingDiff = (result.isPending && !data.rows.length) || (seekingFile && !result.error);
   return (
@@ -1635,7 +1677,14 @@ export function PullRequestDiffContent({
           options={{
             title,
             headerTitle: title,
-            unstable_headerSubtitle: `${commit ? commit.slice(0, 7) : `#${params.number}`} · ${data.files.length} ${data.files.length === 1 ? "file" : "files"}${filter.hideTestFiles && filter.hiddenCount ? ` · ${filter.hiddenCount} ${filter.hiddenCount === 1 ? "test" : "tests"} hidden` : ""}`,
+            unstable_headerSubtitle: `${commit ? commit.slice(0, 7) : `#${params.number}`} · ${gt(
+              "{count, plural, one {{count} file} other {{count} files}}",
+              { count: data.files.length },
+            )}${
+              filter.hideTestFiles && filter.hiddenCount
+                ? ` · ${gt("{count, plural, one {{count} test hidden} other {{count} tests hidden}}", { count: filter.hiddenCount })}`
+                : ""
+            }`,
           }}
         />
       ) : null}
@@ -1646,18 +1695,20 @@ export function PullRequestDiffContent({
           trailing={
             <Menu
               actions={[
-                { id: "view-files", title: "View files", image: "folder" },
-                { id: "view-options", title: "View options", image: "slider.horizontal.3" },
+                { id: "view-files", title: gt("View files"), image: "folder" },
+                { id: "view-options", title: gt("View options"), image: "slider.horizontal.3" },
                 ...(permissions.verdicts.length
-                  ? [{ id: "submit-review", title: "Submit review", image: "text.bubble" }]
+                  ? [{ id: "submit-review", title: gt("Submit review"), image: "text.bubble" }]
                   : []),
                 ...(permissions.canComment
-                  ? [{ id: "comment-on-pr", title: "Add comment", image: "plus.bubble" }]
+                  ? [{ id: "comment-on-pr", title: gt("Add comment"), image: "plus.bubble" }]
                   : []),
                 ...(selectedRow && selectedFile
                   ? [
-                      ...(canCommentOnDiff ? [{ id: "comment", title: "Add review comment" }] : []),
-                      { id: "copy", title: "Copy line" },
+                      ...(canCommentOnDiff
+                        ? [{ id: "comment", title: gt("Add review comment") }]
+                        : []),
+                      { id: "copy", title: gt("Copy line") },
                     ]
                   : []),
               ]}
@@ -1677,7 +1728,7 @@ export function PullRequestDiffContent({
               }}
             >
               <View pointerEvents="none">
-                <IconButton icon="ellipsis" accessibilityLabel="Diff options" />
+                <IconButton icon="ellipsis" accessibilityLabel={gt("Diff options")} />
               </View>
             </Menu>
           }
@@ -1694,7 +1745,7 @@ export function PullRequestDiffContent({
             pr={detail.data}
             params={params}
             filePath={visibleFile?.path}
-            title="Diff options"
+            title={gt("Diff options")}
             onOpenComments={() => setCommentsOpen(true)}
             commentsInHorizontalBar={false}
             controls={[
@@ -1703,10 +1754,12 @@ export function PullRequestDiffContent({
                   key="commit-range"
                   label={
                     commit === null
-                      ? "All"
-                      : `${selectedCommits.length} ${selectedCommits.length === 1 ? "commit" : "commits"}`
+                      ? gt("All")
+                      : gt("{count, plural, one {{count} commit} other {{count} commits}}", {
+                          count: selectedCommits.length,
+                        })
                   }
-                  accessibilityLabel="Commit range"
+                  accessibilityLabel={gt("Commit range")}
                   icon="arrow.triangle.branch"
                   onPress={() => setCommitPickerOpen(true)}
                 />
@@ -1727,7 +1780,7 @@ export function PullRequestDiffContent({
                     icon="arrow.triangle.branch"
                     onPress={() => setCommitPickerOpen(true)}
                   >
-                    <Toolbar.Label>Commit range</Toolbar.Label>
+                    <Toolbar.Label>{gt("Commit range")}</Toolbar.Label>
                   </Toolbar.MenuAction>
                 ) : null}
                 {!isGuideChapter ? (
@@ -1740,7 +1793,7 @@ export function PullRequestDiffContent({
                     onPress={toggleAllFiles}
                   >
                     <Toolbar.Label>
-                      {allCollapsed ? "Expand all files" : "Collapse all files"}
+                      {allCollapsed ? gt("Expand all files") : gt("Collapse all files")}
                     </Toolbar.Label>
                   </Toolbar.MenuAction>
                 ) : null}
@@ -1748,10 +1801,10 @@ export function PullRequestDiffContent({
             }
           >
             <Toolbar.MenuAction icon="folder" onPress={() => setFilesOpen(true)}>
-              <Toolbar.Label>View files</Toolbar.Label>
+              <Toolbar.Label>{gt("View files")}</Toolbar.Label>
             </Toolbar.MenuAction>
             <Toolbar.MenuAction icon="slider.horizontal.3" onPress={() => setOptionsOpen(true)}>
-              <Toolbar.Label>View options</Toolbar.Label>
+              <Toolbar.Label>{gt("View options")}</Toolbar.Label>
             </Toolbar.MenuAction>
             {permissions.verdicts.length ? (
               <Toolbar.MenuAction
@@ -1760,7 +1813,7 @@ export function PullRequestDiffContent({
                   navigation.navigate("PullRequestReview", { ...params, mode: "review" })
                 }
               >
-                <Toolbar.Label>Submit review</Toolbar.Label>
+                <Toolbar.Label>{gt("Submit review")}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {permissions.canComment ? (
@@ -1770,13 +1823,15 @@ export function PullRequestDiffContent({
                   navigation.navigate("PullRequestReview", { ...params, mode: "comment" })
                 }
               >
-                <Toolbar.Label>Add comment</Toolbar.Label>
+                <Toolbar.Label>{gt("Add comment")}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {selectedRow && selectedFile && canCommentOnDiff ? (
               <Toolbar.MenuAction icon="bubble.left" onPress={() => commentOnLine()}>
                 <Toolbar.Label>
-                  {params.replacingDraftId ? "Move draft to this line" : "Add review comment"}
+                  {params.replacingDraftId
+                    ? gt("Move draft to this line")
+                    : gt("Add review comment")}
                 </Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
@@ -1785,7 +1840,7 @@ export function PullRequestDiffContent({
                 icon="document.on.document"
                 onPress={() => void Clipboard.setStringAsync(selectedRow.content ?? "")}
               >
-                <Toolbar.Label>Copy line</Toolbar.Label>
+                <Toolbar.Label>{gt("Copy line")}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
           </PullRequestHeaderToolbar>
@@ -1799,7 +1854,9 @@ export function PullRequestDiffContent({
       {embedded ? (
         <View className="flex-row items-center justify-end gap-1 px-4 py-2">
           <Text numberOfLines={1} className="min-w-0 flex-1 text-xs text-foreground-muted">
-            {data.files.length} files
+            {gt("{count, plural, one {{count} file} other {{count} files}}", {
+              count: data.files.length,
+            })}
           </Text>
           {!isGuideChapter ? (
             <PullRequestFileExpansionActions collapsed={allCollapsed} onToggle={toggleAllFiles} />
@@ -1807,23 +1864,25 @@ export function PullRequestDiffContent({
           {!isGuideChapter && commits.length > 0 ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Commit range"
+              accessibilityLabel={gt("Commit range")}
               className="min-h-11 max-w-[45%] flex-row items-center gap-1.5 rounded-lg bg-secondary px-2.5"
               onPress={() => setCommitPickerOpen(true)}
             >
               <Text numberOfLines={1} className="min-w-0 shrink text-xs">
                 {commit === null
-                  ? "All"
-                  : `${selectedCommits.length} ${selectedCommits.length === 1 ? "commit" : "commits"}`}
+                  ? gt("All")
+                  : gt("{count, plural, one {{count} commit} other {{count} commits}}", {
+                      count: selectedCommits.length,
+                    })}
               </Text>
               <SymbolView name="chevron.down" size={10} tintColorClassName="accent-icon-muted" />
             </Pressable>
           ) : null}
           <Menu
-            title="Code options"
+            title={gt("Code options")}
             actions={[
-              { id: "view-files", title: "View files", image: "folder" },
-              { id: "view-options", title: "View options", image: "slider.horizontal.3" },
+              { id: "view-files", title: gt("View files"), image: "folder" },
+              { id: "view-options", title: gt("View options"), image: "slider.horizontal.3" },
             ]}
             onPressAction={({ nativeEvent }) =>
               nativeEvent.event === "view-files" ? setFilesOpen(true) : setOptionsOpen(true)
@@ -1831,7 +1890,7 @@ export function PullRequestDiffContent({
           >
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Code options"
+              accessibilityLabel={gt("Code options")}
               className="min-h-11 min-w-11 items-center justify-center"
             >
               <SymbolView name="ellipsis" size={20} tintColorClassName="accent-icon-muted" />
@@ -1847,7 +1906,7 @@ export function PullRequestDiffContent({
       <PullRequestFilesSheet
         open={filesOpen}
         onClose={() => setFilesOpen(false)}
-        title={activeChapter || isGuideChapter ? "Files in this chapter" : "Files"}
+        title={activeChapter || isGuideChapter ? gt("Files in this chapter") : gt("Files")}
         files={treeFiles}
         onSelectFile={chooseTreeFile}
         onSetViewed={viewed.canToggle && !commit && !staleDiff ? viewed.setManyViewed : undefined}
@@ -1882,7 +1941,7 @@ export function PullRequestDiffContent({
       ) : null}
       {params.replacingDraftId ? (
         <Text className="px-4 py-2 text-xs text-foreground-muted">
-          Select a current line, then choose “Move draft to this line” from its menu.
+          <T>Select a current line, then choose “Move draft to this line” from its menu.</T>
         </Text>
       ) : null}
       {viewed.error ? (
@@ -1894,10 +1953,10 @@ export function PullRequestDiffContent({
           style={{ paddingTop: contentTopInset + 8 }}
         >
           <Text className="min-w-0 flex-1 text-xs text-foreground-muted">
-            The branch changed. Reload before adding line comments.
+            <T>The branch changed. Reload before adding line comments.</T>
           </Text>
           <Button
-            label="Reload changes"
+            label={gt("Reload changes")}
             onPress={() => {
               result.refresh();
               setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
@@ -2030,11 +2089,13 @@ export function PullRequestDiffContent({
           (commentsOnly || hideReviewed) ? (
           <View style={{ paddingTop: !embedded && Platform.OS === "ios" ? insets.top : 0 }}>
             <EmptyState
-              title={commentsOnly ? "No files with unresolved comments" : "No unreviewed files"}
-              detail="No files match the current review filters."
+              title={
+                commentsOnly ? gt("No files with unresolved comments") : gt("No unreviewed files")
+              }
+              detail={gt("No files match the current review filters.")}
               action={
                 <Button
-                  label="Show all files"
+                  label={gt("Show all files")}
                   tone="contrast"
                   onPress={() =>
                     updateViewingPreferences({ commentsOnly: false, hideReviewed: false })
@@ -2052,27 +2113,37 @@ export function PullRequestDiffContent({
           !seekingFile ? (
           <View style={{ paddingTop: !embedded && Platform.OS === "ios" ? insets.top : 0 }}>
             <EmptyState
-              title="Diff unavailable"
-              detail={`Open this ${terminology.singular} on its provider to view the changes.`}
+              title={gt("Only test files changed")}
+              detail={gt("Test files are hidden from this review.")}
+              action={
+                <Button label={gt("Show test files")} tone="contrast" onPress={filter.showAll} />
+              }
               variant="plain"
             />
           </View>
         ) : !result.isPending && !result.error && !seekingFile ? (
           <EmptyState
-            title="Diff unavailable"
-            detail={`Open this ${terminology.singular} on its provider to view the changes.`}
+            title={gt("Diff unavailable")}
+            detail={gt(
+              "Open this {term, select, mr {merge request} cr {change request} other {pull request}} on its provider to view the changes.",
+              { term: changeRequestTermKind(terminology) },
+            )}
             variant="plain"
           />
         ) : null}
         {result.nextCursor && result.isPending && data.rows.length && !seekingFile ? (
           <View className="flex-row items-center justify-center gap-2 py-2">
             <AppActivityIndicator size="small" />
-            <Text className="text-xs text-foreground-muted">Loading more files…</Text>
+            <Text className="text-xs text-foreground-muted">{gt("Loading more files…")}</Text>
           </View>
         ) : null}
         {result.error && result.nextCursor ? (
           <View className="self-center">
-            <Button label="Retry loading remaining files" tone="text" onPress={result.refresh} />
+            <Button
+              label={gt("Retry loading remaining files")}
+              tone="text"
+              onPress={result.refresh}
+            />
           </View>
         ) : null}
         {parsed.kind === "files" && parsed.notice ? (
@@ -2095,7 +2166,13 @@ export function PullRequestDiffContent({
           {canCommentOnDiff ? (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Comment on ${reviewPositionLabel(selectedRange.position, selectedRange.startPosition)}`}
+              accessibilityLabel={gt("Comment on {range}", {
+                range: reviewPositionLabel(
+                  selectedRange.position,
+                  selectedRange.startPosition,
+                  messages,
+                ),
+              })}
               className="min-h-11 max-w-[85%] flex-row items-center gap-2 rounded-xl bg-primary px-4 py-2"
               onPress={() => commentOnLine()}
             >
@@ -2108,13 +2185,19 @@ export function PullRequestDiffContent({
                 numberOfLines={1}
                 className="shrink text-sm font-t3-medium text-primary-foreground"
               >
-                Comment · {reviewPositionLabel(selectedRange.position, selectedRange.startPosition)}
+                {gt("Comment · {range}", {
+                  range: reviewPositionLabel(
+                    selectedRange.position,
+                    selectedRange.startPosition,
+                    messages,
+                  ),
+                })}
               </Text>
             </Pressable>
           ) : null}
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Clear line selection"
+            accessibilityLabel={gt("Clear line selection")}
             className="min-h-11 min-w-11 items-center justify-center rounded-xl bg-primary"
             onPress={() => {
               setSelectedRowId(null);
@@ -2142,10 +2225,11 @@ function PullRequestFileExpansionActions(props: {
   readonly collapsed: boolean;
   readonly onToggle: () => void;
 }) {
+  const gt = useGT();
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={props.collapsed ? "Expand all files" : "Collapse all files"}
+      accessibilityLabel={props.collapsed ? gt("Expand all files") : gt("Collapse all files")}
       className="min-h-11 flex-row items-center gap-1.5 px-2"
       onPress={props.onToggle}
     >
@@ -2155,7 +2239,7 @@ function PullRequestFileExpansionActions(props: {
         tintColorClassName="accent-icon-muted"
       />
       <Text className="text-xs text-foreground-muted">
-        {props.collapsed ? "Expand all" : "Collapse all"}
+        {props.collapsed ? gt("Expand all") : gt("Collapse all")}
       </Text>
     </Pressable>
   );

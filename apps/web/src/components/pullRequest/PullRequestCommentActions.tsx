@@ -7,6 +7,7 @@ import {
   TextIcon,
   ExternalLinkIcon,
 } from "lucide-react";
+import { msg } from "gt-react";
 import { readLocalApi } from "~/localApi";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
@@ -48,7 +49,11 @@ export function PullRequestCommentActions({
     | undefined;
 }) {
   const { copyToClipboard } = useCopyToClipboard({
-    target: "comment",
+    target: {
+      target: "comment",
+      unavailableMessage: msg("Clipboard API is unavailable while copying the comment."),
+      failureMessage: msg("Failed to copy the comment to the clipboard."),
+    },
     onError: () => toastManager.add({ type: "error", title: "Could not copy the comment" }),
   });
   return (

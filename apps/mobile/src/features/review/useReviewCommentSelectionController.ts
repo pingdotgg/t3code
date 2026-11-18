@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useState } from "react";
 import type { NativeSyntheticEvent } from "react-native";
 import { useNavigation } from "@react-navigation/native";
@@ -27,6 +28,7 @@ export function useReviewCommentSelectionController(input: {
   readonly nativeReviewDiffData: NativeReviewDiffData;
 }) {
   const { environmentId, nativeReviewDiffData, selectedSection, threadId } = input;
+  const gt = useGT();
   const navigation = useNavigation();
   const [sheetId] = useState(nextReviewSheetId);
   // Scoping the selection to this sheet, thread, section and diff drops it when the sheet
@@ -70,11 +72,13 @@ export function useReviewCommentSelectionController(input: {
   const selectionAction =
     activeCommentTarget !== null
       ? {
-          title: `Comment on ${formatReviewSelectedRangeLabel(activeCommentTarget)}`,
+          title: gt("Comment on {range}", {
+            range: formatReviewSelectedRangeLabel(activeCommentTarget),
+          }),
           onOpenComment: openReviewCommentSheet,
         }
       : pendingRange
-        ? { title: "Select range end", onOpenComment: null }
+        ? { title: gt("Select range end"), onOpenComment: null }
         : null;
 
   const onPressLine = (event: NativeSyntheticEvent<{ readonly rowId?: string }>) => {

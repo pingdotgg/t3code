@@ -8,6 +8,7 @@ import {
   MessageCircleQuestionIcon,
   MessageSquareIcon,
 } from "lucide-react";
+import { T, useGT, Var } from "gt-react";
 import { useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 
 import { getDiffLineStat } from "~/lib/diffRendering";
@@ -78,6 +79,7 @@ export function GuideStop({
   isViewed: (path: string) => boolean;
   onSetViewed: ((paths: ReadonlyArray<string>, viewed: boolean) => void) | null;
 }) {
+  const gt = useGT();
   const { resolvedTheme } = useTheme();
   const { byExcerpt } = letterStopNotes(stop);
   const excerptPaths = new Set(stop.excerpts.map((excerpt) => excerpt.path));
@@ -167,7 +169,9 @@ export function GuideStop({
 
       {otherFiles.length > 0 ? (
         <section className="flex flex-col gap-1.5">
-          <h3 className="px-4 text-xs font-medium text-muted-foreground">Files in this chapter</h3>
+          <h3 className="px-4 text-xs font-medium text-muted-foreground">
+            <T>Files in this chapter</T>
+          </h3>
           <DiffWorkerPoolProvider>
             <ul className="flex flex-col border-y border-border/60">
               {otherFiles.map((file) => {
@@ -198,7 +202,11 @@ export function GuideStop({
                       <div className="flex min-w-0 items-center gap-2 bg-foreground/7 px-3 py-2 text-xs">
                         <CollapsibleTrigger
                           render={<Button size="icon-xs" variant="ghost" />}
-                          aria-label={`${open ? "Collapse" : "Expand"} diff for ${file.path}`}
+                          aria-label={
+                            open
+                              ? gt("Collapse diff for {path}", { path: file.path })
+                              : gt("Expand diff for {path}", { path: file.path })
+                          }
                         >
                           <ChevronRightIcon
                             aria-hidden
@@ -234,7 +242,7 @@ export function GuideStop({
                           <div className="flex shrink-0 items-center gap-1.5">
                             <Checkbox
                               id={reviewCheckboxId}
-                              aria-label={`Reviewed ${file.path}`}
+                              aria-label={gt("Reviewed {path}", { path: file.path })}
                               checked={viewed}
                               disabled={!diff?.newObjectId}
                               onCheckedChange={(value) => onSetViewed([file.path], value === true)}
@@ -243,7 +251,7 @@ export function GuideStop({
                               htmlFor={reviewCheckboxId}
                               className="cursor-pointer text-muted-foreground"
                             >
-                              Viewed
+                              <T>Viewed</T>
                             </label>
                           </div>
                         ) : null}
@@ -254,8 +262,8 @@ export function GuideStop({
                         ) : (
                           <p className="px-3 py-2 text-xs text-muted-foreground">
                             {diffLoading
-                              ? "Loading the diff..."
-                              : "This file is not in the loaded diff."}
+                              ? gt("Loading the diff...")
+                              : gt("This file is not in the loaded diff.")}
                           </p>
                         )}
                       </CollapsiblePanel>
@@ -271,7 +279,9 @@ export function GuideStop({
       {stop.questions.length > 0 || onAsk !== null ? (
         <section className="flex flex-col gap-1.5 px-4">
           {stop.questions.length > 0 ? (
-            <h3 className="text-xs font-medium text-muted-foreground">Questions to consider</h3>
+            <h3 className="text-xs font-medium text-muted-foreground">
+              <T>Questions to consider</T>
+            </h3>
           ) : null}
           <div className="flex flex-col items-start gap-1.5">
             {stop.questions.map((question) =>
@@ -291,7 +301,7 @@ export function GuideStop({
                     aria-hidden
                     className="size-3.5 h-lh shrink-0 text-muted-foreground"
                   />
-                  <span className="sr-only">Ask an agent: </span>
+                  <span className="sr-only">{gt("Ask an agent: ")}</span>
                   <span>
                     <GuideProse text={question} plain />
                   </span>
@@ -301,7 +311,7 @@ export function GuideStop({
             {onAsk !== null ? (
               <Button size="sm" variant="ghost-muted" onClick={() => onAsk("")}>
                 <MessageCircleQuestionIcon aria-hidden />
-                Ask about this chapter
+                <T>Ask about this chapter</T>
               </Button>
             ) : null}
           </div>
@@ -311,15 +321,19 @@ export function GuideStop({
       <footer className="flex flex-wrap items-center justify-end gap-3 border-t border-border/60 p-4">
         {nextTitle !== null ? (
           <div className="min-w-0 [&>button]:max-w-full">
-            <Button onClick={() => onStep(1)}>
-              <span className="min-w-0 truncate">Next: {nextTitle}</span>
+            <Button size="multiline" onClick={() => onStep(1)}>
+              <span className="min-w-0 break-words">
+                <T>
+                  Next: <Var>{nextTitle}</Var>
+                </T>
+              </span>
               <ArrowRightIcon aria-hidden />
             </Button>
           </div>
         ) : onFinish !== null ? (
           <Button onClick={onFinish}>
             <MessageSquareIcon aria-hidden />
-            Finish review
+            <T>Finish review</T>
           </Button>
         ) : null}
       </footer>

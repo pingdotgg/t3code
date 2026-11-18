@@ -1,6 +1,8 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { AsyncResult } from "effect/reactivity";
+import { msg, useGT } from "gt-react-native";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../../components/ui/Dialog";
 import {
@@ -21,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRef, useState } from "react";
 
@@ -52,11 +55,12 @@ import {
   pullRequestAgentPrompt,
   type PullRequestAgentTask,
 } from "./pullRequestAgentTasks";
+import { m } from "../../i18n/messages";
 
 type LinkedThread = PullRequestLinkedThreadsResult["threads"][number];
 type DraftKey = Parameters<typeof getComposerDraftSnapshot>[0];
 
-const TOO_MUCH_CONTEXT = "Remove some context from this thread's draft, then try again.";
+const TOO_MUCH_CONTEXT = msg("Remove some context from this thread's draft, then try again.");
 
 function pullRequestMetadata(pr: PullRequestDetail) {
   return {
@@ -184,6 +188,7 @@ export function usePullRequestThreads(
   const canAsk = !connected || canOperate;
   const canCheckout = useEnvironmentScope(target.environmentId, AuthSourceControlWriteScope);
   const navigation = useNavigation();
+  const gt = useGT();
   const pending = useRef(false);
   const previousPrompts = useRef(new Map<string, string>());
   const openThread = (thread: LinkedThread) => {
@@ -205,7 +210,12 @@ export function usePullRequestThreads(
     const result = await settlePromise(async () => {
       if (connected && !thread && !canCheckout)
         throw new Error(
-          `Starting work from this ${terminology.shortLabel} requires source control write access.`,
+          gt(
+            "Starting work from this {term, select, mr {MR} cr {change request} other {PR}} requires source control write access.",
+            {
+              term: changeRequestTermKind(terminology),
+            },
+          ),
         );
       await waitForComposerDraftsLoaded();
       const draftKey = thread
@@ -224,7 +234,7 @@ export function usePullRequestThreads(
             pullRequestReference: pr.url,
           },
         });
-      if (!attachPullRequestContext(draftKey, pr, filePath)) throw new Error(TOO_MUCH_CONTEXT);
+      if (!attachPullRequestContext(draftKey, pr, filePath)) throw new Error(m(TOO_MUCH_CONTEXT));
       const withContext = getComposerDraftSnapshot(draftKey);
       setComposerDraftText(
         draftKey,
@@ -239,13 +249,21 @@ export function usePullRequestThreads(
       );
       previousPrompts.current.set(draftKey, pullRequestAgentPrompt(task, terminology));
       if (thread) openThread(thread);
-      else openThreadRoute({ draft: { draftId: draftKey, title: `Ask about #${pr.number}` } });
+      else
+        openThreadRoute({
+          draft: { draftId: draftKey, title: gt("Ask about #{number}", { number: pr.number }) },
+        });
     });
     pending.current = false;
     setBusy(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      Dialog.alert("Couldn't open a thread", cause instanceof Error ? cause.message : "Try again.");
+      Dialog.alert(
+        gt("Couldn't open a thread"),
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("Try again."),
+      );
     }
   };
   const canAddToComposer = threadBehind !== null && canAsk;
@@ -262,9 +280,9 @@ export function usePullRequestThreads(
     const result = await settlePromise(async () => {
       await waitForComposerDraftsLoaded();
       if (!attachPullRequestContext(draftKey, pr, input.filePath ?? filePath))
-        throw new Error(TOO_MUCH_CONTEXT);
+        throw new Error(m(TOO_MUCH_CONTEXT));
       if (input.context && !appendContext(draftKey, input.context))
-        throw new Error(TOO_MUCH_CONTEXT);
+        throw new Error(m(TOO_MUCH_CONTEXT));
       if (input.markdown) {
         const draft = getComposerDraftSnapshot(draftKey);
         setComposerDraftText(draftKey, `${draft.text.trimEnd()}\n\n${input.markdown}\n\n`);
@@ -275,8 +293,10 @@ export function usePullRequestThreads(
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Couldn't add to the composer",
-        cause instanceof Error ? cause.message : "Try again.",
+        gt("Couldn't add to the composer"),
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("Try again."),
       );
       return false;
     }

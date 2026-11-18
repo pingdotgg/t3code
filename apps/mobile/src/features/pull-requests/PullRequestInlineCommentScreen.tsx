@@ -1,7 +1,9 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { PullRequestThreadCard } from "./PullRequestCommentCard";
 import { Alert } from "react-native";
 import { PullRequestCommentForm } from "./PullRequestCommentForm";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { ScrollView, View } from "react-native";
 import type { PullRequestReviewPosition } from "@t3tools/contracts";
@@ -40,6 +42,8 @@ export type InlineCommentParams = PullRequestParams & {
 export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<InlineCommentParams>) {
   const params = route.params;
   const navigation = useNavigation();
+  const gt = useGT();
+  const m = useMessages();
   const store = usePullRequestReviewDraft(params);
   const ownerKey = pullRequestReviewKey(store.scope, store.scope.viewer);
   const [draftOwner, setDraftOwner] = useState<string | null>(null);
@@ -104,7 +108,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         }
       }
       if (!setReviewDraftBusy(store.scope, true))
-        throw new Error("Wait for the pending comment to finish saving.");
+        throw new Error(gt("Wait for the pending comment to finish saving."));
       locked = true;
       if (hostedComment && saved && body !== saved.body) {
         const result = await updateComment({
@@ -133,11 +137,13 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         ...draft,
         comments: [...draft.comments.filter((comment) => comment.id !== commentId), comment],
       }));
-      if (!(await store.flush())) throw new Error("Could not save the draft on this device.");
+      if (!(await store.flush())) throw new Error(gt("Could not save the draft on this device."));
       if (!hostedComment && detail.data?.capabilities.review.draftComment === true) {
         if (!store.isReady())
           throw new Error(
-            "Your comment is saved on this device. Wait for the account refresh, then save again.",
+            gt(
+              "Your comment is saved on this device. Wait for the account refresh, then save again.",
+            ),
           );
         const result = await saveDraftComment({
           ...target,
@@ -150,15 +156,20 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
             entry.id === comment.id ? { ...entry, hostedComment: result.value } : entry,
           ),
         }));
-        if (!(await store.flush())) throw new Error("Could not save the draft on this device.");
+        if (!(await store.flush())) throw new Error(gt("Could not save the draft on this device."));
       }
       detail.refresh();
       navigation.goBack();
     })()
       .catch(async (cause: unknown) => {
         Alert.alert(
-          "Could not save the review comment",
-          `${cause instanceof Error ? cause.message : "Saving failed."}\nYour draft is kept in T3. Try saving again.`,
+          gt("Could not save the review comment"),
+          gt("{error}\nYour draft is kept in T3. Try saving again.", {
+            error:
+              cause instanceof Error
+                ? (errorDisplayMessage(cause, m) ?? cause.message)
+                : gt("Saving failed."),
+          }),
         );
       })
       .finally(async () => {
@@ -195,21 +206,21 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
   return (
     <PullRequestSheetContent
       busy={busy || uploading}
-      title={saved ? "Edit review comment" : "Review comment"}
-      subtitle={`#${params.number} · ${reviewPositionLabel(params.position, params.startPosition)}`}
+      title={saved ? gt("Edit review comment") : gt("Review comment")}
+      subtitle={`#${params.number} · ${reviewPositionLabel(params.position, params.startPosition, m)}`}
       compact
       footer={
         <View className="flex-row items-center justify-end gap-2">
           <Button
             tone="text"
-            label="Cancel"
+            label={gt("Cancel")}
             disabled={busy || uploading}
             onPress={() => navigation.goBack()}
           />
           {agent.canAddToComposer ? (
             <Button
               tone="secondary"
-              label="Add to composer"
+              label={gt("Add to composer")}
               disabled={
                 accountChanged || !body.trim() || busy || uploading || agent.busy || !detail.data
               }
@@ -218,7 +229,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           ) : null}
           <Button
             tone="primary"
-            label={busy ? "Saving…" : saved ? "Save" : "Add to review"}
+            label={busy ? gt("Saving…") : saved ? gt("Save") : gt("Add to review")}
             loading={busy}
             disabled={!canSave || busy}
             onPress={() => void save()}
@@ -245,13 +256,13 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           <SymbolView name="bubble.left" size={12} tintColorClassName="accent-primary" />
           <Text className="font-mono text-2xs text-foreground-muted">
             {params.path.split("/").at(-1)} ·{" "}
-            {reviewPositionLabel(params.position, params.startPosition)}
+            {reviewPositionLabel(params.position, params.startPosition, m)}
           </Text>
         </View>
         <PullRequestCommentForm
           params={params}
-          label="Inline review comment"
-          placeholder="Write feedback on these lines…"
+          label={gt("Inline review comment")}
+          placeholder={gt("Write feedback on these lines…")}
           editable={store.ready && !accountChanged && !busy && !store.busy}
           autoFocus
           value={body}
@@ -263,7 +274,9 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
           minimumHeight={72}
         />
       </View>
-      <Text className="text-2xs text-foreground-muted">Private until you submit the review.</Text>
+      <Text className="text-2xs text-foreground-muted">
+        {gt("Private until you submit the review.")}
+      </Text>
       {pendingThread ? (
         <PullRequestThreadCard
           params={params}
@@ -274,12 +287,12 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
       ) : null}
       {accountChanged ? (
         <Text className="text-sm text-danger-foreground">
-          The account changed. Close this editor and reopen it for the current account.
+          <T>The account changed. Close this editor and reopen it for the current account.</T>
         </Text>
       ) : null}
       {stale ? (
         <Text className="text-sm text-danger-foreground">
-          The branch changed. Return to the current diff and select the line again.
+          <T>The branch changed. Return to the current diff and select the line again.</T>
         </Text>
       ) : null}
       {store.error || detail.error ? (

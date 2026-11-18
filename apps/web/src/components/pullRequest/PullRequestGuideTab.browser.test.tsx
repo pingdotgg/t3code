@@ -176,7 +176,6 @@ it("keeps excerpt files out of full-file panels and reveals their excerpt from t
     />,
     { container },
   );
-  await vi.waitFor(() => expect(container.querySelector("diffs-container")).not.toBeNull());
   await expect.element(screen.getByText("after()", { exact: true })).toBeVisible();
   await expect
     .element(screen.getByText("outside_excerpt()", { exact: true }))

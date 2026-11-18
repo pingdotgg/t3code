@@ -1,4 +1,5 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 import { getDiffLineStat } from "~/lib/diffRendering";
 
@@ -23,11 +24,11 @@ import { ReviewChapterProgress } from "../ReviewChapterHeader";
 import { ReviewChapterRail, ReviewChapterFileLink } from "../ReviewChapterRail";
 
 const ATTENTION_LABELS = {
-  tradeoff: "A tradeoff to weigh",
-  contract: "A contract to check",
-  product: "A product call",
-  risk: "A risk to judge",
-  accessibility: "An accessibility call",
+  tradeoff: msg("A tradeoff to weigh"),
+  contract: msg("A contract to check"),
+  product: msg("A product call"),
+  risk: msg("A risk to judge"),
+  accessibility: msg("An accessibility call"),
 } as const satisfies Record<PullRequestReviewGuideAttention["kind"], string>;
 
 /** The Guide table of contents uses the same chapter navigation as grouped Code review. */
@@ -50,9 +51,11 @@ export function GuideRail({
   isViewed: (path: string) => boolean;
   onSetViewed: ((paths: ReadonlyArray<string>, viewed: boolean) => void) | null;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   return (
     <ReviewChapterRail
-      ariaLabel="Review tour"
+      ariaLabel={gt("Review tour")}
       chapters={stops.map((stop, index) => {
         const paths = stopFilePaths(stop);
         const progress = reviewGuideStopProgress(stop, isViewed);
@@ -98,7 +101,7 @@ export function GuideRail({
                 {stop.attention !== null ? (
                   <Alert controlAlignment="first-line">
                     <EyeIcon />
-                    <AlertTitle>{ATTENTION_LABELS[stop.attention.kind]}</AlertTitle>
+                    <AlertTitle>{messages(ATTENTION_LABELS[stop.attention.kind])}</AlertTitle>
                     <AlertDescription>
                       <GuideProse text={stop.attention.note} />
                     </AlertDescription>
@@ -126,17 +129,20 @@ export function GuideRail({
             <>
               {stop.attention !== null ? (
                 <Badge size="sm" variant="warning">
-                  Look closely
+                  <T>Look closely</T>
                 </Badge>
               ) : null}
               {onSetViewed && paths.length > 0 ? (
                 index !== position ? (
                   <span>
-                    {progress.reviewedCount} of {paths.length} files reviewed
+                    {gt(
+                      "{total, plural, one {{reviewed} of {total} files reviewed} other {{reviewed} of {total} files reviewed}}",
+                      { reviewed: progress.reviewedCount, total: paths.length },
+                    )}
                   </span>
                 ) : null
               ) : (
-                <span>{stopSubline(stop)}</span>
+                <span>{stopSubline(stop, messages)}</span>
               )}
             </>
           ),

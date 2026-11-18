@@ -2,12 +2,11 @@ import {
   resolvedReviewCommentsLabel,
   groupPendingReviewComments,
 } from "@t3tools/client-runtime/review-editing";
-export { reviewPositionLabel } from "@t3tools/client-runtime/review-selection";
-import {
-  reviewPositionLabel,
-  reviewLineRangeLabel,
-} from "@t3tools/client-runtime/review-selection";
+import { reviewPositionAnchor } from "@t3tools/client-runtime/review-selection";
 import type { PullRequestReviewPosition, PullRequestReviewThread } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 import type { NativeReviewDiffRow } from "../diffs/nativeReviewDiffSurface";
 import type { NativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
 import type { PendingReviewComment } from "./pullRequestReviewDrafts";
@@ -27,9 +26,54 @@ export function reviewPosition(row: NativeReviewDiffRow): PullRequestReviewPosit
     };
   return null;
 }
-export function discussionCommentCountLabel(count: number) {
-  return `${count} ${count === 1 ? "comment" : "comments"}`;
+export function discussionCommentCountLabel(count: number, resolve: MessageResolver = m) {
+  return resolve(msg("{count, plural, one {{count} comment} other {{count} comments}}", { count }));
 }
+export function reviewPositionLabel(
+  position: PullRequestReviewPosition,
+  startPosition?: PullRequestReviewPosition,
+  resolve: MessageResolver = m,
+) {
+  const end = reviewPositionAnchor(position);
+  const start = startPosition ? reviewPositionAnchor(startPosition) : undefined;
+  return reviewLineRangeLabel(
+    {
+      ...end,
+      ...(start && (start.line !== end.line || start.side !== end.side)
+        ? { startLine: start.line, startSide: start.side }
+        : {}),
+    },
+    resolve,
+  );
+}
+
+function reviewLineRangeLabel(
+  input: {
+    line: number | null;
+    side: "left" | "right";
+    startLine?: number;
+    startSide?: "left" | "right";
+  },
+  resolve: MessageResolver,
+) {
+  if (input.line === null)
+    return resolve(msg("File", { $context: "review comment on a whole file" }));
+  const line = input.line;
+  if (input.startLine === undefined)
+    return input.side === "left"
+      ? resolve(msg("Old line {line}", { line }))
+      : resolve(msg("Line {line}", { line }));
+  const start = input.startLine;
+  const startSide = input.startSide ?? input.side;
+  if (startSide === input.side)
+    return input.side === "left"
+      ? resolve(msg("Old lines {start}–{line}", { start, line }))
+      : resolve(msg("Lines {start}–{line}", { start, line }));
+  return startSide === "left"
+    ? resolve(msg("Old line {start} → line {line}", { start, line }))
+    : resolve(msg("Line {start} → old line {line}", { start, line }));
+}
+
 function reviewLine(position: PullRequestReviewPosition) {
   if (position.kind === "deleted" || (position.kind === "context" && position.side === "left"))
     return position.oldLine;
@@ -40,6 +84,7 @@ export function annotatePullRequestDiff(
   threads: readonly PullRequestReviewThread[],
   drafts: readonly PendingReviewComment[],
   headSha: string | undefined,
+  resolve: MessageResolver = m,
 ): NativeReviewDiffData {
   if (threads.length === 0 && drafts.length === 0) return data;
   const anchors = new Map<string, NativeReviewDiffRow[]>();
@@ -88,14 +133,15 @@ export function annotatePullRequestDiff(
     attach(
       anchor,
       `discussion:${thread.id}`,
-      `${first?.author?.login ?? "Discussion"}${thread.isResolved ? " · Resolved" : ""}\n${first?.body ?? ""}\n${discussionCommentCountLabel(thread.commentCount ?? thread.comments.length)} · Tap to open`,
-      reviewLineRangeLabel(thread),
+      `${first?.author?.login ?? resolve(msg("Discussion"))}${thread.isResolved ? ` · ${resolve(msg("Resolved", { $context: "review thread state" }))}` : ""}\n${first?.body ?? ""}\n${resolve(msg("{count, plural, one {{count} comment · Tap to open} other {{count} comments · Tap to open}}", { count: thread.commentCount ?? thread.comments.length }))}`,
+      reviewLineRangeLabel(thread, resolve),
       thread.isResolved
         ? {
             commentResolvedSummary: resolvedReviewCommentsLabel(
               thread.commentCount ?? thread.comments.length,
               thread.comments.map(
-                (comment) => comment.author?.name ?? comment.author?.login ?? "Unknown author",
+                (comment) =>
+                  comment.author?.name ?? comment.author?.login ?? resolve(msg("Unknown author")),
               ),
             ),
           }
@@ -115,7 +161,7 @@ export function annotatePullRequestDiff(
       lines.get(JSON.stringify([draft.path, side, line])),
       `draft:${draft.id}`,
       draft.body,
-      reviewPositionLabel(draft.position, draft.startPosition),
+      reviewPositionLabel(draft.position, draft.startPosition, resolve),
       { commentPending: true },
     );
   }

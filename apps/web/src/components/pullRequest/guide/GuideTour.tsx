@@ -3,6 +3,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestFilesViewed } from "../usePullRequestFilesViewed";
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuide } from "@t3tools/contracts";
+import { T, Var } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
@@ -172,12 +173,14 @@ export function GuideTour({
           {banner ? <div className="px-4 py-3">{banner}</div> : null}
           {diff.error !== null ? (
             <p className="px-4 py-3 text-xs text-muted-foreground">
-              The diff could not be loaded, so excerpts are missing: {diff.error}
+              <T>
+                The diff could not be loaded, so excerpts are missing: <Var>{diff.error}</Var>
+              </T>
             </p>
           ) : null}
           {stop === null ? (
             <p className="px-4 py-3 text-sm text-muted-foreground">
-              This change has no files to tour.
+              <T>This change has no files to tour.</T>
             </p>
           ) : (
             <GuideStop

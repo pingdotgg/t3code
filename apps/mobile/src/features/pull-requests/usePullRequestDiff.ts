@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
+import { useLocale, useMessages } from "gt-react-native";
 import { useContext, useLayoutEffect, useMemo, useState } from "react";
 
 import { composerPullRequests } from "../../state/pull-requests";
@@ -119,6 +120,8 @@ export function usePullRequestDiff(
     input: { ...reference.input, ...(params.commit ? { commit: params.commit } : {}) },
   };
   const key = JSON.stringify(target);
+  const messages = useMessages();
+  const locale = useLocale();
   const firstPageAtom = composerPullRequests.diff(target);
   const refreshFirstPage = useAtomRefresh(firstPageAtom);
   const { refreshing, onRefresh } = usePullToRefresh(firstPageAtom);
@@ -174,12 +177,21 @@ export function usePullRequestDiff(
     );
   });
   const pagesParsed = useMemo(
-    () => getCachedPullRequestDiffPages(pages, key, terminology, ignoreWhitespace),
-    [key, pages, terminology, ignoreWhitespace],
+    () =>
+      getCachedPullRequestDiffPages(pages, key, terminology, messages, locale, ignoreWhitespace),
+    [key, pages, terminology, messages, locale, ignoreWhitespace],
   );
   // The server says whether a withheld file can be read alone; GitHub may refuse the whole diff.
   const withheldFilesReadable = pages[0]?.result.withheldFilesReadable === true;
-  const parsed = withWithheldFiles(pagesParsed, loads, withheldFilesReadable, key);
+  const parsed = withWithheldFiles(
+    pagesParsed,
+    loads,
+    withheldFilesReadable,
+    key,
+    messages,
+    locale,
+    ignoreWhitespace,
+  );
   const patch = useMemo(() => pages.map((page) => page.result.patch).join("\n"), [pages]);
   const nextCursor = pages.at(-1)?.result.nextCursor ?? null;
   const canLoadMore =

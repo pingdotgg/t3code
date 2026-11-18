@@ -1,9 +1,11 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import Animated from "react-native-reanimated";
 import { PR_ROW_LAYOUT } from "./pullRequestAnimations";
 import { useNavigation } from "@react-navigation/native";
 import type { PullRequestDetail } from "@t3tools/contracts";
 import type { MenuAction } from "@react-native-menu/menu";
+import { useGT } from "gt-react-native";
 import type { ReactNode } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -176,6 +178,7 @@ function pullRequestHeaderMenu(props: PullRequestHeaderToolbarProps, actions?: R
 }
 
 export function PullRequestHeaderToolbar(props: PullRequestHeaderToolbarProps) {
+  const gt = useGT();
   const vertical = useVerticalPullRequestRail();
   return vertical ? (
     <PullRequestVerticalHeaderToolbar {...props} />
@@ -185,7 +188,7 @@ export function PullRequestHeaderToolbar(props: PullRequestHeaderToolbarProps) {
       {props.commentsInHorizontalBar !== false ? (
         <Toolbar.Button
           icon="text.bubble"
-          accessibilityLabel="Comments"
+          accessibilityLabel={gt("Comments")}
           onPress={props.onOpenComments}
         />
       ) : null}
@@ -195,6 +198,7 @@ export function PullRequestHeaderToolbar(props: PullRequestHeaderToolbarProps) {
 }
 
 function PullRequestVerticalHeaderToolbar(props: PullRequestHeaderToolbarProps) {
+  const gt = useGT();
   const navigation = useNavigation();
   const draft = usePullRequestReviewDraft(props.params);
   const permissions = usePullRequestPermissions(props.params, props.pr);
@@ -206,11 +210,15 @@ function PullRequestVerticalHeaderToolbar(props: PullRequestHeaderToolbarProps) 
     (draft.comments.length > 0 || Boolean(draft.pendingReviewId));
   const showAgentControls = props.pr !== null && (agent.canAsk || !permissions.connected);
   const canOpenThread = props.pr !== null && (agent.threads.length > 0 || showAgentControls);
-  const { shortLabel } = sourceControlClients.get(
-    (props.pr ?? props.params.initialSummary)?.provider,
-  ).changeRequest;
-  const threadLabel = agent.threads.length ? "Continue thread" : `Work on ${shortLabel}`;
-  const submitLabel = `Submit review${draft.comments.length ? ` · ${draft.comments.length}` : ""}`;
+  const term = changeRequestTermKind(
+    sourceControlClients.get((props.pr ?? props.params.initialSummary)?.provider).changeRequest,
+  );
+  const threadLabel = agent.threads.length
+    ? gt("Continue thread")
+    : gt("Work on {term, select, mr {MR} cr {change request} other {PR}}", { term });
+  const submitLabel = draft.comments.length
+    ? gt("Submit review · {count}", { count: draft.comments.length })
+    : gt("Submit review");
   const actions = (
     <>
       {canOpenThread ? (
@@ -233,7 +241,7 @@ function PullRequestVerticalHeaderToolbar(props: PullRequestHeaderToolbarProps) 
         )
       ) : null}
       {showAgentControls ? (
-        <Toolbar.Menu title="AI helpers" icon="pencil" disabled={agent.disabled}>
+        <Toolbar.Menu title={gt("AI helpers")} icon="pencil" disabled={agent.disabled}>
           {pullRequestAgentMenuItems(agent)}
         </Toolbar.Menu>
       ) : null}
@@ -263,7 +271,7 @@ function PullRequestVerticalHeaderToolbar(props: PullRequestHeaderToolbarProps) 
       <Toolbar.Button
         identifier="pull-request-comments"
         icon="text.bubble"
-        accessibilityLabel="Comments"
+        accessibilityLabel={gt("Comments")}
         onPress={props.onOpenComments}
         separateBackground
         visibilityPriority="high"
@@ -278,6 +286,7 @@ export function PullRequestActionToolbar(props: PullRequestActionToolbarProps) {
 }
 
 function PullRequestHorizontalActionToolbar(props: PullRequestActionToolbarProps) {
+  const gt = useGT();
   const navigation = useNavigation();
   const { comments, pendingReviewId, busy: draftBusy } = usePullRequestReviewDraft(props.params);
   const { themeVariables: colors } = useAppearancePreferences();
@@ -288,13 +297,21 @@ function PullRequestHorizontalActionToolbar(props: PullRequestActionToolbarProps
   const pendingReview = canReview && (comments.length > 0 || Boolean(pendingReviewId));
   const showAgentControls = agent.canAsk || !permissions.connected;
   const canOpenThread = agent.threads.length > 0 || showAgentControls;
-  const { shortLabel } = sourceControlClients.get(
-    (props.pr ?? props.params.initialSummary)?.provider,
-  ).changeRequest;
-  const threadLabel = agent.threads.length ? "Continue thread" : `Work on ${shortLabel}`;
+  const term = changeRequestTermKind(
+    sourceControlClients.get((props.pr ?? props.params.initialSummary)?.provider).changeRequest,
+  );
+  const threadLabel = agent.threads.length
+    ? gt("Continue thread")
+    : gt("Work on {term, select, mr {MR} cr {change request} other {PR}}", { term });
   const primaryLabel = pendingReview
-    ? `Submit review${comments.length ? ` · ${comments.length}` : ""}`
+    ? comments.length
+      ? gt("Submit review · {count}", { count: comments.length })
+      : gt("Submit review")
     : threadLabel;
+  const agentActionsLabel = gt(
+    "{term, select, mr {MR} cr {change request} other {PR}} agent actions",
+    { term },
+  );
   const chooseThread = agent.chooseThread;
   const agentActions = agent.actions.filter((action) => action.task !== "ask");
   const open = (mode: "review" | "comment") =>
@@ -326,14 +343,14 @@ function PullRequestHorizontalActionToolbar(props: PullRequestActionToolbarProps
           <View className="flex-row items-center gap-2">
             {showAgentControls ? (
               <Menu
-                title="AI helpers"
+                title={gt("AI helpers")}
                 actions={agentActions.map((action) => agent.menuAction(action.task))}
                 onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
               >
                 <View pointerEvents="none">
                   <IconButton
                     icon="ellipsis.bubble"
-                    accessibilityLabel={`${shortLabel} agent actions`}
+                    accessibilityLabel={agentActionsLabel}
                     disabled={agent.disabled}
                   />
                 </View>
@@ -343,7 +360,7 @@ function PullRequestHorizontalActionToolbar(props: PullRequestActionToolbarProps
               <View className="min-w-0 shrink">
                 {!pendingReview && chooseThread ? (
                   <Menu
-                    title="Open thread"
+                    title={gt("Open thread")}
                     actions={threadMenuItems}
                     onPressAction={({ nativeEvent }) => agent.select(nativeEvent.event)}
                   >
@@ -355,7 +372,11 @@ function PullRequestHorizontalActionToolbar(props: PullRequestActionToolbarProps
               </View>
             ) : null}
             {props.showFiles !== false ? (
-              <IconButton icon="file.diff" accessibilityLabel="Changed files" onPress={openFiles} />
+              <IconButton
+                icon="file.diff"
+                accessibilityLabel={gt("Changed files")}
+                onPress={openFiles}
+              />
             ) : null}
           </View>
         </Toolbar>
@@ -392,8 +413,8 @@ function PullRequestHorizontalActionToolbar(props: PullRequestActionToolbarProps
     <Toolbar.Menu
       identifier="pull-request-agent"
       icon="ellipsis.bubble"
-      title="AI helpers"
-      accessibilityLabel={`${shortLabel} agent actions`}
+      title={gt("AI helpers")}
+      accessibilityLabel={agentActionsLabel}
       disabled={agent.disabled}
       separateBackground
     >
@@ -406,7 +427,7 @@ function PullRequestHorizontalActionToolbar(props: PullRequestActionToolbarProps
       <Toolbar.Button
         identifier="workspace-trailing-action"
         icon={{ type: "image", source: require("../../../assets/icons/file-diff.png") }}
-        accessibilityLabel="Changed files"
+        accessibilityLabel={gt("Changed files")}
         onPress={openFiles}
         separateBackground
       />

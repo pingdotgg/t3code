@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { useReviewFileProgress } from "@t3tools/client-runtime/review-file-progress";
 import type { PullRequestDetail } from "@t3tools/contracts";
@@ -10,6 +11,7 @@ import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff"
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 
 export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullRequestDetail | null) {
+  const messages = useMessages();
   const target = pullRequestTarget(params);
   const supported = Boolean(pr?.capabilities.viewedFiles);
   const permission = useAtomValue(
@@ -27,7 +29,10 @@ export function usePullRequestFilesViewed(params: PullRequestParams, pr: PullReq
       }),
     [params, write],
   );
-  const onError = useCallback(() => setError("Could not update viewed files."), []);
+  const onError = useCallback(
+    () => setError(messages(msg("Could not update viewed files."))),
+    [messages],
+  );
   const progress = useReviewFileProgress({
     scopeKey: pullRequestReviewKey(params),
     enabled: supported,

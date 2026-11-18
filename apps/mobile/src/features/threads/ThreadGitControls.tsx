@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m, type MessageResolver } from "../../i18n/messages";
 import type { ProjectScript } from "@t3tools/contracts";
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
 import {
@@ -6,7 +8,7 @@ import {
   projectScriptMenuIcon,
   type TerminalMenuSession,
 } from "../terminal/terminalMenu";
-import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
+import { projectScriptMenuLabel } from "@t3tools/shared/projectScriptsCopy";
 import type { ThreadGitMenuProps } from "./threadGitActions";
 export { useThreadGitMenuDefinition } from "./threadGitActions";
 export type { ThreadGitMenuProps } from "./threadGitActions";
@@ -21,17 +23,20 @@ export type ThreadGitControlsProps = ThreadGitMenuProps & {
   readonly onRunProjectScript: (script: ProjectScript) => Promise<void>;
 };
 
-export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | null {
+export function threadTerminalMenu(
+  props: ThreadGitControlsProps,
+  resolve: MessageResolver = m,
+): AppBarMenu | null {
   if (!props.canOpenTerminal) return null;
   return {
-    title: "Terminal",
+    title: resolve(msg("Terminal")),
     icon: "terminal",
     separateBackground: false,
     items: [
       ...(props.projectScripts.length > 0
         ? props.projectScripts.map((script) => ({
             id: `script-${script.id}`,
-            title: projectScriptMenuLabel(script),
+            title: projectScriptMenuLabel(script, resolve),
             icon: projectScriptMenuIcon(script.icon),
             subtitle: script.command,
             disabled: !props.canOperateTerminal,
@@ -40,9 +45,9 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
         : [
             {
               id: "script-none",
-              title: "No project scripts",
+              title: resolve(msg("No project scripts")),
               icon: "play",
-              subtitle: "This project has no saved scripts yet",
+              subtitle: resolve(msg("This project has no saved scripts yet")),
               disabled: true,
               onPress: () => {},
             },
@@ -52,10 +57,13 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
         title: session.displayLabel,
         icon: "terminal",
         subtitle: [
-          getTerminalStatusLabel({
-            status: session.status,
-            hasRunningSubprocess: session.hasRunningSubprocess,
-          }),
+          getTerminalStatusLabel(
+            {
+              status: session.status,
+              hasRunningSubprocess: session.hasRunningSubprocess,
+            },
+            resolve,
+          ),
           basename(session.cwd),
         ]
           .filter(Boolean)
@@ -64,9 +72,9 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
       })),
       {
         id: "terminal-new",
-        title: "Open new terminal",
+        title: resolve(msg("Open new terminal")),
         icon: "plus",
-        subtitle: "Start another shell for this thread",
+        subtitle: resolve(msg("Start another shell for this thread")),
         disabled: !props.canOperateTerminal,
         onPress: props.onOpenNewTerminal,
       },

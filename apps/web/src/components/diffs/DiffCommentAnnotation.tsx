@@ -1,4 +1,6 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
+import { reviewCommentRangeText } from "~/lib/composerContextRecords";
 import { MessageCircle, Trash2 } from "lucide-react";
 import { useLayoutEffect, useState, type ReactNode } from "react";
 
@@ -63,14 +65,17 @@ export function DiffCommentAnnotation({
   onCancel,
   onComment,
   onDelete,
-  placeholder = "Add a comment…",
-  submitLabel = "Comment",
+  placeholder,
+  submitLabel,
   pending = false,
   secondaryAction,
   focusOnMount = true,
   completionScope = null,
   renderAttachments,
 }: DiffCommentAnnotationProps) {
+  const gt = useGT();
+  const messages = useMessages();
+  const commentLabel = submitLabel ?? gt("Comment", { $context: "verb, submit button" });
   const [uploading, setUploading] = useState(false);
   const blocked = pending || uploading;
   const [localDraftText, setLocalDraftText] = useState("");
@@ -108,7 +113,7 @@ export function DiffCommentAnnotation({
             <Button
               variant="ghost-muted"
               size="icon-xs"
-              aria-label="Delete comment"
+              aria-label={gt("Delete comment")}
               onClick={onDelete}
             >
               <Trash2 className="size-3" />
@@ -149,8 +154,10 @@ export function DiffCommentAnnotation({
         disabled={blocked}
         value={displayedText}
         dir={textDirection(displayedText)}
-        placeholder={placeholder}
-        aria-label={`Comment on lines ${rangeLabel}`}
+        placeholder={placeholder ?? gt("Add a comment…")}
+        aria-label={gt("Comment on lines {rangeLabel}", {
+          rangeLabel: reviewCommentRangeText(rangeLabel, messages),
+        })}
         onValueChange={onTextChange ?? setLocalDraftText}
         onFocus={(event) => {
           const end = event.currentTarget.value.length;
@@ -175,17 +182,23 @@ export function DiffCommentAnnotation({
       <div className="mt-1.5 flex flex-wrap items-center gap-1">
         <span className="mr-auto flex flex-col text-3xs text-muted-foreground/70">
           <span>
-            {modifierKey}+Enter to {submitLabel.toLowerCase()}
+            {gt("{modifier}+Enter to {action}", {
+              modifier: modifierKey,
+              action: commentLabel.toLowerCase(),
+            })}
           </span>
           {secondaryAction ? (
             <span>
-              {modifierKey}+Shift+Enter to {secondaryAction.label.toLowerCase()}
+              {gt("{modifier}+Shift+Enter to {action}", {
+                modifier: modifierKey,
+                action: secondaryAction.label.toLowerCase(),
+              })}
             </span>
           ) : null}
         </span>
         {speech ? <TextFieldSpeechControls speech={speech} disabled={blocked} /> : null}
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
-          Cancel
+          <T>Cancel</T>
         </Button>
         {secondaryAction ? (
           <Button
@@ -207,7 +220,7 @@ export function DiffCommentAnnotation({
           disabled={speech?.preparing || blocked || (!speech?.blocksSubmission && !trimmedText)}
           onClick={() => submit(speech, onComment)}
         >
-          {submitLabel}
+          {commentLabel}
         </Button>
       </div>
     </div>

@@ -75,7 +75,7 @@ internal fun ReviewDiffCanvasDrawing.drawNoticeRow(
   val top = rect.top.toInt()
   val bottom = rect.bottom.toInt()
   val width = rect.width().toInt()
-  backgroundPaint.color = theme.background
+  backgroundPaint.color = noticeFill(row)
   canvas.drawRect(rect, backgroundPaint)
   val iconSize = 16f * density
   val iconRect = RectF(
@@ -84,10 +84,10 @@ internal fun ReviewDiffCanvasDrawing.drawNoticeRow(
     style.fileHeaderHorizontalPaddingPx + 2f * density + iconSize,
     (top + bottom + iconSize) / 2f,
   )
-  drawNoticeIcon(canvas, iconRect, theme.mutedText)
+  drawNoticeIcon(canvas, iconRect, noticeColor(row))
   configureUiPaint(
     paint = textPaint,
-    color = theme.mutedText,
+    color = noticeColor(row),
     size = style.fileHeaderSubtextFontSizePx,
     weight = style.fileHeaderSubtextFontWeight,
   )

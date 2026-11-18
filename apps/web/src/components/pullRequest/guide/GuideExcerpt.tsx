@@ -14,6 +14,7 @@ import type {
   PullRequestReviewPosition,
 } from "@t3tools/contracts";
 import { ArrowUpRightIcon } from "lucide-react";
+import { T, useGT, Var } from "gt-react";
 import { useState, type ReactNode } from "react";
 
 import { useRenderedAppearance } from "~/hooks/useTheme";
@@ -191,16 +192,22 @@ export function GuideExcerpt({
         />
       ) : loading ? (
         <p className="rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">
-          Loading {excerpt.path}...
+          <T>
+            Loading <Var>{excerpt.path}</Var>...
+          </T>
         </p>
       ) : (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2 text-xs text-muted-foreground">
           <span className="min-w-0 truncate">
-            <span className="font-mono text-foreground">{excerpt.path}</span> lines {excerpt.start}-
-            {excerpt.end} are not in the loaded diff.
+            <T>
+              <span className="font-mono text-foreground">
+                <Var>{excerpt.path}</Var>
+              </span>{" "}
+              lines <Var>{excerpt.start}</Var>-<Var>{excerpt.end}</Var> are not in the loaded diff.
+            </T>
           </span>
           <Button size="xs" variant="outline" onClick={() => onOpenFile(excerpt.path)}>
-            Open in Code
+            <T>Open in Code</T>
           </Button>
         </div>
       )}
@@ -301,6 +308,7 @@ function ExcerptDiff({
     if (anchor === null) return;
     setDraft({ range, ...anchor });
   };
+  const gt = useGT();
   const interactive =
     commenting !== null &&
     draft === null &&
@@ -312,6 +320,7 @@ function ExcerptDiff({
     const comment = buildDiffReviewComment({
       id: `pull-request-guide:${diffReviewSelectionId(excerpt.path, draft.range)}`,
       sectionId: `pull-request-guide:${excerpt.path}`,
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
       sectionTitle: "Review guide",
       filePath: excerpt.path,
       fileDiff: file,
@@ -392,13 +401,13 @@ function ExcerptDiff({
                 text=""
                 completionScope={commenting.canComment ? commenting.completionScope : null}
                 placeholder={
-                  canQueueComment ? "Add a comment…" : "Ask the agent about these lines…"
+                  canQueueComment ? gt("Add a comment…") : gt("Ask the agent about these lines…")
                 }
-                submitLabel={canQueueComment ? "Add to review" : "Add to composer"}
+                submitLabel={canQueueComment ? gt("Add to review") : gt("Add to composer")}
                 {...(canQueueComment && onAskAgent !== null
                   ? {
                       secondaryAction: {
-                        label: "Add to composer",
+                        label: gt("Add to composer"),
                         onAction: (text: string) => askAgent(text),
                       },
                     }
@@ -427,21 +436,34 @@ function ExcerptDiff({
             {onSetViewed ? (
               <label className="flex items-center gap-1.5">
                 <Checkbox
-                  aria-label={`Reviewed ${excerpt.path}`}
+                  aria-label={gt("Reviewed {path}", { path: excerpt.path })}
                   checked={viewed}
                   onCheckedChange={(checked) => onSetViewed(checked === true)}
                 />
-                Reviewed
+                <T>Reviewed</T>
               </label>
             ) : null}
             <span className="tabular-nums">
-              {excerpt.side === "old" ? "removed code, " : ""}showing {slice.shown} of {slice.total}{" "}
-              diff lines
+              {excerpt.side === "old"
+                ? gt(
+                    "{total, plural, one {removed code, showing {shown} of {total} diff lines} other {removed code, showing {shown} of {total} diff lines}}",
+                    {
+                      shown: slice.shown,
+                      total: slice.total,
+                    },
+                  )
+                : gt(
+                    "{total, plural, one {showing {shown} of {total} diff lines} other {showing {shown} of {total} diff lines}}",
+                    {
+                      shown: slice.shown,
+                      total: slice.total,
+                    },
+                  )}
             </span>
             <Button
               size="icon-xs"
               variant="ghost-muted"
-              aria-label={`Open ${excerpt.path} in Code`}
+              aria-label={gt("Open {path} in Code", { path: excerpt.path })}
               onClick={() => onOpenFile(excerpt.path)}
             >
               <ArrowUpRightIcon aria-hidden />

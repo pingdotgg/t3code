@@ -1,4 +1,5 @@
 import { Button } from "../../../components/ui/Button";
+import { useGT, useMessages } from "gt-react-native";
 import { View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { AppText as Text } from "../../../components/ui/AppText";
@@ -18,7 +19,9 @@ export function GuideNotice({
   readonly state: ReturnType<typeof useReviewGuide>;
   readonly active?: boolean;
 }) {
-  const notice = guideNoticeState(state);
+  const gt = useGT();
+  const messages = useMessages();
+  const notice = guideNoticeState(state, messages);
   if (notice.kind === "ready") return null;
   const compact = state.data?.guide != null;
   const failed = notice.kind === "failed" || notice.kind === "unavailable";
@@ -27,12 +30,12 @@ export function GuideNotice({
     return (
       <View className="mb-3 gap-1 py-2" accessibilityLiveRegion="polite">
         <Text className="text-base font-t3-semibold text-foreground-muted">
-          {notice.kind === "loading" ? "Loading guide…" : "Waiting to generate guide"}
+          {notice.kind === "loading" ? gt("Loading guide…") : gt("Waiting to generate guide")}
         </Text>
         <Text className="text-xs text-foreground-muted">
           {notice.kind === "loading"
-            ? "Checking for a saved guide. You can explore the files below."
-            : "The guide starts automatically when connected with write access."}
+            ? gt("Checking for a saved guide. You can explore the files below.")
+            : gt("The guide starts automatically when connected with write access.")}
         </Text>
       </View>
     );
@@ -43,8 +46,8 @@ export function GuideNotice({
         <GuideGeneratingHeading rewriting={compact} visible={active} />
         <Text className="text-xs text-foreground-muted">
           {compact
-            ? "Keep reading while the guide updates."
-            : "Explore the files while the guide is written."}
+            ? gt("Keep reading while the guide updates.")
+            : gt("Explore the files while the guide is written.")}
         </Text>
       </View>
     );
@@ -65,7 +68,7 @@ export function GuideNotice({
           tintColorClassName={failed ? "accent-danger-foreground" : "accent-icon-muted"}
         />
         <Text className="text-base font-t3-semibold">
-          {compact ? notice.title : "Review guide"}
+          {compact ? notice.title : gt("Review guide")}
         </Text>
       </View>
       <View className="pt-2 pb-3">
@@ -83,8 +86,8 @@ export function GuideNotice({
         ) : (
           <Text className="text-xs text-foreground-muted">
             {notice.kind === "failed"
-              ? "Reconnect or ask someone with write access to retry."
-              : "Writing a guide requires a connection and write access."}
+              ? gt("Reconnect or ask someone with write access to retry.")
+              : gt("Writing a guide requires a connection and write access.")}
           </Text>
         )}
       </View>

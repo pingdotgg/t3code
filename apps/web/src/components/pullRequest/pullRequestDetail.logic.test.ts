@@ -1307,6 +1307,21 @@ describe("adding a remark to the chat", () => {
       ].join("\n\n"),
     );
 
+    const beforeContext = buildPullRequestCommentContext(
+      {
+        ...pullRequest,
+        reviewThreads: reviewThreads.map((thread) => ({ ...thread, side: "left" as const })),
+        reviewThreadsTruncated: false,
+      },
+      { kind: "comment", comment: review },
+    )!;
+    const beforeRecord = reviewCommentContextRecord(beforeContext);
+    const beforePrompt = projectComposerContextForProvider({
+      text: formatComposerContextReference(beforeRecord),
+      records: [beforeRecord],
+    });
+    expect(beforePrompt).toContain("`src/main.rs` line 12 (before)");
+
     const sent = reviewCommentContextRecord(
       buildPullRequestCommentContext(
         { ...pullRequest, reviewThreads, reviewThreadsTruncated: false },

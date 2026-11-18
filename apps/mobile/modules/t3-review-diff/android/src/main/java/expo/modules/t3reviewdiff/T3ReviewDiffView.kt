@@ -444,23 +444,7 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
   private fun handleRowTap(row: DiffRow, gesture: String, target: RowTapTarget) {
     when (row.kind) {
       "hunk" -> if (gesture == "tap") handleHunkTap(row, target)
-      "file" -> {
-        if (gesture != "tap") return
-        if (target == RowTapTarget.FILE_ACTION) {
-          if (!row.fileActionDisabled) {
-            onPressFileAction(
-              mapOf(
-                "fileId" to row.resolvedFileId,
-                "rowId" to row.id
-              )
-            )
-          }
-        } else if (target == RowTapTarget.VIEWED_CHECKBOX) {
-          onToggleViewedFile(mapOf("fileId" to row.resolvedFileId))
-        } else {
-          onToggleFile(mapOf("fileId" to row.resolvedFileId))
-        }
-      }
+      "file" -> if (gesture == "tap") handleFileTap(row, target)
       "comment" -> onToggleComment(mapOf("commentId" to row.id))
       "notice" -> if (gesture == "tap" && row.actionable) {
         onPressNotice(mapOf("rowId" to row.id, "fileId" to row.resolvedFileId))
@@ -476,6 +460,23 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
         row.newLineNumber?.let { payload["newLineNumber"] = it }
         onPressLine(payload)
       }
+    }
+  }
+
+  private fun handleFileTap(row: DiffRow, target: RowTapTarget) {
+    if (target == RowTapTarget.FILE_ACTION) {
+      if (!row.fileActionDisabled) {
+        onPressFileAction(
+          mapOf(
+            "fileId" to row.resolvedFileId,
+            "rowId" to row.id
+          )
+        )
+      }
+    } else if (target == RowTapTarget.VIEWED_CHECKBOX) {
+      onToggleViewedFile(mapOf("fileId" to row.resolvedFileId))
+    } else {
+      onToggleFile(mapOf("fileId" to row.resolvedFileId))
     }
   }
 
@@ -1312,29 +1313,12 @@ private class DiffCanvasView(context: Context) : View(context) {
   }
 
   private fun drawNoticeRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {
-    fill(canvas, drawing.noticeFill(row), 0f, top.toFloat(), width.toFloat(), bottom.toFloat())
-    val iconSize = 16f * density
-    val iconRect = RectF(
-      style.fileHeaderHorizontalPaddingPx + 2f * density,
-      (top + bottom - iconSize) / 2f,
-      style.fileHeaderHorizontalPaddingPx + 2f * density + iconSize,
-      (top + bottom + iconSize) / 2f,
+    drawing.drawNoticeRow(
+      canvas,
+      row,
+      RectF(0f, top.toFloat(), width.toFloat(), bottom.toFloat()),
+      style,
     )
-    drawing.drawNoticeIcon(canvas, iconRect, drawing.noticeColor(row))
-    drawing.configureUiPaint(
-      paint = textPaint,
-      color = drawing.noticeColor(row),
-      size = style.fileHeaderSubtextFontSizePx,
-      weight = style.fileHeaderSubtextFontWeight,
-    )
-    val textX = iconRect.right + 10f * density
-    canvas.drawText(
-      ellipsize(row.text, textPaint, width - textX - style.fileHeaderHorizontalPaddingPx),
-      textX,
-      centeredBaseline(top, bottom, textPaint),
-      textPaint,
-    )
-    drawBottomBorder(canvas, bottom)
   }
 
   private fun drawCommentRow(canvas: Canvas, row: DiffRow, top: Int, bottom: Int) {

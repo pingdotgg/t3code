@@ -33,6 +33,7 @@ import {
   CircleIcon,
 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { T, useGT } from "gt-react";
 
 import { cn } from "~/lib/utils";
 import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
@@ -119,6 +120,7 @@ export function PendingReviewCommentCard({
   canCopyLink: boolean;
   onAddToComposer?: (() => void) | undefined;
 }) {
+  const gt = useGT();
   const [replyCommentId, setReplyCommentId] = useState<string | null>(null);
   const { busy, canSave, canDiscard, saveDraft, copyLink, discard } =
     usePendingReviewCommentActions(environmentId, reference);
@@ -139,20 +141,20 @@ export function PendingReviewCommentCard({
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <Badge variant="warning" size="sm">
           <ClockIcon className="size-3" />
-          Pending
+          <T>Pending</T>
         </Badge>
         <span>
           {comment.hostedComment
-            ? "Saved on GitHub · private until submitted"
+            ? gt("Saved on GitHub · private until submitted")
             : canCopyLink
               ? busy
-                ? "Saving to GitHub…"
-                : "Only saved in T3"
-              : "Sent when you submit the review"}
+                ? gt("Saving to GitHub…")
+                : gt("Only saved in T3")
+              : gt("Sent when you submit the review")}
         </span>
         {canCopyLink && canSave && !comment.hostedComment && !busy ? (
           <Button size="xs" variant="ghost" onClick={() => void saveDraft(comment)}>
-            Retry save
+            <T>Retry save</T>
           </Button>
         ) : null}
         <div className="ml-auto flex items-center gap-1">
@@ -166,7 +168,7 @@ export function PendingReviewCommentCard({
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Discard this comment"
+            aria-label={gt("Discard this comment")}
             disabled={busy || (comment.hostedComment !== undefined && !canDiscard)}
             onClick={() => void discard(comment)}
           >
@@ -187,7 +189,7 @@ export function PendingReviewCommentCard({
             })();
           }}
         >
-          Reply to conversation
+          <T>Reply to conversation</T>
         </Button>
       ) : null}
     </div>
@@ -204,6 +206,7 @@ export function InlineReviewThreads({
   renderThread: (thread: PullRequestReviewThread, hidden: boolean) => ReactNode;
   revealedThreadId?: string | undefined;
 }) {
+  const gt = useGT();
   const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set());
   // A conversation seen open stays shown once resolved, so it does not vanish under the reader.
   const open = threads.filter((thread) => !thread.isResolved);
@@ -218,8 +221,10 @@ export function InlineReviewThreads({
     authors.set(comment.author?.login ?? "ghost", comment.author);
   }
   if (authors.size === 0) authors.set("ghost", null);
-  const label =
-    resolved.length === 1 ? "Resolved conversation" : `${resolved.length} resolved conversations`;
+  const label = gt(
+    "{count, plural, =1 {Resolved conversation} other {{count} resolved conversations}}",
+    { count: resolved.length },
+  );
   return (
     <>
       {resolved.length > 0 ? (
@@ -268,7 +273,7 @@ export function ReviewThreadCard({
   completionScope = null,
   pending,
   fixPending,
-  fixLabel = "Fix in a thread",
+  fixLabel,
   onFix,
   onAddToChat,
   onReply,
@@ -308,6 +313,7 @@ export function ReviewThreadCard({
   revealRequest?: number | undefined;
   onAddToComposer?: ((comment: PullRequestThreadComment) => void) | undefined;
 }) {
+  const gt = useGT();
   // A resolved thread is finished work, so it opens collapsed and stays one line until asked for.
   const pendingActions = usePendingReviewCommentActions(environmentId, reference);
   const [expanded, setExpanded] = useState(
@@ -451,10 +457,19 @@ export function ReviewThreadCard({
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
-          {commentCount === 1 ? "comment" : "comments"}
+          {thread.isResolved
+            ? gt("Resolved", { $context: "review thread state" })
+            : gt("Open", { $context: "review thread state" })}{" "}
+          ·{" "}
+          {gt("{count, plural, one {{count} comment} other {{count} comments}}", {
+            count: commentCount,
+          })}
         </button>
-        {thread.isOutdated ? <span>outdated</span> : null}
+        {thread.isOutdated ? (
+          <span>
+            <T context="review thread state">outdated</T>
+          </span>
+        ) : null}
         {onFix ? (
           <Button
             size="compact"
@@ -464,7 +479,7 @@ export function ReviewThreadCard({
             onClick={onFix}
           >
             <HammerIcon className="size-3" />
-            {fixPending ? "Preparing..." : fixLabel}
+            {fixPending ? gt("Preparing...") : (fixLabel ?? gt("Fix in a thread"))}
           </Button>
         ) : null}
         {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
@@ -475,7 +490,7 @@ export function ReviewThreadCard({
             onClick={() => onAddToChat({ ...thread, comments })}
           >
             <MessageSquarePlusIcon className="size-3" />
-            Add to chat
+            <T>Add to chat</T>
           </Button>
         ) : null}
         {canResolve ? (
@@ -486,7 +501,7 @@ export function ReviewThreadCard({
             disabled={pending}
             onClick={onToggleResolved}
           >
-            {thread.isResolved ? "Unresolve" : "Resolve"}
+            {thread.isResolved ? gt("Unresolve") : gt("Resolve")}
           </Button>
         ) : null}
       </div>
@@ -502,7 +517,7 @@ export function ReviewThreadCard({
                   {comment.pendingReviewId ? (
                     <Badge variant="warning" size="sm">
                       <ClockIcon className="size-3" />
-                      Pending
+                      <T>Pending</T>
                     </Badge>
                   ) : null}
                   {index === 0 && thread.isOutdated ? (
@@ -523,8 +538,8 @@ export function ReviewThreadCard({
                       <Button
                         size="icon-xs"
                         variant="ghost-muted"
-                        aria-label="Resolve conversation"
-                        title="Resolve conversation"
+                        aria-label={gt("Resolve conversation")}
+                        title={gt("Resolve conversation")}
                         disabled={pending}
                         onClick={onToggleResolved}
                       >
@@ -537,7 +552,7 @@ export function ReviewThreadCard({
                       <Button
                         size="icon-xs"
                         variant="ghost-muted"
-                        aria-label="Discard this comment"
+                        aria-label={gt("Discard this comment")}
                         disabled={pendingActions.busy}
                         onClick={() => void pendingActions.discard(discardById.get(comment.id)!)}
                       >
@@ -564,7 +579,7 @@ export function ReviewThreadCard({
                     cwd={workspaceRoot}
                     environmentId={environmentId}
                     completionScope={completionScope}
-                    label="Edit comment"
+                    label={gt("Edit comment")}
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
                     onCancel={() => setEditingId(null)}
@@ -590,7 +605,7 @@ export function ReviewThreadCard({
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
-                {loadingMore ? "Loading..." : "Load more comments"}
+                {loadingMore ? gt("Loading...") : gt("Load more comments")}
               </Button>
             </div>
           ) : null}
@@ -615,8 +630,8 @@ export function ReviewThreadCard({
                       size="sm"
                       completionScope={completionScope}
                       value={reply}
-                      placeholder="Reply"
-                      aria-label="Reply to this conversation"
+                      placeholder={gt("Reply", { $context: "noun, placeholder" })}
+                      aria-label={gt("Reply to this conversation")}
                       onValueChange={setReply}
                       onKeyDown={submitKeys({
                         value: reply,
@@ -638,7 +653,7 @@ export function ReviewThreadCard({
                     <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
                       <TextFieldSpeechControls speech={speech} disabled={pending || uploading} />
                       <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
-                        Cancel
+                        <T>Cancel</T>
                       </Button>
                       <Button
                         size="xs"
@@ -650,7 +665,7 @@ export function ReviewThreadCard({
                         }
                         onClick={() => speech.submitAfterDictation((text) => void send(text))}
                       >
-                        Reply
+                        <T context="verb, button">Reply</T>
                       </Button>
                     </div>
                   </div>
@@ -665,7 +680,7 @@ export function ReviewThreadCard({
                 className="mt-2"
                 onClick={() => setReplying(true)}
               >
-                Reply
+                <T context="verb, button">Reply</T>
               </Button>
             )
           ) : null}
@@ -687,6 +702,7 @@ export function HostedReviewThreadCard({
   threadId?: string | undefined;
   commentId?: string | undefined;
 }) {
+  const gt = useGT();
   const target = { environmentId, input: reference };
   const detail = useEnvironmentQuery(pullRequestEnvironment.detail(target));
   const activity = useEnvironmentQuery(pullRequestEnvironment.activity(target));
@@ -704,8 +720,8 @@ export function HostedReviewThreadCard({
         {activity.error ??
           detail.error ??
           (activity.isPending || detail.isPending
-            ? "Loading conversation…"
-            : "This conversation is not available yet. Refresh to check again.")}
+            ? gt("Loading conversation…")
+            : gt("This conversation is not available yet. Refresh to check again."))}
         <Button
           size="xs"
           variant="ghost"
@@ -714,7 +730,7 @@ export function HostedReviewThreadCard({
             detail.refresh();
           }}
         >
-          Refresh conversation
+          <T>Refresh conversation</T>
         </Button>
       </div>
     );

@@ -6,6 +6,7 @@ import type {
   PullRequestRef,
   PullRequestReviewGuideStop,
 } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { ScrollTextIcon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, type ReactNode } from "react";
 
@@ -68,6 +69,7 @@ export function PullRequestGuideTab({
   onOpenFile: (path: string) => void;
   onTourShown?: (() => void) | undefined;
 }) {
+  const gt = useGT();
   const { query, data, running, canWrite, write } = useReviewGuideWriter({
     environmentId,
     reference,
@@ -159,7 +161,7 @@ export function PullRequestGuideTab({
     canWrite ? (
       <Button size={size} variant="outline" disabled={running} onClick={() => void write()}>
         {running ? <Spinner /> : <ScrollTextIcon aria-hidden className="size-3.5" />}
-        {running ? "Reading the change..." : label}
+        {running ? gt("Reading the change...") : label}
       </Button>
     ) : null;
 
@@ -172,17 +174,21 @@ export function PullRequestGuideTab({
           data-guide-generating={(running && active) || undefined}
           className="text-sm font-medium"
         >
-          {(failure ? "Could not write a review guide" : null) ??
+          {(failure ? gt("Could not write a review guide") : null) ??
             query.error ??
-            (running ? "Generating guide…" : query.isPending ? "Loading guide…" : "Review guide")}
+            (running
+              ? gt("Generating guide…")
+              : query.isPending
+                ? gt("Loading guide…")
+                : gt("Review guide"))}
         </h2>
         <p className="text-xs text-muted-foreground">
           {running
-            ? "Organizing this change into chapters. Review the files while you wait."
-            : "Review the files while the guide is prepared."}
+            ? gt("Organizing this change into chapters. Review the files while you wait.")
+            : gt("Review the files while the guide is prepared.")}
         </p>
         {!running && !query.isPending
-          ? writeButton(failure === null ? "Write guide" : "Try again", "xs")
+          ? writeButton(failure === null ? gt("Write guide") : gt("Try again"), "xs")
           : null}
         {failure === null || running ? null : <FailureDetails detail={failure} />}
       </div>,
@@ -195,17 +201,21 @@ export function PullRequestGuideTab({
         {running ? <Spinner /> : <TriangleAlertIcon />}
         <AlertDescription>
           {running ? (
-            "Rewriting this guide. You will be told when the new one is ready."
+            gt("Rewriting this guide. You will be told when the new one is ready.")
           ) : failure === null ? (
-            "Written before the latest push."
+            gt("Written before the latest push.")
           ) : (
             <>
-              {`Could not rewrite this guide. ${FAILURE_HINT}`}
+              {gt(
+                "Could not rewrite this guide. Check the review guide model in Settings → Source control.",
+              )}
               <FailureDetails detail={failure} />
             </>
           )}
         </AlertDescription>
-        {!running && canWrite ? <AlertAction>{writeButton("Rewrite", "xs")}</AlertAction> : null}
+        {!running && canWrite ? (
+          <AlertAction>{writeButton(gt("Rewrite"), "xs")}</AlertAction>
+        ) : null}
       </Alert>
     ) : null;
 
@@ -235,13 +245,11 @@ export function PullRequestGuideTab({
   );
 }
 
-const FAILURE_HINT = "Check the review guide model in Settings → Source control & issues.";
-
 function FailureDetails({ detail }: { detail: string }) {
   return (
     <details className="w-full max-w-lg text-xs text-muted-foreground">
       <summary className="cursor-pointer rounded-sm -outline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-        Technical details
+        <T>Technical details</T>
       </summary>
       <pre className="scrollbar-gutter-both mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-border bg-muted/40 p-3 text-left font-mono text-xs">
         {detail}
