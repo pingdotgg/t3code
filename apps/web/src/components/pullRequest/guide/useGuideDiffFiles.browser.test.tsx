@@ -6,11 +6,16 @@ import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../../../test/render";
 
 const state = vi.hoisted(() => ({
+  heads: new Map<
+    string,
+    Map<string | null, Atom.Atom<AsyncResult.AsyncResult<PullRequestDiffResult>>>
+  >(),
   pages: new Map<string | null, Atom.Atom<AsyncResult.AsyncResult<PullRequestDiffResult>>>(),
 }));
 vi.mock("~/state/pullRequests", () => ({
   pullRequestEnvironment: {
-    diff: ({ input }: { input: { cursor?: string } }) => state.pages.get(input.cursor ?? null)!,
+    diff: ({ input }: { input: { cursor?: string; cacheHeadSha?: string } }) =>
+      (state.heads.get(input.cacheHeadSha ?? "") ?? state.pages).get(input.cursor ?? null)!,
   },
 }));
 
@@ -35,6 +40,7 @@ function Probe({ wantedPaths }: { wantedPaths: string[] }) {
 
 function setup() {
   state.pages.clear();
+  state.heads.clear();
 }
 
 function page(path: string, value: string, nextCursor: string | null): PullRequestDiffResult {
@@ -142,4 +148,23 @@ it("waits for a later cached page that is still refreshing", async () => {
       ["wanted.ts", "FRESH\n"],
     ],
   });
+});
+
+it("reads the guide head's pages instead of the previous push's cached ones", async () => {
+  setup();
+  await using stack = new AsyncDisposableStack();
+  const registry = stack.adopt(AtomRegistry.make(), (value) => value.dispose());
+  state.pages.set(null, Atom.make(AsyncResult.success(page("wanted.ts", "OLD_HEAD", null))));
+  state.heads.set(
+    "new-head",
+    new Map([[null, Atom.make(AsyncResult.success(page("wanted.ts", "NEW_HEAD", null)))]]),
+  );
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <Probe wantedPaths={["wanted.ts"]} />
+    </RegistryContext.Provider>,
+  );
+  expect(JSON.parse(screen.container.querySelector("output")!.textContent!).files).toEqual([
+    ["wanted.ts", "NEW_HEAD\n"],
+  ]);
 });

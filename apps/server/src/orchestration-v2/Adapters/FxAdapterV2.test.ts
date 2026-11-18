@@ -209,6 +209,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
   readonly frames: ReadonlyArray<Frame>;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
+  readonly modeOptions?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
   /** Loads this fx session instead of creating one. */
   readonly loadSessionId?: string;
   /** Then starts a turn on this model. */
@@ -254,7 +255,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
   const selectionOn = (model: string) => ({
     instanceId,
     model,
-    options: [{ id: "effort", value: "xhigh" }],
+    options: [{ id: "effort", value: "xhigh" }, ...(input.modeOptions ?? [])],
   });
   const modelSelection = selectionOn(input.model ?? "default");
   const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
@@ -352,6 +353,27 @@ describe("FxAdapterV2", () => {
         }),
       { discard: true },
     ).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps supervised sessions in the mode set by their runtime policy", () =>
+    openFxSession({
+      scenario: "supervised-mode-policy",
+      runtimeMode: "approval-required",
+      modeOptions: [
+        { id: "_t3/session-mode", value: "auto" },
+        { id: "mode", value: "auto" },
+      ],
+      frames: [
+        ...initialize,
+        outbound("session/new", {
+          cwd: "<workspace>",
+          mcpServers: "<any>",
+          _meta: { fx: { profileMcpServers: true } },
+        }),
+        answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
+        ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
+      ],
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("puts a loaded session that ran a named model back on fx's default for Default", () =>

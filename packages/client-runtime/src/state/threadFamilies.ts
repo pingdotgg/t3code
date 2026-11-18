@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import {
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
@@ -100,7 +102,7 @@ export function createThreadFamilyAtoms<R, ER, E>(
       if (Option.isNone(session)) {
         return yield* new EnvironmentRpcUnavailableError({
           environmentId: supervisor.target.environmentId,
-          message: "The environment has no session.",
+          ...translatableMessage(msg("The environment has no session.")),
         });
       }
       // A config failure fails the read: an empty family would read as "the thread is gone".
