@@ -1111,6 +1111,8 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         // Runs a Stop ended; a shell they started that is reported only afterwards is stopped too.
         const stoppedRuns = new Set<ProviderAdapter.ProviderAdapterV2TurnInput["runId"]>();
         let latestRunId: ProviderAdapter.ProviderAdapterV2TurnInput["runId"] | undefined;
+        // A Stop or rollback bumps this, which drops wakes still queued behind another run.
+        let wakeGeneration = 0;
         const publishedProviderThread = yield* Ref.make<OrchestrationV2ProviderThread | null>(null);
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
 
@@ -1198,10 +1200,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           ) {
             return;
           }
+          const generation = wakeGeneration;
           yield* continuationRequests.offer({
             threadId: turnInput.threadId,
             providerThreadId,
             driver: CursorAgentSdk.CURSOR_PROVIDER,
+            dispatchIfCurrent: (dispatch) =>
+              generation === wakeGeneration ? Effect.asSome(dispatch) : Effect.succeedNone,
             // Cursor starts a new run from this text, so nothing is buffered.
             delivery: "message_text",
             detail: cursorBackgroundShellDetail(shell),
@@ -1226,6 +1231,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
 
         const stopBackgroundShells = (providerThreadId?: OrchestrationV2ProviderThread["id"]) =>
           Effect.sync(() => {
+            wakeGeneration += 1;
             for (const shell of backgroundShells.values()) {
               if (providerThreadId === undefined || shell.providerThreadId === providerThreadId) {
                 shell.stop();

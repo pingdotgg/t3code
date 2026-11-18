@@ -2408,6 +2408,11 @@ describe("CursorAdapterV2", () => {
           providerThreadTurns: [],
         });
         assert.deepStrictEqual(stopped, ["7"]);
+        // A wake still queued when the rollback landed is dropped.
+        assert.deepStrictEqual(
+          yield* wakes[0]!.dispatchIfCurrent!(Effect.succeed("woken")),
+          Option.none(),
+        );
         yield* report({
           ...shell("7"),
           type: "ended",
