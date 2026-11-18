@@ -41,7 +41,11 @@ export function mediaVideoPreviewUri(
   return assetUrl === null ? null : assetUrl + (source.srcFragment ?? "");
 }
 
-export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string {
+/** Pass the server's `fileRevision` for a host file so a replaced file gets its own poster. */
+export function mediaVideoThumbnailKey(
+  source: MediaVideoPreviewSource,
+  fileRevision?: string,
+): string {
   return JSON.stringify(
     "uri" in source
       ? ["media-video", source.uri]
@@ -55,6 +59,7 @@ export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string 
               source.resource.threadId,
               source.resource.path,
               source.srcFragment ?? "",
+              fileRevision ?? "",
             ]
           : source.resource._tag === SOURCE_CONTROL_MEDIA_ASSET
             ? [
@@ -72,6 +77,7 @@ export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string 
                 source.resource.cwd,
                 source.resource.path,
                 source.srcFragment ?? "",
+                fileRevision ?? "",
               ],
   );
 }
