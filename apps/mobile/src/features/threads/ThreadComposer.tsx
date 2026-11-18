@@ -487,7 +487,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     if (suggestion === null) return;
     // The tap can commit a pending autocorrection; text it leaves in the draft wins.
     await inputRef.current?.flushPendingInput();
-    if (getComposerDraftSnapshot(composerDraftKey).text !== "") return;
+    if (getComposerDraftSnapshot(composerDraftKey).text.trim() !== "") return;
     onChangeDraftMessage(suggestion);
     composerMenu.onSelectionChange({ start: suggestion.length, end: suggestion.length });
   };
