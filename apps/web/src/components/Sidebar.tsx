@@ -3226,14 +3226,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     projects: scopedProjectGroups.map((project) => project.displayName).join(", "),
                   })}
                 </span>
-                <button
-                  type="button"
-                  className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm px-1 text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                  onClick={() => setProjectScopeKeys([])}
-                >
-                  <XIcon className="size-3" />
+                <Button variant="ghost-muted" size="micro" onClick={() => setProjectScopeKeys([])}>
+                  <XIcon />
                   {gt("Clear", { $context: "verb, removes the sidebar project filter" })}
-                </button>
+                </Button>
               </div>
             ) : null}
           </SidebarGroup>
