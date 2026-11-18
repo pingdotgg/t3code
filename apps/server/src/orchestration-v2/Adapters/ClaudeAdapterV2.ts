@@ -10270,6 +10270,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
+        const backgroundTaskLaunch = (
+          activeContext: ActiveClaudeTurnContext | null,
+          toolUseId: string | undefined,
+        ): Pick<OrchestrationV2PendingBackgroundTask, "command" | "itemId" | "sourceThreadId"> => {
+          const launch =
+            toolUseId === undefined || activeContext === null
+              ? undefined
+              : findToolCall(activeContext, toolUseId);
+          const command =
+            launch?.classification.itemType === "command_execution" ||
+            launch?.toolName === "Monitor"
+              ? firstStringInputField(launch.input, ["command"])
+              : undefined;
+          if (launch === undefined || command === undefined) return {};
+          return {
+            command,
+            itemId: idAllocator.derive.turnItemFromProviderItem({
+              driver: CLAUDE_PROVIDER,
+              nativeItemId: launch.nativeItemId,
+            }),
+            sourceThreadId: launch.threadId,
+          };
+        };
+
         const applyBackgroundTaskRosterMessage = Effect.fnUntraced(function* (input: {
           readonly nativeThreadId: string;
           readonly message: SDKMessage;
@@ -10311,7 +10335,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             for (const entry of roster) {
               const task = parseClaudeBackgroundTaskEntry(entry, monitorTasks, toolUseIds);
               if (task !== null) {
-                nextTasks.push(task);
+                // A foreground command Claude moved to the background first appears here.
+                nextTasks.push({
+                  ...backgroundTaskLaunch(input.activeContext, task.nativeItemId),
+                  ...task,
+                });
               }
             }
             yield* replacePendingBackgroundTasks(input.nativeThreadId, nextTasks);
@@ -10335,26 +10363,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (message.is_backgrounded === false) {
               return false;
             }
-            const launch =
-              message.tool_use_id === undefined || input.activeContext === null
-                ? undefined
-                : findToolCall(input.activeContext, message.tool_use_id);
-            const command =
-              launch?.classification.itemType === "command_execution" ||
-              launch?.toolName === "Monitor"
-                ? firstStringInputField(launch.input, ["command"])
-                : undefined;
             yield* upsertPendingBackgroundTask(input.nativeThreadId, {
-              ...(launch === undefined || command === undefined
-                ? {}
-                : {
-                    itemId: idAllocator.derive.turnItemFromProviderItem({
-                      driver: CLAUDE_PROVIDER,
-                      nativeItemId: launch.nativeItemId,
-                    }),
-                    sourceThreadId: launch.threadId,
-                  }),
-              ...(command === undefined ? {} : { command }),
+              ...backgroundTaskLaunch(input.activeContext, message.tool_use_id),
               ...claudePendingBackgroundTask({
                 taskId: message.task_id,
                 taskType: claudeTaskTypeFromSdkMessage(message),
@@ -14078,7 +14088,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
           ),
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
-            function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
+            function* (threadInput: {
+              readonly providerThread: OrchestrationV2ProviderThread;
+              readonly importedNativeSession?: boolean;
+            }) {
               const nativeThreadId = threadInput.providerThread.nativeThreadRef?.nativeId;
               if (nativeThreadId !== undefined && nativeThreadId !== null) {
                 const recordedTitle = threadInput.providerThread.nativeMetadata?.title;
@@ -14102,7 +14115,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 const transcript = yield* claudeTranscriptState(nativeThreadId).pipe(
                   Effect.orElseSucceed(() => "missing" as const),
                 );
-                if (transcript === "empty") {
+                // Opening a missing imported session would start an empty one under its id.
+                if (
+                  transcript === "empty" ||
+                  (transcript === "missing" && threadInput.importedNativeSession === true)
+                ) {
                   return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                     driver: CLAUDE_PROVIDER,
                     detail: `Claude session ${nativeThreadId} has no conversation to resume.`,
