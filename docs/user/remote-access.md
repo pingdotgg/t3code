@@ -425,7 +425,8 @@ t3 pair --scope orchestration:read --scope relay:read
 The selected scopes replace the default permissions. The same option works with
 `t3 auth pairing create` and `t3 auth session issue`; each command's
 `--help` lists the available scopes. Without `--scope`, pairing tokens and issued
-bearer sessions get every permission, including managing access and T3 Connect.
+bearer sessions get the standard client permissions, including managing access.
+Setting up or replacing a T3 Connect link requires the separate `relay:configure` permission.
 A terminal or a full-access agent on the host can reach those as well, so a
 client that should not manage access also needs to go without `terminal:operate`
 and `orchestration:operate`.

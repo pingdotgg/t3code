@@ -4,7 +4,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import {
   linkEnvironmentToCloudWithPreference,
-  updateLinkedEnvironmentLiveActivityPreference,
+  type CloudEnvironmentLinkError,
 } from "../cloud/linkEnvironment";
 import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
 
@@ -14,23 +14,28 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     readonly previousEnabled: boolean;
     readonly clerkToken: string | null;
     readonly connections: ReadonlyArray<SavedRemoteConnection>;
+    readonly updateEnvironment: (
+      environmentId: EnvironmentId,
+      enabled: boolean,
+    ) => Effect.Effect<"updated" | "unlinked" | "unsupported", CloudEnvironmentLinkError>;
     readonly canUpdateEnvironment: (environmentId: EnvironmentId) => boolean;
     readonly canConfigureEnvironment: (environmentId: EnvironmentId) => boolean;
   }) {
-    const linkedConnections = input.connections.filter(
-      (connection) => connection.bearerToken !== null,
-    );
-
     const updateEnvironmentPreference = Effect.fn("updateEnvironmentPreference")(function* (
       connection: SavedRemoteConnection,
       enabled: boolean,
       clerkToken: string | null,
     ) {
       const result = input.canUpdateEnvironment(connection.environmentId)
-        ? yield* updateLinkedEnvironmentLiveActivityPreference(connection, enabled)
+        ? yield* input.updateEnvironment(connection.environmentId, enabled)
         : "unlinked";
       if (result === "updated") return false;
-      if (!enabled || !clerkToken || !input.canConfigureEnvironment(connection.environmentId)) {
+      if (
+        !enabled ||
+        !clerkToken ||
+        !connection.bearerToken ||
+        !input.canConfigureEnvironment(connection.environmentId)
+      ) {
         return result === "unsupported";
       }
 
@@ -51,42 +56,23 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
       if (!clerkToken) return false;
 
       const results = yield* Effect.forEach(
-        linkedConnections,
+        input.connections,
         (connection) => updateEnvironmentPreference(connection, enabled, clerkToken),
         { concurrency: "unbounded" },
       );
       return results.some(Boolean);
     });
 
-    const restoreRelayPreference = Effect.fn("restoreRelayPreference")(function* () {
-      yield* updateAgentAwarenessRegistrationPreferences({
-        liveActivitiesEnabled: input.previousEnabled,
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Could not restore Live Activity device preference.", cause),
-        ),
-      );
-
-      const clerkToken = input.clerkToken;
-      if (!clerkToken) return;
-
-      yield* Effect.forEach(
-        linkedConnections,
-        (connection) =>
-          updateEnvironmentPreference(connection, input.previousEnabled, null).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning(
-                `Could not restore Live Activity preference for environment ${connection.environmentId}.`,
-                cause,
-              ),
-            ),
-          ),
-        { concurrency: "unbounded" },
-      );
-    });
-
     return yield* updateRelayPreference(input.enabled).pipe(
-      Effect.onError(() => restoreRelayPreference()),
+      Effect.onError(() =>
+        updateAgentAwarenessRegistrationPreferences({
+          liveActivitiesEnabled: input.previousEnabled,
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not restore Live Activity device preference.", cause),
+          ),
+        ),
+      ),
     );
   },
 );

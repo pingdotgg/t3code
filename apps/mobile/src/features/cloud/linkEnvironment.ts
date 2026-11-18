@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import { HttpClient, type HttpClientResponse } from "effect/http";
 import {
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentHttpBadRequestError,
@@ -18,6 +18,7 @@ import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import { ManagedRelay, relayRequestFailureDetail } from "@t3tools/client-runtime/relay";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 
+import { executeConnectedEnvironmentHttpRequest } from "@t3tools/client-runtime/state/environmentHttpAuth";
 import { msg } from "gt-react-native";
 
 import { m } from "../../i18n/messages";
@@ -167,40 +168,49 @@ const decodeRelayOkResponse = Schema.decodeUnknownEffect(RelayOkResponse);
 
 export const updateLinkedEnvironmentLiveActivityPreference = Effect.fn(
   "linkEnvironment.updateLinkedEnvironmentLiveActivityPreference",
-)(function* (connection: SavedRemoteConnection, liveActivitiesEnabled: boolean) {
-  if (!connection.bearerToken) return "unlinked" as const;
-
-  const client = yield* makeEnvironmentHttpApiClient(connection.httpBaseUrl);
-  return yield* client.connect
-    .liveActivityPreference({
-      headers: { authorization: `Bearer ${connection.bearerToken}` },
-      payload: { liveActivitiesEnabled },
-      responseMode: "response-only",
-    })
-    .pipe(
-      Effect.flatMap((response) =>
-        Effect.gen(function* () {
-          if (response.status === 404) return "unsupported" as const;
-          if (response.status === 200) {
-            const json = yield* response.json;
-            const result = yield* decodeRelayOkResponse(json);
-            return result.ok ? ("updated" as const) : ("unlinked" as const);
-          }
-          return yield* new CloudEnvironmentLinkError({
-            message: m(msg("Environment returned HTTP {status}."), { status: response.status }),
-          });
-        }),
+)(function* (liveActivitiesEnabled: boolean) {
+  return yield* executeConnectedEnvironmentHttpRequest<
+    "connect",
+    HttpClientResponse.HttpClientResponse,
+    unknown,
+    never
+  >({
+    group: "connect",
+    method: "POST",
+    url: (urls) => urls.liveActivityPreference(),
+    timeoutMs: 8_000,
+    requestInit: { redirect: "error" },
+    isUnauthorizedResponse: (response) => response.status === 401,
+    request: ({ client, headers }) =>
+      client.liveActivityPreference({
+        headers,
+        payload: { liveActivitiesEnabled },
+        responseMode: "response-only",
+      }),
+  }).pipe(
+    Effect.flatMap((response) =>
+      Effect.gen(function* () {
+        if (response.status === 404) return "unsupported" as const;
+        if (response.status === 200) {
+          const json = yield* response.json;
+          const result = yield* decodeRelayOkResponse(json);
+          return result.ok ? ("updated" as const) : ("unlinked" as const);
+        }
+        return yield* new CloudEnvironmentLinkError({
+          message: m(msg("Environment returned HTTP {status}."), { status: response.status }),
+        });
+      }),
+    ),
+    Effect.mapError(
+      cloudEnvironmentLinkError(
+        m(msg("Could not update the environment's Live Activity preference.")),
+        (detail) =>
+          m(msg("Could not update the environment's Live Activity preference: {detail}"), {
+            detail,
+          }),
       ),
-      Effect.mapError(
-        cloudEnvironmentLinkError(
-          m(msg("Could not update the environment's Live Activity preference.")),
-          (detail) =>
-            m(msg("Could not update the environment's Live Activity preference: {detail}"), {
-              detail,
-            }),
-        ),
-      ),
-    );
+    ),
+  );
 });
 
 export const linkEnvironmentToCloudWithPreference = Effect.fn(

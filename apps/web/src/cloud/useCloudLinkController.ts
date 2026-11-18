@@ -190,7 +190,11 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         if (!readEnvironmentCanConfigureRelay(environmentId)) {
           reportUpdateFailure(
             new Error(
-              "This connection needs the relay configuration permission to configure T3 Connect.",
+              m(
+                msg(
+                  "This connection needs the relay configuration permission to configure T3 Connect.",
+                ),
+              ),
             ),
           );
           return false;

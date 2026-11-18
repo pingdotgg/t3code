@@ -11,7 +11,6 @@ import * as MobileStorage from "../../persistence/mobile-storage";
 import {
   CloudEnvironmentLinkError,
   linkEnvironmentToCloudWithPreference,
-  updateLinkedEnvironmentLiveActivityPreference,
 } from "../cloud/linkEnvironment";
 import { setLiveActivityUpdatesEnabled } from "./liveActivityPreferences";
 import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
@@ -35,12 +34,18 @@ vi.mock("expo-device", () => ({}));
 vi.mock("../cloud/linkEnvironment", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../cloud/linkEnvironment")>()),
   linkEnvironmentToCloudWithPreference: vi.fn(() => Effect.void),
-  updateLinkedEnvironmentLiveActivityPreference: vi.fn(() => Effect.succeed("updated" as const)),
 }));
 
 vi.mock("./remoteRegistration", () => ({
   updateAgentAwarenessRegistrationPreferences: vi.fn(() => Effect.void),
 }));
+
+const updateEnvironment = vi.fn<
+  (
+    id: EnvironmentId,
+    enabled: boolean,
+  ) => Effect.Effect<"updated" | "unlinked" | "unsupported", CloudEnvironmentLinkError>
+>(() => Effect.succeed("updated"));
 
 const connection: SavedRemoteConnection = {
   environmentId: "env-1" as EnvironmentId,
@@ -77,14 +82,15 @@ describe("liveActivityPreferences", () => {
     vi.clearAllMocks();
   });
 
-  it.effect("restores relay preferences when an environment update fails", () => {
-    vi.mocked(updateLinkedEnvironmentLiveActivityPreference).mockImplementationOnce(() =>
+  it.effect("restores only the device preference when an environment update fails", () => {
+    updateEnvironment.mockImplementationOnce(() =>
       Effect.fail(new CloudEnvironmentLinkError({ message: "environment update failed" })),
     );
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         setLiveActivityUpdatesEnabled({
+          updateEnvironment,
           enabled: false,
           previousEnabled: true,
           clerkToken: "clerk-token",
@@ -101,24 +107,13 @@ describe("liveActivityPreferences", () => {
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(2, {
         liveActivitiesEnabled: true,
       });
-      expect(updateLinkedEnvironmentLiveActivityPreference).toHaveBeenNthCalledWith(
-        1,
-        connection,
-        false,
-      );
-      expect(updateLinkedEnvironmentLiveActivityPreference).toHaveBeenNthCalledWith(
-        2,
-        connection,
-        true,
-      );
+      expect(updateEnvironment).toHaveBeenCalledExactlyOnceWith(connection.environmentId, false);
       expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
     }).pipe(Effect.provide(layerTest));
   });
 
   it.effect("only creates missing links when the session can configure Connect", () => {
-    vi.mocked(updateLinkedEnvironmentLiveActivityPreference).mockReturnValueOnce(
-      Effect.succeed("unlinked" as const),
-    );
+    updateEnvironment.mockReturnValueOnce(Effect.succeed("unlinked" as const));
     const readOnlyConnection: SavedRemoteConnection = {
       ...connection,
       environmentId: "read-only" as EnvironmentId,
@@ -126,6 +121,7 @@ describe("liveActivityPreferences", () => {
 
     return Effect.gen(function* () {
       yield* setLiveActivityUpdatesEnabled({
+        updateEnvironment,
         enabled: true,
         previousEnabled: false,
         clerkToken: "clerk-token",
@@ -147,14 +143,18 @@ describe("liveActivityPreferences", () => {
 
   it.effect("reports older environments whose preferences could not be updated", () =>
     Effect.gen(function* () {
-      vi.mocked(updateLinkedEnvironmentLiveActivityPreference).mockReturnValueOnce(
-        Effect.succeed("unsupported"),
-      );
+      const dpopConnection: SavedRemoteConnection = {
+        ...connection,
+        bearerToken: null,
+        authenticationMethod: "dpop",
+      };
+      updateEnvironment.mockReturnValueOnce(Effect.succeed("unsupported"));
       const partial = yield* setLiveActivityUpdatesEnabled({
+        updateEnvironment,
         enabled: false,
         previousEnabled: true,
         clerkToken: "clerk-token",
-        connections: [connection],
+        connections: [dpopConnection],
         canConfigureEnvironment: () => false,
         canUpdateEnvironment: () => true,
       });
@@ -173,6 +173,7 @@ describe("liveActivityPreferences", () => {
 
     return Effect.gen(function* () {
       yield* setLiveActivityUpdatesEnabled({
+        updateEnvironment,
         enabled: false,
         previousEnabled: true,
         clerkToken: "clerk-token",
@@ -182,7 +183,7 @@ describe("liveActivityPreferences", () => {
       });
 
       expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
-      expect(updateLinkedEnvironmentLiveActivityPreference).not.toHaveBeenCalled();
+      expect(updateEnvironment).not.toHaveBeenCalled();
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(layerTest));
   });

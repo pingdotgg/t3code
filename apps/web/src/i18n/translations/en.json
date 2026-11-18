@@ -1487,6 +1487,7 @@
   "64b5d9920f89189c": "Wait until the current T3 Connect settings can be read.",
   "a74f94bf4c3c6bfe": "Disconnected here, but T3 Connect still lists it. Remove it in Account.",
   "4ca203c6fe28afa6": "Sign in to T3 Connect before enabling this.",
+  "895d824b027d128e": "This connection needs the relay configuration permission to configure T3 Connect.",
   "e4f274ef6c9c9a6c": "Choose a folder on the other machine.",
   "5aa50c97d1573919": "Could not start the clone.",
   "1a31b5a1f4fe467f": "This machine",

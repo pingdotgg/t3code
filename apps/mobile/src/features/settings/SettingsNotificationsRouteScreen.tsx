@@ -1,5 +1,5 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
-import { useGT, useMessages } from "gt-react-native";
+import { msg, useGT, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import {
@@ -16,6 +16,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState, useSyncExternalStore } from "react";
 import { Linking, Platform } from "react-native";
@@ -24,6 +25,7 @@ import { m as resolveMessage } from "../../i18n/messages";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import {
+  createEnvironmentCommand,
   isAtomCommandInterrupted,
   reportAtomCommandResult,
   settleAsyncResult,
@@ -43,6 +45,11 @@ import {
   refreshAgentAwarenessRegistration,
   subscribeAgentAwarenessRegistrationStatus,
 } from "../agent-awareness/remoteRegistration";
+import { connectionAtomRuntime } from "../../connection/runtime";
+import {
+  CloudEnvironmentLinkError,
+  updateLinkedEnvironmentLiveActivityPreference,
+} from "../cloud/linkEnvironment";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
@@ -54,6 +61,32 @@ import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+
+const updateLiveActivityPreference = createEnvironmentCommand(connectionAtomRuntime, {
+  label: "updateLiveActivityPreference",
+  execute: updateLinkedEnvironmentLiveActivityPreference,
+});
+
+const isCloudEnvironmentLinkError = Schema.is(CloudEnvironmentLinkError);
+
+const updateEnvironmentPreference = Effect.fn("updateEnvironmentPreference")(function* (
+  environmentId: EnvironmentId,
+  enabled: boolean,
+) {
+  const result = yield* Effect.promise(() =>
+    updateLiveActivityPreference.run(appAtomRegistry, { environmentId, input: enabled }),
+  );
+  if (result._tag === "Success") return result.value;
+  const cause = squashAtomCommandFailure(result);
+  return yield* isCloudEnvironmentLinkError(cause)
+    ? cause
+    : new CloudEnvironmentLinkError({
+        message: resolveMessage(
+          msg("Could not update the environment's Live Activity preference."),
+        ),
+        cause,
+      });
+});
 
 /**
  * A policy that turns Connect off refuses relay links and preferences, which would fail the
@@ -323,6 +356,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     const updateResult = await settleAsyncResult(() =>
       runtime.runPromiseExit(
         setLiveActivityUpdatesEnabled({
+          updateEnvironment: updateEnvironmentPreference,
           canConfigureEnvironment: (id) => canManageConnect(id, AuthRelayConfigureScope),
           canUpdateEnvironment: (id) => canManageConnect(id, AuthRelayWriteScope),
           enabled: true,
@@ -416,6 +450,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     const updateResult = await settleAsyncResult(() =>
       runtime.runPromiseExit(
         setLiveActivityUpdatesEnabled({
+          updateEnvironment: updateEnvironmentPreference,
           canConfigureEnvironment: (id) => canManageConnect(id, AuthRelayConfigureScope),
           canUpdateEnvironment: (id) => canManageConnect(id, AuthRelayWriteScope),
           enabled: false,
