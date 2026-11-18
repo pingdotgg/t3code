@@ -1,13 +1,7 @@
-import { useSidebarWorkspaceTabs } from "../layout/workspace/useSystemWorkspaceTabBar";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
-import { useDeviceType } from "../../native/native-layout-metrics";
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import {
-  useAppearancePreferences,
-  useAndroidFloatingTabs,
-} from "../settings/appearance/AppearancePreferencesProvider";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
@@ -15,6 +9,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
 import {
+  AuthOrchestrationOperateScope,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ChatAttachment,
@@ -30,44 +25,35 @@ import {
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
+import { msg, T, useGT, useMessages } from "gt-react-native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
-import { I18nManager, Keyboard, Platform, View, type ViewStyle } from "react-native";
+import { Keyboard, Platform, View } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import {
   composerAttachmentUploadBlockReason,
   composerAttachmentsStillUploading,
   composerAttachmentUploadsAtom,
 } from "../../state/composer-attachment-uploads";
-import Animated, {
-  FadeIn,
-  FadeOut,
-  type LayoutAnimationFunction,
-  ReduceMotion,
-  useAnimatedStyle,
-  useDerivedValue,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated";
+import Animated, { FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { themeColorWithAlpha } from "../../lib/mobileTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import {
   getComposerDraftSnapshot,
-  composerDraftsAtom,
   setComposerDraftText,
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
   useComposerDraft,
 } from "../../state/use-composer-drafts";
-import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useVisibleThreadShells } from "../../state/entities";
 import { useMentionableEnvironments } from "../../state/environments";
 import { useLinkedEnvironments } from "../../state/peerLinks";
+import { useEnvironmentScopeDenied } from "../../state/session";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -76,28 +62,46 @@ import {
   ComposerAttachmentStrip,
   ComposerAttachmentThumbnail,
 } from "../../components/ComposerAttachmentStrip";
-import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
-import { GlassSurface } from "../../components/ui/GlassSurface";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
+import {
+  COMPOSER_BOTTOM_GUTTER,
+  COMPOSER_TRANSITION_DURATION_MS,
+  ComposerSurface,
+  INLINE_EDITOR_MIN_WIDTH,
+  useComposerChrome,
+  useCompactComposerEditor,
+} from "../../components/ComposerSurface";
 import { fileRoutePathSegments } from "../files/filePath";
-import { ComposerActionButton, ComposerToolbarRow } from "../../components/ComposerToolbar";
+import {
+  ComposerActionButton,
+  ComposerInlineControl,
+  ComposerToolbarRow,
+} from "../../components/ComposerToolbar";
+import { formatTokens } from "@t3tools/shared/usageFormat";
 import { ComposerModelControl } from "../../components/ComposerModelControl";
 import {
   composerStripAttachments,
   type DraftComposerFileAttachment,
 } from "../../lib/composerImages";
-import { buildModelOptions, isModelSelectionUnavailable } from "../../lib/modelOptions";
-import { useScaledTextRole, type ScaledTextRole } from "../settings/appearance/useScaledTextRole";
+import { composerAttachmentUploadKey } from "../../lib/composerAttachmentUploadQueue";
+import {
+  buildModelOptions,
+  isModelSelectionUnavailable,
+  serverConfigForCwd,
+} from "../../lib/modelOptions";
+import { useComposerTextRole } from "../settings/appearance/useScaledTextRole";
 import type { RemoteClientConnectionState } from "../../lib/connection";
-import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { Menu } from "../../components/ui/Menu";
-import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
+import {
+  composerRunsDraftLocally,
+  type ActiveTurnComposerAction,
+} from "@t3tools/client-runtime/state/composer-dispatch";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import {
   resolveComposerSendPresentation,
   type ComposerSendPresentation,
 } from "./composerSendPresentation";
-import { compactEditorInsets } from "./compactEditorInsets";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
 import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
@@ -122,86 +126,9 @@ import {
 } from "./use-thread-settings-sheet-presentation";
 
 export const COMPOSER_COLLAPSED_CHROME = 60;
+export const THREAD_COMPOSER_BOTTOM_GUTTER = COMPOSER_BOTTOM_GUTTER;
 
 const NO_MACHINES: ReadonlyArray<ComposerEnvironmentCandidate> = [];
-const COLLAPSED_EDITOR_DEFAULT_INSET = 6;
-// iOS puts line-height slack above glyphs. DM Sans's lowercase midline is
-// descender (0.31em) + half x-height (0.504em) above the line bottom.
-const LOWERCASE_MIDLINE_EM = 0.562;
-
-function lowercaseMidline(text: ScaledTextRole): number {
-  return text.lineHeight - LOWERCASE_MIDLINE_EM * text.fontSize;
-}
-
-function collapsedEditorInset(text: ScaledTextRole): number {
-  const shift = lowercaseMidline(text) - lowercaseMidline(MOBILE_TYPOGRAPHY.body);
-  return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
-}
-
-function useCompactComposerEditor(text: ScaledTextRole, value: string) {
-  const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
-  const [compactWidth, setCompactWidth] = useState(0);
-  const contentHeight = contentSize.height;
-  const rowWidth = useSharedValue(0);
-  const editorX = useSharedValue(0);
-  const editorWidth = useSharedValue(0);
-  const inset =
-    Platform.OS === "android" ? COLLAPSED_EDITOR_DEFAULT_INSET : collapsedEditorInset(text);
-  const minimum = Math.max(INLINE_EDITOR_HEIGHT, Math.ceil(text.lineHeight) + 2 * inset);
-  const height = Math.max(
-    minimum,
-    Math.min(text.lineHeight * 4 + 2 * inset, contentHeight + 2 * inset),
-  );
-  // A line that fits the expanded editor may still overflow its compact slot.
-  // Compare its measured width too so widening cannot trigger a collapse loop.
-  const isExpanded =
-    value.length > 0 &&
-    (contentHeight > text.lineHeight * 1.5 ||
-      (compactWidth > 0 && contentSize.width > compactWidth));
-  const compactRowHeight = Math.max(44, minimum);
-  const isRTL = I18nManager.isRTL;
-  const editorStyle = useAnimatedStyle(() => ({
-    position: "absolute",
-    overflow: "hidden",
-    height,
-    ...(isExpanded
-      ? { left: 14, right: 14 }
-      : compactEditorInsets({
-          slotX: editorX.value,
-          slotWidth: editorWidth.value,
-          rowWidth: rowWidth.value,
-          isRTL,
-        })),
-    // The full-width editor must move above the controls in the same frame it widens.
-    bottom: isExpanded ? 52 : (compactRowHeight - minimum) / 2,
-  }));
-  return {
-    isExpanded,
-    containerStyle: { height: isExpanded ? height + 52 : compactRowHeight },
-    editorStyle,
-    onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
-      rowWidth.set(event.nativeEvent.layout.width);
-    },
-    onEditorLayout: (event: { nativeEvent: { layout: { x: number; width: number } } }) => {
-      // The expanded toolbar gives this slot to the model control. Keep the
-      // compact geometry for the return transition, rather than recording zero.
-      if (!isExpanded) {
-        editorX.set(event.nativeEvent.layout.x);
-        editorWidth.set(event.nativeEvent.layout.width);
-        setCompactWidth(Math.max(0, event.nativeEvent.layout.width - 8));
-      }
-    },
-    editorProps: {
-      singleLineCentered: !isExpanded,
-      scrollEnabled: Platform.OS === "android" || contentHeight >= text.lineHeight * 4,
-      contentInsetVertical: inset,
-      onContentSizeChange: (size: { width: number; height: number }) => {
-        setContentSize(size);
-      },
-      style: { flex: 1 },
-    },
-  };
-}
 
 export interface ThreadComposerProps {
   readonly isDraft?: boolean;
@@ -215,12 +142,20 @@ export interface ThreadComposerProps {
   readonly selectedThread: EnvironmentThreadShell;
   readonly reportedModelSelection?: ModelSelection | null;
   readonly hasCompactableConversation: boolean;
+  /** Set while the next send compacts the thread first. */
+  readonly compactBeforeSend?: {
+    readonly tokens: number;
+    readonly keepFullHistory: boolean;
+    readonly toggleKeepFullHistory: () => void;
+  } | null;
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   readonly onFreshSession?: () => void;
   readonly offersSideChat?: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
+  /** Sending declines a pending approval and redirects the agent, so `/side` is plain text. */
+  readonly redirectsApproval: boolean;
   readonly canStopThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
@@ -256,52 +191,21 @@ export interface ThreadComposerProps {
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
 
-// Android KeyboardStickyView tracks the IME; concurrent timed layout morphs cause jitter.
-const COMPOSER_TRANSITION_DURATION_MS = 220;
-// Side panes animate dock width; nested horizontal transitions would make the surface trail the toolbar.
-const composerHeightTransition: LayoutAnimationFunction = (values) => {
-  "worklet";
-  const timing = {
-    duration: COMPOSER_TRANSITION_DURATION_MS,
-    reduceMotion: ReduceMotion.System,
-  };
-  return {
-    initialValues: {
-      originX: values.targetOriginX,
-      originY: values.currentOriginY,
-      width: values.targetWidth,
-      height: values.currentHeight,
-    },
-    animations: {
-      originX: values.targetOriginX,
-      originY: withTiming(values.targetOriginY, timing),
-      width: values.targetWidth,
-      height: withTiming(values.targetHeight, timing),
-    },
-  };
-};
-const COMPOSER_LAYOUT_TRANSITION = Platform.OS === "android" ? undefined : composerHeightTransition;
-// Share of the one-row composer the draft keeps; a long model name truncates first.
-const INLINE_EDITOR_MIN_WIDTH = "40%";
-const INLINE_EDITOR_HEIGHT = 36;
-
 const COMPOSER_ATTACHMENT_ENTERING =
   Platform.OS === "android"
     ? FadeIn.duration(160)
     : FadeIn.delay(COMPOSER_TRANSITION_DURATION_MS).duration(160).reduceMotion(ReduceMotion.System);
 
-const AnimatedGlassSurface = Animated.createAnimatedComponent(GlassSurface);
-
 const FOLLOW_UP_ACTION_LABEL = {
-  queue: "Queue",
-  steer: "Steer now",
-  restart: "Restart turn",
+  queue: msg("Queue", { $context: "verb, send after the current turn" }),
+  steer: msg("Steer now"),
+  restart: msg("Restart turn"),
 } as const;
 
 const FOLLOW_UP_ACTION_SUBTITLE = {
-  queue: "Run after the current turn",
-  steer: "Interrupt what the agent is doing",
-  restart: "Start the turn over with this message",
+  queue: msg("Run after the current turn"),
+  steer: msg("Interrupt what the agent is doing"),
+  restart: msg("Start the turn over with this message"),
 } as const;
 
 function SendActionButton(props: {
@@ -312,6 +216,8 @@ function SendActionButton(props: {
   readonly onSend: (followUp?: ActiveTurnComposerAction) => void;
 }) {
   const { presentation } = props;
+  const gt = useGT();
+  const m = useMessages();
   const button = (
     <ComposerActionButton
       accessibilityLabel={props.accessibilityLabel}
@@ -330,12 +236,12 @@ function SendActionButton(props: {
   );
   return (
     <Menu
-      accessibilityLabel="Choose how to send this message"
+      accessibilityLabel={gt("Choose how to send this message")}
       shouldOpenOnLongPress
       actions={actions.map((action) => ({
         id: action,
-        title: FOLLOW_UP_ACTION_LABEL[action],
-        subtitle: FOLLOW_UP_ACTION_SUBTITLE[action],
+        title: m(FOLLOW_UP_ACTION_LABEL[action]),
+        subtitle: m(FOLLOW_UP_ACTION_SUBTITLE[action]),
         state: action === presentation.action ? ("on" as const) : ("off" as const),
       }))}
       onPressAction={({ nativeEvent }) =>
@@ -347,77 +253,15 @@ function SendActionButton(props: {
   );
 }
 
-function ComposerSurface(props: {
-  readonly children: ReactNode;
-  readonly style: ViewStyle;
-  readonly animateLayout?: boolean;
-}) {
-  const colors = useUniwindTheme();
-  const targetBorderRadius =
-    typeof props.style.borderRadius === "number" ? props.style.borderRadius : 0;
-  const shouldAnimate = props.animateLayout !== false && Platform.OS !== "android";
-  const animatedBorderRadius = useDerivedValue(() =>
-    shouldAnimate
-      ? withTiming(targetBorderRadius, {
-          duration: COMPOSER_TRANSITION_DURATION_MS,
-          reduceMotion: ReduceMotion.System,
-        })
-      : targetBorderRadius,
-  );
-  const borderCurve = props.style.borderCurve;
-  const animatedShapeStyle = useAnimatedStyle(() => ({
-    borderRadius: animatedBorderRadius.value,
-    ...(borderCurve ? { borderCurve } : {}),
-  }));
-  const layoutTransition = shouldAnimate ? COMPOSER_LAYOUT_TRANSITION : undefined;
-
-  // Animate every native frame or glass and content jump to final height inside the clip.
-  return (
-    <Animated.View
-      className={
-        Platform.OS === "android" ? undefined : "shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
-      }
-      layout={layoutTransition}
-      style={[
-        animatedShapeStyle,
-        {
-          overflow: "hidden",
-        },
-      ]}
-    >
-      <AnimatedGlassSurface
-        chrome="none"
-        fallbackColor={colors["--color-composer-surface"]}
-        fallbackClassName="border border-composer-border"
-        glassEffectStyle="regular"
-        pointerEvents="none"
-        tintColor="transparent"
-        layout={layoutTransition}
-        style={[{ position: "absolute", inset: 0 }, animatedShapeStyle]}
-      >
-        {null}
-      </AnimatedGlassSurface>
-      <Animated.View
-        collapsable={false}
-        layout={layoutTransition}
-        style={[props.style, animatedShapeStyle]}
-      >
-        {props.children}
-      </Animated.View>
-    </Animated.View>
-  );
-}
-
-/** Space below the composer pill, inside the bottom inset it is given. */
-export const THREAD_COMPOSER_BOTTOM_GUTTER = 6;
-
 export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
   const navigation = useNavigation();
   const foregroundColor = useUniwindTheme()["--color-foreground"];
-  const bodyText = useScaledTextRole("body");
+  const bodyText = useComposerTextRole();
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
@@ -450,13 +294,16 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
-  const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
+  const {
+    text: draftMessage,
+    attachments: draftAttachments,
+    context: draftContext,
+  } = useComposerDraft(composerDraftKey);
   const queuedEdit = props.queuedEdit ?? null;
   const hasContent =
     draftMessage.trim().length > 0 ||
     draftAttachments.length > 0 ||
     (queuedEdit?.existingAttachments.length ?? 0) > 0;
-  const stripAttachments = composerStripAttachments(draftAttachments);
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
   const onResumeQueue = props.onResumeQueue;
   const [resumingQueue, setResumingQueue] = useState(false);
@@ -469,7 +316,17 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     setResumingQueue(false);
   };
 
+  const operateDenied = useEnvironmentScopeDenied(
+    props.environmentId,
+    AuthOrchestrationOperateScope,
+  );
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
+  const stripAttachments = composerStripAttachments(
+    draftAttachments,
+    (attachment) =>
+      uploadStates[composerAttachmentUploadKey(props.environmentId, attachment.id)]?.status ===
+      "failed",
+  );
   const attachmentsUploading =
     props.connectionState === "connected" &&
     composerAttachmentsStillUploading({
@@ -478,15 +335,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       serverConfig: props.serverConfig,
       states: uploadStates,
     });
-  const sendPresentation = resolveComposerSendPresentation({
-    editingQueuedMessage: queuedEdit !== null,
-    running: props.activeThreadBusy,
-    canSteer: props.canSteerActiveTurn,
-    followUpBehavior: props.followUpBehavior,
-    deliveryDeferred:
-      props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading,
-  });
-  const sendLabel = sendPresentation.label;
   const currentModelSelection = props.selectedThread.modelSelection;
   const modelUnavailable =
     props.connectionState === "connected" &&
@@ -523,6 +371,28 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       props.serverConfig?.providers ?? [],
       props.serverConfig?.usageLimitSources ?? [],
     );
+  const draftRunsLocally = composerRunsDraftLocally({
+    text: draftMessage,
+    holdsOnlyText: draftAttachments.length === 0,
+    // A redirect's text answers its approval, so `/side` there is that text.
+    sideChat: !props.redirectsApproval,
+    usageLimits: usageLimitsOffered,
+    codexFeedback: selectedProviderStatus?.driver === "codex",
+    freshSession: props.onFreshSession !== undefined && draftContext === undefined,
+  });
+  const sendPresentation = resolveComposerSendPresentation(
+    {
+      editingQueuedMessage: queuedEdit !== null,
+      running: props.activeThreadBusy && !draftRunsLocally,
+      canSteer: props.canSteerActiveTurn,
+      followUpBehavior: props.followUpBehavior,
+      deliveryDeferred:
+        !draftRunsLocally &&
+        (props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading),
+    },
+    messages,
+  );
+  const sendLabel = sendPresentation.label;
   const openUsageLimits = () => {
     const report = collectProviderUsageLimits(
       currentModelSelection.instanceId,
@@ -532,12 +402,22 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     );
     onShowUsageLimits(report);
     if (!report) {
-      Dialog.alert("Usage limits unavailable", "This provider does not currently report limits.");
+      Dialog.alert(
+        gt("Usage limits unavailable"),
+        gt("This provider does not currently report limits."),
+      );
     }
     return report !== null;
   };
 
   const mentionableEnvironments = useMentionableEnvironments();
+  // Mentions name any model for the agent, so they aren't limited to models this thread can switch to.
+  const mentionModelOptions = buildModelOptions(
+    props.serverConfig,
+    currentModelSelection,
+    undefined,
+    props.selectedThread.projectId,
+  );
   const composerMenu = useComposerCommandMenu({
     draftMessage: draftMessage,
     ownerKey: composerDraftKey,
@@ -559,14 +439,16 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     offersUsageLimits: usageLimitsOffered,
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
+    onOpenModelPicker: settingsSheetPresentation.open,
+    modelOptions: mentionModelOptions,
+    modelProviders: props.serverConfig?.providers,
     ...(props.onFreshSession === undefined ? {} : { onFreshSession: props.onFreshSession }),
     offersSideChat: props.offersSideChat === true,
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
-    label: props.selectedThread.title || "Untitled thread",
+    label: props.selectedThread.title || gt("Untitled thread"),
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
-    subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
     selection: composerMenu.selection,
     onChangeDraftMessage: (text) => setComposerDraftText(composerDraftKey, text),
     onChangeSelection: composerMenu.onSelectionChange,
@@ -576,35 +458,39 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const voicePresentation = resolveVoiceComposerPresentation(
     voiceInput.state,
     voiceInput.elapsedSeconds,
+    messages,
   );
   const isVoiceInputPresented = voicePresentation.statusKind === "active";
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
-  const { layout, setComposerEditing } = useAdaptiveWorkspaceLayout();
-  const floatingSidebarComposer = useAndroidFloatingTabs() && layout.usesSplitView;
-  const sidebarWorkspaceTabs = useSidebarWorkspaceTabs();
-  const deviceType = useDeviceType();
-  const usesLargeControls = sidebarWorkspaceTabs === "picker" || deviceType === "pad";
-  const surfacePaddingVertical = usesLargeControls ? 9 : floatingSidebarComposer ? 6 : 2;
+  const { usesLargeControls, paddingVertical: surfacePaddingVertical } = useComposerChrome();
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
-  const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
+  // Animate only while typing; a thread switch or restored draft lands in place.
+  const compactEditor = useCompactComposerEditor(
+    bodyText,
+    draftMessage,
+    Platform.OS === "ios" && isFocused,
+  );
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
     (queuedEdit !== null && queuedEdit.existingAttachments.length > 0) ||
     stripAttachments.length > 0;
-  const attachmentBlockReason = composerAttachmentUploadBlockReason({
-    environmentId: props.environmentId,
-    attachments: draftAttachments,
-    connected: props.connectionState === "connected",
-    serverConfig: props.serverConfig,
-    states: uploadStates,
-  });
+  const attachmentBlockReason = composerAttachmentUploadBlockReason(
+    {
+      environmentId: props.environmentId,
+      attachments: draftAttachments,
+      connected: props.connectionState === "connected",
+      serverConfig: props.serverConfig,
+      states: uploadStates,
+    },
+    messages,
+  );
   const contextImports = useAtomValue(composerContextImportsAtom);
   const sendBlockedReason =
-    (queuedEdit?.saving === true ? "Saving…" : null) ??
+    (queuedEdit?.saving === true ? gt("Saving…") : null) ??
     props.sendBlockedReason ??
-    (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
+    (pendingPastedTextAttachmentCount > 0 ? gt("Attaching pasted text") : null) ??
     attachmentBlockReason;
   const canSend =
     (props.canOperateThread || props.connectionState !== "connected") &&
@@ -614,8 +500,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     sendBlockedReason === null &&
     !modelUnavailable;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the workspace layout's composer-editing flag when the composer unmounts
-  useEffect(() => () => setComposerEditing(false), [setComposerEditing]);
   // A pending sheet presentation or focus restore has no composer left to act on.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- disposes the pending settings sheet presentation and focus restore on unmount
   useEffect(() => () => disposeSettingsSheetPresentation(), []);
@@ -653,14 +537,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     setIsFocused(true);
     settingsSheetPresentation.onEditorFocusChange(true);
     onEditorFocusChange?.(true);
-    setComposerEditing(true);
   };
 
   const handleBlur = () => {
     setIsFocused(false);
     settingsSheetPresentation.onEditorFocusChange(false);
     onEditorFocusChange?.(false);
-    setComposerEditing(false);
   };
   const handleSend = async (followUp?: ActiveTurnComposerAction) => {
     if (
@@ -710,7 +592,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     ? undefined
     : currentModelSelection.instanceId;
   const modelOptions = buildModelOptions(
-    props.serverConfig,
+    serverConfigForCwd(props.serverConfig, props.projectCwd),
     currentModelSelection,
     lockedProviderInstanceId,
     props.selectedThread.projectId,
@@ -807,6 +689,32 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </View>
   );
 
+  const compactBeforeSend =
+    props.compactBeforeSend && !showResumeAction && queuedEdit === null
+      ? props.compactBeforeSend
+      : null;
+  const compactTokens = compactBeforeSend ? formatTokens(compactBeforeSend.tokens) : null;
+  const compactControl =
+    compactBeforeSend && compactTokens !== null ? (
+      <ComposerInlineControl
+        size={usesLargeControls ? "large" : "regular"}
+        icon="arrow.down.right.and.arrow.up.left"
+        label={compactTokens}
+        selected={!compactBeforeSend.keepFullHistory}
+        showChevron={false}
+        disabled={!props.canOperateThread}
+        accessibilityLabel={
+          compactBeforeSend.keepFullHistory
+            ? gt("Next send keeps all {tokens} tokens of history", { tokens: compactTokens })
+            : gt("Next send compacts {tokens} tokens of history first", { tokens: compactTokens })
+        }
+        accessibilityHint={
+          compactBeforeSend.keepFullHistory ? gt("Compacts first") : gt("Keeps the full history")
+        }
+        onPress={compactBeforeSend.toggleKeepFullHistory}
+      />
+    ) : null;
+
   return (
     <Animated.View
       onLayout={(event) => props.onHeightChange?.(event.nativeEvent.layout.height)}
@@ -869,7 +777,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         ) : null}
         {modelUnavailable ? (
           <Button
-            label="Model unavailable. Open model settings."
+            label={gt("Model unavailable. Open model settings.")}
             tone="text"
             onPress={openSettings}
           />
@@ -1027,8 +935,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                         insertPaste();
                       } else {
                         Dialog.alert(
-                          "Pasted text is too large for this message",
-                          "Remove some text or an attachment, then paste again.",
+                          gt("Pasted text is too large for this message"),
+                          gt("Remove some text or an attachment, then paste again."),
                         );
                       }
                       return;
@@ -1087,7 +995,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
-                {modelControl}
+                <Animated.View
+                  key={compactEditor.isExpanded ? "expanded" : "compact"}
+                  className="min-w-0 shrink flex-row items-center"
+                  entering={compactEditor.toolbarControlsEntering}
+                >
+                  {compactControl}
+                  {modelControl}
+                </Animated.View>
                 <ComposerDictationStartAction
                   size={usesLargeControls ? "large" : "regular"}
                   state={voiceInput.state}
@@ -1099,7 +1014,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 {showStopAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel="Stop agent"
+                    accessibilityLabel={gt("Stop agent")}
                     icon="stop.fill"
                     variant="danger"
                     disabled={!props.canOperateThread}
@@ -1108,7 +1023,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 ) : showResumeAction ? (
                   <ComposerActionButton
                     size={usesLargeControls ? "large" : "regular"}
-                    accessibilityLabel="Resume thread"
+                    accessibilityLabel={gt("Resume thread")}
                     icon="play"
                     disabled={!props.canOperateThread || resumingQueue}
                     onPress={() => void handleResumeQueue()}
@@ -1167,7 +1082,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   {showStopAction ? (
                     <ComposerActionButton
                       size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel="Stop agent"
+                      accessibilityLabel={gt("Stop agent")}
                       icon="stop.fill"
                       variant="danger"
                       disabled={!props.canOperateThread}
@@ -1176,7 +1091,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   ) : showResumeAction && voicePresentation.showsSend ? (
                     <ComposerActionButton
                       size={usesLargeControls ? "large" : "regular"}
-                      accessibilityLabel="Resume thread"
+                      accessibilityLabel={gt("Resume thread")}
                       icon="play"
                       disabled={!props.canOperateThread || resumingQueue}
                       onPress={() => void handleResumeQueue()}
@@ -1196,9 +1111,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           </Animated.View>
         </ComposerSurface>
 
-        {props.connectionState === "connected" && !props.canOperateThread ? (
+        {props.connectionState === "connected" && operateDenied ? (
           <Text className="pt-2 text-xs text-foreground-muted">
-            This connection cannot control this task. You can still edit your draft.
+            <T>This connection cannot control this task. You can still edit your draft.</T>
           </Text>
         ) : null}
       </Animated.View>

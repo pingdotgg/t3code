@@ -10,6 +10,7 @@ import {
   fullAccessOverrideExplanation,
   MCP_URL_ELICITATION_HINT,
 } from "@t3tools/client-runtime/state/thread-requests";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 
@@ -27,15 +28,17 @@ export interface PendingApprovalCardProps {
   ) => Promise<unknown>;
 }
 
-const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
-  { decision: "accept", label: "Allow once" },
-  { decision: "acceptForSession", label: "Allow session" },
-  { decision: "decline", label: "Decline" },
-];
-
 export function PendingApprovalCard(props: PendingApprovalCardProps) {
-  const options: ReadonlyArray<ProviderApprovalOption> =
-    props.approval.options ?? DEFAULT_APPROVAL_OPTIONS;
+  const gt = useGT();
+  const m = useMessages();
+  const options: ReadonlyArray<ProviderApprovalOption> = props.approval.options ?? [
+    { decision: "accept", label: gt("Allow once") },
+    { decision: "acceptForSession", label: gt("Allow session") },
+    {
+      decision: "decline",
+      label: gt("Decline", { $context: "verb, rejects the approval request" }),
+    },
+  ];
   const warning = options.find((option) => option.warning)?.warning;
   const canRespond = props.approval.responseCapability === "live";
   const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
@@ -47,7 +50,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   return (
     <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
-        Approval needed
+        <T>Approval needed</T>
       </Text>
       <Text className="font-t3-bold text-lg text-foreground">
         {props.approval.appName ?? props.approval.requestKind}
@@ -60,13 +63,13 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       {elicitationUrl ? (
         <View className="gap-2">
           <Text className="font-sans text-sm text-foreground-secondary">
-            {MCP_URL_ELICITATION_HINT}
+            {m(MCP_URL_ELICITATION_HINT)}
           </Text>
           <Text selectable className="font-mono text-xs text-foreground-secondary">
             {elicitationUrl.href}
           </Text>
           <Button
-            label={`Open ${elicitationUrl.host}`}
+            label={gt("Open {host}", { host: elicitationUrl.host })}
             fullWidth
             tone="secondary"
             disabled={disabled || !props.canOperateThread}
@@ -79,7 +82,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
           />
           {linkError ? (
             <Text accessibilityRole="alert" className="font-sans text-xs text-danger-foreground">
-              Could not open the link. Copy it into your browser to continue.
+              <T>Could not open the link. Copy it into your browser to continue.</T>
             </Text>
           ) : null}
         </View>
@@ -96,19 +99,21 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
           onPress={() => setExplanationOpen((open) => !open)}
         >
           <Text className="font-t3-bold text-xs text-foreground-secondary underline">
-            {FULL_ACCESS_OVERRIDE_QUESTION}
+            {m(FULL_ACCESS_OVERRIDE_QUESTION)}
           </Text>
           {explanationOpen ? (
             <Text className="mt-1 font-sans text-xs leading-normal text-foreground-muted">
-              {fullAccessOverrideExplanation(props.approval.fullAccessOverride)}
+              {fullAccessOverrideExplanation(props.approval.fullAccessOverride, m)}
             </Text>
           ) : null}
         </Pressable>
       ) : null}
       {!canRespond ? (
         <Text className="font-sans text-sm leading-5 text-foreground-muted">
-          The provider process for this request is no longer available. Interrupt or restart the run
-          to continue.
+          <T>
+            The provider process for this request is no longer available. Interrupt or restart the
+            run to continue.
+          </T>
         </Text>
       ) : null}
       {warning ? (
@@ -134,7 +139,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
       </View>
       {!props.canOperateThread ? (
         <Text className="font-sans text-xs text-foreground-muted">
-          This connection cannot respond to approvals.
+          <T>This connection cannot respond to approvals.</T>
         </Text>
       ) : null}
     </View>

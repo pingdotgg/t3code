@@ -240,7 +240,7 @@ export function toMcpElicitationResponse(
   }
 
   if (form?.required?.some((key) => !Object.hasOwn(content, key))) {
-    return { action: "decline" };
+    return { action: "cancel" };
   }
 
   return {
