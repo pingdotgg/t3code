@@ -315,6 +315,7 @@ it("does not install a pending community theme after leaving Appearance", async 
       onImportedMany={() => {}}
     />,
   );
+  await userEvent.click(page.getByRole("button", { name: "Search community themes" }));
   await userEvent.fill(page.getByLabelText("Search Open VSX themes"), "night");
   await page.getByRole("button", { name: "Install Nightfall" }).click();
   await screen.unmount();

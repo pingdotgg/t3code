@@ -558,7 +558,7 @@ it("keeps an unsent reply when the appearance switches between light and dark", 
     { container },
   );
   const reply = () => screen.getByRole("textbox", { name: "Reply to this conversation" });
-  await screen.getByRole("button", { name: "Reply", exact: true }).click();
+  await reply().click();
   await reply().fill("Unsent");
 
   setAppearanceMode("light");
