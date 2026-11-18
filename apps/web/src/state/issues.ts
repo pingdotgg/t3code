@@ -48,15 +48,15 @@ export function useIssueList(
   targets: ReadonlyArray<IssueListTarget>,
 ): MergedIssueList & {
   readonly refresh: () => void;
+  readonly reload: () => void;
   readonly retry: () => void;
-  readonly refreshWorkflow: () => void;
 } {
   const view = useAtomValue(mergedIssueLists.atom(targets));
   return {
     ...view,
-    refresh: () => mergedIssueLists.refresh(appAtomRegistry, targets),
+    refresh: () => mergedIssueLists.refresh(appAtomRegistry, targets, "manual"),
+    reload: () => mergedIssueLists.refresh(appAtomRegistry, targets, "background"),
     retry: () => mergedIssueLists.retry(appAtomRegistry, targets),
-    refreshWorkflow: () => issueEnvironment.refreshWorkflow(appAtomRegistry, targets),
   };
 }
 

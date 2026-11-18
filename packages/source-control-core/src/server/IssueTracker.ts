@@ -127,7 +127,7 @@ export interface IssueTrackerApi {
         /** A cursor this tracker handed back from an earlier page. Absent asks for the first. */
         readonly cursor?: string | undefined;
         /** Whether to re-read tracker metadata for a first page. */
-        readonly refresh?: boolean;
+        readonly refresh?: boolean | undefined;
       },
   ) => Effect.Effect<TrackerIssuePage, IssueTrackerError>;
 

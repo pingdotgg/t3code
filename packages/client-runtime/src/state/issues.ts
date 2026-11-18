@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -147,6 +148,11 @@ export function createIssueCommentPager<E>(
   };
 }
 
+const pendingListRefreshes = new WeakMap<
+  AtomRegistry.AtomRegistry,
+  WeakMap<Atom.Atom<unknown>, symbol>
+>();
+
 /**
  * Every read goes to a tracker API over the environment, so results are reused for a short while
  * and refreshed explicitly. Mutations run serially per environment: changes to one issue are
@@ -181,7 +187,6 @@ export function createIssueEnvironmentAtoms<R, E>(
     label: "environment-data:issues:linked-thread-refreshes",
     tag: WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes,
   });
-  const explicitRefreshes = new WeakMap<AtomRegistry.AtomRegistry, WeakSet<Atom.Atom<unknown>>>();
   const list = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:issues:list",
     staleTimeMs: 30_000,
@@ -191,8 +196,19 @@ export function createIssueEnvironmentAtoms<R, E>(
       _previous,
       { environmentId, registry },
     ): ReturnType<typeof request<typeof WS_METHODS.issuesList>> => {
-      const refresh = explicitRefreshes.get(registry)?.delete(list({ environmentId, input }));
-      return request(WS_METHODS.issuesList, refresh ? { ...input, refresh: true } : input);
+      const atom = list({ environmentId, input });
+      const pending = pendingListRefreshes.get(registry);
+      const intent = pending?.get(atom);
+      if (pending === undefined || intent === undefined)
+        return request(WS_METHODS.issuesList, input);
+      return request(WS_METHODS.issuesList, { ...input, refresh: true }).pipe(
+        // Invalidation interrupts the read; its replacement still owes the explicit refresh.
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            if (!Exit.hasInterrupts(exit) && pending.get(atom) === intent) pending.delete(atom);
+          }),
+        ),
+      );
     },
   });
   return {
@@ -204,18 +220,6 @@ export function createIssueEnvironmentAtoms<R, E>(
       refreshTrigger: ({ environmentId }) => linkedThreadSignals({ environmentId, input: {} }),
     }),
     list,
-    refreshWorkflow(registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueListTarget>) {
-      let pending = explicitRefreshes.get(registry);
-      if (pending === undefined) {
-        pending = new WeakSet();
-        explicitRefreshes.set(registry, pending);
-      }
-      for (const target of targets) {
-        const atom = list(target);
-        pending.add(atom);
-        registry.refresh(atom);
-      }
-    },
     /**
      * A continuation of the listing, run as a command rather than read as a query: a page is
      * asked for once and laid over the rows held, and a refresh of the first page forgets it.
@@ -346,8 +350,18 @@ export function createMergedIssueListAtoms<E>(
   const refresh = (
     registry: AtomRegistry.AtomRegistry,
     targets: ReadonlyArray<IssueListTarget>,
+    mode: "manual" | "background",
   ) => {
-    for (const target of targets) registry.refresh(list(target));
+    let pending = pendingListRefreshes.get(registry);
+    if (mode === "manual" && pending === undefined) {
+      pending = new WeakMap();
+      pendingListRefreshes.set(registry, pending);
+    }
+    for (const target of targets) {
+      const atom = list(target);
+      if (mode === "manual") pending?.set(atom, Symbol());
+      registry.refresh(atom);
+    }
   };
   // The targets behind each listing atom, so a write made elsewhere can refresh the ones still
   // shown. Weak, so a closed search goes with its atom once the registry drops it.
@@ -370,6 +384,7 @@ export function createMergedIssueListAtoms<E>(
         refresh(
           registry,
           targets.filter((target) => target.environmentId === environmentId),
+          "background",
         );
       }
     },

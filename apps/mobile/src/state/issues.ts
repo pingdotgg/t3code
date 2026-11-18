@@ -24,8 +24,7 @@ export function useIssueList(targets: ReadonlyArray<IssueListTarget>) {
   const view = useAtomValue(mergedIssueLists.atom(targets));
   return {
     ...view,
-    refresh: () => mergedIssueLists.refresh(appAtomRegistry, targets),
-    refreshWorkflow: () => issueEnvironment.refreshWorkflow(appAtomRegistry, targets),
+    refresh: () => mergedIssueLists.refresh(appAtomRegistry, targets, "manual"),
   };
 }
 

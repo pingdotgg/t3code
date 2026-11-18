@@ -619,8 +619,7 @@ export const make: Effect.Effect<
       return yield* scoped("listIssues", input).pipe(
         Effect.flatMap((scope) => {
           const key = JSON.stringify([input.cwd, scope.organization, scope.project]);
-          // The service always specifies refresh intent; direct tracker calls default to fresh.
-          const refresh = cursor === undefined && input.state !== "all" && input.refresh !== false;
+          const refresh = cursor === undefined && input.refresh === true;
           const closed = refresh
             ? Cache.getSuccess(listClosedStates, key).pipe(
                 Effect.flatMap((previous) =>
