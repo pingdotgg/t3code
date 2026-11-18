@@ -1,9 +1,14 @@
+import { msg } from "gt-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import {
   makeQueuedRunEditStore,
   makeQueuedRunsAtom,
 } from "@t3tools/client-runtime/queued-run-edit";
+import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
+import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ChatAttachment,
@@ -49,6 +54,7 @@ import {
 } from "../../lib/composerContextReferences";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
+import type { ComposerSubmissionIntent } from "../../composer-logic";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -130,7 +136,7 @@ async function submitQueuedRunEdit(input: {
     await refreshExpiredAttachmentUploads({ environmentId, images: files, draftTarget });
     validateFiles();
     const uploaded = getUploadedAttachments({ environmentId, images: files });
-    if (uploaded === null) throw new Error("Retry or remove failed uploads before saving.");
+    if (uploaded === null) throw new Error(m(msg("Retry or remove failed uploads before saving.")));
     return uploaded;
   };
   try {
@@ -142,7 +148,7 @@ async function submitQueuedRunEdit(input: {
       uploadFiles,
     });
     if (input.draftChanged())
-      return "Draft changed while preparing this message. Review it and save again.";
+      return m(msg("Draft changed while preparing this message. Review it and save again."));
     // The edit draft owns thread and machine mentions, so a chip removed while editing is dropped.
     const keptRecords = (editing.context?.records ?? []).filter(
       (record) =>
@@ -187,9 +193,9 @@ async function submitQueuedRunEdit(input: {
         },
       },
     });
-    return result._tag === "Failure" ? "Could not save the edited queued message." : null;
+    return result._tag === "Failure" ? m(msg("Could not save the edited queued message.")) : null;
   } catch (error) {
-    return error instanceof Error ? error.message : "Could not save the edited queued message.";
+    return thrownErrorMessage(error, m) ?? m(msg("Could not save the edited queued message."));
   }
 }
 
@@ -217,6 +223,7 @@ export function useQueuedRunEdit(input: {
     composerRef,
   } = input;
   const editQueuedRunCommand = useEditQueuedRunCommand();
+  const promoteQueuedRun = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const editKey = scopedThreadKey(routeThreadRef);
   const storedEdit = useAtomValue(queuedRunEdits.atom)[editKey] ?? null;
   const editing = activeThreadId === null ? null : storedEdit;
@@ -311,15 +318,18 @@ export function useQueuedRunEdit(input: {
           const title = appAtomRegistry.get(
             environmentThreadShells.threadShellAtom(threadRef),
           )?.title;
-          const where = title === undefined ? "" : ` in “${title}”`;
           toastManager.add(
             stackedThreadToast({
               type: recovery === "kept" ? "info" : "warning",
-              title: "Queued message is no longer queued",
+              title: m(msg("Queued message is no longer queued")),
               description:
-                recovery === "kept"
-                  ? `Your unsaved edit${where} was kept in the composer.`
-                  : `Your unsaved edit${where} was discarded.`,
+                title === undefined
+                  ? recovery === "kept"
+                    ? m(msg("Your unsaved edit was kept in the composer."))
+                    : m(msg("Your unsaved edit was discarded."))
+                  : recovery === "kept"
+                    ? m(msg("Your unsaved edit in “{title}” was kept in the composer.", { title }))
+                    : m(msg("Your unsaved edit in “{title}” was discarded.", { title })),
             }),
           );
         },
@@ -343,9 +353,39 @@ export function useQueuedRunEdit(input: {
     }));
   });
 
+  // The same move as the queued row's "Send now" while a turn runs.
+  const steerSavedRun = async (edited: EditingQueuedRun) => {
+    const projection = appAtomRegistry.get(
+      environmentThreadDetails.quietThreadAtom({ environmentId, threadId: edited.threadId }),
+    )?.projection;
+    if (!projection) return;
+    const workflow = deriveThreadQueueWorkflowState(projection);
+    const queued = workflow.queuedRuns.find(({ run }) => run.id === edited.runId);
+    if (
+      queued === undefined ||
+      workflow.activeRun === null ||
+      !workflow.canPromoteToSteer ||
+      (queued.run.freshContext === true && !workflow.promoteSkipsCompaction)
+    ) {
+      return;
+    }
+    await promoteQueuedRun({
+      environmentId,
+      input: {
+        threadId: edited.threadId,
+        queuedRunId: edited.runId,
+        targetRunId: workflow.activeRun.id,
+      },
+    });
+  };
+
   const saveEdit = async (
     content: QueuedRunEditContent,
     setThreadError: (threadId: ThreadId, error: string | null) => void,
+    submission?: {
+      readonly dispatchMode: ComposerDispatchMode;
+      readonly submissionIntent: ComposerSubmissionIntent;
+    },
   ) => {
     if (editing === null || isSaving) return;
     const newAttachments = [...content.images, ...content.files];
@@ -355,7 +395,11 @@ export function useQueuedRunEdit(input: {
     ) {
       setThreadError(
         editing.threadId,
-        `A message can have at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+        m(
+          msg("A message can have at most {max} attachments.", {
+            max: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          }),
+        ),
       );
       return;
     }
@@ -388,7 +432,7 @@ export function useQueuedRunEdit(input: {
     setThreadError(
       editing.threadId,
       changedAfterSave
-        ? "The earlier edit was saved. Review your newer changes and save again."
+        ? m(msg("The earlier edit was saved. Review your newer changes and save again."))
         : error,
     );
     const current = finishSave(error === null && !changedAfterSave);
@@ -420,6 +464,11 @@ export function useQueuedRunEdit(input: {
     clearEditDraft(editing.runId);
     composerRef.current?.resetCursorState();
     focusComposerSoon();
+    // A plain submit means "Update queued message"; only the opposite-action shortcut or
+    // modifier-click asks to steer, as it does for a new follow-up.
+    if (submission?.submissionIntent === "alternate" && submission.dispatchMode === "steer") {
+      await steerSavedRun(editing);
+    }
   };
 
   return {

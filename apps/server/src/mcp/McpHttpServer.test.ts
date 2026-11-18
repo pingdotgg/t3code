@@ -680,6 +680,34 @@ it.effect("decodes null optional arguments the way it decodes omitted ones", () 
   }).pipe(Effect.provide(layerRecordingTools(calls)));
 });
 
+it.effect("decodes a JSON-stringified delegate target as the same object", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const task = "Inspect";
+    const target = {
+      providerInstanceId: "codex",
+      model: "gpt-6.2-sol",
+      options: { reasoningEffort: "medium" },
+    };
+    yield* callTool("delegate_task", { task, target });
+    yield* callTool("delegate_task", { task, target: JSON.stringify(target) });
+
+    for (const invalidTarget of ["{model:", '{"model":42}']) {
+      const error = yield* Effect.flip(callTool("delegate_task", { task, target: invalidTarget }));
+      expect(error).toBeInstanceOf(McpSchema.InvalidParams);
+    }
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
+      task,
+      target: {
+        ...target,
+        options: [{ id: "reasoningEffort", value: "medium" }],
+      },
+    });
+    expect(calls[1]).toEqual(calls[0]);
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
+
 it.effect("rejects arguments a tool does not declare instead of dropping them", () => {
   const calls: Array<unknown> = [];
   return Effect.gen(function* () {
