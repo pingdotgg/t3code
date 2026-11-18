@@ -7957,7 +7957,7 @@
   "d9b97f4f5da2517e": "Inaktivera WSL",
   "68916f6f608ece80": "Byt distribution",
   "dcb0b4880837ff9a": "Ändra HTTPS-porten för Tailscale?",
-  "2c7cfee3209c4133": "Changing the port removes the old Serve route. Make sure saved clients have another reachable route; after the restart, add the new HTTPS route to them.",
+  "2c7cfee3209c4133": "När porten ändras tas den gamla Serve-rutten bort. Se till att sparade klienter har en annan nåbar rutt och lägg till den nya HTTPS-rutten efter omstarten.",
   "afd31786b2fd29f0": "Väntande MagicDNS-slutpunkt",
   "2c291721a16e936d": "Aktivera",
   "d087da5017f20fa2": "Ingen miljö vald",

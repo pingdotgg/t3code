@@ -7912,7 +7912,7 @@
   "d9b97f4f5da2517e": "WSL を無効にする",
   "68916f6f608ece80": "ディストリビューションを切り替え",
   "dcb0b4880837ff9a": "Tailscale HTTPSのポートを変更しますか？",
-  "2c7cfee3209c4133": "Changing the port removes the old Serve route. Make sure saved clients have another reachable route; after the restart, add the new HTTPS route to them.",
+  "2c7cfee3209c4133": "ポートを変更すると古い Serve ルートが削除されます。保存済みのクライアントに別の到達可能なルートがあることを確認し、再起動後に新しい HTTPS ルートを追加してください。",
   "afd31786b2fd29f0": "MagicDNS エンドポイントを保留中",
   "2c291721a16e936d": "有効にする",
   "d087da5017f20fa2": "環境が選択されていません",

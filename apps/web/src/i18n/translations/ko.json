@@ -7914,7 +7914,7 @@
   "d9b97f4f5da2517e": "WSL 끄기",
   "68916f6f608ece80": "배포판 전환",
   "dcb0b4880837ff9a": "Tailscale HTTPS 포트를 변경할까요?",
-  "2c7cfee3209c4133": "Changing the port removes the old Serve route. Make sure saved clients have another reachable route; after the restart, add the new HTTPS route to them.",
+  "2c7cfee3209c4133": "포트를 변경하면 기존 Serve 경로가 삭제됩니다. 저장된 클라이언트에 다른 연결 가능한 경로가 있는지 확인하고, 재시작 후 새 HTTPS 경로를 추가하세요.",
   "afd31786b2fd29f0": "MagicDNS 엔드포인트 대기 중",
   "2c291721a16e936d": "켜기",
   "d087da5017f20fa2": "선택된 환경 없음",
