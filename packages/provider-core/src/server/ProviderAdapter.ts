@@ -591,6 +591,14 @@ export interface ProviderAdapterV2SteerInput {
   readonly appContext?: ProviderAdapterV2TurnInput["appContext"];
 }
 
+/**
+ * A steer the provider holds to send later, such as while it compacts. `delivered` succeeds once
+ * the provider has it, and fails with `ProviderAdapterSteerDeclinedError` if its turn ends first.
+ */
+export interface ProviderAdapterV2HeldSteer {
+  readonly delivered: Effect.Effect<void, ProviderAdapterV2Error>;
+}
+
 export interface ProviderAdapterV2InterruptInput {
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly providerTurnId: ProviderTurnId;
@@ -754,7 +762,7 @@ export interface ProviderAdapterV2SessionRuntime {
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly steerTurn: (
     input: ProviderAdapterV2SteerInput,
-  ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  ) => Effect.Effect<void | ProviderAdapterV2HeldSteer, ProviderAdapterV2Error>;
   /** Applies a thread's new selection to its running process where the provider can; otherwise it waits for the next turn. */
   readonly applyModelSelection?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;

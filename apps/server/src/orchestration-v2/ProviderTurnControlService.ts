@@ -14,6 +14,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -72,7 +73,10 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerTurnId: ProviderTurnId;
     readonly messageId: MessageId;
     readonly modelSelection?: ModelSelection;
-  }) => Effect.Effect<void, ProviderTurnControlError>;
+  }) => Effect.Effect<
+    void | { readonly delivered: Effect.Effect<void, ProviderTurnControlError> },
+    ProviderTurnControlError
+  >;
   /** Best effort: a turn that ended or moved sessions picks the selection up when it next starts. */
   readonly applyModelSelection: (input: {
     readonly threadId: ThreadId;
@@ -451,34 +455,11 @@ export const layer: Layer.Layer<
             mcpAppModelContext,
             input.threadId,
           );
-          yield* loaded.session.value
-            .steerTurn({
-              threadId: input.threadId,
-              runId: run.id,
-              providerThread: loaded.providerThread,
-              providerTurnId: loaded.providerTurn.id,
-              ...(input.modelSelection === undefined
-                ? {}
-                : { modelSelection: input.modelSelection }),
-              ...(appContext.length === 0 ? {} : { appContext }),
-              message: {
-                messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
-                }),
-                attachments: message.attachments,
-                createdBy: message.createdBy,
-                creationSource: message.creationSource,
-                ...(message.scheduledTaskId === undefined
-                  ? {}
-                  : { scheduledTaskId: message.scheduledTaskId }),
-                ...(message.senderThreadId === undefined
-                  ? {}
-                  : { senderThreadId: message.senderThreadId }),
-              },
-            })
-            .pipe(
+          // A held steer's later delivery fails the same ways an immediate one does.
+          const asControlError = <A>(
+            steer: Effect.Effect<A, ProviderAdapter.ProviderAdapterV2Error>,
+          ) =>
+            steer.pipe(
               Effect.catchTags({
                 ProviderAdapterSteerDeclinedError: (cause) =>
                   Effect.fail(
@@ -508,7 +489,75 @@ export const layer: Layer.Layer<
                   });
                 }),
               ),
+              Effect.mapError((cause) =>
+                isProviderTurnControlError(cause)
+                  ? cause
+                  : new ProviderTurnControlError({
+                      threadId: input.threadId,
+                      operation: "steer",
+                      providerTurnId: input.providerTurnId,
+                      cause,
+                    }),
+              ),
             );
+          const held = yield* asControlError(
+            loaded.session.value.steerTurn({
+              threadId: input.threadId,
+              runId: run.id,
+              providerThread: loaded.providerThread,
+              providerTurnId: loaded.providerTurn.id,
+              ...(input.modelSelection === undefined
+                ? {}
+                : { modelSelection: input.modelSelection }),
+              ...(appContext.length === 0 ? {} : { appContext }),
+              message: {
+                messageId: message.id,
+                text: projectComposerContextForProvider({
+                  text: message.text,
+                  records: message.context?.records ?? [],
+                }),
+                attachments: message.attachments,
+                createdBy: message.createdBy,
+                creationSource: message.creationSource,
+                ...(message.scheduledTaskId === undefined
+                  ? {}
+                  : { scheduledTaskId: message.scheduledTaskId }),
+                ...(message.senderThreadId === undefined
+                  ? {}
+                  : { senderThreadId: message.senderThreadId }),
+              },
+            }),
+          );
+          if (held === undefined) return;
+          // A held steer is declined as its turn ends; its follow-up needs that end persisted.
+          return {
+            delivered: asControlError(held.delivered).pipe(
+              Effect.catchIf(
+                (error) => error.steerDeclined === true,
+                (error) =>
+                  // The run must settle too: a mailbox follow-up is refused while it still runs.
+                  awaitSettled(input.threadId, {
+                    ...input,
+                    ...(loaded.providerTurn.runAttemptId === null
+                      ? {}
+                      : { attemptId: loaded.providerTurn.runAttemptId }),
+                  }).pipe(
+                    // Only the provider's answer is final; a failed read is retried here.
+                    Effect.retry({ schedule: Schedule.exponential("1 second"), times: 4 }),
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderTurnControlError({
+                          threadId: input.threadId,
+                          operation: "steer",
+                          providerTurnId: input.providerTurnId,
+                          cause,
+                        }),
+                    ),
+                    Effect.andThen(Effect.fail(error)),
+                  ),
+              ),
+            ),
+          };
         },
         (effect, input) =>
           effect.pipe(

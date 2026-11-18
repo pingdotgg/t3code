@@ -3706,9 +3706,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               processQueues.push(sdkMessages);
               return {
                 messages,
-                offer: (message) =>
+                // Like the real runner, reports the message queued before the rest of the write.
+                offer: (message, onQueued) =>
                   Effect.sync(() => {
                     offeredMessages.push(message);
+                    onQueued?.();
                   }).pipe(
                     Effect.andThen(changes.notify),
                     Effect.andThen(options?.offer?.(message) ?? Effect.void),
@@ -11082,7 +11084,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         // A "now" steer would abort the compaction, so it waits without blocking Stop.
-        yield* harness.runtime.steerTurn({
+        const held = yield* harness.runtime.steerTurn({
           threadId: harness.threadId,
           runId: input.runId,
           providerThread: harness.providerThread,
@@ -11097,6 +11099,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           appContext,
         });
         assert.lengthOf(harness.offeredMessages, 1);
+        assert.isDefined(held);
+        const delivery = yield* held!.delivered.pipe(Effect.exit, Effect.forkScoped);
+        const steerStatuses = () =>
+          harness.events.flatMap((event) => (event.type === "steer.updated" ? [event.status] : []));
 
         if (outcome === "interrupt" || outcome === "query exit") {
           if (outcome === "interrupt") {
@@ -11112,20 +11118,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             outcome === "interrupt" ? "interrupted" : "failed",
           );
           assert.lengthOf(harness.offeredMessages, 1);
-          assert.deepEqual(
-            harness.events.flatMap((event) =>
-              event.type === "steer.updated" ? [event.status] : [],
-            ),
-            ["pending", "cancelled"],
-          );
-          const notices = harness.events.flatMap((event) =>
-            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
-              ? [event.turnItem]
-              : [],
-          );
-          const notice = notices.find((item) => item.message?.includes("Subagent finished."));
-          assert.equal(notice?.title, "Steer not sent");
-          assert.notInclude(notice?.message ?? "", "Stop");
+          // Declined, it comes back as a follow-up, or the orchestrator reports it after Stop.
+          const exit = yield* Fiber.join(delivery);
+          const failure = Exit.isFailure(exit)
+            ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+            : undefined;
+          assert.equal(failure?._tag, "ProviderAdapterSteerDeclinedError");
+          const notice = harness.events
+            .flatMap((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+                ? [event.turnItem]
+                : [],
+            )
+            .find((item) => item.message?.includes("Subagent finished."));
+          // Pending while held; a declined hold leaves its outcome to the follow-up or Stop.
+          assert.deepEqual(steerStatuses(), ["pending"]);
+          assert.isUndefined(notice);
           return;
         }
         yield* harness.offerAndWait(
@@ -11149,6 +11157,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.lengthOf(harness.offeredMessages, 2);
         assert.equal(harness.offeredMessages[1]?.priority, "now");
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(delivery)));
         const sent = JSON.stringify(harness.offeredMessages[1]?.message.content);
         assert.include(sent, "Subagent finished.");
         // The boundary drops the root prompt's note from history; a failed compaction keeps it.
@@ -11249,9 +11258,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
-        yield* steer("A");
-        yield* steer("B");
-        if (outcome === "query close") yield* steer("C", [document]);
+        const hold = (name: string, attachments: ReadonlyArray<ChatFileAttachment> = []) =>
+          steer(name, attachments).pipe(
+            Effect.flatMap((held) => {
+              assert.isDefined(held);
+              return held!.delivered.pipe(Effect.exit, Effect.forkScoped);
+            }),
+          );
+        const outcomeOf = Effect.fnUntraced(function* (
+          delivery: Fiber.Fiber<Exit.Exit<void, ProviderAdapter.ProviderAdapterV2Error>>,
+        ) {
+          const exit = yield* Fiber.join(delivery);
+          return Exit.isSuccess(exit)
+            ? "delivered"
+            : Option.getOrUndefined(Cause.findErrorOption(exit.cause))?._tag;
+        });
+        const heldA = yield* hold("A");
+        const heldB = yield* hold("B");
+        const heldC = outcome === "query close" ? yield* hold("C", [document]) : undefined;
         const releasing = yield* harness
           .offerAndWait(
             claudeSdkFrame({
@@ -11291,15 +11315,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* Deferred.succeed(interrupted, undefined);
           yield* Fiber.join(stopping);
           assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
-          assert.include(
-            harness.events.flatMap((event) =>
-              event.type === "turn_item.updated" &&
-              event.turnItem.type === "system_notice" &&
-              event.turnItem.title === "Steer not sent"
-                ? [event.turnItem.message]
-                : [],
-            )[0],
-            "Steer B.",
+          assert.deepEqual(
+            [yield* outcomeOf(heldA), yield* outcomeOf(heldB)],
+            ["delivered", "ProviderAdapterSteerDeclinedError"],
           );
           return;
         }
@@ -11308,6 +11326,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         closing = true;
         yield* Deferred.succeed(resume, undefined);
         yield* Queue.take(harness.terminalReceipts);
+        // B was already in Claude's queue when the close cut its offer short: declining it
+        // would send it twice. C never left the hold.
+        assert.deepEqual(
+          [yield* outcomeOf(heldA), yield* outcomeOf(heldB), yield* outcomeOf(heldC!)],
+          ["delivered", "delivered", "ProviderAdapterSteerDeclinedError"],
+        );
         // The undelivered PDF's pages are free again, so a new turn can send it natively.
         const before = harness.offeredMessages.length;
         yield* harness.runtime.startTurn(

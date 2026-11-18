@@ -6844,23 +6844,74 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     if (command.steerFollowUpOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
-      if (
+      const message = projection.messages.find(
+        (candidate) => candidate.id === command.messageId && candidate.runId === source?.id,
+      );
+      const discarded =
         source === undefined ||
         command.dispatchMode.type !== "queue_after_active" ||
-        !projection.messages.some(
-          (message) => message.id === command.messageId && message.runId === source.id,
-        ) ||
+        message === undefined ||
         projection.thread.archivedAt !== null ||
-        projection.thread.deletedAt !== null ||
-        (yield* stopReachedRun(command, command.threadId, source.id))
-      ) {
+        projection.thread.deletedAt !== null;
+      if (discarded || (yield* stopReachedRun(command, command.threadId, source.id))) {
+        const now = yield* DateTime.now;
+        // The provider never took this steer and Stop cancels it, so say so where it was sent.
+        if (!discarded && source.rootNodeId !== null) {
+          const emitEvent = emit(events, command);
+          const item = projection.turnItems.find(
+            (candidate) =>
+              candidate.id === idAllocator.derive.userTurnItem({ messageId: message.id }),
+          );
+          if (item?.type === "user_message" && item.status !== "cancelled") {
+            yield* emitEvent({
+              type: "turn-item.updated",
+              threadId: command.threadId,
+              runId: source.id,
+              nodeId: source.rootNodeId,
+              providerInstanceId: source.providerInstanceId,
+              occurredAt: now,
+              payload: { ...item, status: "cancelled", updatedAt: now },
+            });
+          }
+          if (message.delegatedCompletion === undefined && message.notification === undefined) {
+            yield* emitEvent({
+              type: "turn-item.updated",
+              threadId: command.threadId,
+              runId: source.id,
+              nodeId: source.rootNodeId,
+              providerInstanceId: source.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                id: idAllocator.derive.runSignalTurnItem({
+                  runId: source.id,
+                  signal: `unsent-steer:${message.id}`,
+                }),
+                threadId: command.threadId,
+                runId: source.id,
+                nodeId: source.rootNodeId,
+                providerThreadId: source.providerThreadId,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: yield* nextTurnItemOrdinal(projection),
+                status: "completed",
+                title: "Steer not sent",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                type: "system_notice",
+                message: `The turn stopped before this steer was sent. Resend it if needed: "${message.text}"`,
+              },
+            });
+          }
+        }
         yield* emit(
           events,
           command,
         )({
           type: "thread.metadata-updated",
           threadId: command.threadId,
-          occurredAt: yield* DateTime.now,
+          occurredAt: now,
           payload: projection.thread,
         });
         return;

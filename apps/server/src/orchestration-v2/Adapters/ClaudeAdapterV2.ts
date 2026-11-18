@@ -5100,11 +5100,14 @@ interface ActiveClaudeTurnContext {
   readonly steerUuids: Set<string>;
   // A "now" steer aborts a running compaction, which Claude then restarts, so steers that
   // arrive mid-compaction wait here, also in pendingSteers, until it settles. Finalization
-  // releases what is still here; an entry taken for offering releases itself.
+  // releases and declines what is still here; an entry taken for offering releases itself.
   readonly heldSteers: Array<{
     readonly uuid: string;
     readonly offer: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
     readonly release: Effect.Effect<void>;
+    readonly delivered: Deferred.Deferred<void, ProviderAdapter.ProviderAdapterV2Error>;
+    // True once Claude's prompt queue holds it, even if the offer is then cut short.
+    readonly queued: () => boolean;
   }>;
   // Set while held steers are offered, so later steers queue behind them.
   releasingHeldSteers: boolean;
@@ -9270,15 +9273,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             next !== undefined;
             next = yield* takeHeldSteer(context)
           ) {
-            const { uuid, offer } = next;
-            yield* offer.pipe(
+            const { uuid, offer, delivered, queued } = next;
+            const steer = context.pendingSteers.get(uuid);
+            // A queued steer is Claude's; only one never queued may be declined and sent again.
+            yield* Effect.uninterruptibleMask((restore) =>
+              restore(offer).pipe(Effect.andThen(Deferred.succeed(delivered, undefined))),
+            ).pipe(
               Effect.onInterrupt(() =>
-                Effect.sync(() => {
+                Effect.suspend(() => {
                   context.releasingHeldSteers = false;
+                  if (queued()) return Deferred.succeed(delivered, undefined);
+                  // The query is closing; finalization declines it with the rest.
+                  context.heldSteers.unshift(next);
+                  return Effect.void;
                 }),
               ),
               Effect.catch((cause) => {
-                const steer = context.pendingSteers.get(uuid);
+                if (queued()) return Deferred.succeed(delivered, undefined);
                 context.pendingSteers.delete(uuid);
                 return Effect.logWarning("orchestration-v2.claude-held-steer-offer-failed", {
                   cause,
@@ -9287,6 +9298,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     steer === undefined
                       ? Effect.void
                       : emitSteerStatus(context, steer.messageId, "cancelled"),
+                  ),
+                  Effect.andThen(
+                    Deferred.fail(
+                      delivered,
+                      new ProviderAdapter.ProviderAdapterSteerRunError({
+                        driver: CLAUDE_PROVIDER,
+                        providerThreadId: context.input.providerThread.id,
+                        providerTurnId: context.providerTurnId,
+                        cause,
+                      }),
+                    ),
                   ),
                 );
               }),
@@ -9322,16 +9344,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             deliveredAppContext.set(input.context.nativeThreadId, input.context.appContextOffered);
           }
           // A turn that completes has taken in every offered steer; one that stops drops them unread.
+          // Held steers were never sent: declined, they come back as follow-ups, which the
+          // orchestrator reports instead when Stop reached the run.
           const heldSteers = input.context.heldSteers.splice(0);
           const heldSteerUuids = new Set(heldSteers.map((steer) => steer.uuid));
-          for (const steer of heldSteers) yield* steer.release;
-          const droppedSteers = [...input.context.pendingSteers];
+          for (const steer of heldSteers) {
+            yield* steer.release;
+            yield* Deferred.fail(
+              steer.delivered,
+              new ProviderAdapter.ProviderAdapterSteerDeclinedError({
+                driver: CLAUDE_PROVIDER,
+                providerThreadId: input.context.input.providerThread.id,
+                providerTurnId: input.context.providerTurnId,
+              }),
+            );
+          }
+          const droppedSteers = [...input.context.pendingSteers].filter(
+            ([uuid]) => !heldSteerUuids.has(uuid),
+          );
           input.context.pendingSteers.clear();
-          for (const [uuid, { messageId }] of droppedSteers) {
+          for (const [, { messageId }] of droppedSteers) {
             yield* emitSteerStatus(
               input.context,
               messageId,
-              input.status === "completed" && !heldSteerUuids.has(uuid) ? "completed" : "cancelled",
+              input.status === "completed" ? "completed" : "cancelled",
             );
           }
           if (input.context.compaction?.status === "running") {
@@ -9471,51 +9507,47 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
           }
 
-          for (const [uuid, { text, liveQuery }] of droppedSteers) {
-            const held = heldSteerUuids.has(uuid);
-            // A held steer was never sent, whatever ended the turn. An offered one can be unread
-            // only after Stop, and only a CLI proven to echo prompt uuids can show it.
-            if (
-              !held &&
-              (input.status !== "interrupted" ||
-                (liveQuery.promptEchoMode !== "early" &&
-                  liveQuery.promptEchoMode !== "result_only"))
-            ) {
-              continue;
-            }
-            const nativeItemId = `unread-steer:${uuid}`;
-            const notice = held
-              ? `The turn ended while Claude was compacting, so this steer was not sent. Resend it if needed: "${text}"`
-              : `Claude did not confirm reading your steer before Stop. It may not have been delivered. Resend it if needed: "${text}"`;
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CLAUDE_PROVIDER,
-              turnItem: {
-                id: idAllocator.derive.turnItemFromProviderItem({
-                  driver: CLAUDE_PROVIDER,
-                  nativeItemId,
-                }),
-                threadId: input.context.input.threadId,
-                runId: input.context.input.runId,
-                nodeId: input.context.input.rootNodeId,
-                providerThreadId: input.context.input.providerThread.id,
-                providerTurnId: input.context.providerTurnId,
-                nativeItemRef: {
-                  driver: CLAUDE_PROVIDER,
-                  nativeId: nativeItemId,
-                  strength: "weak",
+          if (input.status === "interrupted") {
+            for (const [uuid, { text, liveQuery }] of droppedSteers) {
+              // Only a CLI proven to echo prompt uuids can leave a steer unconfirmed.
+              if (
+                liveQuery.promptEchoMode !== "early" &&
+                liveQuery.promptEchoMode !== "result_only"
+              ) {
+                continue;
+              }
+              const nativeItemId = `unread-steer:${uuid}`;
+              const notice = `Claude did not confirm reading your steer before Stop. It may not have been delivered. Resend it if needed: "${text}"`;
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  id: idAllocator.derive.turnItemFromProviderItem({
+                    driver: CLAUDE_PROVIDER,
+                    nativeItemId,
+                  }),
+                  threadId: input.context.input.threadId,
+                  runId: input.context.input.runId,
+                  nodeId: input.context.input.rootNodeId,
+                  providerThreadId: input.context.input.providerThread.id,
+                  providerTurnId: input.context.providerTurnId,
+                  nativeItemRef: {
+                    driver: CLAUDE_PROVIDER,
+                    nativeId: nativeItemId,
+                    strength: "weak",
+                  },
+                  parentItemId: null,
+                  ordinal: yield* resolveItemOrdinal(input.context, nativeItemId),
+                  type: "system_notice",
+                  status: "completed",
+                  title: "Steer delivery not confirmed",
+                  message: notice,
+                  startedAt: input.completedAt,
+                  completedAt: input.completedAt,
+                  updatedAt: input.completedAt,
                 },
-                parentItemId: null,
-                ordinal: yield* resolveItemOrdinal(input.context, nativeItemId),
-                type: "system_notice",
-                status: "completed",
-                title: held ? "Steer not sent" : "Steer delivery not confirmed",
-                message: notice,
-                startedAt: input.completedAt,
-                completedAt: input.completedAt,
-                updatedAt: input.completedAt,
-              },
-            });
+              });
+            }
           }
 
           const threadDisposition = input.threadDisposition ?? "reusable";
@@ -13914,6 +13946,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Notes this turn's prompt or an earlier steer already carried are not sent again.
             // A held steer checks when it is sent, since compaction forgets what was carried.
             const appContext = turnInput.appContext ?? [];
+            let queued = false;
             const offer = Effect.suspend(() => {
               const seenAppContext =
                 currentTurn.appContextOffered ?? deliveredAppContext.get(existing.nativeThreadId);
@@ -13927,6 +13960,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const commitOffer = () => {
                 if (offerCommitted) return;
                 offerCommitted = true;
+                queued = true;
                 pdfReservation.commit();
                 if (userMessage !== steerMessage) {
                   currentTurn.appContextOffered = new Map(
@@ -13948,23 +13982,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               text: turnInput.message.text,
               liveQuery: existing,
             });
-            // Returns without waiting: a running steer effect would block this thread's Stop.
-            if (currentTurn.compaction?.status === "running" || currentTurn.releasingHeldSteers) {
-              held = true;
-              const release = Scope.close(reservationScope, Exit.void);
-              currentTurn.heldSteers.push({
-                uuid: steerUuid,
-                offer: offer.pipe(Effect.ensuring(release)),
-                release,
-              });
-            }
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);
               return next;
             });
             yield* emitSteerStatus(currentTurn, messageId, "pending");
-            if (held) return;
+            // Returns without waiting: a running steer effect would block this thread's Stop.
+            if (currentTurn.compaction?.status === "running" || currentTurn.releasingHeldSteers) {
+              held = true;
+              const release = Scope.close(reservationScope, Exit.void);
+              const delivered = yield* Deferred.make<
+                void,
+                ProviderAdapter.ProviderAdapterV2Error
+              >();
+              currentTurn.heldSteers.push({
+                uuid: steerUuid,
+                offer: offer.pipe(Effect.ensuring(release)),
+                release,
+                delivered,
+                queued: () => queued,
+              });
+              return { delivered: Deferred.await(delivered) };
+            }
             yield* offer.pipe(
               Effect.onError(() =>
                 currentTurn.pendingSteers.delete(steerUuid)

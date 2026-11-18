@@ -39,6 +39,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 const driver = ProviderDriverKind.make("codex");
@@ -54,6 +55,8 @@ it.effect.each(
       [true, "without native steering"],
       [true, "with interrupting native steering"],
       [true, "settled only"],
+      [true, "while held"],
+      [true, "while held through a failure"],
       [false, "during continuation"],
       ["question", "during delivery"],
     ] as const
@@ -151,6 +154,22 @@ it.effect.each(
               Effect.gen(function* () {
                 steerCalls += 1;
                 if (timing === "after delivery" || timing === "during continuation") return;
+                // Held like a steer that waits out a compaction, then declined when the turn ends.
+                if (timing === "while held" || timing === "while held through a failure") {
+                  return {
+                    delivered: Deferred.await(rejectSteer).pipe(
+                      Effect.andThen(
+                        Effect.fail(
+                          new ProviderAdapter.ProviderAdapterSteerDeclinedError({
+                            driver,
+                            providerThreadId: turn.providerThread.id,
+                            providerTurnId: turn.providerTurnId,
+                          }),
+                        ),
+                      ),
+                    ),
+                  };
+                }
                 yield* Deferred.succeed(steerEntered, undefined);
                 yield* Deferred.await(rejectSteer);
                 return yield* new ProviderAdapter.ProviderAdapterSteerRunError({
@@ -324,6 +343,72 @@ it.effect.each(
           : {}),
       });
       if (timing !== "before dispatch") yield* dispatchSteer;
+      if (timing === "while held" || timing === "while held through a failure") {
+        const failed = timing === "while held through a failure";
+        // Subscribed before the worker runs: the follow-up commits as soon as the hold ends.
+        const followUp = yield* watch(
+          (event) =>
+            event.type === "message.updated" &&
+            event.payload.id === messageId &&
+            event.payload.runId !== first.runId,
+        );
+        yield* worker.drain();
+        assert.equal(steerCalls, 1);
+        const holding = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(holding.subagents[0]?.completionDelivery?.state, "claimed");
+        const turn = holding.providerTurns[0]!;
+        const status = failed ? "failed" : "completed";
+        // Declined as the turn ends: before anything is persisted, or once a failed turn is
+        // persisted but its run has not settled yet.
+        if (!failed) yield* Deferred.succeed(rejectSteer, undefined);
+        const turnEnded = yield* watch(
+          (event) => event.type === "provider-turn.updated" && event.payload.status === status,
+        );
+        const runSettled = yield* watch(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === first.runId &&
+            event.payload.status === (failed ? "failed" : "waiting"),
+        );
+        yield* Queue.offer(events, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: { ...turn, status, completedAt: yield* DateTime.now },
+        });
+        yield* Fiber.join(turnEnded);
+        if (failed) yield* Deferred.succeed(rejectSteer, undefined);
+        const ended = {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: turn.providerThreadId,
+          providerTurnId: turn.id,
+          runOrdinal: first.runOrdinal,
+          threadDisposition: "reusable",
+        } as const;
+        yield* Queue.offer(
+          events,
+          failed
+            ? {
+                ...ended,
+                status: "failed",
+                failureItemOrdinal: 100,
+                failure: makeProviderFailure({
+                  message: "Claude exited.",
+                  class: "transport_error",
+                }),
+              }
+            : { ...ended, status: "completed", failure: null },
+        );
+        yield* Fiber.join(runSettled);
+        yield* Fiber.join(followUp);
+        yield* worker.drain();
+        yield* orchestrator.resumeQueuedRuns;
+        yield* worker.drain();
+        assert.lengthOf(started, 2);
+        assert.equal(started[1]?.message.messageId, messageId);
+        assert.include(started[1]?.message.text ?? "", String(taskId));
+        return;
+      }
       if (timing === "during continuation") {
         const projection = yield* orchestrator.getThreadProjection(threadId);
         const turn = projection.providerTurns[0]!;
@@ -1549,6 +1634,18 @@ it.effect.each(declinedSteerTimings)(
         assert.equal(started.length, 1);
         if (timing === "stop-before-decline") {
           assert.isUndefined(queued);
+          // Stop cancelled a steer the provider never took; the thread says so.
+          assert.equal(
+            pending.turnItems.find(
+              (item) => item.type === "user_message" && item.messageId === messageId,
+            )?.status,
+            "cancelled",
+          );
+          const notice = pending.turnItems.find(
+            (item) => item.type === "system_notice" && item.runId === first.runId,
+          );
+          assert.equal(notice?.title, "Steer not sent");
+          assert.include(notice?.type === "system_notice" ? notice.message : "", "follow up");
           return;
         }
         assert.equal(queued?.status, "queued");

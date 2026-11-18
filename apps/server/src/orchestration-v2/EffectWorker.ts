@@ -117,6 +117,7 @@ export const layerExecutor: Layer.Layer<
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const scope = yield* Effect.scope;
     const startRun = (
       effect: EffectOutbox.OrchestrationEffectV2,
       runId: RunId,
@@ -326,37 +327,51 @@ export const layerExecutor: Layer.Layer<
                 ),
               );
           }
-          case "provider-turn.steer":
-            return providerTurnControl
-              .steer({
-                threadId: effect.threadId,
-                providerSessionId: effect.request.providerSessionId,
-                providerThreadId: effect.request.providerThreadId,
-                providerTurnId: effect.request.providerTurnId,
-                messageId: effect.request.messageId,
-                ...(effect.request.modelSelection === undefined
-                  ? {}
-                  : { modelSelection: effect.request.modelSelection }),
-              })
-              .pipe(
-                Effect.tap(() =>
-                  Effect.gen(function* () {
-                    if (effect.request.type !== "provider-turn.steer") return;
-                    const messageId = effect.request.messageId;
-                    const projection = yield* threads.getThreadRecords(
-                      effect.threadId,
-                      ["messages", "runs"],
-                      { messageIds: [effect.request.messageId] },
-                    );
-                    const message = projection.messages.find((row) => row.id === messageId);
-                    if (message?.delegatedCompletion === undefined) return;
-                    yield* threads.dispatch({
-                      type: "notification.delivery.accept",
-                      commandId: CommandId.make(`command:mailbox-accepted:${effect.id}`),
-                      threadId: effect.threadId,
-                      messageId: message.id,
-                    });
-                  }),
+          case "provider-turn.steer": {
+            const settleSteer = (
+              sent: Effect.Effect<
+                Effect.Success<ReturnType<typeof providerTurnControl.steer>>,
+                ProviderTurnControlService.ProviderTurnControlError
+              >,
+            ): Effect.Effect<void, OrchestrationEffectExecutionError> =>
+              sent.pipe(
+                Effect.tap((held) =>
+                  held !== undefined
+                    ? // Returning frees this thread's later effects, such as Stop, while the
+                      // provider holds the steer; its delivery settles the message afterwards.
+                      settleSteer(held.delivered).pipe(
+                        // No outbox row retries this, so retry what was not the provider's answer.
+                        Effect.retry({
+                          while: (error) => !isProviderTurnControlError(error.cause),
+                          schedule: Schedule.exponential("1 second"),
+                          times: 4,
+                        }),
+                        Effect.catchCause((cause) =>
+                          Effect.logWarning(
+                            "orchestration-v2.effect-worker.held-steer-settle-failed",
+                            { effectId: effect.id },
+                            cause,
+                          ),
+                        ),
+                        Effect.forkIn(scope),
+                      )
+                    : Effect.gen(function* () {
+                        if (effect.request.type !== "provider-turn.steer") return;
+                        const messageId = effect.request.messageId;
+                        const projection = yield* threads.getThreadRecords(
+                          effect.threadId,
+                          ["messages", "runs"],
+                          { messageIds: [effect.request.messageId] },
+                        );
+                        const message = projection.messages.find((row) => row.id === messageId);
+                        if (message?.delegatedCompletion === undefined) return;
+                        yield* threads.dispatch({
+                          type: "notification.delivery.accept",
+                          commandId: CommandId.make(`command:mailbox-accepted:${effect.id}`),
+                          threadId: effect.threadId,
+                          messageId: message.id,
+                        });
+                      }),
                 ),
                 Effect.catch((error) =>
                   Effect.gen(function* () {
@@ -450,7 +465,21 @@ export const layerExecutor: Layer.Layer<
                       cause,
                     }),
                 ),
+                Effect.asVoid,
               );
+            return settleSteer(
+              providerTurnControl.steer({
+                threadId: effect.threadId,
+                providerSessionId: effect.request.providerSessionId,
+                providerThreadId: effect.request.providerThreadId,
+                providerTurnId: effect.request.providerTurnId,
+                messageId: effect.request.messageId,
+                ...(effect.request.modelSelection === undefined
+                  ? {}
+                  : { modelSelection: effect.request.modelSelection }),
+              }),
+            );
+          }
           case "provider-turn.restart":
             return providerTurnControl
               .interruptAndAwaitTerminal({
