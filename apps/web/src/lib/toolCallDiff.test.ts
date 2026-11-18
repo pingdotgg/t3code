@@ -127,6 +127,23 @@ describe("toolCallDiff", () => {
       ),
     ).toEqual(["/elsewhere/b.ts"]);
 
+    for (const [fileName, workspace] of [
+      ["repo/src/a.ts", "/repo"],
+      ["/repo/back/slash/a.ts", "/repo/back\\slash"],
+    ] as const) {
+      const diffStr = `--- ${fileName}\n+++ ${fileName}\n@@ -1 +1 @@\n-x\n+y\n`;
+      expect(toolCallDiff({ fileName, diffStr }, workspace).patch).toBe(diffStr);
+    }
+
+    expect(
+      paths(
+        toolCallDiff(
+          { fileName: "/repo/back\\slash/a.ts", diffStr: "@@ -1 +1 @@\n-x\n+y\n" },
+          "/repo/back\\slash",
+        ).patch,
+      ),
+    ).toEqual(["a.ts"]);
+
     // Only where a header's path starts: hunk lines that look like headers, and a path that
     // merely contains the root, keep it, in this file and the next.
     const twoFiles = [

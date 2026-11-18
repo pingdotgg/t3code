@@ -60,17 +60,23 @@ const SEPARATOR = /^(?:\/|\\\\|\\)/;
 
 // Absolute paths under the workspace read relative to it, like the relative paths agents record.
 function relativeHeaderPaths(patch: string | undefined, workspaceRoot: string | null | undefined) {
-  const root = workspaceRoot?.split(/[\\/]+/).filter(Boolean);
+  const windows = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(workspaceRoot ?? "");
+  const root = workspaceRoot?.split(windows ? /[\\/]+/ : /\/+/).filter(Boolean);
   if (!patch || !root?.length) return patch;
-  const sameSegment = /^[A-Za-z]:$/.test(root[0]!)
+  const driveRoot = /^[A-Za-z]:$/.test(root[0]!);
+  const sameSegment = driveRoot
     ? (a: string, b: string) => a.toLowerCase() === b.toLowerCase()
     : (a: string, b: string) => a === b;
   // Removes the root only where a path starts: after an optional quote and git's a/ or b/.
   const stripAt = (line: string, start: number) => {
     const kept = start + /^"?(?:[ab]\/)?/.exec(line.slice(start))![0].length;
-    const separator = (at: number) => SEPARATOR.exec(line.slice(at))?.[0].length ?? 0;
-    let at = kept + separator(kept);
-    for (const segment of root) {
+    const separator = (at: number) =>
+      (windows ? SEPARATOR : /^\//).exec(line.slice(at))?.[0].length ?? 0;
+    const leading = separator(kept);
+    if (driveRoot ? leading !== 0 : leading === 0) return line;
+    let at = kept + leading;
+    for (const rootSegment of root) {
+      const segment = line[start] === '"' ? JSON.stringify(rootSegment).slice(1, -1) : rootSegment;
       if (!sameSegment(line.slice(at, at + segment.length), segment)) return line;
       at += segment.length;
       const width = separator(at);
