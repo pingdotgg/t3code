@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - The retention test forces garbage collection in Node.
-import { setImmediate } from "node:timers/promises";
+import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
 import {
@@ -140,16 +140,49 @@ describe("createMergedIssueCandidatesAtoms", () => {
 });
 
 describe("createMergedIssueListAtoms", () => {
+  const answer: IssueListResult = {
+    viewers: {},
+    trackers: [],
+    entries: [],
+    errors: [],
+    nextCursors: {},
+  };
+
+  it("refreshes the open listings of the environment written to", () => {
+    const reads = new Map<string, number>();
+    const lists = new Map<string, Atom.Atom<AsyncResult.AsyncResult<IssueListResult>>>();
+    const listings = createMergedIssueListAtoms((target) => {
+      const key = `${target.environmentId}:${target.input.query}`;
+      const existing = lists.get(key);
+      if (existing !== undefined) return existing;
+      const atom = Atom.make(() => {
+        reads.set(key, (reads.get(key) ?? 0) + 1);
+        return AsyncResult.success(answer);
+      });
+      lists.set(key, atom);
+      return atom;
+    }, String);
+    const registry = AtomRegistry.make();
+    const written = EnvironmentId.make("written");
+    const other = EnvironmentId.make("other");
+    try {
+      const listing = listings.atom([
+        { environmentId: written, input: { state: "open", query: "bug" } },
+        { environmentId: other, input: { state: "open", query: "bug" } },
+      ]);
+      registry.mount(listing);
+
+      listings.refreshEnvironment(registry, written);
+      registry.get(listing);
+      expect(Object.fromEntries(reads)).toEqual({ "written:bug": 2, "other:bug": 1 });
+    } finally {
+      registry.dispose();
+    }
+  });
+
   it("releases historical search targets when the list closes", async () => {
     NodeV8.setFlagsFromString("--expose-gc");
     const gc = NodeVM.runInNewContext("gc") as () => void;
-    const answer: IssueListResult = {
-      viewers: {},
-      trackers: [],
-      entries: [],
-      errors: [],
-      nextCursors: {},
-    };
     const listings = createMergedIssueListAtoms(
       () => Atom.make(AsyncResult.success(answer)),
       String,
@@ -166,7 +199,8 @@ describe("createMergedIssueListAtoms", () => {
         return new WeakRef(targets);
       });
       // Let the registry remove all three unmounted queries and the WeakRefs leave their creation job.
-      await setImmediate();
+      // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a zero-delay macrotask boundary, not a wait for time
+      await NodeTimersPromises.setImmediate();
       gc();
 
       listings.refreshEnvironment(registry, environmentId);
