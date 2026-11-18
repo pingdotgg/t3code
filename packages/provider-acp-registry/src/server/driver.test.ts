@@ -481,9 +481,10 @@ describe("acpRegistrySnapshotReadiness", () => {
       vibeSession("mistral-large-4-0-3", ["low", "medium", "high"]),
       [],
     );
+    // Until its own session, a model borrows the current model's levels.
     expect(descriptors(onLarge)).toEqual([
       ["mistral-large-4-0-3", [thinking(["low", "medium", "high"])]],
-      ["mistral-medium-3.5", []],
+      ["mistral-medium-3.5", [thinking(["low", "medium", "high"])]],
     ]);
     const onMedium = applyAcpRegistryLiveConfiguration(
       onLarge,
