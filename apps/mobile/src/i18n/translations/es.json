@@ -1966,7 +1966,7 @@
   "746c576ea195806b": "Tomar control",
   "23d5d026ee80963b": "Tomar control de {title}",
   "59235647923be335": "Opciones del dispositivo",
-  "70029129d72da676": [
+  "4104bad7a6a8b8b7": [
     "En uso en ",
     {
       "t": "AppText",
@@ -1979,7 +1979,7 @@
     },
     ", que está en ejecución."
   ],
-  "52cdbb23d4f9ebd8": [
+  "337acff156b4268b": [
     "En uso en ",
     {
       "t": "AppText",
@@ -1992,7 +1992,7 @@
     },
     ", que no está en ejecución."
   ],
-  "6c426aaaa138b8eb": [
+  "d61c4ee92724bb14": [
     "En uso en ",
     {
       "t": "AppText",

@@ -1966,8 +1966,9 @@
   "746c576ea195806b": "Take over",
   "23d5d026ee80963b": "Take over from {title}",
   "59235647923be335": "Device options",
-  "70029129d72da676": [
-    "Busy in ",
+  "4104bad7a6a8b8b7": [
+    "Busy in",
+    " ",
     {
       "t": "AppText",
       "i": 1,
@@ -1979,8 +1980,9 @@
     },
     ", which is running."
   ],
-  "52cdbb23d4f9ebd8": [
-    "Busy in ",
+  "337acff156b4268b": [
+    "Busy in",
+    " ",
     {
       "t": "AppText",
       "i": 1,
@@ -1992,8 +1994,9 @@
     },
     ", which isn't running."
   ],
-  "6c426aaaa138b8eb": [
-    "Busy in ",
+  "d61c4ee92724bb14": [
+    "Busy in",
+    " ",
     {
       "t": "AppText",
       "i": 1,
