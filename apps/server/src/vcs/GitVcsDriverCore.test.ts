@@ -4454,7 +4454,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const changes = preview.sources.find((source) => source.kind === "branch-range")!;
         assert.strictEqual(changes.baseRef, "upstream/main");
         assert.deepStrictEqual(
-          changes.files.map((file) => file.path),
+          changes.files?.map((file) => file.path),
           ["feature.txt"],
         );
       }),
