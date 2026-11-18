@@ -180,6 +180,7 @@ function layerPairingOnboarding(
     Layer.mock(ConnectionCredentialStore.ConnectionCredentialStore)({
       get: () => Effect.succeedNone,
       put: () => Effect.void,
+      wasRejected: () => Effect.succeed(false),
     }),
     Layer.mock(ClientCapabilities.SshEnvironmentGateway)(provision ? { provision } : {}),
     Layer.succeed(
