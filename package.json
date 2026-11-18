@@ -19,6 +19,7 @@
     "screenshots:mobile": "node scripts/mobile-showcase.ts",
     "icons:export": "node scripts/export-brand-icons.ts",
     "icons:check": "node scripts/export-brand-icons.ts --check",
+    "i18n:check": "node scripts/i18n-check.ts",
     "licenses:sync": "node scripts/sync-third-party-license-notices.ts",
     "icons:export:android": "node scripts/export-android-icons.ts",
     "build": "vp run --filter './apps/*' build",
@@ -31,6 +32,7 @@
     "check:changed": "node scripts/check-changed.ts",
     "report:renders": "node scripts/render-metrics.ts",
     "lint": "vp lint --report-unused-disable-directives",
+    "i18n:untranslated": "node scripts/i18n-untranslated.ts",
     "knip": "knip --preprocessor ./scripts/knip-schemas.ts",
     "knip:check": "vp run knip:check:all",
     "knip:check:files": "knip --include files,dependencies --no-config-hints",
@@ -70,7 +72,7 @@
     "vite-plus": "catalog:"
   },
   "engines": {
-    "node": "26.12.1"
+    "node": "26.13.1"
   },
   "packageManager": "pnpm@12.14.0"
 }

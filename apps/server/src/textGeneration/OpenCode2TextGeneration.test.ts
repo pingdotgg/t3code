@@ -70,7 +70,7 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
             files: [{ uri: NodeURL.pathToFileURL(screenshotPath).href, name: "screen.png" }],
           });
         }
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("keeps a provider's own error message out of the caller-visible detail", () =>
@@ -153,7 +153,7 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
         .pipe(Effect.flip);
       assert.equal(failure.detail, "OpenCode could not generate the text.");
       assert.deepEqual(failure.cause, refusal);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("times out when the prompt request and its interrupt never answer", () =>
@@ -219,6 +219,6 @@ it.layer(layer)("OpenCode2TextGeneration", (it) => {
       yield* TestClock.adjust("5 seconds");
       const failure = yield* Fiber.join(generation);
       assert.equal(failure.detail, "OpenCode did not finish generating in time.");
-    }).pipe(Effect.scoped),
+    }),
   );
 });
