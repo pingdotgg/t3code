@@ -291,6 +291,9 @@ export const make = Effect.gen(function* () {
       ...(serverSelfUpdate === "boot-service" ? { serverUpdateStaging: true } : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true, desktopAppChannelSwitch: true } : {}),
       serverBrowser: true,
+      desktopBrowser:
+        serverConfig.desktopBrowserFd !== undefined &&
+        serverConfig.desktopBrowserControlFd !== undefined,
       peerLinks: true,
       mcpModeLimitHeader: true,
       linkFence: true,

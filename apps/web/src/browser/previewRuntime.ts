@@ -6,15 +6,19 @@ import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import {
+  readEnvironmentHasDesktopBrowser,
   readEnvironmentSupportsServerBrowser,
   useEnvironmentSupportsServerBrowser,
 } from "~/state/entities";
 
 export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime | undefined {
   if (!readEnvironmentSupportsServerBrowser(environmentId)) return undefined;
+  // Without the desktop browser channel (WSL-only), a server tab could only stream, losing
+  // annotation and capture; the desktop owns the tab as it does for other environments.
   if (
     isPreviewSupportedInRuntime() &&
-    environmentId !== appAtomRegistry.get(primaryEnvironmentIdAtom)
+    (environmentId !== appAtomRegistry.get(primaryEnvironmentIdAtom) ||
+      !readEnvironmentHasDesktopBrowser(environmentId))
   ) {
     return undefined;
   }

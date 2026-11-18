@@ -168,6 +168,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
       }),
   );
   it.effect.each([
+    { fds: {}, advertised: false },
+    { fds: { desktopBrowserFd: 6, desktopBrowserControlFd: 7 }, advertised: true },
+  ])(
+    "advertises the desktop browser channel only when the desktop passed it ($advertised)",
+    ({ fds, advertised }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const baseDir = yield* fs.makeTempDirectoryScoped();
+        const config = yield* makeServerConfig(baseDir);
+        yield* fs.makeDirectory(config.stateDir, { recursive: true });
+        const descriptor = yield* Effect.gen(function* () {
+          const environment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* environment.getDescriptor;
+        }).pipe(
+          Effect.provide(
+            ServerEnvironment.layer.pipe(
+              Layer.provide(layerEmptySecretStore),
+              Layer.provide(ServerConfig.layer({ ...config, mode: "desktop", ...fds })),
+            ),
+          ),
+          Effect.provideService(HostProcess.Environment, {}),
+        );
+        expect(descriptor.capabilities.desktopBrowser).toBe(advertised);
+      }),
+  );
+  it.effect.each([
     { platform: "darwin", architecture: "arm64", supported: true },
     { platform: "linux", architecture: "x64", supported: true },
     { platform: "linux", architecture: "x64", libc: "musl", supported: false },
