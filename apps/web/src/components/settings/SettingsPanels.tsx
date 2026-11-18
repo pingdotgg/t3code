@@ -1222,7 +1222,7 @@ export function GeneralSettingsPanel() {
           resetAction={
             settings.copyOnSelect !== DEFAULT_UNIFIED_SETTINGS.copyOnSelect ? (
               <SettingResetButton
-                label="copy on select"
+                ariaLabel={gt("Reset copy on select to default")}
                 onClick={() =>
                   updateSettings({ copyOnSelect: DEFAULT_UNIFIED_SETTINGS.copyOnSelect })
                 }
@@ -1244,7 +1244,7 @@ export function GeneralSettingsPanel() {
             resetAction={
               settings.copyOnSelectToast !== DEFAULT_UNIFIED_SETTINGS.copyOnSelectToast ? (
                 <SettingResetButton
-                  label="copy on select toast"
+                  ariaLabel={gt("Reset copy on select toast to default")}
                   onClick={() =>
                     updateSettings({
                       copyOnSelectToast: DEFAULT_UNIFIED_SETTINGS.copyOnSelectToast,

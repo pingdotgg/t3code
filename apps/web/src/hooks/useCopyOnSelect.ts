@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 import { useEffect } from "react";
 
 import { toastManager } from "~/components/ui/toast";
@@ -6,7 +8,7 @@ import { getClientSettings, useClientSettings } from "./useSettings";
 
 const copySelection = createSelectionCopier(() => {
   if (getClientSettings().copyOnSelectToast) {
-    toastManager.add({ type: "success", title: "Copied to clipboard" });
+    toastManager.add({ type: "success", title: m(msg("Copied to clipboard")) });
   }
 });
 
