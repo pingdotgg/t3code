@@ -151,6 +151,9 @@ export type CodexDriverEnv =
   | CodexManagedTokenBroker.CodexManagedTokenBroker;
 
 const CODEX_STALE_CATALOG_POLL = "5 seconds";
+// 1, 2, 4, 8, then every 15 minutes while Codex keeps failing to refresh its catalog.
+const codexStaleCatalogRetryDelay = (staleProbesInARow: number) =>
+  Duration.minutes(Math.min(2 ** Math.max(staleProbesInARow - 1, 0), 15));
 
 export const CodexDriver: ProviderDriver<
   CodexSettings,
@@ -272,11 +275,14 @@ export const CodexDriver: ProviderDriver<
       ),
     );
 
-    // Kick the TTL-gated manifest refresh in the background and classify with the in-memory
-    // manifest, so a slow or hung fetch never delays the provider check.
     // The last probe's stale catalog, watched until Codex or another client refreshes the cache.
     const staleCatalog = yield* Ref.make<CodexAppServerProviderSnapshot["staleCatalog"]>(undefined);
+    const staleProbesInARow = yield* Ref.make(0);
     let refreshSnapshot: Effect.Effect<unknown> = Effect.void;
+    // Set before a probe the cache write triggers, so that probe accepts the write.
+    const catalogFreshSinceMs = yield* Ref.make<number | undefined>(undefined);
+    // Kick the TTL-gated manifest refresh in the background and classify with the in-memory
+    // manifest, so a slow or hung fetch never delays the provider check.
     const checkProvider = Ref.set(staleCatalog, undefined).pipe(
       Effect.andThen(modelCatalog.refreshInBackground),
       Effect.andThen(
@@ -284,9 +290,20 @@ export const CodexDriver: ProviderDriver<
           checkCodexProviderStatus(
             effectiveConfig,
             (input) =>
-              probeCodexAppServerProvider(input).pipe(
+              Ref.getAndSet(catalogFreshSinceMs, undefined).pipe(
+                Effect.flatMap((sinceMs) =>
+                  probeCodexAppServerProvider(
+                    sinceMs === undefined ? input : { ...input, catalogFreshSinceMs: sinceMs },
+                  ),
+                ),
                 Effect.tap((probed: CodexAppServerProviderSnapshot) =>
-                  Ref.set(staleCatalog, probed.staleCatalog),
+                  Ref.set(staleCatalog, probed.staleCatalog).pipe(
+                    Effect.andThen(
+                      Ref.update(staleProbesInARow, (count) =>
+                        probed.staleCatalog ? count + 1 : 0,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             processEnv,
@@ -325,15 +342,26 @@ export const CodexDriver: ProviderDriver<
               Effect.provideService(HttpClient.HttpClient, httpClient),
               Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
               Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
-              // The next probe restarts enrichment, which ends this watch.
+              // Probe again once the cache refreshes, or after a backoff so Codex retries the
+              // download. The next probe restarts enrichment, which ends this watch.
               Effect.andThen(
                 stale === undefined
                   ? Effect.void
-                  : awaitCodexCatalogRefresh(
-                      stale.codexHome,
-                      stale.sinceMs,
-                      CODEX_STALE_CATALOG_POLL,
-                    ).pipe(
+                  : Ref.get(staleProbesInARow).pipe(
+                      Effect.flatMap((count) =>
+                        awaitCodexCatalogRefresh(
+                          stale.codexHome,
+                          stale.sinceMs,
+                          CODEX_STALE_CATALOG_POLL,
+                        ).pipe(
+                          Effect.timeoutOption(codexStaleCatalogRetryDelay(count)),
+                          Effect.flatMap((written) =>
+                            Option.isSome(written)
+                              ? Ref.set(catalogFreshSinceMs, stale.sinceMs)
+                              : Effect.void,
+                          ),
+                        ),
+                      ),
                       Effect.provideService(FileSystem.FileSystem, fileSystem),
                       Effect.provideService(Path.Path, pathService),
                       Effect.andThen(Effect.suspend(() => refreshSnapshot).pipe(Effect.forkDetach)),

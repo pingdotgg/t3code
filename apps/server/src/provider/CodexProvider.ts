@@ -747,16 +747,21 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   readonly cwd: string;
   readonly environment?: NodeJS.ProcessEnv;
   readonly skipNativeUsage?: boolean;
+  /** Accept a catalog written since then, which an earlier probe's Codex may have refreshed. */
+  readonly catalogFreshSinceMs?: number;
 }) {
   const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const processScope = yield* Scope.make();
   let pid: number | undefined;
+  // Stopping Codex mid-download would cancel the catalog refresh the probe gave up waiting for.
+  let awaitPendingCatalogRefresh: Effect.Effect<unknown> = Effect.void;
   // Returning the snapshot must not wait for Codex's own startup work.
   yield* Effect.addFinalizer(() =>
     pid === undefined
       ? Scope.close(processScope, Exit.void)
-      : stopCodexAfterStartupWork(pid, processScope).pipe(
+      : awaitPendingCatalogRefresh.pipe(
+          Effect.andThen(stopCodexAfterStartupWork(pid, processScope)),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.forkDetach,
           Effect.asVoid,
@@ -788,7 +793,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
         ? requestCodexChatGptModels({
             client,
             codexHome: initialize.codexHome,
-            spawnedAtMs,
+            spawnedAtMs: Math.min(spawnedAtMs, input.catalogFreshSinceMs ?? spawnedAtMs),
             deadlineMs,
           })
         : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs).pipe(
@@ -822,6 +827,14 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     ],
     { concurrency: "unbounded" },
   );
+
+  if (catalog.stale) {
+    awaitPendingCatalogRefresh = awaitCodexCatalogRefresh(initialize.codexHome, spawnedAtMs).pipe(
+      Effect.timeoutOption(CODEX_STARTUP_WORK_GRACE),
+      Effect.provideService(FileSystem.FileSystem, yield* FileSystem.FileSystem),
+      Effect.provideService(Path.Path, yield* Path.Path),
+    );
+  }
 
   const cyberAccess = Option.getOrUndefined(decodeCodexCyberAccessConfig(config));
   return {

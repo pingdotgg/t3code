@@ -49,6 +49,8 @@ function makeFakeCodexAppServers(responses: Readonly<Record<string, () => unknow
         closed: false,
       };
       helpers.push(helper);
+      // An idle process group: `pgrep -g` lists nothing and exits 1.
+      if (command._tag === "StandardCommand" && command.command === "pgrep") yield* crash;
       yield* Effect.addFinalizer(() => Effect.sync(() => (helper.closed = true)));
       const respond = (id: unknown, result: unknown) =>
         Queue.offer(output, new TextEncoder().encode(`${JSON.stringify({ id, result })}\n`));
@@ -157,11 +159,11 @@ it.effect("reuses one Codex skills helper per launch until it idles out", () =>
 
 const defaultCodexSettings = Schema.decodeSync(CodexSettings)({});
 
-it.effect("marks a cached catalog Codex did not refresh in time as stale", () =>
+it.effect("keeps Codex running for its late catalog refresh and marks the cache stale", () =>
   Effect.gen(function* () {
     // The TestClock starts at the epoch, so the probe's Codex spawns at 0 ms.
-    const cache = { fetched_at: "1969-12-31T23:59:00Z", models: ["gpt-old"] };
-    const { spawner } = makeFakeCodexAppServers({
+    let cache = { fetched_at: "1969-12-31T23:59:00Z", models: ["gpt-old"] };
+    const { helpers, spawner } = makeFakeCodexAppServers({
       "account/read": () => ({
         account: { type: "chatgpt", email: "dev@example.com", planType: "pro" },
         requiresOpenaiAuth: true,
@@ -209,6 +211,11 @@ it.effect("marks a cached catalog Codex did not refresh in time as stale", () =>
     );
     assert.deepStrictEqual(snapshot.staleCatalog, { codexHome: "/codex-home", sinceMs: 0 });
     yield* Scope.close(probeScope, Exit.void);
+    yield* TestClock.adjust("1 second");
+    assert.strictEqual(helpers[0]!.closed, false);
+    cache = { fetched_at: "1970-01-01T00:00:05Z", models: ["gpt-new"] };
+    yield* TestClock.adjust("1 second");
+    assert.strictEqual(helpers[0]!.closed, true);
 
     const provider = yield* checkCodexProviderStatus(
       defaultCodexSettings,
