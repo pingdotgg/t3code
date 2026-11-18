@@ -16,6 +16,7 @@ import {
   text,
   waitAs,
 } from "./workflow.ts";
+import type { IssueAddress } from "./WorkflowForge.ts";
 import { type AgentModel, AgentResult, AgentTurn, WorkflowAgents } from "./WorkflowAgents.ts";
 
 /** A thread an agent step ran in, to hand to a later step that should continue it. */
@@ -34,6 +35,11 @@ export interface AgentOptions<A, I> {
   readonly project?: string;
   readonly environment?: string;
   readonly thread?: AgentThread;
+  /**
+   * The issue this job is about. Its thread shows the issue, and the issue's page lists the
+   * thread. Only for a thread on this server, not one in a linked `environment`.
+   */
+  readonly issue?: IssueAddress;
   /** How long the agent has. Past it the thread is stopped and the step has failed. */
   readonly timeout?: Duration.Input;
   /**
@@ -77,6 +83,7 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
         project: options.project,
         environment: thread === undefined ? options.environment : thread.environment,
         thread: thread?.threadId,
+        issue: options.issue,
       })
       .pipe(
         Effect.tap((turn) =>
