@@ -3108,12 +3108,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     props.threadId,
     props.contentPresentation.kind,
   ]);
-  // oxlint-disable-next-line react/exhaustive-effect-dependencies, t3code/no-unreasoned-state-sync -- A scope change (thread or presentation) aborts the pending link lookup opened from the old scope.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A scope change aborts lookups opened from the old thread or presentation.
   useLayoutEffect(
     () => () => {
       markdownLinkRequest.current?.abort();
       markdownSaveRequest.current?.abort();
     },
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Scope changes cancel lookups even though cleanup only reads refs.
     [markdownLinkScope],
   );
   const [preview, setPreview] = useState<{
