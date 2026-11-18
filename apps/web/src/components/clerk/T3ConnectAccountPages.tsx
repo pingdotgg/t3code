@@ -1,5 +1,6 @@
 import { useAuth, useClerk } from "@clerk/react";
 import { MessageSquareIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
+import { msg, useMessages } from "gt-react";
 import { type ReactNode, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -9,7 +10,7 @@ import { T3ConnectUserProfilePage } from "./T3ConnectUserProfilePage";
 
 export const T3_CONNECT_ACCOUNT_PAGES = [
   {
-    label: "Mobile clients",
+    label: msg("Mobile clients"),
     url: "mobile-clients",
     icon: <SmartphoneIcon className="size-4" />,
     content: <MobileClientsUserProfilePage />,
@@ -39,6 +40,7 @@ export function useClerkAccountPage(): {
 } {
   const clerk = useClerk();
   const { isSignedIn } = useAuth();
+  const m = useMessages();
   const [targets, setTargets] = useState<PortalTargets>({});
 
   const open = (page: T3ConnectAccountPageUrl = "t3-connect") => {
@@ -47,7 +49,7 @@ export function useClerkAccountPage(): {
     clerk.openUserProfile({
       __experimental_startPath: `/${page}`,
       customPages: T3_CONNECT_ACCOUNT_PAGES.map((page) => ({
-        label: page.label,
+        label: m(page.label),
         url: page.url,
         mount: (element: HTMLDivElement) => setTarget(`content:${page.url}`, element),
         unmount: () => setTarget(`content:${page.url}`, undefined),

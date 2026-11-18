@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { Discovery, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
 import { deregisterManagedRelayEnvironmentCommand } from "../../cloud/managedRelayState";
@@ -32,6 +33,7 @@ export function RemoveT3ConnectEnvironmentDialog({
 }) {
   const accountPage = useT3ConnectAccountPage();
   const { provider } = useCloudAuth();
+  const gt = useGT();
   const session = useAtomValue(managedRelaySessionAtom);
   const deregister = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
     label: "deregister environment",
@@ -71,10 +73,10 @@ export function RemoveT3ConnectEnvironmentDialog({
         openAccountPage();
       }}
     >
-      T3 Connect settings
+      <T>T3 Connect settings</T>
     </InlineButton>
   ) : (
-    "T3 Connect settings"
+    gt("T3 Connect settings")
   );
 
   return (
@@ -88,44 +90,54 @@ export function RemoveT3ConnectEnvironmentDialog({
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {removesEverywhere
-                ? `Remove ${shown.label}?`
-                : `Remove ${shown.label} from this device?`}
+              {removesEverywhere ? (
+                <T>
+                  Remove <Var>{shown.label}</Var>?
+                </T>
+              ) : (
+                <T>
+                  Remove <Var>{shown.label}</Var> from this device?
+                </T>
+              )}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This forgets its pairing, credentials, and cached threads here.
+              <T>This forgets its pairing, credentials, and cached threads here.</T>
             </AlertDialogDescription>
             <AlertDialogDescription>
               {removesEverywhere ? (
-                "It's also removed from your relay account, so it doesn't come back on your devices."
+                gt(
+                  "It's also removed from your relay account, so it doesn't come back on your devices.",
+                )
               ) : shown.registration === "registered" ? (
-                <>
+                <T>
                   It stays on your T3 Connect account and keeps its host space. Deregister it in{" "}
-                  {accountPageLink} to free it.
-                </>
+                  <Var>{accountPageLink}</Var> to free it.
+                </T>
               ) : shown.registration === "unregistered" ? (
-                "It's no longer on your T3 Connect account."
+                gt("It's no longer on your T3 Connect account.")
               ) : (
-                <>
+                <T>
                   This doesn't change your T3 Connect account. To deregister it there, use{" "}
-                  {accountPageLink}.
-                </>
+                  <Var>{accountPageLink}</Var>.
+                </T>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              <T>Cancel</T>
+            </AlertDialogClose>
             {removesEverywhere ? (
               <Button
                 variant="destructive"
                 disabled={isDeregistering}
                 onClick={() => void removeEverywhere()}
               >
-                {isDeregistering ? "Removing…" : "Remove"}
+                {isDeregistering ? gt("Removing…") : gt("Remove")}
               </Button>
             ) : (
               <Button variant="destructive" onClick={onConfirm}>
-                Remove from this device
+                <T>Remove from this device</T>
               </Button>
             )}
           </AlertDialogFooter>

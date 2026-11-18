@@ -1,4 +1,5 @@
 import { UserButton, useAuth } from "@clerk/react";
+import { T, useGT, useMessages } from "gt-react";
 import { LogInIcon, LogOutIcon, RotateCwIcon } from "lucide-react";
 
 import { useCloudAuth } from "../../cloud/cloudAuth";
@@ -17,7 +18,9 @@ export function T3ConnectSidebarSignIn() {
         <SidebarMenuItem>
           <SidebarMenuButton onClick={retryClerkLoad}>
             <RotateCwIcon />
-            <span>Retry T3 Connect</span>
+            <span>
+              <T>Retry T3 Connect</T>
+            </span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       </SidebarMenu>
@@ -30,7 +33,9 @@ export function T3ConnectSidebarSignIn() {
       <SidebarMenuItem>
         <SidebarMenuButton onClick={openAuthPrompt}>
           <LogInIcon />
-          <span>Sign in to T3 Connect</span>
+          <span>
+            <T>Sign in to T3 Connect</T>
+          </span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>
@@ -47,6 +52,7 @@ export function T3ConnectSidebarAvatar() {
 
 function ClerkSidebarAvatar() {
   const { isLoaded, isSignedIn } = useAuth();
+  const m = useMessages();
 
   if (!isLoaded || !isSignedIn) return null;
 
@@ -63,7 +69,7 @@ function ClerkSidebarAvatar() {
       {T3_CONNECT_ACCOUNT_PAGES.map((page) => (
         <UserButton.UserProfilePage
           key={page.url}
-          label={page.label}
+          label={m(page.label)}
           labelIcon={page.icon}
           url={page.url}
         >
@@ -77,15 +83,18 @@ function ClerkSidebarAvatar() {
 /** An OpenID Connect provider hosts no account pages, so the account is just a way to sign out. */
 function OidcSidebarAccount() {
   const { isSignedIn, accountLabel, signOut } = useCloudAuth();
+  const gt = useGT();
 
   if (!isSignedIn) return null;
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton onClick={() => void signOut()} title="Sign out of T3 Connect">
+        <SidebarMenuButton onClick={() => void signOut()} title={gt("Sign out of T3 Connect")}>
           <LogOutIcon />
-          <span className="truncate">Sign out{accountLabel ? ` (${accountLabel})` : ""}</span>
+          <span className="truncate">
+            {accountLabel ? gt("Sign out ({account})", { account: accountLabel }) : gt("Sign out")}
+          </span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

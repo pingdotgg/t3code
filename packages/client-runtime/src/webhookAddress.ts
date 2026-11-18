@@ -1,6 +1,8 @@
 import type { ScheduledTaskWebhookEndpoint } from "@t3tools/contracts";
 import { resolveEnvironmentUrl } from "@t3tools/shared/advertisedEndpoint";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export interface WebhookAddress {
   readonly address: string;
@@ -11,6 +13,7 @@ export interface WebhookAddress {
 export function webhookAddress(
   endpoint: ScheduledTaskWebhookEndpoint,
   httpBaseUrl: string | null,
+  resolve: MFunctionType = mFallback,
 ): WebhookAddress {
   if (endpoint.url !== null) {
     return { address: endpoint.url, copyable: true, note: null };
@@ -19,7 +22,7 @@ export function webhookAddress(
     return {
       address: endpoint.path,
       copyable: false,
-      note: "Link this environment to T3 Connect for a public URL.",
+      note: resolve(msg("Link this environment to T3 Connect for a public URL.")),
     };
   }
   const url = resolveEnvironmentUrl(httpBaseUrl, endpoint.path);
@@ -27,7 +30,11 @@ export function webhookAddress(
     address: url.href,
     copyable: true,
     note: isLocalLoopbackHost(url.hostname)
-      ? "Only this computer can call this address. Link T3 Connect for a public URL."
-      : "Works wherever this environment's address is reachable, for example over Tailscale or your own proxy. Link T3 Connect for a public URL.",
+      ? resolve(msg("Only this computer can call this address. Link T3 Connect for a public URL."))
+      : resolve(
+          msg(
+            "Works wherever this environment's address is reachable, for example over Tailscale or your own proxy. Link T3 Connect for a public URL.",
+          ),
+        ),
   };
 }
