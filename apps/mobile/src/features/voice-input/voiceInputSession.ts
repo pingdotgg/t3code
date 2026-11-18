@@ -8,6 +8,7 @@ import {
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
 
+import { m } from "../../i18n/messages";
 import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 
 const VOICE_METERING_INTERVAL_MS = 80;
@@ -93,6 +94,7 @@ export class VoiceInputSession {
   constructor(dependencies: VoiceInputSessionDependencies) {
     this.dependencies = dependencies;
     this.controller = new VoiceInputController({
+      resolve: m,
       ...dependencies,
       onStateChange: (state) => this.handleStateChange(state),
       // Keep the starting selection and refuse edits outside this session.

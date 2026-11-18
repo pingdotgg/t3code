@@ -81,7 +81,7 @@ describe("OpenCode2Client event subscription", () => {
       assert.strictEqual(error._tag, "HttpClientError");
       assert.strictEqual(error.reason._tag, "TransportError");
       assert.isTrue(Cause.isTimeoutError(error.cause));
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
@@ -198,7 +198,7 @@ it.effect("closes an event subscription that recovery has not started reading", 
     assert.isFalse(signals[0]!.aborted);
     yield* Scope.close(scope, Exit.void);
     assert.isTrue(signals[0]!.aborted);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 describe("OpenCode2Client native image jobs", () => {
@@ -458,6 +458,14 @@ describe("OpenCode2Client usage limits", () => {
         [404, {}, undefined],
         [405, {}, undefined],
         [200, { location: { directory: "/remote" }, data: null }, "unsupported"],
+        [
+          200,
+          {
+            location: { directory: "/remote" },
+            data: { workspace: { id: "wrk_zen", usageURL: "https://opencode.ai" }, budgets: [] },
+          },
+          "unsupported",
+        ],
         [503, {}, "probeFailed"],
         [401, {}, "probeFailed"],
         [200, { data: { workspace: {} } }, "probeFailed"],
@@ -477,7 +485,7 @@ describe("OpenCode2Client usage limits", () => {
         const result = yield* api.usageLimits("/remote");
         if (reason === undefined) assert.strictEqual(result, undefined);
         else assert.strictEqual(result?.unavailable?.reason, reason);
-        if (status === 200 && reason === "unsupported")
+        if ("data" in body && body.data === null)
           assert.include(result?.unavailable?.message ?? "", "signed in");
       }
     }),

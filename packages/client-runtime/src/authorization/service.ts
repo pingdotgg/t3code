@@ -1,4 +1,7 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import {
+  connectDeviceVerificationCode,
   type ClientConnectionMethod,
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
@@ -119,6 +122,24 @@ function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemp
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
     ? error
     : mapRemoteDpopEnvironmentError(error);
+}
+
+function approvalPendingError(hostLabel: string, thumbprint: string, traceId: string) {
+  const verificationCode = connectDeviceVerificationCode(thumbprint);
+  return new ConnectionTransientError({
+    reason: "approval-pending",
+    ...translatableDetail(
+      msg("Approve this device on {host}. It shows code {verificationCode}.", {
+        host: hostLabel,
+        verificationCode,
+      }),
+    ),
+    verificationCode,
+    traceId,
+    hop: "server",
+    via: "relay",
+    failureCause: "approval_pending",
+  });
 }
 
 const fetchDescriptor = Effect.fn("clientRuntime.connection.remote.fetchDescriptor")(function* (
@@ -251,7 +272,7 @@ export const make = Effect.gen(function* () {
               () =>
                 new ConnectionBlockedError({
                   reason: "configuration",
-                  detail: "Could not create the websocket authorization proof.",
+                  ...translatableDetail(msg("Could not create the websocket authorization proof.")),
                 }),
             ),
           ),
@@ -266,7 +287,9 @@ export const make = Effect.gen(function* () {
   const sessionChanged = () =>
     new ConnectionBlockedError({
       reason: "authentication",
-      detail: "Your cloud sign-in changed. Sign in again to authorize the environment.",
+      ...translatableDetail(
+        msg("Your cloud sign-in changed. Sign in again to authorize the environment."),
+      ),
     });
 
   // A missing identity before the attempt captures one means the cloud session
@@ -275,7 +298,7 @@ export const make = Effect.gen(function* () {
   const sessionPending = () =>
     new ConnectionTransientError({
       reason: "session-pending",
-      detail: "Waiting for the T3 Connect sign-in to load.",
+      ...translatableDetail(msg("Waiting for the T3 Connect sign-in to load.")),
     });
 
   const assertSession = Effect.fnUntraced(function* (
@@ -356,7 +379,7 @@ export const make = Effect.gen(function* () {
             () =>
               new ConnectionBlockedError({
                 reason: "configuration",
-                detail: "Could not create the environment authorization proof.",
+                ...translatableDetail(msg("Could not create the environment authorization proof.")),
               }),
           ),
         );
@@ -367,7 +390,11 @@ export const make = Effect.gen(function* () {
         dpopProof: bootstrapProof,
         clientMetadata: presentation.metadata,
       }).pipe(
-        Effect.mapError(mapRemoteDpopEnvironmentError),
+        Effect.mapError((error) =>
+          error._tag === "EnvironmentConnectApprovalPendingError"
+            ? approvalPendingError(descriptor.label, thumbprint, error.traceId)
+            : mapRemoteDpopEnvironmentError(error),
+        ),
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.withSpan("environment.authorization.accessToken.exchange"),
       );
@@ -398,7 +425,7 @@ export const make = Effect.gen(function* () {
         () =>
           new ConnectionBlockedError({
             reason: "configuration",
-            detail: "Could not load the environment authorization key.",
+            ...translatableDetail(msg("Could not load the environment authorization key.")),
           }),
       ),
       Effect.withSpan("environment.authorization.dpopKey.resolve"),
@@ -473,7 +500,7 @@ export const make = Effect.gen(function* () {
               Effect.fail(
                 new ConnectionTransientError({
                   reason: "timeout",
-                  detail: "Timed out renewing the environment credential.",
+                  ...translatableDetail(msg("Timed out renewing the environment credential.")),
                 }),
               ),
           }),

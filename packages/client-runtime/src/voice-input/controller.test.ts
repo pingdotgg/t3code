@@ -913,7 +913,10 @@ describe("VoiceInputController", () => {
   });
 });
 
-function createLiveHarness(startStreaming?: PreparedVoiceTranscription["startStreaming"]) {
+function createLiveHarness(
+  startStreaming?: PreparedVoiceTranscription["startStreaming"],
+  overrides: Partial<VoiceInputControllerDependencies> = {},
+) {
   let callbacks!: LiveVoiceOptions;
   let current = draft();
   const reported: string[] = [];
@@ -939,6 +942,7 @@ function createLiveHarness(startStreaming?: PreparedVoiceTranscription["startStr
           }),
       }),
     }),
+    ...overrides,
   });
   return {
     ...harness,
@@ -997,17 +1001,42 @@ describe("live voice input", () => {
     h.controller.cancel();
   });
 
-  it("falls back to file capture when live capture fails before any speech", async () => {
-    const h = createLiveHarness(async (options) => {
-      options.onTranscript("   ");
-      throw new Error("live capture unavailable");
-    });
-    await h.controller.start();
-    expect(h.prepareFileFallback).toHaveBeenCalledOnce();
-    expect(h.recorder.record).toHaveBeenCalledWith({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
-    await h.controller.stop();
-    expect(h.text).toBe("hello file words");
-  });
+  it.each(["ready", "unsupported language", "preparation failed"] as const)(
+    "falls back to file capture when live capture fails before any speech: %s",
+    async (fallback) => {
+      const h = createLiveHarness(async (options) => {
+        options.onTranscript("   ");
+        throw new Error("live capture unavailable");
+      });
+      if (fallback !== "ready") {
+        h.prepareFileFallback.mockRejectedValueOnce(
+          fallback === "unsupported language"
+            ? new VoiceTranscriptionError({ code: "unsupported-locale", message: "unsupported" })
+            : new Error("model unavailable"),
+        );
+      }
+      await h.controller.start();
+      expect(h.prepareFileFallback).toHaveBeenCalledOnce();
+      if (fallback === "ready") {
+        expect(h.recorder.record).toHaveBeenCalledWith({
+          forDuration: VOICE_RECORDING_LIMIT_SECONDS,
+        });
+        await h.controller.stop();
+        expect(h.text).toBe("hello file words");
+      } else {
+        expect(h.controller.currentState).toMatchObject({
+          phase: "error",
+          error:
+            fallback === "unsupported language"
+              ? "Voice transcription is not available for this language."
+              : "Could not prepare voice transcription.",
+          errorCode: fallback === "unsupported language" ? "language-unsupported" : "start-failed",
+        });
+        expect(h.recorder.record).not.toHaveBeenCalled();
+        expect(h.text).toBe("hello world");
+      }
+    },
+  );
 
   it("keeps words and skips the fallback when live capture fails after speech", async () => {
     const h = createLiveHarness(async (options) => {
@@ -1069,16 +1098,26 @@ describe("live voice input", () => {
     expect(h.controller.currentState.error).toBe("Interrupted");
   });
 
-  it("restores the draft when the recognizer retracts all speech", async () => {
-    const h = createLiveHarness();
-    h.stop.mockResolvedValue("");
-    await h.controller.start();
-    h.emit("noise");
-    h.emit("");
-    expect(h.text).toBe("hello world");
-    await h.controller.stop();
-    expect(h.controller.currentState.error).toBe("No speech was detected.");
-  });
+  it.each([false, true])(
+    "restores the draft when the recognizer retracts all speech (localized: %s)",
+    async (localized) => {
+      const resolve = ((message) =>
+        typeof message === "string" ? "Translated no speech" : message) as NonNullable<
+        VoiceInputControllerDependencies["resolve"]
+      >;
+      const h = createLiveHarness(undefined, localized ? { resolve } : {});
+      h.stop.mockResolvedValue("");
+      await h.controller.start();
+      h.emit("noise");
+      h.emit("");
+      expect(h.text).toBe("hello world");
+      await h.controller.stop();
+      expect(h.controller.currentState).toMatchObject({
+        error: localized ? "Translated no speech" : "No speech was detected.",
+        errorCode: "no-speech",
+      });
+    },
+  );
 
   it("holds the microphone until a cancelled startup releases it", async () => {
     const entered = deferred<void>();

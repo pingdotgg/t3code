@@ -26,6 +26,7 @@ const dependencies = Layer.mergeAll(
   ManagedPolicy.layerTest(),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({
     launch: () => Effect.die("synthetic dispatch failure"),
+    isNonGitProject: () => Effect.succeed(false),
   }),
   Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
     namedProjectsRoot: "/projects",
