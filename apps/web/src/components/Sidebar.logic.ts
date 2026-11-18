@@ -1065,6 +1065,46 @@ export function groupSidebarThreadsByProject<
   return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
 }
 
+/** Folders keep their order, with threads outside any project in one folder after the rest. */
+export function orderSidebarFolderGroups<TGroup extends { readonly isScratch?: boolean }>(
+  groups: readonly TGroup[],
+): TGroup[] {
+  return [
+    ...groups.filter((group) => group.isScratch !== true),
+    ...groups.filter((group) => group.isScratch === true),
+  ];
+}
+
+export type SidebarDateBucket = "today" | "yesterday" | "week" | "month" | "older";
+
+/** The history heading a time falls under, by calendar days in the viewer's time zone. */
+function sidebarDateBucket(timeMs: number, now: Date): SidebarDateBucket {
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const daysAgo = (days: number) =>
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() - days).getTime();
+  if (timeMs >= startOfToday) return "today";
+  if (timeMs >= daysAgo(1)) return "yesterday";
+  if (timeMs >= daysAgo(7)) return "week";
+  if (timeMs >= daysAgo(30)) return "month";
+  return "older";
+}
+
+/** The heading to show above each thread that starts a new date group; threads come newest first. */
+export function sidebarDateHeadings<TThread>(
+  threads: readonly TThread[],
+  timeOf: (thread: TThread) => number,
+  now: Date,
+): Map<TThread, SidebarDateBucket> {
+  const headings = new Map<TThread, SidebarDateBucket>();
+  let previous: SidebarDateBucket | null = null;
+  for (const thread of threads) {
+    const bucket = sidebarDateBucket(timeOf(thread), now);
+    if (bucket !== previous) headings.set(thread, bucket);
+    previous = bucket;
+  }
+  return headings;
+}
+
 export type SidebarV2TopStatusKind =
   | "approval"
   | "done"
@@ -1091,6 +1131,7 @@ export { sortActiveThreadsByOrderKey as sortThreadsForSidebar } from "@t3tools/c
 export {
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
+  threadSendTime,
 } from "@t3tools/client-runtime/state/thread-inbox";
 
 export { pinOrderKeyBetween } from "@t3tools/client-runtime/state/thread-sort";

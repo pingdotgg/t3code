@@ -34,6 +34,8 @@ import {
   type SidebarSection,
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
+  orderSidebarFolderGroups,
+  sidebarDateHeadings,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
@@ -1632,6 +1634,51 @@ describe("groupSidebarThreadsByProject", () => {
     expect(summarize((group) => group.projectKey === "fleet")).toEqual([
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
+    ]);
+  });
+});
+
+describe("orderSidebarFolderGroups", () => {
+  it("moves the no-project folder after every project and keeps their order", () => {
+    const groups = [
+      { projectKey: "t3code" },
+      { projectKey: "no-project", isScratch: true },
+      { projectKey: "fleet" },
+    ];
+    expect(orderSidebarFolderGroups(groups).map((group) => group.projectKey)).toEqual([
+      "t3code",
+      "fleet",
+      "no-project",
+    ]);
+  });
+});
+
+describe("sidebarDateHeadings", () => {
+  it("heads each calendar-day range once, newest first", () => {
+    const now = new Date(2026, 10, 18, 9, 30);
+    const at = (daysAgo: number, hour = 12) => new Date(2026, 10, 18 - daysAgo, hour).getTime();
+    const threads = [
+      { id: "this-morning", time: at(0, 1) },
+      { id: "earlier-today", time: at(0, 0) },
+      { id: "late-yesterday", time: at(1, 23) },
+      { id: "three-days", time: at(3) },
+      { id: "a-week", time: at(7, 0) },
+      { id: "two-weeks", time: at(14) },
+      { id: "two-months", time: at(60) },
+    ];
+
+    const headings = sidebarDateHeadings(threads, (thread) => thread.time, now);
+    expect(
+      threads.flatMap((thread) => {
+        const heading = headings.get(thread);
+        return heading === undefined ? [] : [[thread.id, heading]];
+      }),
+    ).toEqual([
+      ["this-morning", "today"],
+      ["late-yesterday", "yesterday"],
+      ["three-days", "week"],
+      ["two-weeks", "month"],
+      ["two-months", "older"],
     ]);
   });
 });
