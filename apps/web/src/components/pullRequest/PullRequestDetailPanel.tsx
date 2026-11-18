@@ -2083,6 +2083,7 @@ export function PullRequestDetailPanel({
             {mountedTabs.has("summary") ? (
               <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
                 <PullRequestSummaryTab
+                  active={tab === "summary"}
                   scrollerRef={scrollerRefs.summary}
                   revealUrl={tab === "summary" ? revealUrl : undefined}
                   onRevealSettled={settleReveal}
