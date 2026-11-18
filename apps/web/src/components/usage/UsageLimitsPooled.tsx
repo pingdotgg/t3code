@@ -15,7 +15,6 @@ import {
   type ResetCreditChoice,
   resetCreditsForWindow,
   sharedUsage,
-  usageShareSummary,
 } from "@t3tools/shared/usageLimits";
 import { T, Var, useGT, useMessages } from "gt-react";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
@@ -44,6 +43,7 @@ import { Button } from "../ui/button";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
 import {
+  usageShareSummary,
   collectExternalUsageLinks,
   collectLimitNotices,
   cursorUsageWindowDetails,
@@ -209,7 +209,7 @@ function SegmentPopover({
           <Row
             label={shared.labels.map((label) => label.replace(`${window.label} · `, "")).join(", ")}
           >
-            {shared.percent}% of usage
+            {gt("{percent}% of weekly limit", { percent: shared.percent })}
           </Row>
         ) : null}
         {window.resetsAt ? (
@@ -721,7 +721,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
             color={color}
             now={now}
             label={details?.label}
-            description={details?.description ?? usageShareSummary(share, windows) ?? undefined}
+            description={details?.description ?? usageShareSummary(share, windows, m) ?? undefined}
           />
         );
       })}

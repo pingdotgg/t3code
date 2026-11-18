@@ -18,9 +18,13 @@ import {
   remainingPercent,
   resetCountdown,
   sharedUsage,
-  usageShareSummary,
 } from "@t3tools/shared/usageLimits";
-import { formatDuration, limitsNotice, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
+import {
+  usageShareSummary,
+  formatDuration,
+  limitsNotice,
+  resetCreditChoices,
+} from "@t3tools/shared/usageLimitsCopy";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
@@ -66,12 +70,12 @@ function WindowRow(props: {
   const { window, now } = props;
   const remaining = remainingPercent(window);
   const shared = sharedUsage(window, props.windows)?.percent ?? 0;
-  const shareSummary = usageShareSummary(window.share, props.windows);
   const fill = remaining <= 10 ? "bg-red-500" : remaining <= 30 ? "bg-amber-500" : "bg-foreground";
   const fillColor = remaining > 30 && props.color ? { backgroundColor: props.color } : null;
   const timeLeft = paceRemainingPercent(window, now);
   const pace = paceOf(window, now);
   const m = useMessages();
+  const shareSummary = usageShareSummary(window.share, props.windows, m);
   const resetsIn = resetLabels(window, now, m)?.full;
   const [barWidth, setBarWidth] = useState(0);
   const tickX =
