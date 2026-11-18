@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { Pressable, ScrollView } from "react-native";
 import { useState } from "react";
 import { Chip } from "../../components/ui/Chip";
@@ -21,6 +22,7 @@ export function ThreadListFilters(props: {
   /** List padding the scroller bleeds through so pills start where row content does. */
   readonly gutter: number;
 }) {
+  const gt = useGT();
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const { themeAppearance } = useAppearancePreferences();
   const selectedEnvironment = props.environments.find(
@@ -38,13 +40,13 @@ export function ThreadListFilters(props: {
         contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 2, paddingBottom: 10, gap: 8 }}
       >
         <ListFilterMenu
-          label={selectedEnvironment?.label ?? "All environments"}
-          accessibilityLabel="Filter threads by environment"
+          label={selectedEnvironment?.label ?? gt("All environments")}
+          accessibilityLabel={gt("Filter threads by environment")}
           active={selectedEnvironment !== undefined}
           actions={[
             {
               id: "all",
-              title: "All environments",
+              title: gt("All environments"),
               state: props.selectedEnvironmentId === null ? "on" : "off",
             },
             ...props.environments.map((environment) => ({
@@ -68,13 +70,13 @@ export function ThreadListFilters(props: {
         />
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Filter threads by project"
+          accessibilityLabel={gt("Filter threads by project")}
           accessibilityState={{ selected: selectedProject !== undefined }}
           hitSlop={6}
           onPress={() => setProjectPickerOpen(true)}
         >
           <Chip
-            label={selectedProject?.label ?? "All projects"}
+            label={selectedProject?.label ?? gt("All projects")}
             selected={selectedProject !== undefined}
             trailingIcon="chevron.down"
             glass
@@ -84,7 +86,7 @@ export function ThreadListFilters(props: {
         {props.selectedEnvironmentId !== null || props.selectedProjectKey !== null ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Reset thread filters"
+            accessibilityLabel={gt("Reset thread filters")}
             className="h-8 w-8 items-center justify-center"
             onPress={() => {
               props.onEnvironmentChange(null);

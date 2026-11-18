@@ -300,7 +300,7 @@ export const IssueListProjectError = Schema.Struct({
 export type IssueListProjectError = typeof IssueListProjectError.Type;
 
 export const IssueListResult = Schema.Struct({
-  /** The signed-in account per host, which is what involvement compares against. */
+  /** The signed-in account per host that involvement compared against. Empty for `all`. */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   trackers: Schema.Array(IssueTrackerSummary),
   /** By update, newest first, across every scope this answer covers. */
