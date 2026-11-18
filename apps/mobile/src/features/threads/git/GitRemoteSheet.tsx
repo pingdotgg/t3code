@@ -65,7 +65,7 @@ export function GitRemoteSheet(props: GitRemoteSheetProps) {
         return;
       }
       const result = await gitActions.onSetSelectedThreadPushRemote(remoteName);
-      if (result !== null) navigation.goBack();
+      if (result !== null && navigation.isFocused()) navigation.goBack();
     } finally {
       selecting.current = false;
       setIsSelecting(false);
