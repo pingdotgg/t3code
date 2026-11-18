@@ -355,6 +355,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       let relaunchable = false;
       let nativeSessionId: string | undefined;
       let thread: OrchestrationV2ProviderThread | undefined;
+      let hasT3Mcp = false;
       let active: ActiveTurn | undefined;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
       let latestSubscriptionUsage: MuseSubscriptionUsage | undefined;
@@ -2012,6 +2013,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 createdAt,
                 updatedAt: createdAt,
               };
+          hasT3Mcp = mcpSession !== undefined;
           session = {
             ...session,
             model: result.session.modelId ?? args.modelSelection.model,
@@ -2179,8 +2181,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             if (declined !== undefined)
               yield* eventPermit.withPermits(1)(finish(turn, "failed", declined));
           } else {
-            // register() attaches T3 MCP only when this thread has an MCP session.
-            const hasT3Mcp = (yield* mcpSessions.read(turnInput.threadId)) !== undefined;
             const result = yield* request(
               "turn/start",
               {

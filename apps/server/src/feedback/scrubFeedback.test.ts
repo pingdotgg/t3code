@@ -46,6 +46,12 @@ describe("scrubFeedback", () => {
       "[redacted]\n[redacted]\n[redacted]\n[redacted]\n[redacted]",
     ],
     [
+      "a known value that is a URL scheme",
+      "Opened file:///home/alice/private.txt",
+      ["file"],
+      "Opened [redacted]",
+    ],
+    [
       "the tail of a known path",
       "Opened /home/alice/Develop/acme\nThen /Users/al/My Project/src/a.ts",
       ["/home/alice", "/Users/al/My Project"],

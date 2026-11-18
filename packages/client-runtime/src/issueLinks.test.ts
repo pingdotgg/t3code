@@ -56,6 +56,13 @@ describe("resolveIssueLinkTarget", () => {
       ],
     });
     expect(target?.ref.projectId).toBe("ported");
+
+    // An Enterprise Server's hostname need not say "github"; its project vouches for it.
+    const custom = resolveIssueLinkTarget({
+      url: "https://code.acme.test/acme/web/issues/7",
+      projects: [enterprise("custom", "code.acme.test")],
+    });
+    expect(custom?.ref).toMatchObject({ projectId: "custom", host: "code.acme.test", key: "7" });
   });
 
   it.each([

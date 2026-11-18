@@ -23,7 +23,7 @@ const QUOTED_PATH = new RegExp(
 // prefix followed by a separator. URLs, `3/10`, `and/or` and one-segment `/compact` do not start one.
 // The first segment cannot hold a space, or `/mcp /compact` would read as a path.
 const PATH_START = [
-  String.raw`\[redacted\](?=[\\/])`,
+  String.raw`\[redacted\](?=://|[\\/])(?:://)?`,
   String.raw`(?<![\w.:/~-])/[^\s/\\"'\x60<>(){},;:|]+/(?=\S)`,
   String.raw`(?<![\w~-])~/`,
   String.raw`\bfile://`,
