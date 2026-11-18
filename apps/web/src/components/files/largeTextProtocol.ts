@@ -1,3 +1,4 @@
+import type { PreviewFailure } from "./previewFailure";
 export const LARGE_TEXT_MAX_BYTES = 256 * 1024 * 1024;
 export const LARGE_TEXT_MAX_ROWS = 5_000_000;
 export const LARGE_TEXT_MAX_COLUMNS = 1024;
@@ -10,4 +11,4 @@ export type TextPreviewResult =
   | { type: "meta"; count: number; columns: number; complete: boolean; sizeBytes?: number }
   | { type: "page"; index: number; rows: string[][] }
   | { type: "copy"; text: string }
-  | { type: "error"; operation: TextPreviewRequest["type"]; message: string };
+  | ({ type: "error"; operation: TextPreviewRequest["type"] } & PreviewFailure);

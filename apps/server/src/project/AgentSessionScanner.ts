@@ -273,6 +273,13 @@ interface MetadataReadBudget {
   truncated: boolean;
 }
 
+function splitOperationBudget(budget: number, count: number): Array<number> {
+  return Array.from(
+    { length: count },
+    (_, index) => Math.floor(budget / count) + (index < budget % count ? 1 : 0),
+  );
+}
+
 function selectMetadataTranscripts(transcripts: ReadonlyArray<TranscriptCandidate>) {
   const selected: Array<TranscriptCandidate> = [];
   let pending = Array.from(
@@ -356,10 +363,12 @@ function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord)
   const model = record.message?.model?.trim();
   return {
     sessionId: record.sessionId?.trim() || fields.sessionId,
-    title: record.aiTitle?.trim() || fields.title,
+    title: claudeTitle(record.aiTitle) ?? fields.title,
     // Claude flushes the AI title after the user's rename; an empty rename clears it.
     customTitle:
-      record.customTitle === undefined ? fields.customTitle : record.customTitle.trim() || null,
+      record.customTitle === undefined
+        ? fields.customTitle
+        : (claudeTitle(record.customTitle) ?? null),
     // Claude uses this sentinel for local error responses. It is not a
     // model ID that can be selected when the imported session resumes.
     model: model && model !== "<synthetic>" ? model : fields.model,
@@ -395,6 +404,44 @@ function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
     base.end_byte_offset >= 0
     ? base
     : undefined;
+}
+
+// Claude Code records its own UI as user turns: slash commands, `!` shell runs and
+// their output, task notifications. Keep what the user typed, as they typed it.
+const CLAUDE_UI_OUTPUT =
+  /^(?:<(?:task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>|\[Request interrupted by user(?: for tool use)?\]$)/;
+
+/**
+ * A slash command as typed. Its arguments may name the thread; a bare command
+ * leaves that to a later prompt. Null for any other text.
+ */
+function claudeCommand(text: string): { readonly text: string; readonly titleText: string } | null {
+  if (!/^<command-(?:name|message)>/.test(text)) return null;
+  const name =
+    /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim() ||
+    `/${/<command-message>([^<]*)<\/command-message>/.exec(text)?.[1]?.trim() ?? ""}`;
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim() ?? "";
+  return { text: args.length === 0 ? name : `${name} ${args}`, titleText: args };
+}
+
+/** What a Claude user turn shows the user typed, and the part of it that may name the thread. */
+function claudeUserText(text: string): { readonly text: string; readonly titleText: string } {
+  if (CLAUDE_UI_OUTPUT.test(text)) return { text: "", titleText: "" };
+  const shellInput = /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
+  if (shellInput !== undefined) return { text: `!${shellInput}`, titleText: "" };
+  return claudeCommand(text) ?? { text, titleText: text };
+}
+
+function claudeVisibleText(record: DecodedTranscriptRecord) {
+  const text = extractText(record.message?.content);
+  return record.type === "user" ? claudeUserText(text) : { text, titleText: text };
+}
+
+/** Saved titles can be the raw markup of a user turn, such as the command that opened the session. */
+function claudeTitle(title: string | undefined): string | undefined {
+  const trimmed = title?.trim();
+  if (!trimmed) return undefined;
+  return claudeUserText(trimmed).text === trimmed ? trimmed : undefined;
 }
 
 // Agent-started sessions wrap the prompt in a `<wake reason=… current-time=…>`
@@ -480,6 +527,9 @@ function parseAgentSessionRecords(
       : (claudeFields.title ?? null);
   let model = claudeFields.model ?? null;
   let derivedTitle: string | undefined;
+  // Names a session whose only request was a bare command, such as `/review`.
+  let bareCommandTitle: string | undefined;
+  let hasAssistantMessage = false;
   let hasCodexSessionId = false;
   const messages: Array<AgentSessionThreadMessage & { readonly codexResponseUser: boolean }> = [];
   let firstUserMessage:
@@ -541,13 +591,16 @@ function parseAgentSessionRecords(
   let conversationMessageCount = 0;
   const retainMessage = (
     message: AgentSessionThreadMessage & { readonly codexResponseUser: boolean },
+    titleText = message.text,
   ) => {
     if (firstUserMessage === undefined && message.role === "user") {
       firstUserMessage = message;
     }
     if (derivedTitle === undefined && message.role === "user") {
-      derivedTitle = deriveTitle(input.source, message.text);
+      derivedTitle = deriveTitle(input.source, titleText);
+      bareCommandTitle ??= deriveTitle(input.source, message.text);
     }
+    hasAssistantMessage ||= message.role === "assistant";
     conversationMessageCount += 1;
     messages.push(message);
     if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
@@ -587,14 +640,17 @@ function parseAgentSessionRecords(
     if (input.source === "claudeAgent") {
       if (isHiddenClaudeRecord(record)) continue;
       if (record.type !== "user" && record.type !== "assistant") continue;
-      const text = extractText(record.message?.content);
+      const { text, titleText } = claudeVisibleText(record);
       if (text.length === 0) continue;
-      retainMessage({
-        role: record.type,
-        text,
-        createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
-        codexResponseUser: false,
-      });
+      retainMessage(
+        {
+          role: record.type,
+          text,
+          createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
+          codexResponseUser: false,
+        },
+        titleText,
+      );
       continue;
     }
 
@@ -660,7 +716,14 @@ function parseAgentSessionRecords(
   const visibleMessages = messages.map(
     ({ codexResponseUser: _codexResponseUser, ...message }) => message,
   );
-  if (providerSessionId.trim().length === 0 || firstUserMessage === undefined) return null;
+  if (
+    providerSessionId.trim().length === 0 ||
+    firstUserMessage === undefined ||
+    // A Claude session of bare commands such as `/clear` that no reply followed did nothing.
+    (input.source === "claudeAgent" && derivedTitle === undefined && !hasAssistantMessage)
+  ) {
+    return null;
+  }
   const firstUserMessageRetained = messages.includes(firstUserMessage);
   const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
   const retainedMessages = firstUserMessageRetained
@@ -671,7 +734,8 @@ function parseAgentSessionRecords(
     source: input.source,
     providerInstanceId: input.providerInstanceId,
     providerSessionId,
-    title: claudeFields.customTitle ?? title ?? derivedTitle ?? "Imported thread",
+    title:
+      claudeFields.customTitle ?? title ?? derivedTitle ?? bareCommandTitle ?? "Imported thread",
     model,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
@@ -695,12 +759,8 @@ function shouldRetainDecodedRecord(
     if (isHiddenClaudeRecord(record) || (record.type !== "user" && record.type !== "assistant")) {
       return false;
     }
-    const content = record.message?.content;
-    return typeof content === "string"
-      ? content.trim().length > 0
-      : (content?.some(
-          (block) => isTextContentBlock(block) && (block.text?.trim().length ?? 0) > 0,
-        ) ?? false);
+    // Same rule as the parser, so Claude Code's own output never takes a history window slot.
+    return claudeVisibleText(record).text.length > 0;
   }
   if (extractDecodedCwd(record) !== null) return true;
   return (
@@ -1235,7 +1295,6 @@ export const make = Effect.gen(function* () {
             let claudeFields = emptyClaudeFields;
             let historyBytes = prefix?.historyBytes ?? 0;
             let recordBytes = 0;
-            let recordCount = 0;
             let bytesRead = 0;
             const reserve = (bytes: number) => {
               recordBytes += bytes;
@@ -1251,9 +1310,6 @@ export const make = Effect.gen(function* () {
 
             const finishRecord = () => {
               reader.write(decoder.decode());
-              recordCount += 1;
-              // Claude keeps a bounded window, so only the byte budgets limit its length.
-              if (recordCount > MAX_IMPORT_RECORDS && source !== "claudeAgent") return false;
               const value = reader.finish();
               const decoded = decodeTranscriptValue(value);
               if (Option.isNone(decoded) && source === "pi") {
@@ -1285,7 +1341,7 @@ export const make = Effect.gen(function* () {
               reader = createTranscriptJsonReader(reserve, selectTranscriptPath);
               decoder = new TextDecoder();
               recordStarted = false;
-              return true;
+              return records.length <= MAX_IMPORT_RECORDS;
             };
 
             while (bytesRead < readBytes) {
@@ -1395,7 +1451,35 @@ export const make = Effect.gen(function* () {
         operationsRemaining -= 1;
         return listDirectory(directory);
       };
-      const projectDirectories = yield* readDirectory(projectsDir);
+      // Folder names carry no date, so read the newest folders first: a budget that runs out
+      // then drops the oldest sessions. Dating has its own allowance, apart from the reads.
+      let datesRemaining = operationBudget;
+      const dated: Array<{ readonly name: string; readonly mtimeMs: number }> = [];
+      const undated: Array<string> = [];
+      for (const name of yield* readDirectory(projectsDir)) {
+        if (datesRemaining <= 0) {
+          undated.push(name);
+          continue;
+        }
+        datesRemaining -= 1;
+        const stats = yield* statOption(path.join(projectsDir, name));
+        if (Option.isNone(stats) || stats.value.type !== "Directory") continue;
+        dated.push({
+          name,
+          mtimeMs: Option.match(stats.value.mtime, {
+            onNone: () => 0,
+            onSome: (mtime) => mtime.getTime(),
+          }),
+        });
+      }
+      const projectDirectories = [
+        ...dated
+          .toSorted(
+            (left, right) => right.mtimeMs - left.mtimeMs || left.name.localeCompare(right.name),
+          )
+          .map((entry) => entry.name),
+        ...undated,
+      ];
       const transcripts: Array<TranscriptCandidate> = [];
 
       for (const projectDirectory of projectDirectories) {
@@ -1431,7 +1515,7 @@ export const make = Effect.gen(function* () {
           });
         }
       }
-      return { transcripts, truncated };
+      return { transcripts, truncated, operationsUsed: operationBudget - operationsRemaining };
     },
   );
 
@@ -1550,6 +1634,7 @@ export const make = Effect.gen(function* () {
           return roots === undefined ? transcript : { ...transcript, projectRoots: roots };
         }),
         truncated,
+        operationsUsed: operationBudget - operationsRemaining,
       };
     },
   );
@@ -1605,7 +1690,7 @@ export const make = Effect.gen(function* () {
         }
       }
     }
-    return { transcripts, truncated };
+    return { transcripts, truncated, operationsUsed: operationBudget - operationsRemaining };
   });
 
   const groupTranscriptsByCwd = Effect.fn("AgentSessionScanner.groupTranscriptsByCwd")(function* (
@@ -1773,25 +1858,48 @@ export const make = Effect.gen(function* () {
       }
 
       const transcriptCandidates: Array<TranscriptCandidate> = [];
-      const baseOperationBudget = Math.floor(
-        MAX_DISCOVERY_OPERATIONS_PER_SOURCE / Math.max(1, homes.length),
-      );
-      const extraOperationBudgets = MAX_DISCOVERY_OPERATIONS_PER_SOURCE % Math.max(1, homes.length);
+      const discover =
+        source === "claudeAgent"
+          ? discoverClaudeTranscripts
+          : source === "codex"
+            ? discoverCodexTranscripts
+            : discoverPiTranscripts;
+      const shares = splitOperationBudget(MAX_DISCOVERY_OPERATIONS_PER_SOURCE, homes.length);
+      const discovered: Array<{
+        readonly transcripts: ReadonlyArray<TranscriptCandidate>;
+        readonly truncated: boolean;
+        readonly operationsUsed: number;
+      }> = [];
       for (const [index, home] of homes.entries()) {
-        const operationBudget = baseOperationBudget + (index < extraOperationBudgets ? 1 : 0);
-        if (operationBudget === 0) {
-          truncated = true;
-          continue;
+        const operationBudget = shares[index] ?? 0;
+        discovered.push(
+          operationBudget === 0
+            ? { transcripts: [], truncated: true, operationsUsed: 0 }
+            : yield* discover(home.homePath, home.providerInstanceId, operationBudget),
+        );
+      }
+      // Budget that small homes left unused goes to the homes that ran out, which rescan with it.
+      // Each takes an even split of what is still unused; a pass in which no home finishes spends
+      // it all, so every repeat has fewer starved homes.
+      let unused =
+        MAX_DISCOVERY_OPERATIONS_PER_SOURCE -
+        discovered.reduce((total, result) => total + result.operationsUsed, 0);
+      let starved = discovered.flatMap((result, index) => (result.truncated ? [index] : []));
+      while (unused > 0 && starved.length > 0) {
+        for (const [position, index] of starved.entries()) {
+          if (unused <= 0) break;
+          const home = homes[index]!;
+          const before = discovered[index]!.operationsUsed;
+          const extra = Math.ceil(unused / (starved.length - position));
+          const result = yield* discover(home.homePath, home.providerInstanceId, before + extra);
+          discovered[index] = result;
+          unused -= result.operationsUsed - before;
         }
-        const discover =
-          source === "claudeAgent"
-            ? discoverClaudeTranscripts
-            : source === "codex"
-              ? discoverCodexTranscripts
-              : discoverPiTranscripts;
-        const discovered = yield* discover(home.homePath, home.providerInstanceId, operationBudget);
-        truncated ||= discovered.truncated;
-        transcriptCandidates.push(...discovered.transcripts);
+        starved = starved.filter((index) => discovered[index]!.truncated);
+      }
+      for (const result of discovered) {
+        truncated ||= result.truncated;
+        transcriptCandidates.push(...result.transcripts);
       }
 
       transcriptCandidates.sort(
