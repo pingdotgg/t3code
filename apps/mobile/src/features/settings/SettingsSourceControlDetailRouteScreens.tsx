@@ -1,6 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  issueTrackerBindable,
+  issueTrackerSummary,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   AuthSettingsWriteScope,
@@ -11,8 +14,10 @@ import * as Option from "effect/Option";
 import { T, useGT, useMessages } from "gt-react-native";
 import type { ReactNode } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useEnvironments } from "../../state/environments";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
@@ -175,7 +180,6 @@ export function SettingsIssueTrackerRouteScreen({
   const canEdit = useAtomValue(issueTrackerEnvironment.connect.permissionAtom(environmentId));
   const tracker = query.data?.trackers.find((entry) => entry.tracker === route.params.tracker);
   const disabled = !canWrite || !canEdit;
-  const usable = tracker?.connected === true && tracker.account !== null;
   return (
     <DetailPage title={tracker?.displayName ?? gt("Issue tracker")}>
       {!environment || !tracker ? (
@@ -185,6 +189,11 @@ export function SettingsIssueTrackerRouteScreen({
           <Text selectable className="px-2 text-sm text-foreground-muted">
             {issueTrackerSummary(tracker, query.data?.bindings ?? {}, messages)}
           </Text>
+          {tracker.unavailable ? (
+            <View className="px-2">
+              <Button label="Try again" tone="secondary" onPress={query.refresh} />
+            </View>
+          ) : null}
           <SettingsSection title={tracker.credential.label}>
             <IssueTrackerCredentialForm
               environmentId={environmentId}
@@ -192,7 +201,7 @@ export function SettingsIssueTrackerRouteScreen({
               disabled={disabled}
             />
           </SettingsSection>
-          {usable && tracker.scopes.length > 0 ? (
+          {issueTrackerBindable(tracker) ? (
             <SettingsSection
               title={gt("Projects")}
               footer={gt(

@@ -81,6 +81,16 @@ export function issueTrackerDetailText(detail: string, resolve: MFunctionType = 
  * The line under a tracker's name. A connected tracker lists nothing until a project is linked
  * to one of its scopes, so the line says how many are, and what to do when none is.
  */
+/** The tracker refused the stored credential, as opposed to not being reachable to ask. */
+export const issueTrackerRejected = (tracker: IssueTrackerConnection): boolean =>
+  tracker.connected && tracker.account === null && !tracker.unavailable;
+
+/** Projects can be bound: the credential works, or the tracker is only briefly unreachable. */
+export const issueTrackerBindable = (tracker: IssueTrackerConnection): boolean =>
+  tracker.connected &&
+  (tracker.account !== null || tracker.unavailable) &&
+  tracker.scopes.length > 0;
+
 export function issueTrackerSummary(
   tracker: IssueTrackerConnection,
   bindings: IssueTrackerConnectionList["bindings"],

@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -575,6 +576,11 @@ export const IssueTrackerConnection = Schema.Struct({
   account: Schema.NullOr(TrimmedNonEmptyString),
   /** Why a stored credential did not work, when it did not. */
   detail: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * The tracker could not vet the stored credential just now (rate limit, outage), so it is not
+   * known to be rejected; `scopes` then holds only the scopes projects are bound to.
+   */
+  unavailable: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
   scopes: Schema.Array(IssueTrackerScope),
 });
 export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;

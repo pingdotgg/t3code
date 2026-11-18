@@ -16,7 +16,10 @@ import {
   type IssueTrackerConnection,
   type IssueTrackerConnectionList,
 } from "@t3tools/contracts";
-import type { StandaloneIssueTrackerApi } from "@t3tools/source-control-core/server/IssueTracker";
+import type {
+  IssueTrackerError,
+  StandaloneIssueTrackerApi,
+} from "@t3tools/source-control-core/server/IssueTracker";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
@@ -76,47 +79,74 @@ const make = Effect.gen(function* () {
     connected: false,
     account: null,
     detail: null,
+    unavailable: false,
     scopes: [],
   });
 
-  /** The tracker's view of a stored credential; a refusal is status, not a failure. */
-  const status = (api: StandaloneIssueTrackerApi, token: string) =>
+  const probeFailure = (error: IssueTrackerError) =>
+    new IssueTrackerConnectionError({
+      tracker: error.tracker,
+      reason: error.reason === "unauthenticated" ? "rejected" : "failed",
+      detail: IssueService.trackerDetail(error),
+      cause: error,
+    });
+
+  /** The tracker's view of a stored credential; a refusal or an outage is status, not a failure. */
+  const status = (
+    api: StandaloneIssueTrackerApi,
+    token: string,
+    bound: IssueTrackerConnectionList["bindings"],
+  ) =>
     api.probeCredential(token).pipe(
       Effect.map((probe): IssueTrackerConnection => ({
         ...api.standalone,
         connected: true,
         account: probe.account,
         detail: null,
+        unavailable: false,
         scopes: probe.scopes,
       })),
-      Effect.catch((error) =>
-        Effect.succeed<IssueTrackerConnection>({
+      Effect.catch((error) => {
+        const unavailable = error.reason !== "unauthenticated";
+        // Scope names come only from the tracker, so bound projects keep their pickers by key.
+        const boundKeys = new Set(
+          Object.values(bound).flatMap((binding) =>
+            binding.tracker === api.kind ? [binding.scope] : [],
+          ),
+        );
+        return Effect.succeed<IssueTrackerConnection>({
           ...api.standalone,
           connected: true,
           account: null,
           detail: IssueService.trackerDetail(error),
-          scopes: [],
-        }),
-      ),
+          unavailable,
+          scopes: unavailable ? [...boundKeys].map((key) => ({ key, name: key })) : [],
+        });
+      }),
     );
 
-  const current = (api: StandaloneIssueTrackerApi) =>
-    secrets.get(issueTrackerSecretName(api.kind)).pipe(
-      Effect.mapError(secretFailure(api.kind, "The stored credential could not be read.")),
-      Effect.flatMap((stored) =>
-        Option.isNone(stored)
-          ? Effect.succeed(disconnected(api))
-          : status(api, new TextDecoder().decode(stored.value)),
+  const current =
+    (bound: IssueTrackerConnectionList["bindings"]) => (api: StandaloneIssueTrackerApi) =>
+      secrets.get(issueTrackerSecretName(api.kind)).pipe(
+        Effect.mapError(secretFailure(api.kind, "The stored credential could not be read.")),
+        Effect.flatMap((stored) =>
+          Option.isNone(stored)
+            ? Effect.succeed(disconnected(api))
+            : status(api, new TextDecoder().decode(stored.value), bound),
+        ),
+      );
+
+  const list: IssueTrackerConnections["Service"]["list"] = Effect.gen(function* () {
+    const bound = Object.fromEntries(
+      yield* bindings.list.pipe(
+        // No single tracker is at fault; the first registered one carries the report.
+        Effect.mapError(secretFailure(anyTracker, "The project bindings could not be read.")),
       ),
     );
-
-  const list: IssueTrackerConnections["Service"]["list"] = Effect.all({
-    trackers: Effect.forEach(registry.standalone, current, { concurrency: 4 }),
-    bindings: bindings.list.pipe(
-      Effect.map((bound) => Object.fromEntries(bound)),
-      // No single tracker is at fault; the first registered one carries the report.
-      Effect.mapError(secretFailure(anyTracker, "The project bindings could not be read.")),
-    ),
+    const trackers = yield* Effect.forEach(registry.standalone, current(bound), {
+      concurrency: 4,
+    });
+    return { trackers, bindings: bound };
   });
 
   const disconnect = Effect.fn("IssueTrackerConnections.disconnect")(function* (
@@ -137,17 +167,7 @@ const make = Effect.gen(function* () {
   )(function* (input) {
     const api = yield* requireTracker(input.tracker);
     if (input.token === null) return yield* disconnect(api);
-    const probe = yield* api.probeCredential(input.token).pipe(
-      Effect.mapError(
-        (error) =>
-          new IssueTrackerConnectionError({
-            tracker: input.tracker,
-            reason: error.reason === "unauthenticated" ? "rejected" : "failed",
-            detail: IssueService.trackerDetail(error),
-            cause: error,
-          }),
-      ),
-    );
+    const probe = yield* api.probeCredential(input.token).pipe(Effect.mapError(probeFailure));
     yield* secrets
       .set(issueTrackerSecretName(api.kind), encoder.encode(input.token))
       .pipe(Effect.mapError(secretFailure(api.kind, "The credential could not be stored.")));
@@ -156,6 +176,7 @@ const make = Effect.gen(function* () {
       connected: true,
       account: probe.account,
       detail: null,
+      unavailable: false,
       scopes: probe.scopes,
     };
   });

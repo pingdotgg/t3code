@@ -1,5 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  issueTrackerBindable,
+  issueTrackerRejected,
+  issueTrackerSummary,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
@@ -84,6 +88,8 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
           environmentId={environmentId}
           tracker={tracker}
           bindings={query.data?.bindings ?? {}}
+          onRetry={query.refresh}
+          retrying={query.isPending}
         />
       ))}
     </SettingsSection>
@@ -94,10 +100,14 @@ function TrackerRow({
   environmentId,
   tracker,
   bindings,
+  onRetry,
+  retrying,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tracker: IssueTrackerConnection;
   readonly bindings: IssueTrackerConnectionList["bindings"];
+  readonly onRetry: () => void;
+  readonly retrying: boolean;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -145,7 +155,7 @@ function TrackerRow({
             <span className="truncate text-sm font-medium text-foreground">
               {tracker.displayName}
             </span>
-            {tracker.connected && tracker.account === null ? (
+            {issueTrackerRejected(tracker) ? (
               <Badge variant="destructive" size="sm">
                 <T>Credential rejected</T>
               </Badge>
@@ -153,6 +163,11 @@ function TrackerRow({
           </div>
           <p className="text-xs leading-normal text-muted-foreground/80">{summary}</p>
         </div>
+        {tracker.unavailable ? (
+          <Button size="xs" variant="outline" disabled={retrying} onClick={onRetry}>
+            Retry
+          </Button>
+        ) : null}
         <Button
           size="icon-xs"
           variant="ghost-muted"
@@ -221,7 +236,7 @@ function TrackerRow({
                   </div>
                 }
               />
-              {usable ? (
+              {issueTrackerBindable(tracker) ? (
                 <ProjectBindings
                   environmentId={environmentId}
                   tracker={tracker}
