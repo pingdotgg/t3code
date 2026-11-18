@@ -693,7 +693,7 @@
   "43d6a649e6c17f43": "Гілка",
   "f7abe2d9a8afe601": "Робоче дерево",
   "9891bcfd7736e790": "Робочий простір",
-  "4ada574c56e1ff5c": "{count, plural, one {Очікування субагента} few {Очікування {count} субагентів} many {Очікування {count} субагентів} other {Очікування {count} субагентів}}",
+  "4ada574c56e1ff5c": "{count, plural, =1 {Очікування субагента} one {Очікування {count} субагента} few {Очікування {count} субагентів} many {Очікування {count} субагентів} other {Очікування {count} субагентів}}",
   "690e94edaae9496b": "Фаза {number}",
   "101bf926f0721df4": "Воркфлоу",
   "d3f66f03a1c8ddc8": "{count, plural, one {{count} агент} few {{count} агенти} many {{count} агентів} other {{count} агенти}}",
