@@ -18,7 +18,6 @@ export function LabsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
-        <ScrollingWorkspacesRow />
         <BoringSidebarRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
@@ -28,6 +27,7 @@ export function LabsSettingsPanel() {
         <FastWorktreeCheckoutRow />
       </SettingsSection>
       <SettingsSection id="redesign" title="Redesign">
+        <ScrollingWorkspacesRow />
         <TurnWorkFoldRow />
       </SettingsSection>
     </SettingsPageContainer>

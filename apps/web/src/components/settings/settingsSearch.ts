@@ -540,7 +540,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Scrolling workspaces",
     to: "/settings/labs",
     searchTerms: [
-      "beta labs niri strip scroll sideways workspaces overview layout tour swipe panes shrink",
+      "beta labs redesign niri strip scroll sideways workspaces overview layout tour swipe panes shrink",
     ],
   },
   {
