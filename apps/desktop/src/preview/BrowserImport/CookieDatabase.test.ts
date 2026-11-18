@@ -41,6 +41,35 @@ describe("snapshotCookieDatabase", () => {
     ),
   );
 
+  it.effect("copies a database another connection holds exclusively, as Firefox does", () =>
+    runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sourceDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-cookie-exclusive-source-",
+        });
+        const source = path.join(sourceDirectory, "cookies.sqlite");
+        const snapshot = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`PRAGMA locking_mode = EXCLUSIVE`;
+          yield* sql`PRAGMA journal_mode = WAL`;
+          yield* sql`PRAGMA wal_autocheckpoint = 0`;
+          yield* sql`CREATE TABLE moz_cookies(name TEXT NOT NULL)`;
+          yield* sql`INSERT INTO moz_cookies(name) VALUES (${"committed-in-wal"})`;
+          // Exclusive WAL keeps its index in memory, so no other connection can open the file.
+          expect(yield* fileSystem.exists(`${source}-shm`)).toBe(false);
+          return yield* snapshotCookieDatabase(source);
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: source })));
+        const rows = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql<{ readonly name: string }>`SELECT name FROM moz_cookies`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshot, readonly: true })));
+        expect(rows).toEqual([{ name: "committed-in-wal" }]);
+      }),
+    ),
+  );
+
   it.effect("propagates snapshot failures and removes its temporary directory", () =>
     runNode(
       Effect.gen(function* () {

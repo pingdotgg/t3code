@@ -1,3 +1,4 @@
+import * as NodeOS from "node:os";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -92,29 +93,17 @@ describe("BrowserImport.importCookies", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect.skipIf(!symlinksSupported)(
-    "refuses to import while the source browser holds its profile",
-    () =>
-      Effect.gen(function* () {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const { importer, root } = yield* withImporter();
-        yield* fileSystem.symlink("host-that-does-not-exist-1234", `${root}/SingletonLock`);
+  it.effect.skipIf(!symlinksSupported)("offers a running Chromium browser on macOS", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { importer, root } = yield* withImporter();
+      yield* fileSystem.symlink(`${NodeOS.hostname()}-${process.pid}`, `${root}/SingletonLock`);
 
-        const error = yield* importer
-          .importCookies({
-            input: {
-              sourceId: "helium",
-              sourceProfileDirectory: "Default",
-              targetProfileId: "default",
-            },
-            scope: "persist:t3code-preview-test",
-            persistent: true,
-          })
-          .pipe(Effect.flip);
-
-        assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
-        assert.equal(error.reason, "browserRunning");
-      }).pipe(Effect.provide(NodeServices.layer)),
+      const sources = yield* importer.listSources;
+      const source = sources.find((candidate) => candidate.id === "helium");
+      assert.isDefined(source);
+      assert.isUndefined(source.unavailable);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 
