@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   idleServerTab: false,
   idleDesktopTab: false,
   idleDesktopOverlay: false,
+  missingDesktopOverlay: false,
   loading: false,
   loadFailed: false,
   nativeServerTab: false,
@@ -111,25 +112,27 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
   useThreadPreviewState: (() => ({
     activeTabId: "tab-1",
     serverEpoch: mocks.serverEpoch,
-    desktopByTabId: {
-      "tab-1": {
-        hasWebContents: true,
-        navStatus: mocks.loadFailed
-          ? LOAD_FAILED
-          : mocks.idleDesktopOverlay
-            ? { _tag: "Idle" }
-            : { _tag: "Success", url: "http://example.com/", title: "Example" },
-        canGoBack: false,
-        canGoForward: false,
-        loading: mocks.loading,
-        zoomFactor: 1,
-        pictureInPicture: mocks.pictureInPicture,
-        colorScheme: "system",
-        audioMuted: false,
-        audible: false,
-        controller: "none",
-      },
-    },
+    desktopByTabId: mocks.missingDesktopOverlay
+      ? {}
+      : {
+          "tab-1": {
+            hasWebContents: true,
+            navStatus: mocks.loadFailed
+              ? LOAD_FAILED
+              : mocks.idleDesktopOverlay
+                ? { _tag: "Idle" }
+                : { _tag: "Success", url: "http://example.com/", title: "Example" },
+            canGoBack: false,
+            canGoForward: false,
+            loading: mocks.loading,
+            zoomFactor: 1,
+            pictureInPicture: mocks.pictureInPicture,
+            colorScheme: "system",
+            audioMuted: false,
+            audible: false,
+            controller: "none",
+          },
+        },
     recentlySeenUrls: [],
     sessions: mocks.showEmptyState
       ? {}
@@ -249,6 +252,7 @@ function setup() {
   mocks.idleServerTab = false;
   mocks.idleDesktopTab = false;
   mocks.idleDesktopOverlay = false;
+  mocks.missingDesktopOverlay = false;
   mocks.loading = false;
   mocks.loadFailed = false;
   mocks.nativeServerTab = false;
@@ -466,9 +470,13 @@ describe("PreviewView", () => {
     expect(listeners.size).toBe(0);
   });
 
-  it("stops an active recording after the page fails to load", async () => {
+  it.each([
+    { state: "the page fails to load", loadFailed: true, missingDesktopOverlay: false },
+    { state: "the desktop page state is gone", loadFailed: false, missingDesktopOverlay: true },
+  ])("stops an active recording after $state", async (state) => {
     setup();
-    mocks.loadFailed = true;
+    mocks.loadFailed = state.loadFailed;
+    mocks.missingDesktopOverlay = state.missingDesktopOverlay;
     mocks.recordingTabIds = new Set([TEST_RUNTIME_TAB_ID]);
     await using screen = await render(view());
 
