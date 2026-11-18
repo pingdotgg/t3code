@@ -264,11 +264,11 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("typing-with-selection")}
-          description="Choose what typing or pasting does while Cite is available."
+          description={gt("Choose what typing or pasting does while Cite is available.")}
           resetAction={
             settings.typingWithSelection !== DEFAULT_UNIFIED_SETTINGS.typingWithSelection ? (
               <SettingResetButton
-                label="typing with text selected"
+                ariaLabel={gt("Reset typing with text selected to default")}
                 onClick={() =>
                   updateSettings({
                     typingWithSelection: DEFAULT_UNIFIED_SETTINGS.typingWithSelection,
@@ -285,16 +285,16 @@ export function AppearanceSettingsPanel() {
                   updateSettings({ typingWithSelection: value });
               }}
             >
-              <SelectTrigger size="sm" aria-label="Typing with text selected">
+              <SelectTrigger size="sm" aria-label={gt("Typing with text selected")}>
                 <SelectValue>
                   {settings.typingWithSelection === "cite"
-                    ? "Cites the selection"
-                    : "Goes to the composer"}
+                    ? gt("Cites the selection")
+                    : gt("Goes to the composer")}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup>
-                <SelectItem value="composer">Goes to the composer</SelectItem>
-                <SelectItem value="cite">Cites the selection</SelectItem>
+                <SelectItem value="composer">{gt("Goes to the composer")}</SelectItem>
+                <SelectItem value="cite">{gt("Cites the selection")}</SelectItem>
               </SelectPopup>
             </Select>
           }

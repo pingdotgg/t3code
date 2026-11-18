@@ -10,7 +10,6 @@ import {
   type RefObject,
 } from "react";
 
-
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { textDirection } from "~/textDirection";
