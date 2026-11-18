@@ -1,5 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
@@ -8,12 +9,14 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { AppRoot } from "~/AppRoot";
 // The thread route loads ChatView lazily; its first transform would eat the test's timeout.
 import "~/components/ChatView";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
   installFakeEnvironment,
+  PROJECT_ID,
   threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
@@ -100,4 +103,41 @@ it("leaves thread shortcuts and their hints to the preview when their rules excl
     expect(router.history.location.pathname).toBe(`/${ENVIRONMENT_ID}/${second.id}`),
   );
   await whileHoldingControl(() => expect(jumpHint()).not.toBeNull());
+});
+
+it("numbers an unsent draft at the top of the sidebar first", async () => {
+  const thread = threadWithHistory("thread-a", 1);
+  using _environment = installFakeEnvironment([thread]);
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+  const drafts = useComposerDraftStore.getState();
+  using _drafts = { [Symbol.dispose]: () => useComposerDraftStore.setState(drafts, true) };
+  const draftId = DraftId.make("draft-at-top");
+  drafts.setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+    threadId: ThreadId.make("draft-at-top-thread"),
+  });
+  drafts.setPrompt(draftId, "Unsent draft text");
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await page.viewport(1400, 900);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const draftRow = page.getByTestId("sidebar-draft-row");
+  await expect.element(draftRow).toBeVisible();
+
+  let now = Date.parse("2026-01-01T00:00:00.000Z");
+  using _clock = vi.spyOn(Date, "now").mockImplementation(() => (now += 1000));
+  await userEvent.keyboard("{Control>}");
+  await act(() => {});
+  await vi.waitFor(() => expect(document.querySelector("[data-jump-hint]")).not.toBeNull());
+  expect(draftRow.element().querySelector("[data-jump-hint]")).not.toBeNull();
+  await userEvent.keyboard("1{/Control}");
+  await vi.waitFor(() => expect(router.history.location.pathname).toBe(`/draft/${draftId}`));
 });
