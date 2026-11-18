@@ -8,6 +8,7 @@ import {
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import { RelayEnvironmentConnectScope } from "@t3tools/contracts/relay";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
   exchangeRemoteDpopAccessToken,
@@ -16,6 +17,7 @@ import {
   resolveRemoteWebSocketConnectionUrl,
 } from "./remote.ts";
 import {
+  credentialMissingError,
   environmentMismatchError,
   mapManagedRelayError,
   mapRemoteDpopEnvironmentError,
@@ -183,7 +185,7 @@ export const make = Effect.gen(function* () {
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const httpClient = yield* HttpClient.HttpClient;
   const tokenLock = yield* Semaphore.make(1);
-  const directTokenLock = yield* Semaphore.make(1);
+  const directTokenLocks = yield* KeyedLock.make<string>();
   const tokenOwners = new Map<
     EnvironmentId,
     { readonly accessToken: string; readonly identity: ClientCapabilities.CloudSessionIdentity }
@@ -551,22 +553,19 @@ export const make = Effect.gen(function* () {
   });
 
   const proofError = (detail: string) => () =>
-    new ConnectionBlockedError({ reason: "configuration", detail });
+    new ConnectionBlockedError({ reason: "configuration", ...translatableDetail(detail) });
 
-  // Serialized so concurrent requests share one renewal. A doubled renewal would still be
-  // valid, since the host renews the session in place, but it costs a round trip.
+  // Requests for the same credential share a renewal without waiting on other hosts.
   const directDpopToken = Effect.fn("clientRuntime.connection.remote.directDpopToken")(function* (
     connection: DirectDpopConnection,
     rejectedAccessToken?: string,
   ) {
-    return yield* directTokenLock.withPermits(1)(
+    return yield* directTokenLocks.withLock(
+      connection.connectionId,
       Effect.gen(function* () {
         const stored = yield* credentials.get(connection.connectionId);
         if (Option.isNone(stored) || stored.value._tag !== "DpopConnectionCredential") {
-          return yield* new ConnectionBlockedError({
-            reason: "authentication",
-            detail: "This device's sign-in for the environment is missing. Pair it again.",
-          });
+          return yield* credentialMissingError(connection.connectionId);
         }
         const current = stored.value;
         const now = yield* Clock.currentTimeMillis;
@@ -582,7 +581,9 @@ export const make = Effect.gen(function* () {
             url: environmentEndpointUrl(connection.httpBaseUrl, "/oauth/token"),
           })
           .pipe(
-            Effect.mapError(proofError("Could not create the environment authorization proof.")),
+            Effect.mapError(
+              proofError(msg("Could not create the environment authorization proof.")),
+            ),
           );
         const access = yield* exchangeRemoteDpopAccessToken({
           httpBaseUrl: connection.httpBaseUrl,
@@ -634,7 +635,9 @@ export const make = Effect.gen(function* () {
             signer
               .createProof(proof)
               .pipe(
-                Effect.mapError(proofError("Could not create the websocket authorization proof.")),
+                Effect.mapError(
+                  proofError(msg("Could not create the websocket authorization proof.")),
+                ),
               ),
           clientMetadata: presentation.metadata,
           connectionMethod: "direct",

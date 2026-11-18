@@ -389,6 +389,44 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("renews another direct host while the first host is unresponsive", () =>
+    Effect.gen(function* () {
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<Response>();
+      const first = { connectionId: "direct-1", httpBaseUrl: ENDPOINT.httpBaseUrl };
+      const second = { connectionId: "direct-2", httpBaseUrl: "https://other.example.test" };
+      const harness = yield* makeHarness({
+        responses: [
+          () => {
+            started.resolve();
+            return release.promise;
+          },
+          () => accessToken("renewed-second-token"),
+        ],
+        credentials: [first, second].map(({ connectionId }) => [
+          connectionId,
+          new DpopConnectionCredential({ accessToken: connectionId, expiresAtEpochMs: 0 }),
+        ]),
+      });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const pending = yield* remote.authorizeDirectDpopHttp(first).pipe(Effect.forkScoped);
+        yield* Effect.promise(() => started.promise);
+        const healthy = yield* remote
+          .authorizeDirectDpopHttp(second)
+          .pipe(Effect.timeoutOption("1 second"), Effect.forkScoped);
+        yield* TestClock.adjust("1 second");
+        expect(yield* Fiber.join(healthy)).toMatchObject({
+          _tag: "Some",
+          value: { accessToken: "renewed-second-token" },
+        });
+        release.resolve(accessToken("renewed-first-token"));
+        expect((yield* Fiber.join(pending)).accessToken).toBe("renewed-first-token");
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+    }),
+  );
+
   it.effect("reuses a matching descriptor a check just read, once, while fresh", () =>
     Effect.gen(function* () {
       const descriptor = {
