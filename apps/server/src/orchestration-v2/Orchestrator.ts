@@ -1875,7 +1875,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       options: { readonly updateDelegatedCompletionOnly?: boolean } = {},
     ) {
       const withIds = yield* Effect.forEach(events, (event) => makeSystemEvent(event));
-      yield* eventSink.writeWithEffects({ events: withIds, effects, ...options });
+      yield* eventSink.writeWithEffects({
+        events: withIds,
+        effects,
+        ...options,
+      });
     });
 
   const completionDeliveryRun = (
@@ -3781,6 +3785,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootThreadId: command.threadId,
       },
       forkedFrom: null,
+      ...(command.background
+        ? { background: { acknowledgedAt: DateTime.formatIso(now), reportedAt: null } }
+        : {}),
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
@@ -4655,14 +4662,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
       const latestRunCompletedAt = shell?.latestRunCompletedAt ?? null;
-      if (latestRunCompletedAt === null) {
+      if (latestRunCompletedAt === null && thread.background == null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
           cause: `Thread ${command.threadId} has no completed run to mark unread.`,
         });
       }
-      markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
+      markUnreadVisitedAt =
+        latestRunCompletedAt === null
+          ? null
+          : DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
@@ -4806,6 +4816,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             lastVisitedAt: markUnreadVisitedAt,
+            ...(thread.background == null
+              ? {}
+              : {
+                  background: {
+                    ...thread.background,
+                    reportedAt: thread.background.reportedAt ?? DateTime.formatIso(now),
+                  },
+                }),
             ...(snoozeExpired
               ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: thread.snoozedUntil }
               : {}),
@@ -4831,6 +4849,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   };
           return {
             ...thread,
+            ...(command.background === undefined && !command.acknowledgeBackground
+              ? {}
+              : {
+                  background:
+                    command.background === false
+                      ? null
+                      : command.acknowledgeBackground
+                        ? thread.background == null
+                          ? null
+                          : {
+                              acknowledgedAt: DateTime.formatIso(now),
+                              reportedAt: null,
+                            }
+                        : (thread.background ?? {
+                            acknowledgedAt: DateTime.formatIso(now),
+                            reportedAt: null,
+                          }),
+                }),
             ...(command.title === undefined ? {} : { title: command.title }),
             ...(command.limitRecovery === undefined ? {} : { limitRecovery }),
             ...(command.limitRecovery !== undefined &&

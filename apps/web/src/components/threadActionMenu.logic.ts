@@ -5,6 +5,9 @@ import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
 
 export type ThreadActionMenuId =
+  | "background"
+  | "foreground"
+  | "acknowledge-background"
   | "find"
   | "new-thread-on-branch"
   | "filter-by-project"
@@ -94,6 +97,7 @@ export function buildDraftActionMenuItems(
 }
 
 export interface ThreadActionMenuState {
+  readonly background?: boolean;
   readonly canOperate: boolean;
   readonly canFind?: boolean;
   readonly branch: string | null;
@@ -110,6 +114,7 @@ export interface ThreadActionMenuState {
   /** Archive rejects attached providers, so disable it while running. */
   readonly isRunning: boolean;
   readonly supports: {
+    readonly background?: boolean;
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
     readonly snooze: boolean;
@@ -196,6 +201,28 @@ export function buildThreadActionMenuItems(
                   },
                 ],
               },
+        ]
+      : []),
+    ...(state.supports.background
+      ? [
+          {
+            id: state.background ? ("foreground" as const) : ("background" as const),
+            label: state.background
+              ? resolve(msg("Move to Active"))
+              : state.isSettled || state.isSnoozed
+                ? resolve(msg("Run future turns in background"))
+                : resolve(msg("Run in background")),
+            icon: "layers",
+          },
+          ...(state.background
+            ? [
+                {
+                  id: "acknowledge-background" as const,
+                  label: resolve(msg("Acknowledge and return to Background")),
+                  icon: "check",
+                },
+              ]
+            : []),
         ]
       : []),
     { id: "rename", label: resolve(msg("Rename thread")), icon: "pencil", separatorBefore: true },

@@ -385,8 +385,10 @@ function snoozedCompletion(
 
 function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number): boolean {
   return (
-    thread.latestRunCompletedAt != null &&
-    DateTime.toEpochMillis(thread.latestRunCompletedAt) > startedAt
+    (thread.background?.reportedAt != null &&
+      Date.parse(thread.background.reportedAt) > startedAt) ||
+    (thread.latestRunCompletedAt != null &&
+      DateTime.toEpochMillis(thread.latestRunCompletedAt) > startedAt)
   );
 }
 

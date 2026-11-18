@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { environmentServerConfigsAtom } from "../../state/server";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -323,6 +325,12 @@ type ThreadListV2ShelfHeaderProps = {
 };
 
 const SHELF_COPY = {
+  background: {
+    label: msg("Background", { $context: "thread list section" }),
+    count: msg("{count, plural, one {{count} background thread} other {{count} background threads}}"),
+    collapse: msg("Collapses the background threads."),
+    expand: msg("Expands the background threads."),
+  },
   working: {
     label: msg("Working", { $context: "thread list section" }),
     count: msg("{count, plural, one {{count} working thread} other {{count} working threads}}"),
@@ -370,6 +378,12 @@ export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingS
   props: ThreadListV2ShelfHeaderProps,
 ) {
   return <ThreadListV2ShelfHeader {...props} kind="working" />;
+});
+
+export const ThreadListV2BackgroundShelfHeader = memo(function ThreadListV2BackgroundShelfHeader(
+  props: ThreadListV2ShelfHeaderProps,
+) {
+  return <ThreadListV2ShelfHeader {...props} kind="background" />;
 });
 
 export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
@@ -908,6 +922,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     m,
   );
 
+  const updateBackgroundMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const markThreadUnread = useAtomCommand(threadEnvironment.markUnread, { reportFailure: false });
   const handleAcknowledgeWoke = useCallback(() => {
@@ -1030,6 +1045,35 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : [],
     [gt, props.pinningSupported, thread.pinnedAt],
   );
+  const backgroundSupported =
+    useAtomValue(environmentServerConfigsAtom).get(thread.environmentId)?.environment.capabilities
+      .threadBackground === true;
+  const backgroundMenuItems = useMemo<MenuAction[]>(
+    () =>
+      !backgroundSupported
+        ? []
+        : [
+            {
+              id: thread.source.background ? "foreground" : "background",
+              title: thread.source.background
+                ? gt("Move to Active")
+                : variant === "slim" || snoozedRow
+                  ? gt("Run future turns in background")
+                  : gt("Run in background"),
+              attributes: { disabled: !canOperateThread },
+            },
+            ...(thread.source.background
+              ? [
+                  {
+                    id: "acknowledge-background",
+                    title: gt("Acknowledge and return to Background"),
+                    attributes: { disabled: !canOperateThread },
+                  },
+                ]
+              : []),
+          ],
+    [gt, backgroundSupported, canOperateThread, thread.source.background, variant, snoozedRow],
+  );
   const autoSettleMenuItems = useMemo<MenuAction[]>(
     () =>
       props.autoSettleOptOutSupported
@@ -1117,6 +1161,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           secondary: [
             ...titleMenuItems,
             ...autoSettleMenuItems,
+          ...backgroundMenuItems,
             localized(LEGACY_MENU_ACTIONS[0]!),
             localized(SNOOZED_MENU_ACTIONS[1]!),
           ],
@@ -1148,6 +1193,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           secondary: [
             ...titleMenuItems,
             ...autoSettleMenuItems,
+          ...backgroundMenuItems,
             localized(LEGACY_MENU_ACTIONS[0]!),
             localized(SLIM_MENU_ACTIONS[1]!),
           ],
@@ -1177,6 +1223,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         secondary: [
           ...titleMenuItems,
           ...autoSettleMenuItems,
+          ...backgroundMenuItems,
           localized(LEGACY_MENU_ACTIONS[0]!),
           localized(CARD_MENU_ACTIONS[1]!),
         ],
@@ -1184,6 +1231,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       m,
     );
   }, [
+    backgroundMenuItems,
     autoSettleMenuItems,
     canUnsettle,
     pinMenuItems,
@@ -1200,6 +1248,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
+      if (
+        ["background", "foreground", "acknowledge-background"].includes(nativeEvent.event) &&
+        canOperateThread
+      ) {
+        updateBackgroundMetadata({
+          environmentId: thread.environmentId,
+          input: {
+            threadId: thread.id,
+            ...(nativeEvent.event === "acknowledge-background"
+              ? { acknowledgeBackground: true }
+              : { background: nativeEvent.event === "background" }),
+          },
+        });
+      }
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
@@ -1255,6 +1317,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       }
     },
     [
+      updateBackgroundMetadata,
+      canOperateThread,
       gt,
       m,
       onNewThreadOnBranch,

@@ -49,7 +49,9 @@ vi.mock("../state/session", () => ({
 vi.mock("../state/entities", () => ({
   readEnvironmentServerConfigLoaded: () => true,
   readEnvironmentSupportsAutoSettleOptOut: () => true,
+  readEnvironmentSupportsThreadBackground: () => false,
   readThreadShell: () => ({
+    source: {},
     id: "thread",
     environmentId: "secondary",
     projectId: "project",
