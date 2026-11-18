@@ -1,4 +1,5 @@
 {
+  "4bcfa3b976a421cf": "Chat lateral",
   "23be753133ae6950": "Hilo",
   "0001ae5846061bb6": "Hilo en {machine}",
   "eef7f4dacbc3c3f2": "Máquina",
@@ -4689,7 +4690,6 @@
   "13eb3e529a3e9bff": "Descartar del hilo",
   "986951276ab5723d": "Desvincular del hilo",
   "a9c188a91c93fdb4": "No se pudo cambiar el seguimiento",
-  "4bcfa3b976a421cf": "Chat lateral",
   "d6783ef5e11f3e89": "No se pudo iniciar un chat lateral.",
   "afd7cfeb929fcdbd": "Se creó el chat lateral, pero no llegó a este dispositivo.",
   "0efeaa8d0ca3a757": "El chat lateral ya no está disponible.",

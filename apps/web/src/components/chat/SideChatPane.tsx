@@ -32,7 +32,7 @@ import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { BackgroundThreadContext } from "./backgroundThread";
 
-/** A side chat tab: its title, Bring back, Delete and Close, over the side chat's own chat. */
+/** A side chat tab: its title, Add to chat, Delete and Close, over the side chat's own chat. */
 export default function SideChatPane(props: {
   readonly parentRef: ScopedThreadRef;
   readonly threadId: ThreadId;
@@ -54,9 +54,9 @@ export default function SideChatPane(props: {
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const [deleting, setDeleting] = useState(false);
   // Closing an unused side chat deletes it, which would leave the link unreadable.
-  const canBringBack = shell !== null && shell.latestUserMessageAt !== null;
-  const bringBack = () => {
-    if (!canBringBack) return;
+  const canAddToChat = shell !== null && shell.latestUserMessageAt !== null;
+  const addToChat = () => {
+    if (!canAddToChat) return;
     useComposerDraftStore
       .getState()
       .addThreadContexts(parentRef, [threadContextRecord(threadRef, shell.title)], {
@@ -112,15 +112,15 @@ export default function SideChatPane(props: {
               <Button
                 variant="ghost"
                 size="xs"
-                aria-disabled={!canBringBack || undefined}
-                onClick={bringBack}
+                aria-disabled={!canAddToChat || undefined}
+                onClick={addToChat}
               >
-                <T>Bring back</T>
+                <T>Add to chat</T>
               </Button>
             }
           />
           <TooltipPopup side="bottom">
-            {canBringBack
+            {canAddToChat
               ? gt("Adds this side chat to the main thread's next message.")
               : gt("Available after the first message.")}
           </TooltipPopup>

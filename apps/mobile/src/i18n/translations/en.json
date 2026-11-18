@@ -1,4 +1,5 @@
 {
+  "4bcfa3b976a421cf": "Side chat",
   "23be753133ae6950": "Thread",
   "0001ae5846061bb6": "Thread on {machine}",
   "eef7f4dacbc3c3f2": "Machine",
@@ -4697,7 +4698,6 @@
   "13eb3e529a3e9bff": "Dismiss from thread",
   "986951276ab5723d": "Unlink from thread",
   "a9c188a91c93fdb4": "Couldn't change watching",
-  "4bcfa3b976a421cf": "Side chat",
   "d6783ef5e11f3e89": "Could not start a side chat.",
   "afd7cfeb929fcdbd": "The side chat was created, but it did not reach this device.",
   "0efeaa8d0ca3a757": "The side chat is no longer available.",

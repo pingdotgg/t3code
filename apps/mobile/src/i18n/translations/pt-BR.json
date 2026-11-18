@@ -1,4 +1,5 @@
 {
+  "4bcfa3b976a421cf": "Chat paralelo",
   "23be753133ae6950": "Thread",
   "0001ae5846061bb6": "Thread em {machine}",
   "eef7f4dacbc3c3f2": "Máquina",
@@ -4690,7 +4691,6 @@
   "13eb3e529a3e9bff": "Dispensar da thread",
   "986951276ab5723d": "Desvincular da thread",
   "a9c188a91c93fdb4": "Não foi possível alterar o acompanhamento",
-  "4bcfa3b976a421cf": "Chat paralelo",
   "d6783ef5e11f3e89": "Não foi possível iniciar um chat paralelo.",
   "afd7cfeb929fcdbd": "O chat paralelo foi criado, mas não chegou a este dispositivo.",
   "0efeaa8d0ca3a757": "O chat paralelo não está mais disponível.",

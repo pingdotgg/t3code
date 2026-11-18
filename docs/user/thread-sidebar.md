@@ -312,10 +312,10 @@ model, and reasoning level shown in the thread's composer, including for its fir
 reply. Change them for an individual side chat in its composer. Later changes to the
 parent do not change existing side chats.
 
-To use what you learned, choose **Bring back**. It adds a link to the side chat to
-the thread's message, and the thread's agent reads as much of the side chat as it
-needs. This works while the thread is busy, once you have sent a message in the side
-chat.
+To use what you learned, choose **Add to chat** at the top of the side chat, or type
+`@` and a word from its title in the thread's composer. The thread's message gets a
+link to the side chat, and the agent reads as much of it as it needs. This works
+while the thread is busy, once you have sent a message in the side chat.
 
 Closing a side chat you never sent a message in deletes it. To delete one you used,
 choose **Delete** at the top of the side chat. Deleting a thread also deletes its
