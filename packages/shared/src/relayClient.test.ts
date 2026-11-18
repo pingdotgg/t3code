@@ -661,7 +661,10 @@ describe("RelayClient", () => {
   describe("version selection", () => {
     const run = <A, E>(
       body: (baseDir: string) => Effect.Effect<A, E, RelayClientTestServices>,
-      options: { readonly versions?: Record<string, string> } = {},
+      options: {
+        readonly platform?: NodeJS.Platform;
+        readonly versions?: Record<string, string>;
+      } = {},
     ) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -677,7 +680,7 @@ describe("RelayClient", () => {
             NodeCrypto.layer,
             layerHttpClient(new Uint8Array()),
             layerSpawner([], options.versions),
-            layerHostRuntime({ PATH: "" }),
+            layerHostRuntime({ PATH: "" }, options.platform),
           ),
         ),
       );
@@ -713,6 +716,43 @@ describe("RelayClient", () => {
         { versions },
       );
     });
+
+    it.effect("keeps a Windows relay binary available when its version probe is slow", () =>
+      run(
+        (baseDir) =>
+          Effect.gen(function* () {
+            const managedPath = `${baseDir}/tools/cloudflared/${RelayClient.CLOUDFLARED_VERSION}/win32-x64/cloudflared.exe`;
+            yield* writeExecutable(managedPath);
+            const probeStarted = yield* Deferred.make<void>();
+            const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir }).pipe(
+              Effect.provideService(
+                ChildProcessSpawner.ChildProcessSpawner,
+                ChildProcessSpawner.make(() =>
+                  Deferred.succeed(probeStarted, undefined).pipe(
+                    Effect.andThen(Effect.sleep("30 seconds")),
+                    Effect.as(
+                      makeHandle(
+                        0,
+                        `cloudflared version ${RelayClient.CLOUDFLARED_VERSION} (built 2026-01-01-00:00 UTC)\n`,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+
+            const resolving = yield* manager.resolve.pipe(Effect.forkChild);
+            yield* Deferred.await(probeStarted);
+            yield* TestClock.adjust("30 seconds");
+
+            expect(yield* Fiber.join(resolving)).toMatchObject({
+              status: "available",
+              executablePath: managedPath,
+            });
+          }),
+        { platform: "win32" },
+      ),
+    );
 
     it.effect.skipIf(windowsHost)("reports an outdated override as missing", () => {
       const versions: Record<string, string> = {};
