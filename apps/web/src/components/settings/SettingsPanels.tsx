@@ -792,7 +792,10 @@ function useTranslatedSearchableSetting() {
   };
 }
 
-type ClaudeAdditionKey =
+type AdditionSwitchKey =
+  | "t3ContextHandoff"
+  | "t3SideChatContext"
+  | "t3RestartNote"
   | "claudeInstructionFiles"
   | "claudeAutoMemory"
   | "claudeGitContext"
@@ -800,9 +803,9 @@ type ClaudeAdditionKey =
   | "claudeContextLists"
   | "claudeHooks";
 
-/** One on/off row for an item Claude Code adds to what the model receives. */
-function ClaudeAdditionRow(props: {
-  readonly settingKey: ClaudeAdditionKey;
+/** One on/off row for an item T3 Code or Claude Code adds to what the model receives. */
+function AdditionSwitchRow(props: {
+  readonly settingKey: AdditionSwitchKey;
   readonly searchId: SettingsSearchItemId;
   readonly description: ReactNode;
 }) {
@@ -2095,13 +2098,34 @@ export function ThreadsSettingsPanel() {
               />
             }
           />
-          <SettingsRow
-            title={gt("Context T3 Code adds to a turn")}
+          <AdditionSwitchRow
+            settingKey="t3ContextHandoff"
+            searchId="t3-context-handoff"
             description={
               <T>
-                Handoffs when you change provider or model, side-chat context, restart notes and the
-                goal block. Shown in the thread as "T3 Code added context to this turn". On while
-                the feature is in use.
+                Off sends no earlier conversation when you switch provider or model, fork, merge
+                back or lose a provider session. The agent starts without that history. The thread
+                shows a row.
+              </T>
+            }
+          />
+          <AdditionSwitchRow
+            settingKey="t3SideChatContext"
+            searchId="t3-side-chat-context"
+            description={
+              <T>
+                Off starts a side chat without the parent conversation's summary. The agent will not
+                know what the main thread was doing. The thread shows a row.
+              </T>
+            }
+          />
+          <AdditionSwitchRow
+            settingKey="t3RestartNote"
+            searchId="t3-restart-note"
+            description={
+              <T>
+                Off stops telling the agent which background work a server restart cancelled. It may
+                wait on work that is gone. The thread shows a row listing that work.
               </T>
             }
           />
@@ -2125,7 +2149,7 @@ export function ThreadsSettingsPanel() {
               </T>
             }
           />
-          <ClaudeAdditionRow
+          <AdditionSwitchRow
             settingKey="claudeInstructionFiles"
             searchId="claude-instruction-files"
             description={
@@ -2135,7 +2159,7 @@ export function ThreadsSettingsPanel() {
               </T>
             }
           />
-          <ClaudeAdditionRow
+          <AdditionSwitchRow
             settingKey="claudeAutoMemory"
             searchId="claude-auto-memory"
             description={
@@ -2145,7 +2169,7 @@ export function ThreadsSettingsPanel() {
               </T>
             }
           />
-          <ClaudeAdditionRow
+          <AdditionSwitchRow
             settingKey="claudeGitContext"
             searchId="claude-git-context"
             description={
@@ -2156,7 +2180,7 @@ export function ThreadsSettingsPanel() {
               </T>
             }
           />
-          <ClaudeAdditionRow
+          <AdditionSwitchRow
             settingKey="claudeSkillList"
             searchId="claude-skill-list"
             description={
@@ -2166,7 +2190,7 @@ export function ThreadsSettingsPanel() {
               </T>
             }
           />
-          <ClaudeAdditionRow
+          <AdditionSwitchRow
             settingKey="claudeContextLists"
             searchId="claude-context-lists"
             description={
@@ -2177,7 +2201,7 @@ export function ThreadsSettingsPanel() {
               </T>
             }
           />
-          <ClaudeAdditionRow
+          <AdditionSwitchRow
             settingKey="claudeHooks"
             searchId="claude-hooks"
             description={

@@ -412,6 +412,45 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   />
                   <SettingsSwitchRow
                     icon="doc.text"
+                    label="T3 Code: context handoff"
+                    subtitle={managedSubtitle(
+                      "t3ContextHandoff",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off sends no earlier conversation after a provider or model switch, fork, merge back or lost session. The agent starts without that history.",
+                    )}
+                    value={uniform("t3ContextHandoff")}
+                    disabled={disabledFor("t3ContextHandoff")}
+                    onValueChange={(value) => write({ t3ContextHandoff: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="T3 Code: side-chat context"
+                    subtitle={managedSubtitle(
+                      "t3SideChatContext",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off starts a side chat without the parent conversation's summary. The agent will not know what the main thread was doing.",
+                    )}
+                    value={uniform("t3SideChatContext")}
+                    disabled={disabledFor("t3SideChatContext")}
+                    onValueChange={(value) => write({ t3SideChatContext: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
+                    label="T3 Code: restart note"
+                    subtitle={managedSubtitle(
+                      "t3RestartNote",
+                      projectSelected
+                        ? "Environment-wide setting. Select All projects to change it."
+                        : "Off stops telling the agent which background work a server restart cancelled. It may wait on work that is gone.",
+                    )}
+                    value={uniform("t3RestartNote")}
+                    disabled={disabledFor("t3RestartNote")}
+                    onValueChange={(value) => write({ t3RestartNote: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="doc.text"
                     label="Claude Code: instruction files"
                     subtitle={managedSubtitle(
                       "claudeInstructionFiles",

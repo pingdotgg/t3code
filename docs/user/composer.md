@@ -413,7 +413,11 @@ own CLI, and some from the model provider.
 - **Context T3 Code adds to a turn.** A handoff when you change provider or model, side-chat
   context, a note after a restart, and the goal block while a goal is active. The thread shows
   a row named **T3 Code added context to this turn**; open it to read the text that was sent.
-  Long text is cut off after 20,000 characters.
+  Long text is cut off after 20,000 characters. Under **Settings → Threads → Automatic
+  additions**, the **T3 Code: context handoff**, **T3 Code: side-chat context** and **T3 Code:
+  restart note** switches turn each one off. The thread then shows a row saying T3 Code did
+  not send it, and the agent works without that context. Turning off the handoff also covers
+  history sent after a fork, a merge back or a lost provider session.
 - **Messages T3 Code sends for you.** Wake-ups from delegated tasks and watched pull requests,
   goal continuation, idle compaction and restart continuation. They appear in the thread as
   sent by T3 Code and follow their own features and settings.

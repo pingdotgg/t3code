@@ -673,6 +673,34 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "t3-context-handoff",
+    title: msg("T3 Code: context handoff"),
+    to: "/settings/threads",
+    searchTerms: [
+      "automatic additions injected context handoff provider model switch history fork merge recovery",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "t3-side-chat-context",
+    title: msg("T3 Code: side-chat context"),
+    to: "/settings/threads",
+    searchTerms: ["automatic additions injected context side chat parent conversation summary"],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "t3-restart-note",
+    title: msg("T3 Code: restart note"),
+    to: "/settings/threads",
+    searchTerms: [
+      "automatic additions injected context server restart cancelled background work note",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
+  {
     id: "claude-instruction-files",
     title: msg("Claude Code: instruction files"),
     to: "/settings/threads",
