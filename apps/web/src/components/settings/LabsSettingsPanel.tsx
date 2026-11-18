@@ -2,10 +2,10 @@ import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 import { T, useGT, useMessages } from "gt-react";
-
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -28,7 +28,160 @@ export function LabsSettingsPanel() {
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
       </SettingsSection>
+      <OpenShellFleetSection />
     </SettingsPageContainer>
+  );
+}
+
+function OpenShellFleetSection() {
+  const gt = useGT();
+  return (
+    <SettingsSection id="openshell-fleet" title={gt("OpenShell fleet")}>
+      <OpenShellFleetRow />
+    </SettingsSection>
+  );
+}
+
+function OpenShellFleetRow() {
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const gt = useGT();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("openshell-fleet")}
+      settingKeys={["openshellEnabled"]}
+      description={
+        <T>
+          Worker environments on an OpenShell gateway. This machine becomes the managing instance
+          that spawns, pairs, drains, and deletes fleet workers.
+        </T>
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["openshellEnabled"]}
+          checked={settings.openshellEnabled}
+          onCheckedChange={(checked) => updateSettings({ openshellEnabled: Boolean(checked) })}
+          aria-label={gt("OpenShell fleet")}
+        />
+      }
+    >
+      {settings.openshellEnabled ? (
+        <div className="mt-2 mb-2 border-l-2 border-border/60 ps-3">
+          <OpenShellGatewayUrlRow />
+          <OpenShellManagingRow />
+          <OpenShellTemplateRow />
+        </div>
+      ) : null}
+    </SettingsRow>
+  );
+}
+
+function OpenShellGatewayUrlRow() {
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const gt = useGT();
+  const stored = settings.openshell?.gatewayUrl ?? "";
+  // `key` re-seeds the uncontrolled input when the stored value changes.
+  const commit = (raw: string) => {
+    const value = raw.trim();
+    if (value === stored) return;
+    if (value === "") return;
+    updateSettings({ openshell: { gatewayUrl: value } });
+  };
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("openshell-gateway-url")}
+      settingKeys={["openshell"]}
+      description={gt("The gateway control-plane base URL, e.g. https://gateway.example.com")}
+      control={
+        <Input
+          className="w-64"
+          key={stored}
+          defaultValue={stored}
+          placeholder={gt("https://gateway.example.com")}
+          aria-label={gt("OpenShell gateway URL")}
+          onBlur={(event) => commit(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit(event.currentTarget.value);
+            }
+          }}
+        />
+      }
+    />
+  );
+}
+
+function OpenShellManagingRow() {
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const gt = useGT();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("openshell-managing")}
+      settingKeys={["openshell"]}
+      description={
+        <T>
+          Make this environment the managing instance. Only one managing instance can exist per
+          gateway; linked environments can never hold this role.
+        </T>
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["openshell"]}
+          checked={settings.openshell?.managingInstance ?? false}
+          onCheckedChange={(checked) =>
+            updateSettings({ openshell: { managingInstance: Boolean(checked) } })
+          }
+          aria-label={gt("Managing instance")}
+        />
+      }
+    />
+  );
+}
+
+function OpenShellTemplateRow() {
+  const searchableSetting = useSearchableSetting();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const gt = useGT();
+  const stored = settings.openshell?.defaultSandboxTemplate ?? "";
+  // `key` re-seeds the uncontrolled input when the stored value changes.
+  const commit = (raw: string) => {
+    const value = raw.trim();
+    if (value === stored) return;
+    if (value === "") return;
+    updateSettings({ openshell: { defaultSandboxTemplate: value } });
+  };
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("openshell-template")}
+      settingKeys={["openshell"]}
+      description={gt("Default worker sandbox template; a spawn may override it per call.")}
+      control={
+        <Input
+          className="w-64"
+          key={stored}
+          defaultValue={stored}
+          aria-label={gt("Default sandbox template")}
+          onBlur={(event) => commit(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit(event.currentTarget.value);
+            }
+          }}
+        />
+      }
+    />
   );
 }
 
