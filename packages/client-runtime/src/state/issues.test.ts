@@ -83,38 +83,51 @@ describe("prependIssueComments", () => {
   });
 });
 
-it("keeps the current candidate request running when retry is pressed again", () => {
-  const registry = AtomRegistry.make();
-  const targets = [
-    {
+describe("createMergedIssueCandidatesAtoms", () => {
+  it("retries only failed scopes that are not already reloading", () => {
+    const registry = AtomRegistry.make();
+    const target = (scope: string) => ({
       environmentId: EnvironmentId.make("issues"),
       input: {
-        projectId: ProjectId.make("app"),
+        projectId: ProjectId.make(scope),
         tracker: IssueTrackerKind.make("github"),
         host: "github.com",
-        scope: "acme/app",
+        scope,
       },
-    },
-  ];
-  let requests = 0;
-  const candidates = Atom.make(
-    Effect.suspend(() => (++requests === 1 ? Effect.fail("Repository unavailable") : Effect.never)),
-  );
-  const merged = createMergedIssueCandidatesAtoms(
-    () => candidates,
-    () => "Repository unavailable",
-  );
-  const view = merged.atom(targets);
-  const unmount = registry.mount(view);
-  try {
-    expect(registry.get(view)).toMatchObject({ error: "Repository unavailable", isPending: false });
-    merged.retry(registry, targets);
-    expect(registry.get(view).isPending).toBe(true);
+    });
+    const targets = [target("acme/healthy"), target("acme/flaky")];
+    const requests: string[] = [];
+    const candidates = Atom.family((scope: string) =>
+      Atom.make(
+        Effect.suspend(() => {
+          requests.push(scope);
+          if (scope === "acme/healthy") {
+            return Effect.succeed({ labels: [], assignees: [], truncated: false });
+          }
+          return requests.length === 2 ? Effect.fail("Repository unavailable") : Effect.never;
+        }),
+      ),
+    );
+    const merged = createMergedIssueCandidatesAtoms(
+      (t) => candidates(t.input.scope),
+      () => "Repository unavailable",
+    );
+    const view = merged.atom(targets);
+    const unmount = registry.mount(view);
+    try {
+      expect(registry.get(view)).toMatchObject({
+        error: "Repository unavailable",
+        isPending: false,
+      });
 
-    merged.retry(registry, targets);
-    expect(requests).toBe(2);
-  } finally {
-    unmount();
-    registry.dispose();
-  }
+      merged.retry(registry, targets);
+      expect(registry.get(view).isPending).toBe(true);
+      merged.retry(registry, targets);
+
+      expect(requests).toEqual(["acme/healthy", "acme/flaky", "acme/flaky"]);
+    } finally {
+      unmount();
+      registry.dispose();
+    }
+  });
 });
