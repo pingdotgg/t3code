@@ -1,3 +1,4 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { pipe } from "effect/Function";
 import {
   isAtomCommandInterrupted,
@@ -6,19 +7,19 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useNavigation } from "@react-navigation/native";
 import * as Clipboard from "expo-clipboard";
-import Constants from "expo-constants";
+import { useGT } from "gt-react-native";
+import { m } from "../../i18n/messages";
 
 import * as Dialog from "../../components/ui/Dialog";
-import { authClientMetadata } from "../../lib/authClientMetadata";
 import { projectEnvironment } from "../../state/projects";
-import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   createNewTaskDraft,
   setComposerDraftText,
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { usePrepareTriage } from "./usePrepareTriage";
 
 const CLI_COMMAND = "npx t3 triage";
 
@@ -28,27 +29,34 @@ const CLI_COMMAND = "npx t3 triage";
  */
 export function useStartTriage() {
   const navigation = useNavigation();
+  const gt = useGT();
   const selectDetail = useSelectWorkspaceDetail();
-  const prepare = useAtomCommand(serverEnvironment.prepareTriage, { reportFailure: false });
+  const prepare = usePrepareTriage();
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
 
   const fail = (message: string) =>
     Dialog.alert(
-      "Could not start triage",
-      `${message} Run ${CLI_COMMAND} in a terminal on that machine instead.`,
+      gt("Could not start triage"),
+      gt("{message} Run {command} in a terminal on that machine instead.", {
+        message,
+        command: CLI_COMMAND,
+      }),
       [
         {
-          text: "Copy command",
+          text: gt("Copy command"),
           onPress: () =>
             void Clipboard.setStringAsync(CLI_COMMAND).catch(() =>
-              Dialog.alert("Could not copy", `Type ${CLI_COMMAND} instead.`),
+              Dialog.alert(
+                gt("Could not copy"),
+                gt("Type {command} instead.", { command: CLI_COMMAND }),
+              ),
             ),
         },
-        { text: "OK", style: "cancel" },
+        { text: gt("OK"), style: "cancel" },
       ],
     );
   const errorMessage = (error: unknown, fallback: string) =>
-    error instanceof Error ? error.message : fallback;
+    error instanceof Error ? (errorDisplayMessage(error, m) ?? error.message) : fallback;
 
   const activeRoute = () => {
     const state = navigation.getState();
@@ -71,21 +79,18 @@ export function useStartTriage() {
         pipe(
           squashAtomCommandFailure(scratch),
           (failure) =>
-            errorMessage(failure, "This machine cannot start threads without a project."),
+            errorMessage(failure, gt("This machine cannot start threads without a project.")),
           fail,
         );
       }
       return;
     }
-    const prepared = await prepare({
-      environmentId,
-      input: { client: authClientMetadata(Constants.expoConfig?.version) },
-    });
+    const prepared = await prepare(environmentId);
     if (prepared._tag === "Failure") {
       if (!isAtomCommandInterrupted(prepared)) {
         pipe(
           squashAtomCommandFailure(prepared),
-          (failure) => errorMessage(failure, "The server could not prepare it."),
+          (failure) => errorMessage(failure, gt("The server could not prepare it.")),
           fail,
         );
       }
@@ -94,7 +99,7 @@ export function useStartTriage() {
     try {
       await waitForComposerDraftsLoaded();
     } catch {
-      fail("Drafts could not be loaded.");
+      fail(gt("Drafts could not be loaded."));
       return;
     }
     if (routeChanged()) return;
@@ -105,7 +110,14 @@ export function useStartTriage() {
     setComposerDraftText(draftId, prepared.value.prompt);
     selectDetail({
       name: "Thread",
-      params: { draft: { environmentId, projectId: scratch.value.id, title: "Triage", draftId } },
+      params: {
+        draft: {
+          environmentId,
+          projectId: scratch.value.id,
+          title: gt("Triage", { $context: "draft thread title" }),
+          draftId,
+        },
+      },
     });
   };
 }

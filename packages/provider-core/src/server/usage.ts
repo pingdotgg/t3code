@@ -18,6 +18,8 @@ export interface UsageRecord {
   readonly rateModel?: string;
   readonly sessionId: string;
   readonly totals: UsageTokenTotals;
+  /** The part of `totals.cacheCreationTokens` written with a 1-hour TTL. */
+  readonly cacheCreation1hTokens?: number;
   readonly reportedCostUsd: number | null;
   readonly speed: UsageSpeed;
   readonly unresolvedServiceTierTurnId?: string;
@@ -89,7 +91,6 @@ export interface ProviderUsageScan {
   readonly hostId?: string;
   readonly status?: UsageSource["status"];
   readonly message?: string;
-  readonly action?: UsageSource["action"];
   readonly files:
     | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
     | null;
@@ -104,27 +105,41 @@ export interface ProviderUsageScanInput<Config> {
   readonly awaitRefresh: boolean;
 }
 
+interface ProviderUsageRateModel {
+  /**
+   * The rate-table name for a model ID this provider records with a separate `rateModel`, so
+   * usage mapped onto that ID prices like the provider's own records of it.
+   */
+  readonly rateModel?: (model: string) => string;
+}
+
 export type ProviderUsageReader<Config, R> =
-  | {
+  | (ProviderUsageRateModel & {
       readonly kind: "transcripts";
       readonly provider: UsageProviderKind;
       readonly format: TranscriptUsageFormat<unknown>;
       readonly resolveServiceTiers?: (
         records: readonly UsageRecord[],
       ) => Effect.Effect<ReadonlyMap<UsageRecord, UsageSpeed>, never, R>;
+      /** A `refreshing` entry is not scanned; it reports its source as still being located. */
       readonly directories: (
         instance: ProviderUsageInstance<Config>,
+        options: { readonly awaitRefresh: boolean },
       ) => Effect.Effect<
-        ReadonlyArray<{ readonly dir: string; readonly fileName?: string }>,
+        ReadonlyArray<{
+          readonly dir: string;
+          readonly fileName?: string;
+          readonly refreshing?: true;
+        }>,
         never,
         R
       >;
-    }
-  | {
+    })
+  | (ProviderUsageRateModel & {
       readonly kind: "scan";
       readonly provider: UsageProviderKind;
       /** Fails only when the whole usage read cannot go on; an unreadable source is a status. */
       readonly scan: (
         input: ProviderUsageScanInput<Config>,
       ) => Effect.Effect<ReadonlyArray<ProviderUsageScan>, UsageReadError, R>;
-    };
+    });

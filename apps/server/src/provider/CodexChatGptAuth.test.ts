@@ -401,8 +401,8 @@ const makeHarnessFor = Effect.fnUntraced(function* (
     setIdentityFailure: (value: "issuer" | "audience" | "signature") => {
       identityFailure = value;
     },
-    mismatchCallbackState: () => {
-      mismatchedState = true;
+    mismatchCallbackState: (value = true) => {
+      mismatchedState = value;
     },
     setCallbackClientId: (value: string) => {
       callbackClientId = value;
@@ -871,16 +871,24 @@ it.effect(
     ),
 );
 
-it.effect("rejects mismatched callback state before any token exchange or credential write", () =>
+it.effect("rejects mismatched callback state and keeps waiting for the real redirect", () =>
   provision(
     Effect.gen(function* () {
       const h = yield* makeHarness;
       h.mismatchCallbackState();
       yield* h.signIn;
-      assert.include((yield* h.phase("failed")).message!, "could not be verified");
+      assert.include(h.callbackResponses[0]!.body, "does not belong to the active sign-in");
       assert.strictEqual(h.exchanges.length, 0);
       assert.deepEqual(h.storedRecords(), []);
       assert.isTrue(Option.isNone(yield* h.auth.read));
+      h.mismatchCallbackState(false);
+      const waiting = yield* h.phase("waiting");
+      const redirectUri = new URL(waiting.authorizationUrl!).searchParams.get("redirect_uri")!;
+      const unparsable = yield* Effect.promise(() => fetch(`${new URL(redirectUri).origin}//`));
+      assert.strictEqual(unparsable.status, 404);
+      yield* h.finishCallback(waiting);
+      yield* h.phase("succeeded");
+      assert.strictEqual(h.exchanges.length, 1);
     }),
   ),
 );
@@ -1379,6 +1387,70 @@ it.effect("an expired initial code retains the issued ID for a fresh authorizati
   ),
 );
 
+it.effect.each([false, true])(
+  "removes only the selected incomplete connection across restart (authenticated: %s)",
+  (authenticated) =>
+    provision(
+      Effect.gen(function* () {
+        const h = yield* makeHarness;
+        if (authenticated) {
+          yield* h.signIn;
+          yield* h.phase("succeeded");
+        }
+        const credentials = yield* h.auth.read;
+        h.setCallbackClientId("oaiapp_failed");
+        h.setCodeError("invalid_grant");
+        yield* h.changeAccount;
+        const failed = yield* h.phase("failed");
+        const methodId = "chatgpt-profile:oaiapp_failed";
+        assert.isTrue(failed.methods!.find((method) => method.id === methodId)?.canRemove);
+        h.setCallbackClientId("oaiapp_other_failed");
+        yield* h.changeAccount;
+        yield* h.phase("failed");
+        const { waiting } = yield* h.startRemote(methodId);
+        const busy = yield* Effect.flip(h.auth.controller.removeMethod!(methodId));
+        assert.include(busy.detail, "Finish or cancel");
+        yield* h.auth.controller.cancel("owner", waiting.flowId!);
+        const removed = yield* h.auth.controller.removeMethod!(methodId);
+        assert.isFalse(removed.methods!.some((method) => method.id === methodId));
+        assert.isTrue(
+          removed.methods!.some((method) => method.id === "chatgpt-profile:oaiapp_other_failed"),
+        );
+        assert.deepEqual(yield* h.auth.read, credentials);
+        h.setCallbackClientId("oaiapp_new_failed");
+        yield* h.changeAccount;
+        const next = yield* h.phase("failed");
+        const profiles = next.methods!.filter((method) => method.id.startsWith("chatgpt-profile:"));
+        assert.strictEqual(new Set(profiles.map((method) => method.name)).size, profiles.length);
+        yield* h.auth.controller.removeMethod!("chatgpt-profile:oaiapp_new_failed");
+        const last = yield* h.auth.controller.removeMethod!("chatgpt-profile:oaiapp_other_failed");
+        assert.strictEqual(
+          last.methods!.filter((method) => method.id.startsWith("chatgpt-profile:")).length,
+          authenticated ? 1 : 0,
+        );
+        const restarted = yield* h.recreateAuth;
+        yield* restarted.controller.refreshMethods!;
+        const state = yield* restarted.controller.subscribe("owner").pipe(Stream.runHead);
+        assert.deepEqual(Option.getOrThrow(state).methods, last.methods);
+        if (authenticated) {
+          assert.isFalse(
+            last.methods!.find((method) => method.id === "chatgpt-profile:oaiapp_test")?.canRemove,
+          );
+          yield* Effect.flip(h.auth.controller.removeMethod!("chatgpt-profile:oaiapp_test"));
+          yield* h.auth.controller.logout(Effect.void);
+        }
+        h.setCodeError(undefined);
+        h.setCallbackClientId("oaiapp_test");
+        yield* h.signIn;
+        yield* h.phase("succeeded");
+        assert.strictEqual(
+          h.authorizationRequests.at(-1)!.searchParams.get("client_id"),
+          authenticated ? "oaiapp_test" : "dynamic_agent_client",
+        );
+      }),
+    ),
+);
+
 it.effect("identity-only sign-in requests consent on an explicit retry, then rechecks scopes", () =>
   provision(
     Effect.gen(function* () {
@@ -1640,8 +1712,13 @@ it.effect(
         const callback = new URL(
           new URL(state.authorizationUrl!).searchParams.get("redirect_uri")!,
         );
-        const request = yield* Effect.tryPromise(() => fetch(callback)).pipe(Effect.result);
-        assert.strictEqual(request._tag, "Failure");
+        const rejected = yield* Effect.promise(() =>
+          fetch(callback).then(
+            () => false,
+            () => true,
+          ),
+        );
+        assert.isTrue(rejected);
         assert.isTrue(Option.isNone(yield* h.auth.read));
       }),
     ),

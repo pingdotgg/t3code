@@ -1,11 +1,13 @@
 // RFC 9449 DPoP proofs for relay requests. Platforms supply the key: web keeps a
-// non-extractable WebCrypto key, mobile signs with @noble/curves (Hermes has no SubtleCrypto).
+// non-extractable WebCrypto key, mobile signs with the platform's P-256 through a native module.
+import { msg } from "gt-i18n";
+import { MarkedText, translatableMessage } from "../errors/translatable.ts";
 import { normalizeDpopHtu, type DpopPublicJwk } from "@t3tools/shared/dpopCommon";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
-import * as Data from "effect/Data";
+import * as Schema from "effect/Schema";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -18,10 +20,11 @@ import {
   ManagedRelayDpopSigner,
 } from "./managedRelay.ts";
 
-export class DpopProofError extends Data.TaggedError("DpopProofError")<{
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
+export class DpopProofError extends Schema.TaggedError<DpopProofError>()("DpopProofError", {
+  message: Schema.String,
+  i18nMessage: Schema.optionalKey(MarkedText),
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 /** A P-256 proof key. `sign` returns the raw `r‖s` ES256 signature over the JWS signing input. */
 export interface DpopProofKey {
@@ -48,7 +51,8 @@ export const createProof = Effect.fn("DpopProof.createProof")(function* (input: 
   readonly key: DpopProofKey;
 }) {
   const htu = normalizeDpopHtu(input.url);
-  if (htu === null) return yield* new DpopProofError({ message: "DPoP URL is invalid." });
+  if (htu === null)
+    return yield* new DpopProofError(translatableMessage(msg("DPoP URL is invalid.")));
   const random = yield* SecureRandom.SecureRandom;
   const header = encodeSegment({ typ: "dpop+jwt", alg: "ES256", jwk: input.key.publicJwk });
   const payload = encodeSegment({

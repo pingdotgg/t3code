@@ -13,7 +13,9 @@ import {
   resolveBrowserLinkTargetPreference,
   resolveLinkTarget,
 } from "./browserLinkTarget";
-import { BrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview";
+import { isBrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 const NO_MODIFIER = { metaKey: false, ctrlKey: false } as const;
 
@@ -46,11 +48,11 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
         return;
       }
       const failure = squashAtomCommandFailure(result);
-      if (failure instanceof BrowserSettingsReadError) throw failure;
+      if (isBrowserSettingsReadError(failure)) throw failure;
       console.error(result.cause);
     }
     const api = readLocalApi();
-    if (!api) throw new Error("Link opening is unavailable.");
+    if (!api) throw new Error(m(msg("Link opening is unavailable.")));
     await api.shell.openExternal(url);
   };
 }

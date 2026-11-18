@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { HttpServerResponse } from "effect/http";
 
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
@@ -25,7 +26,12 @@ const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inlin
 export const sourceControlMediaResponse = Effect.fn(
   "SourceControlMediaResponse.sourceControlMediaResponse",
 )(function* (
-  asset: { readonly url: string; readonly cwd: string; readonly expiresAt: number },
+  asset: {
+    readonly url: string;
+    readonly cwd: string;
+    readonly repository?: string;
+    readonly expiresAt: number;
+  },
   requestHeaders: Record<string, string | undefined>,
 ) {
   const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);
@@ -46,7 +52,20 @@ export const sourceControlMediaResponse = Effect.fn(
     const value = requestHeaders[name];
     if (value !== undefined) forwarded[name] = value;
   }
-  const response = yield* fetchMedia({ url: asset.url, headers: forwarded });
+  // Clients that predate `repository` fall back to the repository checked out at `cwd`.
+  let repository = asset.repository;
+  if (repository === undefined) {
+    const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+    const identity = yield* identities.resolve(asset.cwd);
+    if (identity?.provider === media.definition.kind && identity.owner && identity.name) {
+      repository = `${identity.owner}/${identity.name}`;
+    }
+  }
+  const response = yield* fetchMedia({
+    url: asset.url,
+    headers: forwarded,
+    ...(repository === undefined ? {} : { repository }),
+  });
   if (response === null) return HttpServerResponse.empty({ status: 502, headers });
   // It carries none of the upstream entity headers: a `content-length` with no body behind it
   // holds the connection open until the browser gives up on it.

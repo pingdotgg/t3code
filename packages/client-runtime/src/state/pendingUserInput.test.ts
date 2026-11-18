@@ -83,6 +83,18 @@ describe("resolvePendingUserInputAnswer", () => {
     ).toBe("Node.js");
   });
 
+  it("lets an optional text question stay blank", () => {
+    const textQuestion = { id: "notes", options: [] };
+    expect(resolvePendingUserInputAnswer({ ...textQuestion, required: false }, undefined)).toBe("");
+    expect(
+      resolvePendingUserInputAnswer({ ...textQuestion, required: false }, { customAnswer: " " }),
+    ).toBe("");
+    expect(resolvePendingUserInputAnswer(textQuestion, { customAnswer: " " })).toBeNull();
+    expect(
+      resolvePendingUserInputAnswer({ ...textQuestion, required: true }, { customAnswer: "" }),
+    ).toBeNull();
+  });
+
   it("accepts ready attachment-only answers while preserving selected options", () => {
     expect(resolvePendingUserInputAnswer(singleSelectQuestion, { attachmentCount: 1 })).toBe("");
     expect(
@@ -177,4 +189,31 @@ describe("buildPendingUserInputAnswers", () => {
       compat: "Keep the current envelope for one release window",
     });
   });
+});
+
+it.each([
+  ["single-select", singleSelectQuestion, ["Orchestration-first"], '"Orchestration-first"'],
+  [
+    "multi-select",
+    {
+      ...singleSelectQuestion,
+      multiSelect: true,
+      options: [{ label: "Server" }, { label: "Web" }],
+    },
+    ["Server", "Web"],
+    '["Server","Web"]',
+  ],
+])("sends a %s answer to a question with the id __proto__", (_kind, question, selected, json) => {
+  const answers = buildPendingUserInputAnswers(
+    [
+      { ...question, id: "__proto__" },
+      { ...singleSelectQuestion, id: "name" },
+    ],
+    {
+      ["__proto__"]: { selectedOptionValues: selected },
+      name: { selectedOptionValues: ["Orchestration-first"] },
+    },
+  );
+
+  expect(JSON.stringify(answers)).toBe(`{"__proto__":${json},"name":"Orchestration-first"}`);
 });
