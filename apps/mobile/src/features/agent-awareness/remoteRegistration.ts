@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { AppState, Platform } from "react-native";
+import { msg } from "gt-react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 import {
@@ -26,6 +27,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
+import { m } from "../../i18n/messages";
 import { runtime } from "../../lib/runtime";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentCatalog } from "../../connection/catalog";
@@ -41,6 +43,7 @@ import {
   saveAgentAwarenessRegistrationRecord,
 } from "../../persistence/imperative";
 import type { AgentActivityProps } from "../../widgets/AgentActivity";
+import { agentActivityText } from "../../widgets/agentActivityWidgetTimeline";
 import { AGENT_ACTIVITY_FRESHNESS_MS } from "../../widgets/agentActivityTimeline";
 import {
   dismissEndedAgentLiveActivities,
@@ -561,6 +564,7 @@ function widgetPropsFromAggregate(
   aggregate: NonNullable<RelayAgentActivitySnapshotResponse["aggregate"]>,
 ): AgentActivityProps {
   return {
+    text: agentActivityText(Math.max(aggregate.activeCount, aggregate.activities.length), m),
     title: aggregate.title,
     subtitle: aggregate.subtitle,
     activeCount: aggregate.activeCount,
@@ -575,7 +579,7 @@ function widgetPropsFromAggregate(
 function idleWidgetProps(): AgentActivityProps {
   return {
     title: "T3 Code",
-    subtitle: "No active agents",
+    subtitle: m(msg("No active agents")),
     activeCount: 0,
     updatedAt: new Date().toISOString(),
     activities: [],
@@ -618,10 +622,10 @@ function publishReconciledWidget(): void {
     title: "T3 Code",
     subtitle:
       result.activeCount === null
-        ? "Activity count unavailable"
+        ? m(msg("Activity count unavailable"))
         : result.activeCount > 0
-          ? "Agent work in progress"
-          : "No active agents",
+          ? m(msg("Agent work in progress"))
+          : m(msg("No active agents")),
     activeCount: result.activeCount,
     workingCount: result.workingCount,
     attentionCount: result.attentionCount,
@@ -736,7 +740,7 @@ function localWorkStartingWidgetProps(input: {
   const nowIso = new Date(Date.now()).toISOString();
   return {
     title: "T3 Code",
-    subtitle: "Agent work in progress",
+    subtitle: m(msg("Agent work in progress")),
     activeCount: 1,
     updatedAt: nowIso,
     activities: [
@@ -747,7 +751,7 @@ function localWorkStartingWidgetProps(input: {
         threadTitle: input.threadTitle,
         modelTitle: "",
         phase: "starting",
-        status: "Connecting",
+        status: m(msg("Connecting", { $context: "agent status" })),
         updatedAt: nowIso,
         deepLink: "/",
       },
@@ -767,7 +771,7 @@ function armAgentAwarenessLiveActivityForLocalWorkNow(input: {
       );
       return;
     }
-    const props = localWorkStartingWidgetProps(input);
+    const props = { ...localWorkStartingWidgetProps(input), text: agentActivityText(1, m) };
     // Only the foreground-only Live Activity needs this optimistic seed.
     // Regular widgets keep observed state until real work arrives.
     const activity = startAgentLiveActivity(props, liveActivityStaleDate());
@@ -1024,6 +1028,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       deviceId,
       label:
         Constants.deviceName?.trim() ||
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- device label stored on the relay and shown to every client
         (Platform.OS === "android" ? "Android device" : "iOS device"),
       ...(Platform.OS === "android"
         ? {

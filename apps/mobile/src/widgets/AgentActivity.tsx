@@ -45,7 +45,30 @@ export interface AgentActivityRowProps {
   readonly deepLink: string;
 }
 
+/**
+ * Copy for the widget extension, which runs without the app's catalogs. Count-keyed tables hold
+ * one string per count. Live Activities updated by push have none and fall back to English.
+ */
+export interface AgentActivityText {
+  readonly working?: Readonly<Record<string, string>>;
+  readonly openToRefresh?: string;
+  readonly outOfDate: string;
+  readonly failed: string;
+  readonly done: string;
+  readonly workFailed: string;
+  readonly workCompleted: string;
+  readonly statusOutOfDate: string;
+  readonly approval: string;
+  readonly input: string;
+  readonly noActiveAgents: string;
+  readonly activeAgents: Readonly<Record<string, string>>;
+  readonly active: Readonly<Record<string, string>>;
+  readonly needAttention: Readonly<Record<string, string>>;
+  readonly needYou: Readonly<Record<string, string>>;
+}
+
 export interface AgentActivityProps {
+  readonly text?: AgentActivityText;
   readonly title: string;
   readonly subtitle: string;
   readonly activeCount: number | null;
@@ -77,7 +100,7 @@ export function AgentActivity(
 export function AgentActivity(
   props: AgentActivityProps = {
     title: "T3 Code",
-    subtitle: "No active agents",
+    subtitle: "",
     activeCount: 0,
     updatedAt: "",
     activities: [],
@@ -85,6 +108,9 @@ export function AgentActivity(
   environment: WidgetEnvironment | LiveActivityEnvironment,
 ): JSX.Element | LiveActivityLayout {
   "widget";
+
+  const text = props.text;
+  const productName = "Code";
 
   // Placeholder / first-paint entries arrive with empty props. Treat missing
   // fields as idle rather than throwing inside the widget JS runtime.
@@ -170,7 +196,7 @@ export function AgentActivity(
     ? receivedActivities.map((row) =>
         row.phase === "completed" || row.phase === "failed"
           ? row
-          : { ...row, phase: "stale", status: "Out of date" },
+          : { ...row, phase: "stale", status: text?.outOfDate ?? text?.outOfDate ?? "Out of date" },
       )
     : receivedActivities;
   const ordered = [...activities].sort((a, b) => phasePriority(a.phase) - phasePriority(b.phase));
@@ -200,30 +226,31 @@ export function AgentActivity(
   const doneLabel = props.isSignedOut
     ? "Signed out"
     : failedRow
-      ? "Failed"
+      ? (text?.failed ?? "Failed")
       : hasRows
-        ? "Done"
+        ? (text?.done ?? "Done")
         : "Idle";
   const outcomeLabel = props.isSignedOut
     ? "Sign in to see agent activity"
     : failedRow
-      ? "Agent work failed"
+      ? (text?.workFailed ?? "Agent work failed")
       : hasRows
-        ? "Agent work completed"
-        : "No active agents";
+        ? (text?.workCompleted ?? "Agent work completed")
+        : (text?.noActiveAgents ?? "No active agents");
 
   const countLabel = allDone
     ? outcomeLabel
     : props.isExpired || isSystemStale
-      ? "Agent status out of date"
+      ? (text?.statusOutOfDate ?? "Agent status out of date")
       : workingCount === null
         ? "Working count unavailable"
-        : `${workingCount} working`;
+        : (text?.working?.[String(workingCount)] ?? `${workingCount} working`);
   const agentsLabel =
     props.isStale && !props.isExpired ? `Last observed: ${countLabel}` : countLabel;
   const attentionSuffix =
     !props.isExpired && !isSystemStale && attentionCount !== null && attentionCount > 0
-      ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`
+      ? (text?.needAttention[String(attentionCount)] ??
+        `${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`)
       : "";
   const currentLabel = allDone
     ? doneLabel
@@ -364,7 +391,7 @@ export function AgentActivity(
               lineLimit(1),
             ]}
           >
-            {props.isExpired ? "Open T3 to refresh" : row0.threadTitle}
+            {props.isExpired ? (text?.openToRefresh ?? "Open T3 to refresh") : row0.threadTitle}
           </Text>
           <Spacer minLength={6} />
           <Text modifiers={[font({ size: 11 }), foregroundStyle(phaseTint(row0.phase))]}>
@@ -374,7 +401,7 @@ export function AgentActivity(
       ) : null}
       {props.isExpired && !row0 ? (
         <Text modifiers={[font({ size: 11 }), foregroundStyle(secondaryForeground)]}>
-          Open T3 to refresh
+          {text?.openToRefresh ?? "Open T3 to refresh"}
         </Text>
       ) : null}
     </VStack>
@@ -412,7 +439,7 @@ export function AgentActivity(
                 foregroundStyle(secondaryForeground),
               ]}
             >
-              Code
+              {productName}
             </Text>
             <Spacer minLength={4} />
             {renderGlyph("arrow.up.right", 10, secondaryForeground)}
@@ -509,7 +536,7 @@ export function AgentActivity(
           <Text
             modifiers={[font({ weight: "medium", size: 13 }), foregroundStyle(secondaryForeground)]}
           >
-            Code
+            {productName}
           </Text>
           <Spacer minLength={8} />
           <Text
@@ -638,10 +665,13 @@ export function AgentActivity(
       >
         {attentionRow
           ? attentionRow.phase === "waiting_for_approval"
-            ? "Approval"
-            : "Input"
+            ? // oxlint-disable-next-line t3code/no-untranslated-copy -- fallback for a Live Activity without translated text
+              (text?.approval ?? "Approval")
+            : // oxlint-disable-next-line t3code/no-untranslated-copy -- fallback for a Live Activity without translated text
+              (text?.input ?? "Input")
           : failedRow
-            ? "Failed"
+            ? // oxlint-disable-next-line t3code/no-untranslated-copy -- fallback for a Live Activity without translated text
+              (text?.failed ?? "Failed")
             : activeLabel}
       </Text>
     ),
