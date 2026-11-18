@@ -1,4 +1,5 @@
 import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 
 /** Marks a typed message whose reply is read aloud, as Pi's voice mode does. */
 export function markSpokenReply(text: string, voiceOn: boolean): string {
@@ -9,6 +10,7 @@ export function markSpokenReply(text: string, voiceOn: boolean): string {
 interface Reply {
   readonly runId: RunId;
   readonly text: string;
+  readonly completedAtMs: number;
 }
 
 /** The final answer of the thread's latest completed run. */
@@ -20,7 +22,8 @@ export function latestReply(projection: OrchestrationV2ThreadProjection): Reply 
         latest === null || candidate.ordinal > latest.ordinal ? candidate : latest,
       null,
     );
-  if (run === null) return null;
+  if (run === null || run.completedAt === null) return null;
+  const completedAtMs = DateTime.toEpochMillis(run.completedAt);
   const text = projection.turnItems
     .filter(
       (item) =>
@@ -32,6 +35,6 @@ export function latestReply(projection: OrchestrationV2ThreadProjection): Reply 
     .toSorted((left, right) => left.ordinal - right.ordinal)
     .at(-1);
   return text?.type === "assistant_message" && text.text.trim() !== ""
-    ? { runId: run.id, text: text.text }
+    ? { runId: run.id, text: text.text, completedAtMs }
     : null;
 }

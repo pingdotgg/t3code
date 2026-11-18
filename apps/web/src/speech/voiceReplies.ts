@@ -33,7 +33,10 @@ export const voiceThreadAtom = Atom.make((get): (ScopedThreadRef & { setAt: stri
   return owner;
 }).pipe(Atom.withLabel("web-voice-thread"));
 
-/** Gives voice to `thread`, or turns it off everywhere for `null`; resolves whether it saved. */
+/**
+ * Gives voice to `thread`, or turns it off everywhere for `null`; resolves whether it saved and
+ * reports a failure.
+ */
 export async function setVoiceThread(
   registry: AtomRegistry.AtomRegistry,
   thread: ScopedThreadRef | null,
@@ -58,7 +61,9 @@ export async function setVoiceThread(
       );
     }),
   );
-  return results.every((result) => result === undefined || result._tag === "Success");
+  const saved = results.every((result) => result === undefined || result._tag === "Success");
+  if (!saved) toastManager.add({ type: "error", title: "Voice mode could not be saved" });
+  return saved;
 }
 
 function reportVoiceFailure(error: unknown) {
@@ -114,14 +119,15 @@ async function readAloud(environmentId: EnvironmentId, text: string, signal: Abo
 
 /**
  * Reads the voice thread's replies aloud as its runs complete. Replies that finished before
- * voice reached the thread stay silent.
+ * this window started following the thread stay silent.
  */
 export function startVoiceReplies(registry: AtomRegistry.AtomRegistry): () => void {
   let session: { key: string; stop: () => void } | null = null;
 
   const follow = (thread: ScopedThreadRef) => {
     const controller = new AbortController();
-    let lastRunId: RunId | null | undefined;
+    const followedAtMs = Date.now();
+    let lastRunId: RunId | null = null;
     let queue = Promise.resolve();
     const prepared = readPreparedConnection(thread.environmentId);
     if (prepared !== null)
@@ -131,13 +137,9 @@ export function startVoiceReplies(registry: AtomRegistry.AtomRegistry): () => vo
       (detail) => {
         if (detail === null) return;
         const reply = latestReply(detail.projection);
-        const runId = reply?.runId ?? null;
-        if (lastRunId === undefined || runId === lastRunId) {
-          lastRunId ??= runId;
+        if (reply === null || reply.runId === lastRunId || reply.completedAtMs < followedAtMs)
           return;
-        }
-        lastRunId = runId;
-        if (reply === null) return;
+        lastRunId = reply.runId;
         queue = queue
           .then(() =>
             controller.signal.aborted

@@ -155,7 +155,7 @@ import type { useQueuedRunEdit } from "./useQueuedRunEdit";
 import type { useTimelineFollow } from "./useTimelineFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
-import { voiceThreadAtom } from "../../speech/voiceReplies";
+import { setVoiceThread, voiceThreadAtom } from "../../speech/voiceReplies";
 import { markSpokenReply } from "../../speech/voiceReplies.logic";
 
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
@@ -1095,6 +1095,9 @@ export function useComposerSend(input: ComposerSendInput) {
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const voiceThread = appAtomRegistry.get(voiceThreadAtom);
+    const spokenReply = voiceThread?.threadId === threadIdForSend;
+    if (spokenReply && voiceThread.environmentId !== environmentId)
+      void setVoiceThread(appAtomRegistry, { environmentId, threadId: threadIdForSend });
     const outgoingMessageText = markSpokenReply(
       formatOutgoingPrompt({
         provider: ctxSelectedProvider,
@@ -1103,12 +1106,9 @@ export function useComposerSend(input: ComposerSendInput) {
         effort: ctxSelectedPromptEffort,
         text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
       }),
-      voiceThread?.environmentId === environmentId && voiceThread.threadId === threadIdForSend,
+      spokenReply,
     );
-    if (
-      isCurrentRouteThread() &&
-      composerRef.current?.validateProviderInput(outgoingMessageText) === false
-    ) {
+    if (isCurrentRouteThread() && composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
       return;
     }
 

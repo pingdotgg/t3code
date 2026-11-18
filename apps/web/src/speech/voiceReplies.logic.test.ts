@@ -1,4 +1,5 @@
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { expect, it } from "vite-plus/test";
 
 import { latestReply, markSpokenReply } from "./voiceReplies.logic";
@@ -7,7 +8,12 @@ type Run = OrchestrationV2ThreadProjection["runs"][number];
 type Item = OrchestrationV2ThreadProjection["turnItems"][number];
 
 const run = (id: string, ordinal: number, status: Run["status"] = "completed") =>
-  ({ id, ordinal, status }) as unknown as Run;
+  ({
+    id,
+    ordinal,
+    status,
+    completedAt: status === "completed" ? DateTime.makeUnsafe(ordinal * 1_000) : null,
+  }) as unknown as Run;
 
 const answer = (
   runId: string,
@@ -40,7 +46,7 @@ it("reads the last top-level answer of the latest completed run", () => {
       ],
     ),
   );
-  expect(reply).toEqual({ runId: "run-2", text: "The build passed." });
+  expect(reply).toEqual({ runId: "run-2", text: "The build passed.", completedAtMs: 2_000 });
 });
 
 it("waits while the answer is still streaming", () => {
@@ -52,6 +58,8 @@ it("waits while the answer is still streaming", () => {
 it("has nothing to read without a completed run or an answer", () => {
   expect(latestReply(projection([run("run-1", 1, "interrupted")], []))).toBeNull();
   expect(latestReply(projection([run("run-1", 1)], [answer("run-1", 1, "   ")]))).toBeNull();
+  const undated = { ...run("run-1", 1), completedAt: null } as unknown as Run;
+  expect(latestReply(projection([undated], [answer("run-1", 1, "Done.")]))).toBeNull();
 });
 
 it("marks typed messages for spoken replies only while voice is on", () => {
