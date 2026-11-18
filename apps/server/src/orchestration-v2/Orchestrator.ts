@@ -1103,7 +1103,18 @@ function usageLimitHoldsQueue(
   return resetAt != null && Date.parse(resetAt) > DateTime.toEpochMillis(now);
 }
 
-function pullRequestSnapshotEndsWatch(
+/** A thread that takes no pull request wake: the orchestrator refuses one sent to it. */
+export const pullRequestWakeThreadInactive = (
+  thread: Parameters<typeof isProviderNativeSubagentThread>[0] &
+    Pick<OrchestrationV2AppThread, "archivedAt" | "settledOverride" | "settledAt">,
+): boolean =>
+  thread.archivedAt !== null ||
+  thread.settledOverride === "settled" ||
+  thread.settledAt !== null ||
+  isProviderNativeSubagentThread(thread);
+
+/** The stored snapshot already ended this watch, so news of it is dropped. */
+export function pullRequestSnapshotEndsWatch(
   snapshot: ThreadPullRequestLink["snapshot"],
   watchStartedAt: ThreadPullRequestWatch["startedAt"],
 ): boolean {
@@ -4209,11 +4220,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         return { entry, key, link };
       });
-      const inactive =
-        thread.archivedAt !== null ||
-        thread.settledOverride === "settled" ||
-        thread.settledAt !== null ||
-        isProviderNativeSubagentThread(thread);
+      const inactive = pullRequestWakeThreadInactive(thread);
       // An idle thread dispatches immediately, bypassing queued-wake validation.
       const outdated = entries.map(
         ({ entry, link }) =>
@@ -10883,6 +10890,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
           ),
         );
+      // An archived thread still takes a notice: it starts nothing, and the owner reads it on
+      // unarchiving. A deleted thread has nowhere to show one.
+      if (projection.thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is deleted.`,
+        });
+      }
       const now = yield* DateTime.now;
       yield* emit(
         events,

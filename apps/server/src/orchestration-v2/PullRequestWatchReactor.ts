@@ -12,6 +12,8 @@ import {
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
+  threadPullRequestKeysEqual,
+  threadPullRequestsOf,
   visibleThreadPullRequests,
 } from "../sourceControl/threadPullRequests.ts";
 import * as Cause from "effect/Cause";
@@ -329,9 +331,33 @@ export const makeWith = Effect.fn("PullRequestWatchReactor.make")(function* (opt
     const uuid = yield* random.uuidV4();
     // Switched off, the watch still records what it saw, so nothing is reported again later.
     const notWoken = wake !== undefined && !(yield* wakeOnUpdate);
+    const commandId = CommandId.make(`server:pr-watch:${target.thread.id}:${uuid}`);
+    // The row stands in for the wake, so it follows the orchestrator's rules for one: refused on
+    // a thread that takes no wake, dropped when the stored snapshot already ended the watch.
+    let noticed = notWoken;
+    if (notWoken) {
+      const thread = yield* projections.getThread(target.thread.id);
+      if (Orchestrator.pullRequestWakeThreadInactive(thread)) {
+        return yield* new Orchestrator.OrchestratorDispatchError({
+          commandId,
+          commandType: "thread.pull-request-watch.sync",
+          cause: "The pull request watch ended or its thread settled while it was read.",
+        });
+      }
+      const key = normalizeThreadPullRequestKey(identityOf(target.link));
+      const link = threadPullRequestsOf(thread).find(
+        (candidate) =>
+          candidate.source !== "stack-dismissed" && threadPullRequestKeysEqual(candidate, key),
+      );
+      noticed = !(
+        wake.notification.source.kind === "monitor" &&
+        next !== null &&
+        Orchestrator.pullRequestSnapshotEndsWatch(link?.snapshot ?? null, target.watch.startedAt)
+      );
+    }
     yield* engine.dispatch({
       type: "thread.pull-request-watch.sync",
-      commandId: CommandId.make(`server:pr-watch:${target.thread.id}:${uuid}`),
+      commandId,
       threadId: target.thread.id,
       ...identityOf(target.link),
       startedAt: target.watch.startedAt,
@@ -342,7 +368,7 @@ export const makeWith = Effect.fn("PullRequestWatchReactor.make")(function* (opt
         ? {}
         : { wake: { ...wake, messageId: MessageId.make(`message:pr-watch:${uuid}`) } }),
     });
-    if (notWoken) {
+    if (wake !== undefined && noticed) {
       yield* engine.dispatch({
         type: "thread.notice.record",
         commandId: CommandId.make(`server:pr-watch-not-woken:${target.thread.id}:${uuid}`),

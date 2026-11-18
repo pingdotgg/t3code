@@ -1609,6 +1609,22 @@ it.effect("records a notice once at the end of the thread without starting a run
       detail: "What the wake would have said",
     });
     assert.isAbove(notices[0]!.ordinal, Math.max(...before.turnItems.map((item) => item.ordinal)));
+
+    // A deleted thread has nowhere to show a notice.
+    yield* orchestrator.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("notice:delete"),
+      threadId,
+    });
+    const refused = yield* orchestrator
+      .dispatch({
+        type: "thread.notice.record",
+        commandId: CommandId.make("notice:record-after-delete"),
+        threadId,
+        notification: { source: { kind: "system" }, outcome: "cancelled", summary: "Too late" },
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(refused));
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -1715,7 +1731,13 @@ it.effect("records a row and wakes nobody when the delegated question wake is sw
     yield* reactor.handle(first);
     assert.equal(yield* wakes, 0);
     assert.lengthOf(yield* notices, 1);
-    yield* ask("request:question-on");
+    const woken = yield* ask("request:question-on");
+    assert.equal(yield* wakes, 1);
+    assert.lengthOf(yield* notices, 1);
+
+    // Switched off after the agent was woken: catching up on that question records no false row.
+    wakeOn = false;
+    yield* reactor.handle(woken);
     assert.equal(yield* wakes, 1);
     assert.lengthOf(yield* notices, 1);
   }).pipe(

@@ -59,6 +59,12 @@ const make = Effect.fn("DelegatedTaskQuestionReactor.make")(function* (options: 
       })) !== null;
     if (alreadyNoticed) return;
     if (!(yield* options.wakeOnQuestion ?? Effect.succeed(true))) {
+      // Already woken for this question while the switch was on: a row now would be false.
+      const wakeMessageId = MessageId.make(`message:delegated-task-question:${key}`);
+      const { messages } = yield* projections.getThreadRecords(task.threadId, ["messages"], {
+        messageIds: [wakeMessageId],
+      });
+      if (messages.some((message) => message.id === wakeMessageId)) return;
       yield* engine.dispatch({
         type: "thread.notice.record",
         commandId: noticeCommandId,
