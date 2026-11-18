@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { LegendList } from "@legendapp/list/react-native";
 import { useMemo, useRef, useState } from "react";
 import { View, type TextInputInstance } from "react-native";
@@ -17,6 +18,7 @@ export function ProjectFilterSheet(props: {
   readonly onProjectChange: (key: string | null) => void;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const inputRef = useRef<TextInputInstance>(null);
   const insets = useSafeAreaInsets();
@@ -29,7 +31,7 @@ export function ProjectFilterSheet(props: {
     props.onClose();
   };
   return (
-    <Sheet title="Filter by project" onClose={props.onClose}>
+    <Sheet title={gt("Filter by project")} onClose={props.onClose}>
       <LegendList
         renderScrollComponent={NativeScrollView}
         extraData={{ ...props, count: projects.length }}
@@ -46,15 +48,15 @@ export function ProjectFilterSheet(props: {
               <SearchField
                 inputRef={inputRef}
                 autoFocus={false}
-                accessibilityLabel="Search projects"
-                clearAccessibilityLabel="Clear project search"
-                placeholder="Search projects"
+                accessibilityLabel={gt("Search projects")}
+                clearAccessibilityLabel={gt("Clear project search")}
+                placeholder={gt("Search projects")}
                 value={query}
                 onChangeText={setQuery}
               />
             </View>
             <SelectionRow
-              title="All projects"
+              title={gt("All projects")}
               icon="folder"
               selected={props.selectedProjectKey === null}
               onPress={() => select(null)}
@@ -65,7 +67,9 @@ export function ProjectFilterSheet(props: {
           </>
         }
         ListEmptyComponent={
-          <AppText className="py-6 text-center text-foreground-muted">No matching projects</AppText>
+          <AppText className="py-6 text-center text-foreground-muted">
+            {gt("No matching projects")}
+          </AppText>
         }
         renderItem={({ item, index }) => (
           <SelectionRow
