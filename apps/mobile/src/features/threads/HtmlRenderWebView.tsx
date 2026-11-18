@@ -15,6 +15,7 @@ import { Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { useContentBottomInset, useContentTopInset } from "../../components/ui/useBarInset";
 import { AppText as Text } from "../../components/ui/AppText";
 import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
@@ -83,6 +84,8 @@ export function HtmlRenderWebView(props: {
   readonly onLoadError?: () => void;
 }) {
   const theme = useHtmlRenderTheme();
+  const topInset = useContentTopInset();
+  const bottomInset = useContentBottomInset();
   const [initialTheme] = useState(theme);
   const [generation, setGeneration] = useState(0);
   const [loaded, setLoaded] = useState(false);
@@ -116,6 +119,9 @@ export function HtmlRenderWebView(props: {
           ? { flex: 1 }
           : {
               flex: 1,
+              // WKWebView starts its first load at offset 0 and leaves an automatic inset's
+              // top under the iOS bar, so the full-screen page sits below the bar instead.
+              paddingTop: topInset,
               paddingHorizontal: FULL_SCREEN_GUTTER,
               backgroundColor: theme.variables["--background"],
             }
@@ -128,7 +134,8 @@ export function HtmlRenderWebView(props: {
         accessibilityLabel={props.title}
         style={{ flex: 1, backgroundColor: "transparent" }}
         allowsInlineMediaPlayback
-        contentInsetAdjustmentBehavior={props.nested ? "never" : "automatic"}
+        contentInsetAdjustmentBehavior="never"
+        contentInset={props.nested ? undefined : { bottom: bottomInset }}
         bounces={!props.nested}
         showsVerticalScrollIndicator={!props.nested}
         showsHorizontalScrollIndicator={!props.nested}
