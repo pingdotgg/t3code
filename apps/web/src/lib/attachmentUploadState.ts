@@ -25,6 +25,7 @@ export type AttachmentUploadState =
       readonly reasonMessage?: string;
       /** Retry/release deletes this id; never use a persisted draft attachment id. */
       readonly attachmentId?: string;
+      readonly requiresReattach?: true;
       readonly previous?: ReadyAttachmentUpload;
     };
 

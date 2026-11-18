@@ -200,7 +200,10 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
   if (!canOperate(job.environmentId)) {
     return yield* failUpload(job, msg("This connection cannot upload attachments."));
   }
-  if (job.persistedAttachmentId) {
+  if (
+    job.persistedAttachmentId &&
+    (!job.image.file || readEnvironmentScope(job.environmentId, AuthOrchestrationReadScope))
+  ) {
     const verification = yield* verifyPersistedAttachmentUpload({
       registry: appAtomRegistry,
       createAssetUrl: assetEnvironment.createUrl,
@@ -518,6 +521,14 @@ export function retryAttachmentUpload(input: {
 }): void {
   if (!canOperate(input.environmentId)) return;
   const previous = readAttachmentUpload(input.image.id);
+  if (
+    !input.image.file &&
+    previous?.status === "failed" &&
+    previous.environmentId === input.environmentId &&
+    previous.requiresReattach
+  ) {
+    return;
+  }
   const held = heldUploads.get(input.image.id);
   cancelAttachmentUpload(input.image.id);
   // The failed upload stays cached until dropped, and the retry must start a fresh one.
@@ -622,7 +633,9 @@ export async function refreshExpiredAttachmentUploads(input: {
       setUploadState(image.id, {
         status: "failed",
         environmentId: input.environmentId,
-        previous: upload,
+        ...(verification.status === "mismatched"
+          ? { requiresReattach: true }
+          : { previous: upload }),
         ...uploadFailureReason(
           verification.status === "missing"
             ? msg("Uploaded attachment expired. Remove it and attach it again.")
