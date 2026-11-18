@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import { usePullRequestReviewScope } from "./usePullRequestReviewKey";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -40,9 +42,11 @@ export function usePendingReviewCommentActions(
     })().catch(async (cause: unknown) => {
       toastManager.add({
         type: "error",
-        title: "Could not save the pending comment to GitHub",
+        title: m(msg("Could not save the pending comment to GitHub")),
         description:
-          cause instanceof Error ? cause.message : "Your draft is kept in T3. Retry saving it.",
+          cause instanceof Error
+            ? cause.message
+            : m(msg("Your draft is kept in T3. Retry saving it.")),
       });
       return null;
     });
@@ -72,7 +76,10 @@ export function usePendingReviewCommentActions(
           input: { ...reference, ...comment.hostedComment },
         });
         if (result._tag === "Failure") {
-          toastManager.add({ type: "error", title: "Could not discard the pending comment" });
+          toastManager.add({
+            type: "error",
+            title: m(msg("Could not discard the pending comment")),
+          });
           return false;
         }
       }

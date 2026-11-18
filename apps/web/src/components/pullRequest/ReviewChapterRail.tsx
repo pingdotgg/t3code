@@ -1,7 +1,9 @@
+import { msg, T, useGT, Var } from "gt-react";
 import { CheckIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ContextMenuItem } from "@t3tools/contracts";
 
+import { m } from "~/i18n/messages";
 import { readLocalApi } from "~/localApi";
 
 import { cn } from "~/lib/utils";
@@ -30,8 +32,9 @@ function showChapterReviewMenu(chapter: ReviewChapter, position: { x: number; y:
   if (!review || review.disabled || review.fileCount === 0) return;
   const items: ContextMenuItem<"viewed" | "unviewed">[] = [];
   if (review.reviewedCount < review.fileCount)
-    items.push({ id: "viewed", label: "Mark all as viewed" });
-  if (review.reviewedCount > 0) items.push({ id: "unviewed", label: "Mark all as unviewed" });
+    items.push({ id: "viewed", label: m(msg("Mark all as viewed")) });
+  if (review.reviewedCount > 0)
+    items.push({ id: "unviewed", label: m(msg("Mark all as unviewed")) });
   void readLocalApi()
     ?.contextMenu.show(items, position)
     .then((action) => {
@@ -51,11 +54,14 @@ export function ReviewChapterRail({
   onSelect: (position: number) => void;
   ariaLabel: string;
 }) {
+  const gt = useGT();
   return (
     <nav aria-label={ariaLabel} className="flex min-h-0 flex-col gap-4">
       <p className="text-xs text-muted-foreground tabular-nums @max-[56rem]/guide:hidden">
-        {chapters.filter((chapter) => chapter.reviewed).length} of {chapters.length} chapters
-        reviewed
+        <T>
+          <Var>{chapters.filter((chapter) => chapter.reviewed).length}</Var> of{" "}
+          <Var>{chapters.length}</Var> chapters reviewed
+        </T>
       </p>
       <ol className="flex flex-col gap-0.5">
         {chapters.map((chapter, index) => (
@@ -96,7 +102,10 @@ export function ReviewChapterRail({
                 )}
               >
                 {chapter.reviewed ? (
-                  <CheckIcon aria-label={`Chapter ${index + 1}, reviewed`} className="size-3" />
+                  <CheckIcon
+                    aria-label={gt("Chapter {chapter}, reviewed", { chapter: index + 1 })}
+                    className="size-3"
+                  />
                 ) : (
                   index + 1
                 )}
@@ -144,6 +153,7 @@ export function ReviewChapterFileLink({
   stat: { additions: number; deletions: number } | null;
   onSelect: () => void;
 }) {
+  const gt = useGT();
   const { resolvedTheme } = useTheme();
   return (
     <Tooltip>
@@ -151,7 +161,7 @@ export function ReviewChapterFileLink({
         render={
           <button
             type="button"
-            aria-label={`Show ${path}`}
+            aria-label={gt("Show {path}", { path })}
             onClick={onSelect}
             className="flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-1 text-left text-xs outline-none hover:bg-background/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
           />

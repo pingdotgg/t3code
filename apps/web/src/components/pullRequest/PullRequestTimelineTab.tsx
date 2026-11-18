@@ -958,7 +958,9 @@ export function PullRequestTimelineTab({
     <div className="relative mb-5 pl-12">
       <IconMarker className="top-6" icon={<MessageSquareIcon className="size-3.5" />} />
       <div className="mb-1 px-3 text-xs font-medium text-muted-foreground">
-        Pending review · {pendingComments.length}
+        <T>
+          Pending review · <Var>{pendingComments.length}</Var>
+        </T>
       </div>
       {pendingComments.map((comment) => (
         <div key={comment.id}>

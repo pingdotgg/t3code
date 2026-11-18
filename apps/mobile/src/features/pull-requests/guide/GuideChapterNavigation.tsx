@@ -1,3 +1,4 @@
+import { T, Var, useGT } from "gt-react-native";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../../components/ui/AppText";
 import { SymbolView } from "../../../components/ui/AppSymbol";
@@ -19,6 +20,7 @@ export function GuideChapterNavigation({
   readonly onSelect: (position: number) => void;
   readonly onToggleReviewed?: (() => void) | undefined;
 }) {
+  const gt = useGT();
   const chapter = chapters[position];
   if (!chapter) return null;
   const reviewed = fileCount > 0 && reviewedCount === fileCount;
@@ -30,7 +32,7 @@ export function GuideChapterNavigation({
         </Text>
         <View className="min-w-0 flex-1">
           <Menu
-            title="Chapters"
+            title={gt("Chapters")}
             actions={chapters.map((item, index) => ({
               id: String(index),
               title: `${index + 1}. ${item.title}`,
@@ -40,7 +42,11 @@ export function GuideChapterNavigation({
           >
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Chapter ${position + 1} of ${chapters.length}: ${chapter.title}`}
+              accessibilityLabel={gt("Chapter {position} of {count}: {title}", {
+                position: position + 1,
+                count: chapters.length,
+                title: chapter.title,
+              })}
               className="min-h-11 min-w-0 flex-row items-center gap-2"
             >
               <Text numberOfLines={2} className="min-w-0 flex-1 text-sm leading-5 font-t3-semibold">
@@ -56,7 +62,7 @@ export function GuideChapterNavigation({
             <Pressable
               key={delta}
               accessibilityRole="button"
-              accessibilityLabel={delta < 0 ? "Previous chapter" : "Next chapter"}
+              accessibilityLabel={delta < 0 ? gt("Previous chapter") : gt("Next chapter")}
               accessibilityState={{ disabled }}
               disabled={disabled}
               className="min-h-11 min-w-11 items-center justify-center disabled:opacity-40"
@@ -75,7 +81,11 @@ export function GuideChapterNavigation({
         <Pressable
           accessibilityRole="checkbox"
           accessibilityState={{ checked: reviewed, disabled: !onToggleReviewed }}
-          accessibilityLabel={`Mark chapter ${position + 1} ${reviewed ? "unreviewed" : "reviewed"}`}
+          accessibilityLabel={
+            reviewed
+              ? gt("Mark chapter {position} unreviewed", { position: position + 1 })
+              : gt("Mark chapter {position} reviewed", { position: position + 1 })
+          }
           disabled={!onToggleReviewed}
           onPress={onToggleReviewed}
           className="min-h-11 flex-row items-center gap-2"
@@ -86,7 +96,9 @@ export function GuideChapterNavigation({
             tintColorClassName={reviewed ? "accent-adaptive-emerald-600-400" : "accent-icon-muted"}
           />
           <Text className="text-xs text-foreground-muted">
-            {reviewedCount} of {fileCount} files reviewed
+            <T>
+              <Var>{reviewedCount}</Var> of <Var>{fileCount}</Var> files reviewed
+            </T>
           </Text>
         </Pressable>
       ) : null}

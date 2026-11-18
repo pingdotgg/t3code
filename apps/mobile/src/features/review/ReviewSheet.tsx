@@ -705,7 +705,7 @@ export function ReviewSheet(
             !isSelectedSectionPending &&
             !areFilePatchesPending ? (
             <Text className="px-4 py-3 text-xs text-foreground-muted">
-              No changes remaining in this file.
+              <T>No changes remaining in this file.</T>
             </Text>
           ) : selectedSection && parsedDiff.kind === "files" && NativeReviewDiffView ? (
             <View

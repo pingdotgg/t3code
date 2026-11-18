@@ -1658,7 +1658,7 @@ function PullRequestCodeTab({
               onBusyChange={onBusyChange}
             />
           )}
-          rangeLabel={`${draft.path} · ${reviewPositionLabel(draft.position, draft.startPosition)}`}
+          rangeLabel={`${draft.path} · ${reviewPositionLabel(draft.position, draft.startPosition, messages)}`}
           text=""
           completionScope={canCommentOnLines ? completionScope : null}
           submitLabel={canCommentOnLines ? gt("Add to review") : gt("Add to agent")}

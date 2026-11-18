@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { Alert } from "react-native";
@@ -41,8 +43,10 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
     if (comment.hostedComment) {
       if (!(await store.flush())) {
         Alert.alert(
-          "Could not copy the pending comment link",
-          "This device could not save the hosted identity. Retry to save it before copying.",
+          m(msg("Could not copy the pending comment link")),
+          m(
+            msg("This device could not save the hosted identity. Retry to save it before copying."),
+          ),
         );
         return;
       }
@@ -61,7 +65,9 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
       }));
       if (!(await store.flush()))
         throw new Error(
-          "This device could not save the hosted identity. Retry to save it before copying.",
+          m(
+            msg("This device could not save the hosted identity. Retry to save it before copying."),
+          ),
         );
       await Clipboard.setStringAsync(result.value.url);
       detail.refresh();
@@ -69,8 +75,8 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
     })()
       .catch(async (cause: unknown) => {
         Alert.alert(
-          "Could not copy the pending comment link",
-          cause instanceof Error ? cause.message : "Your draft has been kept. Try again.",
+          m(msg("Could not copy the pending comment link")),
+          cause instanceof Error ? cause.message : m(msg("Your draft has been kept. Try again.")),
         );
       })
       .finally(async () => {
@@ -86,7 +92,8 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
         comment.hostedComment &&
         isReviewDraftCommentRetired(scope, comment.hostedComment.commentId);
       if (comment.hostedComment && !alreadyRemoved) {
-        if (!canDiscard) throw new Error("This connection cannot discard saved review comments.");
+        if (!canDiscard)
+          throw new Error(m(msg("This connection cannot discard saved review comments.")));
         const result = await remove({
           ...target,
           input: { ...target.input, ...comment.hostedComment },
@@ -100,7 +107,11 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
       if (!alreadyRemoved) retireReviewDraftComments(scope, [comment]);
       if (!(await store.flush()))
         throw new Error(
-          "The comment was removed from the host, but this device could not save the draft. Retry to finish discarding it.",
+          m(
+            msg(
+              "The comment was removed from the host, but this device could not save the draft. Retry to finish discarding it.",
+            ),
+          ),
         );
       detail.refresh();
       activity.refresh();
@@ -108,8 +119,8 @@ export function usePendingReviewCommentActions(params: PullRequestParams) {
     })()
       .catch(async (cause: unknown) => {
         Alert.alert(
-          "Could not discard the pending comment",
-          cause instanceof Error ? cause.message : "Your draft has been kept. Try again.",
+          m(msg("Could not discard the pending comment")),
+          cause instanceof Error ? cause.message : m(msg("Your draft has been kept. Try again.")),
         );
         return false;
       })

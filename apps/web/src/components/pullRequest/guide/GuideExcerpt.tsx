@@ -14,7 +14,7 @@ import type {
   PullRequestReviewPosition,
 } from "@t3tools/contracts";
 import { ArrowUpRightIcon } from "lucide-react";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { useState, type ReactNode } from "react";
 
 import { useRenderedAppearance } from "~/hooks/useTheme";
@@ -309,6 +309,7 @@ function ExcerptDiff({
     setDraft({ range, ...anchor });
   };
   const gt = useGT();
+  const messages = useMessages();
   const interactive =
     commenting !== null &&
     draft === null &&
@@ -397,7 +398,7 @@ function ExcerptDiff({
                 kind="draft"
                 renderAttachments={commenting.renderAttachments}
                 pending={!canQueueComment && onAskAgent === null}
-                rangeLabel={`${excerpt.path} · ${reviewPositionLabel(draft.position, draft.startPosition)}`}
+                rangeLabel={`${excerpt.path} · ${reviewPositionLabel(draft.position, draft.startPosition, messages)}`}
                 text=""
                 completionScope={commenting.canComment ? commenting.completionScope : null}
                 placeholder={

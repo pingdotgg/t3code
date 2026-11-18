@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { Modal, Pressable, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -23,6 +24,7 @@ export function PullRequestFilesSheet({
   readonly onSetViewed?: (paths: ReadonlyArray<string>, viewed: boolean) => void;
   readonly onLoadMore?: () => void;
 }) {
+  const gt = useGT();
   const { themeVariables: colors } = useAppearancePreferences();
   return (
     <Modal
@@ -38,7 +40,7 @@ export function PullRequestFilesSheet({
           <Text className="text-xs text-foreground-muted">{files.length}</Text>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Close files"
+            accessibilityLabel={gt("Close files")}
             className="min-h-11 min-w-11 items-center justify-center"
             onPress={onClose}
           >
@@ -56,7 +58,9 @@ export function PullRequestFilesSheet({
             onSetViewed={onSetViewed}
           />
         ) : (
-          <Text className="px-4 py-6 text-sm text-foreground-muted">No files match this view.</Text>
+          <Text className="px-4 py-6 text-sm text-foreground-muted">
+            <T>No files match this view.</T>
+          </Text>
         )}
         {onLoadMore ? (
           <Pressable
@@ -64,7 +68,9 @@ export function PullRequestFilesSheet({
             className="min-h-11 items-center justify-center border-t border-border-subtle"
             onPress={onLoadMore}
           >
-            <Text className="text-xs text-foreground-muted">Load more files</Text>
+            <Text className="text-xs text-foreground-muted">
+              <T>Load more files</T>
+            </Text>
           </Pressable>
         ) : null}
       </SafeAreaView>

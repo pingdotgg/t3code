@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { Modal, Pressable, ScrollView, Switch, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -21,6 +22,7 @@ export function ReviewDisplayOptions({
   readonly onClose: () => void;
   readonly options: ReadonlyArray<ReviewDisplayOption>;
 }) {
+  const gt = useGT();
   const insets = useSafeAreaInsets();
   return (
     <Modal visible={open} transparent animationType="fade" onRequestClose={onClose}>
@@ -28,15 +30,17 @@ export function ReviewDisplayOptions({
         <Pressable
           className="absolute inset-0"
           accessibilityRole="button"
-          accessibilityLabel="Close view options"
+          accessibilityLabel={gt("Close view options")}
           onPress={onClose}
         />
         <View className="w-full max-w-[320px] self-end overflow-hidden rounded-2xl border border-border-subtle bg-card shadow-lg">
           <View className="flex-row items-center border-b border-border-subtle px-3">
-            <Text className="flex-1 text-sm font-t3-semibold">View options</Text>
+            <Text className="flex-1 text-sm font-t3-semibold">
+              <T>View options</T>
+            </Text>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Close view options"
+              accessibilityLabel={gt("Close view options")}
               onPress={onClose}
               className="min-h-11 min-w-11 items-center justify-center"
             >

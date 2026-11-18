@@ -522,7 +522,7 @@ export function ReviewThreadCard({
                   ) : null}
                   {index === 0 && thread.isOutdated ? (
                     <Badge variant="warning" size="sm">
-                      Outdated
+                      <T>Outdated</T>
                     </Badge>
                   ) : null}
                   <div className="ml-auto flex shrink-0 items-center gap-1">

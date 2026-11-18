@@ -7,6 +7,7 @@ import {
   type ReviewTreeRow,
   type ReviewTreeSelection,
 } from "@t3tools/client-runtime/review-tree-selection";
+import { T, useGT } from "gt-react";
 import { ChevronDown, ChevronRight, Minus, Plus, Undo2, PanelsTopLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "~/hooks/useTheme";
@@ -45,6 +46,7 @@ export function WorkingChangesTree({
   onRevert: (paths: ReadonlyArray<string> | null) => void;
   onViewAll: (scope: Scope) => void;
 }) {
+  const gt = useGT();
   const { resolvedTheme } = useTheme();
   const list = useRef<LegendListRef | null>(null);
   const [open, setOpen] = useState({ staged: true, unstaged: true });
@@ -118,10 +120,7 @@ export function WorkingChangesTree({
   const actions = (scope: Scope, row: ReviewTreeRow | null) => {
     const path = row?.path ?? null;
     const groupTarget = row && isInSelection(row);
-    const label =
-      groupTarget && (selection.rows.length > 1 || row.kind === "folder")
-        ? "selected files"
-        : (path ?? "all files");
+    const multiple = groupTarget && (selection.rows.length > 1 || row.kind === "folder");
     const targets = () => reviewTreeActionFiles(sectionPaths[scope], selection.rows, row);
     return (
       <div className="flex shrink-0 items-center gap-0">
@@ -130,7 +129,13 @@ export function WorkingChangesTree({
             size="icon-micro"
             variant="ghost"
             disabled={revertDisabled || unstaged.length === 0}
-            aria-label={path ? `Revert ${label}` : "Revert all unstaged changes"}
+            aria-label={
+              path
+                ? multiple
+                  ? gt("Revert selected files")
+                  : gt("Revert {path}", { path })
+                : gt("Revert all unstaged changes")
+            }
             onClick={() => onRevert(row ? targets() : null)}
           >
             <MorphIcon icon={Undo2} />
@@ -140,7 +145,19 @@ export function WorkingChangesTree({
           size="icon-micro"
           variant="ghost"
           disabled={disabled || sections[scope].length === 0}
-          aria-label={`${scope === "staged" ? "Unstage" : "Stage"} ${label}`}
+          aria-label={
+            scope === "staged"
+              ? multiple
+                ? gt("Unstage selected files")
+                : path === null
+                  ? gt("Unstage all files")
+                  : gt("Unstage {path}", { path })
+              : multiple
+                ? gt("Stage selected files")
+                : path === null
+                  ? gt("Stage all files")
+                  : gt("Stage {path}", { path })
+          }
           onClick={() => onStage(scope, row ? targets() : null)}
         >
           <MorphIcon icon={scope === "staged" ? Minus : Plus} />
@@ -151,7 +168,7 @@ export function WorkingChangesTree({
   return (
     <div
       role="tree"
-      aria-label="Git files"
+      aria-label={gt("Git files")}
       aria-multiselectable="true"
       className="flex min-h-0 flex-1 flex-col"
     >
@@ -179,7 +196,9 @@ export function WorkingChangesTree({
                     className="size-3.5"
                     icon={open[row.scope] ? ChevronDown : ChevronRight}
                   />
-                  {row.scope === "staged" ? "Staged" : "Unstaged"}
+                  {row.scope === "staged"
+                    ? gt("Staged", { $context: "Git changes ready to commit" })
+                    : gt("Unstaged", { $context: "Git changes not staged for commit" })}
                 </button>
                 <Badge variant="info" size="sm">
                   {sections[row.scope].length}
@@ -187,7 +206,11 @@ export function WorkingChangesTree({
                 <Button
                   size="icon-micro"
                   variant="ghost"
-                  aria-label={`View all ${row.scope} changes`}
+                  aria-label={
+                    row.scope === "staged"
+                      ? gt("View all staged changes")
+                      : gt("View all unstaged changes")
+                  }
                   disabled={sections[row.scope].length === 0}
                   onClick={() => onViewAll(row.scope)}
                 >
@@ -231,7 +254,11 @@ export function WorkingChangesTree({
               {folder ? (
                 <button
                   type="button"
-                  aria-label={`${collapsed.has(`${row.scope}:${row.path}`) ? "Expand" : "Collapse"} ${row.path}`}
+                  aria-label={
+                    collapsed.has(`${row.scope}:${row.path}`)
+                      ? gt("Expand {path}", { path: row.path })
+                      : gt("Collapse {path}", { path: row.path })
+                  }
                   className="flex size-4 shrink-0 items-center justify-center text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                   onClick={() => toggleFolder(row)}
                 >
@@ -244,7 +271,11 @@ export function WorkingChangesTree({
               <button
                 type="button"
                 className={`flex min-w-0 flex-1 items-center gap-1 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${row.scope === "unstaged" ? "group-hover:pr-11 group-focus-within:pr-11" : "group-hover:pr-6 group-focus-within:pr-6"}`}
-                aria-label={`${row.scope}: ${row.path}`}
+                aria-label={
+                  row.scope === "staged"
+                    ? gt("staged: {path}", { path: row.path })
+                    : gt("unstaged: {path}", { path: row.path })
+                }
                 aria-current={!folder && current ? "true" : undefined}
                 onMouseDown={(event) => {
                   if (event.shiftKey) event.preventDefault();
@@ -283,7 +314,7 @@ export function WorkingChangesTree({
               <span
                 className={`w-3 shrink-0 text-center ${statusClass} ${folder ? "opacity-50" : ""}`}
                 style={{ colorScheme: resolvedTheme }}
-                aria-label={folder ? "Contains changes" : row.file.status}
+                aria-label={folder ? gt("Contains changes") : row.file.status}
               >
                 {folder
                   ? "•"
@@ -316,7 +347,7 @@ export function WorkingChangesTree({
                 }}
               >
                 <MorphIcon icon={contextMenu.row.scope === "staged" ? Minus : Plus} />
-                {contextMenu.row.scope === "staged" ? "Unstage changes" : "Stage changes"}
+                {contextMenu.row.scope === "staged" ? gt("Unstage changes") : gt("Stage changes")}
               </MenuItem>
               {contextMenu.row.scope === "unstaged" ? (
                 <MenuItem
@@ -328,7 +359,7 @@ export function WorkingChangesTree({
                   }}
                 >
                   <MorphIcon icon={Undo2} />
-                  Revert changes
+                  <T>Revert changes</T>
                 </MenuItem>
               ) : null}
             </>

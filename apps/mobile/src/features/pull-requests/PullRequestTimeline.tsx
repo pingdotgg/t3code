@@ -143,8 +143,11 @@ function TimelineConversation({
               {discussionCommentCountLabel(comments.length, messages)}
             </Text>
             <Text className="text-2xs text-foreground-tertiary" numberOfLines={1}>
-              {reviewParticipantsLabel(comments.map((comment) => comment.author))} ·{" "}
-              {relativeTime(first.createdAt, undefined, messages)}
+              {reviewParticipantsLabel(
+                comments.map((comment) => comment.author),
+                messages,
+              )}{" "}
+              · {relativeTime(first.createdAt, undefined, messages)}
             </Text>
           </View>
           <SymbolView

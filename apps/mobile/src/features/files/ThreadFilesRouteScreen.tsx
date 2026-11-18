@@ -644,8 +644,8 @@ export function ThreadFilesTreeScreen(
                 {props.workspaceTabs}
                 <View className="px-3 py-2">
                   <AppTextInput
-                    accessibilityLabel="Search files"
-                    placeholder="Search files"
+                    accessibilityLabel={gt("Search files")}
+                    placeholder={gt("Search files")}
                     value={searchQuery}
                     onChangeText={setSearchQuery}
                     autoCapitalize="none"

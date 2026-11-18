@@ -8,6 +8,7 @@ import {
   reviewSelectedLinesPatch,
   reviewFolderContains,
 } from "@t3tools/client-runtime/review-workspace";
+import { T, msg, useGT, useMessages } from "gt-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import type { DraftId } from "~/composerDraftStore";
@@ -65,6 +66,7 @@ import { useReviewFilePatches } from "./useReviewFilePatches";
 import { applyWorkingChangesMutation, type WorkingChangesState } from "./workingChangesState";
 import { reviewDiffEdits } from "@t3tools/client-runtime/review-diff-context";
 import { hideWhitespaceChanges } from "~/lib/diffRendering";
+import { m } from "~/i18n/messages";
 
 const workingFileCache = new WeakMap<
   FileDiffMetadata,
@@ -180,6 +182,8 @@ function useWorkingChanges(
 }
 
 export function WorkingChangesReview(props: WorkingReviewProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const { environmentId, cwd, composerDraftTarget, fileTreeOpen } = props;
   const { resolvedTheme } = useTheme();
   const [generation, setGeneration] = useState(0);
@@ -214,7 +218,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
   const [generatingMessage, setGeneratingMessage] = useState(false);
   const [reverting, setReverting] = useState<{
     paths: string[];
-    label: string;
+    description: string;
     patch?: string;
   } | null>(null);
   const all = useWorkingChanges(props, undefined, generation);
@@ -397,8 +401,8 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
     else
       toastManager.add({
         type: "error",
-        title: "Could not generate a commit message",
-        description: "Check your source-control writing model in Settings and try again.",
+        title: m(msg("Could not generate a commit message")),
+        description: m(msg("Check your source-control writing model in Settings and try again.")),
       });
   };
   const runCommit = async (action: "commit" | "amend" | "commit-push" = "commit") => {
@@ -417,9 +421,12 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: "Could not commit",
-        description:
-          "Check your staged changes and Git or source-control writer settings, then try again.",
+        title: m(msg("Could not commit")),
+        description: m(
+          msg(
+            "Check your staged changes and Git or source-control writer settings, then try again.",
+          ),
+        ),
       });
     } else {
       setMessage("");
@@ -427,13 +434,17 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
         type: result.value.pushStatus === "failed" ? "error" : "success",
         title:
           result.value.pushStatus === "failed"
-            ? "Committed, but push failed"
+            ? m(msg("Committed, but push failed"))
             : result.value.pushStatus === "pushed"
-              ? "Committed and pushed"
-              : "Committed",
+              ? m(msg("Committed and pushed"))
+              : m(msg("Committed", { $context: "Git commit success notification" })),
         description:
           result.value.pushStatus === "failed"
-            ? "Your commit is saved locally. Check the remote connection and retry pushing from the Git menu."
+            ? m(
+                msg(
+                  "Your commit is saved locally. Check the remote connection and retry pushing from the Git menu.",
+                ),
+              )
             : result.value.commitSha.slice(0, 7),
       });
     }
@@ -468,8 +479,8 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
       setPending(false);
       toastManager.add({
         type: "error",
-        title: "Could not revert changes",
-        description: "Refresh the diff and try again.",
+        title: m(msg("Could not revert changes")),
+        description: m(msg("Refresh the diff and try again.")),
       });
     } else {
       setOptimistic((current) =>
@@ -554,8 +565,10 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
         onFailure: () =>
           toastManager.add({
             type: "error",
-            title: "Could not update changes",
-            description: "The failed action was rolled back. Your other changes have been kept.",
+            title: m(msg("Could not update changes")),
+            description: m(
+              msg("The failed action was rolled back. Your other changes have been kept."),
+            ),
           }),
       });
     }
@@ -612,11 +625,13 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
           size="xs"
           variant="outline"
           disabled={!canStage || pending}
-          aria-label={`${scope === "unstaged" ? "Stage" : "Unstage"} ${path}`}
+          aria-label={
+            scope === "unstaged" ? gt("Stage {path}", { path }) : gt("Unstage {path}", { path })
+          }
           onClick={() => void updateStaging(scope, stagingPaths(scope, path))}
         >
           <MorphIcon icon={scope === "unstaged" ? FilePlus : FileMinus} />
-          {scope === "unstaged" ? "Stage file" : "Unstage file"}
+          {scope === "unstaged" ? gt("Stage file") : gt("Unstage file")}
         </Button>
       </>
     );
@@ -632,18 +647,23 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
           setView(next);
         }
       }}
-      aria-label="Workspace navigation"
+      aria-label={gt("Workspace navigation")}
     >
       <Toggle value="git" className="flex-1">
         <MorphIcon icon={GitBranch} />
-        Git
-        <Badge size="sm" variant="info" aria-label={`${changedCount} changed files`}>
+        {/* oxlint-disable-next-line t3code/no-untranslated-copy -- Git is a product name. */}
+        {"Git"}
+        <Badge
+          size="sm"
+          variant="info"
+          aria-label={gt("{count} changed files", { count: changedCount })}
+        >
           {changedCount}
         </Badge>
       </Toggle>
       <Toggle value="files" className="flex-1">
         <MorphIcon icon={Files} />
-        Files
+        <T>Files</T>
       </Toggle>
     </ToggleGroup>
   );
@@ -657,9 +677,9 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
           <span className="truncate">
             {view === "git"
               ? scope === "staged"
-                ? "Staged"
-                : "Unstaged"
-              : (workspacePath ?? "Workspace files")}
+                ? gt("Staged", { $context: "Git changes ready to commit" })
+                : gt("Unstaged", { $context: "Git changes not staged for commit" })
+              : (workspacePath ?? gt("Workspace files"))}
           </span>
           {!fileTreeOpen ? viewTabs : null}
         </div>
@@ -689,19 +709,20 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                     variant="outline"
                     onClick={() => setGeneration((value) => value + 1)}
                   >
-                    Retry
+                    <T>Retry</T>
                   </Button>
                 </div>
               ) : null}
               {files.length === 0 ? (
                 <p className="px-3 py-4 text-xs text-muted-foreground">
-                  {!optimistic && data.query.isPending ? "Loading changes…" : "No changes."}
+                  {!optimistic && data.query.isPending ? gt("Loading changes…") : gt("No changes.")}
                 </p>
               ) : (
                 <AnnotatableCodeView
                   pendingFiles={[]}
                   codeViewKey={`${cwd}:${view}:${view === "git" ? `${scope}:${selectedPath ?? "all"}` : "all"}`}
                   sectionId={view === "git" ? scope : "working-tree"}
+                  // oxlint-disable-next-line t3code/no-untranslated-copy -- Context title stored in review comments and sent to the agent.
                   sectionTitle={view === "git" ? scope : "Uncommitted"}
                   composerDraftTarget={composerDraftTarget}
                   files={codeFiles}
@@ -764,7 +785,16 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                             setReverting({
                               paths: stagingPaths(scope, path),
                               patch,
-                              label: `the selected ${range.start === range.end ? "line" : "lines"} in ${path}`,
+                              description:
+                                range.start === range.end
+                                  ? msg(
+                                      "This reverts only the selected line in {path}. Staged changes are kept.",
+                                      { path },
+                                    )
+                                  : msg(
+                                      "This reverts only the selected lines in {path}. Staged changes are kept.",
+                                      { path },
+                                    ),
                             });
                         }
                       : undefined
@@ -784,30 +814,46 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                                   size="xs"
                                   variant="ghost-muted"
                                   disabled={!canRevert || pending || props.ignoreWhitespace}
-                                  aria-label={`Revert hunk ${index + 1} in ${path}`}
+                                  aria-label={gt("Revert hunk {number} in {path}", {
+                                    number: index + 1,
+                                    path,
+                                  })}
                                   onClick={() =>
                                     setReverting({
                                       paths: stagingPaths(scope, path),
                                       patch,
-                                      label: `hunk ${index + 1} in ${path}`,
+                                      description: msg(
+                                        "This reverts only hunk {number} in {path}. Staged changes are kept.",
+                                        { number: index + 1, path },
+                                      ),
                                     })
                                   }
                                 >
                                   <MorphIcon icon={Undo2} />
-                                  Revert hunk
+                                  <T>Revert hunk</T>
                                 </Button>
                               ) : null}
                               <Button
                                 size="xs"
                                 variant="ghost"
                                 disabled={!canStage || pending || props.ignoreWhitespace}
-                                aria-label={`${scope === "unstaged" ? "Stage" : "Unstage"} hunk ${index + 1} in ${path}`}
+                                aria-label={
+                                  scope === "unstaged"
+                                    ? gt("Stage hunk {number} in {path}", {
+                                        number: index + 1,
+                                        path,
+                                      })
+                                    : gt("Unstage hunk {number} in {path}", {
+                                        number: index + 1,
+                                        path,
+                                      })
+                                }
                                 onClick={() =>
                                   void updateStaging(scope, stagingPaths(scope, path), patch)
                                 }
                               >
                                 <MorphIcon icon={scope === "unstaged" ? Plus : Minus} />
-                                {scope === "unstaged" ? "Stage hunk" : "Unstage hunk"}
+                                {scope === "unstaged" ? gt("Stage hunk") : gt("Unstage hunk")}
                               </Button>
                             </div>
                           ) : null;
@@ -825,7 +871,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                     <Button
                       size="icon-xs"
                       variant="ghost"
-                      aria-label={`Toggle ${resolveFileDiffPath(file)}`}
+                      aria-label={gt("Toggle {path}", { path: resolveFileDiffPath(file) })}
                       onClick={() => {
                         if (file.cacheKey?.endsWith(":pending")) {
                           if (data.patches.fileStates.get(resolveFileDiffPath(file))?.error)
@@ -875,7 +921,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
               )}
               {data.patches.settledFileCount < data.files.length && !selectedPath ? (
                 <Button size="xs" variant="ghost" onClick={data.patches.loadNextFiles}>
-                  Load more files
+                  <T>Load more files</T>
                 </Button>
               ) : null}
             </>
@@ -883,7 +929,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
         </div>
         {fileTreeOpen ? (
           <aside
-            aria-label="Changed files panel"
+            aria-label={gt("Changed files panel")}
             className="relative flex w-(--resizable-width) min-w-48 max-w-[60%] shrink-0 flex-col border-l border-border/60"
             style={{ "--resizable-width": `${width.width}px` } as React.CSSProperties}
           >
@@ -902,11 +948,11 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
             ) : (
               <>
                 <div className="flex shrink-0 flex-col gap-1 px-2 py-1.5">
-                  <InputGroup size="compact" aria-label="Commit message field">
+                  <InputGroup size="compact" aria-label={gt("Commit message field")}>
                     <InputGroupTextarea
                       rows={1}
-                      aria-label="Commit message"
-                      placeholder="Message (blank generates one)"
+                      aria-label={gt("Commit message")}
+                      placeholder={gt("Message (blank generates one)")}
                       value={message}
                       disabled={pending || stagingCount > 0 || !canCommit}
                       onChange={(event) => setMessage(event.target.value)}
@@ -923,7 +969,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                           size="icon-xs"
                           variant="ghost"
                           disabled={pending || stagingCount > 0 || !canGenerate}
-                          aria-label="Generate commit message"
+                          aria-label={gt("Generate commit message")}
                           aria-busy={generatingMessage}
                           onClick={() => void generatePreview()}
                         >
@@ -932,7 +978,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                       </InputGroupAddon>
                     ) : null}
                   </InputGroup>
-                  <Group className="w-full" aria-label="Commit actions">
+                  <Group className="w-full" aria-label={gt("Commit actions")}>
                     <Button
                       size="sm"
                       className="min-w-0 flex-1"
@@ -943,10 +989,10 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                     >
                       <MorphIcon icon={GitCommitHorizontal} />
                       {generatingMessage
-                        ? "Generating…"
+                        ? gt("Generating…")
                         : pending && !optimistic
-                          ? "Working…"
-                          : "Commit"}
+                          ? gt("Working…")
+                          : gt("Commit", { $context: "verb, creates a Git commit" })}
                     </Button>
                     <GroupSeparator />
                     <Menu>
@@ -955,7 +1001,7 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                           <Button
                             size="icon-sm"
                             disabled={pending || stagingCount > 0 || !canCommit}
-                            aria-label="Commit options"
+                            aria-label={gt("Commit options")}
                           />
                         }
                       >
@@ -974,10 +1020,10 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                             onClick={() => void runCommit(action)}
                           >
                             {action === "amend"
-                              ? "Commit (Amend)"
+                              ? gt("Commit (Amend)")
                               : action === "commit-push"
-                                ? "Commit & Push"
-                                : "Commit"}
+                                ? gt("Commit & Push")
+                                : gt("Commit", { $context: "verb, creates a Git commit" })}
                           </MenuItem>
                         ))}
                       </MenuPopup>
@@ -1015,12 +1061,20 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
                             selectedPaths === null || selectedPaths.has(resolveFileDiffPath(file)),
                         )
                         .map(resolveFileDiffPath),
-                      label:
+                      description:
                         paths === null
-                          ? "all unstaged changes"
+                          ? msg(
+                              "This reverts unstaged edits in all unstaged changes. Staged changes are kept. Selected new, untracked files will be deleted.",
+                            )
                           : paths.length === 1
-                            ? paths[0]!
-                            : `${paths.length} selected files`,
+                            ? msg(
+                                "This reverts unstaged edits in {path}. Staged changes are kept. Selected new, untracked files will be deleted.",
+                                { path: paths[0]! },
+                              )
+                            : msg(
+                                "This reverts unstaged edits in {count} selected files. Staged changes are kept. Selected new, untracked files will be deleted.",
+                                { count: paths.length },
+                              ),
                     });
                   }}
                 />
@@ -1037,23 +1091,23 @@ export function WorkingChangesReview(props: WorkingReviewProps) {
       >
         <DialogPopup>
           <DialogHeader>
-            <DialogTitle>Revert unstaged changes?</DialogTitle>
+            <DialogTitle>
+              <T>Revert unstaged changes?</T>
+            </DialogTitle>
             <DialogDescription>
-              This reverts {reverting?.patch ? "only " : "unstaged edits in "}
-              {reverting?.label}. Staged changes are kept.
-              {!reverting?.patch ? " Selected new, untracked files will be deleted." : null}
+              {reverting ? messages(reverting.description) : null}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" disabled={pending} onClick={() => setReverting(null)}>
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button
               variant="destructive"
               disabled={pending || !canRevert || !reverting?.paths.length}
               onClick={() => void runRevert()}
             >
-              Revert changes
+              <T>Revert changes</T>
             </Button>
           </DialogFooter>
         </DialogPopup>

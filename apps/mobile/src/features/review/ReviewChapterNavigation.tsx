@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -21,6 +22,7 @@ export function ReviewChapterNavigation({
   readonly onToggleReviewed?: (() => void) | undefined;
   readonly reviewedDisabled?: boolean;
 }) {
+  const gt = useGT();
   const chapter = chapters[position];
   if (!chapter) return null;
   const reviewed = fileCount !== null && fileCount > 0 && reviewedCount === fileCount;
@@ -32,7 +34,7 @@ export function ReviewChapterNavigation({
         </View>
         <View className="min-w-0 flex-1">
           <Menu
-            title="Chapters"
+            title={gt("Chapters")}
             actions={chapters.map((item, index) => ({
               id: String(index),
               title: `${index + 1}. ${item.title}`,
@@ -42,7 +44,11 @@ export function ReviewChapterNavigation({
           >
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Chapter ${position + 1} of ${chapters.length}: ${chapter.title}`}
+              accessibilityLabel={gt("Chapter {position} of {count}: {title}", {
+                position: position + 1,
+                count: chapters.length,
+                title: chapter.title,
+              })}
               className="min-h-11 min-w-0 flex-row items-center gap-2"
             >
               <Text numberOfLines={1} className="min-w-0 shrink text-sm font-t3-semibold">
@@ -56,7 +62,11 @@ export function ReviewChapterNavigation({
           <Pressable
             accessibilityRole="checkbox"
             accessibilityState={{ checked: reviewed, disabled: reviewedDisabled }}
-            accessibilityLabel={`Mark chapter ${position + 1} ${reviewed ? "unreviewed" : "reviewed"}`}
+            accessibilityLabel={
+              reviewed
+                ? gt("Mark chapter {position} unreviewed", { position: position + 1 })
+                : gt("Mark chapter {position} reviewed", { position: position + 1 })
+            }
             disabled={reviewedDisabled}
             className="min-h-11 min-w-11 items-center justify-center disabled:opacity-40"
             onPress={onToggleReviewed}
@@ -74,7 +84,7 @@ export function ReviewChapterNavigation({
             <Pressable
               key={delta}
               accessibilityRole="button"
-              accessibilityLabel={delta < 0 ? "Previous chapter" : "Next chapter"}
+              accessibilityLabel={delta < 0 ? gt("Previous chapter") : gt("Next chapter")}
               accessibilityState={{ disabled }}
               disabled={disabled}
               className="min-h-11 min-w-11 items-center justify-center disabled:opacity-40"
@@ -90,10 +100,17 @@ export function ReviewChapterNavigation({
         })}
       </View>
       <Text className="pb-2 text-xs text-foreground-muted">
-        Chapter {position + 1} of {chapters.length} ·{" "}
         {fileCount === null
-          ? "Loading review counts…"
-          : `${reviewedCount} of ${fileCount} files reviewed`}
+          ? gt("Chapter {position} of {count} · Loading review counts…", {
+              position: position + 1,
+              count: chapters.length,
+            })
+          : gt("Chapter {position} of {count} · {reviewedCount} of {fileCount} files reviewed", {
+              position: position + 1,
+              count: chapters.length,
+              reviewedCount,
+              fileCount,
+            })}
       </Text>
     </View>
   );

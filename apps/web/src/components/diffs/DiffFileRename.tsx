@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -20,6 +21,7 @@ export function DiffFileRename({
   file: FileDiffMetadata;
   workspaceRoot?: string;
 }) {
+  const gt = useGT();
   const previous = resolveFileDiffPreviousPath(file);
   const path = resolveFileDiffPath(file);
   if (previous === path) return null;
@@ -32,7 +34,7 @@ export function DiffFileRename({
             className="block min-w-0 max-w-full overflow-x-auto whitespace-nowrap text-left text-xs [scrollbar-width:thin]"
           />
         }
-        aria-label={`Renamed from ${previous} to ${path}`}
+        aria-label={gt("Renamed from {previous} to {path}", { previous, path })}
       >
         {keyedRenameSegments(previous, path).map((part) => (
           <span

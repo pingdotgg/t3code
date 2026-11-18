@@ -1,3 +1,4 @@
+import { useGT, useMessages, msg } from "gt-react-native";
 import { useNavigation } from "@react-navigation/native";
 import {
   AuthSourceControlWriteScope,
@@ -17,6 +18,7 @@ import {
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { Pressable, View } from "react-native";
 
+import { m, type MessageResolver } from "../../i18n/messages";
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -61,12 +63,15 @@ function compactMenuBranchLabel(branch: string): string {
   return truncateMiddle(branch, 24);
 }
 
-function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
+function compactMenuStatus(
+  gitStatus: VcsStatusResult | null,
+  resolve: MessageResolver = m,
+): string {
   if (!gitStatus) {
-    return "Checking status";
+    return resolve(msg("Checking status"));
   }
   if (!gitStatus.isRepo) {
-    return "Not a repo";
+    return resolve(msg("Not a repo"));
   }
 
   const parts: string[] = [];
@@ -106,6 +111,8 @@ export type ThreadGitMenuProps = {
 };
 
 export function useThreadGitControlModel(props: ThreadGitMenuProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
   const environmentId = props.environmentId;
@@ -125,24 +132,24 @@ export function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const quickAction = (() => {
     if (!isRepo) {
       return {
-        label: "Git unavailable",
+        label: gt("Git unavailable"),
         disabled: true,
         kind: "show_hint" as const,
-        hint: "This workspace is not a git repository.",
+        hint: gt("This workspace is not a git repository."),
       };
     }
-    const action = resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote);
+    const action = resolveQuickAction(gitStatus, busy, isDefaultRef, hasPrimaryRemote, messages);
     return !canWriteSourceControl && (action.kind === "run_pull" || action.kind === "run_action")
       ? {
           ...action,
           disabled: true,
-          hint: "This connection cannot change source control.",
+          hint: gt("This connection cannot change source control."),
         }
       : action;
   })();
 
   const quickActionHint = quickAction.disabled
-    ? (quickAction.hint ?? "This action is unavailable.")
+    ? (quickAction.hint ?? gt("This action is unavailable."))
     : null;
 
   const quickActionIcon: QuickActionIcon = (() => {
@@ -158,9 +165,11 @@ export function useThreadGitControlModel(props: ThreadGitMenuProps) {
 
   // The same secondary actions as desktop's split button; the quick action already covers its own.
   const menuActions = isRepo
-    ? secondaryGitMenuItems(buildMenuItems(gitStatus, busy, hasPrimaryRemote), quickAction).map(
-        (item) =>
-          canWriteSourceControl || item.kind === "open_pr" ? item : { ...item, disabled: true },
+    ? secondaryGitMenuItems(
+        buildMenuItems(gitStatus, busy, hasPrimaryRemote, messages),
+        quickAction,
+      ).map((item) =>
+        canWriteSourceControl || item.kind === "open_pr" ? item : { ...item, disabled: true },
       )
     : [];
 
@@ -170,11 +179,17 @@ export function useThreadGitControlModel(props: ThreadGitMenuProps) {
     ).changeRequest;
     const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
     if (!prUrl) {
-      Dialog.alert(`No open ${shortLabel}`, `This branch does not have an open ${singular}.`);
+      Dialog.alert(
+        gt("No open {shortLabel}", { shortLabel }),
+        gt("This branch does not have an open {singular}.", { singular }),
+      );
       return;
     }
     if (!(await openPullRequest(prUrl))) {
-      Dialog.alert(`Unable to open ${shortLabel}`, `The ${singular} could not be opened.`);
+      Dialog.alert(
+        gt("Unable to open {shortLabel}", { shortLabel }),
+        gt("The {singular} could not be opened.", { singular }),
+      );
     }
   };
 
@@ -196,8 +211,8 @@ export function useThreadGitControlModel(props: ThreadGitMenuProps) {
     ) {
       if (props.hasThread === false) {
         Dialog.alert(
-          "Choose a feature branch",
-          "Switch branches before publishing changes from this draft.",
+          gt("Choose a feature branch"),
+          gt("Switch branches before publishing changes from this draft."),
         );
         return;
       }
@@ -290,9 +305,10 @@ export function useThreadGitControlModel(props: ThreadGitMenuProps) {
 export function threadGitMenuDefinition(
   props: ThreadGitMenuProps,
   model: ReturnType<typeof useThreadGitControlModel>,
+  resolve: MessageResolver = m,
 ): AppBarMenu {
   return {
-    title: "Git",
+    title: resolve(msg("Git")),
     icon: THREAD_GIT_GLYPH,
     separateBackground: false,
     items: [
@@ -301,7 +317,7 @@ export function threadGitMenuDefinition(
         title: compactMenuBranchLabel(model.currentBranchLabel),
         icon: THREAD_GIT_GLYPH,
         disabled: true,
-        subtitle: compactMenuStatus(props.gitStatus),
+        subtitle: compactMenuStatus(props.gitStatus, resolve),
         onPress: () => {},
       },
       {
@@ -327,8 +343,8 @@ export function threadGitMenuDefinition(
         ? [
             {
               id: "git-merge-back",
-              title: "Merge back to source",
-              subtitle: "Bring this thread's latest turn into its source",
+              title: resolve(msg("Merge back to source")),
+              subtitle: resolve(msg("Bring this thread's latest turn into its source")),
               icon: PullRequestGlyph.merged,
               onPress: props.onMergeBack,
             },
@@ -336,13 +352,13 @@ export function threadGitMenuDefinition(
         : []),
       {
         id: "git-branches",
-        title: "Branches & worktrees…",
+        title: resolve(msg("Branches & worktrees…")),
         icon: "arrow.triangle.branch",
         disabled: props.hasThread === false,
         subtitle:
           props.hasThread === false
-            ? "Available after the first message"
-            : "Switch branch, link a pull request",
+            ? resolve(msg("Available after the first message"))
+            : resolve(msg("Switch branch, link a pull request")),
         onPress: model.openGitInspector,
       },
     ],
@@ -351,18 +367,21 @@ export function threadGitMenuDefinition(
 
 /** Returns menu data because native toolbars serialize direct items rather than rendering component children. */
 export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
-  return threadGitMenuDefinition(props, useThreadGitControlModel(props));
+  const messages = useMessages();
+  return threadGitMenuDefinition(props, useThreadGitControlModel(props), messages);
 }
 
 /** Desktop's git split button: the quick action as the button, the other actions behind the chevron. */
 export function ThreadGitSplitButton(props: ThreadGitMenuProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const model = useThreadGitControlModel(props);
   const disabled = model.quickAction.disabled;
   const actions = [
     {
       id: "status",
       title: compactMenuBranchLabel(model.currentBranchLabel),
-      subtitle: compactMenuStatus(props.gitStatus),
+      subtitle: compactMenuStatus(props.gitStatus, messages),
       attributes: { disabled: true },
     },
     ...model.menuActions.map((item) => ({
@@ -373,12 +392,12 @@ export function ThreadGitSplitButton(props: ThreadGitMenuProps) {
     })),
     {
       id: "branches",
-      title: "Branches & worktrees…",
+      title: gt("Branches & worktrees…"),
       image: "arrow.triangle.branch",
       subtitle:
         props.hasThread === false
-          ? "Available after the first message"
-          : "Switch branch, link a pull request",
+          ? gt("Available after the first message")
+          : gt("Switch branch, link a pull request"),
       attributes: { disabled: props.hasThread === false },
     },
   ];
@@ -404,7 +423,7 @@ export function ThreadGitSplitButton(props: ThreadGitMenuProps) {
         </Text>
       </Pressable>
       <Menu
-        title="Git"
+        title={gt("Git")}
         actions={actions}
         style={{ alignSelf: "stretch" }}
         onPressAction={({ nativeEvent }) => {
@@ -415,7 +434,7 @@ export function ThreadGitSplitButton(props: ThreadGitMenuProps) {
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="More git actions"
+          accessibilityLabel={gt("More git actions")}
           className="h-full w-11 items-center justify-center border-l border-border-subtle active:opacity-70"
         >
           <SymbolView

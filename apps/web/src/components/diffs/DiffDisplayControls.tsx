@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { Columns2Icon, Rows3Icon, Settings2Icon } from "lucide-react";
 import { useId } from "react";
 
@@ -38,6 +39,7 @@ export function DiffDisplayControls({
   filters?: ReadonlyArray<DiffDisplayOption>;
   onWhitespaceChange?: (checked: boolean) => void;
 }) {
+  const gt = useGT();
   const settings = useClientSettings();
   const updateSettings = updateClientSettings;
   return (
@@ -47,18 +49,20 @@ export function DiffDisplayControls({
           render={
             <PopoverTrigger
               render={<Button size="icon-sm" variant="ghost" />}
-              aria-label="Diff options"
+              aria-label={gt("Diff options")}
             />
           }
         >
           <Settings2Icon className="size-3.5" />
         </TooltipTrigger>
-        <TooltipPopup side="top">Diff options</TooltipPopup>
+        <TooltipPopup side="top">
+          <T>Diff options</T>
+        </TooltipPopup>
       </Tooltip>
-      <PopoverPopup align="end" width="md" padding="none" aria-label="Diff options">
+      <PopoverPopup align="end" width="md" padding="none" aria-label={gt("Diff options")}>
         <div className="px-3 py-2">
           <ToggleGroup
-            aria-label="Diff layout"
+            aria-label={gt("Diff layout")}
             variant="segmented"
             className="w-full *:flex-1"
             value={[settings.diffLayout]}
@@ -67,25 +71,25 @@ export function DiffDisplayControls({
               if (next === "stacked" || next === "split") updateSettings({ diffLayout: next });
             }}
           >
-            <Toggle aria-label="Unified diff view" value="stacked">
+            <Toggle aria-label={gt("Unified diff view")} value="stacked">
               <Rows3Icon className="size-3.5" />
-              Unified
+              <T>Unified</T>
             </Toggle>
-            <Toggle aria-label="Split diff view" value="split">
+            <Toggle aria-label={gt("Split diff view")} value="split">
               <Columns2Icon className="size-3.5" />
-              Split
+              <T>Split</T>
             </Toggle>
           </ToggleGroup>
         </div>
         <Separator />
         <div className="px-3 py-1.5">
           <DiffDisplayOptionRow
-            label="Wrap lines"
+            label={gt("Wrap lines")}
             checked={settings.wordWrap}
             onCheckedChange={(checked) => updateSettings({ wordWrap: checked })}
           />
           <DiffDisplayOptionRow
-            label="Hide whitespace changes"
+            label={gt("Hide whitespace changes")}
             checked={settings.diffIgnoreWhitespace}
             onCheckedChange={
               onWhitespaceChange ?? ((checked) => updateSettings({ diffIgnoreWhitespace: checked }))

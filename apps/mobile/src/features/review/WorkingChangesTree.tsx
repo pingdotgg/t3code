@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { reviewFileTreeRows } from "@t3tools/client-runtime/review-workspace";
@@ -40,6 +41,7 @@ export function WorkingChangesTree({
   onRefresh?: (() => void) | undefined;
   refreshing?: boolean;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState({ staged: true, unstaged: true });
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [width, setWidth] = useState(0);
@@ -66,7 +68,9 @@ export function WorkingChangesTree({
       {scope === "unstaged" ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={path ? `Revert ${path}` : "Revert all unstaged changes"}
+          accessibilityLabel={
+            path ? gt("Revert {path}", { path }) : gt("Revert all unstaged changes")
+          }
           accessibilityState={{ disabled: revertDisabled || unstaged.length === 0 }}
           disabled={revertDisabled || unstaged.length === 0}
           onPress={() => onRevert(path)}
@@ -81,7 +85,15 @@ export function WorkingChangesTree({
       ) : null}
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${scope === "staged" ? "Unstage" : "Stage"} ${path ?? "all files"}`}
+        accessibilityLabel={
+          scope === "staged"
+            ? path === null
+              ? gt("Unstage all files")
+              : gt("Unstage {path}", { path })
+            : path === null
+              ? gt("Stage all files")
+              : gt("Stage {path}", { path })
+        }
         accessibilityState={{
           disabled: disabled || (scope === "staged" ? staged : unstaged).length === 0,
         }}
@@ -116,7 +128,7 @@ export function WorkingChangesTree({
               <View className="min-h-[42px] flex-row items-center border-b border-border-subtle pl-3">
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={row.scope === "staged" ? "Staged" : "Unstaged"}
+                  accessibilityLabel={row.scope === "staged" ? gt("Staged") : gt("Unstaged")}
                   accessibilityState={{ expanded: open[row.scope] }}
                   className="min-h-[42px] min-w-0 flex-1 flex-row items-center gap-2"
                   onPress={() =>
@@ -129,7 +141,7 @@ export function WorkingChangesTree({
                     tintColorClassName="accent-icon-muted"
                   />
                   <Text numberOfLines={1} className="min-w-0 flex-1 text-sm font-t3-semibold">
-                    {row.scope === "staged" ? "Staged" : "Unstaged"}
+                    {row.scope === "staged" ? gt("Staged") : gt("Unstaged")}
                   </Text>
                 </Pressable>
                 <Text className="rounded-md bg-secondary px-1.5 text-xs text-foreground-muted">
@@ -137,7 +149,11 @@ export function WorkingChangesTree({
                 </Text>
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={`View all ${row.scope} changes`}
+                  accessibilityLabel={
+                    row.scope === "staged"
+                      ? gt("View all staged changes")
+                      : gt("View all unstaged changes")
+                  }
                   disabled={(row.scope === "staged" ? staged : unstaged).length === 0}
                   onPress={() => onOpenScope(row.scope)}
                   className="size-10 items-center justify-center active:bg-secondary"
@@ -153,7 +169,11 @@ export function WorkingChangesTree({
             <View className={`min-h-[42px] flex-row items-center ${active ? "bg-secondary" : ""}`}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`${row.scope}: ${row.path}`}
+                accessibilityLabel={
+                  row.scope === "staged"
+                    ? gt("staged: {path}", { path: row.path })
+                    : gt("unstaged: {path}", { path: row.path })
+                }
                 accessibilityState={
                   folder
                     ? { expanded: !collapsed.has(`${row.scope}:${row.path}`) }

@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -83,7 +85,10 @@ export function useReviewThreadActions(
         input: { ...reference, threadId: thread.id, resolved: !thread.isResolved },
       }).then((result) => {
         if (result._tag === "Failure") {
-          toastManager.add({ type: "error", title: "The conversation could not be updated" });
+          toastManager.add({
+            type: "error",
+            title: m(msg("The conversation could not be updated")),
+          });
         }
       });
     },
@@ -93,7 +98,7 @@ export function useReviewThreadActions(
         input: { ...reference, threadId: thread.id, cursor },
       });
       if (result._tag === "Failure") {
-        toastManager.add({ type: "error", title: "More comments could not be loaded" });
+        toastManager.add({ type: "error", title: m(msg("More comments could not be loaded")) });
         return null;
       }
       return result.value;

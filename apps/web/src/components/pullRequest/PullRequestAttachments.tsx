@@ -1,3 +1,5 @@
+import { T, msg, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { publishReviewAttachment } from "@t3tools/client-runtime/review-attachments";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
@@ -29,6 +31,7 @@ export function PullRequestAttachments({
   onTextChange: (text: string) => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  const gt = useGT();
   const fileInput = useRef<HTMLInputElement>(null);
   const target = { environmentId, input: reference };
   const detail = useEnvironmentQuery(pullRequestEnvironment.detail(target));
@@ -133,8 +136,8 @@ export function PullRequestAttachments({
         if (!session.cancelled)
           toastManager.add({
             type: "error",
-            title: "Could not attach the file",
-            description: error instanceof Error ? error.message : "Try uploading again.",
+            title: m(msg("Could not attach the file")),
+            description: error instanceof Error ? error.message : m(msg("Try uploading again.")),
           });
       })
       .finally(async () => {
@@ -195,14 +198,14 @@ export function PullRequestAttachments({
       />
       {busy ? (
         <span role="status" className="text-xs text-muted-foreground">
-          Uploading…
+          <T>Uploading…</T>
         </span>
       ) : null}
       <Button
         size="icon-xs"
         variant="ghost-muted"
-        aria-label={busy ? "Uploading attachment" : "Attach files"}
-        title={busy ? "Uploading attachment…" : "Attach files"}
+        aria-label={busy ? gt("Uploading attachment") : gt("Attach files")}
+        title={busy ? gt("Uploading attachment…") : gt("Attach files")}
         disabled={disabled || busy}
         onClick={() => fileInput.current?.click()}
       >

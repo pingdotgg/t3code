@@ -1,3 +1,5 @@
+import { msg, useGT } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import type { OrchestrationMessageContext } from "@t3tools/contracts";
 import {
@@ -85,6 +87,7 @@ type Props = {
 };
 
 function useWorkingChanges(props: Props, scope: WorkingScope | undefined, generation: number) {
+  const gt = useGT();
   const query = useWorkingChangesQuery({
     environmentId: props.environmentId,
     cwd: props.cwd,
@@ -98,13 +101,17 @@ function useWorkingChanges(props: Props, scope: WorkingScope | undefined, genera
       id: `working-tree:${scope ?? "all"}`,
       kind: "working-tree",
       title:
-        scope === "staged" ? "Staged" : scope === "unstaged" ? "Unstaged" : "All changed files",
+        scope === "staged"
+          ? gt("Staged")
+          : scope === "unstaged"
+            ? gt("Unstaged")
+            : gt("All changed files"),
       subtitle: null,
       diff: source?.diff ?? null,
       source,
       isLoading: query.isPending && query.data === null,
     }),
-    [scope, source, query.isPending, query.data],
+    [scope, source, query.isPending, query.data, gt],
   );
   const diff = useReviewDiffData({
     environmentId: props.environmentId,
@@ -147,6 +154,7 @@ export function WorkingChangesReview(props: Props) {
 }
 
 function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
+  const gt = useGT();
   const { environmentId, threadId, cwd } = props;
   const [remembered] = useState(() => getWorkingChangesReviewMemory(props.memoryKey));
   const [generation, setGeneration] = useState(0);
@@ -465,8 +473,8 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
         },
         onFailure: () =>
           Alert.alert(
-            "Could not update changes",
-            "The failed action was rolled back. Your other changes have been kept.",
+            m(msg("Could not update changes")),
+            m(msg("The failed action was rolled back. Your other changes have been kept.")),
           ),
       });
     }
@@ -482,12 +490,14 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
     const paths = pathsFor("unstaged", path);
     if (!canRevert || pending || !paths.length) return;
     Alert.alert(
-      path ? `Revert ${path}?` : "Revert all unstaged changes?",
-      "Unstaged changes will be discarded and selected untracked files deleted. Staged changes are kept.",
+      path ? gt("Revert {path}?", { path }) : gt("Revert all unstaged changes?"),
+      gt(
+        "Unstaged changes will be discarded and selected untracked files deleted. Staged changes are kept.",
+      ),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: gt("Cancel"), style: "cancel" },
         {
-          text: "Revert",
+          text: gt("Revert", { $context: "verb, discards git changes" }),
           style: "destructive",
           onPress: () => {
             void (async () => {
@@ -519,22 +529,28 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
               unlock();
               refresh();
               if (result._tag === "Failure")
-                Alert.alert("Could not revert changes", "Refresh and try again.");
+                Alert.alert(gt("Could not revert changes"), gt("Refresh and try again."));
             })();
           },
         },
       ],
     );
   };
-  const confirmPatchRevert = (path: string, patch: string, label: string) => {
+  const confirmPatchRevert = (path: string, patch: string, kind: "hunk" | "line" | "lines") => {
     if (!canRevert || busy.current) return;
     Alert.alert(
-      `Revert ${label}?`,
-      `Only ${label} in ${path} will be discarded. Other edits and staged changes are kept.`,
+      gt(
+        "{kind, select, hunk {Revert this hunk?} line {Revert the selected line?} other {Revert the selected lines?}}",
+        { kind },
+      ),
+      gt(
+        "{kind, select, hunk {Only this hunk in {path} will be discarded. Other edits and staged changes are kept.} line {Only the selected line in {path} will be discarded. Other edits and staged changes are kept.} other {Only the selected lines in {path} will be discarded. Other edits and staged changes are kept.}}",
+        { kind, path },
+      ),
       [
-        { text: "Cancel", style: "cancel" },
+        { text: gt("Cancel"), style: "cancel" },
         {
-          text: "Revert",
+          text: gt("Revert", { $context: "verb, discards git changes" }),
           style: "destructive",
           onPress: () => {
             updateStaging("unstaged", [path], patch, true);
@@ -554,8 +570,8 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
     if (result._tag === "Success") setMessage(result.value);
     else
       Alert.alert(
-        "Could not generate a commit message",
-        "Check your source-control writing model in Settings and try again.",
+        gt("Could not generate a commit message"),
+        gt("Check your source-control writing model in Settings and try again."),
       );
   };
   const runCommit = async (action: "commit" | "amend" | "commit-push") => {
@@ -567,19 +583,21 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
     refresh();
     if (result._tag === "Failure")
       Alert.alert(
-        "Could not commit",
-        "Check your staged changes and Git or source-control writer settings, then try again.",
+        gt("Could not commit"),
+        gt("Check your staged changes and Git or source-control writer settings, then try again."),
       );
     else {
       setMessage("");
       Alert.alert(
         result.value.pushStatus === "failed"
-          ? "Committed, but push failed"
+          ? gt("Committed, but push failed")
           : result.value.pushStatus === "pushed"
-            ? "Committed and pushed"
-            : "Committed",
+            ? gt("Committed and pushed")
+            : gt("Committed"),
         result.value.pushStatus === "failed"
-          ? "Your commit is saved locally. Check the remote connection and retry pushing from the Git menu."
+          ? gt(
+              "Your commit is saved locally. Check the remote connection and retry pushing from the Git menu.",
+            )
           : result.value.commitSha.slice(0, 7),
       );
     }
@@ -647,7 +665,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
                   confirmPatchRevert(
                     activeSelection.filePath,
                     selectionPatches.revert,
-                    selectedLines.length === 1 ? "the selected line" : "the selected lines",
+                    selectedLines.length === 1 ? "line" : "lines",
                   );
               }
             : undefined
@@ -776,12 +794,12 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
             <View className="gap-2 px-3 py-2">
               <View className="min-h-11 flex-row items-center rounded-xl border border-border-subtle bg-card">
                 <TextInput
-                  accessibilityLabel="Commit message"
+                  accessibilityLabel={gt("Commit message")}
                   value={message}
                   onChangeText={setMessage}
                   editable={!pending}
                   multiline
-                  placeholder="Message (blank generates one)"
+                  placeholder={gt("Message (blank generates one)")}
                   textAlignVertical="top"
                   className="min-h-11 min-w-0 flex-1 rounded-none border-0 bg-transparent px-3 py-2 text-sm"
                   style={{ maxHeight: 144 }}
@@ -789,7 +807,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
                 {tree.staged.length ? (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="Generate commit message"
+                    accessibilityLabel={gt("Generate commit message")}
                     accessibilityState={{ disabled: !canGenerate || pending }}
                     disabled={!canGenerate || pending}
                     onPress={() => void generatePreview()}
@@ -802,7 +820,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
               <View className="min-h-11 flex-row overflow-hidden rounded-xl bg-primary">
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel="Commit"
+                  accessibilityLabel={gt("Commit", { $context: "verb, git action" })}
                   accessibilityState={{
                     disabled: !canCommit || pending || !tree.staged.length,
                   }}
@@ -816,27 +834,29 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
                     tintColorClassName="accent-primary-foreground"
                   />
                   <Text className="font-t3-medium text-primary-foreground">
-                    {generating ? "Generating…" : "Commit"}
+                    {generating
+                      ? gt("Generating…")
+                      : gt("Commit", { $context: "verb, git action" })}
                   </Text>
                 </Pressable>
                 <Menu
-                  title="Commit options"
+                  title={gt("Commit options")}
                   actions={[
                     {
                       id: "commit",
-                      title: "Commit",
+                      title: gt("Commit", { $context: "verb, git action" }),
                       attributes: { disabled: !canCommit || pending || !tree.staged.length },
                     },
                     {
                       id: "amend",
-                      title: "Commit (Amend)",
+                      title: gt("Commit (Amend)"),
                       attributes: {
                         disabled: !canCommit || pending || (!tree.staged.length && !message.trim()),
                       },
                     },
                     {
                       id: "commit-push",
-                      title: "Commit & Push",
+                      title: gt("Commit & Push"),
                       attributes: { disabled: !canCommit || pending || !tree.staged.length },
                     },
                   ]}
@@ -851,7 +871,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
                 >
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="Commit options"
+                    accessibilityLabel={gt("Commit options")}
                     className="size-11 items-center justify-center border-l border-primary-foreground/30"
                   >
                     <SymbolView
@@ -895,10 +915,10 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
           >
             <Text className="px-4 py-3 text-xs text-foreground-muted">
               {loadingChanges
-                ? "Loading changes…"
+                ? gt("Loading changes…")
                 : error
-                  ? "Changes are unavailable."
-                  : "No uncommitted changes."}
+                  ? gt("Changes are unavailable.")
+                  : gt("No uncommitted changes.")}
             </Text>
           </ScrollView>
         )}
@@ -1055,8 +1075,7 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
               if (!row || !file) return;
               const patch = reviewHunkPatch(data.hunks.get(file.path) ?? [], row.text ?? "");
               if (!patch) return;
-              if (nativeEvent.action === "revert")
-                confirmPatchRevert(file.path, patch, "this hunk");
+              if (nativeEvent.action === "revert") confirmPatchRevert(file.path, patch, "hunk");
               else updateStaging(scope, pathsFor(scope, file.path), patch);
             }}
             onPullToRefresh={() => {
@@ -1067,12 +1086,14 @@ function WorkingChangesReader(props: Props & { readonly memoryKey: string }) {
         ) : (
           <Text className="px-4 py-3 text-xs text-foreground-muted">
             {loadingChanges
-              ? "Loading changes…"
+              ? gt("Loading changes…")
               : files.length
-                ? "The native diff viewer is unavailable."
+                ? gt("The native diff viewer is unavailable.")
                 : props.openedFile.path
-                  ? "No changes remaining in this file."
-                  : `No ${scope} changes.`}
+                  ? gt("No changes remaining in this file.")
+                  : scope === "staged"
+                    ? gt("No staged changes.")
+                    : gt("No unstaged changes.")}
           </Text>
         )}
       </View>

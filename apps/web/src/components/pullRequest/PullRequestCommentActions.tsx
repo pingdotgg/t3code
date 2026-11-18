@@ -7,7 +7,8 @@ import {
   TextIcon,
   ExternalLinkIcon,
 } from "lucide-react";
-import { msg } from "gt-react";
+import { T, msg, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 import { readLocalApi } from "~/localApi";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
@@ -48,19 +49,20 @@ export function PullRequestCommentActions({
       }
     | undefined;
 }) {
+  const gt = useGT();
   const { copyToClipboard } = useCopyToClipboard({
     target: {
       target: "comment",
       unavailableMessage: msg("Clipboard API is unavailable while copying the comment."),
       failureMessage: msg("Failed to copy the comment to the clipboard."),
     },
-    onError: () => toastManager.add({ type: "error", title: "Could not copy the comment" }),
+    onError: () => toastManager.add({ type: "error", title: m(msg("Could not copy the comment")) }),
   });
   return (
     <Menu>
       <MenuTrigger
         render={<Button size="icon-xs" variant="ghost-muted" />}
-        aria-label="Comment actions"
+        aria-label={gt("Comment actions")}
         disabled={disabled}
       >
         <MoreHorizontalIcon className="size-3.5" />
@@ -70,7 +72,7 @@ export function PullRequestCommentActions({
           <>
             <MenuItem disabled={resolution.pending} onClick={resolution.onToggle}>
               <CheckIcon />
-              {resolution.resolved ? "Unresolve thread" : "Resolve thread"}
+              {resolution.resolved ? gt("Unresolve thread") : gt("Resolve thread")}
             </MenuItem>
             <MenuSeparator />
           </>
@@ -80,14 +82,18 @@ export function PullRequestCommentActions({
             onClick={() => (onOpen ? onOpen(url) : void readLocalApi()?.shell.openExternal(url))}
           >
             <ExternalLinkIcon />
-            Open on host
+            <T>Open on host</T>
           </MenuItem>
         ) : null}
-        {onEdit ? <MenuItem onClick={onEdit}>Edit comment</MenuItem> : null}
+        {onEdit ? (
+          <MenuItem onClick={onEdit}>
+            <T>Edit comment</T>
+          </MenuItem>
+        ) : null}
         <MenuSub>
           <MenuSubTrigger>
             <ClipboardIcon />
-            Copy
+            <T>Copy</T>
           </MenuSubTrigger>
           <MenuSubPopup>
             <MenuItem
@@ -100,11 +106,11 @@ export function PullRequestCommentActions({
               }
             >
               <LinkIcon />
-              Link to comment
+              <T>Link to comment</T>
             </MenuItem>
             <MenuItem disabled={body.length === 0} onClick={() => copyToClipboard(body, undefined)}>
               <TextIcon />
-              Copy as Markdown
+              <T>Copy as Markdown</T>
             </MenuItem>
           </MenuSubPopup>
         </MenuSub>
@@ -113,7 +119,7 @@ export function PullRequestCommentActions({
             <MenuSeparator />
             <MenuItem onClick={onAddToComposer}>
               <MessageSquarePlusIcon />
-              Add to composer
+              <T>Add to composer</T>
             </MenuItem>
           </>
         ) : null}

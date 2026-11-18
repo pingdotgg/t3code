@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -21,6 +22,7 @@ import type { GuideStopParams } from "./PullRequestGuideScreen";
 import { PullRequestMarkdown, PullRequestMarkdownRepository } from "../PullRequestMarkdown";
 
 export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideStopParams>) {
+  const gt = useGT();
   const params = route.params;
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
@@ -37,7 +39,10 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
     guide !== null &&
     (guide.headSha !== params.guideHeadSha || guide.generatedAt !== params.guideGeneratedAt);
   const progress = stop ? reviewGuideStopProgress(stop, viewed.isViewed) : null;
-  const title = `Chapter ${position + 1} of ${guide?.stops.length ?? "…"}`;
+  const title = gt("Chapter {position} of {count}", {
+    position: position + 1,
+    count: guide?.stops.length ?? "…",
+  });
   const selectChapter = (nextPosition: number) => {
     navigation.setParams({ position: nextPosition });
     setExpanded(false);
@@ -60,12 +65,12 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
       <Toolbar placement="right">
         <Toolbar.Button
           icon="slider.horizontal.3"
-          accessibilityLabel="View options"
+          accessibilityLabel={gt("View options")}
           onPress={() => setOptionsOpen(true)}
         />
         <Toolbar.Button
           icon="text.bubble"
-          accessibilityLabel="Comments"
+          accessibilityLabel={gt("Comments")}
           onPress={() => setCommentsOpen(true)}
         />
       </Toolbar>
@@ -76,12 +81,12 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
           actions={[
             {
               icon: "slider.horizontal.3",
-              accessibilityLabel: "View options",
+              accessibilityLabel: gt("View options"),
               onPress: () => setOptionsOpen(true),
             },
             {
               icon: "text.bubble",
-              accessibilityLabel: "Comments",
+              accessibilityLabel: gt("Comments"),
               onPress: () => setCommentsOpen(true),
             },
           ]}
@@ -91,10 +96,10 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
         <View className="p-4">
           <Text>
             {changedGuide
-              ? "This guide was rewritten. Go back to open the new chapters."
+              ? gt("This guide was rewritten. Go back to open the new chapters.")
               : stale
-                ? "The branch changed. Rewrite the guide before reviewing its chapters."
-                : (state.error ?? "Loading chapter…")}
+                ? gt("The branch changed. Rewrite the guide before reviewing its chapters.")
+                : (state.error ?? gt("Loading chapter…"))}
           </Text>
         </View>
       ) : (
@@ -116,7 +121,7 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={
-                  expanded ? "Collapse chapter description" : "Expand chapter description"
+                  expanded ? gt("Collapse chapter description") : gt("Expand chapter description")
                 }
                 onPress={() => setExpanded(!expanded)}
               >
@@ -141,7 +146,9 @@ export function PullRequestGuideStopScreen({ route }: StaticScreenProps<GuideSto
                       </View>
                     ))}
                     {stop.questions.length ? (
-                      <Text className="text-sm font-t3-semibold">Questions to consider</Text>
+                      <Text className="text-sm font-t3-semibold">
+                        <T>Questions to consider</T>
+                      </Text>
                     ) : null}
                     {stop.questions.map((question) => (
                       <PullRequestMarkdown key={question} markdown={question} />

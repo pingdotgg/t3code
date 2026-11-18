@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { usePullRequestThreads } from "./usePullRequestThreads";
 import { canEditPullRequestComment } from "@t3tools/client-runtime/review-editing";
 import { PullRequestCommentComposer } from "./PullRequestCommentComposer";
@@ -55,6 +56,7 @@ export function PullRequestCommentControls({
   onDiscard?: (() => void) | undefined;
   render?: (slots: { actions: ReactNode; reactions: ReactNode }) => ReactNode;
 }) {
+  const gt = useGT();
   const target = pullRequestTarget(params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const activity = useEnvironmentQuery(composerPullRequests.activity(target));
@@ -104,7 +106,7 @@ export function PullRequestCommentControls({
     });
     setSaving(false);
     if (result._tag === "Failure") {
-      Alert.alert("Could not edit the comment", "Your draft has been kept. Try again.");
+      Alert.alert(gt("Could not edit the comment"), gt("Your draft has been kept. Try again."));
       return;
     }
     setEditing(false);
@@ -135,7 +137,7 @@ export function PullRequestCommentControls({
     setBusy(false);
     if (result._tag === "Failure") {
       setState({ signature, overlay: new Map() });
-      Alert.alert("Could not save the reaction");
+      Alert.alert(gt("Could not save the reaction"));
     } else activity.refresh();
   };
   const reactionChips = shown.map((reaction) => (
@@ -155,7 +157,7 @@ export function PullRequestCommentControls({
   ));
   const reactionPicker = canReact ? (
     <Menu
-      title="Add reaction"
+      title={gt("Add reaction")}
       actions={PULL_REQUEST_REACTION_ORDER.map((content) => ({
         id: content,
         title: `${pullRequestReactionEmoji(content)} ${pullRequestReactionName(content)}`,
@@ -173,7 +175,7 @@ export function PullRequestCommentControls({
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Add reaction"
+        accessibilityLabel={gt("Add reaction")}
         disabled={busy || disabled}
         className="min-h-11 min-w-11 items-center justify-center"
       >
@@ -183,13 +185,13 @@ export function PullRequestCommentControls({
   ) : null;
   const commentMenu = (
     <Menu
-      title="Comment actions"
+      title={gt("Comment actions")}
       actions={[
         ...(onResolve
           ? [
               {
                 id: "resolve",
-                title: "Resolve thread",
+                title: gt("Resolve thread"),
                 attributes: { disabled: Boolean(disabled) },
               },
             ]
@@ -198,39 +200,40 @@ export function PullRequestCommentControls({
           ? [
               {
                 id: "unresolve",
-                title: "Unresolve thread",
+                title: gt("Unresolve thread"),
                 attributes: { disabled: Boolean(disabled) },
               },
             ]
           : []),
-        ...(onEdit || canEdit ? [{ id: "edit", title: "Edit comment" }] : []),
+        ...(onEdit || canEdit ? [{ id: "edit", title: gt("Edit comment") }] : []),
         ...(onDiscard
           ? [
               {
                 id: "discard",
-                title: "Discard comment",
+                title: gt("Discard comment"),
                 attributes: { destructive: true, disabled: Boolean(disabled) },
               },
             ]
           : []),
         {
           id: "copy-menu",
-          title: "Copy",
+          title: gt("Copy", { $context: "verb, copies a comment" }),
           subactions: [
-            ...(comment.url ? [{ id: "copy-link", title: "Link to comment" }] : []),
-            { id: "copy", title: "Copy as Markdown" },
+            ...(comment.url ? [{ id: "copy-link", title: gt("Link to comment") }] : []),
+            { id: "copy", title: gt("Copy as Markdown") },
           ],
         },
         {
           id: "composer",
-          title: "Add to composer",
+          title: gt("Add to composer"),
           attributes: { disabled: !agent.canAsk || agent.busy },
         },
         ...(comment.url
           ? [
               {
                 id: "open",
-                title: detail.data?.provider === "github" ? "Open in GitHub" : "Open on host",
+                title:
+                  detail.data?.provider === "github" ? gt("Open in GitHub") : gt("Open on host"),
               },
             ]
           : []),
@@ -256,7 +259,7 @@ export function PullRequestCommentControls({
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="Comment actions"
+        accessibilityLabel={gt("Comment actions")}
         className="min-h-11 min-w-11 items-center justify-center"
       >
         <SymbolView name="ellipsis" size={16} tintColorClassName="accent-icon-muted" />
@@ -295,7 +298,7 @@ export function PullRequestCommentControls({
         <KeyboardAvoidingView automaticOffset behavior="padding" className="flex-1 justify-end">
           <Pressable
             className="absolute inset-0 bg-black/40"
-            accessibilityLabel="Close comment editor"
+            accessibilityLabel={gt("Close comment editor")}
             onPress={() => {
               if (!saving && !uploading) setEditing(false);
             }}
@@ -305,24 +308,28 @@ export function PullRequestCommentControls({
             className="gap-3 rounded-t-[24px] bg-sheet px-4 pt-3 pb-4"
           >
             <View className="flex-row items-center gap-2">
-              <Text className="min-w-0 flex-1 text-base font-t3-semibold">Edit comment</Text>
+              <Text className="min-w-0 flex-1 text-base font-t3-semibold">
+                <T>Edit comment</T>
+              </Text>
               <ControlPill
                 icon="xmark"
-                accessibilityLabel="Cancel editing"
+                accessibilityLabel={gt("Cancel editing")}
                 disabled={saving || uploading}
                 onPress={() => setEditing(false)}
               />
             </View>
             <PullRequestCommentComposer
               params={params}
-              label="Edit comment body"
-              placeholder="Edit your comment…"
+              label={gt("Edit comment body")}
+              placeholder={gt("Edit your comment…")}
               value={draft}
               onChangeText={setDraft}
               editable={!saving && canEdit}
               busy={saving}
               canSubmit={canEdit && !saving && !uploading && Boolean(draft.trim())}
-              submitLabel={saving ? "Saving…" : "Save"}
+              submitLabel={
+                saving ? gt("Saving…") : gt("Save", { $context: "verb, saves comment edits" })
+              }
               showSubmitLabel
               onSubmit={() => void save()}
               onBusyChange={setUploading}

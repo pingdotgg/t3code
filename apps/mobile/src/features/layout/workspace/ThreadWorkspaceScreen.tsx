@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
@@ -40,6 +41,7 @@ type Props = StaticScreenProps<{
 }>;
 
 function ThreadWorkspaceScreen(props: Props & { readonly defaultPane?: WorkspacePane }) {
+  const gt = useGT();
   const navigation = useNavigation();
   const paneKey = workspaceThreadMemoryKey(
     props.route.params.environmentId,
@@ -127,7 +129,7 @@ function ThreadWorkspaceScreen(props: Props & { readonly defaultPane?: Workspace
         options={[
           {
             value: "git" as const,
-            label: "Changes",
+            label: gt("Changes"),
             trailing:
               workingTree && (workingTree.insertions > 0 || workingTree.deletions > 0) ? (
                 <PullRequestDiffStats
@@ -137,7 +139,7 @@ function ThreadWorkspaceScreen(props: Props & { readonly defaultPane?: Workspace
                 />
               ) : undefined,
           },
-          { value: "files" as const, label: "Files" },
+          { value: "files" as const, label: gt("Files") },
         ]}
         selected={selectedTab ?? "files"}
         onSelect={selectTab}
@@ -176,7 +178,7 @@ function ThreadWorkspaceScreen(props: Props & { readonly defaultPane?: Workspace
         {workspaceHeader}
         {tabs}
         <View className="flex-1 items-center justify-center">
-          <AppActivityIndicator accessibilityLabel="Loading workspace" />
+          <AppActivityIndicator accessibilityLabel={gt("Loading workspace")} />
         </View>
       </View>
     );

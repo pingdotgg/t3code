@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Hash from "effect/Hash";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
@@ -21,26 +22,33 @@ export function WorkspaceSourcePreview(props: {
   });
   if (!props.path)
     return (
-      <p className="px-3 py-4 text-xs text-muted-foreground">Select a file to view its contents.</p>
+      <p className="px-3 py-4 text-xs text-muted-foreground">
+        <T>Select a file to view its contents.</T>
+      </p>
     );
   if (file.error)
     return (
       <div className="flex items-center gap-2 px-3 py-4 text-xs">
         <p>{file.error}</p>
         <Button size="xs" variant="outline" onClick={file.refresh}>
-          Retry
+          <T>Retry</T>
         </Button>
         <Button size="xs" variant="outline" onClick={() => props.onOpenFile(props.path!)}>
-          Open file
+          <T>Open file</T>
         </Button>
       </div>
     );
-  if (!file.data) return <p className="px-3 py-4 text-xs text-muted-foreground">Loading file…</p>;
+  if (!file.data)
+    return (
+      <p className="px-3 py-4 text-xs text-muted-foreground">
+        <T>Loading file…</T>
+      </p>
+    );
   return (
     <>
       {file.data.truncated ? (
         <p className="shrink-0 px-3 py-1 text-xs text-muted-foreground">
-          Showing the first 1 MB of this file.
+          <T>Showing the first 1 MB of this file.</T>
         </p>
       ) : null}
       <ReadOnlySourcePreview

@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import type {
   AnnotationSide,
   CodeViewDiffItem,
@@ -373,7 +375,12 @@ export function AnnotatableCodeView({
                 ]
               : []),
             ...(revertAvailable
-              ? [{ id: "revert-lines", label: `Revert ${singleLine ? "line" : "selected lines"}` }]
+              ? [
+                  {
+                    id: "revert-lines",
+                    label: singleLine ? m(msg("Revert line")) : m(msg("Revert selected lines")),
+                  },
+                ]
               : []),
           ],
           { x: event.clientX, y: event.clientY },

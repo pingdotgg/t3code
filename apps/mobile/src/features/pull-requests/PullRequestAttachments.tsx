@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { publishReviewAttachment } from "@t3tools/client-runtime/review-attachments";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
@@ -25,6 +26,7 @@ export function PullRequestAttachments({
   onAppend: (markdown: string) => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  const gt = useGT();
   const target = pullRequestTarget(params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const allowed = useAtomValue(
@@ -130,8 +132,8 @@ export function PullRequestAttachments({
       .catch(async (error: unknown) => {
         if (!session.cancelled)
           Alert.alert(
-            "Could not attach the file",
-            error instanceof Error ? error.message : "Try uploading again.",
+            gt("Could not attach the file"),
+            error instanceof Error ? error.message : gt("Try uploading again."),
           );
       })
       .finally(async () => {
@@ -149,7 +151,7 @@ export function PullRequestAttachments({
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={busy ? "Uploading attachment" : "Attach files"}
+      accessibilityLabel={busy ? gt("Uploading attachment") : gt("Attach files")}
       disabled={disabled || busy}
       className="min-h-11 min-w-11 items-center justify-center"
       onPress={() => void upload()}

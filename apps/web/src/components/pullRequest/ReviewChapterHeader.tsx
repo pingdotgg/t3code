@@ -1,3 +1,4 @@
+import { T, useGT, Var } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { useId, type ReactNode } from "react";
 
@@ -28,6 +29,7 @@ export function ReviewChapterHeader({
   keyboardHints?: boolean;
   wideRail?: boolean;
 }) {
+  const gt = useGT();
   return (
     <Collapsible open={railOpen} onOpenChange={onRailOpenChange}>
       <header className="flex items-center justify-between gap-2">
@@ -37,7 +39,9 @@ export function ReviewChapterHeader({
             wideRail ? "@max-[80rem]/guide:hidden" : "@max-[56rem]/guide:hidden",
           )}
         >
-          Chapter {index + 1} of {count}
+          <T>
+            Chapter <Var>{index + 1}</Var> of <Var>{count}</Var>
+          </T>
         </p>
         <CollapsibleTrigger
           render={
@@ -49,7 +53,9 @@ export function ReviewChapterHeader({
           }
         >
           <span className="tabular-nums">
-            Chapter {index + 1} of {count}
+            <T>
+              Chapter <Var>{index + 1}</Var> of <Var>{count}</Var>
+            </T>
           </span>
           <ChevronDownIcon aria-hidden className={cn(railOpen && "rotate-180")} />
         </CollapsibleTrigger>
@@ -57,7 +63,7 @@ export function ReviewChapterHeader({
           <Button
             size="icon-xs"
             variant="outline"
-            aria-label="Previous chapter"
+            aria-label={gt("Previous chapter")}
             disabled={index === 0}
             onClick={() => onStep(-1)}
           >
@@ -66,7 +72,7 @@ export function ReviewChapterHeader({
           <Button
             size="icon-xs"
             variant="outline"
-            aria-label="Next chapter"
+            aria-label={gt("Next chapter")}
             disabled={index === count - 1}
             onClick={() => onStep(1)}
           >
@@ -101,13 +107,14 @@ export function ReviewChapterProgress({
   onSetReviewed: ((reviewed: boolean) => void) | null;
   disabled?: boolean;
 }) {
+  const gt = useGT();
   const id = useId();
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       {onSetReviewed ? (
         <Checkbox
           id={id}
-          aria-label="Mark chapter reviewed"
+          aria-label={gt("Mark chapter reviewed")}
           disabled={disabled}
           checked={fileCount > 0 && reviewedCount === fileCount}
           onCheckedChange={(checked) => onSetReviewed(checked === true)}
@@ -115,11 +122,15 @@ export function ReviewChapterProgress({
       ) : null}
       {onSetReviewed ? (
         <label htmlFor={id} className={disabled ? "text-muted-foreground" : "cursor-pointer"}>
-          {reviewedCount} of {fileCount} files reviewed
+          <T>
+            <Var>{reviewedCount}</Var> of <Var>{fileCount}</Var> files reviewed
+          </T>
         </label>
       ) : (
         <span>
-          {reviewedCount} of {fileCount} files reviewed
+          <T>
+            <Var>{reviewedCount}</Var> of <Var>{fileCount}</Var> files reviewed
+          </T>
         </span>
       )}
     </div>

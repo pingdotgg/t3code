@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { usePullRequestReviewKey } from "./usePullRequestReviewKey";
 import type {
   EnvironmentId,
@@ -48,6 +49,7 @@ export function PullRequestCommentsPopover({
     | undefined;
   onAddPendingToComposer?: ((comment: PendingReviewComment) => void) | undefined;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null);
   const anchor = trigger
@@ -95,10 +97,10 @@ export function PullRequestCommentsPopover({
       <PopoverTrigger
         ref={setTrigger}
         render={<Button size="xs" variant="ghost-muted" />}
-        aria-label={`Comments, ${openCount} open`}
+        aria-label={gt("Comments, {count} open", { count: openCount })}
       >
         <MessageSquareIcon className="size-3.5" />
-        Comments
+        <T>Comments</T>
         <Badge variant="secondary" size="sm">
           {openCount}
         </Badge>
@@ -115,12 +117,14 @@ export function PullRequestCommentsPopover({
       >
         <div className="flex max-h-[min(75vh,48rem,var(--available-height))] w-[min(28rem,calc(100vw-2rem))] min-w-0 flex-col [--text-sm:0.8125rem]">
           <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
-            <PopoverTitle>Comments</PopoverTitle>
+            <PopoverTitle>
+              <T>Comments</T>
+            </PopoverTitle>
             <span className="ml-auto">
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label="Close comments"
+                aria-label={gt("Close comments")}
                 onClick={() => setOpen(false)}
               >
                 <XIcon className="size-3.5" />
@@ -131,7 +135,7 @@ export function PullRequestCommentsPopover({
             <ToggleGroup
               variant="segmented"
               className="w-full *:flex-1"
-              aria-label="Comment status"
+              aria-label={gt("Comment status")}
               value={[status]}
               onValueChange={(values) => {
                 const next = values[0];
@@ -140,20 +144,20 @@ export function PullRequestCommentsPopover({
               }}
             >
               <Toggle value="unresolved">
-                Unresolved{" "}
+                <T>Unresolved</T>{" "}
                 <Badge variant="secondary" size="sm">
                   {unresolved.length}
                 </Badge>
               </Toggle>
               <Toggle value="resolved">
-                Resolved{" "}
+                <T>Resolved</T>{" "}
                 <Badge variant="secondary" size="sm">
                   {resolved.length}
                 </Badge>
               </Toggle>
               {pending.length > 0 ? (
                 <Toggle value="pending">
-                  Pending{" "}
+                  <T>Pending</T>{" "}
                   <Badge variant="secondary" size="sm">
                     {pending.length}
                   </Badge>
@@ -234,7 +238,13 @@ export function PullRequestCommentsPopover({
                   </div>
                 ))}
                 {visibleThreads.length === 0 && (status !== "pending" || pending.length === 0) ? (
-                  <p className="px-4 py-5 text-sm text-muted-foreground">No {status} comments.</p>
+                  <p className="px-4 py-5 text-sm text-muted-foreground">
+                    {status === "resolved"
+                      ? gt("No resolved comments.")
+                      : status === "unresolved"
+                        ? gt("No unresolved comments.")
+                        : gt("No pending comments.")}
+                  </p>
                 ) : null}
               </>
             ) : null}

@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { useId } from "react";
 import { Checkbox } from "../ui/checkbox";
 
@@ -14,7 +15,9 @@ export function PullRequestAdminMergeOption({
   return (
     <label htmlFor={id} className="flex items-start gap-2 text-xs text-destructive">
       <Checkbox id={id} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
-      <span>Merge with admin permissions</span>
+      <span>
+        <T>Merge with admin permissions</T>
+      </span>
     </label>
   );
 }

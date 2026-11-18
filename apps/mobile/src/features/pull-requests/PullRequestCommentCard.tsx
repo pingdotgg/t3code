@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react-native";
 import { usePendingReviewCommentActions } from "./usePendingReviewCommentActions";
 import { useRetiredReviewDraftCommentIds } from "./usePullRequestReviewDraft";
 import {
@@ -40,6 +41,7 @@ const LONG_BODY_LINES = 8;
 
 /** A comment body that folds very long remarks behind "Show more" so lists stay scannable. */
 export function PullRequestCommentBody({ body }: { body: string }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(false);
   const { themeVariables: colors } = useAppearancePreferences();
   const long = body.length > LONG_BODY_CHARACTERS || body.split("\n").length > LONG_BODY_LINES;
@@ -86,7 +88,7 @@ export function PullRequestCommentBody({ body }: { body: string }) {
           className="flex-row items-center justify-center gap-1 pt-1 active:opacity-70"
         >
           <Text className="text-xs font-t3-medium text-foreground">
-            {expanded ? "Show less" : "Show more"}
+            {expanded ? gt("Show less") : gt("Show more")}
           </Text>
           <SymbolView
             name={expanded ? "chevron.up" : "chevron.down"}
@@ -138,6 +140,7 @@ export function PullRequestCommentItem({
   onResolve?: (() => void) | undefined;
   onUnresolve?: (() => void) | undefined;
 }) {
+  const gt = useGT();
   return (
     <PullRequestCommentControls
       params={params}
@@ -152,7 +155,7 @@ export function PullRequestCommentItem({
             <PullRequestAvatar actor={comment.author} size={20} />
             <Text className="min-w-0 shrink text-xs" numberOfLines={1}>
               <Text className="font-t3-medium">
-                {comment.author?.name ?? comment.author?.login ?? "Unknown author"}
+                {comment.author?.name ?? comment.author?.login ?? gt("Unknown author")}
               </Text>
               {title ? <Text className="text-foreground-muted"> {title}</Text> : null}
             </Text>
@@ -208,6 +211,7 @@ export function usePullRequestThreadActions(
   params: PullRequestParams,
   thread: PullRequestReviewThread,
 ) {
+  const gt = useGT();
   const target = pullRequestTarget(params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const permissions = usePullRequestPermissions(params, detail.data);
@@ -233,8 +237,10 @@ export function usePullRequestThreadActions(
       }).then((result) => {
         if (result._tag === "Failure")
           Alert.alert(
-            resolved ? "Could not resolve the conversation" : "Could not reopen the conversation",
-            "Its previous state has been restored. Try again.",
+            resolved
+              ? gt("Could not resolve the conversation")
+              : gt("Could not reopen the conversation"),
+            gt("Its previous state has been restored. Try again."),
           );
       });
     },
@@ -245,7 +251,7 @@ export function usePullRequestThreadActions(
         input: { ...target.input, ...reviewThreadReplyTarget(thread), body },
       });
       if (result._tag === "Failure") {
-        Alert.alert("Reply could not be posted", "Your reply has been kept. Try again.");
+        Alert.alert(gt("Reply could not be posted"), gt("Your reply has been kept. Try again."));
         return false;
       }
       refresh();
@@ -257,7 +263,7 @@ export function usePullRequestThreadActions(
         input: { ...target.input, threadId: thread.id, cursor },
       });
       if (result._tag === "Failure") {
-        Alert.alert("More comments could not be loaded");
+        Alert.alert(gt("More comments could not be loaded"));
         return null;
       }
       return result.value;
@@ -287,6 +293,7 @@ export function PullRequestThreadCard({
   /** Lets a modal host dismiss itself before the file diff is pushed beneath it. */
   onBeforeNavigate?: () => void;
 }) {
+  const gt = useGT();
   const navigation = useNavigation();
   const actions = usePullRequestThreadActions(params, thread);
   const [expanded, setExpanded] = useState(defaultExpanded ?? !thread.isResolved);
@@ -315,7 +322,8 @@ export function PullRequestThreadCard({
     );
   }, [thread.comments, page?.comments, retiredIds]);
   const nextCursor = page === null ? (thread.nextCommentsCursor ?? null) : page.nextCursor;
-  const summary = reviewThreadSummary(thread);
+  const messages = useMessages();
+  const summary = reviewThreadSummary(thread, messages);
   const pendingById = new Map(
     pendingReviewCommentsFromThreads([{ ...thread, comments }]).map((comment) => [
       comment.id,
@@ -367,7 +375,7 @@ export function PullRequestThreadCard({
       {showPath ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`View ${thread.path} diff`}
+          accessibilityLabel={gt("View {path} diff", { path: thread.path })}
           onPress={() => {
             onBeforeNavigate?.();
             navigation.navigate("PullRequestFile", { ...params, path: thread.path });
@@ -383,7 +391,9 @@ export function PullRequestThreadCard({
             {thread.line === null ? "" : `:${thread.line}`}
           </Text>
           {thread.isOutdated ? (
-            <Text className="text-2xs text-foreground-muted">Outdated</Text>
+            <Text className="text-2xs text-foreground-muted">
+              <T>Outdated</T>
+            </Text>
           ) : null}
         </Pressable>
       ) : null}
@@ -391,7 +401,7 @@ export function PullRequestThreadCard({
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ expanded }}
-          accessibilityLabel={expanded && thread.isResolved ? "Collapse conversation" : summary}
+          accessibilityLabel={expanded && thread.isResolved ? gt("Collapse conversation") : summary}
           onPress={() => setExpanded(!expanded)}
           className="min-h-10 min-w-0 flex-1 flex-row items-center gap-2 pl-3 active:opacity-70"
         >
@@ -403,7 +413,7 @@ export function PullRequestThreadCard({
             }
           />
           <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
-            {thread.isResolved && expanded ? "Collapse" : summary}
+            {thread.isResolved && expanded ? gt("Collapse") : summary}
           </Text>
           {thread.line !== null ? (
             <Text className="text-2xs text-foreground-tertiary">
@@ -420,11 +430,13 @@ export function PullRequestThreadCard({
         {thread.isResolved && actions.canResolve ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Unresolve conversation"
+            accessibilityLabel={gt("Unresolve conversation")}
             onPress={actions.toggleResolved}
             className="-my-1 min-h-11 justify-center px-2 active:opacity-70"
           >
-            <Text className="text-xs font-t3-medium text-foreground">Unresolve</Text>
+            <Text className="text-xs font-t3-medium text-foreground">
+              <T>Unresolve</T>
+            </Text>
           </Pressable>
         ) : (
           <View className="w-2" />
@@ -445,12 +457,12 @@ export function PullRequestThreadCard({
                   pendingActions.canDiscard
                     ? () =>
                         Alert.alert(
-                          "Discard this comment?",
-                          "Your other review comments will be kept.",
+                          gt("Discard this comment?"),
+                          gt("Your other review comments will be kept."),
                           [
-                            { text: "Cancel", style: "cancel" },
+                            { text: gt("Cancel"), style: "cancel" },
                             {
-                              text: "Discard",
+                              text: gt("Discard"),
                               style: "destructive",
                               onPress: () =>
                                 void pendingActions.discard(pendingById.get(comment.id)!),
@@ -463,7 +475,7 @@ export function PullRequestThreadCard({
                   index === 0 && actions.canResolve && !thread.isResolved ? (
                     <InlineIconAction
                       icon="checkmark"
-                      label="Resolve conversation"
+                      label={gt("Resolve conversation")}
                       onPress={actions.toggleResolved}
                     />
                   ) : null
@@ -485,7 +497,7 @@ export function PullRequestThreadCard({
               className="min-h-10 justify-center border-t border-border-subtle px-3 active:opacity-70"
             >
               <Text className="text-xs font-t3-medium text-foreground-muted">
-                {loadingMore ? "Loading…" : "Load more comments"}
+                {loadingMore ? gt("Loading…") : gt("Load more comments")}
               </Text>
             </Pressable>
           ) : null}
@@ -493,13 +505,13 @@ export function PullRequestThreadCard({
             <PullRequestCommentComposer
               params={params}
               variant="inline"
-              label="Reply to this conversation"
-              placeholder="Leave a reply…"
+              label={gt("Reply to this conversation")}
+              placeholder={gt("Leave a reply…")}
               value={reply}
               onChangeText={setReply}
               busy={sending}
               canSubmit={!sending && !uploading && Boolean(reply.trim())}
-              submitLabel={sending ? "Posting…" : "Send reply"}
+              submitLabel={sending ? gt("Posting…") : gt("Send reply")}
               onSubmit={() => void send()}
               onBusyChange={setUploading}
               autoFocus={autoFocusReply}

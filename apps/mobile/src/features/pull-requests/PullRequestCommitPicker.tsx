@@ -1,3 +1,4 @@
+import { T, Var, useGT } from "gt-react-native";
 import type { PullRequestCommit } from "@t3tools/contracts";
 import {
   reviewCommitScope,
@@ -31,6 +32,7 @@ export function PullRequestCommitPicker({
   readonly canSelectRange: boolean;
   readonly onChange: (scope: string | null) => void;
 }) {
+  const gt = useGT();
   const { height } = useWindowDimensions();
   const [shown, setShown] = useState(10);
   const oids = commits.map((commit) => commit.oid);
@@ -56,7 +58,7 @@ export function PullRequestCommitPicker({
       <View className="flex-1 items-center justify-center px-4">
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Close commit picker"
+          accessibilityLabel={gt("Close commit picker")}
           className="absolute inset-0 bg-backdrop"
           onPress={onClose}
         />
@@ -65,14 +67,23 @@ export function PullRequestCommitPicker({
           style={{ maxHeight: Math.max(200, height - 64) }}
         >
           <View className="flex-row items-center gap-2 px-3 py-2">
-            <Text className="min-w-0 flex-1 text-sm font-t3-semibold">Commit range</Text>
-            <ControlPill icon="xmark" accessibilityLabel="Close commit picker" onPress={onClose} />
+            <Text className="min-w-0 flex-1 text-sm font-t3-semibold">
+              <T>Commit range</T>
+            </Text>
+            <ControlPill
+              icon="xmark"
+              accessibilityLabel={gt("Close commit picker")}
+              onPress={onClose}
+            />
           </View>
           <View className="gap-1 border-b border-border-subtle px-4 pb-3">
             <Text className="text-xs text-foreground-muted">
               {scope === null
-                ? "All"
-                : `${selected.length} ${selected.length === 1 ? "commit" : "commits"} selected`}
+                ? gt("All")
+                : gt(
+                    "{count, plural, one {{count} commit selected} other {{count} commits selected}}",
+                    { count: selected.length },
+                  )}
             </Text>
             {scope !== null && first ? (
               <Text className="text-xs" style={{ fontFamily: REVIEW_MONO_FONT_FAMILY }}>
@@ -92,7 +103,9 @@ export function PullRequestCommitPicker({
                 <SymbolView name="checkmark" size={13} tintColorClassName="accent-icon" />
               ) : null}
             </View>
-            <Text className="text-sm">All</Text>
+            <Text className="text-sm">
+              <T>All</T>
+            </Text>
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -102,7 +115,9 @@ export function PullRequestCommitPicker({
             onPress={() => chooseQuick(reviewCommitScope(oids.slice(reviewedIndex + 1)))}
           >
             <View className="w-4" />
-            <Text className="text-sm">Since last reviewed</Text>
+            <Text className="text-sm">
+              <T>Since last reviewed</T>
+            </Text>
           </Pressable>
           <ScrollView
             style={{ flexShrink: 1, maxHeight: Math.max(84, Math.min(360, height * 0.55)) }}
@@ -138,7 +153,7 @@ export function PullRequestCommitPicker({
                   </View>
                   <View className="min-w-0 flex-1 gap-0.5">
                     <Text numberOfLines={1} ellipsizeMode="tail" className="text-sm">
-                      {entry.messageHeadline || "Untitled commit"}
+                      {entry.messageHeadline || gt("Untitled commit")}
                     </Text>
                     <Text
                       numberOfLines={1}
@@ -165,7 +180,9 @@ export function PullRequestCommitPicker({
                 onPress={() => setShown((current) => current + 10)}
               >
                 <Text className="text-xs text-foreground-muted">
-                  Show more ({commits.length - shown} left)
+                  <T>
+                    Show more (<Var>{commits.length - shown}</Var> left)
+                  </T>
                 </Text>
               </Pressable>
             ) : null}

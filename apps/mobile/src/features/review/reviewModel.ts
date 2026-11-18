@@ -10,9 +10,8 @@ import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
-import { msg } from "gt-react-native";
-
-import { m, type MessageResolver } from "../../i18n/messages";
+import { msg, mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
@@ -113,11 +112,11 @@ export type ReviewParsedDiff =
       readonly notice: string | null;
     };
 
-function checkpointTitle(checkpoint: ThreadCheckpointSummary, resolve: MessageResolver): string {
+function checkpointTitle(checkpoint: ThreadCheckpointSummary, resolve: MFunctionType): string {
   return resolve(msg("Turn {count}", { count: checkpoint.checkpointTurnCount }));
 }
 
-function checkpointSubtitle(checkpoint: ThreadCheckpointSummary, resolve: MessageResolver): string {
+function checkpointSubtitle(checkpoint: ThreadCheckpointSummary, resolve: MFunctionType): string {
   const fileCount = checkpointFileTotals(checkpoint).count;
   if (checkpoint.status !== "ready") {
     return resolve(msg("Diff {status}", { status: checkpoint.status }));
@@ -144,7 +143,7 @@ const readyCheckpointOrder = Order.make<ThreadCheckpointSummary>(
   compareCheckpointTurnCountDescending,
 );
 
-function gitSubtitle(section: ReviewDiffPreviewSource, resolve: MessageResolver): string | null {
+function gitSubtitle(section: ReviewDiffPreviewSource, resolve: MFunctionType): string | null {
   if (section.kind === "working-tree") {
     return resolve(UNCOMMITTED_SUBTITLE);
   }
@@ -278,7 +277,7 @@ function countReviewRenderableCharacters(file: ReviewRenderableFile): number {
 
 export function getReviewFilePreviewState(
   file: ReviewRenderableFile,
-  resolve: MessageResolver = m,
+  resolve: MFunctionType = mFallback,
 ): ReviewFilePreviewState {
   const extension = getFileExtension(file.path);
   if (extension && NON_TEXT_FILE_EXTENSIONS.has(extension)) {
@@ -534,9 +533,9 @@ export function buildReviewSectionItems(input: {
   readonly gitSections: ReadonlyArray<ReviewDiffPreviewSource>;
   readonly turnDiffById: Readonly<Record<string, string | undefined>>;
   readonly loadingGitSections: boolean;
-  readonly resolve?: MessageResolver;
+  readonly resolve?: MFunctionType;
 }): ReadonlyArray<ReviewSectionItem> {
-  const resolve = input.resolve ?? m;
+  const resolve = input.resolve ?? mFallback;
   const turnItems = getReadyReviewCheckpoints(input.checkpoints).map<ReviewSectionItem>(
     (checkpoint) => {
       const id = getReviewSectionIdForCheckpoint(checkpoint);
@@ -616,7 +615,7 @@ export function resolveReviewSelectedSectionId(
 export function buildReviewParsedDiff(
   diff: string | null | undefined,
   cacheScope: string,
-  resolve: MessageResolver = m,
+  resolve: MFunctionType = mFallback,
   ignoreWhitespace = false,
 ): ReviewParsedDiff {
   if (!diff?.trim()) {
@@ -701,7 +700,7 @@ export function buildReviewParsedDiff(
 export function applyReviewDiffMetadata(
   previewDiff: ReviewParsedDiff,
   selectedSection: Pick<ReviewSectionItem, "files" | "truncated"> | null,
-  resolve: MessageResolver = m,
+  resolve: MFunctionType = mFallback,
 ): ReviewParsedDiff {
   if (previewDiff.kind === "empty") return previewDiff;
   const notice = selectedSection?.truncated

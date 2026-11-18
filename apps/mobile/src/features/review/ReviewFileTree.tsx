@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { reviewFileTreeRows, reviewFolderContains } from "@t3tools/client-runtime/review-workspace";
@@ -40,6 +41,7 @@ export function ReviewFileTree({
   refreshing?: boolean;
   showViewedCheckbox?: boolean;
 }) {
+  const gt = useGT();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [width, setWidth] = useState(0);
   const rows = useMemo(
@@ -92,7 +94,7 @@ export function ReviewFileTree({
                   ? [
                       {
                         id: "mark-reviewed",
-                        title: reviewActionLabels?.mark ?? "Mark as reviewed",
+                        title: reviewActionLabels?.mark ?? gt("Mark as reviewed"),
                       },
                     ]
                   : []),
@@ -100,11 +102,11 @@ export function ReviewFileTree({
                   ? [
                       {
                         id: "mark-unreviewed",
-                        title: reviewActionLabels?.unmark ?? "Mark as unreviewed",
+                        title: reviewActionLabels?.unmark ?? gt("Mark as unreviewed"),
                       },
                     ]
                   : []),
-                { id: "copy", title: "Copy folder path" },
+                { id: "copy", title: gt("Copy folder path") },
               ]}
               onPressAction={({ nativeEvent }) => {
                 if (
@@ -120,7 +122,10 @@ export function ReviewFileTree({
             >
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`${item.path}, ${count?.unresolved ?? 0} unresolved comments`}
+                accessibilityLabel={gt("{path}, {count} unresolved comments", {
+                  path: item.path,
+                  count: count?.unresolved ?? 0,
+                })}
                 accessibilityState={{ expanded: !collapsed.has(item.path) }}
                 className="min-h-[42px] flex-row items-center gap-2 rounded-xl pr-3"
                 style={{ paddingLeft: 12 + Math.min(item.depth * 16, Math.max(0, width - 220)) }}
@@ -170,20 +175,25 @@ export function ReviewFileTree({
             title={file.path}
             shouldOpenOnLongPress
             actions={[
-              { id: "open", title: "View diff" },
+              { id: "open", title: gt("View diff") },
               ...(onSetViewed
                 ? [
                     {
                       id: "review",
                       title: file.reviewed
-                        ? (reviewActionLabels?.unmark ?? "Mark as unreviewed")
-                        : (reviewActionLabels?.mark ?? "Mark as reviewed"),
+                        ? (reviewActionLabels?.unmark ?? gt("Mark as unreviewed"))
+                        : (reviewActionLabels?.mark ?? gt("Mark as reviewed")),
                     },
                   ]
                 : []),
-              { id: "copy", title: "Copy full path" },
+              { id: "copy", title: gt("Copy full path") },
               ...(renamed
-                ? [{ id: "copy-old", title: `Copy old path: ${file.previousPath}` }]
+                ? [
+                    {
+                      id: "copy-old",
+                      title: gt("Copy old path: {path}", { path: file.previousPath }),
+                    },
+                  ]
                 : []),
             ]}
             onPressAction={({ nativeEvent }) => {
@@ -198,7 +208,18 @@ export function ReviewFileTree({
             <View className="flex-row items-center">
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`${file.path}${renamed ? `, renamed from ${file.previousPath}` : ""}, ${file.unresolved ?? 0} unresolved comments`}
+                accessibilityLabel={
+                  renamed
+                    ? gt("{path}, renamed from {previousPath}, {count} unresolved comments", {
+                        path: file.path,
+                        previousPath: file.previousPath,
+                        count: file.unresolved ?? 0,
+                      })
+                    : gt("{path}, {count} unresolved comments", {
+                        path: file.path,
+                        count: file.unresolved ?? 0,
+                      })
+                }
                 className="min-h-[42px] min-w-0 flex-1 flex-row items-center gap-2 rounded-xl pr-3"
                 style={{ paddingLeft: 28 + Math.min(item.depth * 16, Math.max(0, width - 220)) }}
                 onPress={() => onSelectFile(file.path)}
@@ -237,7 +258,11 @@ export function ReviewFileTree({
               {showViewedCheckbox ? (
                 <Pressable
                   accessibilityRole="checkbox"
-                  accessibilityLabel={`Mark ${file.path} as ${file.reviewed ? "unviewed" : "viewed"}`}
+                  accessibilityLabel={
+                    file.reviewed
+                      ? gt("Mark {path} as unviewed", { path: file.path })
+                      : gt("Mark {path} as viewed", { path: file.path })
+                  }
                   accessibilityState={{ checked: file.reviewed === true, disabled: !onSetViewed }}
                   disabled={!onSetViewed}
                   className="min-h-11 min-w-11 items-center justify-center"

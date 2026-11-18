@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { reviewRenameSegments } from "@t3tools/client-runtime/review-workspace";
 import { useId, useMemo, useState } from "react";
 import { Pressable, ScrollView, View } from "react-native";
@@ -30,6 +31,7 @@ export function GuideFiles({
   readonly onToggleViewed?: ((path: string) => void) | undefined;
   readonly onOpenFile: (path: string) => void;
 }) {
+  const gt = useGT();
   const { themeVariables: colors } = useAppearancePreferences();
   const gradientId = `guide-path-fade-${useId().replaceAll(":", "")}`;
   const byPath = useMemo(() => new Map(files.map((file) => [file.path, file])), [files]);
@@ -88,7 +90,15 @@ export function GuideFiles({
                 <Pressable
                   key={path}
                   accessibilityRole="button"
-                  accessibilityLabel={`View diff for ${path}${file ? `, ${file.additions} additions, ${file.deletions} deletions` : ""}`}
+                  accessibilityLabel={
+                    file
+                      ? gt("View diff for {path}, {additions} additions, {deletions} deletions", {
+                          path,
+                          additions: file.additions,
+                          deletions: file.deletions,
+                        })
+                      : gt("View diff for {path}", { path })
+                  }
                   onPress={() => onOpenFile(path)}
                   className="flex-row items-center gap-2 px-3 active:opacity-60"
                   style={{ height: ROW_HEIGHT }}
@@ -138,7 +148,7 @@ export function GuideFiles({
             key={path}
             accessibilityRole="checkbox"
             accessibilityState={{ checked: isViewed(path), disabled: !onToggleViewed }}
-            accessibilityLabel={`Viewed ${path}`}
+            accessibilityLabel={gt("Viewed {path}", { path })}
             disabled={!onToggleViewed}
             onPress={() => onToggleViewed?.(path)}
             className="w-11 items-center justify-center"

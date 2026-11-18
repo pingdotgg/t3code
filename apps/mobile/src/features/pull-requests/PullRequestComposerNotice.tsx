@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Toast } from "../../components/ui/Toast";
@@ -6,6 +7,7 @@ import { dismissComposerInsertNotice, useComposerInsertNotice } from "./composer
 
 /** Confirms a comment reached the thread's composer without leaving the pull request. */
 export function PullRequestComposerNotice(props: { readonly bottomInset?: number }) {
+  const gt = useGT();
   const notice = useComposerInsertNotice();
   const selectDetail = useSelectWorkspaceDetail();
   const insets = useSafeAreaInsets();
@@ -18,10 +20,10 @@ export function PullRequestComposerNotice(props: { readonly bottomInset?: number
       pointerEvents="box-none"
     >
       <Toast
-        message="Added to composer"
+        message={gt("Added to composer")}
         tone="success"
         action={{
-          label: "Open",
+          label: gt("Open", { $context: "verb, opens the thread composer" }),
           onPress: () => {
             dismissComposerInsertNotice();
             selectDetail({

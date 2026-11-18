@@ -1390,6 +1390,7 @@ export function PullRequestDetailPanel({
           {
             id: comment.id,
             sectionId: `pull-request:${reference.number}`,
+            // oxlint-disable-next-line t3code/no-untranslated-copy -- Stored in the review comment record sent to the agent; localized when displayed.
             sectionTitle: `PR #${reference.number} review`,
             filePath: comment.path,
             startIndex: (start?.line ?? anchor.line) - 1,

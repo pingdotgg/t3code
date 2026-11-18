@@ -35,6 +35,10 @@ vi.mock("@effect/atom-react", () => ({
         : [],
 }));
 vi.mock("../../state/reviewTurnDiffs", () => ({ lastReviewTurnDiffsAtom: () => state.turnAtom }));
+vi.mock("gt-react-native", async () => {
+  const { mFallback, msg } = await import("gt-i18n");
+  return { msg, useMessages: () => mFallback };
+});
 vi.mock("react", () => ({
   useCallback: <A>(callback: A) => callback,
   useEffect: (effect: () => void) => state.effects.push(effect),

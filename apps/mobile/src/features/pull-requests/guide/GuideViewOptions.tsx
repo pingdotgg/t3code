@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useState } from "react";
 import { Pressable } from "react-native";
 import { SymbolView } from "../../../components/ui/AppSymbol";
@@ -13,6 +14,7 @@ export function GuideViewOptions({
   readonly open: boolean;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const { ignoreWhitespace, setIgnoreWhitespace } = useDiffWhitespacePreference();
   return (
@@ -22,13 +24,13 @@ export function GuideViewOptions({
       options={[
         {
           id: "word-wrap",
-          label: "Word wrap",
+          label: gt("Word wrap"),
           checked: appearance.codeWordBreak,
           onChange: setCodeWordBreak,
         },
         {
           id: "hide-whitespace",
-          label: "Hide whitespace changes",
+          label: gt("Hide whitespace changes"),
           checked: ignoreWhitespace,
           onChange: setIgnoreWhitespace,
         },
@@ -38,12 +40,13 @@ export function GuideViewOptions({
 }
 
 export function GuideViewOptionsButton() {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   return (
     <>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel="View options"
+        accessibilityLabel={gt("View options")}
         onPress={() => setOpen(true)}
         className="h-11 w-11 items-center justify-center rounded-lg active:bg-grouped-card"
       >

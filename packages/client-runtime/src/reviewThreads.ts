@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type { PullRequestActor, PullRequestReviewThread } from "@t3tools/contracts";
 
 /**
@@ -48,22 +50,49 @@ function actorName(actor: PullRequestActor | null | undefined) {
 }
 
 /** "a and b", or "a, b and 2 more" once a list stops fitting on one line. */
-export function reviewParticipantsLabel(actors: ReadonlyArray<PullRequestActor | null>) {
+export function reviewParticipantsLabel(
+  actors: ReadonlyArray<PullRequestActor | null>,
+  resolve: MFunctionType = mFallback,
+) {
   const names = [...new Set(actors.map(actorName))];
   return names.length > 2
-    ? `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`
-    : names.join(" and ");
+    ? resolve(
+        msg("{names} and {count} more", {
+          names: names.slice(0, 2).join(", "),
+          count: names.length - 2,
+        }),
+      )
+    : names.length === 2
+      ? resolve(msg("{first} and {second}", { first: names[0]!, second: names[1]! }))
+      : (names[0] ?? "");
 }
 
 /** The one line a review conversation shows when collapsed, matching desktop's header. */
 export function reviewThreadSummary(
   thread: Pick<PullRequestReviewThread, "isResolved" | "commentCount" | "comments">,
+  resolve: MFunctionType = mFallback,
 ) {
   const count = thread.commentCount ?? thread.comments.length;
-  const noun = count === 1 ? "comment" : "comments";
-  if (!thread.isResolved) return `Open · ${count} ${noun}`;
-  const authors = reviewParticipantsLabel(thread.comments.map((comment) => comment.author));
-  return `${count} resolved ${noun}${authors ? ` from ${authors}` : ""}`;
+  if (!thread.isResolved)
+    return resolve(
+      msg("Open · {count, plural, one {{count} comment} other {{count} comments}}", { count }),
+    );
+  const authors = reviewParticipantsLabel(
+    thread.comments.map((comment) => comment.author),
+    resolve,
+  );
+  return authors
+    ? resolve(
+        msg(
+          "{count, plural, one {{count} resolved comment} other {{count} resolved comments}} from {authors}",
+          { count, authors },
+        ),
+      )
+    : resolve(
+        msg("{count, plural, one {{count} resolved comment} other {{count} resolved comments}}", {
+          count,
+        }),
+      );
 }
 
 /** Open and resolved totals for a checklist header; read after the optimistic projection. */

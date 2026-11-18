@@ -1,3 +1,4 @@
+import { T, Var, useGT } from "gt-react-native";
 import { reviewFileChapters } from "@t3tools/shared/reviewFileClassification";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../../components/ui/AppText";
@@ -23,6 +24,7 @@ export function GuideGeneratingFiles({
   readonly onToggleViewed?: ((path: string) => void) | undefined;
   readonly onOpenFile: (path: string) => void;
 }) {
+  const gt = useGT();
   return (
     <View className="gap-3">
       {reviewFileChapters(files, (file) => file.path).map((group) => (
@@ -30,8 +32,10 @@ export function GuideGeneratingFiles({
           <View className="min-h-9 flex-row items-center justify-between gap-2">
             <Text className="text-sm font-t3-semibold">{group.title}</Text>
             <Text className="text-xs text-foreground-muted">
-              {group.files.filter((file) => isViewed(file.path)).length} of {group.files.length}{" "}
-              files reviewed
+              <T>
+                <Var>{group.files.filter((file) => isViewed(file.path)).length}</Var> of{" "}
+                <Var>{group.files.length}</Var> files reviewed
+              </T>
             </Text>
           </View>
           <GuideFiles
@@ -45,7 +49,7 @@ export function GuideGeneratingFiles({
       ))}
       {!files.length ? (
         <Text className="py-3 text-sm text-foreground-muted">
-          {error ?? (loading ? "Loading files…" : "No changed files.")}
+          {error ?? (loading ? gt("Loading files…") : gt("No changed files."))}
         </Text>
       ) : error ? (
         <Text className="text-xs text-danger-foreground">{error}</Text>
@@ -56,7 +60,9 @@ export function GuideGeneratingFiles({
           onPress={onLoadMore}
           className="min-h-11 items-center justify-center"
         >
-          <Text className="text-sm font-t3-medium">Load more files</Text>
+          <Text className="text-sm font-t3-medium">
+            <T>Load more files</T>
+          </Text>
         </Pressable>
       ) : null}
     </View>

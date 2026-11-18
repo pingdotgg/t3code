@@ -1,3 +1,4 @@
+import { T, Var, useGT } from "gt-react";
 import { useId, useState } from "react";
 import { Button } from "../ui/button";
 import { PullRequestAdminMergeOption } from "./PullRequestAdminMergeOption";
@@ -25,16 +26,17 @@ export function PullRequestMergeControl({
   blockedReason?: string | null;
   onConfirm: (adminOverride: boolean) => Promise<boolean>;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [bypass, setBypass] = useState(false);
   const checkboxId = useId();
   const inlineConfirm = useInlineActionConfirm(checkboxId);
   const adminOverride = canAdminOverride && bypass;
   const confirmLabel = adminOverride
-    ? "Bypass rules and merge"
+    ? gt("Bypass rules and merge")
     : autoMerge
-      ? "Enable auto-merge"
-      : `Confirm ${methodLabel.toLowerCase()}`;
+      ? gt("Enable auto-merge")
+      : gt("Confirm {method}", { method: methodLabel.toLowerCase() });
   const setOpenAndReset = (next: boolean) => {
     setOpen(next && blockedReason === null);
     setBypass(false);
@@ -55,7 +57,7 @@ export function PullRequestMergeControl({
       >
         <PullRequestGlyph.merged aria-hidden className="size-3.5" />
         <span className="@max-[30rem]/pr-header:hidden">
-          {pending ? "Working..." : confirming ? confirmLabel : label}
+          {pending ? gt("Working...") : confirming ? confirmLabel : label}
         </span>
       </Button>
     );
@@ -75,19 +77,23 @@ export function PullRequestMergeControl({
         }
       >
         <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-        <span className="@max-[30rem]/pr-header:hidden">{pending ? "Working..." : label}</span>
+        <span className="@max-[30rem]/pr-header:hidden">{pending ? gt("Working...") : label}</span>
       </PopoverTrigger>
-      <PopoverPopup width="md" align="end" aria-label="Confirm pull request merge">
+      <PopoverPopup width="md" align="end" aria-label={gt("Confirm pull request merge")}>
         <div className="flex flex-col gap-3">
           <div>
             <p className="text-sm font-medium">{methodLabel}</p>
             <p className="mt-1 text-xs text-muted-foreground">
               {autoMerge && !adminOverride ? (
-                "Merge automatically once the requirements are met."
+                <T>Merge automatically once the requirements are met.</T>
               ) : (
-                <>
-                  Merge this pull request into <span className="font-mono">{baseBranch}</span>.
-                </>
+                <T>
+                  Merge this pull request into{" "}
+                  <span className="font-mono">
+                    <Var>{baseBranch}</Var>
+                  </span>
+                  .
+                </T>
               )}
             </p>
           </div>
@@ -105,7 +111,7 @@ export function PullRequestMergeControl({
               disabled={pending}
               onClick={() => setOpenAndReset(false)}
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
             <Button
               size="xs"
@@ -116,7 +122,7 @@ export function PullRequestMergeControl({
                 if (await onConfirm(adminOverride)) setOpenAndReset(false);
               }}
             >
-              {pending ? "Working..." : confirmLabel}
+              {pending ? gt("Working...") : confirmLabel}
             </Button>
           </div>
         </div>

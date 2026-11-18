@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { useNavigation } from "@react-navigation/native";
 import { countReviewThreads } from "@t3tools/client-runtime/review-threads";
 import { useState } from "react";
@@ -27,6 +28,7 @@ export function PullRequestCommentsSheet({
   visible: boolean;
   onClose: () => void;
 }) {
+  const gt = useGT();
   const navigation = useNavigation();
   const { themeVariables: colors } = useAppearancePreferences();
   const draft = usePullRequestReviewDraft(params);
@@ -56,16 +58,16 @@ export function PullRequestCommentsSheet({
   const options = [
     {
       value: "unresolved" as const,
-      label: "Unresolved",
+      label: gt("Unresolved"),
       ...(draft.activityLoaded ? { badge: unresolved.length } : {}),
     },
     {
       value: "resolved" as const,
-      label: "Resolved",
+      label: gt("Resolved"),
       ...(draft.activityLoaded ? { badge: resolved.length } : {}),
     },
     ...(draft.comments.length
-      ? [{ value: "pending" as const, label: "Pending", badge: draft.comments.length }]
+      ? [{ value: "pending" as const, label: gt("Pending"), badge: draft.comments.length }]
       : []),
   ];
   return (
@@ -79,19 +81,26 @@ export function PullRequestCommentsSheet({
       <SafeAreaView style={{ flex: 1, backgroundColor: colors["--color-screen"] }}>
         <View className="flex-row items-center gap-3 px-4 pt-4 pb-1">
           <View className="min-w-0 flex-1">
-            <Text className="text-base font-t3-bold">Comments</Text>
+            <Text className="text-base font-t3-bold">
+              <T>Comments</T>
+            </Text>
             <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
               {draft.activityLoaded
-                ? `${counts.open} open · ${counts.resolved} resolved`
+                ? gt("{open} open · {resolved} resolved", {
+                    open: counts.open,
+                    resolved: counts.resolved,
+                  })
                 : draft.activityError
-                  ? "Could not load comments"
-                  : "Loading comments…"}
-              {draft.comments.length ? ` · ${draft.comments.length} pending` : ""}
+                  ? gt("Could not load comments")
+                  : gt("Loading comments…")}
+              {draft.comments.length
+                ? gt(" · {count} pending", { count: draft.comments.length })
+                : ""}
             </Text>
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Close comments"
+            accessibilityLabel={gt("Close comments")}
             onPress={onClose}
             hitSlop={6}
             className="size-9 items-center justify-center rounded-xl bg-subtle active:opacity-70"
@@ -146,7 +155,9 @@ export function PullRequestCommentsSheet({
                     });
                   }}
                 >
-                  <Text className="py-2 text-xs text-foreground-muted">Open pending comment</Text>
+                  <Text className="py-2 text-xs text-foreground-muted">
+                    <T>Open pending comment</T>
+                  </Text>
                 </Pressable>
               </View>
             ))}
@@ -168,19 +179,21 @@ export function PullRequestCommentsSheet({
                   onPress={draft.refreshActivity}
                   className="min-h-11 justify-center active:opacity-70"
                 >
-                  <Text className="text-sm font-t3-medium">Try again</Text>
+                  <Text className="text-sm font-t3-medium">
+                    <T>Try again</T>
+                  </Text>
                 </Pressable>
               </View>
             ) : !draft.activityLoaded && selectedStatus !== "pending" ? (
               <Text accessibilityLiveRegion="polite" className="text-sm text-foreground-muted">
-                Loading comments…
+                <T>Loading comments…</T>
               </Text>
             ) : null}
             {draft.activityLoaded && !draft.activityError && !threads.length && !pending.length ? (
               <Text className="text-sm text-foreground-muted">
                 {selectedStatus === "resolved"
-                  ? "No resolved comments."
-                  : "No unresolved comments."}
+                  ? gt("No resolved comments.")
+                  : gt("No unresolved comments.")}
               </Text>
             ) : null}
           </ScrollView>

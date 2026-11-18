@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -17,8 +18,10 @@ type Props = {
 
 /** Comment stays within reach; Git operations share a compact secondary menu. */
 export function WorkingChangesLineActions(props: Props) {
-  const noun = props.lineCount === 1 ? "line" : "lines";
-  const stageLabel = `${props.staged ? "Unstage" : "Stage"} ${noun}`;
+  const gt = useGT();
+  const stageLabel = props.staged
+    ? gt("{count, plural, =1 {Unstage line} other {Unstage lines}}", { count: props.lineCount })
+    : gt("{count, plural, =1 {Stage line} other {Stage lines}}", { count: props.lineCount });
   const actions = [
     {
       id: "stage",
@@ -30,7 +33,9 @@ export function WorkingChangesLineActions(props: Props) {
       ? [
           {
             id: "revert",
-            title: `Revert ${noun}`,
+            title: gt("{count, plural, =1 {Revert line} other {Revert lines}}", {
+              count: props.lineCount,
+            }),
             image: "arrow.uturn.backward",
             attributes: { disabled: !props.canRevert, destructive: true },
           },
@@ -41,11 +46,14 @@ export function WorkingChangesLineActions(props: Props) {
     <View className="gap-1 border-t border-border-subtle bg-card px-3 pb-2 pt-1">
       <View className="flex-row items-center">
         <Text className="min-w-0 flex-1 text-xs text-foreground-muted">
-          {props.lineCount === 1 ? "Line" : "Lines"} {props.rangeLabel} selected
+          {gt("{count, plural, =1 {Line {range} selected} other {Lines {range} selected}}", {
+            count: props.lineCount,
+            range: props.rangeLabel,
+          })}
         </Text>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Clear line selection"
+          accessibilityLabel={gt("Clear line selection")}
           onPress={props.onClear}
           className="size-11 items-center justify-center"
         >
@@ -55,7 +63,7 @@ export function WorkingChangesLineActions(props: Props) {
       <View className="flex-row items-center gap-2">
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Comment on selected lines"
+          accessibilityLabel={gt("Comment on selected lines")}
           accessibilityState={{ disabled: !props.onComment }}
           disabled={!props.onComment}
           onPress={props.onComment}
@@ -69,11 +77,11 @@ export function WorkingChangesLineActions(props: Props) {
           <Text
             className={`text-sm font-t3-medium ${props.onComment ? "text-primary-foreground" : "text-foreground-muted"}`}
           >
-            Comment
+            <T>Comment</T>
           </Text>
         </Pressable>
         <Menu
-          title="Selected line actions"
+          title={gt("Selected line actions")}
           actions={actions}
           onPressAction={({ nativeEvent }) => {
             if (nativeEvent.event === "stage" && props.canStage) props.onStage();
@@ -82,10 +90,12 @@ export function WorkingChangesLineActions(props: Props) {
         >
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Selected line actions"
+            accessibilityLabel={gt("Selected line actions")}
             className="min-h-11 flex-row items-center justify-center gap-2 rounded-lg border border-border-subtle px-3"
           >
-            <Text className="text-sm font-t3-medium">More</Text>
+            <Text className="text-sm font-t3-medium">
+              <T>More</T>
+            </Text>
             <SymbolView name="ellipsis" size={16} tintColorClassName="accent-icon" />
           </Pressable>
         </Menu>

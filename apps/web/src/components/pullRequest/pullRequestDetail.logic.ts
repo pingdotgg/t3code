@@ -909,7 +909,9 @@ export function buildPullRequestTimeline(
         at: latest,
         kind: "thread" as const,
         reviewThread: thread,
-        title: thread.isResolved ? "resolved discussion" : "open discussion",
+        title: thread.isResolved
+          ? resolve(msg("resolved discussion"))
+          : resolve(msg("open discussion")),
         body: null,
         markdown: false,
         url: first?.url ?? null,

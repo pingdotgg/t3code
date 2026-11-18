@@ -323,6 +323,7 @@ export function pendingReviewCommentComposerContext(
   const startIndex = Math.max(0, Math.min(comment.startLine, comment.endLine) - 1);
   return {
     ...pullRequestComposerContext(pullRequest, id, comment.path),
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- context record sent to the agent
     sectionTitle: `PR #${pullRequest.number} review`,
     startIndex,
     endIndex: Math.max(startIndex, comment.endLine - 1),
