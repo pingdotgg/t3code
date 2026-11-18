@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import type { PluggableList } from "unified";
 import type { Root, RootContent } from "mdast";
 import {
@@ -6,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { type TimelineWorkEntry, type TimelineRow } from "./timelineRowContext";
 import { type WorkEntryIconName } from "./TimelineToolActivityIcon";
 
@@ -95,6 +97,7 @@ export function buildToolCallExpandedBody(
   workspaceRoot: string | undefined,
   visibleLabel: string,
   viewedImagePath: string | null,
+  resolve: MessageResolver = m,
 ): string | null {
   const blocks: string[] = [];
   const seen = new Set<string>([visibleLabel.trim()]);
@@ -113,7 +116,9 @@ export function buildToolCallExpandedBody(
             "input" in workEntry.toolData
           ? workEntry.toolData.input
           : undefined;
-    if (input !== undefined) addBlock(`Tool input\n${JSON.stringify(input, null, 2)}`);
+    if (input !== undefined) {
+      addBlock(resolve(msg("Tool input\n{input}", { input: JSON.stringify(input, null, 2) })));
+    }
   }
   const command = workEntry.command?.trim();
   const raw = workEntryRawCommand(workEntry);
@@ -167,6 +172,12 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
         return "zap";
     }
   }
+  if (workEntry.itemType === "system_notice") {
+    return workEntry.structuredPayload?.type === "system_notice" &&
+      workEntry.structuredPayload.level === "info"
+      ? "zap"
+      : "circle-alert";
+  }
   if (workEntry.itemType === "user_input_request" || workEntry.itemType === "approval_request") {
     return "message-circle";
   }
@@ -177,7 +188,7 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
     isJavaScriptReplTool(workEntry.structuredPayload.toolName)
   )
     return "code";
-  const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
+  const toolPresentation = resolveWorkEntryToolPresentation(workEntry, undefined, m);
   if (toolPresentation) return toolPresentation.icon;
   const action = toolGroupAction(workEntry);
   if (action !== "other") return toolGroupSummaryIconName(action);
@@ -209,17 +220,20 @@ export function remarkThoughtPreview(fallback: string) {
       children.push({ type: "text", value: fragments.join("").replace(/\s+/g, " ") });
       fragments = [];
     };
-    const append = (value: string) => {
+    const take = (value: string) => {
       const text = value.slice(0, remaining);
-      remaining -= text.length;
-      fragments.push(text);
+      remaining = text.length < value.length ? 0 : remaining - text.length;
+      // A cut here or at the source limit must not leave half a surrogate pair.
+      return text.replace(/[\uD800-\uDBFF]$/, "");
+    };
+    const append = (value: string) => {
+      fragments.push(take(value));
     };
     const visit = (node: Root | RootContent) => {
       if (remaining === 0 || node.type === "html" || node.type === "definition") return;
       if (node.type === "math" || node.type === "inlineMath") {
         flush();
-        const value = node.value.slice(0, remaining);
-        remaining -= value.length;
+        const value = take(node.value);
         children.push({
           type: "inlineMath",
           value,
@@ -256,5 +270,6 @@ export function remarkThoughtPreview(fallback: string) {
   };
 }
 
-export const THOUGHT_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thought"]];
-export const THINKING_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thinking"]];
+export function thoughtPreviewPlugins(fallback: string): PluggableList {
+  return [[remarkThoughtPreview, fallback]];
+}

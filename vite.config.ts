@@ -51,6 +51,12 @@ const RESTRICTED_IMPORT_PATHS = [
     message:
       "Use NativeScrollViewMarker or NativeScrollView (src/native/NativeScrollViewMarker.tsx): they carry the header's scroll-edge blur under the Duo's vertical bar.",
   },
+  {
+    name: "react-native",
+    importNames: ["RefreshControl"],
+    message:
+      "Use RefreshControl from src/components/ui/RefreshControl: Android bottom sheets own the pull at the top, so it steps aside there.",
+  },
 ];
 
 const RESTRICTED_UI_VARIANT_PATTERNS = [
@@ -577,6 +583,20 @@ export default defineConfig({
           ],
         },
       },
+      // Registered always so a disable comment for intentional English counts as used.
+      // `vp run i18n:untranslated` counts what it flags.
+      {
+        files: ["apps/web/src/**", "apps/mobile/src/**", "packages/client-runtime/src/**"],
+        excludeFiles: [
+          "**/*.{test,spec,bench}.{ts,tsx}",
+          "**/{test,testkit,testing,fixtures}/**",
+          "**/*.test-fixtures.ts",
+          "**/{test-fixtures,*TestFixtures}.ts",
+          "apps/mobile/src/features/development/**",
+          "packages/client-runtime/src/rpc/**",
+        ],
+        rules: { "t3code/no-untranslated-copy": "error" },
+      },
       {
         // React Compiler owns memoization; upstream rules do not ban redundant useMemo/useCallback.
         files: ["apps/web/src/**/*.{ts,tsx}"],
@@ -641,6 +661,7 @@ export default defineConfig({
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
+          "apps/mobile/src/components/ComposerSurface.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",

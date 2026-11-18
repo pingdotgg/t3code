@@ -70,6 +70,8 @@ export const ServerProviderAuth = Schema.Struct({
   subscriptionSharing: Schema.optional(Schema.Boolean),
   profileId: Schema.optional(TrimmedNonEmptyString),
   workspaceId: Schema.optional(TrimmedNonEmptyString),
+  /** Origin of the custom endpoint the instance sends its requests to. */
+  endpoint: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
@@ -83,6 +85,9 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  // False when the provider can run this model in sessions but not for
+  // application text generation. Absent means supported.
+  supportsTextGeneration: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
@@ -271,6 +276,11 @@ export const ServerProvider = Schema.Struct({
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
+  /**
+   * Set when the server rescanned a workspace after a session start and its skills or commands
+   * changed. Clients holding fetched workspace snapshots for this provider fetch them again.
+   */
+  workspaceRescannedAt: Schema.optionalKey(IsoDateTime),
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
@@ -617,6 +627,8 @@ const EnvironmentThemeColors = Schema.Record(
   TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
 );
 
+export const THEME_CSS_MAX_LENGTH = 100_000;
+
 const environmentThemeFields = {
   version: Schema.optional(Schema.Literal(1)),
   name: TrimmedNonEmptyString.check(Schema.isMaxLength(48)),
@@ -631,6 +643,8 @@ const environmentThemeFields = {
       dark: Schema.optional(EnvironmentThemeColors),
     }),
   ),
+  /** Custom styles for web and desktop clients. */
+  css: Schema.optional(Schema.String.check(Schema.isMaxLength(THEME_CSS_MAX_LENGTH))),
 };
 
 export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
@@ -639,6 +653,8 @@ export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
 export const EnvironmentTheme = Schema.Struct({
   id: EnvironmentThemeId,
   ...environmentThemeFields,
+  /** Revision of the image file published beside the theme; absent without one. */
+  background: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });
 export type EnvironmentTheme = typeof EnvironmentTheme.Type;
 
@@ -676,6 +692,8 @@ export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
   cwd: TrimmedNonEmptyString,
+  /** The machine's own name, which file URIs from its shells may carry. Older servers omit it. */
+  hostname: Schema.optionalKey(Schema.String),
   keybindingsConfigPath: TrimmedNonEmptyString,
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
@@ -721,6 +739,12 @@ export const ServerConfig = Schema.Struct({
    * answering. Clients do not cache it, since it describes the host at connect.
    */
   lastEventLoopStall: Schema.optionalKey(ServerEventLoopStall),
+  /**
+   * The host's clock when it built the config, so clients can count live
+   * elapsed times against host timestamps despite clock skew. Only a
+   * subscription's first snapshot is fresh; later snapshots may repeat it.
+   */
+  serverTime: Schema.optionalKey(IsoDateTime),
   /**
    * Never sent in a config snapshot: the theme stream emits the current set
    * before any change, so a snapshot carrying it too would hand every
@@ -998,6 +1022,7 @@ export const ServerSelfUpdateInput = Schema.Struct({
   channel: Schema.optionalKey(DesktopUpdateChannelSchema),
   /** The target release's highest migration; the host refuses to leave Nightly without it. */
   targetDatabaseMigration: Schema.optionalKey(Schema.Int),
+  stageOnly: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerSelfUpdateInput = typeof ServerSelfUpdateInput.Type;
 

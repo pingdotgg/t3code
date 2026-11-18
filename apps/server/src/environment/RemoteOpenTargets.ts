@@ -37,7 +37,8 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
-    const magicDnsName = tailscaleStatus?.magicDnsName ?? null;
+    const magicDnsName =
+      tailscaleStatus?.running === false ? null : (tailscaleStatus?.magicDnsName ?? null);
 
     const targets: Array<RemoteOpenTarget> = [];
 

@@ -21,6 +21,7 @@ const ALL_MCP_CAPABILITIES = [
   "worktree",
   "device",
   "pull-requests",
+  "issues",
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
@@ -141,6 +142,11 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
+  /**
+   * The origin this `/mcp` request reached, e.g. a T3 Connect tunnel. Hosted clients cannot
+   * see the URL they were configured with, so links they must fetch carry it. Unset in-process.
+   */
+  readonly origin?: string | undefined;
 }
 
 /**
@@ -173,6 +179,17 @@ export const hiddenFromSubagents = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.thread?.subagent !== true;
+};
+
+/**
+ * `McpSchema.EnabledWhen` for tools that act as the calling thread: a client
+ * from outside has none. Discovery only; `McpToolAccess` still refuses the
+ * call, and `toLayer` requires this on every thread-bound declaration.
+ */
+export const hiddenFromOutsideClients = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope === undefined || scope.thread !== undefined;
 };
 
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */

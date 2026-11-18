@@ -47,6 +47,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   reviewers: { request: true, listCandidates: true, searchCandidates: true },
   labels: true,
   edit: { changeRequest: true, comment: true, maintainerEdits: true },
+  withheldFileDiff: true,
 };
 
 const UNAVAILABLE_REQUIREMENT = {
@@ -379,6 +380,11 @@ export const make = Effect.gen(function* () {
             : { behindBy: mergeRequest.divergedCommits }),
         })),
       ),
+
+    getChangeRequestWatchFingerprint: (input) =>
+      cli
+        .getMergeRequestWatchFingerprint(input)
+        .pipe(Effect.mapError(fail("getChangeRequestWatchFingerprint"))),
 
     getChangeRequestActivity: (input) =>
       Effect.all(

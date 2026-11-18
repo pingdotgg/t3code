@@ -1,9 +1,11 @@
-import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { createContext, use, useState, type Dispatch, type ReactNode } from "react";
 
-import { mobilePreferencesAtom } from "../../../state/preferences";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../state/preferences";
 import {
+  isSharedSlotTab,
+  sharedSlotAbsentee,
   navigationCustomizationAvailable,
   resolveHiddenNavigationTabs,
   resolveSelectedNavigationTab,
@@ -26,6 +28,8 @@ export const WorkspaceTabsContext = createContext<{
   readonly settingsOpen: boolean;
   readonly getScrollOffset: (tab: WorkspaceSearchTab) => number;
   readonly recordScrollOffset: (tab: WorkspaceSearchTab, offset: number) => void;
+  /** Leaves search and returns the list to where it was when search began. */
+  readonly cancelSearch: (tab: WorkspaceSearchTab) => void;
 } | null>(null);
 
 export function useWorkspaceTabs() {
@@ -41,9 +45,12 @@ function resolveWorkspaceTabsSelection(
 ): WorkspaceTabsState {
   const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
   const order = resolveWorkspaceTabOrder(saved?.navigationTabOrder);
-  const hidden = navigationCustomizationAvailable()
-    ? resolveHiddenNavigationTabs(saved?.hiddenNavigationTabs)
-    : [];
+  const hidden = [
+    ...(navigationCustomizationAvailable()
+      ? resolveHiddenNavigationTabs(saved?.hiddenNavigationTabs)
+      : []),
+    sharedSlotAbsentee(state.selectedTab, saved?.sharedSlotTab),
+  ];
   const selected = resolveSelectedNavigationTab(order, hidden, state.selectedTab);
   return selected && selected !== state.selectedTab
     ? workspaceTabsReducer(state, { type: "select", tab: selected })
@@ -52,11 +59,12 @@ function resolveWorkspaceTabsSelection(
 
 // One model per provider. Handlers on frozen screens keep stale closures, so
 // they read the current selection from the registry at call time.
-function createWorkspaceTabsModel() {
-  const stored = Atom.make(initialWorkspaceTabsState());
+function createWorkspaceTabsModel(selectedTab?: WorkspaceTab) {
+  const stored = Atom.make(initialWorkspaceTabsState(selectedTab));
   const scrollOffsets: Record<WorkspaceSearchTab, number> = {
     threads: 0,
     pullRequests: 0,
+    issues: 0,
     usage: 0,
     settings: 0,
   };
@@ -75,19 +83,29 @@ function createWorkspaceTabsModel() {
 export function WorkspaceTabsProvider(props: {
   readonly children: ReactNode;
   readonly settingsOpen?: boolean;
+  readonly initialTab?: WorkspaceTab;
 }) {
   const registry = use(RegistryContext);
-  const [model] = useState(createWorkspaceTabsModel);
+  const [model] = useState(() => createWorkspaceTabsModel(props.initialTab));
   const state = useAtomValue(model.resolved);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const dispatch = (action: WorkspaceTabsAction) => {
+    registry.set(model.stored, workspaceTabsReducer(registry.get(model.resolved), action));
+    if (action.type === "select" && isSharedSlotTab(action.tab))
+      savePreferences({ sharedSlotTab: action.tab });
+  };
   const context = {
     state,
-    dispatch: (action: WorkspaceTabsAction) =>
-      registry.set(model.stored, workspaceTabsReducer(registry.get(model.resolved), action)),
+    dispatch,
     isTabActive: (tab: WorkspaceTab) => registry.get(model.resolved).selectedTab === tab,
     bottomClearance: 0,
     settingsOpen: props.settingsOpen ?? false,
     getScrollOffset: model.getScrollOffset,
     recordScrollOffset: model.recordScrollOffset,
+    cancelSearch: (tab: WorkspaceSearchTab) => {
+      model.recordScrollOffset(tab, registry.get(model.resolved).tabs[tab].searchEntryOffset);
+      dispatch({ type: "cancel", tab });
+    },
   };
   return <WorkspaceTabsContext value={context}>{props.children}</WorkspaceTabsContext>;
 }
