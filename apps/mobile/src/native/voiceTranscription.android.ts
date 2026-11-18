@@ -1,7 +1,9 @@
 import { requireOptionalNativeModule } from "expo";
 import type { RecorderState, RecordingStatus } from "expo-audio";
+import { msg } from "gt-react-native";
 import { Platform } from "react-native";
 import type { NativeVoiceRecorder } from "../features/voice-input/lazyVoiceRecorder";
+import { m } from "../i18n/messages";
 
 import {
   VoiceTranscriptionError,
@@ -27,17 +29,22 @@ type GoogleTranscriptionModule = {
 const native = requireOptionalNativeModule<GoogleTranscriptionModule>("T3VoiceTranscription");
 
 const nativeErrorMessages: Readonly<Record<string, string>> = {
-  unavailable: "On-device voice transcription is not available for this device language.",
-  storage: "Not enough storage for on-device dictation. Free device storage and retry.",
-  quota: "On-device speech quota reached. Let the device rest or charge it, then retry.",
-  "no-speech": "No speech was detected. Speak again and retry dictation.",
-  busy: "On-device speech is busy. Wait for it to finish, then retry dictation.",
-  "needs-update": "Update Android and its on-device speech services, then retry dictation.",
-  "download-failed": "Speech model download failed. Check your network connection and retry.",
-  "audio-overflow":
+  unavailable: msg("On-device voice transcription is not available for this device language."),
+  storage: msg("Not enough storage for on-device dictation. Free device storage and retry."),
+  quota: msg("On-device speech quota reached. Let the device rest or charge it, then retry."),
+  "no-speech": msg("No speech was detected. Speak again and retry dictation."),
+  busy: msg("On-device speech is busy. Wait for it to finish, then retry dictation."),
+  "needs-update": msg(
+    "Update {platform} and its on-device speech services, then retry dictation.",
+    { platform: "Android" },
+  ),
+  "download-failed": msg("Speech model download failed. Check your network connection and retry."),
+  "audio-overflow": msg(
     "The speech engine could not process the complete recording. No text was added. Retry dictation.",
-  "incomplete-audio":
+  ),
+  "incomplete-audio": msg(
     "Speech recognition could not process the complete recording. No text was added. Retry dictation.",
+  ),
 };
 
 let nextOperationId = 0;
@@ -102,10 +109,15 @@ async function runOperation<T>(
     throw new VoiceTranscriptionError({
       code: code === "unavailable" || code === "unsupported-locale" ? code : fallbackCode,
       message:
-        (typeof code === "string" ? nativeErrorMessages[code] : undefined) ??
+        m(typeof code === "string" ? nativeErrorMessages[code] : undefined) ??
         (fallbackCode === "preparation-failed"
-          ? "Voice transcription could not prepare this language. Check Google speech services and try again."
-          : "Voice transcription failed."),
+          ? m(
+              msg(
+                "Voice transcription could not prepare this language. Check {service} and try again.",
+                { service: "Google speech services" },
+              ),
+            )
+          : m(msg("Voice transcription failed."))),
       cause: error,
     });
   } finally {
