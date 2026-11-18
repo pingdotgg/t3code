@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react";
 import { machineSummaryParts } from "@t3tools/client-runtime/machine-resources";
 import { AuthOrchestrationReadScope, type EnvironmentId } from "@t3tools/contracts";
 
@@ -32,14 +33,16 @@ function EnvironmentMachineSummaryLine({
   readonly environmentId: EnvironmentId;
   readonly layout: SummaryLayout;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const resources = useEnvironmentQuery(
     serverEnvironment.machineResources({ environmentId, input: {} }),
   );
   if (resources.data === null) return null;
-  const parts = machineSummaryParts(resources.data);
+  const parts = machineSummaryParts(resources.data, m);
   const line =
     parts === null
-      ? "Not reported"
+      ? gt("Not reported")
       : parts.map((part, index) => (
           <span key={part.text}>
             {index > 0 ? " · " : null}
@@ -55,7 +58,10 @@ function EnvironmentMachineSummaryLine({
         ));
   if (layout === "row") {
     return (
-      <SettingsRow title="Machine" description={<span className="tabular-nums">{line}</span>} />
+      <SettingsRow
+        title={gt("Machine")}
+        description={<span className="tabular-nums">{line}</span>}
+      />
     );
   }
   return <span className="block truncate text-xs text-muted-foreground tabular-nums">{line}</span>;

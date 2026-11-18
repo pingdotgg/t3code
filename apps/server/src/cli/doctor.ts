@@ -1,4 +1,10 @@
 import { DATABASE_COMPACTION_RECOMMENDED_BYTES } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -225,12 +231,32 @@ export const doctorCommand = Command.make("doctor", {
     Effect.gen(function* () {
       const logLevel = yield* GlobalFlag.LogLevel;
       const config = yield* resolveCliAuthConfig(flags, logLevel);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* HostProcess.HomeDirectory;
+      const settings = yield* fs.readFileString(config.settingsPath).pipe(
+        Effect.flatMap(
+          Schema.decodeUnknownEffect(
+            fromLenientJson(
+              Schema.Struct({ worktreesDirectory: Schema.optionalKey(Schema.String) }),
+            ),
+          ),
+        ),
+        Effect.orElseSucceed(() => ({ worktreesDirectory: "" })),
+      );
+      const worktrees =
+        resolveWorktreesDirectory(
+          settings.worktreesDirectory ?? "",
+          config.worktreesDir,
+          path,
+          home,
+        ) ?? config.worktreesDir;
       yield* runDoctor(
         {
           ...config,
           diskSpaceTargets: [
             { role: "t3Home", path: config.baseDir },
-            { role: "worktrees", path: config.worktreesDir },
+            { role: "worktrees", path: worktrees },
           ],
         },
         { fix: flags.fix, dryRun: flags.dryRun },

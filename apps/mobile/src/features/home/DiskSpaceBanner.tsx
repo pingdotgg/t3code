@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { machineDiskSpaceWarnings } from "@t3tools/client-runtime/machine-resources";
 import { useNavigation } from "@react-navigation/native";
@@ -10,6 +11,8 @@ import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 
 /** The server pushes `diskSpace` only when a level changes, so this never polls. */
 export function DiskSpaceBanner() {
+  const gt = useGT();
+  const m = useMessages();
   const navigation = useNavigation();
   const configs = useServerConfigs();
   const connected = useAtomValue(connectedEnvironmentIdsAtom);
@@ -18,6 +21,7 @@ export function DiskSpaceBanner() {
     const warnings = machineDiskSpaceWarnings(
       config?.environment.label ?? environmentId,
       config?.diskSpace,
+      m,
     );
     return warnings.length === 0 ? [] : [{ environmentId, warnings }];
   });
@@ -30,7 +34,7 @@ export function DiskSpaceBanner() {
           <Pressable
             key={environmentId}
             accessibilityRole="button"
-            accessibilityHint="Opens this environment's settings"
+            accessibilityHint={gt("Opens this environment's settings")}
             onPress={() => navigation.navigate("SettingsEnvironmentDetail", { environmentId })}
             className={cn(
               "rounded-2xl border px-3.5 py-3 active:opacity-70",

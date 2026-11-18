@@ -1,3 +1,4 @@
+import { msg, useGT, useMessages } from "gt-react";
 import {
   machineCpuDetail,
   machineGpuMemory,
@@ -9,7 +10,13 @@ import {
   machineVolumeUsedShare,
   type MachineVolumeTone,
 } from "@t3tools/client-runtime/machine-resources";
-import type { EnvironmentId, HostGpu, HostResourcesSnapshot, HostVolume } from "@t3tools/contracts";
+import {
+  AuthOrchestrationReadScope,
+  type EnvironmentId,
+  type HostGpu,
+  type HostResourcesSnapshot,
+  type HostVolume,
+} from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import {
   AlertTriangleIcon,
@@ -24,11 +31,12 @@ import { formatBytes } from "../../lib/formatBytes";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
 import { SettingsSection } from "./settingsLayout";
 
-const ROLE_LABELS: Record<HostVolume["roles"][number], string> = {
-  t3Home: "T3 data",
-  worktrees: "Worktrees",
+const ROLE_LABELS = {
+  t3Home: msg("T3 data"),
+  worktrees: msg("Worktrees"),
 };
 
 function formatPercent(share: number): string {
@@ -81,10 +89,11 @@ function MachineStat({
 }
 
 function CoreStrip({ cores }: { cores: HostResourcesSnapshot["cpuCoreUtilization"] }) {
+  const gt = useGT();
   if (cores === undefined) {
     return (
       <div className="mt-1.5 text-3xs text-muted-foreground/60">
-        Per-core load not reported by this server
+        {gt("Per-core load not reported by this server")}
       </div>
     );
   }
@@ -92,7 +101,7 @@ function CoreStrip({ cores }: { cores: HostResourcesSnapshot["cpuCoreUtilization
     <div
       className="mt-2 flex h-5 items-end gap-px"
       role="img"
-      aria-label={`Per-core load: ${cores.map(formatPercent).join(", ")}`}
+      aria-label={gt("Per-core load: {cores}", { cores: cores.map(formatPercent).join(", ") })}
     >
       {cores.map((share, index) => (
         <div
@@ -111,6 +120,7 @@ function CoreStrip({ cores }: { cores: HostResourcesSnapshot["cpuCoreUtilization
 }
 
 function GpuRow({ gpu }: { gpu: HostGpu }) {
+  const gt = useGT();
   const memory = machineGpuMemory(gpu);
   return (
     <li className="flex flex-col gap-2 px-4 py-3 sm:px-5">
@@ -118,8 +128,8 @@ function GpuRow({ gpu }: { gpu: HostGpu }) {
         <span className="truncate text-xs font-medium text-foreground">{gpu.name}</span>
         <span className="shrink-0 font-mono text-xs tabular-nums text-foreground">
           {gpu.utilization === undefined
-            ? "Load unavailable"
-            : `${formatPercent(gpu.utilization)} busy`}
+            ? gt("Load unavailable")
+            : gt("{percent} busy", { percent: formatPercent(gpu.utilization) })}
         </span>
       </div>
       {gpu.utilization === undefined ? null : <UsageBar share={gpu.utilization} />}
@@ -129,15 +139,15 @@ function GpuRow({ gpu }: { gpu: HostGpu }) {
             <>
               <span>
                 {memory.usedBytes === undefined
-                  ? "VRAM in use not reported"
-                  : `${formatBytes(memory.usedBytes)} VRAM used`}
+                  ? gt("VRAM in use not reported")
+                  : gt("{used} VRAM used", { used: formatBytes(memory.usedBytes) })}
               </span>
-              <span>{formatBytes(memory.totalBytes)} total</span>
+              <span>{gt("{bytes} total", { bytes: formatBytes(memory.totalBytes) })}</span>
             </>
           ) : (
             <>
-              <span>{formatBytes(memory.usedBytes)} in use</span>
-              <span>Unified memory</span>
+              <span>{gt("{bytes} in use", { bytes: formatBytes(memory.usedBytes) })}</span>
+              <span>{gt("Unified memory")}</span>
             </>
           )}
         </div>
@@ -147,6 +157,7 @@ function GpuRow({ gpu }: { gpu: HostGpu }) {
 }
 
 function GpuSection({ snapshot }: { snapshot: HostResourcesSnapshot }) {
+  const gt = useGT();
   const state = machineGpuState(snapshot);
   return (
     <div className="border-t border-border/60">
@@ -156,11 +167,11 @@ function GpuSection({ snapshot }: { snapshot: HostResourcesSnapshot }) {
       </div>
       {state.kind === "unsupported" ? (
         <p className="px-4 py-3 text-xs text-muted-foreground sm:px-5">
-          GPUs are not reported by this server. Update it to see them.
+          {gt("GPUs are not reported by this server. Update it to see them.")}
         </p>
       ) : state.kind === "empty" ? (
         <p className="px-4 py-3 text-xs text-muted-foreground sm:px-5">
-          {state.notice ?? "No GPU found."}
+          {state.notice ?? gt("No GPU found.")}
         </p>
       ) : (
         <>
@@ -183,6 +194,8 @@ function GpuSection({ snapshot }: { snapshot: HostResourcesSnapshot }) {
 }
 
 function VolumeRow({ volume }: { volume: HostVolume }) {
+  const gt = useGT();
+  const m = useMessages();
   const tone = machineVolumeTone(volume);
   const usedBytes = Math.max(0, volume.totalBytes - volume.availableBytes);
   return (
@@ -201,7 +214,7 @@ function VolumeRow({ volume }: { volume: HostVolume }) {
               key={role}
               className="shrink-0 rounded-sm bg-muted px-1.5 py-px text-3xs text-muted-foreground"
             >
-              {ROLE_LABELS[role]}
+              {m(ROLE_LABELS[role])}
             </span>
           ))}
         </div>
@@ -212,13 +225,13 @@ function VolumeRow({ volume }: { volume: HostVolume }) {
             tone === "danger" && "text-destructive",
           )}
         >
-          {formatBytes(volume.availableBytes)} free
+          {gt("{bytes} free", { bytes: formatBytes(volume.availableBytes) })}
         </span>
       </div>
       <UsageBar share={machineVolumeUsedShare(volume)} tone={tone} />
       <div className="flex justify-between text-3xs text-muted-foreground/60">
-        <span>{formatBytes(usedBytes)} used</span>
-        <span>{formatBytes(volume.totalBytes)} total</span>
+        <span>{gt("{bytes} used", { bytes: formatBytes(usedBytes) })}</span>
+        <span>{gt("{bytes} total", { bytes: formatBytes(volume.totalBytes) })}</span>
       </div>
     </li>
   );
@@ -227,14 +240,18 @@ function VolumeRow({ volume }: { volume: HostVolume }) {
 function MachineResourcesView({
   snapshot,
   error,
+  dataUpdatedAt,
 }: {
   snapshot: HostResourcesSnapshot | null;
   error: string | null;
+  dataUpdatedAt: number;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   if (!snapshot) {
     return (
       <div className="px-4 py-4 text-xs text-muted-foreground sm:px-5">
-        {error ?? "Reading machine resources…"}
+        {error ?? gt("Reading machine resources…")}
       </div>
     );
   }
@@ -242,28 +259,39 @@ function MachineResourcesView({
   const storageState = machineStorageState(snapshot);
   return (
     <div className="overflow-hidden rounded-[inherit]">
+      {error ? (
+        <p role="status" className="px-4 py-3 text-xs text-warning-foreground sm:px-5">
+          {error}{" "}
+          <time dateTime={new Date(dataUpdatedAt).toISOString()}>
+            {new Date(dataUpdatedAt).toLocaleTimeString()}
+          </time>
+        </p>
+      ) : null}
       <div className="grid grid-cols-1 divide-y divide-border/55 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
         <MachineStat
           icon={<CpuIcon className="size-3.5" />}
           label="CPU"
           value={
             snapshot.cpuUtilization === null
-              ? "Unavailable"
+              ? gt("Unavailable")
               : formatPercent(snapshot.cpuUtilization)
           }
-          detail={machineCpuDetail(snapshot)}
+          detail={machineCpuDetail(snapshot, m)}
         >
           {snapshot.cpuUtilization === null ? null : <UsageBar share={snapshot.cpuUtilization} />}
           <CoreStrip cores={snapshot.cpuCoreUtilization} />
         </MachineStat>
         <MachineStat
           icon={<MemoryStickIcon className="size-3.5" />}
-          label="Memory"
+          label={gt("Memory")}
           value={`${formatBytes(snapshot.totalMemoryBytes - snapshot.availableMemoryBytes)} / ${formatBytes(snapshot.totalMemoryBytes)}`}
           detail={[
-            `${formatBytes(snapshot.availableMemoryBytes)} available`,
+            gt("{bytes} available", { bytes: formatBytes(snapshot.availableMemoryBytes) }),
             snapshot.swap && snapshot.swap.totalBytes > 0
-              ? `swap ${formatBytes(snapshot.swap.usedBytes)} / ${formatBytes(snapshot.swap.totalBytes)}`
+              ? gt("swap {used} / {total}", {
+                  used: formatBytes(snapshot.swap.usedBytes),
+                  total: formatBytes(snapshot.swap.totalBytes),
+                })
               : undefined,
           ]
             .filter(Boolean)
@@ -276,11 +304,11 @@ function MachineResourcesView({
       <div className="border-t border-border/60">
         <div className="flex items-center gap-2 px-4 pt-3 text-3xs font-semibold uppercase tracking-widest text-muted-foreground/70 sm:px-5">
           <HardDriveIcon className="size-3.5 text-muted-foreground/55" />
-          Disks
+          {gt("Disks")}
         </div>
         {storageState.kind === "unsupported" ? (
           <p className="px-4 py-3 text-xs text-muted-foreground sm:px-5">
-            This server is too old to report disk usage. Update it to see its volumes.
+            {gt("This server is too old to report disk usage. Update it to see its volumes.")}
           </p>
         ) : (
           <>
@@ -292,7 +320,7 @@ function MachineResourcesView({
             ) : null}
             {storageState.kind === "empty" ? (
               <p className="px-4 py-3 text-xs text-muted-foreground sm:px-5">
-                No volumes reported.
+                {gt("No volumes reported.")}
               </p>
             ) : (
               <ul className="divide-y divide-border/45">
@@ -310,15 +338,18 @@ function MachineResourcesView({
 
 /** Whole-machine CPU, memory, GPU and disks of the selected environment's host. Polls while mounted. */
 export function MachineResourcesSection({ environmentId }: { environmentId: EnvironmentId }) {
-  const { data, error } = useEnvironmentQuery(
-    serverEnvironment.machineResources({ environmentId, input: {} }),
+  const gt = useGT();
+  const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
+  const { data, error, dataUpdatedAt } = useEnvironmentQuery(
+    canRead ? serverEnvironment.machineResources({ environmentId, input: {} }) : null,
   );
+  if (!canRead) return null;
   return (
     <SettingsSection
-      title="Machine"
+      title={gt("Machine")}
       icon={<MonitorIcon className="size-4 text-muted-foreground" />}
     >
-      <MachineResourcesView snapshot={data} error={data ? null : error} />
+      <MachineResourcesView snapshot={data} error={error} dataUpdatedAt={dataUpdatedAt} />
     </SettingsSection>
   );
 }

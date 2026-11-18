@@ -649,6 +649,7 @@ export function HomeScreen(props: HomeScreenProps) {
             }}
           >
             <View className="w-full max-w-[430px]">
+              <DiskSpaceBanner />
               <EmptyState
                 title={emptyState.title}
                 detail={emptyState.detail}
@@ -753,6 +754,8 @@ export function HomeScreen(props: HomeScreenProps) {
   if (Platform.OS === "android" && threadListV2Items.length === 0) {
     return (
       <ScreenContent surface="screen">
+        <HomeTopContentSpacer />
+        <DiskSpaceBanner />
         <View
           className="flex-1 items-center justify-center px-4"
           style={{ paddingBottom: insets.bottom }}

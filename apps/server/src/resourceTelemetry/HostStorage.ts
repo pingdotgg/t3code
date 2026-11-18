@@ -20,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -95,11 +96,7 @@ function containsPath(mountPoint: string, target: string, platform: NodeJS.Platf
   return path === mount || path.startsWith(prefix);
 }
 
-/**
- * Keeps one entry per user-relevant volume. APFS lists the read-only system snapshot and the
- * Data volume of one container separately with identical capacity, so equal name, filesystem
- * and size collapse into one entry that shows the writable member.
- */
+/** Keeps user volumes distinct, except the matching APFS system/Data pair. */
 export function selectHostVolumes(
   disks: ReadonlyArray<ResourceMonitorHostDisk>,
   targets: ReadonlyArray<VolumeTarget>,
@@ -130,7 +127,13 @@ export function selectHostVolumes(
         !PSEUDO_FILE_SYSTEMS.has(disk.fileSystem.toLowerCase()) &&
         !isSystemMount(disk.mountPoint, platform));
     if (!relevant) continue;
-    const key = `${disk.name}\0${disk.fileSystem}\0${disk.totalBytes}`;
+    const apfsAlias =
+      platform === "darwin" &&
+      disk.fileSystem.toLowerCase() === "apfs" &&
+      (disk.mountPoint === "/" || disk.mountPoint === "/System/Volumes/Data");
+    const key = apfsAlias
+      ? disk.name + "\0" + disk.fileSystem + "\0" + disk.totalBytes
+      : disk.mountPoint;
     const group = groups.get(key) ?? { members: [], roles: new Set() };
     group.members.push(disk);
     for (const role of roles ?? []) group.roles.add(role);
@@ -187,7 +190,16 @@ const make = Effect.fn("makeHostStorage")(function* () {
   const platform = yield* HostProcess.Platform;
   const home = yield* HostProcess.HomeDirectory;
 
-  const realPath = (target: string) => fs.realPath(target).pipe(Effect.orElseSucceed(() => target));
+  const realPath = Effect.fn("HostStorage.existingAncestor")(function* (
+    target: string,
+  ): Effect.fn.Return<string> {
+    return yield* fs.realPath(target).pipe(
+      Effect.catch(() => {
+        const parent = path.dirname(target);
+        return parent === target ? Effect.succeed(target) : realPath(parent);
+      }),
+    );
+  });
 
   const targets = Effect.gen(function* () {
     const worktreesSetting = yield* settings.getSettings.pipe(
@@ -245,11 +257,39 @@ const make = Effect.fn("makeHostStorage")(function* () {
   const sample = Effect.fn("HostStorage.sample")(function* () {
     const current = yield* targets;
     const reading = yield* native.hostSystem.pipe(
-      Effect.map((system): HostStorageReading => ({
-        storage: { sampledAt: 0, volumes: selectHostVolumes(system.disks, current, platform) },
-        swap: { totalBytes: system.swapTotalBytes, usedBytes: system.swapUsedBytes },
-        gpu: hostGpus(system),
-      })),
+      Effect.flatMap(
+        Effect.fn("HostStorage.verifyTargets")(function* (
+          system: ResourceMonitorHostSystemEvent,
+        ): Effect.fn.Return<HostStorageReading> {
+          const selected = selectHostVolumes(system.disks, current, platform);
+          const verified = yield* Effect.forEach(current, (target) => {
+            const holder = selected.find((volume) => volume.roles.includes(target.role));
+            if (!holder) return Effect.succeed(false);
+            return Effect.all([fs.stat(target.path), fs.stat(holder.mountPoint)]).pipe(
+              Effect.map(([targetInfo, holderInfo]) => targetInfo.dev === holderInfo.dev),
+              Effect.orElseSucceed(() => false),
+            );
+          });
+          const missing = current.filter((_, index) => !verified[index]);
+          const fallback =
+            missing.length === 0 ? [] : (yield* statfsFallback(missing, "")).storage.volumes;
+          return {
+            storage: {
+              sampledAt: 0,
+              volumes: [
+                ...selectHostVolumes(
+                  system.disks,
+                  current.filter((_, index) => verified[index]),
+                  platform,
+                ),
+                ...fallback,
+              ],
+            },
+            swap: { totalBytes: system.swapTotalBytes, usedBytes: system.swapUsedBytes },
+            gpu: hostGpus(system),
+          };
+        }),
+      ),
       Effect.catch((error) =>
         Effect.map(
           statfsFallback(current, `Only T3 volumes are shown: ${error.message}`),
@@ -267,18 +307,21 @@ const make = Effect.fn("makeHostStorage")(function* () {
   const scope = yield* Effect.scope;
   const last = yield* Ref.make<Option.Option<HostStorageReading>>(Option.none());
   const inFlight = yield* Ref.make<Option.Option<Fiber.Fiber<HostStorageReading>>>(Option.none());
-  const startRefresh = Effect.uninterruptible(
-    Effect.gen(function* () {
-      const running = yield* Ref.get(inFlight);
-      if (Option.isSome(running)) return running.value;
-      const fiber = yield* sample().pipe(
-        Effect.tap((reading) => Ref.set(last, Option.some(reading))),
-        Effect.ensuring(Ref.set(inFlight, Option.none())),
-        Effect.forkIn(scope),
-      );
-      yield* Ref.set(inFlight, Option.some(fiber));
-      return fiber;
-    }),
+  const refreshLock = yield* Semaphore.make(1);
+  const startRefresh = refreshLock.withPermit(
+    Effect.uninterruptible(
+      Effect.gen(function* () {
+        const running = yield* Ref.get(inFlight);
+        if (Option.isSome(running)) return running.value;
+        const fiber = yield* sample().pipe(
+          Effect.tap((reading) => Ref.set(last, Option.some(reading))),
+          Effect.ensuring(refreshLock.withPermit(Ref.set(inFlight, Option.none()))),
+          Effect.forkIn(scope),
+        );
+        yield* Ref.set(inFlight, Option.some(fiber));
+        return fiber;
+      }),
+    ),
   );
 
   // The refresh runs in the layer scope, so a stalled mount finishes in the background while
@@ -292,10 +335,23 @@ const make = Effect.fn("makeHostStorage")(function* () {
     const fiber = yield* startRefresh;
     const reading = yield* Fiber.join(fiber).pipe(Effect.timeoutOption(READ_DEADLINE));
     if (Option.isSome(reading)) return reading.value;
-    return Option.getOrElse(previous, () => ({
-      storage: { sampledAt: now, volumes: [], unavailableReason: "Reading volumes timed out." },
-      gpu: { gpus: [], unavailableReason: "Reading GPUs timed out." },
-    }));
+    return Option.match(previous, {
+      onSome: (retained) => ({
+        ...retained,
+        storage: {
+          ...retained.storage,
+          unavailableReason: "Reading volumes timed out; showing the last reading.",
+        },
+        gpu: {
+          ...retained.gpu,
+          unavailableReason: "Reading GPUs timed out; showing the last reading.",
+        },
+      }),
+      onNone: () => ({
+        storage: { sampledAt: now, volumes: [], unavailableReason: "Reading volumes timed out." },
+        gpu: { gpus: [], unavailableReason: "Reading GPUs timed out." },
+      }),
+    });
   });
 
   return HostStorage.of({ read });

@@ -74,7 +74,9 @@ function machineResources(snapshot: HostResourcesSnapshot) {
             ...(memoryTotalBytes === undefined
               ? {}
               : {
-                  memoryFreeGiB: gib(Math.max(0, memoryTotalBytes - (memoryUsedBytes ?? 0))),
+                  ...(memoryUsedBytes === undefined
+                    ? {}
+                    : { memoryFreeGiB: gib(Math.max(0, memoryTotalBytes - memoryUsedBytes)) }),
                   memoryTotalGiB: gib(memoryTotalBytes),
                 }),
           })),

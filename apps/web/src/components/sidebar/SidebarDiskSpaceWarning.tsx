@@ -1,3 +1,4 @@
+import { T, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { machineDiskSpaceWarnings } from "@t3tools/client-runtime/machine-resources";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -10,12 +11,14 @@ import { Alert, AlertDescription } from "../ui/alert";
 
 /** The server pushes `diskSpace` only when a level changes, so this never polls. */
 export function SidebarDiskSpaceWarning() {
+  const m = useMessages();
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const low = [...presentations].flatMap(([environmentId, presentation]) => {
     if (presentation.connection.phase !== "connected") return [];
     const warnings = machineDiskSpaceWarnings(
       presentation.entry.target.label,
       presentation.serverConfig?.diskSpace,
+      m,
     );
     return warnings.length === 0 ? [] : [{ environmentId, warnings }];
   });
@@ -55,7 +58,7 @@ function EnvironmentDiskSpaceWarning({
             search={{ machine: environmentId }}
             className="underline underline-offset-2"
           >
-            Diagnostics
+            <T>Diagnostics</T>
           </Link>
           {/* Storage offers to reclaim database space when there is enough to be worth it. */}
           {canReclaim ? (
@@ -64,7 +67,7 @@ function EnvironmentDiskSpaceWarning({
               search={{ machine: environmentId }}
               className="underline underline-offset-2"
             >
-              Storage
+              <T>Storage</T>
             </Link>
           ) : null}
         </span>

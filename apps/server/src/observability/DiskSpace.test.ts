@@ -40,6 +40,18 @@ describe("applyDiskSpaceReadings", () => {
       reading(["t3Home"], 100),
       reading(["worktrees"], 15),
     ]);
+    const partial = applyDiskSpaceReadings(first, [reading(["worktrees"], 100)]);
+    expect(partial).toMatchObject({ level: "critical", volumes: [{ roles: ["t3Home"] }] });
+    const moved = applyDiskSpaceReadings(first, [
+      reading(["t3Home"], 100),
+      { ...reading(["worktrees"], 21), path: "/new-worktrees" },
+    ]);
+    expect(moved.level).toBe("ok");
+    const replaced = applyDiskSpaceReadings(first, [
+      reading(["t3Home"], 4),
+      { ...reading(["worktrees"], 15), path: "/new-worktrees" },
+    ]);
+    expect(sameDiskSpaceLevels(first, replaced)).toBe(false);
     expect(recovered).toMatchObject({ level: "low", volumes: [{ roles: ["worktrees"] }] });
     expect(sameDiskSpaceLevels(hovering, recovered)).toBe(false);
   });

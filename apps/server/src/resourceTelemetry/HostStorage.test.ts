@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Scheduler from "effect/Scheduler";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
@@ -103,7 +104,7 @@ describe("selectHostVolumes", () => {
     const volumes = HostStorage.selectHostVolumes(
       [
         disk({ mountPoint: "C:\\", name: "Windows", fileSystem: "NTFS" }),
-        disk({ mountPoint: "D:\\", name: "Data", fileSystem: "NTFS", totalBytes: 200 * GiB }),
+        disk({ mountPoint: "D:\\", name: "Windows", fileSystem: "NTFS", availableBytes: GiB }),
       ],
       [
         { role: "t3Home", path: "c:\\Users\\me\\.t3" },
@@ -112,6 +113,7 @@ describe("selectHostVolumes", () => {
       "win32",
     );
 
+    assert.strictEqual(volumes[1]?.availableBytes, GiB);
     assert.deepStrictEqual(
       volumes.map((volume) => [volume.mountPoint, volume.roles]),
       [
@@ -241,7 +243,10 @@ describe("HostStorage.layer", () => {
       const stalledStarted = yield* Deferred.make<void>();
       const program = Effect.gen(function* () {
         const storage = yield* HostStorage.HostStorage;
-        const first = yield* storage.read;
+        const [first] = yield* Effect.all(
+          Array.from({ length: 16 }, () => storage.read),
+          { concurrency: "unbounded" },
+        );
         // Past the freshness window, the next refresh stalls on a hung mount.
         yield* TestClock.adjust("20 seconds");
         const stalled = yield* Effect.forkChild(
@@ -250,9 +255,14 @@ describe("HostStorage.layer", () => {
         yield* Deferred.await(stalledStarted);
         yield* TestClock.adjust("3 seconds");
         const [second, third] = yield* Fiber.join(stalled);
+        yield* Deferred.succeed(release, undefined);
+        yield* storage.read;
+        yield* TestClock.adjust("20 seconds");
+        yield* storage.read;
         return { first, second, third };
       });
       const { first, second, third } = yield* program.pipe(
+        Effect.provideService(Scheduler.MaxOpsBeforeYield, 32),
         Effect.provide(
           storageLayer({
             hostSystem: Ref.getAndUpdate(calls, (count) => count + 1).pipe(
@@ -269,9 +279,12 @@ describe("HostStorage.layer", () => {
         ),
       );
 
-      assert.strictEqual(yield* Ref.get(calls), 2);
-      assert.deepStrictEqual(second, first);
-      assert.deepStrictEqual(third, first);
+      assert.strictEqual(yield* Ref.get(calls), 3);
+      assert.deepStrictEqual(second.storage.volumes, first?.storage.volumes);
+      assert.strictEqual(second.storage.sampledAt, first?.storage.sampledAt);
+      assert.match(second.storage.unavailableReason ?? "", /timed out; showing the last reading/);
+      assert.match(second.gpu.unavailableReason ?? "", /timed out; showing the last reading/);
+      assert.deepStrictEqual(third, second);
     }),
   );
 });

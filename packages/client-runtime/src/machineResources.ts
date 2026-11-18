@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import {
   diskSpaceLevel,
   type DiskSpaceLevel,
@@ -51,21 +53,24 @@ export interface MachineDiskSpaceWarning {
   readonly text: string;
 }
 
-const ROLE_VOLUME_LABEL = { t3Home: "the T3 data volume", worktrees: "the worktrees volume" };
-
 /** One line per low volume, worst first. */
 export function machineDiskSpaceWarnings(
   environmentLabel: string,
   diskSpace: ServerDiskSpace | undefined,
+  resolve: MFunctionType = mFallback,
 ): ReadonlyArray<MachineDiskSpaceWarning> {
   if (diskSpace === undefined || diskSpace.level === "ok") return [];
   return [...diskSpace.volumes]
     .sort((left, right) => (left.level === right.level ? 0 : left.level === "critical" ? -1 : 1))
     .map((volume) => ({
       tone: volume.level === "critical" ? ("danger" as const) : ("warning" as const),
-      text: `${environmentLabel}: ${formatMachineGigabytes(volume.availableBytes)} free on ${
-        volume.roles.includes("t3Home") ? ROLE_VOLUME_LABEL.t3Home : ROLE_VOLUME_LABEL.worktrees
-      }`,
+      text: resolve(msg("{environment}: {free} free on {volume}"), {
+        environment: environmentLabel,
+        free: formatMachineGigabytes(volume.availableBytes),
+        volume: resolve(
+          volume.roles.includes("t3Home") ? msg("the T3 data volume") : msg("the worktrees volume"),
+        ),
+      }),
     }));
 }
 
@@ -83,22 +88,31 @@ export function machineSummaryParts(
     HostResourcesSnapshot,
     "cpuUtilization" | "availableMemoryBytes" | "totalMemoryBytes" | "storage"
   >,
+  resolve: MFunctionType = mFallback,
 ): ReadonlyArray<MachineSummaryPart> | null {
   const parts: Array<MachineSummaryPart> = [];
   if (snapshot.cpuUtilization !== null) {
-    parts.push({ text: `CPU ${Math.round(snapshot.cpuUtilization * 100)}%`, tone: "default" });
+    parts.push({
+      text: resolve(msg("CPU {percent}%"), { percent: Math.round(snapshot.cpuUtilization * 100) }),
+      tone: "default",
+    });
   }
   if (snapshot.totalMemoryBytes > 0) {
     const used = snapshot.totalMemoryBytes - snapshot.availableMemoryBytes;
     parts.push({
-      text: `RAM ${formatMachineGigabytes(Math.max(0, used))} / ${formatMachineGigabytes(snapshot.totalMemoryBytes)}`,
+      text: resolve(msg("RAM {used} / {total}"), {
+        used: formatMachineGigabytes(Math.max(0, used)),
+        total: formatMachineGigabytes(snapshot.totalMemoryBytes),
+      }),
       tone: "default",
     });
   }
   const t3Volume = snapshot.storage?.volumes.find((volume) => volume.roles.includes("t3Home"));
   if (t3Volume !== undefined && t3Volume.totalBytes > 0) {
     parts.push({
-      text: `${formatMachineGigabytes(t3Volume.availableBytes)} free`,
+      text: resolve(msg("{bytes} free"), {
+        bytes: formatMachineGigabytes(t3Volume.availableBytes),
+      }),
       tone: machineVolumeTone(t3Volume),
     });
   }
@@ -107,13 +121,18 @@ export function machineSummaryParts(
 
 export function machineCpuDetail(
   snapshot: Pick<HostResourcesSnapshot, "cpuCount" | "cpuModel" | "loadAverage">,
+  resolve: MFunctionType = mFallback,
 ): string {
   const load = snapshot.loadAverage;
   return [
     snapshot.cpuModel,
-    `${snapshot.cpuCount} ${snapshot.cpuCount === 1 ? "core" : "cores"}`,
+    resolve(msg("{count, plural, one {{count} core} other {{count} cores}}"), {
+      count: snapshot.cpuCount,
+    }),
     load
-      ? `load ${[load.one, load.five, load.fifteen].map((value) => value.toFixed(2)).join(" ")}`
+      ? resolve(msg("load {values}"), {
+          values: [load.one, load.five, load.fifteen].map((value) => value.toFixed(2)).join(" "),
+        })
       : undefined,
   ]
     .filter(Boolean)

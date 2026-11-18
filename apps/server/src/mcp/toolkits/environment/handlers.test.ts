@@ -141,7 +141,7 @@ it.effect("reads the machine's resources rounded, with T3's volumes first", () =
       .handle("t3_environment_read", {})
       .pipe(Stream.unwrap, Stream.runCollect);
     const read = result.at(-1)?.result;
-    // toEqual: absent swap, disk reason and iGPU memory must stay out of the result.
+    // toEqual: absent swap, disk reason and free iGPU memory must stay out of the result.
     expect(read !== undefined && "machine" in read ? read.machine : read).toEqual({
       cpu: { usedPercent: 37, cores: 16, model: "Acme M9", load1m: 6.1 },
       memory: { availableGiB: 12.5, totalGiB: 64 },
@@ -152,7 +152,7 @@ it.effect("reads the machine's resources rounded, with T3's volumes first", () =
       ],
       gpus: [
         { name: "Acme RTX", usedPercent: 90, memoryFreeGiB: 4, memoryTotalGiB: 24 },
-        { name: "Acme iGPU" },
+        { name: "Acme iGPU", memoryTotalGiB: 8 },
       ],
     });
   }).pipe((effect) =>
@@ -185,7 +185,7 @@ it.effect("reads the machine's resources rounded, with T3's volumes first", () =
                 memoryTotalBytes: 24 * GiB,
                 memoryUsedBytes: 20 * GiB,
               },
-              { name: "Acme iGPU" },
+              { name: "Acme iGPU", memoryTotalBytes: 8 * GiB },
             ],
           },
         }),

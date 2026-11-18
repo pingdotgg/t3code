@@ -48,7 +48,10 @@ export interface DiskSpaceReading {
 
 export const EMPTY_DISK_SPACE: ServerDiskSpace = { level: "ok", volumes: [] };
 
-const volumeKey = (roles: ReadonlyArray<HostVolumeRole>) => roles.join(",");
+const volumeKey = (volume: {
+  readonly path: string;
+  readonly roles: ReadonlyArray<HostVolumeRole>;
+}) => `${volume.path}\0${volume.roles.join(",")}`;
 
 /** Folds a new reading into the previous state; a volume that could not be read keeps its level. */
 export function applyDiskSpaceReadings(
@@ -57,15 +60,12 @@ export function applyDiskSpaceReadings(
 ): ServerDiskSpace {
   if (readings.length === 0) return previous;
   const previousLevels = new Map(
-    previous.volumes.map((volume) => [volumeKey(volume.roles), volume.level]),
+    previous.volumes.map((volume) => [volumeKey(volume), volume.level]),
   );
   const volumes: Array<ServerDiskSpaceVolume> = [];
   let level: DiskSpaceLevel = "ok";
   for (const reading of readings) {
-    const volumeLevel = nextDiskSpaceLevel(
-      previousLevels.get(volumeKey(reading.roles)) ?? "ok",
-      reading,
-    );
+    const volumeLevel = nextDiskSpaceLevel(previousLevels.get(volumeKey(reading)) ?? "ok", reading);
     if (volumeLevel === "ok") continue;
     volumes.push({
       path: reading.path,
@@ -75,6 +75,13 @@ export function applyDiskSpaceReadings(
       totalBytes: reading.totalBytes,
     });
     if (diskSpaceLevelSeverity(volumeLevel) > diskSpaceLevelSeverity(level)) level = volumeLevel;
+  }
+  const readRoles = new Set(readings.flatMap((reading) => reading.roles));
+  for (const volume of previous.volumes) {
+    const roles = volume.roles.filter((role) => !readRoles.has(role));
+    if (roles.length === 0) continue;
+    volumes.push({ ...volume, roles });
+    if (diskSpaceLevelSeverity(volume.level) > diskSpaceLevelSeverity(level)) level = volume.level;
   }
   return { level, volumes };
 }
@@ -87,7 +94,7 @@ export function sameDiskSpaceLevels(left: ServerDiskSpace, right: ServerDiskSpac
     left.volumes.every(
       (volume, index) =>
         volume.level === right.volumes[index]?.level &&
-        volumeKey(volume.roles) === volumeKey(right.volumes[index]?.roles ?? []),
+        volumeKey(volume) === (right.volumes[index] ? volumeKey(right.volumes[index]) : undefined),
     )
   );
 }
@@ -97,14 +104,27 @@ export const readDiskSpace = Effect.fn("DiskSpace.read")(function* (
   targets: ReadonlyArray<DiskSpaceTarget>,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const existing = Effect.fn("DiskSpace.existingAncestor")(function* (target: string) {
+    let current = target;
+    while (!(yield* fs.exists(current))) {
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+    return current;
+  });
   const results = yield* Effect.forEach(targets, (target) =>
-    Effect.all({
-      device: fs.stat(target.path).pipe(Effect.map((info) => info.dev)),
-      stats: Effect.tryPromise({
-        try: () => NodeFSP.statfs(target.path),
-        catch: (cause) => new DiskSpaceStatfsFailed({ path: target.path, cause }),
-      }),
-    }).pipe(
+    existing(target.path).pipe(
+      Effect.flatMap((resolved) =>
+        Effect.all({
+          device: fs.stat(resolved).pipe(Effect.map((info) => info.dev)),
+          stats: Effect.tryPromise({
+            try: () => NodeFSP.statfs(resolved),
+            catch: (cause) => new DiskSpaceStatfsFailed({ path: target.path, cause }),
+          }),
+        }),
+      ),
       Effect.map(({ device, stats }) => ({ target, device, stats })),
       Effect.option,
     ),
@@ -145,7 +165,6 @@ export class DiskSpace extends Context.Reference<DiskSpaceService>("t3/observabi
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const settings = yield* ServerSettings.ServerSettingsService;
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const home = yield* HostProcess.HomeDirectory;
 
@@ -156,15 +175,9 @@ const make = Effect.gen(function* () {
     );
     const worktrees =
       resolveWorktreesDirectory(setting, config.worktreesDir, path, home) ?? config.worktreesDir;
-    // The worktrees directory may not exist yet; its parent is on the same volume.
-    const existing = (target: string) =>
-      fs.exists(target).pipe(
-        Effect.orElseSucceed(() => false),
-        Effect.map((exists) => (exists ? target : path.dirname(target))),
-      );
     return [
       { role: "t3Home" as const, path: config.baseDir },
-      { role: "worktrees" as const, path: yield* existing(worktrees) },
+      { role: "worktrees" as const, path: worktrees },
     ];
   });
 

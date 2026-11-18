@@ -1,3 +1,4 @@
+import { msg, useGT, useMessages } from "gt-react-native";
 import {
   machineCpuDetail,
   machineGpuState,
@@ -25,9 +26,9 @@ import {
   machineMemoryDetail,
 } from "./MachineResourcesSection.logic";
 
-const ROLE_LABELS: Record<HostVolume["roles"][number], string> = {
-  t3Home: "T3 data",
-  worktrees: "Worktrees",
+const ROLE_LABELS = {
+  t3Home: msg("T3 data"),
+  worktrees: msg("Worktrees"),
 };
 
 // The native Progress control only tints with the primary colour, so tones need a plain bar.
@@ -87,6 +88,8 @@ function Stat(props: {
 }
 
 function VolumeRow({ volume }: { readonly volume: HostVolume }) {
+  const gt = useGT();
+  const m = useMessages();
   const tone = machineVolumeTone(volume);
   const label = machineVolumeLabel(volume);
   const usedBytes = Math.max(0, volume.totalBytes - volume.availableBytes);
@@ -111,7 +114,7 @@ function VolumeRow({ volume }: { readonly volume: HostVolume }) {
                 : "text-foreground",
           )}
         >
-          {formatBytes(volume.availableBytes)} free
+          {gt("{bytes} free", { bytes: formatBytes(volume.availableBytes) })}
         </Text>
       </View>
       <View className="flex-row flex-wrap items-center gap-1.5">
@@ -122,18 +125,22 @@ function VolumeRow({ volume }: { readonly volume: HostVolume }) {
         {volume.roles.map((role) => (
           <View key={role} className="rounded bg-subtle px-1.5 py-px">
             <Text textRole="caption" className="text-foreground-muted">
-              {ROLE_LABELS[role]}
+              {m(ROLE_LABELS[role])}
             </Text>
           </View>
         ))}
       </View>
-      <UsageBar share={machineVolumeUsedShare(volume)} tone={tone} label={`${label} disk used`} />
+      <UsageBar
+        share={machineVolumeUsedShare(volume)}
+        tone={tone}
+        label={gt("{label} disk used", { label })}
+      />
       <View className="flex-row justify-between">
         <Text textRole="caption" className="tabular-nums text-foreground-muted">
-          {formatBytes(usedBytes)} used
+          {gt("{bytes} used", { bytes: formatBytes(usedBytes) })}
         </Text>
         <Text textRole="caption" className="tabular-nums text-foreground-muted">
-          {formatBytes(volume.totalBytes)} total
+          {gt("{bytes} total", { bytes: formatBytes(volume.totalBytes) })}
         </Text>
       </View>
     </View>
@@ -160,6 +167,8 @@ function Message(props: { readonly children: string; readonly tone?: "danger" | 
 }
 
 function MachineResourcesView({ snapshot }: { readonly snapshot: HostResourcesSnapshot }) {
+  const gt = useGT();
+  const m = useMessages();
   const storage = machineStorageState(snapshot);
   const cores = snapshot.cpuCoreUtilization ?? [];
   const gpuState = machineGpuState(snapshot);
@@ -168,17 +177,21 @@ function MachineResourcesView({ snapshot }: { readonly snapshot: HostResourcesSn
       <Stat
         label="CPU"
         value={
-          snapshot.cpuUtilization === null ? "Unavailable" : formatShare(snapshot.cpuUtilization)
+          snapshot.cpuUtilization === null
+            ? gt("Unavailable")
+            : formatShare(snapshot.cpuUtilization)
         }
-        detail={machineCpuDetail(snapshot)}
+        detail={machineCpuDetail(snapshot, m)}
       >
         {snapshot.cpuUtilization === null ? null : (
-          <UsageBar share={snapshot.cpuUtilization} label="CPU used" />
+          <UsageBar share={snapshot.cpuUtilization} label={gt("CPU used")} />
         )}
         {cores.length > 0 ? (
           <View
             accessible
-            accessibilityLabel={`Per-core use: ${machineCoresSummary(cores)}`}
+            accessibilityLabel={gt("Per-core use: {cores}", {
+              cores: machineCoresSummary(cores, m),
+            })}
             className="h-4 flex-row items-end gap-px"
           >
             {cores.map((share, index) => (
@@ -194,11 +207,11 @@ function MachineResourcesView({ snapshot }: { readonly snapshot: HostResourcesSn
         ) : null}
       </Stat>
       <Stat
-        label="Memory"
+        label={gt("Memory")}
         value={`${formatBytes(Math.max(0, snapshot.totalMemoryBytes - snapshot.availableMemoryBytes))} / ${formatBytes(snapshot.totalMemoryBytes)}`}
-        detail={machineMemoryDetail(snapshot)}
+        detail={machineMemoryDetail(snapshot, m)}
       >
-        <UsageBar share={machineMemoryUsedShare(snapshot)} label="Memory used" />
+        <UsageBar share={machineMemoryUsedShare(snapshot)} label={gt("Memory used")} />
       </Stat>
       {gpuState.kind === "unsupported" ? null : (
         <>
@@ -210,10 +223,13 @@ function MachineResourcesView({ snapshot }: { readonly snapshot: HostResourcesSn
                   key={`${gpu.name}:${index}`}
                   label={gpu.name || "GPU"}
                   value={gpu.utilization === undefined ? "" : formatShare(gpu.utilization)}
-                  detail={machineGpuDetail(gpu)}
+                  detail={machineGpuDetail(gpu, m)}
                 >
                   {gpu.utilization === undefined ? null : (
-                    <UsageBar share={gpu.utilization} label={`${gpu.name || "GPU"} used`} />
+                    <UsageBar
+                      share={gpu.utilization}
+                      label={gt("{label} used", { label: gpu.name || "GPU" })}
+                    />
                   )}
                 </Stat>
               ))
@@ -222,13 +238,13 @@ function MachineResourcesView({ snapshot }: { readonly snapshot: HostResourcesSn
       )}
       {storage.kind === "unsupported" ? (
         <Message>
-          This server is too old to report disk usage. Update it to see its volumes.
+          {gt("This server is too old to report disk usage. Update it to see its volumes.")}
         </Message>
       ) : (
         <>
           {storage.notice ? <Message tone="warning">{storage.notice}</Message> : null}
           {storage.kind === "empty" ? (
-            <Message>No volumes reported.</Message>
+            <Message>{gt("No volumes reported.")}</Message>
           ) : (
             storage.volumes.map((volume) => <VolumeRow key={volume.mountPoint} volume={volume} />)
           )}
@@ -240,17 +256,21 @@ function MachineResourcesView({ snapshot }: { readonly snapshot: HostResourcesSn
 
 /** Whole-machine CPU, memory and disks of the environment's host. Polls only while mounted. */
 export function MachineResourcesSection(props: { readonly environmentId: EnvironmentId }) {
+  const gt = useGT();
   const { data, error } = useEnvironmentQuery(
     serverEnvironment.machineResources({ environmentId: props.environmentId, input: {} }),
   );
   return (
-    <SettingsSection title="Machine">
+    <SettingsSection title={gt("Machine")}>
+      {data && error ? (
+        <Message tone="warning">{`${error} ${new Date(data.sampledAt).toLocaleTimeString()}`}</Message>
+      ) : null}
       {data ? (
         <MachineResourcesView snapshot={data} />
       ) : error ? (
         <Message tone="danger">{error}</Message>
       ) : (
-        <Message>Reading machine resources…</Message>
+        <Message>{gt("Reading machine resources…")}</Message>
       )}
     </SettingsSection>
   );

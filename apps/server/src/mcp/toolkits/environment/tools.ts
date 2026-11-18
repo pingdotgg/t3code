@@ -78,7 +78,7 @@ const MachineResources = Schema.Struct({
 const EnvironmentReadTool = Tool.make("t3_environment_read", {
   ...shared,
   description:
-    "Read a machine's identity, preferences, and free CPU, memory, disk and GPU now. To pick a machine, read each linked environment; no SSH `df`/`free`. Providers and models: `orchestrator_capabilities`.",
+    "Read identity, preferences, free CPU/memory/disk/GPU. Models: `orchestrator_capabilities`.",
   parameters: Schema.Struct({ environmentId: OrchestratorMcpEnvironmentTarget }),
   success: Schema.Struct({
     environmentId: ExecutionEnvironmentDescriptor.fields.environmentId,
