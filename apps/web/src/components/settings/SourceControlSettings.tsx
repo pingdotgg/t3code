@@ -582,7 +582,11 @@ export function SourceControlSettingsPanel() {
         />
       )}
       {environmentId === null ? null : (
-        <IssueTrackerSettings key={environmentId} environmentId={environmentId} />
+        <IssueTrackerSettings
+          key={environmentId}
+          environmentId={environmentId}
+          environmentSuffix={environmentSuffix}
+        />
       )}
 
       <SourceControlWritingSettingsSection />

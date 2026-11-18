@@ -40,14 +40,21 @@ const UNBOUND = "";
  * environment's projects to one of the tracker's scopes so their issues list beside the git
  * host's. Generic over the trackers the server reports; nothing here names Linear but its icon.
  */
-export function IssueTrackerSettings({ environmentId }: { readonly environmentId: EnvironmentId }) {
+export function IssueTrackerSettings({
+  environmentId,
+  environmentSuffix,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly environmentSuffix: string;
+}) {
+  const title = `Issue trackers${environmentSuffix}`;
   const query = useEnvironmentQuery(
     issueTrackerEnvironment.connections({ environmentId, input: {} }),
   );
   const trackers = query.data?.trackers ?? [];
   if (query.data === null && query.isPending) {
     return (
-      <SettingsSection id={searchableSetting("issue-trackers").id} title="Issue trackers">
+      <SettingsSection id={searchableSetting("issue-trackers").id} title={title}>
         <div className="grid gap-3 px-4 py-3">
           <Skeleton className="h-4 w-40" />
           <Skeleton className="h-8 w-full" />
@@ -57,7 +64,7 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
   }
   if (query.data === null && query.error !== null) {
     return (
-      <SettingsSection id={searchableSetting("issue-trackers").id} title="Issue trackers">
+      <SettingsSection id={searchableSetting("issue-trackers").id} title={title}>
         <SettingsRow
           title="Could not load issue trackers"
           description={query.error}
@@ -72,7 +79,7 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
   }
   if (trackers.length === 0) return null;
   return (
-    <SettingsSection id={searchableSetting("issue-trackers").id} title="Issue trackers">
+    <SettingsSection id={searchableSetting("issue-trackers").id} title={title}>
       {trackers.map((tracker) => (
         <TrackerRow
           // Drafts belong to one environment; switching must not carry them over.
