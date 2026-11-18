@@ -10,6 +10,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
+import * as PlatformError from "effect/PlatformError";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
@@ -380,6 +381,34 @@ describe("tailscale", () => {
         Effect.provide(layer),
       );
       assert.equal(degraded, null);
+    });
+  });
+
+  it.effect("reads status from the Tailscale app bundle when no CLI is on PATH on macOS", () => {
+    // The Mac App Store Tailscale ships its CLI only inside the app bundle.
+    const bundleCli = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+    const layer = Layer.merge(
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          const executable = (command as unknown as { readonly command: string }).command;
+          return executable === bundleCli
+            ? Effect.succeed(mockHandle({ stdout: tailscaleStatusJson }))
+            : Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "ChildProcess",
+                  method: "spawn",
+                }),
+              );
+        }),
+      ),
+      Layer.succeed(HostProcess.Platform, "darwin"),
+    );
+
+    return Effect.gen(function* () {
+      const status = yield* readTailscaleStatus.pipe(Effect.provide(layer));
+      assert.equal(status.magicDnsName, "desktop.tail.ts.net");
     });
   });
 
