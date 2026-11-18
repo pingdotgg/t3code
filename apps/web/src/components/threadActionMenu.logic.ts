@@ -37,6 +37,9 @@ export type DraftActionMenuId =
   | "copy-path"
   | "copy-branch"
   | "project-settings"
+  | "snooze"
+  | `snooze:${string}`
+  | "unsnooze"
   | "discard";
 
 export function buildDraftActionMenuItems(
@@ -44,10 +47,33 @@ export function buildDraftActionMenuItems(
     readonly hasPath: boolean;
     readonly hasBranch: boolean;
     readonly hasProject: boolean;
+    readonly isSnoozed: boolean;
+    readonly canSnoozeNow: boolean;
+    readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   },
   resolve: MessageResolver = m,
 ): ReadonlyArray<ContextMenuItem<DraftActionMenuId>> {
   return [
+    options.isSnoozed
+      ? { id: "unsnooze" as const, label: resolve(msg("Wake draft")), icon: "clock" }
+      : {
+          id: "snooze" as const,
+          label: resolve(msg("Snooze", { $context: "verb, snooze the thread" })),
+          icon: "clock",
+          disabled: !options.canSnoozeNow,
+          children: [
+            ...options.snoozePresets.map((preset) => ({
+              id: `snooze:${preset.id}` as const,
+              label: preset.label,
+              detail: preset.whenLabel,
+            })),
+            {
+              id: "snooze:custom" as const,
+              label: resolve(msg("Custom…")),
+              separatorBefore: options.snoozePresets.length > 0,
+            },
+          ],
+        },
     {
       id: "copy",
       label: resolve(msg("Copy", { $context: "submenu of things to copy" })),

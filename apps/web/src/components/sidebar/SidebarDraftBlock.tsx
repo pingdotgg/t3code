@@ -1,10 +1,11 @@
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import type { ContextMenuSource } from "@t3tools/contracts";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { T, useGT } from "gt-react";
-import { SquarePenIcon, XIcon } from "lucide-react";
+import { AlarmClockIcon, AlarmClockOffIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   memo,
   useState,
@@ -14,7 +15,8 @@ import {
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "~/lib/utils";
-import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
+import { isDraftSnoozed, resolveSidebarRowAccessibility } from "../Sidebar.logic";
+import { snoozeWakeLabel, type SnoozePreset } from "../Sidebar.snooze";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -24,11 +26,24 @@ import {
   type ComposerThreadDraftState,
   type DraftSessionState,
 } from "../../composerDraftStore";
-import { draftPenClassName, draftSurfaceClassName } from "./SidebarThreadRow";
+import { draftPenClassName, draftSurfaceClassName, SnoozeMenuButton } from "./SidebarThreadRow";
+
+type SidebarDraftSection = "drafts" | "snoozed";
+
+const rowActionClassName =
+  "pointer-events-none inline-flex h-full cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100";
 
 const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   draftId: DraftId;
+  session: DraftSessionState;
   composer: ComposerThreadDraftState;
+  /** Set only in the Snoozed shelf; rows get the label, not the clock, so the memo holds. */
+  wakeLabel: string | null;
+  /** An emptied draft has nothing to come back to, so it offers no snooze. */
+  canSnooze: boolean;
+  timestampFormat: TimestampFormat;
+  onSnooze: (draftId: DraftId, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onUnsnooze: (draftId: DraftId) => void;
   project: ProjectFaviconProject | null;
   projectDisplayName: string | null;
   isActive: boolean;
@@ -40,8 +55,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
     source: ContextMenuSource,
   ) => void;
 }) {
-  const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
+  const { composer, draftId, onContextMenu, onDiscard, onNavigate, onSnooze, onUnsnooze } = props;
   const gt = useGT();
+  const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
   const promptPreview =
     assistantCitationsToPlainText(
       replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label),
@@ -64,7 +80,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         });
   const accessibility = resolveSidebarRowAccessibility({
     title: preview,
-    statusLabel: gt("Unsent draft"),
+    statusLabel: props.wakeLabel === null ? gt("Unsent draft") : gt("Snoozed draft"),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -74,6 +90,8 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
     // preventDefault here would swallow Space's synthesized click and
     // navigate instead of discarding.
     if ((event.target as HTMLElement).closest("button")) return;
+    // The snooze menu is portaled, but React still bubbles its keys here.
+    if (!event.currentTarget.contains(event.target as Node)) return;
     if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
       event.preventDefault();
       const rect = event.currentTarget.getBoundingClientRect();
@@ -91,6 +109,11 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
     event.preventDefault();
     event.stopPropagation();
     onDiscard(draftId);
+  };
+  const handleUnsnooze = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onUnsnooze(draftId);
   };
   return (
     <li className="list-none py-0.5">
@@ -118,24 +141,72 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
             <span className="min-w-0 flex-1 truncate text-xs font-medium text-secondary-label">
               {props.projectDisplayName}
             </span>
-            <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={gt("Discard draft")}
-                      onClick={handleDiscard}
-                      className="pointer-events-none inline-flex cursor-pointer items-center rounded-md bg-transparent px-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100"
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  }
-                />
-                <TooltipPopup side="top">
-                  <T>Discard draft</T>
-                </TooltipPopup>
-              </Tooltip>
+            <span className="relative ml-auto flex h-5 min-w-5 shrink-0 items-center justify-end">
+              {props.wakeLabel !== null ? (
+                <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums transition-opacity group-focus-within/sidebar-row:opacity-0 group-hover/sidebar-row:opacity-0">
+                  <AlarmClockIcon aria-hidden className="size-3" />
+                  {props.wakeLabel}
+                </span>
+              ) : null}
+              <span
+                className={cn(
+                  "flex h-full items-center",
+                  props.wakeLabel !== null && "absolute inset-y-0 right-0",
+                )}
+              >
+                {props.wakeLabel !== null ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label={gt("Wake draft now")}
+                          onClick={handleUnsnooze}
+                          className={rowActionClassName}
+                        >
+                          <AlarmClockOffIcon className="mb-px size-3" />
+                        </button>
+                      }
+                    />
+                    <TooltipPopup side="top">
+                      <T>Wake draft now</T>
+                    </TooltipPopup>
+                  </Tooltip>
+                ) : !props.canSnooze ? null : (
+                  <span
+                    className={cn(
+                      "pointer-events-none inline-flex h-full opacity-0 transition-opacity has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:opacity-100 group-hover/sidebar-row:pointer-events-auto group-hover/sidebar-row:opacity-100",
+                      snoozeMenuOpen && "pointer-events-auto opacity-100",
+                    )}
+                  >
+                    <SnoozeMenuButton
+                      open={snoozeMenuOpen}
+                      onOpenChange={setSnoozeMenuOpen}
+                      onSnooze={(preset) => onSnooze(draftId, preset)}
+                      timestampFormat={props.timestampFormat}
+                      environmentId={props.session.environmentId}
+                      label={gt("Snooze draft")}
+                    />
+                  </span>
+                )}
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label={gt("Discard draft")}
+                        onClick={handleDiscard}
+                        className={rowActionClassName}
+                      >
+                        <XIcon className="size-3" />
+                      </button>
+                    }
+                  />
+                  <TooltipPopup side="top">
+                    <T>Discard draft</T>
+                  </TooltipPopup>
+                </Tooltip>
+              </span>
             </span>
           </div>
           <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
@@ -152,6 +223,13 @@ interface SidebarDraftRowData {
 }
 
 export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
+  section: SidebarDraftSection;
+  /** A collapsed Snoozed shelf still shows the open draft, like it does the open thread. */
+  routeOnly?: boolean;
+  snoozeNowMs: number;
+  timestampFormat: TimestampFormat;
+  onSnoozeDraft: (draftId: DraftId, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onUnsnoozeDraft: (draftId: DraftId) => void;
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
@@ -196,25 +274,38 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       if (session.promotedTo != null) {
         continue;
       }
+      if (isDraftSnoozed(session, props.snoozeNowMs) !== (props.section === "snoozed")) {
+        continue;
+      }
+      if (props.routeOnly && draftKey !== props.routeDraftId) {
+        continue;
+      }
       if (
         props.scopedProjectKeys !== null &&
         !props.scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
       ) {
         continue;
       }
+      const composer = draftsByThreadKey[draftKey];
       if (draftKey === props.routeDraftId) {
-        if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
-          rows.push(frozenActive.row);
+        // The open snoozed draft shows its live text, and stays even when emptied, as counted.
+        if (props.section === "snoozed" && composer) {
+          rows.push({ draftId: DraftId.make(draftKey), session, composer });
+        } else if (frozenActive.routeDraftId === draftKey && frozenActive.row !== null) {
+          rows.push({ ...frozenActive.row, session });
         }
         continue;
       }
-      const composer = draftsByThreadKey[draftKey];
       if (!composer || !composerDraftHasUserContent(composer)) {
         continue;
       }
       rows.push({ draftId: DraftId.make(draftKey), session, composer });
     }
-    rows.sort((left, right) => right.session.createdAt.localeCompare(left.session.createdAt));
+    rows.sort((left, right) =>
+      props.section === "snoozed"
+        ? (left.session.snoozedUntil ?? "").localeCompare(right.session.snoozedUntil ?? "")
+        : right.session.createdAt.localeCompare(left.session.createdAt),
+    );
     return rows;
   })();
   if (drafts.length === 0) {
@@ -228,7 +319,19 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
           <SidebarDraftRow
             key={draftId}
             draftId={draftId}
+            session={session}
             composer={composer}
+            wakeLabel={
+              props.section === "snoozed" && session.snoozedUntil
+                ? snoozeWakeLabel(session.snoozedUntil, {
+                    now: new Date(props.snoozeNowMs).toISOString(),
+                  })
+                : null
+            }
+            canSnooze={composerDraftHasUserContent(draftsByThreadKey[draftId])}
+            timestampFormat={props.timestampFormat}
+            onSnooze={props.onSnoozeDraft}
+            onUnsnooze={props.onUnsnoozeDraft}
             project={props.projectByKey.get(projectKey) ?? null}
             projectDisplayName={props.projectDisplayNameByKey.get(projectKey) ?? null}
             isActive={draftId === props.routeDraftId}
@@ -238,11 +341,13 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
           />
         );
       })}
-      <li
-        aria-hidden
-        data-testid="sidebar-draft-divider"
-        className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
-      />
+      {props.section === "drafts" ? (
+        <li
+          aria-hidden
+          data-testid="sidebar-draft-divider"
+          className="mx-2.5 my-1.5 h-px list-none bg-sidebar-border/60"
+        />
+      ) : null}
     </>
   );
 });

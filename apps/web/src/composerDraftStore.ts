@@ -428,6 +428,7 @@ const PersistedDraftThreadState = Schema.Struct({
       }),
     ),
   ),
+  snoozedUntil: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 type PersistedDraftThreadState = typeof PersistedDraftThreadState.Type;
 
@@ -519,6 +520,8 @@ export interface DraftSessionState {
   /** Linked to the thread when the draft is sent on this branch. */
   checkoutPullRequest?: DraftCheckoutPullRequest;
   promotedTo?: ScopedThreadRef | null;
+  /** Drafts are local, so their snooze is too: hidden from the draft list until this time. */
+  snoozedUntil?: string | null;
 }
 
 export type DraftThreadState = DraftSessionState;
@@ -634,6 +637,7 @@ interface ComposerDraftStoreState {
   markDraftThreadPromoting: (threadRef: ComposerThreadTarget, promotedTo?: ScopedThreadRef) => void;
   finalizePromotedDraftThread: (threadRef: ComposerThreadTarget) => void;
   clearDraftThread: (threadRef: ComposerThreadTarget) => void;
+  setDraftSnoozedUntil: (draftId: DraftId, snoozedUntil: string | null) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
   setPrompt: (threadRef: ComposerThreadTarget, prompt: string) => void;
   setTerminalContexts: (threadRef: ComposerThreadTarget, contexts: TerminalContextDraft[]) => void;
@@ -1772,6 +1776,7 @@ function createDraftThreadState(
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
     ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
+    ...(existingThread?.snoozedUntil ? { snoozedUntil: existingThread.snoozedUntil } : {}),
     promotedTo: null,
   };
 }
@@ -1824,6 +1829,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
     checkoutPullRequestsEqual(left.checkoutPullRequest, right.checkoutPullRequest) &&
+    (left.snoozedUntil ?? null) === (right.snoozedUntil ?? null) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1997,6 +2003,9 @@ function normalizePersistedDraftThreads(
             ? { loadBalancedEnvironmentId: null }
             : {}),
         ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
+        ...(typeof candidateDraftThread.snoozedUntil === "string"
+          ? { snoozedUntil: candidateDraftThread.snoozedUntil }
+          : {}),
         promotedTo,
       };
     }
@@ -2777,6 +2786,9 @@ function toHydratedDraftThreadState(
     ...(persistedDraftThread.checkoutPullRequest
       ? { checkoutPullRequest: persistedDraftThread.checkoutPullRequest }
       : {}),
+    ...(persistedDraftThread.snoozedUntil
+      ? { snoozedUntil: persistedDraftThread.snoozedUntil }
+      : {}),
     promotedTo: persistedDraftThread.promotedTo
       ? scopeThreadRef(
           persistedDraftThread.promotedTo.environmentId as EnvironmentId,
@@ -2900,13 +2912,18 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const existingThread = state.draftThreadsByThreadKey[draftId];
             const previousThreadKeyForLogicalProject =
               state.logicalProjectDraftThreadKeyByLogicalProjectKey[normalizedLogicalProjectKey];
-            const nextDraftThread = createDraftThreadState(
+            const mappedDraftThread = createDraftThreadState(
               projectRef,
               options?.threadId ?? existingThread?.threadId ?? ThreadId.make(draftId),
               normalizedLogicalProjectKey,
               existingThread,
               options,
             );
+            // An empty draft mapped as the project's new thread starts fresh, unsnoozed.
+            const { snoozedUntil: _snoozedUntil, ...unsnoozedDraftThread } = mappedDraftThread;
+            const nextDraftThread = composerDraftHasUserContent(state.draftsByThreadKey[draftId])
+              ? mappedDraftThread
+              : unsnoozedDraftThread;
             const hasSameLogicalMapping = previousThreadKeyForLogicalProject === draftId;
             const hasNoStaleMappingsForDraft = Object.entries(
               state.logicalProjectDraftThreadKeyByLogicalProjectKey,
@@ -3065,6 +3082,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
               ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
+              ...(existing.snoozedUntil ? { snoozedUntil: existing.snoozedUntil } : {}),
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -3178,6 +3196,21 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               promotedDraftRedirects: {
                 ...state.promotedDraftRedirects,
                 [threadKey]: existing.promotedTo,
+              },
+            };
+          });
+        },
+        setDraftSnoozedUntil: (draftId, snoozedUntil) => {
+          set((state) => {
+            const existing = state.draftThreadsByThreadKey[draftId];
+            if (!existing || (existing.snoozedUntil ?? null) === snoozedUntil) {
+              return state;
+            }
+            const { snoozedUntil: _previous, ...rest } = existing;
+            return {
+              draftThreadsByThreadKey: {
+                ...state.draftThreadsByThreadKey,
+                [draftId]: snoozedUntil === null ? rest : { ...rest, snoozedUntil },
               },
             };
           });

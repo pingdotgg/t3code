@@ -119,6 +119,8 @@ export function SidebarSectionHeader(props: {
   dragging?: boolean;
   isDropTarget?: boolean;
   toggle: { expanded: boolean; onToggle: () => void };
+  /** Rows that are not sortable ride inside the header so drag projections measure them. */
+  children?: ReactNode;
 }) {
   const shelf =
     props.marker === "working-header"
@@ -126,22 +128,32 @@ export function SidebarSectionHeader(props: {
       : props.marker === "snoozed-header"
         ? "snoozed"
         : "settled";
+  const header = (
+    <CollapsibleSectionHeader
+      data-sidebar-row={`shelf:${shelf}`}
+      onClick={props.toggle.onToggle}
+      expanded={props.toggle.expanded}
+      tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "muted"}
+      data-testid={`sidebar-${shelf}-shelf-toggle`}
+      accessory={<span className="font-normal tabular-nums">{props.count}</span>}
+    >
+      {props.label}
+    </CollapsibleSectionHeader>
+  );
   return (
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className={cn("relative mx-0.5 h-8", props.className)}
+      className={cn("relative mx-0.5", props.children == null && "h-8", props.className)}
     >
-      <CollapsibleSectionHeader
-        data-sidebar-row={`shelf:${shelf}`}
-        onClick={props.toggle.onToggle}
-        expanded={props.toggle.expanded}
-        tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "muted"}
-        data-testid={`sidebar-${shelf}-shelf-toggle`}
-        accessory={<span className="font-normal tabular-nums">{props.count}</span>}
-      >
-        {props.label}
-      </CollapsibleSectionHeader>
+      {props.children == null ? (
+        header
+      ) : (
+        <>
+          <div className="relative h-8">{header}</div>
+          <ul className="-mx-0.5">{props.children}</ul>
+        </>
+      )}
     </SortableSidebarMarker>
   );
 }

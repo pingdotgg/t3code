@@ -126,7 +126,8 @@ export function createSidebarSortingStrategy(input: {
     let headerScale: number | undefined;
     for (const [index, item] of items.entries()) {
       if (item.kind === "marker") {
-        if (isShelfHeader(item)) {
+        // The Snoozed header also holds snoozed draft rows, so its height is no gauge.
+        if (isShelfHeader(item) && item.marker !== "snoozed-header") {
           const height = rects[index]?.height;
           if (height) headerScale ??= height / 32;
         }

@@ -10,6 +10,7 @@ import {
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
+import { useShallow } from "zustand/react/shallow";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
@@ -203,6 +204,8 @@ import {
   resolveSidebarReorderableThreadKeys,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
+  isDraftSnoozed,
+  minuteTickMs,
   shouldNavigateAfterThreadPark,
   sidebarListItemId,
   sidebarThreadKeyAtY,
@@ -1201,25 +1204,47 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       : { projectIds: scopedProjectRefs.map((projectRef) => projectRef.projectId) },
   );
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
-  const visibleDraftSessionCount = useComposerDraftStore((store) => {
-    let count = 0;
-    for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
-      if (session.promotedTo != null) {
-        continue;
+  const draftSnoozeTimes = useComposerDraftStore(
+    useShallow((store) =>
+      Object.values(store.draftThreadsByThreadKey).flatMap((session) =>
+        session.snoozedUntil ? [session.snoozedUntil] : [],
+      ),
+    ),
+  );
+  const draftSnoozeWakeClock = useSnoozeWakeClock(
+    draftSnoozeTimes.map((snoozedUntil) => ({ snoozedUntil })),
+  );
+  const nowMinute = useNowMinute();
+  const draftSnoozeNowMs = Math.max(draftSnoozeWakeClock, minuteTickMs(nowMinute));
+  const [visibleDraftSessionCount, snoozedDraftCount, routeDraftSnoozed] = useComposerDraftStore(
+    useShallow((store) => {
+      let visible = 0;
+      let snoozedCount = 0;
+      let routeSnoozed = false;
+      for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
+        if (session.promotedTo != null) {
+          continue;
+        }
+        const snoozed = isDraftSnoozed(session, draftSnoozeNowMs);
+        const composer = store.draftsByThreadKey[draftKey];
+        // The open snoozed draft keeps its shelf row while it is emptied, like the drafts list.
+        const keptOpen = snoozed && draftKey === routeDraftIdForRows && composer !== undefined;
+        if (!keptOpen && !composerDraftHasUserContent(composer)) {
+          continue;
+        }
+        if (
+          scopedProjectKeys !== null &&
+          !scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
+        ) {
+          continue;
+        }
+        if (snoozed) snoozedCount += 1;
+        else visible += 1;
+        if (snoozed && draftKey === routeDraftIdForRows) routeSnoozed = true;
       }
-      if (!composerDraftHasUserContent(store.draftsByThreadKey[draftKey])) {
-        continue;
-      }
-      if (
-        scopedProjectKeys !== null &&
-        !scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
-      ) {
-        continue;
-      }
-      count += 1;
-    }
-    return count;
-  });
+      return [visible, snoozedCount, routeSnoozed] as const;
+    }),
+  );
 
   const openProjectSettings = useStableCallback(
     (projectGroup: SidebarProjectSnapshot, projectRef?: ScopedProjectRef) => {
@@ -1961,6 +1986,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         activeThreads.length +
         workingThreads.length +
         snoozedThreads.length +
+        snoozedDraftCount +
         settledCount ===
         0
     ) {
@@ -1977,7 +2003,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       items.push({ kind: "marker", marker: "working-header" });
       items.push(...rowsOf(visibleWorkingThreads, "working"));
     }
-    if (snoozedThreads.length > 0) {
+    if (snoozedThreads.length + snoozedDraftCount > 0) {
       items.push({ kind: "marker", marker: "snoozed-header" });
       items.push(...rowsOf(visibleSnoozedThreads, "snoozed"));
     }
@@ -2016,6 +2042,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       ?.map((folder) => `${folder.group.projectKey}:${folder.threads.length}`)
       .join("\n") ?? "",
     visibleDraftSessionCount,
+    snoozedDraftCount,
     routeDraftIdForRows ?? "",
   ].join("\0");
   const listMotionAnimate =
@@ -2065,7 +2092,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     settledExpanded: settledShelfExpanded,
     settledVisibleCount,
     routeThreadKey: routeRowThreadKey,
-    snoozedThreadCount: snoozedThreads.length,
+    // Snoozed drafts ride in the header, so it stays while they remain.
+    snoozedThreadCount: snoozedThreads.length + snoozedDraftCount,
   });
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
@@ -2554,12 +2582,44 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
 
+  const snoozeDraft = useStableCallback(
+    (draftId: DraftId, preset: Pick<SnoozePreset, "snoozedUntil">) => {
+      const store = useComposerDraftStore.getState();
+      const session = store.getDraftSession(draftId);
+      // An emptied draft has nothing to come back to; reuse would drop the snooze anyway.
+      if (
+        !session ||
+        session.promotedTo ||
+        !composerDraftHasUserContent(store.getComposerDraft(draftId))
+      )
+        return;
+      store.setDraftSnoozedUntil(draftId, preset.snoozedUntil);
+      if (routeDraftIdForRows !== draftId) return;
+      // Like a snoozed open thread, move on to the next thread that is still in play.
+      const settledKeys = settledThreadKeysRef.current;
+      const snoozedKeys = snoozedThreadKeysRef.current;
+      const nextKey = orderedThreadKeysRef.current.find(
+        (key) => !settledKeys.has(key) && !snoozedKeys.has(key),
+      );
+      const nextThread = nextKey ? threadByKeyRef.current.get(nextKey) : undefined;
+      if (nextThread) navigateToThread(scopeThreadRef(nextThread.environmentId, nextThread.id));
+      else void handleNewThread(scopeProjectRef(session.environmentId, session.projectId));
+    },
+  );
+  const unsnoozeDraft = useStableCallback((draftId: DraftId) => {
+    useComposerDraftStore.getState().setDraftSnoozedUntil(draftId, null);
+  });
+
   const handleDraftContextMenu = useStableCallback(
     (draftId: DraftId, position: { x: number; y: number }, source: ContextMenuSource) => {
       void (async () => {
         const api = readLocalApi();
         const session = useComposerDraftStore.getState().getDraftSession(draftId);
         if (!api || !session || session.promotedTo) return;
+        const isSnoozed = isDraftSnoozed(session, Date.now());
+        const snoozePresets = isSnoozed
+          ? []
+          : resolveSnoozePresets(new Date(), timestampFormat, session.environmentId);
         const projectGroup = projectGroupsRef.current.find((group) =>
           group.memberProjectRefs.some(
             (ref) =>
@@ -2575,13 +2635,34 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               hasPath: Boolean(workspacePath),
               hasBranch: Boolean(session.branch),
               hasProject: projectGroup != null,
+              isSnoozed,
+              canSnoozeNow: composerDraftHasUserContent(
+                useComposerDraftStore.getState().getComposerDraft(draftId),
+              ),
+              snoozePresets,
             }),
             position,
             source,
           ),
         );
         if (clicked._tag === "Failure") return;
+        if (clicked.value?.startsWith("snooze:")) {
+          const preset =
+            clicked.value === "snooze:custom"
+              ? await requestCustomSnooze()
+              : pickSnoozePreset(
+                  snoozePresets,
+                  clicked.value.slice("snooze:".length),
+                  timestampFormat,
+                  session.environmentId,
+                );
+          if (preset) snoozeDraft(draftId, preset);
+          return;
+        }
         switch (clicked.value) {
+          case "unsnooze":
+            unsnoozeDraft(draftId);
+            return;
           case "project-settings":
             if (projectGroup)
               openProjectSettings(projectGroup, {
@@ -3307,7 +3388,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           {/* A scope can hide every active thread; say so even when its project still has settled ones. */}
           {!isSearchingThreads &&
           !hasProjectFolders &&
-          visibleDraftSessionCount === 0 &&
+          visibleDraftSessionCount + snoozedDraftCount === 0 &&
           pinnedThreads.length +
             activeThreads.length +
             workingThreads.length +
@@ -3515,6 +3596,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       const items: ReactNode[] = [
                         <SidebarDraftBlock
                           key="draft-sessions"
+                          section="drafts"
+                          snoozeNowMs={draftSnoozeNowMs}
+                          timestampFormat={timestampFormat}
+                          onSnoozeDraft={snoozeDraft}
+                          onUnsnoozeDraft={unsnoozeDraft}
                           projectByKey={projectByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
                           scopedProjectKeys={scopedProjectKeys}
@@ -3618,12 +3704,30 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 marker="snoozed-header"
                                 className={cn(workingThreads.length === 0 && "mt-auto")}
                                 label={gt("Snoozed", { $context: "sidebar section" })}
-                                count={snoozedThreads.length}
+                                count={snoozedThreads.length + snoozedDraftCount}
                                 toggle={{
                                   expanded: snoozedShelfExpanded,
                                   onToggle: toggleSnoozedShelf,
                                 }}
-                              />,
+                              >
+                                {snoozedDraftCount > 0 &&
+                                (snoozedShelfExpanded || routeDraftSnoozed) ? (
+                                  <SidebarDraftBlock
+                                    section="snoozed"
+                                    routeOnly={!snoozedShelfExpanded}
+                                    snoozeNowMs={draftSnoozeNowMs}
+                                    timestampFormat={timestampFormat}
+                                    onSnoozeDraft={snoozeDraft}
+                                    onUnsnoozeDraft={unsnoozeDraft}
+                                    projectByKey={projectByKey}
+                                    projectDisplayNameByKey={projectDisplayNameByKey}
+                                    scopedProjectKeys={scopedProjectKeys}
+                                    routeDraftId={routeDraftIdForRows}
+                                    onNavigateToDraft={navigateToDraft}
+                                    onDraftContextMenu={handleDraftContextMenu}
+                                  />
+                                ) : null}
+                              </SidebarSectionHeader>,
                             );
                             break;
                           case "settled-header":
@@ -3632,7 +3736,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key="settled-shelf-header"
                                 marker="settled-header"
                                 className={cn(
-                                  workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
+                                  workingThreads.length +
+                                    snoozedThreads.length +
+                                    snoozedDraftCount ===
+                                    0 && "mt-auto",
                                 )}
                                 label={gt("Settled", { $context: "sidebar section" })}
                                 count={settledCount}

@@ -72,6 +72,19 @@ export function shouldNavigateAfterThreadPark(input: {
   );
 }
 
+/** `minuteTick` reads UTC without a zone, which `Date.parse` would take as local time. */
+export function minuteTickMs(nowMinute: string): number {
+  return Date.parse(`${nowMinute}:00.000Z`);
+}
+
+/** Draft snoozes are local; `nowMs` comes from a wake clock so a draft returns on time. */
+export function isDraftSnoozed(
+  session: { readonly snoozedUntil?: string | null | undefined },
+  nowMs: number,
+): boolean {
+  return session.snoozedUntil != null && Date.parse(session.snoozedUntil) > nowMs;
+}
+
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 
 export function resolveSidebarRowAccessibility(input: {
