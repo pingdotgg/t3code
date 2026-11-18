@@ -14,7 +14,7 @@ it.effect("bounds diagnostic retention while draining and redacting split startu
     const footer = new TextEncoder().encode(
       "\u001b[31mStartup failed: café\u001b[0m\nC:\\Users\\Private\\runtime\nc:/users/private/runtime\n" +
         "Authorization: Bearer secret-fixture\npassword=private-value\n" +
-        "opaque-environment-secret\nC:\\Users\\Private\\credential-file\nhttps://example.test/auth?code=private-code#private-fragment\n" +
+        "opaque-environment-\u001b[31msecret\u001b[0m\nC:\\Users\\Private\\credential-file\nhttps://example.test/auth?code=private-code#private-fragment\n" +
         'Authorization: Token alternate-secret\nsecret="unfinished secret value',
     );
     const chunks = [

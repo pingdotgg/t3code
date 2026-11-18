@@ -28,15 +28,15 @@ export const makeInstallationDiagnostics = Effect.fn("InstallationDiagnostics.ma
           "giu",
         ),
     );
+  const normalize = (text: string) => NodeUtil.stripVTControlCharacters(text).replaceAll("\r", "");
   const secrets = Object.entries(environment).flatMap(([name, value]) =>
     /token|password|secret|credential|api[_-]?key|authorization/i.test(name) && value
-      ? value.split(/\r?\n/u).filter(Boolean)
+      ? value.split(/\r?\n/u).map(normalize).filter(Boolean)
       : [],
   );
   const sanitize = (text: string) => {
-    let result = text;
+    let result = normalize(text);
     for (const secret of secrets) result = result.split(secret).join("[redacted]");
-    result = NodeUtil.stripVTControlCharacters(result).replaceAll("\r", "");
     for (const pattern of homePatterns) result = result.replace(pattern, "~");
     return sanitizeAcpStderrExcerpt(result, homeDirectory, environment)
       .replace(/\bauthorization["']?\s*[:=].*/giu, "Authorization: [redacted]")

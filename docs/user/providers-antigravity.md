@@ -156,10 +156,10 @@ T3 does not support Antigravity goal status, pause, resume, or clear commands.
 
 ## Check access and troubleshoot
 
-If runtime installation fails, expand **Installation details** in provider settings
-to see the failed check, any reported exit status, and redacted startup output from
-that environment. Mobile **Settings > Providers** can also show a failed installation's
-details. Retry clears the previous attempt's output.
+If **Installation details** is available, expand it in provider settings to see the
+failed check, any reported exit status, and redacted startup output from that
+environment. Mobile **Settings > Providers** can also show these details. Retry
+clears the previous attempt's output.
 
 Open **Usage > Limits** to see the remaining Gemini and shared Claude/GPT allowances
 for Google sign-ins. Each group has separate five-hour and weekly limits and reset

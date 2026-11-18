@@ -24,6 +24,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
+import { ANTIGRAVITY_AUTH_BROWSER_MARKER } from "./antigravityAuthSupport.ts";
 import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
 
 const serverContents = "antigravity runtime\n";
@@ -721,27 +722,35 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
   it.effect("retains startup diagnostics when ACP initialization times out", () =>
     Effect.gen(function* () {
       const entered = yield* Deferred.make<void>();
-      const spawner = ChildProcessSpawner.make(() =>
-        Effect.succeed(
+      const encoder = new TextEncoder();
+      const preflightUrl = "https://example.invalid/t3-antigravity-browser-preflight";
+      const spawner = ChildProcessSpawner.make((command) => {
+        const preflight =
+          ChildProcess.isStandardCommand(command) && command.args.at(-1) === preflightUrl;
+        return Effect.succeed(
           ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1),
-            exitCode: Effect.never,
+            exitCode: preflight ? Effect.succeed(ChildProcessSpawner.ExitCode(0)) : Effect.never,
             isRunning: Effect.succeed(true),
             kill: () => Effect.void,
             unref: Effect.succeed(Effect.void),
             stdin: Sink.drain,
-            stdout: Stream.never,
-            stderr: Stream.succeed(
-              new TextEncoder().encode(
-                "Could not initialize local harness\nAuthorization: Bearer private-fixture-token\n",
-              ),
-            ).pipe(Stream.tap(() => Deferred.succeed(entered, undefined))),
+            stdout: preflight ? Stream.empty : Stream.never,
+            stderr: preflight
+              ? Stream.succeed(
+                  encoder.encode(`${ANTIGRAVITY_AUTH_BROWSER_MARKER}"${preflightUrl}"\n`),
+                )
+              : Stream.succeed(
+                  encoder.encode(
+                    "Could not initialize local harness\nAuthorization: Bearer private-fixture-token\n",
+                  ),
+                ).pipe(Stream.tap(() => Deferred.succeed(entered, undefined))),
             all: Stream.empty,
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
           }),
-        ),
-      );
+        );
+      });
       const { installation } = yield* makeHarness({
         previous: true,
         useDefaultValidation: true,
@@ -753,6 +762,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       const failed = yield* terminalState(installation);
       expect(failed).toMatchObject({
         phase: "failed",
+        message: expect.stringContaining(
+          "Antigravity runtime verification timed out after 90 seconds.",
+        ),
         diagnostics: {
           step: "Antigravity initialization",
           stderr: "Could not initialize local harness\nAuthorization: [redacted]",

@@ -7,7 +7,7 @@ import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as EffectNodeStream from "@effect/platform-node/NodeStream";
 import {
   ProviderDriverKind,
-  ProviderInstallDiagnostics,
+  type ProviderInstallDiagnostics,
   type ProviderInstallState,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -29,6 +29,7 @@ import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as Ref from "effect/Ref";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -83,7 +84,6 @@ export class AntigravityInstallationError extends Schema.TaggedError<Antigravity
   {
     operation: Schema.String,
     detail: Schema.String,
-    diagnostics: Schema.optionalKey(ProviderInstallDiagnostics),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -463,7 +463,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     options.validate ??
     Effect.fn("AntigravityInstallation.validate")(
       function* (executable: AntigravityExecutable, expectedVersion: string) {
-        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const runtimeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const validationScope = yield* Effect.scope;
         const profileDirectory = yield* Effect.acquireRelease(
           fs.makeTempDirectory({ prefix: "t3-antigravity-validate-" }),
@@ -487,7 +487,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           baseEnv: environment,
           // A shallow scoped profile cleans up unpacked files within Windows' path limit.
           tempDirectory: profileDirectory,
-        });
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
         const runtime = yield* makeAntigravityAcpRuntime({
           runtimeVersion: expectedVersion,
           spawn: buildAntigravityAcpSpawnInput({
@@ -501,7 +501,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             platform === "win32"
               ? ChildProcessSpawner.make(
                   Effect.fnUntraced(function* (command) {
-                    const child = yield* spawner.spawn(command);
+                    const child = yield* runtimeSpawner.spawn(command);
                     // Stop PyInstaller's tree before ACP closes pipes; after launcher exit, taskkill cannot reach children holding DLLs open.
                     yield* Scope.addFinalizer(
                       validationScope,
@@ -510,7 +510,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
                     return child;
                   }),
                 )
-              : spawner,
+              : runtimeSpawner,
         });
         const initialized = yield* runtime.initialize();
         if (
@@ -549,6 +549,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   const validate = Effect.fn("AntigravityInstallation.verify")(function* (
     executable: AntigravityExecutable,
     expectedVersion: string,
+    verificationDiagnostics: Ref.Ref<ProviderInstallDiagnostics | null>,
   ) {
     const capture = yield* makeInstallationDiagnostics("Antigravity initialization").pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -559,32 +560,34 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capture.spawner),
       Effect.scoped,
       withValidationTimeout,
-      Effect.mapError(
-        (error) =>
-          new AntigravityInstallationError({
-            ...error,
-            diagnostics: {
-              ...capture.snapshot(isAcpProcessExitedError(error.cause) ? error.cause : undefined),
-              ...(error === validationTimeoutError ? { exitCode: null, signal: null } : {}),
-            },
-          }),
-      ),
       Effect.tapError((error) =>
-        SubscriptionRef.get(state).pipe(
-          Effect.flatMap(({ operationId }) =>
-            Effect.logWarning("Managed runtime verification failed", {
-              driver: DRIVER,
-              operationId,
-              diagnostics: error.diagnostics,
-            }),
-          ),
-        ),
+        Effect.gen(function* () {
+          const diagnostics = {
+            ...capture.snapshot(isAcpProcessExitedError(error.cause) ? error.cause : undefined),
+            ...(error === validationTimeoutError ? { exitCode: null, signal: null } : {}),
+          };
+          yield* Ref.set(verificationDiagnostics, diagnostics);
+          const { operationId } = yield* SubscriptionRef.get(state);
+          yield* Effect.logWarning("Managed runtime verification failed", {
+            driver: DRIVER,
+            operationId,
+            step: diagnostics.step,
+            exitCode: diagnostics.exitCode,
+            signal: diagnostics.signal,
+            systemError: diagnostics.systemError,
+            stderrChars: diagnostics.stderr.length,
+            truncated: diagnostics.truncated,
+          });
+        }),
       ),
     );
   });
 
   const install = Effect.fn("AntigravityInstallation.install")(
-    function* (asset: AntigravityReleaseAsset | AntigravityCliReleaseAsset) {
+    function* (
+      asset: AntigravityReleaseAsset | AntigravityCliReleaseAsset,
+      verificationDiagnostics: Ref.Ref<ProviderInstallDiagnostics | null>,
+    ) {
       yield* ensureEligible(asset.version);
       const cli = "sha512" in asset;
       // Existing installation records use 64-character IDs, including native SHA-512 prefixes.
@@ -658,7 +661,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           );
         }
         yield* report("verifying", "Checking the installed runtime.");
-        yield* validate(existing, asset.version);
+        yield* validate(existing, asset.version, verificationDiagnostics);
         yield* activate();
         return;
       }
@@ -915,6 +918,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           managedVersionDirectory: pairDirectory,
         },
         asset.version,
+        verificationDiagnostics,
       );
       const record: InstalledRelease = {
         releaseId,
@@ -938,7 +942,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           completedRelease(releaseId).pipe(
             Effect.flatMap((existing) =>
               existing.version === asset.version
-                ? validate(existing, asset.version)
+                ? validate(existing, asset.version, verificationDiagnostics)
                 : Effect.fail(
                     installationError(
                       "activate",
@@ -1063,10 +1067,11 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
               : "Checking the installed runtime.",
         };
         yield* SubscriptionRef.set(state, next);
+        const verificationDiagnostics = yield* Ref.make<ProviderInstallDiagnostics | null>(null);
         const work = (
           reuse === undefined
-            ? install(asset!)
-            : validate(reuse, reuse.version!).pipe(
+            ? install(asset!, verificationDiagnostics)
+            : validate(reuse, reuse.version!, verificationDiagnostics).pipe(
                 Effect.andThen(ensureEligible(reuse.version!)),
                 Effect.andThen(
                   SubscriptionRef.update(state, (value) => ({
@@ -1083,23 +1088,26 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           ),
           Effect.onExit((exit) =>
             Exit.isFailure(exit)
-              ? SubscriptionRef.update(state, (value) => {
-                  if (value.operationId !== operationId || value.phase === "succeeded")
-                    return value;
-                  const error = Cause.findErrorOption(exit.cause);
-                  const cancelled = Cause.hasInterruptsOnly(exit.cause);
-                  return {
-                    ...value,
-                    phase: cancelled ? "cancelled" : "failed",
-                    diagnostics:
-                      cancelled || Option.isNone(error) ? null : (error.value.diagnostics ?? null),
-                    message: cancelled
-                      ? "Installation cancelled. The previous runtime is unchanged."
-                      : Option.isSome(error)
-                        ? error.value.detail
-                        : "Could not finish the Antigravity installation. Check disk space and directory access.",
-                  } satisfies ProviderInstallState;
-                })
+              ? Ref.get(verificationDiagnostics).pipe(
+                  Effect.flatMap((diagnostics) =>
+                    SubscriptionRef.update(state, (value) => {
+                      if (value.operationId !== operationId || value.phase === "succeeded")
+                        return value;
+                      const error = Cause.findErrorOption(exit.cause);
+                      const cancelled = Cause.hasInterruptsOnly(exit.cause);
+                      return {
+                        ...value,
+                        phase: cancelled ? "cancelled" : "failed",
+                        diagnostics: cancelled ? null : diagnostics,
+                        message: cancelled
+                          ? "Installation cancelled. The previous runtime is unchanged."
+                          : Option.isSome(error)
+                            ? error.value.detail
+                            : "Could not finish the Antigravity installation. Check disk space and directory access.",
+                      } satisfies ProviderInstallState;
+                    }),
+                  ),
+                )
               : Effect.void,
           ),
           Effect.ignoreCause,

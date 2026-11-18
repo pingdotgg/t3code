@@ -139,9 +139,9 @@ sign in to Codex with an account that has it.
 
 ## Troubleshoot runtime installation
 
-If the managed runtime fails to install, open **Installation details** in Codex setup
-to see the failed check, any reported exit status, and redacted startup output from
-the environment running Codex. The same failure is visible in mobile **Settings > Providers**.
+If **Installation details** is available, expand it in Codex setup to see the
+failed check, any reported exit status, and redacted startup output from that
+environment. Mobile **Settings > Providers** can also show these details.
 
 ## Codex says I hit a usage limit
 
