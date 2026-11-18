@@ -1,3 +1,4 @@
+import "@t3tools/shared/testing/gitEnv";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

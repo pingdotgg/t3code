@@ -3,6 +3,7 @@
  * An isolated T3 server for one device run. Its only provider is `evalbot`, an Fx instance
  * backed by `fake-fx.ts`, so every reply is scripted. State lives under the run's `--out`.
  */
+import "@t3tools/shared/testing/gitEnv";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";

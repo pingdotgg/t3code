@@ -19,6 +19,7 @@ import {
   VcsProcessStdinWriteError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
+import { unsetInheritedRepositoryEnv } from "@t3tools/shared/gitEnvironment";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { SourceControlProcessInput } from "@t3tools/source-control-core/server/SourceControlHost";
 
@@ -134,29 +135,6 @@ export const gitConfigEnv = (
  */
 export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
-
-const REPOSITORY_SELECTORS = new Set([
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_COMMON_DIR",
-  "GIT_INDEX_FILE",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-]);
-
-/**
- * Unsets repository selectors the server inherited, such as a Git hook's `GIT_DIR`, so Git finds
- * the repository from cwd. Spread it before a command's own env, which may still set them.
- */
-export const unsetInheritedRepositoryEnv = (
-  inherited: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-): NodeJS.ProcessEnv =>
-  Object.fromEntries(
-    Object.keys(inherited)
-      .filter((name) => REPOSITORY_SELECTORS.has(platform === "win32" ? name.toUpperCase() : name))
-      .map((name) => [name, undefined]),
-  );
 
 const classifyNonZeroExit = (
   stderr: string,

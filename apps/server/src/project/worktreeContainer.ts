@@ -1,10 +1,11 @@
+import { unsetInheritedRepositoryEnv } from "@t3tools/shared/gitEnvironment";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
-import { explicitBareRepositoryEnv, unsetInheritedRepositoryEnv } from "../vcs/VcsProcess.ts";
+import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
 
 const parseGitfileTarget = (contents: string): string | undefined => {
   const firstLine = contents.split(/\r?\n/u, 1)[0] ?? "";

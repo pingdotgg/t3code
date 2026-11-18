@@ -226,6 +226,8 @@ describe("check:changed", () => {
   });
 
   it.each([
+    "packages/shared/src/gitEnvironment.ts",
+    "packages/shared/src/testing/gitEnv.ts",
     "packages/shared/src/testing/longTempDir.ts",
     "packages/shared/src/testing/providerEnv.ts",
   ])("tests every package when the shared test setup file %s changes", (file) => {
