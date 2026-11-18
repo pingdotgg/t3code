@@ -23,7 +23,7 @@ const questions: ComputerQuestions = {
 
 const deciderWith = (
   grounder: {
-    readonly kind?: "openai-compatible" | "systemone";
+    readonly kind?: "jev" | "openai-compatible" | "systemone";
     readonly baseUrl?: string;
     readonly model?: string;
     readonly apiKey?: string;
@@ -156,6 +156,87 @@ it.effect("a System One grounder reads its own answer shape", () => {
       instructions: "What is the one next step toward the goal on this screen?",
       criteria: { c0: "Click the button “Search”", stuck: "None of these moves toward the goal." },
     });
+  });
+});
+
+it.effect("a key on the Jev preset sends the step to TypeSafe's System One endpoint", () => {
+  const seen: Array<{ url: string; body: unknown; auth: string | null }> = [];
+  const upstream = async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    seen.push({
+      url: String(url),
+      body: JSON.parse(String(init?.body)),
+      auth: new Headers(init?.headers).get("authorization"),
+    });
+    return Response.json({
+      model: "jev-1.14.0",
+      answers: {
+        next: { type: "choice", choice: "c0", confidence: 1, probabilities: { c0: 1, stuck: 0 } },
+      },
+    });
+  };
+  return Effect.gen(function* () {
+    const decider = yield* deciderWith({
+      kind: "jev",
+      baseUrl: "",
+      model: "",
+      apiKey: "jev_key",
+    });
+    const answer = yield* decider
+      .ask({ state: { goal: "search" }, questions })
+      .pipe(
+        Effect.provideService(FetchHttpClient.Fetch, upstream),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      );
+
+    assert.deepStrictEqual(answer, {
+      _tag: "answers",
+      answers: { next: { type: "choice", choice: "c0", probability: 1 } },
+    });
+    const request = seen[0]!;
+    assert.strictEqual(request.url, "https://api.typesafe.ai/v1/systemone");
+    assert.strictEqual((request.body as { model: string }).model, "jev-latest");
+    assert.strictEqual(request.auth, "Bearer jev_key");
+  });
+});
+
+it.effect("the Jev preset without a key leaves the step to the planner", () => {
+  const upstream = async () => {
+    throw new Error("no request expected");
+  };
+  return Effect.gen(function* () {
+    const decider = yield* deciderWith({ kind: "jev", baseUrl: "", model: "", apiKey: "" });
+    assert.deepStrictEqual(
+      yield* decider
+        .ask({ state: {}, questions })
+        .pipe(
+          Effect.provideService(FetchHttpClient.Fetch, upstream),
+          Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      { _tag: "not_configured" },
+    );
+  });
+});
+
+it.effect("a custom endpoint answers without a key, as a local model needs none", () => {
+  const seen: Array<string | null> = [];
+  const upstream = async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    seen.push(new Headers(init?.headers).get("authorization"));
+    return Response.json({ answers: { next: { type: "choice", choice: "c0", confidence: 1 } } });
+  };
+  return Effect.gen(function* () {
+    const decider = yield* deciderWith({
+      kind: "systemone",
+      baseUrl: "http://localhost:11434",
+      apiKey: "",
+    });
+    const answer = yield* decider
+      .ask({ state: {}, questions })
+      .pipe(
+        Effect.provideService(FetchHttpClient.Fetch, upstream),
+        Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      );
+    assert.strictEqual(answer._tag, "answers");
+    assert.deepStrictEqual(seen, [null]);
   });
 });
 

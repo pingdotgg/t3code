@@ -47,8 +47,11 @@ runs, it does not run. **Deny** ends the task, and so does letting the
 countdown run out. Agents cannot approve a step.
 
 Clicks the built-in rules cannot judge also ask, unless you set a **decision
-endpoint** in **Settings → Computer use**. That endpoint sees control labels
-and up to 1,500 characters of visible text, never the text a task types.
+endpoint** in **Settings → Computer use**. **Jev (TypeSafe)** answers once you
+paste an API key from the TypeSafe console; **Custom** takes an
+OpenAI-compatible or System One endpoint of your own. That endpoint sees
+control labels and up to 1,500 characters of visible text, never the text a
+task types.
 
 ### Skip approvals
 
