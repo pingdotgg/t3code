@@ -19,7 +19,7 @@ export function nativeLanguageName(locale: string): string {
 }
 
 // Our `zh` is Simplified, so Traditional tags fall back to `zh-TW`, never to `zh`.
-const TRADITIONAL_CHINESE = /^zh[-_](hant|tw|hk|mo)\b/;
+const TRADITIONAL_CHINESE = /^zh[-_](hant|tw|hk|mo)(?![a-z0-9])/;
 
 function matchSupportedLocale(tag: string, supported: ReadonlyArray<string>): string | undefined {
   const normalized = tag.trim().toLowerCase();
