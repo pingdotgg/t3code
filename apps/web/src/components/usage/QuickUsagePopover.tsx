@@ -55,8 +55,12 @@ function selectedDriverLimits(
         driver,
         kind,
         accounts: providerAccounts.map((account) => {
-          const notice = limitsNotice(account.limits, m);
-          const probeFailed = account.limits.unavailable?.reason === "probeFailed";
+          const { limits } = account;
+          const probeFailed = limits.unavailable?.reason === "probeFailed";
+          const notice =
+            limits.zeroSpendCap && !limits.unavailable && limits.windows.length === 0
+              ? gt("$0 cap")
+              : limitsNotice(limits, m);
           return {
             key: account.key,
             label:
@@ -127,6 +131,9 @@ export function QuickUsagePopover({
   const todaySummary = showingToday
     ? summarizeTodayUsage(shown.merged.daily, new Date(now), todayWindow.timeZone)
     : null;
+
+  const paceUsd = usage.isPartial ? null : (todaySummary?.paceUsd ?? null);
+  const deltaPercent = usage.isPartial ? null : (todaySummary?.deltaPercent ?? null);
 
   const providers = selectedDriverLimits(
     collectLimitAccounts(presentations, { includeUnavailable: true }),
@@ -350,20 +357,27 @@ export function QuickUsagePopover({
               <div className="min-w-0 text-xs tabular-nums">
                 <p className="font-medium text-foreground">{gt("Spent today")}</p>
                 <p className="truncate text-muted-foreground">
-                  {gt("{spent} spent · {pace} pace", {
-                    spent: formatUsd(todaySummary.todayCostUsd),
-                    pace: formatUsd(todaySummary.paceUsd),
-                  })}
+                  {paceUsd === null
+                    ? formatUsd(todaySummary.todayCostUsd)
+                    : gt("{spent} spent · {pace} pace", {
+                        spent: formatUsd(todaySummary.todayCostUsd),
+                        pace: formatUsd(paceUsd),
+                      })}
                 </p>
+                {usage.isPartial ? (
+                  <p className="text-muted-foreground">
+                    {gt("Totals are partial while selected environments scan.")}
+                  </p>
+                ) : null}
               </div>
-              {todaySummary.deltaPercent === null ? null : (
+              {deltaPercent === null ? null : (
                 <span className="shrink-0 rounded-full border border-border px-2 py-1 text-2xs font-medium tabular-nums text-muted-foreground">
-                  {todaySummary.deltaPercent <= 0
+                  {deltaPercent <= 0
                     ? gt("{percent}% under pace", {
-                        percent: Math.abs(Math.round(todaySummary.deltaPercent)),
+                        percent: Math.abs(Math.round(deltaPercent)),
                       })
                     : gt("{percent}% over pace", {
-                        percent: Math.round(todaySummary.deltaPercent),
+                        percent: Math.round(deltaPercent),
                       })}
                 </span>
               )}

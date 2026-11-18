@@ -12,7 +12,7 @@ import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, fakeTimers, render } from "../../../test/render";
 import { QuickUsagePopover } from "./QuickUsagePopover";
 
 import type { EnvironmentPresentationWithProviders } from "@t3tools/client-runtime/state/presentation";
@@ -271,22 +271,38 @@ describe("QuickUsagePopover", () => {
     expect(onOpenFull).toHaveBeenCalledOnce();
   });
 
-  it("waits for today’s spending when the previous day is still cached", async () => {
-    using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-25T16:30:00.000Z"));
+  it("labels partial spending and waits for current data after midnight", async () => {
     const previousWindow = makeWindow(8, new Date("2026-10-24T16:30:00.000Z"));
-    const merged = { daily: [{ day: previousWindow.untilDay, costUsd: 20 }] };
+    const merged = {
+      daily: [
+        { day: previousWindow.untilDay, costUsd: 20 },
+        { day: "2026-10-23", costUsd: 10 },
+      ],
+    };
     await using screen = await render(
       view(envPresentations([]), undefined, {
         shown: { window: previousWindow, merged },
         isPending: true,
+        isPartial: true,
       }),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+    using _timers = fakeTimers({ now: Date.parse("2026-10-24T16:30:00.000Z") });
+    await act(() =>
+      (screen.getByRole("button", { name: "Usage" }).element() as HTMLElement).click(),
+    );
+    await expect
+      .element(page.getByText("Totals are partial while selected environments scan."))
+      .toBeVisible();
+    await expect.element(page.getByText("$20.00", { exact: true })).toBeVisible();
+    await expect.element(page.getByText(/pace/)).not.toBeInTheDocument();
+
+    vi.setSystemTime(Date.parse("2026-10-25T16:30:00.000Z"));
+    await act(() => vi.advanceTimersByTime(30_000));
     await expect.element(page.getByText("Loading today’s spending…")).toBeVisible();
     await expect.element(page.getByText("Spent today", { exact: true })).not.toBeInTheDocument();
   });
 
-  it("keeps unsupported accounts distinct from failed limit probes", async () => {
+  it("distinguishes an unsupported account from a zero spend cap", async () => {
     const account = unavailableProvider();
     const unsupported = {
       ...account,
@@ -296,8 +312,14 @@ describe("QuickUsagePopover", () => {
         unavailable: { reason: "unsupported", message: "This account has no subscription limits." },
       },
     } as ServerProvider;
-    await using screen = await render(view(envPresentations([unsupported])));
+    const capped = {
+      ...provider("codex", { session: 0, weekly: 0 }),
+      usageLimits: { checkedAt, windows: [], zeroSpendCap: true },
+    } as ServerProvider;
+    await using screen = await render(view(envPresentations([capped, unsupported])));
     await userEvent.click(screen.getByRole("button", { name: "Usage" }));
+    await expect.element(page.getByText("$0 cap", { exact: true })).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Cursor" }));
     await expect.element(page.getByText("This account has no subscription limits.")).toBeVisible();
     await expect
       .element(page.getByRole("button", { name: "Subscription limit error details for Desk" }))

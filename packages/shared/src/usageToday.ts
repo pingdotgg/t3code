@@ -7,7 +7,7 @@ import type { UsageBucket } from "@t3tools/contracts";
  */
 export interface UsageTodaySummary {
   readonly todayCostUsd: number;
-  readonly paceUsd: number;
+  readonly paceUsd: number | null;
   readonly deltaPercent: number | null;
   readonly dayKey: string;
 }
@@ -48,7 +48,8 @@ export function summarizeTodayUsage(
   }
   if (!hasToday && priorCosts.length === 0) return null;
   const priorTotal = priorCosts.reduce((sum, cost) => sum + cost, 0);
-  const paceUsd = priorCosts.length === 0 ? todayCostUsd : priorTotal / priorCosts.length;
-  const deltaPercent = paceUsd > 0 ? ((todayCostUsd - paceUsd) / paceUsd) * 100 : null;
+  const paceUsd = priorCosts.length === 0 ? null : priorTotal / priorCosts.length;
+  const deltaPercent =
+    paceUsd !== null && paceUsd > 0 ? ((todayCostUsd - paceUsd) / paceUsd) * 100 : null;
   return { todayCostUsd, paceUsd, deltaPercent, dayKey };
 }

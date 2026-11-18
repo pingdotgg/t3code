@@ -77,7 +77,7 @@ describe("summarizeTodayUsage", () => {
       "America/Los_Angeles",
     );
     expect(beforeMidnight?.dayKey).toBe("2026-11-03");
-    expect(beforeMidnight?.todayCostUsd).toBe(5);
+    expect(beforeMidnight).toMatchObject({ todayCostUsd: 5, paceUsd: null, deltaPercent: null });
     // 2026-11-04 00:30 in America/Los_Angeles is Nov 4 there (Nov 4 08:30 UTC).
     const afterMidnight = summarizeTodayUsage(
       buckets,
