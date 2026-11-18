@@ -10,11 +10,11 @@ import {
   IssueTrackerKind,
   type IssueCapabilities,
   type IssueEvent,
-  type IssueInvolvement,
   type IssueViewerPermissions,
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
+  type IssueInvolvementFilter,
   type IssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
@@ -37,7 +37,9 @@ import {
   type GitLabTemplateEntry,
 } from "./gitLabIssueJson.ts";
 import {
+  awardReactions,
   decodeAwardEmojiJson,
+  decodeAwardListJson,
   decodeOwnAwardIdJson,
   decodeViewerJson,
   gitLabAwardName,
@@ -135,11 +137,9 @@ function query(params: ReadonlyArray<readonly [string, string]>): string {
   return params.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
 }
 
-function involvementParams(input: {
-  readonly involvement: IssueInvolvement;
-  readonly viewer: string;
-  readonly assignee?: string | undefined;
-}): ReadonlyArray<readonly [string, string]> {
+function involvementParams(
+  input: IssueInvolvementFilter & { readonly assignee?: string | undefined },
+): ReadonlyArray<readonly [string, string]> {
   switch (input.involvement) {
     case "authored":
       return [["author_username", input.viewer]];
@@ -523,6 +523,13 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   number,
                   operation: "getIssue",
                 }),
+                read({
+                  cwd: input.cwd,
+                  host: input.host,
+                  operation: "getIssue",
+                  path: paged(`${path}/award_emoji`, 1),
+                  decode: decodeAwardListJson,
+                }),
               ],
               { concurrency: 4 },
             ),
@@ -537,6 +544,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
               closing,
               related,
               awardPage,
+              issueAwards,
             ]) => {
               const closingKeys = new Set(
                 closing.map((link) => `${link.repository}!${link.number}`),
@@ -546,7 +554,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                 viewer: viewerLogin,
                 viewerPermissions: VIEWER_PERMISSIONS,
                 states: ISSUE_STATES,
-                reactions: awardPage.reactions,
+                reactions: awardReactions(issueAwards, viewerLogin),
                 comments: notes.comments.map((comment) => ({
                   ...comment,
                   reactions: awardPage.reactionsByNoteId.get(comment.id) ?? [],
