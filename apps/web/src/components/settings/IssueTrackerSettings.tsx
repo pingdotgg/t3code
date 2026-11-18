@@ -35,19 +35,19 @@ const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
 
 const UNBOUND = "";
 
-type EnvironmentBindings = ReadonlyMap<EnvironmentId, IssueTrackerConnectionList["bindings"]>;
+type EnvironmentConnections = ReadonlyMap<EnvironmentId, IssueTrackerConnectionList>;
 
-const bindingsAcrossEnvironmentsAtom = Atom.family((environmentIdsKey: string) => {
+const connectionsAcrossEnvironmentsAtom = Atom.family((environmentIdsKey: string) => {
   const environmentIds = JSON.parse(environmentIdsKey) as ReadonlyArray<EnvironmentId>;
-  return Atom.make((get): EnvironmentBindings => {
-    const bindings = new Map<EnvironmentId, IssueTrackerConnectionList["bindings"]>();
+  return Atom.make((get): EnvironmentConnections => {
+    const connections = new Map<EnvironmentId, IssueTrackerConnectionList>();
     for (const environmentId of environmentIds) {
       const result = get(issueTrackerEnvironment.connections({ environmentId, input: {} }));
       const data = AsyncResult.getOrElse(result, () => null);
-      if (data !== null) bindings.set(environmentId, data.bindings);
+      if (data !== null) connections.set(environmentId, data);
     }
-    return bindings;
-  }).pipe(Atom.withLabel(`web-settings-issue-tracker-bindings:${environmentIdsKey}`));
+    return connections;
+  }).pipe(Atom.withLabel(`web-settings-issue-tracker-connections:${environmentIdsKey}`));
 });
 
 /**
@@ -62,7 +62,9 @@ export function IssueTrackerSettings({
   readonly environmentIds: readonly [EnvironmentId, ...EnvironmentId[]];
 }) {
   const environmentId = environmentIds[0];
-  const bindings = useAtomValue(bindingsAcrossEnvironmentsAtom(JSON.stringify(environmentIds)));
+  const connections = useAtomValue(
+    connectionsAcrossEnvironmentsAtom(JSON.stringify(environmentIds)),
+  );
   const query = useEnvironmentQuery(
     issueTrackerEnvironment.connections({ environmentId, input: {} }),
   );
@@ -101,7 +103,7 @@ export function IssueTrackerSettings({
           key={`${tracker.tracker}-${environmentId}`}
           environmentIds={environmentIds}
           tracker={tracker}
-          bindings={bindings}
+          connections={connections}
         />
       ))}
     </SettingsSection>
@@ -111,11 +113,11 @@ export function IssueTrackerSettings({
 function TrackerRow({
   environmentIds,
   tracker,
-  bindings,
+  connections,
 }: {
   readonly environmentIds: readonly [EnvironmentId, ...EnvironmentId[]];
   readonly tracker: IssueTrackerConnection;
-  readonly bindings: EnvironmentBindings;
+  readonly connections: EnvironmentConnections;
 }) {
   const environmentId = environmentIds[0];
   const Icon = TRACKER_ICONS[tracker.tracker];
@@ -146,7 +148,10 @@ function TrackerRow({
   const usable = tracker.connected && tracker.account !== null;
   const summary = issueTrackerSummary(
     tracker,
-    Object.assign({}, ...bindings.values()) as IssueTrackerConnectionList["bindings"],
+    Object.assign(
+      {},
+      ...[...connections.values()].map((list) => list.bindings),
+    ) as IssueTrackerConnectionList["bindings"],
   );
 
   return (
@@ -247,7 +252,7 @@ function TrackerRow({
                 <ProjectBindings
                   environmentIds={environmentIds}
                   tracker={tracker}
-                  bindings={bindings}
+                  connections={connections}
                 />
               ) : null}
             </div>
@@ -260,21 +265,28 @@ function TrackerRow({
 
 /**
  * One picker per project in scope. Bindings are keyed by each machine's own project id, so a
- * project checked out on several environments is bound on each of them.
+ * project checked out on several environments is bound on each one where the tracker works.
  */
 function ProjectBindings({
   environmentIds,
   tracker,
-  bindings,
+  connections,
 }: {
   readonly environmentIds: readonly EnvironmentId[];
   readonly tracker: IssueTrackerConnection;
-  readonly bindings: EnvironmentBindings;
+  readonly connections: EnvironmentConnections;
 }) {
   const { groups } = useSettingsScope();
+  const usableOn = (environmentId: EnvironmentId) => {
+    const connection = connections
+      .get(environmentId)
+      ?.trackers.find((candidate) => candidate.tracker === tracker.tracker);
+    return connection?.connected && connection.account !== null ? connection : null;
+  };
   const projects = groups.flatMap((group) => {
-    const members = group.memberProjects.filter((member) =>
-      environmentIds.includes(member.environmentId),
+    const members = group.memberProjects.filter(
+      (member) =>
+        environmentIds.includes(member.environmentId) && usableOn(member.environmentId) !== null,
     );
     return members.length === 0
       ? []
@@ -289,15 +301,21 @@ function ProjectBindings({
   const change = async (project: (typeof projects)[number], scope: string) => {
     setPending(project.key);
     await Promise.all(
-      project.members.map((member) =>
-        bind({
-          environmentId: member.environmentId,
-          input: {
-            projectId: member.id,
-            binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
-          },
-        }),
-      ),
+      project.members
+        .filter(
+          (member) =>
+            scope === UNBOUND ||
+            usableOn(member.environmentId)?.scopes.some((candidate) => candidate.key === scope),
+        )
+        .map((member) =>
+          bind({
+            environmentId: member.environmentId,
+            input: {
+              projectId: member.id,
+              binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
+            },
+          }),
+        ),
     );
     setPending(null);
   };
@@ -310,7 +328,7 @@ function ProjectBindings({
       />
       {projects.map((project) => {
         const bound = project.members
-          .map((member) => bindings.get(member.environmentId)?.[member.id])
+          .map((member) => connections.get(member.environmentId)?.bindings[member.id])
           .find((binding) => binding?.tracker === tracker.tracker);
         // A project bound to another tracker keeps that binding; this picker shows it unbound.
         const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
