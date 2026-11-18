@@ -322,9 +322,29 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   expect(strip.scrollLeft).toBe(140);
   strip.style.removeProperty("max-width");
 
-  await userEvent.wheel(header.querySelector('button[aria-label="New tab"]')!, {
-    delta: { x: -140 },
+  const tabIds = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].map(
+    (tab) => tab.dataset.layoutPaneTab!,
+  );
+  const middle = tabIds[Math.floor(tabIds.length / 2)]!;
+  useLayoutStore.getState().focusTab(middle);
+  await vi.waitFor(() => expect(joinOffset(strip)).toBe(tabOffset(strip, middle)));
+  const held = Number.parseFloat(tabOffset(strip, middle)) - 100;
+  strip.scrollLeft = held;
+  await vi.waitFor(() =>
+    expect(strip.style.getPropertyValue("--strip-overflow-start")).toBe(`${held}px`),
+  );
+  useLayoutStore.getState().closeTab(middle);
+  await vi.waitFor(() => {
+    const next = focusedTabId()!;
+    expect(next).not.toBe(middle);
+    expect(joinOffset(strip)).toBe(tabOffset(strip, next));
   });
+  expect(strip.scrollLeft).toBe(held);
+
+  await userEvent.wheel(
+    strip.closest("[data-pane-header]")!.querySelector('button[aria-label="New tab"]')!,
+    { delta: { x: -held } },
+  );
   await vi.waitFor(() => expect(strip.scrollLeft).toBe(0));
   const tabs = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")];
   for (const tab of tabs) {

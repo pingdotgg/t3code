@@ -120,6 +120,8 @@ interface PaneStrip {
   readonly litProperties: readonly [start: string, end: string];
   lit: { host: HTMLElement; offset: number; width: number } | null;
   width: number;
+  scrollLeft: number;
+  restoreScroll: boolean;
 }
 
 const paneStrips = new Map<string, PaneStrip>();
@@ -197,6 +199,8 @@ function createPaneStrip(role?: "panel"): PaneStrip {
         : ["--pane-lit-start", "--pane-lit-end"],
     lit: null,
     width: 0,
+    scrollLeft: 0,
+    restoreScroll: false,
   };
   stripEntries.set(strip, entry);
   strip.addEventListener(
@@ -216,7 +220,14 @@ function createPaneStrip(role?: "panel"): PaneStrip {
     },
     { passive: false },
   );
-  strip.addEventListener("scroll", () => markStripOverflow(strip), { passive: true });
+  strip.addEventListener(
+    "scroll",
+    () => {
+      if (!entry.restoreScroll) entry.scrollLeft = strip.scrollLeft;
+      markStripOverflow(strip);
+    },
+    { passive: true },
+  );
   // The shape leaves on the press, before the switch's render: a click lands
   // on its release, after the incoming chat has been laid out.
   strip.addEventListener("pointerdown", (event) => slideOnPress(entry, event));
@@ -357,6 +368,17 @@ function holdPaneStrip(
   entry.motionMs = motionMs;
   pendingReveals.add(entry.strip);
   schedulePlacement(entry.strip, motionMs);
+}
+
+function attachPaneStrip(entry: PaneStrip, slot: HTMLElement): void {
+  if (!entry.strip.isConnected) entry.restoreScroll = true;
+  if (entry.strip.parentNode !== slot) moveInto(slot, entry.strip);
+}
+
+function restorePaneStripScroll(entry: PaneStrip): void {
+  if (!entry.restoreScroll) return;
+  entry.restoreScroll = false;
+  entry.strip.scrollLeft = entry.scrollLeft;
 }
 
 /** Forget a pane's strip once no header holds it, after the commit that may hand it on. */
@@ -621,9 +643,10 @@ export function LayoutPaneTabStrip({
       showStripLayer(layer, slot, false);
       return;
     }
-    if (strip.parentNode !== slot) moveInto(slot, strip);
+    attachPaneStrip(entry, slot);
     showStripLayer(layer, strip, true);
     const place = (motion: number) => {
+      restorePaneStripScroll(entry);
       const reveal = pendingReveals.has(strip) ? revealPaneTab(strip, tabId) : null;
       if (reveal !== null) pendingReveals.delete(strip);
       placePaneJoin(entry, tabId, motion);
