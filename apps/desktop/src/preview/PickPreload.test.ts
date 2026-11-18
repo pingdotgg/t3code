@@ -1,9 +1,10 @@
 import { expect, it, vi } from "vite-plus/test";
 
-import { START_PICK_CHANNEL } from "./GuestProtocol.ts";
+import { ELEMENT_PICKED_CHANNEL, START_PICK_CHANNEL } from "./GuestProtocol.ts";
 import "./PickPreload.ts";
 
 const ipcListeners = vi.hoisted(() => new Map<string, Array<(...args: unknown[]) => void>>());
+const ipcSend = vi.hoisted(() => ({ calls: [] as unknown[][] }));
 
 vi.mock("electron", () => ({
   ipcRenderer: {
@@ -11,7 +12,9 @@ vi.mock("electron", () => ({
       ipcListeners.set(channel, [...(ipcListeners.get(channel) ?? []), listener]);
     },
     off: () => {},
-    send: () => {},
+    send: (...args: unknown[]) => {
+      ipcSend.calls.push(args);
+    },
     invoke: async () => undefined,
   },
 }));
@@ -84,3 +87,62 @@ it("keeps comment keystrokes away from the page's capture-phase shortcuts", () =
   expect(pageShortcut).not.toHaveBeenCalled();
   expect(space.defaultPrevented).toBe(false);
 });
+
+it("keeps the annotation when Escape dismisses an IME candidate in the comment", () => {
+  const shadowRoot = startAnnotation();
+  const comment = shadowRoot.querySelector("textarea");
+  if (!comment) throw new Error("comment textarea not found");
+
+  comment.value = "draft";
+  comment.focus();
+  comment.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "Escape",
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    }),
+  );
+
+  expect(shadowRoot.host.isConnected).toBe(true);
+  expect(comment.value).toBe("draft");
+});
+
+it.each([
+  { scrolled: false, rect: { x: 40, y: 60, width: 200, height: 120 } },
+  // The last rect would point at whatever now sits there, so no crop beats a wrong one.
+  { scrolled: true, rect: { x: 0, y: 0, width: 0, height: 0 } },
+])(
+  "submits a replaced element's last rect unless the page scrolled ($scrolled)",
+  async ({ scrolled, rect }) => {
+    ipcSend.calls.length = 0;
+    const card = document.body.appendChild(document.createElement("div"));
+    const pickedRect = new DOMRect(40, 60, 200, 120);
+    // Browsers report a detached element at 0x0 in the corner.
+    using _rect = vi
+      .spyOn(card, "getBoundingClientRect")
+      .mockImplementation(() => (card.isConnected ? pickedRect : new DOMRect()));
+    document.elementsFromPoint = () => [card];
+    const shadowRoot = startAnnotation();
+
+    card.dispatchEvent(
+      new PointerEvent("pointerdown", { button: 0, clientX: 100, clientY: 100, bubbles: true }),
+    );
+    // A polling page re-renders while the comment is written and replaces the picked node.
+    card.replaceWith(document.createElement("div"));
+    if (scrolled) window.dispatchEvent(new Event("scroll"));
+    const attach = Array.from(shadowRoot.querySelectorAll("button")).find(
+      (button) => button.textContent === "Attach",
+    );
+    if (!attach) throw new Error("Attach button not found");
+    attach.click();
+
+    await vi.waitFor(() =>
+      expect(ipcSend.calls.some(([channel]) => channel === ELEMENT_PICKED_CHANNEL)).toBe(true),
+    );
+    const [, annotation] =
+      ipcSend.calls.find(([channel]) => channel === ELEMENT_PICKED_CHANNEL) ?? [];
+    expect((annotation as { elements: Array<{ rect: unknown }> }).elements[0]?.rect).toEqual(rect);
+  },
+);
