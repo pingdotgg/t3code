@@ -1,10 +1,4 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { driver as gitHubDriver } from "@t3tools/source-control-github/server/driver";
-import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
-import * as HostProcess from "@t3tools/shared/HostProcess";
-import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -361,81 +355,10 @@ describe("IssueService", () => {
     }),
   );
 
-  it.effect("loads the next Everyone page with one GitHub API request", () =>
-    Effect.gen(function* () {
-      const requests: string[] = [];
-      const http = HttpClient.make((request) => {
-        if (request.body._tag !== "Uint8Array")
-          return Effect.die("Expected a GitHub GraphQL request.");
-        requests.push(request.url);
-        const { variables } = JSON.parse(new TextDecoder().decode(request.body.body));
-        const more = variables?.cursor === "next";
-        const number = more ? 1 : 2;
-        const timestamp = "2026-07-01T00:00:00Z";
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            Response.json({
-              data: {
-                viewer: { login: "julius" },
-                search: {
-                  pageInfo: { hasNextPage: !more, endCursor: more ? null : "next" },
-                  nodes: [
-                    {
-                      __typename: "Issue",
-                      number,
-                      title: `Issue ${number}`,
-                      url: `https://github.com/acme/web/issues/${number}`,
-                      author: null,
-                      state: "OPEN",
-                      stateReason: null,
-                      createdAt: timestamp,
-                      updatedAt: timestamp,
-                      closedAt: null,
-                      assignees: { nodes: [] },
-                      labels: { nodes: [] },
-                      comments: { totalCount: 0 },
-                    },
-                  ],
-                },
-              },
-            }),
-          ),
-        );
-      });
-      const { issues } = yield* gitHubDriver.make.pipe(
-        Effect.provide([
-          Layer.succeed(HttpClient.HttpClient, http),
-          TestSourceControlHost.layer({
-            process: { run: () => Effect.succeed(TestSourceControlHost.processOutput("")) },
-          }),
-          NodeCrypto.layer,
-          NodeServices.layer,
-          SourceControlRateLimit.layer,
-        ]),
-        Effect.provideService(HostProcess.Environment, { GH_TOKEN: "fixture-token" }),
-        Effect.provideService(HostProcess.WorkingDirectory, "/w"),
-      );
-      if (issues === undefined) return yield* Effect.die("Missing the GitHub issue driver.");
-      const service = yield* makeService({
-        projects: [project({ id: "web", repository: "acme/web" })],
-        trackers: [issues],
-      });
-      const input = { state: "open", involvement: "all", limit: 1 } as const;
-      const first = yield* service.list(input);
-      expect(first.entries.map((entry) => entry.key)).toEqual(["2"]);
-
-      const before = requests.length;
-      const next = yield* service.list({ ...input, cursors: first.nextCursors });
-
-      expect(next.entries.map((entry) => entry.key)).toEqual(["1"]);
-      expect(requests.length - before, "GitHub API requests for the next Everyone page").toBe(1);
-    }),
-  );
-
   it.effect("deduplicates and pages repositories despite partial failures", () =>
     Effect.gen(function* () {
       const listed: string[] = [];
+      let viewerReads = 0;
       let failContinuation = true;
       const service = yield* makeService({
         projects: [
@@ -453,6 +376,11 @@ describe("IssueService", () => {
         ],
         trackers: [
           fakeTracker({
+            getViewer: () =>
+              Effect.sync(() => {
+                viewerReads += 1;
+                return "julius";
+              }),
             listIssues: (input) =>
               Effect.gen(function* () {
                 listed.push(input.scope);
@@ -519,13 +447,15 @@ describe("IssueService", () => {
         "gitlab.com",
       ]);
 
-      // A continuation only reads the scopes it names.
+      // A continuation only reads the scopes it names, and not the account it does not filter by.
       listed.length = 0;
+      viewerReads = 0;
       const failed = yield* service.list({
         state: "open",
         cursors: result.nextCursors,
       });
       expect(listed).toEqual(["Acme/Web"]);
+      expect(viewerReads).toBe(0);
       expect(failed.nextCursors).toEqual(result.nextCursors);
       expect(failed.errors).toEqual([
         { projectId: "web", projectTitle: "web", message: "try again" },
