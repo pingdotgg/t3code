@@ -5,6 +5,9 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { SourceUpdateRun } from "@t3tools/client-runtime/state/server";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export type SourceUpdatePhase =
   | { readonly kind: "idle" }
@@ -38,7 +41,10 @@ const IDLE: SourceUpdatePhase = { kind: "idle" };
 export const SOURCE_UPDATE_GIVE_UP_MS = 32 * 60_000;
 
 /** How the run the server last logged ended, or null while none has. */
-function settledRun(status: ServerSourceUpdateStatus | null): SettledPhase | null {
+function settledRun(
+  status: ServerSourceUpdateStatus | null,
+  resolve: MessageResolver,
+): SettledPhase | null {
   if (status === null || status.updateRunning || status.lastRunId === null) return null;
   const result = status.lastResult;
   // The script logs an outcome on every exit it survives; none means it was killed outright.
@@ -46,7 +52,7 @@ function settledRun(status: ServerSourceUpdateStatus | null): SettledPhase | nul
     return {
       kind: "failed",
       runId: status.lastRunId,
-      message: "The update stopped without reporting a result.",
+      message: resolve(msg("The update stopped without reporting a result.")),
     };
   }
   return result.outcome === "succeeded"
@@ -66,9 +72,11 @@ export function resolveSourceUpdatePhase(input: {
   readonly conflictThreadId?: ThreadId | null;
   readonly dismissedRunId: string | null;
   readonly nowMs: number;
+  readonly resolve?: MessageResolver;
 }): SourceUpdatePhase {
   const { status, run } = input;
-  const settled = settledRun(status);
+  const resolve = input.resolve ?? m;
+  const settled = settledRun(status, resolve);
   // Past the server's own limit even a status that still says running is stale.
   if (
     run !== null &&
@@ -78,7 +86,9 @@ export function resolveSourceUpdatePhase(input: {
     return {
       kind: "failed",
       runId: run.runId,
-      message: "The update never reported back; the server may not have restarted. Check its log.",
+      message: resolve(
+        msg("The update never reported back; the server may not have restarted. Check its log."),
+      ),
     };
   }
   if (status?.updateRunning) return { kind: "running", cancellable: true };
@@ -103,32 +113,50 @@ export function supportsSourceUpdate(config: Pick<ServerConfig, "environment"> |
   return config?.environment.capabilities.sourceUpdate === true;
 }
 
-function commitsLabel(count: number): string {
-  return `${count} commit${count === 1 ? "" : "s"}`;
-}
-
 /** What the source checkout needs, or how the last update went; null while there is nothing. */
-export function sourceUpdateSummary(phase: SourceUpdatePhase): string | null {
+export function sourceUpdateSummary(
+  phase: SourceUpdatePhase,
+  resolve: MessageResolver = m,
+): string | null {
   switch (phase.kind) {
     case "idle":
     case "resolving":
       return null;
     case "available":
       return [
-        phase.behindOrigin > 0 ? `origin/main is ${commitsLabel(phase.behindOrigin)} ahead` : null,
-        phase.upstreamAhead > 0
-          ? `upstream/main is ${commitsLabel(phase.upstreamAhead)} ahead`
+        phase.behindOrigin > 0
+          ? resolve(
+              msg(
+                "{count, plural, one {{branch} is {count} commit ahead} other {{branch} is {count} commits ahead}}",
+              ),
+              { branch: "origin/main", count: phase.behindOrigin },
+            )
           : null,
-        phase.unbuilt > 0 ? `${commitsLabel(phase.unbuilt)} not built` : null,
+        phase.upstreamAhead > 0
+          ? resolve(
+              msg(
+                "{count, plural, one {{branch} is {count} commit ahead} other {{branch} is {count} commits ahead}}",
+              ),
+              { branch: "upstream/main", count: phase.upstreamAhead },
+            )
+          : null,
+        phase.unbuilt > 0
+          ? resolve(
+              msg(
+                "{count, plural, one {{count} commit not built} other {{count} commits not built}}",
+              ),
+              { count: phase.unbuilt },
+            )
+          : null,
       ]
         .filter((part) => part !== null)
         .join(" · ");
     case "running":
-      return "Updating from source…";
+      return resolve(msg("Updating from source…"));
     case "succeeded":
-      return phase.message || `Updated to ${phase.sha}`;
+      return phase.message || resolve(msg("Updated to {sha}"), { sha: phase.sha });
     case "failed":
-      return `Update failed: ${phase.message}`;
+      return resolve(msg("Update failed: {message}"), { message: phase.message });
   }
 }
 
@@ -175,15 +203,18 @@ export function collectSourceUpdateMachines(
 }
 
 /** The pill names the state that most needs attention; null hides it. */
-export function sourceUpdatePillLabel(machines: ReadonlyArray<SourceUpdateMachine>): string | null {
+export function sourceUpdatePillLabel(
+  machines: ReadonlyArray<SourceUpdateMachine>,
+  resolve: MessageResolver = m,
+): string | null {
   const has = (kind: SourceUpdatePhase["kind"]) =>
     machines.some(({ phase }) => phase.kind === kind);
-  if (has("failed")) return "Update failed";
-  if (has("resolving")) return "Resolving conflicts…";
-  if (has("running")) return "Updating…";
+  if (has("failed")) return resolve(msg("Update failed"));
+  if (has("resolving")) return resolve(msg("Resolving conflicts…"));
+  if (has("running")) return resolve(msg("Updating…"));
   const available = machines.filter(({ phase }) => phase.kind === "available");
   if (available.length === 0) return null;
   return available.length === 1
-    ? `Update · ${available[0]!.label}`
-    : `Update · ${available.length} machines`;
+    ? resolve(msg("Update · {machine}"), { machine: available[0]!.label })
+    : resolve(msg("Update · {count} machines"), { count: available.length });
 }

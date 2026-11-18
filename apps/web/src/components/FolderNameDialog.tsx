@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useId, useState } from "react";
 import { create } from "zustand";
 
@@ -39,9 +40,9 @@ function requestFolderName(copy: FolderNameRequestCopy): Promise<string | null> 
 /** Asks for a folder's new name; `null` when cancelled. */
 export function requestFolderRename(current: string): Promise<string | null> {
   return requestFolderName({
-    title: "Rename folder",
-    description: "Renaming onto an existing folder merges the two.",
-    submitLabel: "Rename",
+    title: msg("Rename folder"),
+    description: msg("Renaming onto an existing folder merges the two."),
+    submitLabel: msg("Rename", { $context: "verb, confirms renaming a folder" }),
     initialName: current,
   });
 }
@@ -52,9 +53,9 @@ export async function resolveFolderMenuAction(
 ): Promise<{ readonly folder: string | null } | null> {
   if (action === "folder-new") {
     const name = await requestFolderName({
-      title: "New folder",
-      description: "Moved threads leave their project and show under this folder.",
-      submitLabel: "Move",
+      title: msg("New folder"),
+      description: msg("Moved threads leave their project and show under this folder."),
+      submitLabel: msg("Move", { $context: "verb, moves threads into a folder" }),
       initialName: "",
     });
     return name === null ? null : { folder: name };
@@ -79,8 +80,10 @@ export function FolderNameDialogHost() {
 
 function FolderNameDialog({ request }: { request: FolderNameRequestCopy }) {
   const id = useId();
+  const gt = useGT();
+  const m = useMessages();
   const [value, setValue] = useState(request.initialName);
-  const [error, setError] = useState<string | null>(null);
+  const [invalid, setInvalid] = useState(false);
   return (
     <Dialog
       open
@@ -95,19 +98,19 @@ function FolderNameDialog({ request }: { request: FolderNameRequestCopy }) {
             event.preventDefault();
             const name = parseFolderName(value);
             if (name === null) {
-              setError("Use a single line of at most 64 characters.");
+              setInvalid(true);
               return;
             }
             finish(name);
           }}
         >
           <DialogHeader>
-            <DialogTitle>{request.title}</DialogTitle>
-            <DialogDescription>{request.description}</DialogDescription>
+            <DialogTitle>{m(request.title)}</DialogTitle>
+            <DialogDescription>{m(request.description)}</DialogDescription>
           </DialogHeader>
           <DialogPanel>
             <Label className="flex flex-col items-stretch" htmlFor={`${id}-name`}>
-              Name
+              <T>Name</T>
               <Input
                 nativeInput
                 id={`${id}-name`}
@@ -116,21 +119,21 @@ function FolderNameDialog({ request }: { request: FolderNameRequestCopy }) {
                 value={value}
                 onChange={(event) => {
                   setValue(event.target.value);
-                  setError(null);
+                  setInvalid(false);
                 }}
               />
             </Label>
-            {error && (
+            {invalid && (
               <p role="alert" className="text-destructive">
-                {error}
+                {gt("Use a single line of at most 64 characters.")}
               </p>
             )}
           </DialogPanel>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => finish(null)}>
-              Cancel
+              <T>Cancel</T>
             </Button>
-            <Button type="submit">{request.submitLabel}</Button>
+            <Button type="submit">{m(request.submitLabel)}</Button>
           </DialogFooter>
         </form>
       </DialogPopup>

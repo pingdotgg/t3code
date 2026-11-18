@@ -15,6 +15,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/model
 import type { ProjectIconOverride } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as Schema from "effect/Schema";
+import { useGT, useMessages } from "gt-react";
 import { type MouseEvent, type ReactNode, useRef } from "react";
 
 import { cn } from "~/lib/utils";
@@ -105,10 +106,11 @@ export function ProjectRail(props: {
     if (event.over === null || event.active.id === event.over.id) return;
     props.onMove(String(event.active.id), String(event.over.id));
   };
-  const hideLabel = hideIdle ? "Show idle projects" : "Hide idle projects";
+  const gt = useGT();
+  const hideLabel = hideIdle ? gt("Show idle projects") : gt("Hide idle projects");
   return (
     <nav
-      aria-label="Projects"
+      aria-label={gt("Projects")}
       className="flex w-12 shrink-0 flex-col items-center gap-1 overflow-y-auto border-r border-sidebar-border py-2 [scrollbar-width:none]"
       onTouchEndCapture={(event) => {
         if (!touchLiftedRef.current) return;
@@ -117,7 +119,7 @@ export function ProjectRail(props: {
       }}
     >
       <RailTileButton
-        label="All projects"
+        label={gt("All projects")}
         selected={selectedKeys.length === 0}
         dot={allDot}
         onClick={() => props.onSelectAll()}
@@ -190,6 +192,7 @@ function SortableRailTile(props: {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tile.key,
   });
+  const gt = useGT();
   return (
     <div
       ref={setNodeRef}
@@ -206,7 +209,11 @@ function SortableRailTile(props: {
     >
       <RailTileButton
         label={tile.kind === "project" ? tile.group.displayName : tile.tag}
-        detail={tile.kind === "project" ? tile.group.workspaceRoot : "Folder"}
+        detail={
+          tile.kind === "project"
+            ? tile.group.workspaceRoot
+            : gt("Folder", { $context: "kind of sidebar rail tile" })
+        }
         selected={props.selected}
         quiet={idle}
         dot={dot}
@@ -240,13 +247,14 @@ function RailTileButton(props: {
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
   children: ReactNode;
 }) {
+  const m = useMessages();
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <button
             type="button"
-            aria-label={`${props.label}${props.dot ? FOLDER_DOT_LABEL[props.dot] : ""}`}
+            aria-label={`${props.label}${props.dot ? m(FOLDER_DOT_LABEL[props.dot]) : ""}`}
             aria-pressed={props.selected}
             onClick={props.onClick}
             className={cn(

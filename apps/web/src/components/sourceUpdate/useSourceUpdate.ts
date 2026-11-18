@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   selectEnvironmentQueryData,
@@ -7,9 +8,11 @@ import {
 import { type EnvironmentId, ServerSourceUpdateError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
+import { msg, useMessages } from "gt-react";
 import { useSyncExternalStore } from "react";
 
 import { useNowAfter } from "~/hooks/useDeadline";
+import { m } from "~/i18n/messages";
 import {
   readLocalStorageValue,
   subscribeLocalStorageKey,
@@ -55,6 +58,7 @@ export function useCanSourceUpdate(environmentId: EnvironmentId | null): boolean
 
 /** Pass null when the environment cannot source-update; nothing is fetched then. */
 export function useSourceUpdateState(environmentId: EnvironmentId | null) {
+  const messages = useMessages();
   const query =
     environmentId === null
       ? null
@@ -83,7 +87,14 @@ export function useSourceUpdateState(environmentId: EnvironmentId | null) {
     phase:
       environmentId === null
         ? IDLE_PHASE
-        : resolveSourceUpdatePhase({ status, run, conflictThreadId, dismissedRunId, nowMs }),
+        : resolveSourceUpdatePhase({
+            status,
+            run,
+            conflictThreadId,
+            dismissedRunId,
+            nowMs,
+            resolve: messages,
+          }),
   };
 }
 
@@ -119,6 +130,7 @@ function useDismissedRunIds(environmentIds: ReadonlyArray<EnvironmentId>) {
 
 /** Connected source-built environments with something to update, running, failed or resolving. */
 export function useSourceUpdateMachines() {
+  const messages = useMessages();
   const { environments } = useEnvironments();
   const candidates = environments.filter(
     (environment) =>
@@ -137,7 +149,12 @@ export function useSourceUpdateMachines() {
       const input = inputs[index];
       if (!input) return [];
       const dismissedRunId = dismissedRunIds[index] ?? null;
-      const phase = resolveSourceUpdatePhase({ ...input, dismissedRunId, nowMs });
+      const phase = resolveSourceUpdatePhase({
+        ...input,
+        dismissedRunId,
+        nowMs,
+        resolve: messages,
+      });
       return [{ environmentId, label, status: input.status, phase }];
     }),
   );
@@ -148,7 +165,7 @@ const toastFailure = (title: string, error: unknown) =>
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : "An error occurred.",
+      description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
     }),
   );
 
@@ -170,24 +187,28 @@ export function useSourceUpdateActions() {
     const error = squashAtomCommandFailure(result);
     if (!force && isSourceUpdateError(error) && error.reason === "turns-running") {
       const confirmed = await ensureLocalApi().dialogs.confirm(
-        `${error.message}\n\nUpdate and restart anyway?`,
+        m(msg("{message}\n\nUpdate and restart anyway?"), { message: error.message }),
         { variant: "destructive" },
       );
       if (confirmed) await update(environmentId, true);
       return;
     }
-    toastFailure("Could not update from source", error);
+    toastFailure(m(msg("Could not update from source")), error);
   };
 
   const cancel = async (environmentId: EnvironmentId): Promise<void> => {
     const confirmed = await ensureLocalApi().dialogs.confirm(
-      "Cancel the update? The checkout keeps what was pulled, and the server keeps running its current build.",
+      m(
+        msg(
+          "Cancel the update? The checkout keeps what was pulled, and the server keeps running its current build.",
+        ),
+      ),
       { variant: "destructive" },
     );
     if (!confirmed) return;
     const result = await cancelUpdate({ environmentId, input: {} });
     if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
-    toastFailure("Could not cancel the update", squashAtomCommandFailure(result));
+    toastFailure(m(msg("Could not cancel the update")), squashAtomCommandFailure(result));
   };
 
   return { update, cancel };

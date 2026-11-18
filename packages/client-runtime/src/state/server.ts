@@ -1,4 +1,11 @@
 import {
+  errorI18nMessage,
+  type MarkedText,
+  markedTextEnglish,
+  resolveMarkedText,
+  thrownErrorMessage,
+} from "../errors/translatable.ts";
+import {
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerConfig,
@@ -66,6 +73,8 @@ import {
   type ServerConfigProjection,
   withoutEnvironmentThemes,
 } from "./serverConfigProjection.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type { ServerConfigProjection } from "./serverConfigProjection.ts";
 
@@ -85,6 +94,8 @@ export type ServerUpdateState =
       readonly fromVersion: string;
       readonly targetVersion: string;
       readonly message: string;
+      /** `message` as marked text, so it follows the UI language; absent for plain error text. */
+      readonly i18nMessage?: MarkedText;
     };
 
 export interface ServerUpdateTarget {
@@ -131,7 +142,16 @@ export class ServerUpdateResumeTimeoutError extends Schema.TaggedError<ServerUpd
   },
 ) {
   override get message(): string {
-    return `Could not confirm that the server resumed on t3@${this.targetVersion}. Reconnect to check the update outcome.`;
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [
+      msg(
+        "Could not confirm that the server resumed on t3@{version}. Reconnect to check the update outcome.",
+        { version: this.targetVersion },
+      ),
+    ];
   }
 }
 
@@ -142,9 +162,21 @@ export class ServerUpdateProgressIncompleteError extends Schema.TaggedError<Serv
   },
 ) {
   override get message(): string {
-    return `The t3@${this.targetVersion} update ended before the server accepted the restart.`;
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [
+      msg("The t3@{version} update ended before the server accepted the restart.", {
+        version: this.targetVersion,
+      }),
+    ];
   }
 }
+
+const DESKTOP_RESUMED_WITHOUT_UPDATE = msg(
+  "The desktop app resumed without installing the prepared update.",
+);
 
 export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTerminalError>()(
   "ServerUpdateTerminalError",
@@ -155,7 +187,27 @@ export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTe
   },
 ) {
   override get message(): string {
-    return this.reason ?? `The t3@${this.targetVersion} update ${this.status}.`;
+    return this.reason ?? markedTextEnglish(this.statusText);
+  }
+
+  get i18nMessage(): MarkedText | undefined {
+    return this.reason === undefined
+      ? this.statusText
+      : this.reason === DESKTOP_RESUMED_WITHOUT_UPDATE
+        ? [DESKTOP_RESUMED_WITHOUT_UPDATE]
+        : undefined;
+  }
+
+  private get statusText(): MarkedText {
+    const version = this.targetVersion;
+    switch (this.status) {
+      case "committed":
+        return [msg("The t3@{version} update committed.", { version })];
+      case "rolled-back":
+        return [msg("The t3@{version} update rolled-back.", { version })];
+      case "failed":
+        return [msg("The t3@{version} update failed.", { version })];
+    }
   }
 }
 
@@ -309,7 +361,7 @@ export const waitForDesktopUpdateTarget = Effect.fn("waitForDesktopUpdateTarget"
   return yield* new ServerUpdateTerminalError({
     targetVersion,
     status: "failed",
-    reason: "The desktop app resumed without installing the prepared update.",
+    reason: DESKTOP_RESUMED_WITHOUT_UPDATE,
   });
 });
 
@@ -343,8 +395,31 @@ export function serverUpdateStateForServerVersion(
     : IDLE_SERVER_UPDATE_STATE;
 }
 
-export function serverUpdateFailureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Server update failed.";
+function serverUpdateFailureMessage(error: unknown, resolve: MFunctionType = mFallback): string {
+  return error instanceof Error
+    ? (thrownErrorMessage(error, resolve) ?? error.message)
+    : resolve(msg("Server update failed."));
+}
+
+/** The failed state's `message` and, when the text is ours, its marked text. */
+export function serverUpdateFailure(error: unknown): {
+  readonly message: string;
+  readonly i18nMessage?: MarkedText;
+} {
+  const i18nMessage =
+    error instanceof Error ? errorI18nMessage(error) : [msg("Server update failed.")];
+  return i18nMessage === undefined
+    ? { message: serverUpdateFailureMessage(error) }
+    : { message: serverUpdateFailureMessage(error), i18nMessage };
+}
+
+export function serverUpdateFailureText(
+  state: Extract<ServerUpdateState, { status: "failed" }>,
+  resolve: MFunctionType = mFallback,
+): string {
+  return state.i18nMessage === undefined
+    ? state.message
+    : resolveMarkedText(state.i18nMessage, resolve);
 }
 
 function isRpcSocketError(error: unknown): boolean {
@@ -1255,7 +1330,7 @@ export function createServerEnvironmentAtoms<R, E>(
               stage: currentStage,
               fromVersion,
               targetVersion,
-              message: serverUpdateFailureMessage(Cause.squash(exit.cause)),
+              ...serverUpdateFailure(Cause.squash(exit.cause)),
             });
           }),
         ),

@@ -1,3 +1,4 @@
+import { T, useMessages } from "gt-react";
 import { CircleAlertIcon, CircleArrowUpIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
@@ -12,9 +13,10 @@ import { useSourceUpdateActions, useSourceUpdateMachines } from "./useSourceUpda
 export function SidebarSourceUpdatePill() {
   const machines = useSourceUpdateMachines();
   const { update } = useSourceUpdateActions();
-  const label = sourceUpdatePillLabel(machines);
+  const messages = useMessages();
+  const label = sourceUpdatePillLabel(machines, messages);
   if (label === null) return null;
-  const failed = label === "Update failed";
+  const failed = machines.some(({ phase }) => phase.kind === "failed");
   const updatable = machines.filter(({ canUpdate }) => canUpdate);
   const updateAll = async () => {
     // One at a time: each may ask to confirm restarting over running turns.
@@ -58,7 +60,7 @@ export function SidebarSourceUpdatePill() {
             {updatable.length >= 2 ? (
               <div className="flex justify-end">
                 <Button size="xs" variant="outline" onClick={() => void updateAll()}>
-                  Update all
+                  <T>Update all</T>
                 </Button>
               </div>
             ) : null}

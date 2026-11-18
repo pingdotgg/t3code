@@ -1,6 +1,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
+import { T, useGT, useMessages } from "gt-react";
 import { CircleArrowUpIcon, CircleStopIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 
@@ -23,30 +24,34 @@ export function SourceUpdateStatus({
   readonly full?: boolean;
 }) {
   const { status, failed, phase } = useSourceUpdateState(environmentId);
+  const gt = useGT();
+  const messages = useMessages();
   if (phase.kind === "resolving") {
     return (
-      <span className="text-xs">
-        Upstream has conflicts; an agent is resolving them in{" "}
-        <Link
-          to="/$environmentId/$threadId"
-          params={buildThreadRouteParams(scopeThreadRef(environmentId, phase.threadId))}
-          className="underline"
-        >
-          this thread
-        </Link>
-        . Press Update once it pushes.
-      </span>
+      <T>
+        <span className="text-xs">
+          Upstream has conflicts; an agent is resolving them in{" "}
+          <Link
+            to="/$environmentId/$threadId"
+            params={buildThreadRouteParams(scopeThreadRef(environmentId, phase.threadId))}
+            className="underline"
+          >
+            this thread
+          </Link>
+          . Press Update once it pushes.
+        </span>
+      </T>
     );
   }
   const text =
-    sourceUpdateSummary(phase) ??
+    sourceUpdateSummary(phase, messages) ??
     (!full
       ? null
       : status !== null
-        ? (status.updateUnavailableReason ?? `Up to date at ${status.head.sha}`)
+        ? (status.updateUnavailableReason ?? gt("Up to date at {sha}", { sha: status.head.sha }))
         : failed
-          ? "Could not read the source checkout. Check the server log."
-          : "Checking the checkout…");
+          ? gt("Could not read the source checkout. Check the server log.")
+          : gt("Checking the checkout…"));
   if (text === null) return null;
   return (
     <span className={phase.kind === "failed" ? "text-destructive text-xs" : "text-xs"}>{text}</span>
@@ -65,9 +70,14 @@ export function SourceUpdateButton({
 }) {
   const { status, phase } = useSourceUpdateState(environmentId);
   const { update, cancel } = useSourceUpdateActions();
+  const gt = useGT();
   const cancellable = canCancelSourceUpdate(phase);
   if (!cancellable && !canRunSourceUpdate(status, phase)) return null;
-  const label = cancellable ? "Cancel update" : phase.kind === "failed" ? "Retry update" : "Update";
+  const label = cancellable
+    ? gt("Cancel update")
+    : phase.kind === "failed"
+      ? gt("Retry update")
+      : gt("Update", { $context: "verb, updates the server from source" });
   const onClick = () => void (cancellable ? cancel(environmentId) : update(environmentId));
   if (appearance === "icon") {
     return (
