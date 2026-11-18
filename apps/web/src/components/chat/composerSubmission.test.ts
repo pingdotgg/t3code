@@ -236,10 +236,10 @@ it("retains tray-inclusive limit errors until the tray is shortened", () => {
     onSend: vi.fn(),
   });
   expect(result.validationMessage).not.toBeNull();
-  expect(getComposerPromptLengthValidationMessage(prompt, [assistantCitation])).toBe(
-    result.validationMessage,
-  );
-  expect(getComposerPromptLengthValidationMessage(prompt, [])).toBeNull();
+  expect(
+    getComposerPromptLengthValidationMessage(serializeComposerTray(prompt, [assistantCitation])),
+  ).toBe(result.validationMessage);
+  expect(getComposerPromptLengthValidationMessage(prompt)).toBeNull();
 });
 
 describe("isComposerSubmissionBlocked", () => {

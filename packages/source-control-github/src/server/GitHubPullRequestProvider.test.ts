@@ -849,7 +849,8 @@ describe("getChangeRequestActivity", () => {
 
   const failingThreadRead = (error: GitHubPullRequestApi.GitHubPullRequestApiError) =>
     Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-      getPullRequestActivity: () => Effect.succeed({ author: null, comments: [], commits: [] }),
+      getPullRequestActivity: () =>
+        Effect.succeed({ author: null, comments: [], commits: [], truncated: false }),
       listReviewThreadComments: () => Effect.fail(error),
     });
   const retryAt = 1_900_000_000_000;

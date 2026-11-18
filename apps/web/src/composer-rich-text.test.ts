@@ -7,6 +7,9 @@ describe("composer rich text markdown", () => {
     for (const text of [
       "plain text",
       "snake_case",
+      "ملفٌ_اول و ملفٌ_ثاني",
+      "файл_один и файл_два",
+      "𐐀_𐐁_𐐂 and 𠀀_𠀁_𠀂",
       "unmatched **",
       "** spaced **",
       "\\*literal\\*",
@@ -72,6 +75,8 @@ describe("composer rich text markdown", () => {
       ["__see src/__a.ts__(optional)", "see src/__a.ts", "bold", "(optional)"],
       ["_see src/_a.ts_.", "see src/_a.ts", "italic", "."],
       ["_notes.md_ here", "notes.md", "italic", " here"],
+      ["_файл_один.py_ now", "файл_один.py", "italic", " now"],
+      ["_my_file.py is broken_ now", "my_file.py is broken", "italic", " now"],
       ["_e.g._ this", "e.g.", "italic", " this"],
       ["_and_/or", "and", "italic", "/or"],
     ] as const) {
