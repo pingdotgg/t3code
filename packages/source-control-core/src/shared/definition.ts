@@ -39,6 +39,8 @@ export interface ChangeRequestLink {
 export interface IssueLink {
   readonly host: string;
   readonly scope: string;
+  /** An equivalent binding scope when the provider allows another spelling in URLs. */
+  readonly scopeAlias?: string;
   readonly key: string;
 }
 

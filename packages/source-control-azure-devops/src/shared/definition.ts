@@ -124,14 +124,18 @@ export const definition = defineSourceControl({
   },
   // A project named with spaces arrives percent-encoded; the binding it is matched against is not.
   parseIssueUrl: (url) => {
+    const legacy = url.hostname.toLowerCase().endsWith(".visualstudio.com");
     const link =
       parseIssuePath(url, WORK_ITEM_PATH) ??
-      (url.hostname.toLowerCase().endsWith(".visualstudio.com")
-        ? parseIssuePath(url, LEGACY_WORK_ITEM_PATH)
-        : null);
-    return link === null
-      ? null
-      : { ...link, scope: link.scope.split("/").map(decodeUrlPathSegment).join("/").toLowerCase() };
+      (legacy ? parseIssuePath(url, LEGACY_WORK_ITEM_PATH) : null);
+    if (link === null) return null;
+    const scope = link.scope.split("/").map(decodeUrlPathSegment).join("/").toLowerCase();
+    if (!legacy) return { ...link, scope };
+    // On legacy hosts the default collection is optional in a work item URL.
+    const scopeAlias =
+      /^defaultcollection\/([^/]+)$/u.exec(scope)?.[1] ??
+      (scope.includes("/") ? undefined : `defaultcollection/${scope}`);
+    return { ...link, scope, ...(scopeAlias === undefined ? {} : { scopeAlias }) };
   },
   changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set([

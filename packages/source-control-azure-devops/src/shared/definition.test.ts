@@ -277,7 +277,22 @@ describe("Azure DevOps issue scope", () => {
       definition.parseIssueUrl?.(
         new URL("https://acme.visualstudio.com/Web%20App/_workitems/edit/9"),
       ),
-    ).toEqual({ host: "acme.visualstudio.com", scope: "web app", key: "9" });
+    ).toEqual({
+      host: "acme.visualstudio.com",
+      scope: "web app",
+      scopeAlias: "defaultcollection/web app",
+      key: "9",
+    });
+    expect(
+      definition.parseIssueUrl?.(
+        new URL("https://acme.visualstudio.com/DefaultCollection/Web%20App/_workitems/edit/9"),
+      ),
+    ).toEqual({
+      host: "acme.visualstudio.com",
+      scope: "defaultcollection/web app",
+      scopeAlias: "web app",
+      key: "9",
+    });
     expect(
       definition.parseIssueUrl?.(new URL("https://dev.azure.com/acme/_workitems/edit/9")),
     ).toBeNull();
