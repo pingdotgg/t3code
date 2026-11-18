@@ -242,8 +242,8 @@ export function SavedBackendListRow({
     versionMismatch !== null &&
     (serverUpdateState.status === "idle" || serverUpdateState.status === "failed");
 
-  const statusTooltip = `${environmentTransportLabel(environment, connectedTarget)}
-${serverVersion ? `Version ${serverVersion}\n` : ""}${
+  const statusTooltip = `${environmentTransportLabel(environment, connectedTarget, messages)}
+${serverVersion ? `${gt("Version {version}", { version: serverVersion })}\n` : ""}${
     unsupported
       ? (connectionErrorText(environment.connection, messages) ??
         connectionStatusText(environment.connection, messages))
