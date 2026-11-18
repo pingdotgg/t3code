@@ -63,6 +63,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  idleCompactionOf,
   latestProviderTurnForAttempt,
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
@@ -4123,6 +4124,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
+    // Settling can stop an idle compaction before its provider turn starts.
+    let settleCancelUnsettledEffects:
+      | {
+          readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+          readonly reason: string;
+        }
+      | undefined;
     const thread = yield* projectionStore.getThread(command.threadId).pipe(
       Effect.mapError(
         (cause) =>
@@ -4370,9 +4378,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const automaticQueuedRuns = projection.runs.filter(
         (run) => run.status === "queued" && automaticMessageIds.has(run.userMessageId),
       );
-      const runningRunExists = projection.runs.some((run) =>
+      const activeRuns = projection.runs.filter((run) =>
         ["preparing", "starting", "running", "waiting"].includes(run.status),
       );
+      const activeMessages = yield* projectionStore
+        .getMessagesById(
+          command.threadId,
+          activeRuns.map((run) => run.userMessageId),
+        )
+        .pipe(mapDispatchError(command));
+      // Clients hide T3 Code's own idle compactions and their Stop, so settling stops them.
+      const idleCompactionRuns = activeRuns.filter((run) => {
+        const message = activeMessages.get(run.userMessageId);
+        return message !== undefined && idleCompactionOf(message) !== undefined;
+      });
+      const runningRunExists = activeRuns.some((run) => !idleCompactionRuns.includes(run));
       const queuedMessageExists = projection.runs.some(
         (run) => run.status === "queued" && !automaticQueuedRuns.includes(run),
       );
@@ -4397,6 +4417,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
+      for (const run of idleCompactionRuns) {
+        const cancelled = yield* dispatchRunInterrupt(
+          {
+            type: "run.interrupt",
+            commandId: command.commandId,
+            threadId: command.threadId,
+            runId: run.id,
+            reason: "Thread settled.",
+          },
+          events,
+          effects,
+        );
+        if (cancelled !== undefined) settleCancelUnsettledEffects = cancelled;
+      }
       for (const request of pendingRequests) {
         yield* dispatchRuntimeRequestRespond(
           {
@@ -5518,6 +5552,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         } satisfies PendingOrchestrationEffectV2,
       ]);
     }
+    return settleCancelUnsettledEffects;
   });
 
   const dispatchProviderSessionDetach = Effect.fn("orchestrationV2.dispatch.providerSessionDetach")(
@@ -15072,7 +15107,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} changed before automatic settlement.`,
           });
         }
-        yield* dispatchThreadMutation(
+        cancelUnsettledEffects = yield* dispatchThreadMutation(
           {
             type: "thread.settle",
             commandId: command.commandId,
@@ -15169,7 +15204,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.interaction-mode.set":
       case "thread.model-selection.set":
       case "provider.switch":
-        yield* dispatchThreadMutation(command, events, effects);
+        cancelUnsettledEffects = yield* dispatchThreadMutation(command, events, effects);
         break;
       case "thread.metadata.update": {
         const continuation = metadataUpdateContinuation(command);

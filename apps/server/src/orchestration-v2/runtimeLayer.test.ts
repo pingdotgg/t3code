@@ -7073,6 +7073,55 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("settling a thread stops its idle compaction", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-idle-compaction-settle-thread");
+
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-idle-compaction-settle-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-idle-compaction-settle-project"),
+        title: "Idle compaction settle",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: "/tmp/runtime-layer-idle-compaction-settle",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "agent",
+        creationSource: "server",
+        commandId: CommandId.make("runtime-layer-idle-compaction-settle-compact"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-idle-compaction-settle-compact"),
+        text: "/compact",
+        attachments: [],
+        idleCompaction: "beforeCacheExpires",
+        dispatchMode: { type: "start_immediately" },
+      });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(before.runs.length, 1);
+      assert.include(["preparing", "starting", "running"], before.runs[0]?.status);
+
+      // Clients hide this run and its Stop, so settling must not ask the user to stop it.
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-idle-compaction-settle"),
+        threadId,
+      });
+
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projection.runs[0]?.status, "interrupted");
+      assert.equal(projection.thread.settledOverride, "settled");
+      assert.isNotNull(projection.thread.settledAt);
+    }),
+  );
+
   it.effect("keeps a linked environment's sender on started and queued messages", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
