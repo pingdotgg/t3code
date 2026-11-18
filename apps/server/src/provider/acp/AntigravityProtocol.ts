@@ -571,13 +571,9 @@ export function extractAntigravityBackgroundTaskId(toolCall: AcpToolCallState): 
   const outputText = extractAntigravityToolOutputText(toolCall);
   if (outputText !== undefined) {
     const match =
-      /(?:^|\n)(?:Tool is )?running as a background task with task id:\s*([^\s\r\n]+)/i.exec(
-        outputText,
-      ) ??
-      /(?:^|\n)(?:Scheduled|Tool scheduled) task with (?:task )?id:\s*([^\s\r\n]+)/i.exec(
-        outputText,
-      ) ??
-      /(?:^|\n)(?:Tool )?background task with task id:\s*([^\s\r\n]+)/i.exec(outputText);
+      /^(?:Tool is )?running as a background task with task id:\s*([^\s\r\n]+)/i.exec(outputText) ??
+      /^(?:Scheduled|Tool scheduled) task with (?:task )?id:\s*([^\s\r\n]+)/i.exec(outputText) ??
+      /^(?:Tool )?background task with task id:\s*([^\s\r\n]+)/i.exec(outputText);
     if (match?.[1]) {
       // Strip only trailing punctuation such as quotes, commas, dots
       return match[1].replace(/["',.]+$/, "").trim();

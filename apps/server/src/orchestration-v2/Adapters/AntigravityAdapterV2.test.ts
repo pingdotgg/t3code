@@ -184,6 +184,19 @@ describe("AntigravityAdapterV2 flavor", () => {
     // Under Antigravity flavor (backgroundTasksIdleOnTurnCompletion: true), background tools terminalize on completed turn
     assert.isTrue(acpCompletedTurnShouldTerminalizeTool(bgTool, flavor));
 
+    const updatedTool = {
+      ...bgTool,
+      backgroundCommandTaskId: "task-1",
+      data: { rawOutput: "progress output" },
+    };
+    assert.isTrue(acpCompletedTurnShouldTerminalizeTool(updatedTool, flavor));
+    assert.isFalse(
+      acpCompletedTurnShouldTerminalizeTool(updatedTool, {
+        ...flavor,
+        backgroundTasksIdleOnTurnCompletion: false,
+      }),
+    );
+
     // Under a flavor where backgroundTasksIdleOnTurnCompletion is false/undefined, background tools are excluded
     assert.isFalse(
       acpCompletedTurnShouldTerminalizeTool(bgTool, {

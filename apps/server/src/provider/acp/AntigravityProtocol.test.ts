@@ -660,6 +660,20 @@ describe("Antigravity background tasks", () => {
       }),
     ).toBe("task-custom-123");
 
+    for (const phrase of [
+      "Tool is running as a background task with task id: bogus",
+      "Scheduled task with ID: bogus",
+      "background task with task id: bogus",
+    ]) {
+      expect(
+        extractAntigravityBackgroundTaskId({
+          toolCallId: "quoted-output",
+          title: "run_command",
+          data: { rawOutput: "unrelated output\n" + phrase },
+        }),
+      ).toBeUndefined();
+    }
+
     // Does not identify manage_task as a background task
     expect(
       extractAntigravityBackgroundTaskId({
