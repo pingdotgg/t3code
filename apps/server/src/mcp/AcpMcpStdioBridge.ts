@@ -1,7 +1,5 @@
 // Relay JSON-RPC verbatim; schema decoding would reject foreign payloads.
-// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off
-import * as NodeReadline from "node:readline";
-
+// @effect-diagnostics globalJsonInEffect:off
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -60,6 +58,12 @@ function protocolVersionOf(entry: unknown): string | null {
   return typeof version === "string" && version.length > 0 ? version : null;
 }
 
+function replyToServerRequest(envelope: JsonRpcEnvelope): unknown {
+  return envelope.method === "ping"
+    ? { jsonrpc: "2.0", id: envelope.id, result: {} }
+    : { jsonrpc: "2.0", id: envelope.id, error: { code: -32601, message: "Method not found" } };
+}
+
 export interface McpToolSessionOptions {
   readonly endpoint: string;
   readonly authorization: string;
@@ -114,10 +118,16 @@ export const mcpToolSession = (
         message: `T3 Code MCP endpoint responded with HTTP ${response.status}.`,
       });
     }
-    const payloads = yield* Stream.runCollect(responsePayloads(response, bridgeError));
-    for (const payload of payloads) {
+    const payloads: Array<unknown> = [];
+    yield* Stream.runForEach(responsePayloads(response, bridgeError), (payload) => {
       protocolVersion = protocolVersionOf(payload) ?? protocolVersion;
-    }
+      const envelope = asEnvelope(payload);
+      if (envelope?.id !== undefined && typeof envelope.method === "string") {
+        return send(replyToServerRequest(envelope)).pipe(Effect.asVoid);
+      }
+      payloads.push(payload);
+      return Effect.void;
+    });
     return payloads;
   });
 
@@ -320,8 +330,12 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
       return yield* launch(task);
     });
 
-    const reader = NodeReadline.createInterface({ input: options.input });
-    yield* Stream.runForEach(Stream.fromAsyncIterable(reader, bridgeError), dispatch).pipe(
+    // node:readline also splits on U+2028/U+2029, which JSON.stringify leaves raw inside strings.
+    yield* Stream.fromAsyncIterable(options.input, bridgeError).pipe(
+      Stream.map((chunk) => (typeof chunk === "string" ? Buffer.from(chunk) : chunk)),
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.runForEach(dispatch),
       Effect.ignoreCause,
     );
     yield* Fiber.awaitAll(running);

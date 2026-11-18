@@ -2,6 +2,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
+import type * as NodeDns from "node:dns";
+import * as NodeDnsPromises from "node:dns/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
@@ -25,6 +27,23 @@ vi.mock("node:os", async (importOriginal) => {
         },
       ],
     }),
+  };
+});
+
+// Clash and Mihomo answer every name from 198.18.0.0/16 in fake-IP mode.
+const TEST_DNS: Record<string, ReadonlyArray<{ address: string; family: number }>> = {
+  "cdn.fake-ip.test": [{ address: "198.18.2.40", family: 4 }],
+  "mixed.fake-ip.test": [
+    { address: "93.184.215.14", family: 4 },
+    { address: "198.18.2.41", family: 4 },
+  ],
+};
+vi.mock("node:dns/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof NodeDnsPromises>();
+  return {
+    ...actual,
+    lookup: (host: string, options: NodeDns.LookupOptions) =>
+      TEST_DNS[host] ? Promise.resolve(TEST_DNS[host]) : actual.lookup(host, options),
   };
 });
 
@@ -82,7 +101,7 @@ const domainTarget = (host: string, port: number) => {
 describe("publicProxy", () => {
   it.effect("refuses loopback and private targets, by address or by name", () =>
     Effect.gen(function* () {
-      const port = yield* publicProxy;
+      const { port } = yield* publicProxy;
       for (const target of [
         ipv4Target("127.0.0.1", 80),
         ipv4Target("10.1.2.3", 80),
@@ -102,12 +121,24 @@ describe("publicProxy", () => {
       const { code, socket } = yield* connectThrough(port, ipv4Target("1.1.1.1", 0));
       socket.destroy();
       expect(code).toBe(7);
-    }).pipe(Effect.scoped),
+    }),
+  );
+
+  it.effect("refuses fake-IP names and records hosts whose every address is fake", () =>
+    Effect.gen(function* () {
+      const { port, fakeIpHosts } = yield* publicProxy;
+      for (const host of ["cdn.fake-ip.test", "mixed.fake-ip.test"]) {
+        const { code, socket } = yield* connectThrough(port, domainTarget(host, 443));
+        socket.destroy();
+        expect(code).toBe(2);
+      }
+      expect([...fakeIpHosts]).toEqual([["cdn.fake-ip.test", "198.18.2.40"]]);
+    }),
   );
 
   it.effect("refuses every address this machine holds, even a public one", () =>
     Effect.gen(function* () {
-      const port = yield* publicProxy;
+      const { port } = yield* publicProxy;
       const own = Object.values(NodeOS.networkInterfaces())
         .flatMap((entries) => entries ?? [])
         .filter((entry) => !entry.internal && !entry.address.startsWith("fe80"));
@@ -125,14 +156,14 @@ describe("publicProxy", () => {
         socket.destroy();
         expect(code).toBe(2);
       }
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("closes every connection when its scope closes", () =>
     Effect.gen(function* () {
       const socket = yield* Effect.scoped(
         Effect.gen(function* () {
-          const port = yield* publicProxy;
+          const { port } = yield* publicProxy;
           return yield* Effect.callback<NodeNet.Socket>((resume) => {
             const client = NodeNet.connect(port, "127.0.0.1", () => {
               client.write(Buffer.from([5, 1, 0]));
