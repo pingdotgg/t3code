@@ -177,9 +177,9 @@ it.each([
     .toHaveAttribute("aria-disabled", "true");
 });
 
-const OFFLINE_STATUS = "Offline machines will not get this setting: Laptop.";
+const OFFLINE_STATUS = "Offline machines will not get this setting: Laptop and Studio.";
 
-// Desk stays connected with both device switches on; Laptop is a saved machine that is offline.
+// Desk stays connected with both device switches on; Laptop and Studio are offline saved machines.
 function setupDevices() {
   const desk = environments[0]!;
   const settings = { ...config.settings, enableDeviceSupport: true, enableAgentDeviceAccess: true };
@@ -190,7 +190,8 @@ function setupDevices() {
     connection: { phase: "offline", error: null, traceId: null },
     serverConfig: null,
   };
-  environments.splice(0, 1, { ...desk, serverConfig: { ...config, settings } }, laptop);
+  const studio = { ...laptop, environmentId: EnvironmentId.make("studio"), label: "Studio" };
+  environments.splice(0, 1, { ...desk, serverConfig: { ...config, settings } }, laptop, studio);
   deviceTest.configure.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   deviceTest.toast.mockReset();
   return { [Symbol.dispose]: () => void environments.splice(0, Infinity, desk) };

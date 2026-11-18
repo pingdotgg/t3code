@@ -42,7 +42,7 @@ import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useRef, useState } from "react";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { m as resolveNow, type MessageResolver } from "../../i18n/messages";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
@@ -905,6 +905,7 @@ function DeviceIntegrationControls({
 }) {
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
+  const locale = useLocale();
   const canConfigure = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const { state, loaded } = useDeviceState(environmentId);
   const { scope, environments, connectedEnvironments } = useSettingsScope();
@@ -919,7 +920,7 @@ function DeviceIntegrationControls({
   const offlineStatus =
     offlineLabels.length > 0
       ? gt("Offline machines will not get this setting: {machines}.", {
-          machines: offlineLabels.join(", "),
+          machines: new Intl.ListFormat(locale, { type: "conjunction" }).format(offlineLabels),
         })
       : undefined;
   const configure = useAtomCommand(deviceEnvironment.configure, { reportFailure: false });
