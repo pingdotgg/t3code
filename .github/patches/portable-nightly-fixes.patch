@@ -286,37 +286,49 @@ index a94b9e9497..f22abbe71f 100644
    const pinned: EnvironmentThreadShell[] = [];
    const active: EnvironmentThreadShell[] = [];
 diff --git a/apps/web/src/components/settings/SavedEnvironmentRows.tsx b/apps/web/src/components/settings/SavedEnvironmentRows.tsx
-index 866841b4bc..44b0cf0cb3 100644
+index dc6923a4c0..01bd32dcb3 100644
 --- a/apps/web/src/components/settings/SavedEnvironmentRows.tsx
 +++ b/apps/web/src/components/settings/SavedEnvironmentRows.tsx
-@@ -58,4 +58,4 @@ import { environmentCatalog } from "~/connection/catalog";
+@@ -59,8 +59,8 @@ import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
+ import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
+ import { environmentCatalog } from "~/connection/catalog";
  import { readEnvironmentScope } from "~/state/session";
 +import { getServerUpdateTargetVersion } from "~/versionSkew";
  import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
 -import { APP_VERSION } from "~/branding";
  import { useManagedPolicy } from "~/state/managedPolicy";
-@@ -365,3 +365,3 @@ export function SavedBackendListRow({
+ import { useAtomCommand } from "../../state/use-atom-command";
+ import { useUpdateEnvironmentSettings } from "~/hooks/useSettings";
+@@ -390,7 +390,7 @@ export function SavedBackendListRow({
+             $context: "names a T3 server inside sentences such as {serverLabel} updated",
+           })}
            fromVersion={lastDescriptor?.serverVersion}
 -          targetVersion={APP_VERSION}
 +          targetVersion={getServerUpdateTargetVersion()}
-           label={serverUpdateState.status === "failed" ? "Retry update" : "Update"}
+           label={serverUpdateState.status === "failed" ? gt("Retry update") : gt("Update")}
+         />
+       ) : null}
 diff --git a/apps/web/src/components/sidebar/useUpdateEverything.ts b/apps/web/src/components/sidebar/useUpdateEverything.ts
-index 05127d9885..47179ca513 100644
+index 87c3a43a59..1efeb336aa 100644
 --- a/apps/web/src/components/sidebar/useUpdateEverything.ts
 +++ b/apps/web/src/components/sidebar/useUpdateEverything.ts
-@@ -6,2 +6,3 @@
+@@ -5,6 +5,7 @@ import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+ import { APP_VERSION } from "~/branding";
+ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
  import { isElectron } from "~/env";
 +import { getServerUpdateTargetVersion } from "~/versionSkew";
  import { useEnvironments } from "~/state/environments";
-@@ -52,7 +53,7 @@ export function useUpdateEverything(
+ import { environmentIdsKey } from "~/state/environmentAtomList";
+ import { environmentUpdateStatesAtom, serverEnvironment } from "~/state/server";
+@@ -54,7 +55,7 @@ export function useUpdateEverything(
    localUpdateVersion: string | null,
    channelSwitch?: ChannelSwitchRelease,
  ) {
 -  const targetVersion = localUpdateVersion ?? APP_VERSION;
 +  const targetVersion = getServerUpdateTargetVersion(localUpdateVersion ?? APP_VERSION);
    const { environments } = useEnvironments();
+   const resolve = useMessages();
    const environmentIds = environmentIdsKey(environments.map(({ environmentId }) => environmentId));
-   const sessionStates = useAtomValue(environmentSessionStatesAtom(environmentIds));
 diff --git a/apps/web/src/versionSkew.test.ts b/apps/web/src/versionSkew.test.ts
 index 2b5f61063d..e9c2921a90 100644
 --- a/apps/web/src/versionSkew.test.ts
@@ -351,10 +363,10 @@ index 2b5f61063d..e9c2921a90 100644
      expect(resolveVersionMismatch("0.0.35")).toBeNull();
      expect(resolveVersionMismatch("9.9.9")).toBeNull();
 diff --git a/apps/web/src/versionSkew.ts b/apps/web/src/versionSkew.ts
-index 3b45703fb2..808fddbd31 100644
+index 08e64cb77e..9a0975fd3a 100644
 --- a/apps/web/src/versionSkew.ts
 +++ b/apps/web/src/versionSkew.ts
-@@ -17,6 +17,20 @@ export interface VersionMismatch {
+@@ -19,6 +19,20 @@ export interface VersionMismatch {
    readonly hint: string;
  }
  
@@ -375,14 +387,15 @@ index 3b45703fb2..808fddbd31 100644
  const VERSION_MISMATCH_DISMISSALS_STORAGE_KEY = "t3code:version-mismatch-dismissals:v1";
  
  const dismissedServerUpdateFailures = new WeakSet<ServerUpdateState>();
-@@ -80,7 +94,10 @@ export function resolveVersionMismatch(
- export function resolveServerConfigVersionMismatch(
+@@ -86,7 +100,11 @@ export function resolveServerConfigVersionMismatch(
    serverConfig: Pick<ServerConfig, "environment"> | null | undefined,
+   resolve: MessageResolver = m,
  ): VersionMismatch | null {
--  return resolveVersionMismatch(serverConfig?.environment.serverVersion);
+-  return resolveVersionMismatch(serverConfig?.environment.serverVersion, APP_VERSION, resolve);
 +  return resolveVersionMismatch(
 +    serverConfig?.environment.serverVersion,
 +    getServerUpdateTargetVersion(),
++    resolve,
 +  );
  }
  
