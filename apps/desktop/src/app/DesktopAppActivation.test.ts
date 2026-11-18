@@ -16,6 +16,7 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
@@ -176,6 +177,7 @@ describe("desktop app control server", () => {
 it.effect("rejects folder opening when the local environment is disabled", () =>
   Effect.gen(function* () {
     const errors: string[] = [];
+    let ready = false;
     const activation = yield* make.pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -191,9 +193,15 @@ it.effect("rejects folder opening when the local environment is disabled", () =>
             ElectronWindow.ElectronWindow,
             {} as ElectronWindow.ElectronWindow["Service"],
           ),
+          Layer.mock(ElectronApp.ElectronApp, {
+            whenReady: Effect.sync(() => {
+              ready = true;
+            }),
+          }),
           Layer.succeed(ElectronDialog.ElectronDialog, {
             showErrorBox: (_title, message) =>
               Effect.sync(() => {
+                expect(ready).toBe(true);
                 errors.push(message);
               }),
           } as ElectronDialog.ElectronDialog["Service"]),
