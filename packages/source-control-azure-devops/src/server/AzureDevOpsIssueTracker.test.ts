@@ -290,6 +290,15 @@ describe("AzureDevOpsIssueTracker", () => {
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 
+  it.effect("names the viewer without a request that a sign-in could refuse", () =>
+    Effect.gen(function* () {
+      const api = yield* tracker((args) => {
+        throw new Error(`unexpected az invocation ${args.join(" ")}`);
+      });
+      expect(yield* api.getViewer({ cwd: "/w", host: "dev.azure.com" })).toBe("@Me");
+    }),
+  );
+
   it.effect("refuses a scope that is not organization/project without a request", () =>
     Effect.gen(function* () {
       let requests = 0;

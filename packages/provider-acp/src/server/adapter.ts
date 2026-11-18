@@ -7118,7 +7118,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const nativeForm = flavor.extractElicitationForm?.(params);
               const parsedForm =
                 nativeForm === undefined
-                  ? parseElicitationForm(params.requestedSchema, params.message)
+                  ? parseElicitationForm(params.requestedSchema, params.message, {
+                      allowOther: unknownRecord(params._meta)?.["cognition.ai/allowOther"] === true,
+                    })
                   : undefined;
               const form =
                 nativeForm ??

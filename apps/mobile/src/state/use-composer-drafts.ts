@@ -1,4 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
   EnvironmentId as EnvironmentIdSchema,
   ModelSelection as ModelSelectionSchema,
@@ -1180,7 +1182,8 @@ export async function archiveCloudComposerDrafts(
   knownEnvironmentIds: Iterable<EnvironmentId>,
 ): Promise<void> {
   await waitForComposerDraftsLoaded();
-  if (!(await threadOutboxManager.load())) throw new Error("Could not preserve queued messages.");
+  if (!(await threadOutboxManager.load()))
+    throw new Error(m(msg("Could not preserve queued messages.")));
   await flushThreadOutbox();
   const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
   const owner = accountId ?? cloud.accountId;
@@ -1310,7 +1313,8 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
   const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
   const saved = cloud.signedOut[accountId];
   if (saved) {
-    if (!(await threadOutboxManager.load())) throw new Error("Could not restore queued messages.");
+    if (!(await threadOutboxManager.load()))
+      throw new Error(m(msg("Could not restore queued messages.")));
     for (const message of saved.queuedMessages) {
       const alreadyQueued = Object.values(
         appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),

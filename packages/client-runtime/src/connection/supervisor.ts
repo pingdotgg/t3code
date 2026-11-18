@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -270,7 +272,9 @@ function failureFromExit<A>(
     failure: {
       error: new ConnectionTransientError({
         reason: "transport",
-        detail: `${target.label} connection failed unexpectedly.`,
+        ...translatableDetail(
+          msg("{host} connection failed unexpectedly.", { host: target.label }),
+        ),
       }),
       attemptSpan: Option.none(),
     },
@@ -305,9 +309,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const usesRelay = connectionRoutes(entry).some(
     (route) => route.target._tag === "RelayConnectionTarget",
   );
-  const setupTimeoutDetail = `${target.label} did not respond during connection setup.${
-    usesRelay ? ` ${NETWORK_BLOCKING_HINT}` : ""
-  }`;
+  const setupTimeout = msg("{host} did not respond during connection setup.", {
+    host: target.label,
+  });
+  const setupTimeoutDetail = usesRelay
+    ? translatableDetail(setupTimeout, NETWORK_BLOCKING_HINT)
+    : translatableDetail(setupTimeout);
   yield* annotateTarget(target);
 
   const connectivity = yield* Connectivity.Connectivity;
@@ -901,7 +908,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           if (longResume) return true;
           return yield* new ConnectionTransientError({
             reason: "timeout",
-            detail: `${target.label} did not respond to a connection health check.`,
+            ...translatableDetail(
+              msg("{host} did not respond to a connection health check.", {
+                host: target.label,
+              }),
+            ),
           });
         }
         if (probeEvent._tag === "ProbeCompleted") {
@@ -1013,7 +1024,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         failure: {
           error: new ConnectionTransientError({
             reason: "timeout",
-            detail: setupTimeoutDetail,
+            ...setupTimeoutDetail,
           }),
           attemptSpan: Option.none(),
         },

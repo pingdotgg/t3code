@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { MarkedText, messageFromError, translatableMessage } from "../errors/translatable.ts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -11,7 +13,7 @@ import * as Semaphore from "effect/Semaphore";
 
 export class AttachmentUploadError extends Schema.TaggedError<AttachmentUploadError>()(
   "AttachmentUploadError",
-  { message: Schema.String, cause: Schema.Defect() },
+  { message: Schema.String, i18nMessage: Schema.optionalKey(MarkedText), cause: Schema.Defect() },
 ) {}
 
 const isAttachmentUploadError = Schema.is(AttachmentUploadError);
@@ -19,7 +21,9 @@ const isAttachmentUploadError = Schema.is(AttachmentUploadError);
 export function attachmentUploadError(cause: unknown): AttachmentUploadError {
   if (isAttachmentUploadError(cause)) return cause;
   return new AttachmentUploadError({
-    message: cause instanceof Error ? cause.message : "Upload failed. Tap to retry.",
+    ...(cause instanceof Error
+      ? messageFromError(cause)
+      : translatableMessage(msg("Upload failed. Tap to retry."))),
     cause,
   });
 }
