@@ -1859,6 +1859,8 @@
   "20732c0363a295a8": "Impossible d’obtenir la preuve d’association de l’environnement : {detail}",
   "78bf018d20589722": "Impossible de configurer l’accès relais de l’environnement.",
   "a5e3ff0d1a60b766": "Impossible de configurer l’accès au relais de l’environnement : {detail}",
+  "013df8bdb9ca9096": "Impossible d’activer la publication de l’activité de l’agent.",
+  "7247ede5160a0154": "Impossible d’activer la publication de l’activité de l’agent : {detail}",
   "7d508fe978cb0f3b": "Éteint",
   "3ae222ec888dd171": "ID de trace :",
   "be00d572b18076d8": "Appuyez longuement pour retirer de cet appareil",

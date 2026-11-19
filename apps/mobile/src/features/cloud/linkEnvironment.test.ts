@@ -162,14 +162,11 @@ function validLinkResponse(environmentId = "env-1") {
     ok: true,
     environmentId,
     endpoint: {
-      httpBaseUrl: "https://managed.example.test/",
-      wsBaseUrl: "wss://managed.example.test/ws",
-      providerKind: "cloudflare_tunnel",
+      httpBaseUrl: "https://desktop.example.test/",
+      wsBaseUrl: "wss://desktop.example.test/ws",
+      providerKind: "manual",
     },
-    endpointRuntime: {
-      providerKind: "cloudflare_tunnel",
-      connectorToken: "connector-token",
-    },
+    endpointRuntime: null,
     relayIssuer: "https://relay.example.test",
     cloudUserId: "user_123",
     environmentCredential: "environment-credential",
@@ -259,7 +256,7 @@ describe("mobile cloud link environment client", () => {
             ...validLinkResponse(),
             endpoint: {
               ...validLinkResponse().endpoint,
-              providerKind: "manual",
+              providerKind: "cloudflare_tunnel",
             },
           }),
         );
@@ -291,6 +288,17 @@ describe("mobile cloud link environment client", () => {
         if (String(url).endsWith("/v1/client/environment-links")) {
           return Promise.resolve(Response.json(validLinkResponse()));
         }
+        if (String(url).endsWith("/api/connect/preferences")) {
+          return Promise.resolve(
+            Response.json({
+              linked: true,
+              cloudUserId: "user_123",
+              relayUrl: "https://relay.example.test",
+              relayIssuer: "https://relay.example.test",
+              publishAgentActivity: true,
+            }),
+          );
+        }
         return Promise.resolve(
           Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
         );
@@ -303,7 +311,7 @@ describe("mobile cloud link environment client", () => {
         endpoint: {
           httpBaseUrl: "https://desktop.example.test/",
           wsBaseUrl: "wss://desktop.example.test/ws",
-          providerKind: "cloudflare_tunnel",
+          providerKind: "manual",
         },
         origin: {
           localHttpHost: "127.0.0.1",
@@ -314,12 +322,13 @@ describe("mobile cloud link environment client", () => {
         deviceId: "device-1",
         notificationsEnabled: true,
         liveActivitiesEnabled: false,
-        managedTunnelsEnabled: true,
+        managedTunnelsEnabled: false,
       });
       expect(bodies[3]).toMatchObject({
         cloudUserId: "user_123",
         environmentCredential: "environment-credential",
       });
+      expect(bodies[4]).toEqual({ publishAgentActivity: true });
     }),
   );
 });

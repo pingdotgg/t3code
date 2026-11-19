@@ -1859,6 +1859,8 @@
   "20732c0363a295a8": "Kunde inte hämta miljöns länkbevis: {detail}",
   "78bf018d20589722": "Kunde inte konfigurera miljöns reläåtkomst.",
   "a5e3ff0d1a60b766": "Kunde inte konfigurera miljöns reläåtkomst: {detail}",
+  "013df8bdb9ca9096": "Det gick inte att aktivera publicering av agentaktivitet.",
+  "7247ede5160a0154": "Det gick inte att aktivera publicering av agentaktivitet: {detail}",
   "7d508fe978cb0f3b": "Av",
   "3ae222ec888dd171": "Spårnings-id:",
   "be00d572b18076d8": "Tryck länge för att ta bort från den här enheten",

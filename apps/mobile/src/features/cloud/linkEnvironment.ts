@@ -52,8 +52,8 @@ const isEnvironmentCloudApiError = Schema.is(
   ]),
 );
 
-const MANAGED_ENDPOINT_PROVIDER_KIND =
-  "cloudflare_tunnel" satisfies RelayManagedEndpointProviderKind;
+// Live Activities need only agent activity, so a phone never starts a tunnel on the host.
+const PUBLISH_ONLY_PROVIDER_KIND = "manual" satisfies RelayManagedEndpointProviderKind;
 
 function cloudEnvironmentLinkError(
   message: string,
@@ -251,7 +251,7 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
       payload: {
         notificationsEnabled: true,
         liveActivitiesEnabled,
-        managedTunnelsEnabled: true,
+        managedTunnelsEnabled: false,
       },
     })
     .pipe(
@@ -270,7 +270,7 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
         payload: {
           challenge: challenge.challenge,
           relayIssuer: relayUrl,
-          endpoint: { httpBaseUrl, wsBaseUrl, providerKind: MANAGED_ENDPOINT_PROVIDER_KIND },
+          endpoint: { httpBaseUrl, wsBaseUrl, providerKind: PUBLISH_ONLY_PROVIDER_KIND },
           origin: endpointOrigin(httpBaseUrl),
         },
       }),
@@ -289,7 +289,7 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
         proof,
         notificationsEnabled: true,
         liveActivitiesEnabled,
-        managedTunnelsEnabled: true,
+        managedTunnelsEnabled: false,
       },
     })
     .pipe(
@@ -297,7 +297,7 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
     );
   yield* ensureLinkedEnvironmentMatches({
     expectedEnvironmentId: environmentId,
-    expectedProviderKind: MANAGED_ENDPOINT_PROVIDER_KIND,
+    expectedProviderKind: PUBLISH_ONLY_PROVIDER_KIND,
     link,
   });
 
@@ -323,6 +323,24 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
       cloudEnvironmentLinkError(
         m(msg("Could not configure environment relay access.")),
         (detail) => m(msg("Could not configure environment relay access: {detail}", { detail })),
+        { relayLinkCommitted: true },
+      ),
+    ),
+  );
+
+  // Without publishing, the link exists but the host never sends the activity Live Activities show.
+  yield* executeConnectedEnvironmentHttpRequest({
+    group: "connect",
+    method: "POST",
+    url: (urls) => urls.preferences(),
+    timeoutMs: CLOUD_LINK_REQUEST_TIMEOUT_MS,
+    request: ({ client, headers }) =>
+      client.preferences({ headers, payload: { publishAgentActivity: true } }),
+  }).pipe(
+    Effect.mapError(
+      cloudEnvironmentLinkError(
+        m(msg("Could not turn on agent activity publishing.")),
+        (detail) => m(msg("Could not turn on agent activity publishing: {detail}", { detail })),
         { relayLinkCommitted: true },
       ),
     ),
