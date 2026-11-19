@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useGT } from "gt-react";
+import { msg, useGT } from "gt-react";
 import * as Schema from "effect/Schema";
 import {
   useEffect,
@@ -14,6 +14,7 @@ import { useLocation, useParams, useRouter, type AnyRouter } from "@tanstack/rea
 import { moveWorkspaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
+import { m } from "../i18n/messages";
 import {
   releaseThreadUndoShortcut,
   threadUndoClaimsShortcut,
@@ -244,7 +245,7 @@ function registerComputerStopCommand(): () => void {
         if (failures.length === 0) return;
         toastManager.add({
           type: "error",
-          title: "Could not stop computer use",
+          title: m(msg("Could not stop computer use")),
           description: failures[0],
         });
       });

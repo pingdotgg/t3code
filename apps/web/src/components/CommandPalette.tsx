@@ -1431,7 +1431,7 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "stop-computer-use",
-      title: "Stop computer use",
+      title: gt("Stop computer use"),
       searchTerms: ["computer", "stop", "cancel", "screen", "control", "mouse", "keyboard"],
       icon: <MonitorOffIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "computer.stop",
@@ -1440,7 +1440,7 @@ function OpenCommandPaletteDialog(props: {
         if (failures.length > 0) {
           toastManager.add({
             type: "error",
-            title: "Could not stop computer use",
+            title: gt("Could not stop computer use"),
             description: failures[0],
           });
         }

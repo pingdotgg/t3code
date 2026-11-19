@@ -1,6 +1,6 @@
 import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import { GlassContainer, GlassView } from "expo-glass-effect";
-import { useGT } from "gt-react-native";
+import { T, useGT } from "gt-react-native";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type LayoutChangeEvent, Pressable, useWindowDimensions, View } from "react-native";
 import Animated, {
@@ -482,7 +482,7 @@ function FloatingStatusLabel(props: {
         </Text>
         {props.status.approvalsOff ? (
           <Text className="shrink font-sans text-xs text-warning-foreground" numberOfLines={1}>
-            approvals off
+            <T>approvals off</T>
           </Text>
         ) : null}
       </StatusLabelRow>

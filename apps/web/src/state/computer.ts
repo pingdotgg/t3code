@@ -8,6 +8,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { m } from "../i18n/messages";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "./presentation";
 
@@ -46,7 +47,7 @@ export function stopComputerTasks(input: {
   readonly environmentId: EnvironmentId;
   readonly taskId?: string;
 }): Promise<string | null> {
-  return stopEnvironmentComputerTasks(appAtomRegistry, computerEnvironment, input);
+  return stopEnvironmentComputerTasks(appAtomRegistry, computerEnvironment, input, m);
 }
 
 /** Stops every running task across connected environments, for the palette and the keybinding. */

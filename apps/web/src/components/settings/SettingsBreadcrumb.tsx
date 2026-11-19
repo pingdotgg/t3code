@@ -1,4 +1,4 @@
-import { msg, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 import { Badge } from "../ui/badge";
 
@@ -41,7 +41,7 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
         {m(sectionLabel ?? SETTINGS_LABEL)}
         {BETA_SETTINGS_PATHS.has(normalizedPathname) ? (
           <Badge variant="info" size="sm">
-            Beta
+            <T>Beta</T>
           </Badge>
         ) : null}
       </WorkspaceBreadcrumbItem>

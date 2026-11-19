@@ -426,13 +426,13 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
             {props.page === "computer" ? (
               <>
                 <SettingsSection
-                  title="Agent access"
-                  titleIcon={<Chip label="Beta" size="small" />}
+                  title={gt("Agent access")}
+                  titleIcon={<Chip label={gt("Beta")} size="small" />}
                   footer="Computer use is in early testing and may make mistakes. Keep approvals on for anything important."
                 >
                   <SettingsSwitchRow
                     icon="desktopcomputer"
-                    label="Agent computer use"
+                    label={gt("Agent computer use")}
                     subtitle={managedSubtitle(
                       "enableAgentComputerUse",
                       projectSelected
@@ -445,7 +445,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   />
                   <SettingsSwitchRow
                     icon="exclamationmark.shield"
-                    label="Ask before consequential actions"
+                    label={gt("Ask before consequential actions")}
                     subtitle={managedSubtitle(
                       "computerApprovals",
                       uniform("computerApprovals") === "skip"
@@ -463,7 +463,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     onValueChange={(ask) => write({ computerApprovals: ask ? "ask" : "skip" })}
                   />
                 </SettingsSection>
-                <SettingsSection title="Computers">
+                <SettingsSection
+                  title={gt("Computers", { $context: "section title, connected computers" })}
+                >
                   <ComputerUseHostsRow
                     environmentIds={selectedTargets.map((target) => target.environmentId)}
                   />

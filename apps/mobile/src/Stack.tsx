@@ -178,6 +178,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsEnvironmentMaintenance: msg("Maintenance"),
   SettingsNotifications: msg("Notifications"),
   SettingsThreads: msg("Threads"),
+  SettingsComputerUse: msg("Computer use"),
   SettingsAbout: msg("About"),
   SettingsEnvironmentNew: msg("Add Environment"),
   SettingsArchive: msg("Archive", { $context: "noun, settings page of archived threads" }),
@@ -302,7 +303,7 @@ const SETTINGS_SCREENS = {
   SettingsComputerUse: createNativeStackScreen({
     screen: SettingsComputerUseRouteScreen,
     linking: "settings/computer-use",
-    options: settingsPage("Computer use"),
+    options: settingsPage(),
   }),
   SettingsAbout: createNativeStackScreen({
     screen: SettingsAboutRouteScreen,

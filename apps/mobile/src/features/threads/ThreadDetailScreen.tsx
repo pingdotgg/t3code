@@ -806,7 +806,7 @@ function ThreadDetailBody(
       taskId: computerTask.taskId,
     });
     setComputerStopping(false);
-    if (failure !== null) Dialog.alert("Could not stop computer use", failure);
+    if (failure !== null) Dialog.alert(gt("Could not stop computer use"), failure);
   };
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus(
@@ -855,11 +855,16 @@ function ThreadDetailBody(
       return {
         kind: "computer",
         label: computerTask.goal,
-        accessibilityLabel: `Computer use on ${props.environmentLabel ?? "this computer"}: ${computerTask.goal}`,
+        accessibilityLabel: gt("Computer use on {environment}: {goal}", {
+          environment: props.environmentLabel ?? gt("this computer"),
+          goal: computerTask.goal,
+        }),
         approvalsOff: computerTask.approvalsMode === "skip",
         action: {
-          label: computerStopping ? "Stopping…" : "Stop",
-          accessibilityLabel: "Stop computer use",
+          label: computerStopping
+            ? gt("Stopping…")
+            : gt("Stop", { $context: "button that stops a computer use task" }),
+          accessibilityLabel: gt("Stop computer use"),
           disabled: computerStopping || !props.canOperateThread,
           onPress: () => void stopComputerUse(),
         },
@@ -1815,7 +1820,7 @@ function ThreadDetailBody(
                                 <ComputerApprovalCard
                                   key={approval.id}
                                   environmentId={props.environmentId}
-                                  environmentLabel={props.environmentLabel ?? "This computer"}
+                                  environmentLabel={props.environmentLabel ?? gt("This computer")}
                                   approval={approval}
                                 />
                               ))}

@@ -1156,47 +1156,53 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "agent-computer-use",
-    title: "Agent computer use",
+    title: msg("Agent computer use"),
     to: "/settings/computer-use",
     scope: "project-defaults",
     searchTerms: [
-      "allow enable disable agents control mac desktop screen click type move mouse accessibility approval project override",
+      msg(
+        "allow enable disable agents control mac desktop screen click type move mouse accessibility approval project override",
+      ),
     ],
   },
   {
     id: "computer-approvals",
-    title: "Ask before consequential actions",
+    title: msg("Ask before consequential actions"),
     to: "/settings/computer-use",
     scope: "project-defaults",
     searchTerms: [
-      "approve deny tap confirm skip warnings off consequential click type send buy delete",
+      msg("approve deny tap confirm skip warnings off consequential click type send buy delete"),
     ],
   },
   {
     id: "computer-hosts",
-    title: "Connected computers",
+    title: msg("Connected computers"),
     to: "/settings/computer-use",
     searchTerms: [
-      "host mac laptop desktop accessibility screen recording permission ready connected stop task",
+      msg(
+        "host mac laptop desktop accessibility screen recording permission ready connected stop task",
+      ),
     ],
   },
   {
     id: "computer-grounder",
-    title: "Computer use decision endpoint",
+    title: msg("Computer use decision endpoint"),
     to: "/settings/computer-use",
     targetId: "computer-use-grounder",
     scope: "environment",
     searchTerms: [
-      "grounder decide judge model endpoint jev typesafe system one openai compatible base url key llm click shared all devices sync",
+      msg(
+        "grounder decide judge model endpoint jev typesafe system one openai compatible base url key llm click shared all devices sync",
+      ),
     ],
     environmentOnly: true,
   },
   {
     id: "computer-audit",
-    title: "Computer use activity",
+    title: msg("Computer use activity"),
     to: "/settings/computer-use",
     scope: "environment",
-    searchTerms: ["audit log history steps grants approvals refused outcome typed digest"],
+    searchTerms: [msg("audit log history steps grants approvals refused outcome typed digest")],
     environmentOnly: true,
   },
   {

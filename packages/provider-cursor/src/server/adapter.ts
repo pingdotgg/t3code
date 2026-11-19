@@ -3276,7 +3276,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               // The kept turns may predate a compaction, so the instructions are sent again.
               const forgetConversation = (agent: string) =>
                 Effect.all([
-                  Ref.set(told, { agent, orchestration: false, device: false }),
+                  Ref.set(told, { agent, orchestration: false, device: false, computer: false }),
                   Ref.set(interruptedPrompt, null),
                   Ref.set(resumedAgent, null),
                 ]);
