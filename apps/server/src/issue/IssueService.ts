@@ -28,6 +28,7 @@ import {
   type IssueSetStateInput,
   type IssueTemplateList,
   type IssueTrackerSummary,
+  type IssueTrackerProjectBinding,
   type IssueUpdateInput,
   type OrchestrationProjectShell,
   type ProjectId,
@@ -189,31 +190,12 @@ const make = Effect.gen(function* () {
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const bindings = yield* IssueTrackerBindings.IssueTrackerBindingsRepository;
 
-  // Read per resolution so a binding saved in Settings applies without a restart.
-  const resolveStandaloneBinding = (
-    project: OrchestrationProjectShell,
-  ): Effect.Effect<ProjectTrackerBinding | null, IssueOperationError> =>
-    bindings.list.pipe(
-      Effect.map((bound) => {
-        const binding = bound.get(project.id);
-        const api = binding === undefined ? null : registry.get(binding.tracker);
-        if (binding === undefined || api === null || !isStandaloneIssueTracker(api)) return null;
-        return {
-          tracker: binding.tracker,
-          host: api.standalone.host,
-          scope: binding.scope,
-        };
-      }),
-      // A failed read is not an unbound project: that would list the git host's issues alone.
-      Effect.mapError(
-        (cause) =>
-          new IssueOperationError({
-            operation: "listProjects",
-            detail: "The project's issue tracker binding could not be read.",
-            cause,
-          }),
-      ),
-    );
+  const resolveStandaloneBinding = (binding: IssueTrackerProjectBinding | undefined) => {
+    if (binding === undefined) return null;
+    const api = registry.get(binding.tracker);
+    if (api === null || !isStandaloneIssueTracker(api)) return null;
+    return { tracker: binding.tracker, host: api.standalone.host, scope: binding.scope };
+  };
 
   /**
    * Where a project's issues live: its bound standalone tracker, its git host's, or both. The
@@ -221,18 +203,19 @@ const make = Effect.gen(function* () {
    */
   const resolveProjectTracker = (
     project: OrchestrationProjectShell,
-  ): Effect.Effect<ReadonlyArray<ProjectTrackerBinding>, IssueOperationError> =>
-    Effect.all([
-      resolveStandaloneBinding(project),
-      (project.repositoryIdentity != null
-        ? Effect.succeed(project.repositoryIdentity)
-        : repositoryIdentities.resolve(project.workspaceRoot)
-      ).pipe(
-        Effect.map((repositoryIdentity) =>
+    binding: IssueTrackerProjectBinding | undefined,
+  ) =>
+    (project.repositoryIdentity != null
+      ? Effect.succeed(project.repositoryIdentity)
+      : repositoryIdentities.resolve(project.workspaceRoot)
+    ).pipe(
+      Effect.map((repositoryIdentity) =>
+        [
+          resolveStandaloneBinding(binding),
           resolveGitHostBinding({ ...project, repositoryIdentity }),
-        ),
+        ].filter((candidate) => candidate !== null),
       ),
-    ]).pipe(Effect.map((resolved) => resolved.filter((binding) => binding !== null)));
+    );
 
   const listProjects = (filter: {
     readonly projectId?: IssueListInput["projectId"];
@@ -252,15 +235,32 @@ const make = Effect.gen(function* () {
             cause,
           }),
       ),
-      Effect.flatMap((shells) =>
-        Effect.forEach(
-          shells,
-          (project) =>
-            resolveProjectTracker(project).pipe(
-              Effect.map((bindings) => bindings.map((binding) => ({ project, ...binding }))),
+      Effect.flatMap(
+        Effect.fnUntraced(function* (shells) {
+          if (shells.length === 0) return [];
+          // One read per listing, not per project, and never cached so Settings changes apply.
+          const bound = yield* bindings.list.pipe(
+            // A failed read is not an unbound project: that would list the git host's issues alone.
+            Effect.mapError(
+              (cause) =>
+                new IssueOperationError({
+                  operation: "listProjects",
+                  detail: "The project's issue tracker binding could not be read.",
+                  cause,
+                }),
             ),
-          { concurrency: SCOPE_CONCURRENCY },
-        ),
+          );
+          return yield* Effect.forEach(
+            shells,
+            (project) =>
+              resolveProjectTracker(project, bound.get(project.id)).pipe(
+                Effect.map((candidates) =>
+                  candidates.map((candidate) => ({ project, ...candidate })),
+                ),
+              ),
+            { concurrency: SCOPE_CONCURRENCY },
+          );
+        }),
       ),
       Effect.map((bound) => {
         const host = filter.host?.trim().toLowerCase();
