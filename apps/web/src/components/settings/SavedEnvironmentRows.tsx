@@ -459,7 +459,7 @@ export function SavedBackendListRow({
           </MenuItem>
           {canImportSessions ? (
             <MenuItem onClick={() => void navigate({ to: "/welcome", search: { environmentId } })}>
-              Import sessions…
+              <T>Import sessions…</T>
             </MenuItem>
           ) : null}
           {mcpUrl ? (

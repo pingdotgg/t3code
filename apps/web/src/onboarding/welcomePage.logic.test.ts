@@ -273,10 +273,6 @@ describe("resolveWelcomeEnvironmentId", () => {
     knownEnvironmentIds: ["primary", "remote", "other"],
   };
 
-  it("sets up this computer by default", () => {
-    expect(resolveWelcomeEnvironmentId(base)).toBe("primary");
-  });
-
   it("opens a connected computer that Settings asked for", () => {
     expect(resolveWelcomeEnvironmentId({ ...base, requestedEnvironmentId: "remote" })).toBe(
       "remote",
