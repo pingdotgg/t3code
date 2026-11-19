@@ -435,6 +435,21 @@ ends, as for any delegated task. It keeps following the task across restarts.
 If the other machine revokes the link, or the link is removed here, the task
 fails with that reason.
 
+### Read a linked machine's threads
+
+You can read a thread on a linked machine without connecting this app to it. Open
+a task that was delegated there from the thread's agents, or a thread link that
+points there, and its transcript opens read-only, fetched by the machine you are
+connected to over its link. It follows the thread while it runs.
+
+- The view is marked **Read-only** with both machines' names. To reply, approve
+  or stop the thread, connect this app to that machine.
+- If this app is already connected to that machine, the thread opens there as
+  usual instead.
+- You need permission to read threads on the machine you are connected to, and
+  Linked environments must be on there. Both machines need a version of T3 Code
+  that has this view.
+
 ## Manage or revoke access
 
 On the host, **Settings → Sharing & access** lets authorized administrators create

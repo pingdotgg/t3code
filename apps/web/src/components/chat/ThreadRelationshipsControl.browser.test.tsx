@@ -45,6 +45,9 @@ vi.mock(import("../../state/environments"), () => ({
   useEnvironment: (() => null) as never,
   useEnvironmentProviders: (() => new Map()) as never,
 }));
+vi.mock(import("../../state/peerLinks"), () => ({
+  peerLinkEnvironment: { readThread: {} } as never,
+}));
 vi.mock(import("../../lib/archivedThreadsState"), () => ({
   useArchivedThreadSnapshots: (() => ({
     snapshots: [{ environmentId: "environment", snapshot: { threads: state.archivedThreads } }],
@@ -330,8 +333,9 @@ it("shows a remote subagent's full title in its tooltip even when its environmen
   await vi.waitFor(() =>
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
   );
+  // This client is not connected there, so the row reads the thread through this environment.
   expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
-    "Runs on Remote VM with a long machine name in the office. Connect to it to open the thread there.",
+    "Read the thread on Remote VM with a long machine name in the office",
   );
 
   await row.click({ force: true });

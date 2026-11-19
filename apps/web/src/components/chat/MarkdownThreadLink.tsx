@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useGT, useMessages } from "gt-react";
+import { MessagesSquareIcon } from "lucide-react";
 import {
   formatHostedThreadLink,
   guessThreadLinkRef,
@@ -11,10 +12,14 @@ import { unknownThreadLinkLabel } from "@t3tools/shared/threadLinksCopy";
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useThreadRefs, useThreadShell } from "../../state/entities";
 import { useEnvironmentIdentities } from "../../state/environments";
+import { useOpenLinkedThread } from "../../state/linkedThreadView";
+import { useLinkedEnvironments } from "../../state/peerLinks";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
+import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { UnresolvedChip } from "../contextChipParts";
 import { ThreadContextChip } from "../ThreadContextChip";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /** `label` is the link's written text; an autolink has none. */
 export function MarkdownThreadLink(props: {
@@ -58,6 +63,45 @@ export function MarkdownThreadLink(props: {
     : null;
   const remote = useThreadShell(remoteRef);
   const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
+  // A thread on a machine this client cannot reach still reads through the one that links to it.
+  const linkedLabel = useLinkedEnvironments(reachable ? null : props.environmentId).get(
+    writtenRef.environmentId,
+  );
+  const openLinked = useOpenLinkedThread();
+  if (resolved === null && linkedLabel !== undefined) {
+    const title = props.label ?? gt("Thread on {label}", { label: linkedLabel });
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ContextChip
+              kind="thread"
+              render={
+                <button
+                  type="button"
+                  onClick={() =>
+                    openLinked({
+                      viaEnvironmentId: props.environmentId,
+                      ...writtenRef,
+                      label: linkedLabel,
+                      title: props.label,
+                    })
+                  }
+                />
+              }
+              aria-label={gt("Thread, {title}", { title })}
+            >
+              <MessagesSquareIcon />
+              <ContextChipLabel>{title}</ContextChipLabel>
+            </ContextChip>
+          }
+        />
+        <TooltipPopup side="top">
+          {gt("Read the thread on {label}", { label: linkedLabel })}
+        </TooltipPopup>
+      </Tooltip>
+    );
+  }
   if (missing && resolved === null) {
     const unknown = unknownThreadLinkLabel(props.link, props.environmentId, messages);
     return <UnresolvedChip label={props.label ?? unknown} tooltip={unknown} />;

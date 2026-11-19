@@ -30,7 +30,8 @@ import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { SubagentStopButton } from "./SubagentStopButton";
 import { ThreadWorkflowGroup } from "./ThreadWorkflowGroup";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { subagentThreadTarget } from "./threadAgentsPresentation";
+import { subagentThreadTarget, type SubagentThreadTarget } from "./threadAgentsPresentation";
+import { linkedThreadRouteParams } from "./LinkedThreadSheet";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 
@@ -69,8 +70,14 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
     [messages, subagents],
   );
 
-  const openChildThread = (child: { environmentId: EnvironmentId; threadId: ThreadId }) => {
+  const openChildThread = (child: SubagentThreadTarget, title: string | null = null) => {
     void Haptics.selectionAsync();
+    if (child.linked !== undefined) {
+      navigation.dispatch(
+        StackActions.replace("LinkedThread", linkedThreadRouteParams(child, child.linked, title)),
+      );
+      return;
+    }
     if (
       openInspector(target, {
         type: "thread",
@@ -141,14 +148,15 @@ function AgentRow(props: {
   readonly environmentId: EnvironmentId;
   readonly subagent: OrchestrationV2Subagent;
   readonly tickSeconds: boolean;
-  readonly onOpen: (child: { environmentId: EnvironmentId; threadId: ThreadId }) => void;
+  readonly onOpen: (child: SubagentThreadTarget, title: string | null) => void;
 }) {
   const { subagent } = props;
   const gt = useGT();
   const { presentationById } = useEnvironments();
-  const target = subagentThreadTarget(subagent, props.environmentId, (id) =>
-    presentationById.has(id),
-  );
+  const target = subagentThreadTarget(subagent, props.environmentId, (id) => {
+    const own = presentationById.get(id);
+    return own && { connected: own.connection.phase === "connected" };
+  });
 
   const row = (
     <View className="py-3.5">
@@ -166,21 +174,21 @@ function AgentRow(props: {
       <View
         accessible
         className="min-w-0 flex-1"
-        accessibilityHint={
-          subagent.remoteChild === undefined
-            ? gt("Provider-managed agent. Its work appears in the transcript.")
-            : gt("Runs on {label}. Connect to it to open its thread.", {
-                label: subagent.remoteChild.label,
-              })
-        }
+        accessibilityHint={gt("Provider-managed agent. Its work appears in the transcript.")}
       >
         {row}
       </View>
     ) : (
       <Pressable
         accessibilityRole="link"
-        accessibilityHint={gt("Opens this agent's thread")}
-        onPress={() => props.onOpen(target)}
+        accessibilityHint={
+          target.linked === undefined
+            ? gt("Opens this agent's thread")
+            : gt("Opens a read-only view of this agent's thread on {label}", {
+                label: target.linked.label,
+              })
+        }
+        onPress={() => props.onOpen(target, subagent.title)}
         className="min-w-0 flex-1 active:opacity-70"
       >
         {row}

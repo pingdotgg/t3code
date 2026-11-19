@@ -516,6 +516,37 @@ it.effect(
     }),
 );
 
+it.effect(
+  "reads a linked environment's thread with thread read access, not access management",
+  () =>
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const read = createCommandPermissions(runtime, WS_METHODS.peerLinksReadThread);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthAccessWriteScope],
+          permissions: [AuthAccessWriteScope],
+        }),
+      );
+      expect(registry.get(read.permissionAtom(env))).toBe(false);
+      expect((yield* read.authorize(registry, env).pipe(Effect.flip)).requiredPermission).toBe(
+        AuthOrchestrationReadScope,
+      );
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthOrchestrationReadScope],
+          permissions: [AuthOrchestrationReadScope],
+        }),
+      );
+      expect(registry.get(read.permissionAtom(env))).toBe(true);
+      yield* read.authorize(registry, env);
+    }),
+);
+
 it.effect("requires access management to answer a link request", () =>
   Effect.gen(function* () {
     const registry = yield* setup;

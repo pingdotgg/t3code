@@ -10,6 +10,8 @@ import { MarkdownThreadLink } from "./MarkdownThreadLink";
 const state = vi.hoisted(() => ({
   reply: null as unknown,
   remote: null as unknown,
+  linked: new Map<string, string>(),
+  openedLinked: [] as Array<unknown>,
 }));
 vi.mock(import("../../state/entities"), () => ({
   useThreadShell: ((ref: { environmentId: string } | null) =>
@@ -26,6 +28,15 @@ vi.mock(import("../../state/environments"), () => ({
     { environmentId: EnvironmentId.make("environment"), label: "Here" },
     { environmentId: EnvironmentId.make("remote"), label: "Remote" },
   ],
+}));
+vi.mock(import("../../state/peerLinks"), () => ({
+  useLinkedEnvironments: ((environmentId: string | null) =>
+    environmentId === null ? new Map() : state.linked) as never,
+}));
+vi.mock(import("../../state/linkedThreadView"), () => ({
+  useOpenLinkedThread: () => (target) => {
+    state.openedLinked.push(target);
+  },
 }));
 vi.mock(import("../ProjectFavicon"), () => ({
   ProjectFavicon: () => (
@@ -46,6 +57,8 @@ function setup() {
     AsyncResult.AsyncResult<Record<string, { title: string; projectId: ProjectId | null }>, string>
   >(AsyncResult.initial());
   state.reply = reply;
+  state.linked = new Map();
+  state.openedLinked = [];
   state.remote = {
     environmentId: EnvironmentId.make("remote"),
     id: ThreadId.make("older-thread"),
@@ -155,4 +168,22 @@ it("names a thread on a machine this client has no connection to, without waitin
     .element(screen.getByText("Thread on another machine", { exact: true }))
     .toBeVisible();
   await expect.element(screen.getByRole("link")).not.toBeInTheDocument();
+});
+
+it("opens a thread on a machine only this environment links to as a read through it", async () => {
+  const { registry } = setup();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  state.linked = new Map([["linked-vm", "fs-17"]]);
+  const environmentId = EnvironmentId.make("environment");
+  const link = { environmentId: EnvironmentId.make("linked-vm"), threadId: ThreadId.make("there") };
+  await using screen = await render(
+    <RegistryContext value={registry}>
+      <MarkdownThreadLink environmentId={environmentId} link={link} label={null} />
+    </RegistryContext>,
+  );
+  await screen.getByRole("button", { name: "Thread, Thread on fs-17" }).click();
+  expect(state.openedLinked).toEqual([
+    { viaEnvironmentId: environmentId, ...link, label: "fs-17", title: null },
+  ]);
+  expect(screen.router?.state.location.pathname).toBe("/");
 });

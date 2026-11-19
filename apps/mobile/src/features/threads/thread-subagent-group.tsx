@@ -29,6 +29,7 @@ import { useServerConfigs } from "../../state/entities";
 import { SubagentRow } from "./SubagentRow";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { subagentThreadTarget } from "./threadAgentsPresentation";
+import { linkedThreadRouteParams } from "./LinkedThreadSheet";
 import { WorkLogBlock } from "./work-log-layout";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
@@ -199,24 +200,36 @@ export function ThreadSubagentGroup(props: {
         <View className="mb-1 gap-px rounded-xl border border-border bg-card/30 p-1">
           {agents.map((agent) => {
             // A task in a linked environment opens there, if this app is connected to it.
-            const target = subagentThreadTarget(agent, props.environmentId, (id) =>
-              presentationById.has(id),
-            );
+            const target = subagentThreadTarget(agent, props.environmentId, (id) => {
+              const own = presentationById.get(id);
+              return own && { connected: own.connection.phase === "connected" };
+            });
             return (
               <Pressable
                 key={agent.item.id}
                 accessible
                 accessibilityRole={target === null ? undefined : "link"}
                 accessibilityHint={
-                  target !== null
-                    ? gt("Opens this agent's thread")
-                    : agent.remoteChild !== undefined
-                      ? gt("Runs on {label}", { label: agent.remoteChild.label })
-                      : gt("Provider-managed agent")
+                  target === null
+                    ? gt("Provider-managed agent")
+                    : target.linked === undefined
+                      ? gt("Opens this agent's thread")
+                      : gt("Opens a read-only view of this agent's thread on {label}", {
+                          label: target.linked.label,
+                        })
                 }
                 disabled={target === null}
                 onPress={() => {
                   if (target === null) return;
+                  if (target.linked !== undefined) {
+                    navigation.dispatch(
+                      StackActions.push(
+                        "LinkedThread",
+                        linkedThreadRouteParams(target, target.linked, agent.title),
+                      ),
+                    );
+                    return;
+                  }
                   if (
                     openInspector(
                       { environmentId: props.environmentId, threadId: members[0]!.threadId },

@@ -30,6 +30,11 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
       onSuccess: ({ environmentId }, registry) =>
         Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
     }),
+    /** One page of a linked environment's thread. An open view calls it; nothing is cached. */
+    readThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:peer-links:read-thread",
+      tag: WS_METHODS.peerLinksReadThread,
+    }),
     // An agent's link card. One answer per card at a time.
     answerRequest: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:peer-links:answer-request",
