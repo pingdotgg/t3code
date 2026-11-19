@@ -358,6 +358,40 @@ describe("file metadata", () => {
     }),
   );
 
+  it.effect("stats listed files that replace directories or misses and reuses known file sizes", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const threadId = ThreadId.make("listed-file-thread");
+      h.registry.mount(h.atoms.retainThread({ environmentId: ENVIRONMENT_ID, threadId }));
+      const directory = "/workspace/was-directory";
+      const missing = "/workspace/was-missing";
+      const file = "/workspace/known-file";
+      yield* h.seed("was-directory", "directory");
+      expect(yield* h.read(missing, ENVIRONMENT_ID, threadId)).toBeNull();
+      h.values.set(file, { kind: "file", byteLength: 100 });
+      yield* h.read(file, ENVIRONMENT_ID, threadId);
+
+      h.values.set(directory, { kind: "file", byteLength: 2048 });
+      h.values.set(missing, { kind: "file", byteLength: 4096 });
+      yield* h.seed("was-directory", "file");
+      yield* h.seed("was-missing", "file");
+      yield* h.seed("known-file", "file");
+
+      expect(yield* h.read(directory)).toEqual({ kind: "file", byteLength: 2048 });
+      h.registry.refresh(h.atom(missing, ENVIRONMENT_ID, threadId));
+      expect(yield* h.read(missing, ENVIRONMENT_ID, threadId)).toEqual({
+        kind: "file",
+        byteLength: 4096,
+      });
+      h.registry.refresh(h.atom(file, ENVIRONMENT_ID, threadId));
+      expect(yield* h.read(file, ENVIRONMENT_ID, threadId)).toEqual({
+        kind: "file",
+        byteLength: 100,
+      });
+      expect(h.batches.flat()).toEqual([missing, file, directory, missing]);
+    }),
+  );
+
   it.effect("splits large mounts into bounded batches and caches misses", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
