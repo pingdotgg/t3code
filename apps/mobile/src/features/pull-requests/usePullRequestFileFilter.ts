@@ -1,13 +1,14 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useMemo } from "react";
 import type { ReviewParsedDiff } from "../review/reviewModel";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { filterPullRequestTestFiles } from "./pullRequestFileFilters";
 
 export function usePullRequestFileFilter(parsed: ReviewParsedDiff, includePath?: string) {
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const hideTestFiles =
     AsyncResult.isSuccess(preferences) && preferences.value.pullRequestHideTestFiles === true;
   const visible = useMemo(
@@ -20,7 +21,11 @@ export function usePullRequestFileFilter(parsed: ReviewParsedDiff, includePath?:
     parsed: visible,
     hideTestFiles,
     hiddenCount,
-    toggle: () => savePreferences({ pullRequestHideTestFiles: !hideTestFiles }),
-    showAll: () => savePreferences({ pullRequestHideTestFiles: false }),
+    toggle: () => {
+      void savePreferences({ pullRequestHideTestFiles: !hideTestFiles });
+    },
+    showAll: () => {
+      void savePreferences({ pullRequestHideTestFiles: false });
+    },
   };
 }
