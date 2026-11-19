@@ -901,6 +901,8 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         `Delegated task ${deferredTaskId} (Inspect regression) [${testCase.inlineFirst ? "cancelled" : "failed"}]`,
       );
       assert.include(message.text, `Use task_status with taskId ${deferredTaskId}`);
+      const inlinedTaskId = testCase.inlineFirst ? firstTaskId : secondTaskId;
+      assert.notInclude(message.text, inlinedTaskId);
       assert.deepEqual(message.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
       assert.equal(
         projection.subagents.find((candidate) => candidate.id === deferredTaskId)?.result,
