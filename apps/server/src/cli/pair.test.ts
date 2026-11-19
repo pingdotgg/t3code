@@ -719,18 +719,25 @@ describe("auth session revoke", () => {
       outcome: "revoked locally",
     },
     {
-      label: "changes nothing when a running server does not answer",
+      label: "changes nothing when a running server refuses the connection",
       recorded: true,
       lockHeld: true,
       server: "none",
-      outcome: "unreachable",
+      outcome: "RunningServerUnreachableError",
     },
     {
-      label: "changes nothing when a running server never finishes answering",
+      label: "does not repeat a change locally when the server stops replying mid-request",
       recorded: true,
-      lockHeld: true,
+      lockHeld: false,
       server: "hangs",
-      outcome: "unreachable",
+      outcome: "RunningServerNoReplyError",
+    },
+    {
+      label: "does not repeat a change locally when the server answers with an error",
+      recorded: true,
+      lockHeld: false,
+      server: "fails",
+      outcome: "HttpClientError",
     },
   ] as const)("$label", ({ recorded, lockHeld, server, outcome }) =>
     provideCliTestLayers(
@@ -743,6 +750,8 @@ describe("auth session revoke", () => {
           ),
         ) as { readonly sessionId: string };
         if (recorded) {
+          // A port just released has no listener, so connecting to it is refused.
+          const port = yield* (yield* NetService.NetService).reserveLoopbackPort("127.0.0.1");
           yield* persistServerRuntimeState({
             path: statePath,
             // An owner id skips the legacy liveness probe, so only the lock decides.
@@ -750,8 +759,8 @@ describe("auth session revoke", () => {
               ...baseState,
               pid: process.pid,
               ownerId: "test-owner",
-              port: 1,
-              origin: "http://127.0.0.1:1",
+              port,
+              origin: `http://127.0.0.1:${port}`,
             },
           });
         }
@@ -764,13 +773,15 @@ describe("auth session revoke", () => {
         const requests: Array<{ readonly path: string; readonly body: unknown }> = [];
         const requestStarted = Promise.withResolvers<void>();
         const fetch: typeof globalThis.fetch | undefined =
-          server === "answers"
+          server === "answers" || server === "fails"
             ? async (input, init) => {
                 requests.push({
                   path: new URL(String(input)).pathname,
                   body: JSON.parse(String(init?.body)),
                 });
-                return Response.json({ revoked: true });
+                return server === "answers"
+                  ? Response.json({ revoked: true })
+                  : new Response(null, { status: 502 });
               }
             : server === "hangs"
               ? (_input, init) => {
@@ -806,17 +817,14 @@ describe("auth session revoke", () => {
 
         assert.deepEqual(
           requests,
-          outcome === "revoked by server"
+          server === "answers" || server === "fails"
             ? [{ path: "/api/auth/clients/revoke", body: { sessionId: issued.sessionId } }]
             : [],
         );
-        if (outcome === "unreachable") {
-          assert.include(
-            Cause.pretty(Exit.isFailure(exit) ? exit.cause : Cause.empty),
-            "RunningServerUnreachableError",
-          );
-        } else {
+        if (outcome === "revoked by server" || outcome === "revoked locally") {
           assert.isTrue(Exit.isSuccess(exit));
+        } else {
+          assert.include(Cause.pretty(Exit.isFailure(exit) ? exit.cause : Cause.empty), outcome);
         }
         // The stub server revokes nothing, and the CLI's own session is gone either way.
         assert.deepEqual(

@@ -3,6 +3,7 @@ import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -24,7 +25,16 @@ export class RunningServerUnreachableError extends Schema.TaggedError<RunningSer
   { origin: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `The T3 Code server at ${this.origin} is running but did not answer, so the change may or may not have been made. Check the current state before you retry, or restart the server.`;
+    return `The T3 Code server at ${this.origin} is running but refused the connection, so nothing was changed. Retry, or restart the server and retry.`;
+  }
+}
+
+export class RunningServerNoReplyError extends Schema.TaggedError<RunningServerNoReplyError>()(
+  "RunningServerNoReplyError",
+  { origin: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `The T3 Code server at ${this.origin} did not reply, so the change may or may not have been made. Check the current state before you retry.`;
   }
 }
 
@@ -50,6 +60,26 @@ const serverClient = Effect.fn("RunningServer.serverClient")(function* (
   }).pipe(Effect.provide(FetchHttpClient.layer));
 });
 
+// The request never reached a server, so it changed nothing there.
+const NOT_CONNECTED_CODES = new Set([
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EADDRNOTAVAIL",
+  "UND_ERR_CONNECT_TIMEOUT",
+]);
+const systemErrorCode = (error: unknown) =>
+  [error, Predicate.hasProperty(error, "cause") ? error.cause : undefined]
+    .map((candidate) => (Predicate.hasProperty(candidate, "code") ? candidate.code : undefined))
+    .find(Predicate.isString);
+const neverConnected = (cause: unknown) => {
+  if (!HttpClientError.isHttpClientError(cause) || cause.reason._tag !== "TransportError") {
+    return false;
+  }
+  const code = systemErrorCode(cause.reason.cause);
+  return code !== undefined && NOT_CONNECTED_CODES.has(code);
+};
 const isUnanswered = (cause: unknown) =>
   Cause.isTimeoutError(cause) ||
   (HttpClientError.isHttpClientError(cause) && cause.response === undefined);
@@ -87,9 +117,13 @@ export const changeState = Effect.fn("RunningServer.changeState")(function* <A, 
     Effect.flatMap(viaServer),
     Effect.timeout(REQUEST_TIMEOUT),
     Effect.scoped,
-    // An error answer is final; no answer means the server is gone or stuck, and the lock tells.
-    Effect.catchIf(isUnanswered, (cause) =>
+    // A refused connection reached no server, so the lock decides whether one still runs.
+    Effect.catchIf(neverConnected, (cause) =>
       changeLocally(() => Effect.fail(new RunningServerUnreachableError({ origin, cause }))),
+    ),
+    // Once connected, the server may have made the change; writing it again could repeat it.
+    Effect.catchIf(isUnanswered, (cause) =>
+      Effect.fail(new RunningServerNoReplyError({ origin, cause })),
     ),
   );
 });
