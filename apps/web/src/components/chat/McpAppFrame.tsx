@@ -282,7 +282,9 @@ export function McpAppFrame(props: {
       hostContext,
       callTool: async ({ name, arguments: args }) => {
         const userActive =
-          document.activeElement === frameRef.current && navigator.userActivation?.isActive;
+          document.activeElement === frameRef.current &&
+          navigator.userActivation?.isActive &&
+          performance.now() - lastPageInputAt >= PAGE_ACTIVATION_MS;
         const { environmentId, input } = scope();
         const info = await readLive().toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
