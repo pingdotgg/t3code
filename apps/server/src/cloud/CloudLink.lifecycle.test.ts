@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -10,22 +11,11 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import {
-  HttpClient,
-  HttpClientResponse,
-  HttpServer,
-  HttpServerRequest,
-  type HttpClientRequest,
-} from "effect/http";
+import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } from "effect/http";
 import { RELAY_LINK_PROOF_TYP, signRelayJwt, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import * as NetAddress from "effect/net/NetAddress";
 
-import {
-  AuthSessionId,
-  type AuthEnvironmentScope,
-  EnvironmentAuthenticatedPrincipal,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as EnvironmentKeys from "./environmentKeys.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -268,11 +258,14 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ),
         ),
 
-        Effect.provide(
+        Effect.provide([
           ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" }).pipe(
             Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
-        ),
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_RELAY_URL: "https://relay.example.test" } }),
+          ),
+        ]),
         Effect.scoped,
       );
 
@@ -308,30 +301,16 @@ describe("releaseManagedTunnelOnShutdown", () => {
         });
         yield* TestClock.setTime((relayNow + skewSeconds) * 1_000);
         const link = yield* CloudLink.CloudLink;
-        const proof = yield* link
-          .linkProof(
-            {
-              challenge,
-              relayIssuer,
-              endpoint: {
-                httpBaseUrl: "http://127.0.0.1:3773",
-                wsBaseUrl: "ws://127.0.0.1:3773",
-                providerKind: "manual",
-              },
-              origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
-            },
-            HttpServerRequest.fromWeb(
-              new Request("http://127.0.0.1:3773/api/t3-connect/link-proof"),
-            ),
-          )
-          .pipe(
-            Effect.provideService(EnvironmentAuthenticatedPrincipal, {
-              sessionId: AuthSessionId.make("test-session"),
-              subject: "test",
-              method: "bearer-access-token",
-              scopes: new Set<AuthEnvironmentScope>(),
-            }),
-          );
+        const proof = yield* link.linkProof({
+          challenge,
+          relayIssuer,
+          endpoint: {
+            httpBaseUrl: "http://127.0.0.1:3773",
+            wsBaseUrl: "ws://127.0.0.1:3773",
+            providerKind: "manual",
+          },
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        });
         const environmentKeys =
           yield* EnvironmentKeys.getOrCreateEnvironmentKeyPairFromSecretStore(store);
         yield* TestClock.setTime(relayNow * 1_000);
@@ -397,6 +376,20 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(request.headers.authorization).toBe("Bearer cli-access-token");
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
       expect(values.has(CLOUD_ENDPOINT_CONFIRMED_ORIGIN)).toBe(false);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
+  it.effect("releases a tunnel only through the configured relay", () => {
+    const { store, values } = makeMemorySecretStore(managedLinkSecrets);
+    values.set(RELAY_URL_SECRET, new TextEncoder().encode("https://old-relay.example.test"));
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      expect(yield* link.releaseManagedTunnelOnShutdown()).toBe(false);
+      expect(applyConfigCalls).toEqual([]);
+      expect(requests).toEqual([]);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
