@@ -101,6 +101,7 @@ const optedIn = {
 const decodeSettings = Schema.decodeUnknownEffect(ServerSettingsSchema);
 const decodeSummarySearchInput = Schema.decodeEffect(ConversationSummarySearchInput);
 const encodeSummary = Schema.encodeEffect(Schema.fromJsonString(ConversationSummary));
+const encodeModelSelection = Schema.encodeSync(Schema.fromJsonString(ModelSelection));
 // Freeze the protocol-2 summary codec from before ranged/tool sources. An older client
 // compiles these shapes into RpcClient; merely accepting our current schema proves nothing.
 const LegacySummary = Schema.Struct({
@@ -239,13 +240,28 @@ const settingsLayer = (overrides: Parameters<typeof ServerSettings.layerTest>[0]
     }),
   ).pipe(Layer.provide(ServerSettings.layerTest(overrides)));
 
-const makeLayer = (generate: Generate, settings: Parameters<typeof ServerSettings.layerTest>[0]) =>
+const makeLayer = (
+  generate: Generate,
+  settings: Parameters<typeof ServerSettings.layerTest>[0],
+  afterSourceRead: (
+    input: Parameters<ProjectKnowledge.ProjectKnowledge["Service"]["readSources"]>[0],
+  ) => Effect.Effect<void> = () => Effect.void,
+) =>
   Layer.merge(ConversationSummaries.layer, ContextHandoffService.layer).pipe(
     Layer.provide(
       Layer.mock(TextGeneration.TextGeneration)({ generateConversationSummary: generate }),
     ),
     Layer.provide(IdAllocator.layer),
-    Layer.provideMerge(ProjectKnowledge.layer.pipe(Layer.provide(HolographicMemory.layer))),
+    Layer.provideMerge(
+      Layer.effect(
+        ProjectKnowledge.ProjectKnowledge,
+        Effect.map(ProjectKnowledge.ProjectKnowledge, (knowledge) => ({
+          ...knowledge,
+          readSources: (input) =>
+            knowledge.readSources(input).pipe(Effect.tap(() => afterSourceRead(input))),
+        })),
+      ).pipe(Layer.provide(ProjectKnowledge.layer.pipe(Layer.provide(HolographicMemory.layer)))),
+    ),
     Layer.provideMerge(
       Layer.mergeAll(
         ProjectStore.layer,
@@ -504,6 +520,9 @@ it.effect(
   "summarizes the settled range once with exact citations and no stored source text",
   () => {
     const model = citing();
+    let sourceRead:
+      | { entered: Deferred.Deferred<void>; release: Deferred.Deferred<void> }
+      | undefined;
     return Effect.gen(function* () {
       yield* seed;
       yield* summarize;
@@ -535,17 +554,42 @@ it.effect(
       assert.isTrue(rows.every((row) => !row.payload_json.includes("Detail. Detail.")));
 
       const adoptedProjectId = yield* adoptThreadProject();
-      yield* summarize;
       const service = yield* ConversationSummaries.ConversationSummaries;
-      const adopted = yield* service.list({ projectId: adoptedProjectId, threadId });
-      assert.equal(adopted.summaries.length, 1);
-      assert.deepInclude(adopted.summaries[0], {
-        state: "available",
-        summary: { ...summary, projectId: adoptedProjectId },
-      });
+      const gate = { entered: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+      sourceRead = gate;
+      const oldRead = yield* service
+        .describe({ ...scope, summaryId: summary.id })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(gate.entered);
+      yield* Effect.gen(function* () {
+        yield* summarize;
+        const adopted = yield* service.list({ projectId: adoptedProjectId, threadId });
+        assert.equal(adopted.summaries.length, 1);
+        assert.deepInclude(adopted.summaries[0], {
+          state: "available",
+          summary: { ...summary, projectId: adoptedProjectId },
+        });
+      }).pipe(Effect.ensuring(Deferred.succeed(gate.release, undefined)));
+      assert.equal((yield* Fiber.join(oldRead)).state, "stale");
+      assert.equal(
+        (yield* service.describe({ projectId: adoptedProjectId, threadId, summaryId: summary.id }))
+          .state,
+        "available",
+      );
       yield* summarize;
       assert.equal(model.calls.length, 2);
-    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+    }).pipe(
+      Effect.provide(
+        makeLayer(model.generate, optedIn, (input) => {
+          if (sourceRead === undefined || input.projectId !== projectId) return Effect.void;
+          const gate = sourceRead;
+          sourceRead = undefined;
+          return Deferred.succeed(gate.entered, undefined).pipe(
+            Effect.andThen(Deferred.await(gate.release)),
+          );
+        }),
+      ),
+    );
   },
 );
 
@@ -909,6 +953,44 @@ it.effect.each([
       yield* sql`UPDATE projection_projects SET deleted_at = '2026-01-01T00:00:00.000Z'
       WHERE project_id = ${projectId}`;
       assert.deepEqual(yield* stalled(), []);
+
+      const adoptedProjectId = yield* adoptThreadProject();
+      assert.deepInclude((yield* stalled())[0], { threadId, runId: freshRunId, retry: 1 });
+      const adoptedModel = { instanceId, model: "gpt-5-mini" };
+      const adoptedModelKey = encodeModelSelection(adoptedModel);
+      const adoptedSettings = {
+        projectSettingsOverrides: {
+          [projectId]: { enableConversationSummaries: false },
+          [adoptedProjectId]: {
+            enableConversationSummaries: true,
+            textGenerationModelSelection: adoptedModel,
+          },
+        },
+      };
+      yield* settings.updateSettings(adoptedSettings);
+      assert.deepEqual(yield* stalled(), []);
+      assert.deepInclude((yield* stalled(adoptedModelKey))[0], {
+        threadId,
+        runId: freshRunId,
+        retry: 1,
+      });
+      yield* sql`
+      UPDATE conversation_summary_passes
+      SET payload_json = json_set(payload_json, '$.retries', 6) WHERE thread_id = ${threadId}
+    `;
+      yield* settings.updateSettings({
+        projectSettingsOverrides: {
+          ...adoptedSettings.projectSettingsOverrides,
+          [adoptedProjectId]: { enableConversationSummaries: false },
+        },
+      });
+      assert.deepEqual(yield* stalled(adoptedModelKey), []);
+      yield* settings.updateSettings(adoptedSettings);
+      assert.deepInclude((yield* stalled(adoptedModelKey))[0], {
+        threadId,
+        runId: freshRunId,
+        retry: 1,
+      });
     }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
   },
 );
@@ -1382,26 +1464,60 @@ it.effect(
   },
 );
 
-it.effect(
-  "keeps scrubbed summaries stale after a source reverts and regenerates their text",
-  () => {
+it.effect.each([false, true])(
+  "keeps scrubbed summaries stale after a source reverts and regenerates their text (legacy: %s)",
+  (legacy) => {
     const model = citing();
+    let sourceRead:
+      | { entered: Deferred.Deferred<void>; release: Deferred.Deferred<void> }
+      | undefined;
     return Effect.gen(function* () {
       yield* seed;
       yield* summarize;
       const summary = yield* onlySummary;
+      if (legacy) {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE conversation_summaries
+          SET payload_json = json_remove(payload_json, '$._revision')
+          WHERE summary_id = ${summary.id}`;
+      }
       const service = yield* ConversationSummaries.ConversationSummaries;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       yield* projections.apply(messageEvent(0, "Changed source"));
-      assert.equal((yield* service.describe({ ...scope, summaryId: summary.id })).state, "stale");
-      yield* projections.apply(messageEvent(0, rawText(0)));
-      assert.equal((yield* service.describe({ ...scope, summaryId: summary.id })).state, "stale");
-      yield* summarize;
-      assert.equal(model.calls.length, 2);
-      const regenerated = yield* onlySummary;
-      assert.equal(regenerated.statements[0]!.text, summary.statements[0]!.text);
-      assert.notInclude(regenerated.statements[0]!.text, "Source unavailable");
-    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+      const gate = { entered: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+      sourceRead = gate;
+      const oldRead = yield* service
+        .describe({ ...scope, summaryId: summary.id })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(gate.entered);
+      yield* Effect.gen(function* () {
+        assert.equal((yield* service.describe({ ...scope, summaryId: summary.id })).state, "stale");
+        yield* projections.apply(messageEvent(0, rawText(0)));
+        assert.equal((yield* service.describe({ ...scope, summaryId: summary.id })).state, "stale");
+        yield* summarize;
+        assert.equal(model.calls.length, 2);
+        const regenerated = yield* onlySummary;
+        // A source revert can reproduce the entire public payload, even createdAt on this clock.
+        assert.deepEqual(regenerated, summary);
+        assert.notInclude(regenerated.statements[0]!.text, "Source unavailable");
+      }).pipe(Effect.ensuring(Deferred.succeed(gate.release, undefined)));
+      assert.equal((yield* Fiber.join(oldRead)).state, "stale");
+      assert.equal(
+        (yield* service.describe({ ...scope, summaryId: summary.id })).state,
+        "available",
+      );
+    }).pipe(
+      Effect.provide(
+        makeLayer(model.generate, optedIn, () => {
+          if (sourceRead === undefined) return Effect.void;
+          const gate = sourceRead;
+          sourceRead = undefined;
+          return Deferred.succeed(gate.entered, undefined).pipe(
+            Effect.andThen(Deferred.await(gate.release)),
+          );
+        }),
+      ),
+    );
   },
 );
 

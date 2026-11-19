@@ -114,15 +114,9 @@ export const makeInferenceProviderHealth = Effect.fn("makeInferenceProviderHealt
             };
       }
       if (problem === undefined) return { ...provider, models };
-      if (models.some((model) => model.isUnavailable))
-        return {
-          ...provider,
-          models,
-          status: provider.status === "ready" ? ("warning" as const) : provider.status,
-          message: problem,
-        };
       return {
         ...provider,
+        models: models.length ? models : provider.models,
         availability: "unavailable" as const,
         unavailableReason: problem,
         status: "error" as const,

@@ -4,7 +4,6 @@ import { CheckIcon, StarIcon } from "lucide-react";
 import { getDisplayModelName } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
-import { Badge } from "../ui/badge";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -29,7 +28,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   /** Marks this instance apart from another of the same provider. */
   showInstanceBadge: boolean;
   showNewBadge?: boolean;
-  unavailable?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
   onToggleFavorite: (instanceId: ProviderInstanceId, slug: string) => void;
@@ -46,7 +44,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
       selectedFill={false}
       index={props.index}
       value={modelPickerModelKey(props.instanceId, props.slug)}
-      disabled={props.unavailable || Boolean(props.disabledReason)}
+      disabled={Boolean(props.disabledReason)}
       className={cn(
         "group relative w-full !min-w-0 max-w-full cursor-pointer",
         props.disabledReason &&
@@ -92,11 +90,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
           >
             New
           </span>
-        ) : null}
-        {props.unavailable ? (
-          <Badge variant="outline" size="sm">
-            Unavailable
-          </Badge>
         ) : null}
       </div>
 
