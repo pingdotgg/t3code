@@ -21,6 +21,7 @@ const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const harnessFailure = process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE;
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
+const antigravityAutoMode = process.env.T3_ACP_ANTIGRAVITY_AUTO_MODE === "1";
 const copilotModeId = (name: string) =>
   `https://agentclientprotocol.com/protocol/session-modes#${name}`;
 const modeOptionCategory = process.env.T3_ACP_MODE_OPTION_CATEGORY ?? "mode";
@@ -375,6 +376,7 @@ const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
       { id: "default", name: "Default" },
       { id: "auto_edit", name: "Auto edit" },
       { id: "yolo", name: "YOLO" },
+      ...(antigravityAutoMode ? [{ id: "auto", name: "Auto" }] : []),
     ]
   : copilotModesProfile
     ? [

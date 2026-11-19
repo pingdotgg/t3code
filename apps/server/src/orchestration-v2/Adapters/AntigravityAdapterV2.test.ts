@@ -877,7 +877,10 @@ describe("AntigravityAdapterV2 html_render pages", () => {
               command: process.execPath,
               args: [mockAgentPath],
               cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1" },
+              env: {
+                T3_ACP_ANTIGRAVITY: "1",
+                ...(options.nativeAuto ? { T3_ACP_ANTIGRAVITY_AUTO_MODE: "1" } : {}),
+              },
             },
           }).pipe(
             Effect.provideService(SecureRandom.SecureRandom, crypto),
@@ -1944,7 +1947,10 @@ describe("AntigravityAdapterV2 subagent reads", () => {
 });
 
 describe("AntigravityAdapterV2 runtime mode ceiling", () => {
-  const modesSetFor = (pickedMode: string) =>
+  const modesSetFor = (
+    pickedMode: string | undefined,
+    options: { readonly runtimeMode?: "auto"; readonly nativeAuto?: boolean } = {},
+  ) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -1988,13 +1994,13 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
         modelSelection: {
           instanceId,
           model: "gemini-test-low",
-          options: [{ id: "_t3/session-mode", value: pickedMode }],
+          ...(pickedMode ? { options: [{ id: "_t3/session-mode", value: pickedMode }] } : {}),
         },
         runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "approval-required",
+          runtimeMode: options.runtimeMode ?? "approval-required",
           interactionMode: "default",
           cwd: process.cwd(),
-          maxRuntimeMode: "auto-accept-edits",
+          maxRuntimeMode: options.runtimeMode ?? "auto-accept-edits",
         }),
       });
       return modesSet;
@@ -2005,6 +2011,16 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
       assert.deepEqual(yield* modesSetFor("yolo"), ["default"]);
       // A mode under the ceiling is still the user's to pick.
       assert.deepEqual(yield* modesSetFor("auto_edit"), ["default", "auto_edit"]);
+    }),
+  );
+
+  it.effect("runs Auto in the runtime's native auto mode when the session advertises it", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* modesSetFor(undefined, { runtimeMode: "auto", nativeAuto: true }), [
+        "auto",
+      ]);
+      // Without native review, Auto still asks.
+      assert.deepEqual(yield* modesSetFor(undefined, { runtimeMode: "auto" }), ["default"]);
     }),
   );
 });
