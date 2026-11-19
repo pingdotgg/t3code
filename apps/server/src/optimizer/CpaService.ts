@@ -3,12 +3,15 @@ import {
   normalizeHeadroomProxyUrl,
   OptimizerStartError,
   type OptimizerStatusSnapshot,
+  type ProviderConsumeResetCreditOutcome,
   type ServerProvider,
+  type ServerProviderResetCredits,
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { SessionOptimizerAttachments } from "@t3tools/provider-core/server/sessionOptimizerAttachments";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -20,6 +23,11 @@ import * as Path from "effect/Path";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as ProcessRunner from "../processRunner.ts";
+import {
+  type ClaudeResetCreditError,
+  fetchClaudeResetCredits,
+  redeemClaudeResetCredit,
+} from "../provider/claudeResetCredits.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeCliproxyApi } from "../usage/cliproxyApi.ts";
 import {
@@ -33,6 +41,17 @@ import { OptimizerProbeService } from "./OptimizerProbeService.ts";
 const START_TIMEOUT_MS = 10_000;
 const START_POLL = Duration.millis(250);
 const USAGE_TTL = Duration.seconds(60);
+// CPA swaps the account's OAuth token in for this placeholder.
+const CPA_TOKEN = "$TOKEN$";
+
+/** A Claude account's reset credits as CPA sees them, and their redemption through CPA. */
+export interface CpaClaudeResetCredits {
+  readonly credits: ServerProviderResetCredits | undefined;
+  readonly redeem: (input: {
+    readonly grantId: string;
+    readonly requestId: string;
+  }) => Effect.Effect<ProviderConsumeResetCreditOutcome, ClaudeResetCreditError>;
+}
 
 /**
  * The local CLIProxyAPI (CPA): its status, a macOS launchd start, the one global switch that
@@ -51,6 +70,10 @@ export class CpaService extends Context.Service<
     ) => Effect.Effect<OptimizerStatusSnapshot, OptimizerStartError>;
     /** Swaps in CPA's quota for a Claude or Codex instance whose endpoint is CPA. */
     readonly overlayUsageLimits: (provider: ServerProvider) => Effect.Effect<ServerProvider>;
+    /** None unless a Claude instance's endpoint is CPA and CPA answers. */
+    readonly claudeResetCredits: (
+      provider: ServerProvider,
+    ) => Effect.Effect<Option.Option<CpaClaudeResetCredits>>;
   }
 >()("t3/optimizer/CpaService") {}
 
@@ -221,40 +244,110 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const hub = Effect.gen(function* () {
+    const settings = yield* settingsService.getSettings;
+    const managementKey = (yield* fileSystem.readFileString(
+      expandHomePath(settings.cpa.managementKeyPath, home),
+    )).trim();
+    return { url: settings.cpa.url, managementKey };
+  });
+
   // Failures cache too, so an unreachable CPA falls back to native limits for one TTL.
-  const accounts = yield* Effect.cachedWithTTL(
-    Effect.gen(function* () {
-      const settings = yield* settingsService.getSettings;
-      const managementKey = (yield* fileSystem.readFileString(
-        expandHomePath(settings.cpa.managementKeyPath, home),
-      )).trim();
-      return yield* cliproxy.readAccounts({ url: settings.cpa.url, managementKey });
-    }).pipe(Effect.option),
+  const [accounts, invalidateAccounts] = yield* Effect.cachedInvalidateWithTTL(
+    hub.pipe(Effect.flatMap(cliproxy.readAccounts), Effect.option),
     USAGE_TTL,
   );
+
+  const usableAccount = (driver: string) =>
+    accounts.pipe(
+      Effect.map(
+        Option.flatMap((read) =>
+          Option.fromUndefinedOr(
+            read.find(
+              (candidate) =>
+                String(candidate.driver) === driver && !candidate.usageLimits.unavailable,
+            ),
+          ),
+        ),
+      ),
+    );
+
+  const routedThroughCpa = Effect.fn("CpaService.routedThroughCpa")(function* (
+    provider: ServerProvider,
+  ) {
+    const driver = String(provider.driver);
+    if (driver !== "claudeAgent" && driver !== "codex") return false;
+    const settings = yield* settingsService.getSettings.pipe(Effect.option);
+    return (
+      Option.isSome(settings) &&
+      provider.auth.endpoint !== undefined &&
+      provider.auth.endpoint === normalizeHeadroomProxyUrl(settings.value.cpa.url)
+    );
+  });
+
+  // Keyed by CLI version: Claude only reports grants to a recent enough CLI user agent.
+  const claudeCredits: Cache.Cache<
+    string,
+    Option.Option<CpaClaudeResetCredits>
+  > = yield* Cache.make({
+    capacity: 4,
+    timeToLive: USAGE_TTL,
+    lookup: Effect.fn("CpaService.readClaudeResetCredits")(
+      function* (version: string) {
+        const account = yield* usableAccount("claudeAgent");
+        if (Option.isNone(account)) return Option.none();
+        const client = yield* cliproxy.accountClient(yield* hub, account.value.id);
+        const read = yield* fetchClaudeResetCredits(CPA_TOKEN, version).pipe(
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.timeout("10 seconds"),
+        );
+        return Option.some({
+          credits: read.credits,
+          redeem: (input) =>
+            redeemClaudeResetCredit({
+              ...input,
+              token: CPA_TOKEN,
+              organization: read.organization,
+              version,
+            }).pipe(
+              Effect.provideService(HttpClient.HttpClient, client),
+              Effect.ensuring(
+                Effect.andThen(invalidateAccounts, Cache.invalidateAll(claudeCredits)),
+              ),
+            ),
+        } satisfies CpaClaudeResetCredits);
+      },
+      Effect.orElseSucceed(() => Option.none()),
+    ),
+  });
+
+  const claudeResetCredits: CpaService["Service"]["claudeResetCredits"] = Effect.fn(
+    "CpaService.claudeResetCredits",
+  )(function* (provider) {
+    if (String(provider.driver) !== "claudeAgent" || !provider.version) return Option.none();
+    if (!(yield* routedThroughCpa(provider))) return Option.none();
+    return yield* Cache.get(claudeCredits, provider.version);
+  });
 
   const overlayUsageLimits: CpaService["Service"]["overlayUsageLimits"] = Effect.fn(
     "CpaService.overlayUsageLimits",
   )(function* (provider) {
-    const driver = String(provider.driver);
-    if (driver !== "claudeAgent" && driver !== "codex") return provider;
-    const settings = yield* settingsService.getSettings.pipe(Effect.option);
-    if (
-      Option.isNone(settings) ||
-      provider.auth.endpoint === undefined ||
-      provider.auth.endpoint !== normalizeHeadroomProxyUrl(settings.value.cpa.url)
-    ) {
-      return provider;
-    }
-    const read = yield* accounts;
-    if (Option.isNone(read)) return provider;
-    const account = read.value.find(
-      (candidate) => String(candidate.driver) === driver && !candidate.usageLimits.unavailable,
+    if (!(yield* routedThroughCpa(provider))) return provider;
+    const account = yield* usableAccount(String(provider.driver));
+    if (Option.isNone(account)) return provider;
+    const credits = (yield* claudeResetCredits(provider)).pipe(
+      Option.flatMap((read) => Option.fromUndefinedOr(read.credits)),
     );
-    return account === undefined ? provider : { ...provider, usageLimits: account.usageLimits };
+    return {
+      ...provider,
+      usageLimits: Option.match(credits, {
+        onNone: () => account.value.usageLimits,
+        onSome: (resetCredits) => ({ ...account.value.usageLimits, resetCredits }),
+      }),
+    };
   });
 
-  return CpaService.of({ getStatus, start, setRouting, overlayUsageLimits });
+  return CpaService.of({ getStatus, start, setRouting, overlayUsageLimits, claudeResetCredits });
 });
 
 export const layer = Layer.effect(CpaService, make);

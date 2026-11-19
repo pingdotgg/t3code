@@ -5,6 +5,7 @@ import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
@@ -30,6 +31,7 @@ import { claudeUsageReader } from "./claudeUsage.ts";
 import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
 import * as ClaudeResetCredits from "../claudeResetCredits.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
+import * as CpaService from "../../optimizer/CpaService.ts";
 import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
@@ -115,6 +117,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+    // Optional so driver tests need no CLIProxyAPI.
+    const cpa = yield* Effect.serviceOption(CpaService.CpaService);
     const catalogService = yield* ModelCatalog.ModelCatalog;
     const modelCatalog = catalogService
       .current(DRIVER_KIND)
@@ -356,7 +360,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     )(
       function* (creditId) {
         const current = yield* snapshot.getSnapshot;
-        const credits = current.usageLimits?.resetCredits;
+        // A CPA-routed instance spends the CPA account's credits, not the local login's.
+        const viaCpa = Option.isSome(cpa)
+          ? yield* cpa.value.claudeResetCredits(current)
+          : Option.none();
+        const credits = Option.match(viaCpa, {
+          onNone: () => current.usageLimits?.resetCredits,
+          onSome: (read) => read.credits,
+        });
         const grantId =
           creditId === undefined
             ? credits?.nextCreditId
@@ -366,14 +377,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         if (!grantId || !current.version) return "noCredit" as const;
         const version = current.version;
         return yield* resetCreditCoordinator.redeem(
-          configDir,
+          Option.isSome(viaCpa) ? "cliproxyapi:claude" : configDir,
           (requestId) =>
-            ClaudeResetCredits.consumeClaudeResetCredit({
-              login,
-              accountConfigPath,
-              version,
-              grantId,
-              requestId,
+            Option.match(viaCpa, {
+              onSome: (read) => read.redeem({ grantId, requestId }),
+              onNone: () =>
+                ClaudeResetCredits.consumeClaudeResetCredit({
+                  login,
+                  accountConfigPath,
+                  version,
+                  grantId,
+                  requestId,
+                }),
             }),
           ClaudeResetCredits.isSettledClaudeResetCreditFailure,
         );

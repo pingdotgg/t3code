@@ -77,7 +77,7 @@ const RESET_CREDIT_FAILURES = {
   requestFailed: "Claude could not redeem the reset.",
 } as const;
 
-class ClaudeResetCreditError extends Schema.TaggedError<ClaudeResetCreditError>()(
+export class ClaudeResetCreditError extends Schema.TaggedError<ClaudeResetCreditError>()(
   "ClaudeResetCreditError",
   {
     reason: Schema.Literals(
@@ -240,23 +240,34 @@ const withClaudeHeaders = (token: string, version: string) =>
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 
+/** Reads the grants and the organization that owns them; `token` may be CPA's `$TOKEN$`. */
+export const fetchClaudeResetCredits = Effect.fn("fetchClaudeResetCredits")(function* (
+  token: string,
+  version: string,
+) {
+  const client = yield* HttpClient.HttpClient;
+  const response = yield* HttpClientResponse.filterStatusOk(
+    yield* client.execute(
+      HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
+        urlParams: { cedar_ember: "1", skip_spend: "1" },
+      }).pipe(withClaudeHeaders(token, version)),
+    ),
+  );
+  const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(response);
+  return {
+    credits: claudeResetCreditsToContract(
+      body.cedar_ember,
+      DateTime.toEpochMillis(yield* DateTime.now),
+    ),
+    organization: response.headers["anthropic-organization-id"]?.trim() || undefined,
+  };
+});
+
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   function* (login: ClaudeLogin, version: string) {
     const token = yield* readAccessToken(login);
     if (!token) return undefined;
-    const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
-        urlParams: { cedar_ember: "1", skip_spend: "1" },
-      }).pipe(withClaudeHeaders(token, version)),
-    );
-    const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(
-      yield* HttpClientResponse.filterStatusOk(response),
-    );
-    return claudeResetCreditsToContract(
-      body.cedar_ember,
-      DateTime.toEpochMillis(yield* DateTime.now),
-    );
+    return (yield* fetchClaudeResetCredits(token, version)).credits;
   },
   Effect.timeout("10 seconds"),
   Effect.orElseSucceed(() => undefined),
@@ -297,17 +308,31 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   readonly grantId: string;
   readonly requestId: string;
 }) {
-  if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
-    return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
-  }
   const token = yield* readAccessToken(input.login).pipe(
     Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "loginUnreadable", cause })),
   );
   const config = yield* readJson(Config, input.accountConfigPath).pipe(
     Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "accountUnreadable", cause })),
   );
-  const organization = config.oauthAccount?.organizationUuid?.trim();
-  if (!token || !organization) {
+  return yield* redeemClaudeResetCredit({
+    ...input,
+    token,
+    organization: config.oauthAccount?.organizationUuid?.trim(),
+  });
+});
+
+/** Claims a grant for the organization; `token` may be CPA's `$TOKEN$`. */
+export const redeemClaudeResetCredit = Effect.fn("redeemClaudeResetCredit")(function* (input: {
+  readonly token: string | undefined;
+  readonly organization: string | undefined;
+  readonly version: string;
+  readonly grantId: string;
+  readonly requestId: string;
+}) {
+  if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
+    return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
+  }
+  if (!input.token || !input.organization) {
     return yield* new ClaudeResetCreditError({ reason: "signedOut" });
   }
   const client = yield* HttpClient.HttpClient;
@@ -315,11 +340,11 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
     .execute(
       HttpClientRequest.post(
         new URL(
-          `/api/organizations/${encodeURIComponent(organization)}/reset_rate_limits`,
+          `/api/organizations/${encodeURIComponent(input.organization)}/reset_rate_limits`,
           API_BASE,
         ),
       ).pipe(
-        withClaudeHeaders(token, input.version),
+        withClaudeHeaders(input.token, input.version),
         HttpClientRequest.bodyJsonUnsafe({
           program: PROGRAM,
           grant_id: input.grantId,

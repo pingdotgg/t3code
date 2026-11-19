@@ -55,7 +55,11 @@ const AuthFile = Schema.Struct({
   ),
 });
 const AuthFiles = Schema.Struct({ files: Schema.Array(AuthFile) });
-const ApiResponse = Schema.Struct({ status_code: Schema.Number, body: Schema.String });
+const ApiResponse = Schema.Struct({
+  status_code: Schema.Number,
+  header: Schema.optional(Schema.Record(Schema.String, Schema.Array(Schema.String))),
+  body: Schema.String,
+});
 const CodexWindow = Schema.Struct({
   used_percent: Schema.Number,
   reset_at: Schema.optional(Schema.NullOr(Schema.Number)),
@@ -439,6 +443,21 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return (yield* decodeAuthFiles(response)).files;
   });
 
+  const send = Effect.fn("CliproxyApi.send")(function* (
+    hub: CliproxyHub,
+    authIndex: string,
+    request: {
+      readonly method: string;
+      readonly url: string;
+      readonly header: Record<string, string>;
+      readonly data?: string;
+    },
+  ) {
+    return yield* decodeApiResponse(
+      yield* management(hub, "api-call", { auth_index: authIndex, ...request }),
+    );
+  });
+
   const apiCall = Effect.fn("CliproxyApi.apiCall")(function* (
     hub: CliproxyHub,
     account: AuthFile,
@@ -446,20 +465,70 @@ export const makeCliproxyApi = Effect.gen(function* () {
     url: string,
     data?: unknown,
   ) {
-    const raw = yield* management(hub, "api-call", {
-      auth_index: account.auth_index,
+    const response = yield* send(hub, account.auth_index, {
       method: data === undefined ? "GET" : "POST",
       url,
       header,
       ...(data === undefined ? {} : { data: yield* encodeJson(data) }),
     });
-    const response = yield* decodeApiResponse(raw);
     if (response.status_code < 200 || response.status_code >= 300) {
       return yield* new UsageLimitSourceError({
         detail: `The provider refused the hub request (HTTP ${response.status_code}).`,
       });
     }
     return response.body;
+  });
+
+  /** An HttpClient that sends each request through the hub, which puts the account's token in place of `$TOKEN$`. */
+  const accountClient = Effect.fn("CliproxyApi.accountClient")(function* (
+    hub: CliproxyHub,
+    accountId: string,
+  ) {
+    const account = (yield* authFiles(hub)).find(
+      (candidate) => candidate.id === accountId && !candidate.disabled,
+    );
+    if (!account) {
+      return yield* new UsageLimitSourceError({
+        detail: "The hub account is missing or disabled.",
+      });
+    }
+    return HttpClient.make((request, url) =>
+      send(hub, account.auth_index, {
+        method: request.method,
+        url: url.toString(),
+        // Effect's Headers redact authorization when encoded; CPA needs the `$TOKEN$` placeholder.
+        header: Object.fromEntries(Object.entries(request.headers)),
+        ...(request.body._tag === "Uint8Array"
+          ? { data: new TextDecoder().decode(request.body.body) }
+          : {}),
+      }).pipe(
+        Effect.flatMap((response) =>
+          // A status Response rejects, such as 0 or 204 with a body, is a transport failure.
+          Effect.try({
+            try: () =>
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(response.body, {
+                  status: response.status_code,
+                  headers: Object.entries(response.header ?? {}).flatMap(([name, values]) =>
+                    values.map((value): [string, string] => [name, value]),
+                  ),
+                }),
+              ),
+            catch: () =>
+              new UsageLimitSourceError({
+                detail: `The hub relayed an unusable response (HTTP ${response.status_code}).`,
+              }),
+          }),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({ request, cause }),
+            }),
+        ),
+      ),
+    );
   });
 
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
@@ -562,5 +631,5 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
   });
-  return { readAccounts, consume };
+  return { readAccounts, consume, accountClient };
 });
