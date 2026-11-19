@@ -170,6 +170,7 @@ export const readAntigravityPlugins = Effect.fn("readAntigravityPlugins")(functi
     const info = yield* readIfPresent(fileSystem.stat(pluginDirectory), pluginDirectory);
     if (info?.type === "Directory") plugins.set(name, pluginDirectory);
   }
+  if (plugins.size === 0) return [];
   const disabled = yield* readAntigravityDisabledPlugins(
     path.join(input.profileDirectory, "config", "config.json"),
   );

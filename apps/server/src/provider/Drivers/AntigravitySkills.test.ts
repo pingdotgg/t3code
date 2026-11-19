@@ -121,6 +121,34 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  it.effect("skips an oversized profile config.json when no plugins are installed", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const userSkill = yield* writeSkill(
+        path.join(input.userHome, ".gemini", "config", "skills", "user"),
+        "---\nname: user\n---\n",
+      );
+      const projectSkill = yield* writeSkill(
+        path.join(input.cwd, ".agents", "skills", "project"),
+        "---\nname: project\n---\n",
+      );
+      yield* fileSystem.makeDirectory(path.join(input.profileDirectory, "config"), {
+        recursive: true,
+      });
+      yield* fileSystem.writeFileString(
+        path.join(input.profileDirectory, "config", "config.json"),
+        " ".repeat(1_000_001),
+      );
+
+      assert.deepEqual(yield* discoverAntigravitySkills(input), [
+        { name: "project", path: projectSkill, scope: "project", enabled: true },
+        { name: "user", path: userSkill, scope: "user", enabled: true },
+      ]);
+    }),
+  );
+
   it.effect.skipIf(!symlinksSupported)(
     "reads skills from enabled user plugins before the profile links them",
     () =>
