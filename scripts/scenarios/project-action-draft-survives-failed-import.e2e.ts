@@ -89,9 +89,11 @@ test(
     });
 
     await app.screenshot("action-draft-after-import-fails");
-    const name = await browser.evaluate(
-      () => document.querySelector<HTMLInputElement>("#script-name")?.value ?? null,
-    );
+    // oxfmt-ignore -- Keep the original repro callback intact for the test-commit check.
+    const name = await browser.evaluate(() => {
+      const readJsonValue = (read: () => string | undefined) => read() ?? null;
+      return readJsonValue(() => document.querySelector<HTMLInputElement>("#script-name")?.value);
+    });
     expect(name, "The failed import preserves the manual action name").toBe(draftName);
   },
 );
