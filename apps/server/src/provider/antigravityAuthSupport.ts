@@ -481,7 +481,8 @@ export function buildAntigravityAcpSpawnInput(input: {
             "antigravity-acp",
           ]
         : input.profile.platform === "linux"
-          ? ["--uid="]
+          ? // Without the fallback, the bundled runtime exits 255 for users with no passwd entry (OS Login).
+            ["--uid=", "--loas_pwd_fallback_in_corp"]
           : [],
     cwd: input.cwd,
     env: {
