@@ -213,6 +213,16 @@ describe("resolveDraftProjectSelection", () => {
       kind: "select",
       project: projects[1],
     });
+    expect(
+      resolveDraftProjectSelection(null, projects, scopes, {
+        ...shareDraft,
+        useLastProject: false,
+      }),
+    ).toEqual({ kind: "pick" });
+    const archived = [projects[0]!, { ...projects[1]!, archivedAt: "2026-07-02T00:00:00.000Z" }];
+    expect(resolveDraftProjectSelection(null, archived, scopes, shareDraft)).toEqual({
+      kind: "pick",
+    });
   });
 });
 
