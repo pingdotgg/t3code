@@ -14,6 +14,7 @@ import "~/index.css";
 import { render } from "../../../test/render";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { ComposerEffortColumn } from "./ComposerModelEffort";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 
 it("keeps each registry image when adding a model from another ACP agent", async () => {
@@ -177,7 +178,7 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await expect.element(search).not.toBeInTheDocument();
 });
 
-it("names a row in full on hover when only its sub-provider is cut off", async () => {
+it("names a row and the docked header in full on hover", async () => {
   const instanceId = ProviderInstanceId.make("opencode-zen");
   const entries = deriveProviderInstanceEntries([
     {
@@ -201,7 +202,7 @@ it("names a row in full on hover when only its sub-provider is cut off", async (
       instanceId,
       [
         { slug: "glm-5.3", name: "GLM-5.3", subProvider: longSubProvider },
-        { slug: "kimi", name: "Kimi", subProvider: "Pi" },
+        { slug: "kimi-k2-0905", name: "Kimi K2 0905", shortName: "Kimi K2", subProvider: "Pi" },
       ],
     ],
   ]);
@@ -210,24 +211,32 @@ it("names a row in full on hover when only its sub-provider is cut off", async (
     <ProviderModelPicker
       environmentId={null}
       activeInstanceId={instanceId}
-      model="kimi"
+      model="kimi-k2-0905"
       lockedProvider={null}
       instanceEntries={entries}
       modelOptionsByInstance={options}
       triggerAriaLabel="Choose model"
       onInstanceModelChange={() => {}}
+      effortColumn={<ComposerEffortColumn traits={null} />}
     />,
   );
   await screen.getByRole("button", { name: "Choose model" }).click();
 
   const option = page.getByRole("option", { name: /GLM-5\.3/ });
   await expect.element(option).toBeVisible();
-  // Only the sub-provider is clipped here, and main named only a clipped model name.
   await userEvent.hover(option.getByText(longSubProvider));
   await vi.waitFor(() =>
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(
-      `GLM-5.3 · ${longSubProvider}`,
+      `GLM-5.3 · ${longSubProvider} · OpenCode Zen · glm-5.3`,
     ),
+  );
+
+  // The header shows the short name; its hover names the full model and slug.
+  await userEvent.hover(page.getByText("Kimi K2", { exact: true }).last());
+  await vi.waitFor(() =>
+    expect(
+      [...document.querySelectorAll('[data-slot="tooltip-popup"]')].map((el) => el.textContent),
+    ).toContain("Kimi K2 0905 · kimi-k2-0905"),
   );
 });
 

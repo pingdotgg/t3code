@@ -1,6 +1,6 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
-import { memo, useRef, useState } from "react";
+import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
 import { getDisplayModelName } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
@@ -42,8 +42,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
     subProvider: props.subProvider,
   };
   const displayName = getDisplayModelName(model);
-  const textRef = useRef<HTMLDivElement>(null);
-  const [nameTooltipOpen, setNameTooltipOpen] = useState(false);
+  const identity = [
+    ...new Set([displayName, props.subProvider, props.providerDisplayName, props.slug]),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const row = (
     <ComboboxItem
@@ -72,23 +75,12 @@ export const ModelListRow = memo(function ModelListRow(props: {
         badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
       />
       <Tooltip
-        open={nameTooltipOpen}
-        // Opens only when the name or sub-provider is cut off; a disabled row's reason tooltip covers it.
-        onOpenChange={(open) => {
-          const text = textRef.current;
-          setNameTooltipOpen(
-            open &&
-              !!text &&
-              [...text.children].some((child) => child.scrollWidth > child.clientWidth),
-          );
-        }}
+        // A disabled row's reason tooltip covers it.
         disabled={Boolean(props.disabledReason)}
       >
         <TooltipTrigger
           tabIndex={-1}
-          render={
-            <div ref={textRef} className="flex min-w-0 flex-1 items-center gap-2 text-left" />
-          }
+          render={<div className="flex min-w-0 flex-1 items-center gap-2 text-left" />}
         >
           <div className="min-w-0 truncate text-sm font-normal leading-snug">
             {displayName}
@@ -116,7 +108,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
           ) : null}
         </TooltipTrigger>
         <TooltipPopup side="top" align="start">
-          {[displayName, props.subProvider].filter(Boolean).join(" · ")}
+          {identity}
         </TooltipPopup>
       </Tooltip>
 

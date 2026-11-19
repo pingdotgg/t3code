@@ -526,8 +526,6 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
   const gt = useGT();
   const messages = useMessages();
   const picker = use(DockedPickerContext);
-  const modelLabelRef = useRef<HTMLSpanElement>(null);
-  const [modelTooltipOpen, setModelTooltipOpen] = useState(false);
   const visibility = props.traits
     ? getTraitsSectionVisibility({ ...props.traits, resolve: messages })
     : null;
@@ -546,27 +544,15 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
                 ? gt("Options", { $context: "heading for model options" })
                 : gt("Effort", { $context: "heading for reasoning effort levels" }))}
           </span>
-          <Tooltip
-            open={modelTooltipOpen}
-            // Opens only when the model name is cut off.
-            onOpenChange={(open) => {
-              const label = modelLabelRef.current;
-              setModelTooltipOpen(open && !!label && label.scrollWidth > label.clientWidth);
-            }}
-          >
+          <Tooltip>
             <TooltipTrigger
               tabIndex={-1}
-              render={
-                <span
-                  ref={modelLabelRef}
-                  className="ms-auto min-w-0 truncate text-muted-foreground text-xs"
-                />
-              }
+              render={<span className="ms-auto min-w-0 truncate text-muted-foreground text-xs" />}
             >
               {picker.modelLabel}
             </TooltipTrigger>
             <TooltipPopup side="top" align="end">
-              {picker.modelLabel}
+              {picker.modelTitle}
             </TooltipPopup>
           </Tooltip>
         </div>
