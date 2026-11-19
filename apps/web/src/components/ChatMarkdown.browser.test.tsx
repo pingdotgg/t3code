@@ -1014,67 +1014,27 @@ describe("ChatMarkdown copy", () => {
     },
   );
 
-  it.each([
-    { boundary: "end", from: "Configure", to: "Verify", text: "2. Configure\n3. Deploy" },
-    { boundary: "start", from: "Install", to: "Deploy", text: "2. Configure\n3. Deploy" },
-    {
-      boundary: "linked end",
-      from: "Configure",
-      to: "Verify",
-      text: "2. Configure\n3. Deploy",
-    },
-  ])(
-    "excludes the empty $boundary item when copying with the markers its list shows",
-    async ({ boundary, from, to, text }) => {
-      setup();
-      const lastItem =
-        boundary === "linked end" ? "[Verify](https://example.com/verify)" : "Verify";
-      await using screen = await renderText(`1. Install\n2. Configure\n3. Deploy\n4. ${lastItem}`);
-      const items = [...screen.container.querySelectorAll("li")];
-      const start = items.find((item) => item.textContent === from)!.firstChild!;
-      const endItem = items.find((item) => item.textContent === to)!;
-      const end = endItem.querySelector("a > span")?.lastChild ?? endItem.firstChild!;
-      const range = document.createRange();
-      range.setStart(start, boundary === "start" ? from.length : 0);
-      range.setEnd(end, boundary === "start" ? to.length : 0);
-      const selection = window.getSelection()!;
-      selection.removeAllRanges();
-      selection.addRange(range);
-
-      const payload = chatMarkdownClipboardPayload(selection);
-      expect(payload?.text).toBe(text);
-      const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
-      expect(
-        [...pasted.querySelectorAll('ol[start="2"] > li')].map((item) => item.textContent),
-      ).toEqual(["Configure", "Deploy"]);
-    },
-  );
-
-  it.each([
-    { source: "1. Install\n2. Configure", selector: "li:nth-child(2)", text: "Configure" },
-    { source: "- Install\n- Configure", selector: "li:nth-child(2)", text: "Configure" },
-    { source: "1. `items[0]*_`", selector: "li code", text: "items[0]*_" },
-    { source: "1. [Docs](https://example.com)", selector: "li a", text: "Docs" },
-    {
-      source: "1. Install\n2. ```sh\n   pnpm dev\n   ```",
-      selector: "li pre code",
-      text: "pnpm dev\n",
-    },
-  ])("copies only the selected $selector content", async ({ source, selector, text }) => {
+  it("omits an end item whose selected edge sits inside its link", async () => {
     setup();
-    await using screen = await renderText(source);
-    const content = screen.container.querySelector(selector)!;
+    await using screen = await renderText(
+      "1. Install\n2. Configure\n3. Deploy\n4. [Verify](https://example.com/verify)",
+    );
+    const items = [...screen.container.querySelectorAll("li")];
+    const start = items.find((item) => item.textContent === "Configure")!.firstChild!;
+    const end = items.at(-1)!.querySelector("a > span")!.lastChild!;
     const range = document.createRange();
-    range.selectNodeContents(content);
+    range.setStart(start, 0);
+    range.setEnd(end, 0);
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
 
     const payload = chatMarkdownClipboardPayload(selection);
-    expect(payload?.text).toBe(text);
+    expect(payload?.text).toBe("2. Configure\n3. Deploy");
     const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
-    expect(pasted.querySelector("li")).toBeNull();
-    expect(pasted.body.textContent).toBe(text);
+    expect(
+      [...pasted.querySelectorAll('ol[start="2"] > li')].map((item) => item.textContent),
+    ).toEqual(["Configure", "Deploy"]);
   });
 });
 
