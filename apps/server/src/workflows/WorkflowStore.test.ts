@@ -189,6 +189,18 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
       // Nor can the id, sent again straight to that wait, claim it: one id wakes one wait.
       assert.isFalse(yield* store.waitSignalled("r2", "go", woke, "s1"));
       assert.isDefined(yield* store.waitAt({ runId: "r2", wait: "go" }));
+      // And a kept copy of an id that already woke a wait straight wakes none: the two sends of a
+      // retry that overlapped, one buffered and one delivered.
+      yield* store.mailPut({
+        signalId: "s1",
+        address: { workflow: "gate", key: "ready" },
+        valueJson: '"yes"',
+        expiresAt: "2999-01-01T00:00:00.000Z",
+      });
+      assert.equal(yield* store.mailDeliver("s1", "r2", "go", woke), "gone");
+      assert.isDefined(yield* store.waitAt({ runId: "r2", wait: "go" }));
+      // It is dropped, so a wait looking through its mail is not handed it again.
+      assert.isUndefined(yield* store.mailNext([{ workflow: "gate", key: "ready" }]));
       // A wait that is already claimed takes no second wake.
       assert.equal(yield* store.mailDeliver("other", "r1", "go", woke), "claimed");
 

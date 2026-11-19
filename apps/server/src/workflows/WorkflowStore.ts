@@ -446,6 +446,13 @@ export const make = Effect.gen(function* () {
       return yield* sql
         .withTransaction(
           Effect.gen(function* () {
+            // A kept copy of an id that already woke a wait straight is spent: it is dropped, so
+            // it wakes no second wait and is not offered again.
+            const seen = yield* sql`SELECT 1 FROM workflow_signals WHERE signal_id = ${signalId}`;
+            if (seen.length > 0) {
+              yield* sql`DELETE FROM workflow_mail WHERE signal_id = ${signalId}`;
+              return "gone" as const;
+            }
             const claimed = yield* sql`
               UPDATE workflow_waits SET signalled_at = ${at}, woke_json = ${jsonText(woke)}
               WHERE run_id = ${runId} AND name = ${name} AND signalled_at IS NULL
@@ -457,10 +464,13 @@ export const make = Effect.gen(function* () {
             `;
             // Failing undoes the claim: the wait stays open for a signal that is still there.
             if (taken.length === 0) return yield* Effect.fail("gone" as const);
-            yield* sql`
+            const receipt = yield* sql`
               INSERT INTO workflow_signals (signal_id, delivered_at) VALUES (${signalId}, ${at})
               ON CONFLICT (signal_id) DO NOTHING
+              RETURNING signal_id
             `;
+            // Delivered straight in the meantime: undone, and the next look drops the copy above.
+            if (receipt.length === 0) return yield* Effect.fail("gone" as const);
             return "delivered" as const;
           }),
         )
