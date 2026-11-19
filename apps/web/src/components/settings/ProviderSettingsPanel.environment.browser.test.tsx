@@ -524,7 +524,7 @@ describe("EnvironmentProviderSettings account email", () => {
     const email = "developer@example.com";
     await setProviders([{ ...provider(), auth: { status: "authenticated", email } }]);
     await using _screen = await render(panel({ targetInstanceId: codexId }));
-    const toggle = page.getByRole("button", { name: "Toggle account email visibility" });
+    const toggle = page.getByRole("button", { name: "Toggle account email visibility" }).first();
     const button = toggle.element() as HTMLButtonElement;
 
     await act(() => button.click());
