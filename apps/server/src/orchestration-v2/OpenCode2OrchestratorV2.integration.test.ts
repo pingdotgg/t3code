@@ -65,6 +65,7 @@ const mcpRules = (name: string) => [
   { action: "t3-code-*", resource: "*", effect: "deny" },
   { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
   { action: "cua-driver-*", resource: "*", effect: "deny" },
+  { action: "chrome-devtools-*", resource: "*", effect: "deny" },
 ];
 const FULL_ACCESS = [{ action: "*", resource: "*", effect: "allow" }];
 

@@ -7618,6 +7618,32 @@
       "v": "v"
     }
   ],
+  "c5cf4921e9b53824": "Chrome DevTools MCP did not install. Try again.",
+  "75b1a7d1af613c5d": "Finish later",
+  "290cac9bd85be15a": "Use your browser tabs",
+  "2709455317e2d538": [
+    "Agents connect to the browser on ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " that has remote debugging on. On ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    ", open the browser's page below and turn on remote debugging. The browser asks to allow each connection, so someone at ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " has to approve it."
+  ],
+  "2e844dc004983ebb": "No Chromium browser found. Install Chrome, Edge, Brave, Helium, or Chromium.",
+  "99859ef84af13eb3": "On",
   "a2fc467e1a6e2e29": "Couldn't prepare the changes. Check Advanced for help.",
   "9c09c0fc3f65c734": "Shortcut saved",
   "b1d65f0c09819ac5": "Use {shortcut} from another app.",
@@ -8047,7 +8073,6 @@
   "82a12d86994dfd17": "Click, type, and read controls in other apps.",
   "c07fc2cd79fb94c4": "Screen Recording",
   "4bbac051622766c1": "See the screen to decide what to do next.",
-  "75b1a7d1af613c5d": "Finish later",
   "a9b9096280be6466": [
     "Let agents use ",
     {
@@ -8413,6 +8438,11 @@
   "d18307275ee97e9a": "Reset computer use to default",
   "1419352c258bc7de": "This connection cannot change settings on this host.",
   "b26ad48726dd8132": "Computer use is on, but Cua Driver could not restart. Try Setup again.",
+  "024b1791e74e4875": "Needs setup",
+  "565cc034918e3732": "Using {browser}",
+  "ce62c408d095401d": "Turn on remote debugging in your browser",
+  "2541722d5b0f9ccd": "Let agents use the open tabs and sign-ins in your browser on {host} through Chrome DevTools MCP.",
+  "b714ba7431dc4989": "Agent browser tabs",
   "b395b88284e3bca2": "Show the floating preview when an agent opens a browser or device unless the agent says otherwise.",
   "6aadfd59cf60b4b5": "Reset auto-show floating preview to default",
   "e4a7ec61190bc1f9": "Auto-show floating preview",
@@ -11607,6 +11637,7 @@
   "345075be6cacc171": "device hosts ssh remote mac mini identity key connection eas expo cloud simlock pool gateway local simulators",
   "a6b742430b05d6cc": "Agents can use devices",
   "1d5d7418a83575c2": "allow simulator emulator ios android drive tools sessions",
+  "9a44b2704adff236": "chrome devtools tabs sign-ins signed in browser remote debugging edge brave",
   "04050ac46c68cdaa": "cua driver apps desktop screen click type agents control mac linux windows",
   "60f0825756e404dc": "Use devices",
   "907782e153a139a3": "device hub simulator emulator ios android install start version",

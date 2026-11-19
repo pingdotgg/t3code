@@ -7611,6 +7611,32 @@
     },
     " fehlgeschlagen"
   ],
+  "c5cf4921e9b53824": "Chrome DevTools MCP wurde nicht installiert. Versuch es erneut.",
+  "75b1a7d1af613c5d": "Später abschließen",
+  "290cac9bd85be15a": "Deine Browser-Tabs verwenden",
+  "2709455317e2d538": [
+    "Agenten verbinden sich mit dem Browser auf ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ", in dem Remote-Debugging aktiviert ist. Öffne auf ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " die unten angezeigte Seite des Browsers und aktiviere Remote-Debugging. Der Browser fragt bei jeder Verbindung nach, daher muss jemand an ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " sie bestätigen."
+  ],
+  "2e844dc004983ebb": "Kein Chromium-Browser gefunden. Installiere Chrome, Edge, Brave, Helium oder Chromium.",
+  "99859ef84af13eb3": "An",
   "a2fc467e1a6e2e29": "Die Änderungen konnten nicht vorbereitet werden. Hilfe findest du unter „Erweitert“.",
   "9c09c0fc3f65c734": "Tastenkürzel gespeichert",
   "b1d65f0c09819ac5": "Verwende {shortcut} aus einer anderen App.",
@@ -8040,7 +8066,6 @@
   "82a12d86994dfd17": "In anderen Apps klicken, tippen und Steuerelemente lesen.",
   "c07fc2cd79fb94c4": "Bildschirmaufnahme",
   "4bbac051622766c1": "Den Bildschirm sehen, um den nächsten Schritt zu entscheiden.",
-  "75b1a7d1af613c5d": "Später abschließen",
   "a9b9096280be6466": [
     "Agenten ",
     {
@@ -8406,6 +8431,11 @@
   "d18307275ee97e9a": "Computersteuerung auf Standard zurücksetzen",
   "1419352c258bc7de": "Diese Verbindung kann auf diesem Host keine Einstellungen ändern.",
   "b26ad48726dd8132": "Computersteuerung ist eingeschaltet, aber Cua Driver konnte nicht neu starten. Öffne das Setup erneut.",
+  "024b1791e74e4875": "Einrichtung nötig",
+  "565cc034918e3732": "Verwendet {browser}",
+  "ce62c408d095401d": "Aktiviere Remote-Debugging in deinem Browser",
+  "2541722d5b0f9ccd": "Agenten über Chrome DevTools MCP die offenen Tabs und Anmeldungen in deinem Browser auf {host} nutzen lassen.",
+  "b714ba7431dc4989": "Browser-Tabs für Agenten",
   "b395b88284e3bca2": "Die schwebende Vorschau anzeigen, wenn ein Agent einen Browser oder ein Gerät öffnet, sofern der Agent nichts anderes angibt.",
   "6aadfd59cf60b4b5": "Schwebende Vorschau automatisch anzeigen auf Standard zurücksetzen",
   "e4a7ec61190bc1f9": "Schwebende Vorschau automatisch anzeigen",
@@ -11600,6 +11630,7 @@
   "345075be6cacc171": "gerät hosts ssh remote mac mini identität schlüssel verbindung eas expo cloud simlock pool gateway lokale simulatoren",
   "a6b742430b05d6cc": "Agenten können Geräte nutzen",
   "1d5d7418a83575c2": "erlauben simulator emulator ios android steuern tools sitzungen",
+  "9a44b2704adff236": "chrome devtools tabs anmeldungen angemeldet browser remote-debugging edge brave",
   "04050ac46c68cdaa": "cua driver apps desktop bildschirm klicken tippen agenten steuerung computersteuerung mac linux windows",
   "60f0825756e404dc": "Geräte nutzen",
   "907782e153a139a3": "geräte-hub simulator emulator ios android installieren starten version",

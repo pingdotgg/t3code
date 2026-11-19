@@ -1,3 +1,5 @@
+import { browserTabsInstructions } from "./mcpSession.ts";
+
 /** Session-invariant; harnesses with a native system-prompt append can carry it once per session. */
 export const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
 Link each PR you create, take over, or push to: link_pull_request, or link_pull_requests for several, full URL, every stack layer, as your next call. Host tools don't link for you. If linking fails, say so. Skip PRs you only read or review and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch. When pull_request_* tools are listed, use them, not gh or cafe, to read, list, open, edit, review, reply on, close, or merge PRs, and ci_logs and ci_rerun for their checks. pull_request_create links for you.
@@ -23,6 +25,8 @@ export function buildRuntimeInstructions(runtime: {
   readonly pullRequestLinking?: boolean;
   /** True when this session's tool list includes the managed `cua-driver` MCP server. */
   readonly computerUse?: boolean | undefined;
+  /** The browser `chrome-devtools` is attached to, when this session has browser tabs. */
+  readonly browserTabs?: string | undefined;
 }): string {
   const harness = toSingleLine(runtime.harness);
   const model = toSingleLine(runtime.model ?? "");
@@ -34,9 +38,12 @@ export function buildRuntimeInstructions(runtime: {
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
   const runtimeInfo = `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in T3 Code's files viewer.</runtime_info>`;
   const computerUse = runtime.computerUse ? `\n\n${COMPUTER_USE_INSTRUCTIONS}` : "";
+  const browserTabs = runtime.browserTabs
+    ? `\n\n${browserTabsInstructions(toSingleLine(runtime.browserTabs))}`
+    : "";
   return runtime.pullRequestLinking === false
-    ? `${runtimeInfo}${computerUse}`
-    : `${runtimeInfo}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}${computerUse}`;
+    ? `${runtimeInfo}${computerUse}${browserTabs}`
+    : `${runtimeInfo}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}${computerUse}${browserTabs}`;
 }
 
 function toSingleLine(value: string): string {

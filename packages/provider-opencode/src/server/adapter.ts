@@ -1105,6 +1105,27 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 ),
               )
             : false;
+        const tabs = mcpSession?.browserTabs;
+        const browserTabs =
+          hasT3Mcp && tabs !== undefined
+            ? yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
+                client.mcp.add({
+                  name: McpProviderSession.BROWSER_TABS_MCP_SERVER_NAME,
+                  config: {
+                    type: "local",
+                    command: [tabs.command, ...tabs.args],
+                    environment: { ...tabs.env },
+                  },
+                }),
+              ).pipe(
+                Effect.as(tabs.browserName),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("Could not add Chrome DevTools MCP to OpenCode.", cause).pipe(
+                    Effect.as(undefined),
+                  ),
+                ),
+              )
+            : undefined;
 
         const now = yield* DateTime.now;
         let sessionEntity: OrchestrationV2ProviderSession = {
@@ -3522,6 +3543,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 harness: "OpenCode",
                 model: turn.modelSelection.model,
                 computerUse,
+                browserTabs,
               }),
             ]
               .filter(Boolean)

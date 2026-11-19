@@ -339,7 +339,14 @@ import {
   DeviceSession,
   DeviceShutdownInput,
 } from "./device.ts";
-import { CuaHostStatus, CuaWindowPreviewState, CuaWindowPreviewSubscribeInput } from "./cua.ts";
+import {
+  BrowserTabsAction,
+  BrowserTabsError,
+  BrowserTabsStatus,
+  CuaHostStatus,
+  CuaWindowPreviewState,
+  CuaWindowPreviewSubscribeInput,
+} from "./cua.ts";
 import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
@@ -536,6 +543,8 @@ export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverGetNpmRelease: "server.getNpmRelease",
   serverCheckComputerUse: "server.checkComputerUse",
+  serverCheckBrowserTabs: "server.checkBrowserTabs",
+  serverRunBrowserTabsAction: "server.runBrowserTabsAction",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
@@ -698,6 +707,18 @@ const WsServerCheckComputerUseRpc = Rpc.make(WS_METHODS.serverCheckComputerUse, 
   payload: Schema.Struct({}),
   success: CuaHostStatus,
   error: EnvironmentAuthorizationError,
+});
+
+const WsServerCheckBrowserTabsRpc = Rpc.make(WS_METHODS.serverCheckBrowserTabs, {
+  payload: Schema.Struct({}),
+  success: BrowserTabsStatus,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsServerRunBrowserTabsActionRpc = Rpc.make(WS_METHODS.serverRunBrowserTabsAction, {
+  payload: Schema.Struct({ action: BrowserTabsAction }),
+  success: BrowserTabsStatus,
+  error: Schema.Union([BrowserTabsError, EnvironmentAuthorizationError]),
 });
 
 const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
@@ -2289,6 +2310,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerCheckComputerUseRpc,
+  WsServerCheckBrowserTabsRpc,
+  WsServerRunBrowserTabsActionRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
   WsProviderConsumeResetCreditRpc,

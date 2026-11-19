@@ -832,6 +832,8 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly deviceToolsAvailable?: boolean;
     /** The managed `cua-driver` MCP server is attached to this thread. */
     readonly computerUse?: boolean;
+    /** The browser `chrome-devtools` drives, when browser tabs are attached. */
+    readonly browserTabs?: string;
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
@@ -881,6 +883,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
               computerUse: input.computerUse ?? false,
+              ...(input.browserTabs === undefined ? {} : { browserTabs: input.browserTabs }),
             },
           )
         : undefined;
@@ -1554,6 +1557,7 @@ export function codexThreadRuntimeParams(input: {
           http_headers: { Authorization: mcpSession.authorizationHeader },
         };
   const cuaDriver = input.userCuaDriver === true ? undefined : mcpSession?.cuaDriver;
+  const browserTabs = mcpSession?.browserTabs;
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
@@ -1584,6 +1588,15 @@ export function codexThreadRuntimeParams(input: {
                     env: Object.fromEntries(
                       cuaDriver.environment.map(({ name, value }) => [name, value]),
                     ),
+                  },
+                }),
+            ...(browserTabs === undefined
+              ? {}
+              : {
+                  [`mcp_servers.${McpProviderSession.BROWSER_TABS_MCP_SERVER_NAME}`]: {
+                    command: browserTabs.command,
+                    args: [...browserTabs.args],
+                    env: { ...browserTabs.env },
                   },
                 }),
           }),
@@ -7646,6 +7659,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               computerUse:
                 mcpSession?.cuaDriver !== undefined &&
                 !(yield* userCuaDriver(mcpSession, turnInput.runtimePolicy.cwd)),
+              ...(mcpSession?.browserTabs === undefined
+                ? {}
+                : { browserTabs: mcpSession.browserTabs.browserName }),
               omitServiceTier: adapterOptions.resolveRuntime !== undefined,
               ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
               ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),

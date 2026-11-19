@@ -7610,6 +7610,32 @@
       "v": "v"
     }
   ],
+  "c5cf4921e9b53824": "O Chrome DevTools MCP não foi instalado. Tente novamente.",
+  "75b1a7d1af613c5d": "Concluir depois",
+  "290cac9bd85be15a": "Usar as abas do seu navegador",
+  "2709455317e2d538": [
+    "Os agentes se conectam ao navegador em ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " que tem a depuração remota ativada. Em ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    ", abra a página do navegador abaixo e ative a depuração remota. O navegador pede para permitir cada conexão, então alguém em ",
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    },
+    " precisa aprová-la."
+  ],
+  "2e844dc004983ebb": "Nenhum navegador Chromium encontrado. Instale Chrome, Edge, Brave, Helium ou Chromium.",
+  "99859ef84af13eb3": "Ativada",
   "a2fc467e1a6e2e29": "Não foi possível preparar as alterações. Veja Avançado para obter ajuda.",
   "9c09c0fc3f65c734": "Atalho salvo",
   "b1d65f0c09819ac5": "Use {shortcut} a partir de outro app.",
@@ -8039,7 +8065,6 @@
   "82a12d86994dfd17": "Clicar, digitar e ler controles em outros apps.",
   "c07fc2cd79fb94c4": "Gravação de Tela",
   "4bbac051622766c1": "Ver a tela para decidir o que fazer em seguida.",
-  "75b1a7d1af613c5d": "Concluir depois",
   "a9b9096280be6466": [
     "Permitir que agentes usem ",
     {
@@ -8403,6 +8428,11 @@
   "d18307275ee97e9a": "Redefinir o uso do computador para o padrão",
   "1419352c258bc7de": "Esta conexão não pode alterar configurações neste host.",
   "b26ad48726dd8132": "O uso do computador está ativado, mas o Cua Driver não conseguiu reiniciar. Abra a configuração novamente.",
+  "024b1791e74e4875": "Precisa de configuração",
+  "565cc034918e3732": "Usando {browser}",
+  "ce62c408d095401d": "Ative a depuração remota no seu navegador",
+  "2541722d5b0f9ccd": "Permite que agentes usem as abas abertas e os logins do seu navegador em {host} pelo Chrome DevTools MCP.",
+  "b714ba7431dc4989": "Abas do navegador para agentes",
   "b395b88284e3bca2": "Mostra a pré-visualização flutuante quando um agente abre um navegador ou dispositivo, a menos que o agente diga o contrário.",
   "6aadfd59cf60b4b5": "Redefinir \"Mostrar pré-visualização flutuante automaticamente\" para o padrão",
   "e4a7ec61190bc1f9": "Mostrar pré-visualização flutuante automaticamente",
@@ -11596,6 +11626,7 @@
   "345075be6cacc171": "dispositivo hosts ssh remoto mac mini identidade chave conexão eas expo nuvem simlock pool gateway simuladores locais",
   "a6b742430b05d6cc": "Agentes podem usar dispositivos",
   "1d5d7418a83575c2": "permitir simulador emulador ios android controlar ferramentas sessões",
+  "9a44b2704adff236": "chrome devtools abas logins conectado navegador depuração remota edge brave",
   "04050ac46c68cdaa": "cua driver apps área de trabalho tela clicar digitar agentes controle uso do computador mac linux windows",
   "60f0825756e404dc": "Usar dispositivos",
   "907782e153a139a3": "dispositivo hub simulador emulador ios android instalar iniciar versão",
