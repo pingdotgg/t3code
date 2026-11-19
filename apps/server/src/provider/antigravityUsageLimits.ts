@@ -199,7 +199,7 @@ export function readWindowsCliCredential(
     // CRED_TYPE_GENERIC
     paramsType: [DataType.WString, DataType.U32, DataType.U32, DataType.U8Array],
     paramsValue: ["gemini:antigravity", 1, 0, out],
-    errno: true,
+    errno: true as const,
   });
   if (read.value === 0) {
     // ERROR_NOT_FOUND
