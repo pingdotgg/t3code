@@ -112,11 +112,16 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         JSON.stringify({ plugins: { off: { enabled: false } } }),
       );
       yield* fileSystem.writeFileString(path.join(plugins, ".DS_Store"), "x");
+      // `agy plugin install` writes to ~/.gemini/config/plugins, outside the instance profile.
+      yield* writeSkill(
+        path.join(workspace.userHome, ".gemini", "config", "plugins", "global", "skills", "g"),
+        "---\nname: global-skill\ndescription: From an agy-installed plugin.\n---\n",
+      );
       const input = { ...workspace, profileDirectory };
 
       assert.deepEqual(
         (yield* discoverAntigravitySkills(input)).map((skill) => skill.name),
-        ["demo-skill"],
+        ["demo-skill", "global-skill"],
       );
     }),
   );
