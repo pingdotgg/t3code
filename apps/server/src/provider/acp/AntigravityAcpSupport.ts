@@ -201,8 +201,7 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
 /**
  * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
  * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
- * on the next turn without a restart. Agy does not offer its Auto to every account, such as
- * Gemini Enterprise; there Auto stays in `default`.
+ * on the next turn without a restart.
  */
 export function antigravitySessionMode(
   modeId: string,
@@ -216,7 +215,6 @@ export function antigravitySessionMode(
   return input.cli && (modeId === "yolo" || modeId === "auto_edit") ? "default" : modeId;
 }
 
-/** Agy's Auto asks only about what its own review will not approve, so those requests reach the user. */
 export function antigravityPermissionDisposition(
   policy: AcpRuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,

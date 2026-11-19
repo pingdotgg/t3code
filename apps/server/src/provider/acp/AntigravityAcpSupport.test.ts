@@ -105,7 +105,6 @@ describe("Antigravity release gates", () => {
 describe("Antigravity Auto", () => {
   it.each([
     { offered: ["default", "accept-edits", "auto", "plan"], expected: "auto" },
-    // Gemini Enterprise accounts are not offered agy's Auto.
     { offered: ["default", "accept-edits", "plan"], expected: "default" },
   ])("runs as $expected when the session offers $offered", ({ offered, expected }) => {
     const modeState = {
