@@ -1,7 +1,7 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "composite": true,
+    "incremental": true,
     "types": ["node"],
     "lib": ["ESNext", "esnext.disposable"]
   },
