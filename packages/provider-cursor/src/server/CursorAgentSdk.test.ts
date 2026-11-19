@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- A loopback fake of Cursor's backend drives the real SDK.
+import * as NodeHttp from "node:http";
+
 import type { ListRunsOptions } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -5,6 +8,7 @@ import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
 import { vi } from "vite-plus/test";
@@ -12,6 +16,18 @@ import { vi } from "vite-plus/test";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as CursorAgentSdk from "./CursorAgentSdk.ts";
 import * as CursorSdk from "./CursorSdk.ts";
+
+// The SDK reads CURSOR_BACKEND_URL once when it loads, before any test body runs.
+const cursorBackendUrl = await vi.hoisted(async () => {
+  const NodeNet = await import("node:net");
+  const probe = NodeNet.createServer();
+  await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const address = probe.address();
+  await new Promise((resolve) => probe.close(resolve));
+  const url = `http://127.0.0.1:${typeof address === "object" && address !== null ? address.port : 0}`;
+  process.env.CURSOR_BACKEND_URL = url;
+  return url;
+});
 
 const cursorSdkMock = vi.hoisted(() => {
   const closeExecutionOrder: Array<string> = [];
@@ -38,7 +54,10 @@ const cursorSdkMock = vi.hoisted(() => {
   const send = vi.fn(
     async (
       _message: unknown,
-      options: { readonly onDelta?: (input: { readonly update: unknown }) => Promise<void> },
+      options: {
+        readonly model?: { readonly id: string };
+        readonly onDelta?: (input: { readonly update: unknown }) => Promise<void>;
+      },
     ) => {
       runOperations.push("run.start");
       if (storedRuns.some((run) => run.status === "running")) {
@@ -59,11 +78,18 @@ const cursorSdkMock = vi.hoisted(() => {
       };
     },
   );
-  const create = vi.fn(async () => ({
-    agentId: "agent-cursor-agent-sdk-test",
-    send,
-    close: agentClose,
-  }));
+  const create = vi.fn(
+    async (): Promise<{
+      readonly agentId: string;
+      readonly platform?: unknown;
+      readonly send: typeof send;
+      readonly close: typeof agentClose;
+    }> => ({
+      agentId: "agent-cursor-agent-sdk-test",
+      send,
+      close: agentClose,
+    }),
+  );
   const resume = vi.fn(async () => ({
     agentId: "agent-cursor-agent-sdk-test",
     send,
@@ -429,6 +455,203 @@ describe("CursorAgentSdkRunner", () => {
       }));
       const plain = yield* session.send({ message: "plain" });
       assert.equal(yield* plain.steer!("later"), "revert_to_followup");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live(
+    "refreshes the workspace model list once when Cursor rejects a model from a stale cache",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-model-cache-" });
+        const workspace = path.join(home, "project");
+        yield* fileSystem.makeDirectory(workspace);
+
+        let advertisedModels: ReadonlyArray<{ readonly id: string; readonly displayName: string }> =
+          [{ id: "gemini-4-carbon", displayName: "Gemini 4 Carbon" }];
+        let modelListRequests = 0;
+
+        yield* Effect.acquireRelease(
+          Effect.promise(async () => {
+            const server = NodeHttp.createServer((request, response) => {
+              request.resume();
+              if (request.url === "/auth/exchange_user_api_key") {
+                response.setHeader("content-type", "application/json");
+                response.end(JSON.stringify({ accessToken: "synthetic-access-token" }));
+                return;
+              }
+              if (request.url === "/v1/models") {
+                modelListRequests += 1;
+                response.setHeader("content-type", "application/json");
+                response.end(JSON.stringify({ items: advertisedModels }));
+                return;
+              }
+              response.statusCode = 404;
+              response.end();
+            });
+            const port = Number(new URL(cursorBackendUrl).port);
+            await new Promise<void>((resolve, reject) => {
+              server.once("error", reject);
+              server.listen(port, "127.0.0.1", () => resolve());
+            });
+            return server;
+          }),
+          (server) =>
+            Effect.promise(
+              () =>
+                new Promise<void>((resolve) => {
+                  server.close(() => resolve());
+                }),
+            ),
+        );
+
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            vi.stubEnv("HOME", home);
+            vi.stubEnv("USERPROFILE", home);
+            vi.stubEnv("CURSOR_CONFIG_DIR", path.join(home, ".cursor"));
+          }),
+          () => Effect.sync(() => vi.unstubAllEnvs()),
+        );
+
+        const loaders = yield* Effect.promise(() =>
+          vi.importActual<typeof import("./sdk.ts")>("./sdk.ts"),
+        );
+        const runner = yield* CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined).pipe(
+          Effect.provideService(CursorSdk.CursorSdk, {
+            load: loaders.loadCursorSdk,
+            loadSqlite: loaders.loadCursorSqlite,
+          }),
+        );
+
+        const openInput = (
+          operation: "create" | "resume",
+          modelId: string,
+          agentId?: string,
+        ): CursorAgentSdk.CursorAgentSdkOpenInput => ({
+          operation,
+          ...(agentId === undefined ? {} : { agentId }),
+          options: {
+            apiKey: "synthetic-cursor-key",
+            model: { id: modelId },
+            local: { cwd: workspace },
+          },
+          threadId: ThreadId.make(`thread-${operation}-${modelId}`),
+          providerSessionId: ProviderSessionId.make(`session-${operation}-${modelId}`),
+        });
+
+        const first = yield* runner.open(openInput("create", "gemini-4-carbon"));
+        assert.strictEqual(modelListRequests, 1);
+        yield* first.close;
+
+        // Cursor adds a model after the workspace platform already cached /v1/models.
+        advertisedModels = [
+          ...advertisedModels,
+          { id: "gemini-4-neon", displayName: "Gemini 4 Neon" },
+        ];
+        const second = yield* runner.open(openInput("create", "gemini-4-neon"));
+        assert.strictEqual(modelListRequests, 2);
+        yield* second.close;
+
+        advertisedModels = [
+          ...advertisedModels,
+          { id: "gemini-4-argon", displayName: "Gemini 4 Argon" },
+        ];
+        const resumed = yield* runner.open(openInput("resume", "gemini-4-argon", second.agentId));
+        assert.strictEqual(modelListRequests, 3);
+        yield* resumed.close;
+
+        const movedWorkspace = path.join(home, "moved-project");
+        yield* fileSystem.makeDirectory(movedWorkspace);
+        advertisedModels = [
+          ...advertisedModels,
+          { id: "gemini-4-hydrogen", displayName: "Gemini 4 Hydrogen" },
+        ];
+        const movedResume = yield* runner.open({
+          operation: "resume",
+          agentId: second.agentId,
+          storeCwd: workspace,
+          options: {
+            apiKey: "synthetic-cursor-key",
+            model: { id: "gemini-4-hydrogen" },
+            local: { cwd: movedWorkspace },
+          },
+          threadId: ThreadId.make("thread-resume-moved-gemini-4-hydrogen"),
+          providerSessionId: ProviderSessionId.make("session-resume-moved-gemini-4-hydrogen"),
+        });
+        assert.strictEqual(modelListRequests, 4);
+        yield* movedResume.close;
+
+        // A model missing even after one refresh fails without looping.
+        const rejected = yield* runner
+          .open(openInput("create", "not-a-cursor-model"))
+          .pipe(Effect.exit);
+        assert(Exit.isFailure(rejected));
+        assert.strictEqual(modelListRequests, 5);
+        const failure = Cause.squash(rejected.cause);
+        assert(CursorAgentSdk.isCursorAgentSdkRunnerError(failure));
+        assert(failure.cause instanceof Error);
+        assert.strictEqual(failure.cause.name, "ConfigurationError");
+        assert.include(failure.cause.message, "Cannot use this model: not-a-cursor-model");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refreshes the cached model list once when send rejects a model", () =>
+    Effect.gen(function* () {
+      const cache = new Map<string, Promise<unknown>>([["key", Promise.resolve([])]]);
+      const rejectModel = (modelId: string) => {
+        const error = new Error(`Cannot use this model: ${modelId}. Available models: default.`);
+        error.name = "ConfigurationError";
+        return error;
+      };
+      cursorSdkMock.create.mockImplementationOnce(async () => ({
+        agentId: "agent-model-refresh",
+        platform: { localModelListCache: cache },
+        send: cursorSdkMock.send,
+        close: cursorSdkMock.agentClose,
+      }));
+      cursorSdkMock.send.mockClear();
+      cursorSdkMock.send.mockImplementationOnce(async (_message, options) => {
+        assert.strictEqual(cache.size, 1);
+        throw rejectModel(options.model?.id ?? "unknown");
+      });
+
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: { model: { id: "default" } },
+        threadId: ThreadId.make("thread-send-model-refresh"),
+        providerSessionId: ProviderSessionId.make("session-send-model-refresh"),
+      });
+
+      const run = yield* session.send({
+        message: "switch to neon",
+        options: { model: { id: "gemini-4-neon" } },
+      });
+      assert.strictEqual(run.runId, "run-cursor-agent-sdk-test");
+      assert.strictEqual(cursorSdkMock.send.mock.calls.length, 2);
+      assert.strictEqual(cache.size, 0);
+
+      // Repopulate the cache and verify an unavailable model still stops after one retry.
+      cache.set("key", Promise.resolve([]));
+      cursorSdkMock.send.mockClear();
+      cursorSdkMock.send
+        .mockImplementationOnce(async () => {
+          throw rejectModel("missing-model");
+        })
+        .mockImplementationOnce(async () => {
+          throw rejectModel("missing-model");
+        });
+      const rejected = yield* session
+        .send({
+          message: "switch to missing",
+          options: { model: { id: "missing-model" } },
+        })
+        .pipe(Effect.exit);
+      assert(Exit.isFailure(rejected));
+      assert.strictEqual(cursorSdkMock.send.mock.calls.length, 2);
+      assert.strictEqual(cache.size, 0);
     }).pipe(Effect.provide(layerTest)),
   );
 });

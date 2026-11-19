@@ -323,6 +323,27 @@ function isActiveRunConflict(cause: unknown): boolean {
   return cause instanceof Error && /already has active run/i.test(cause.message);
 }
 
+function isCursorModelRejection(cause: unknown): boolean {
+  return (
+    cause instanceof Error &&
+    cause.name === "ConfigurationError" &&
+    cause.message.startsWith("Cannot use this model:")
+  );
+}
+
+// @cursor/sdk caches /v1/models per workspace platform for the process lifetime.
+function clearPlatformModelListCache(platform: unknown): boolean {
+  if (typeof platform !== "object" || platform === null) {
+    return false;
+  }
+  const cache = Reflect.get(platform, "localModelListCache");
+  if (!(cache instanceof Map)) {
+    return false;
+  }
+  cache.clear();
+  return true;
+}
+
 export function isCursorCancellationError(cause: unknown): boolean {
   let current = cause;
   const seen = new Set<object>();
@@ -498,6 +519,10 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         },
       });
 
+      const cwd =
+        typeof input.options.local?.cwd === "string"
+          ? input.options.local.cwd
+          : input.options.local?.cwd?.[0];
       // Cursor uses cwd for both execution and store lookup; a moved thread keeps its original store.
       const storeCwd = input.storeCwd;
       const storePlatform =
@@ -515,15 +540,32 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               catch: (cause) => runnerError(cause, "agent.resume"),
             })
           : undefined;
-      const agent = yield* Effect.tryPromise({
-        try: () =>
-          input.operation === "create"
-            ? Agent.create(input.options)
-            : storePlatform === undefined
-              ? Agent.resume(input.agentId!, input.options)
-              : storePlatform.resumeAgent(input.agentId!, input.options),
-        catch: (cause) => runnerError(cause, `agent.${input.operation}`),
-      });
+      const openAgent = () =>
+        Effect.tryPromise({
+          try: () =>
+            input.operation === "create"
+              ? Agent.create(input.options)
+              : storePlatform === undefined
+                ? Agent.resume(input.agentId!, input.options)
+                : storePlatform.resumeAgent(input.agentId!, input.options),
+          catch: (cause) => runnerError(cause, `agent.${input.operation}`),
+        });
+      const resolveCachedPlatform = () =>
+        input.options.local?.store !== undefined
+          ? Promise.resolve(undefined)
+          : storePlatform !== undefined
+            ? Promise.resolve(storePlatform)
+            : createAgentPlatform(cwd === undefined ? {} : { workspaceRef: cwd });
+      const agent = yield* openAgent().pipe(
+        Effect.catchIf(
+          (error) => isCursorModelRejection(error.cause),
+          (error) =>
+            Effect.tryPromise({
+              try: async () => clearPlatformModelListCache(await resolveCachedPlatform()),
+              catch: () => error,
+            }).pipe(Effect.flatMap((cleared) => (cleared ? openAgent() : Effect.fail(error)))),
+        ),
+      );
 
       yield* log({
         direction: "incoming",
@@ -534,10 +576,6 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         },
       });
 
-      const cwd =
-        typeof input.options.local?.cwd === "string"
-          ? input.options.local.cwd
-          : input.options.local?.cwd?.[0];
       const runOptions = {
         runtime: "local" as const,
         ...(cwd === undefined ? {} : { cwd }),
@@ -623,6 +661,17 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                 runnerError(cause, sendInput.resume === true ? "run.resume" : "run.start"),
             });
           const run = yield* startRun().pipe(
+            Effect.catchIf(
+              (error) => isCursorModelRejection(error.cause),
+              (error) =>
+                Effect.tryPromise({
+                  try: async () =>
+                    clearPlatformModelListCache(
+                      Reflect.get(agent, "platform") ?? (await storeView()),
+                    ),
+                  catch: () => error,
+                }).pipe(Effect.flatMap((cleared) => (cleared ? startRun() : Effect.fail(error)))),
+            ),
             Effect.catchIf(
               (error) => abandonedRunRecoveryAvailable && isActiveRunConflict(error.cause),
               (error) =>
