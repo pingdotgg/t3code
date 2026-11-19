@@ -4,10 +4,7 @@ import * as Schema from "effect/Schema";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
-import {
-  linkEnvironmentToCloudWithPreference,
-  type CloudEnvironmentLinkError,
-} from "../cloud/linkEnvironment";
+import type { CloudEnvironmentLinkError } from "../cloud/linkEnvironment";
 import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
 
 export class LiveActivityEnvironmentUpdateError extends Schema.TaggedError<LiveActivityEnvironmentUpdateError>()(
@@ -31,6 +28,10 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
       "updated" | "unlinked" | "unsupported" | "disconnected",
       CloudEnvironmentLinkError
     >;
+    readonly linkEnvironment: (
+      environmentId: EnvironmentId,
+      input: { readonly clerkToken: string; readonly liveActivitiesEnabled: boolean },
+    ) => Effect.Effect<void, CloudEnvironmentLinkError>;
     readonly canUpdateEnvironment: (environmentId: EnvironmentId) => boolean;
     readonly canConfigureEnvironment: (environmentId: EnvironmentId) => boolean;
   }) {
@@ -43,18 +44,12 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
         ? yield* input.updateEnvironment(connection.environmentId, enabled)
         : "unlinked";
       if (result === "updated" || result === "disconnected") return result;
-      if (
-        !enabled ||
-        !clerkToken ||
-        !connection.bearerToken ||
-        !input.canConfigureEnvironment(connection.environmentId)
-      ) {
+      if (!enabled || !clerkToken || !input.canConfigureEnvironment(connection.environmentId)) {
         return result;
       }
 
-      yield* linkEnvironmentToCloudWithPreference({
+      yield* input.linkEnvironment(connection.environmentId, {
         clerkToken,
-        connection,
         liveActivitiesEnabled: enabled,
       });
       return "updated" as const;

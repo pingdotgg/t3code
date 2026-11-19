@@ -1,5 +1,4 @@
 import {
-  EnvironmentAuthenticatedPrincipal,
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
   type EnvironmentCloudRelayConfigResult,
@@ -55,12 +54,7 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import {
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-  type HttpServerRequest,
-} from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpServer from "effect/http/HttpServer";
 
@@ -111,13 +105,11 @@ import {
 import {
   hasBoundedCloudProofLifetime,
   hasExactScope,
-  hasForwardedAuthorityHeaders,
-  isAllowedEndpointOrigin,
+  isLoopbackEndpointOrigin,
   isSupportedLinkProviderKind,
   linkProofScopes,
   managedEndpointRuntimeConfigsMatch,
   parseManagedEndpointLocalOrigin,
-  requestAbsoluteUrl,
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
 
@@ -416,21 +408,15 @@ type ManagedTunnelRegistration =
 export class CloudLink extends Context.Service<
   CloudLink,
   {
-    /**
-     * Signs the proof the relay asks for to link this environment. The request
-     * must reach this server directly. Desktop bootstrap sessions may use the
-     * WSL IP; all other sessions must use the loopback origin they name.
-     */
+    /** Signs the proof the relay asks for to link this environment, for this server's own origin. */
     readonly linkProof: (
       request: RelayLinkProofRequest,
-      httpRequest: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<
       RelayEnvironmentLinkProof,
       | CloudLinkOriginInvalidError
       | CloudLinkInternalError
       | EnvironmentAuth.ServerAuthInternalError
-      | ManagedLimits.ManagedPolicyRefusedError,
-      EnvironmentAuthenticatedPrincipal
+      | ManagedLimits.ManagedPolicyRefusedError
     >;
     readonly applyRelayConfig: (
       payload: RelayEnvironmentConfigRequest,
@@ -586,21 +572,28 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // The tunnel must reach this server, so the signed origin is its own loopback address, never the caller's.
+  const serverLoopbackOrigin = Effect.gen(function* () {
+    const address = httpServer.address;
+    if (typeof address === "string" || !("port" in address)) {
+      return yield* new CloudLinkInternalError({ operation: "resolve-server-origin" });
+    }
+    const { origin } = parseManagedEndpointLocalOrigin(
+      `http://${loopbackUrlHostForAddress(address)}:${address.port}`,
+    );
+    if (!isLoopbackEndpointOrigin(origin)) {
+      return yield* new CloudLinkOriginInvalidError({ origin: "local" });
+    }
+    return origin;
+  });
+
   const makeCloudLinkProof = Effect.fn("environment.cloud.makeLinkProof")(function* (
     request: RelayLinkProofRequest,
-    requestUrl: string,
-    allowNonLoopbackRequestHost = false,
   ) {
-    if (
-      !isSupportedLinkProviderKind(request) ||
-      !isAllowedEndpointOrigin({
-        origin: request.origin,
-        requestUrl,
-        allowNonLoopbackRequestHost,
-      })
-    ) {
+    if (!isSupportedLinkProviderKind(request)) {
       return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
     }
+    const origin = yield* serverLoopbackOrigin;
     const now = yield* DateTime.now;
     const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
     // Borrow only the relay clock; the relay still verifies and consumes the challenge.
@@ -623,7 +616,7 @@ const make = Effect.gen(function* () {
       environmentId: descriptor.environmentId,
       environmentPublicKey: normalizePemForSignedPayload(signingKey.publicKey),
       endpoint: request.endpoint,
-      origin: request.origin,
+      origin,
       scopes: linkProofScopes(request),
     } satisfies RelayEnvironmentLinkProofPayload;
     return yield* signingKey
@@ -642,18 +635,8 @@ const make = Effect.gen(function* () {
   });
 
   const linkProof = Effect.fn("environment.cloud.linkProof")(
-    function* (request: RelayLinkProofRequest, httpRequest: HttpServerRequest.HttpServerRequest) {
-      const requestUrl = requestAbsoluteUrl(httpRequest);
-      if (requestUrl === null || hasForwardedAuthorityHeaders(httpRequest)) {
-        return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
-      }
-      const principal = yield* EnvironmentAuthenticatedPrincipal;
-      // WSL desktop requests use the distro IP; only the server-issued bootstrap subject qualifies.
-      return yield* makeCloudLinkProof(
-        request,
-        requestUrl,
-        principal.subject === "desktop-bootstrap",
-      );
+    function* (request: RelayLinkProofRequest) {
+      return yield* makeCloudLinkProof(request);
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("generate-link-proof")),
   );
@@ -877,19 +860,16 @@ const make = Effect.gen(function* () {
         },
         schema: RelayEnvironmentLinkChallengeResponse,
       });
-      const proof = yield* makeCloudLinkProof(
-        {
-          challenge: challenge.challenge,
-          relayIssuer: relayUrl,
-          endpoint: {
-            httpBaseUrl: parsedOrigin.httpBaseUrl,
-            wsBaseUrl: parsedOrigin.wsBaseUrl,
-            providerKind: managedTunnelsEnabled ? "cloudflare_tunnel" : "manual",
-          },
-          origin: parsedOrigin.origin,
+      const proof = yield* makeCloudLinkProof({
+        challenge: challenge.challenge,
+        relayIssuer: relayUrl,
+        endpoint: {
+          httpBaseUrl: parsedOrigin.httpBaseUrl,
+          wsBaseUrl: parsedOrigin.wsBaseUrl,
+          providerKind: managedTunnelsEnabled ? "cloudflare_tunnel" : "manual",
         },
-        parsedOrigin.httpBaseUrl,
-      );
+        origin: parsedOrigin.origin,
+      });
       const link = yield* relayClientRequest({
         url: `${relayUrl}/v1/client/environment-links`,
         token: token.accessToken,
