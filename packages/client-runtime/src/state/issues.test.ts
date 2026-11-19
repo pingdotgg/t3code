@@ -162,6 +162,37 @@ describe("createIssueCommentPager", () => {
       registry.dispose();
     }
   });
+  it("discards loaded and late older pages after refreshing unchanged detail", async () => {
+    const value = { comments: [comment("newest")], commentsCursor: "first" };
+    const detail = Atom.make(AsyncResult.success(value));
+    const pager = createIssueCommentPager(detail);
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(pager.view);
+    const pending = Promise.withResolvers<AsyncResult.Success<IssueCommentsPage>>();
+    try {
+      await pager.loadOlder(registry, async () =>
+        AsyncResult.success({ comments: [comment("older")], nextCursor: "second" }),
+      );
+      const inFlight = pager.loadOlder(registry, () => pending.promise);
+      await pager.refresh(registry, async () => {
+        registry.set(detail, AsyncResult.waiting(registry.get(detail)));
+        registry.set(detail, AsyncResult.success(value));
+      });
+      const afterRefresh = registry.get(pager.view);
+
+      pending.resolve(AsyncResult.success({ comments: [comment("oldest")], nextCursor: null }));
+      await inFlight;
+
+      expect(afterRefresh.comments.map(({ id }) => id)).toEqual(["newest"]);
+      const settled = registry.get(pager.view);
+      expect(settled.comments.map(({ id }) => id)).toEqual(["newest"]);
+      expect(settled.nextCursor).toBe("first");
+      expect(settled.canLoadOlder).toBe(true);
+    } finally {
+      unmount();
+      registry.dispose();
+    }
+  });
 });
 
 describe("createMergedIssueCandidatesAtoms", () => {

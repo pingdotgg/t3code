@@ -105,18 +105,18 @@ export function createIssueCommentPager<E>(
     async refresh(registry: AtomRegistry.AtomRegistry, read: () => Promise<unknown>) {
       const current = registry.get(state);
       if (current.refreshing) return;
-      const shown = AsyncResult.getOrElse(registry.get(detailAtom), () => null);
       registry.set(state, { ...current, refreshing: true });
+      let succeeded = false;
       try {
         await read();
+        const result = registry.get(detailAtom);
+        succeeded = result._tag === "Success" && !result.waiting;
       } finally {
         const latest = registry.get(state);
-        // A failed read keeps the detail shown, so its older pages stay. A new detail can return the
-        // same cursor, so drop the pages and any still loading explicitly.
-        const replaced = AsyncResult.getOrElse(registry.get(detailAtom), () => null) !== shown;
+        // A successful read invalidates older pages even when the query reuses unchanged detail.
         registry.set(
           state,
-          replaced
+          succeeded
             ? { ...latest, older: null, refreshing: false, refreshes: latest.refreshes + 1 }
             : { ...latest, refreshing: false },
         );
