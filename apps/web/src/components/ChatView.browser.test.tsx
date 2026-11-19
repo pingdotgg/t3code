@@ -821,30 +821,42 @@ it("/side sends the draft's attachments and context, and keeps them when it does
     await userEvent.keyboard("/side what is this?{Enter}");
     await expect.element(image).not.toBeInTheDocument();
   };
-  const sentMessage = (fields: Record<string, unknown>) =>
-    vi.waitFor(() =>
+  // The tab opens once the start finished; until then `/side` refuses another side chat.
+  const sideChatTabs = page.getByRole("button", { name: "Side chat", exact: true });
+  const sentMessage = async (fields: Record<string, unknown>, openTabs: number) => {
+    await vi.waitFor(() =>
       expect(dispatchedCommands()).toContainEqual(
         expect.objectContaining({ type: "message.dispatch", ...fields }),
       ),
     );
+    await expect.element(sideChatTabs).toHaveLength(openTabs);
+  };
 
   await sendImageToSideChat();
-  await sentMessage({
-    text: "what is this?",
-    attachments: [expect.objectContaining({ type: "image", id: "upload-1" })],
-    context: {
-      version: 1,
-      records: [expect.objectContaining({ kind: "image", attachmentId: "upload-1" })],
+  await sentMessage(
+    {
+      text: "what is this?",
+      attachments: [expect.objectContaining({ type: "image", id: "upload-1" })],
+      context: {
+        version: 1,
+        records: [expect.objectContaining({ kind: "image", attachmentId: "upload-1" })],
+      },
     },
-  });
+    1,
+  );
 
   // A reply alone is enough to send.
   await page.getByRole("button", { name: "Reply to this response" }).first().click();
   await userEvent.click(editor);
   await userEvent.keyboard("/side {Enter}");
-  await sentMessage({
-    context: expect.objectContaining({ records: [expect.objectContaining({ kind: "response" })] }),
-  });
+  await sentMessage(
+    {
+      context: expect.objectContaining({
+        records: [expect.objectContaining({ kind: "response" })],
+      }),
+    },
+    2,
+  );
 
   // A failed start puts the message back after the draft typed meanwhile.
   holdFork = true;
