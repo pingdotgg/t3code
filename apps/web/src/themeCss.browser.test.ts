@@ -56,6 +56,11 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
   expect(style.borderTopWidth).toBe("4px");
   expect(style.backgroundImage).toContain("linear-gradient");
 
+  applyThemeCss(`
+    [data-theme-css-probe] { list-style: env(t3-none, url(https://example.com/l)); list-style-type: disc; }
+  `);
+  expect(style.listStyleImage).toBe("none");
+
   applyThemeCss(undefined);
   expect(getComputedStyle(probe).color).not.toBe("rgb(1, 2, 3)");
 });

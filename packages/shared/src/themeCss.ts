@@ -45,10 +45,13 @@ export function themeCssValueFetches(value: string): boolean {
   return code.includes("\\") || fetchesOutsideStrings(code);
 }
 
+const SUBSTITUTES = /(?:var|env|attr|if)\(/i;
+
 /**
- * Whether a declaration block that uses var(), or holds an escape, can load a remote file. Once a
- * later declaration overrides one longhand, browsers hide a var() shorthand's text, so only the
- * source shows it. Blocks split at braces outside parentheses, after strings are removed.
+ * Whether a declaration block that uses var(), env(), attr() or if(), or holds an escape, can
+ * load a remote file. Once a later declaration overrides one longhand, browsers hide such a
+ * shorthand's text, so only the source shows it. Blocks split at braces outside parentheses,
+ * after strings are removed.
  */
 export function themeCssVarBlockFetches(css: string): boolean {
   const code = withoutStrings(css, false);
@@ -60,7 +63,7 @@ export function themeCssVarBlockFetches(css: string): boolean {
     else if (char === ")") depth = Math.max(0, depth - 1);
     else if (index === code.length || (depth === 0 && (char === "{" || char === "}"))) {
       const block = code.slice(start, index);
-      if (block.includes("\\") || (/var\(/i.test(block) && fetchesOutsideStrings(block))) {
+      if (block.includes("\\") || (SUBSTITUTES.test(block) && fetchesOutsideStrings(block))) {
         return true;
       }
       start = index + 1;

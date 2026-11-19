@@ -68,6 +68,7 @@ describe("themeCssVarBlockFetches", () => {
   it.each([
     ["a { border: var(--edge); } b { cursor: url(https://e.com/x), auto; }", false],
     ["a { mask: var(--none, url(https://e.com/k)); mask-size: auto; }", true],
+    ["a { background: env(t3-none, url(https://e.com/l)); background-color: red; }", true],
     ['a { background: var(--none, "{" url(https://e.com/k)); }', true],
     ["a { background: var(--none, { } url(https://e.com/k)); }", true],
     ["a { background: v\\61r(--none, url(https://e.com/k)); }", true],
