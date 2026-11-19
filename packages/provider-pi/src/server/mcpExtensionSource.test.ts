@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
+import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 
 import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
@@ -79,7 +80,20 @@ describe("Pi orchestration prompt section", () => {
       assert.isDefined(result);
       assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
+      assert.include(result!.systemPrompt, PULL_REQUEST_LINKING_INSTRUCTIONS);
     }
+  });
+
+  it("sets the guidance section on Pi builds with prompt sections", async () => {
+    const bridge = await loadMcpBridge();
+    const sections: Record<string, string> = {};
+    const result = await bridge.handlers.get("before_agent_start")!(
+      { systemPrompt: "base", systemPromptOptions: { sections } },
+      { ui: { notify: assert.fail } },
+    );
+    assert.isUndefined(result);
+    assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
+    assert.include(sections.t3_code_orchestration, PULL_REQUEST_LINKING_INSTRUCTIONS);
   });
 });
 
@@ -387,9 +401,12 @@ describe("Pi tool discovery permissions", () => {
         },
       },
     };
-    assert.isUndefined(
-      await toolCall!({ toolName: "tool_search", input: { query: "preview_snapshot" } }, ctx),
-    );
+    for (const builtinPath of ["builtin:tool-search", "<builtin:tool-search>"]) {
+      searchPath = builtinPath;
+      assert.isUndefined(
+        await toolCall!({ toolName: "tool_search", input: { query: "preview_snapshot" } }, ctx),
+      );
+    }
     assert.equal(confirmations.length, 0);
     const result = await toolCall!({ toolName: "mcp__t3-code__preview_snapshot", input: {} }, ctx);
     assert.equal(result?.block, true);
@@ -399,6 +416,32 @@ describe("Pi tool discovery permissions", () => {
     const replaced = await toolCall!({ toolName: "tool_search", input: {} }, ctx);
     assert.equal(replaced?.block, true);
     assert.equal(confirmations.at(-1), "Allow tool_search?");
+  });
+
+  it("gives long inputs that differ past the shown text different confirmation details", async () => {
+    const bridge = await loadMcpBridge({ runtimeMode: "approval-required" });
+    const hook = bridge.handlers.get("tool_call") as unknown as (
+      event: { toolName: string; input: unknown },
+      ctx: { ui: { confirm: (title: string, detail: string) => Promise<boolean> } },
+    ) => Promise<{ block: true; reason: string } | undefined>;
+    const details: string[] = [];
+    const ctx = {
+      ui: {
+        confirm: async (_title: string, detail: string) => {
+          details.push(detail);
+          return true;
+        },
+      },
+    };
+    const filler = "a".repeat(4_100);
+    await hook({ toolName: "bash", input: { command: filler + "\necho one" } }, ctx);
+    await hook({ toolName: "bash", input: { command: filler + "\necho two" } }, ctx);
+    await hook({ toolName: "bash", input: { command: "ls" } }, ctx);
+    const [first, second, short] = details;
+    assert.equal(first!.slice(0, 4_000), second!.slice(0, 4_000));
+    assert.notEqual(first, second);
+    assert.match(first!, /\n\.\.\. \d+ more characters not shown \(sha256 [0-9a-f]{64}\)$/);
+    assert.equal(short, JSON.stringify({ command: "ls" }, null, 2));
   });
 });
 

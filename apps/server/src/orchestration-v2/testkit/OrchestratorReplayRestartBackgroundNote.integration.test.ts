@@ -37,7 +37,7 @@ const FIRST_AFTER_RESTART = "Is the background subagent done yet?";
 const SECOND_AFTER_RESTART = "Thanks. Anything else?";
 const NOTE = [
   "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
-  "- subagent: Background subagent test (id a2995bfced8019363)",
+  "- subagent: Background subagent test (id a2995bfced8019363; resume it with SendMessage to 'a2995bfced8019363')",
 ].join("\n");
 
 const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
@@ -268,34 +268,30 @@ describe("restart-cancelled background work", () => {
   it.effect.each([false, true])(
     "keeps the thread settled and tells the next user turn once when continuation is %s",
     (continueThreadsAfterServerUpdate) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const projection = yield* runRestart({
-            resumedPrompts: [
-              `${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`,
-              SECOND_AFTER_RESTART,
-            ],
-            userMessagesAfterRestart: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],
-            continueThreadsAfterServerUpdate,
-          });
-          assert.deepEqual(
-            projection.runs.map((run) => run.status),
-            ["completed", "completed", "completed"],
-          );
-          assert.isFalse(
-            projection.runs.some((run) => run.restartContinuationOfRunId !== undefined),
-          );
-
-          assert.deepEqual(userTexts(projection), [
-            CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
-            FIRST_AFTER_RESTART,
+      Effect.gen(function* () {
+        const projection = yield* runRestart({
+          resumedPrompts: [
+            `${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`,
             SECOND_AFTER_RESTART,
-          ]);
-        }).pipe(
-          provideDeterministicTestRuntime,
-          Effect.provide(
-            Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-          ),
+          ],
+          userMessagesAfterRestart: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],
+          continueThreadsAfterServerUpdate,
+        });
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["completed", "completed", "completed"],
+        );
+        assert.isFalse(projection.runs.some((run) => run.restartContinuationOfRunId !== undefined));
+
+        assert.deepEqual(userTexts(projection), [
+          CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
+          FIRST_AFTER_RESTART,
+          SECOND_AFTER_RESTART,
+        ]);
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(
+          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
   );

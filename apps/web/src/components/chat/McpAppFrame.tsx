@@ -12,12 +12,14 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   clampMcpAppHeight,
+  MCP_APP_COLOR_SCHEME_PARAM,
   MCP_APP_DEFAULT_HEIGHT,
   MCP_APP_MAX_HEIGHT,
   mcpAppAllowAttribute,
   mcpAppFileName,
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
+import { msg, T, useGT, Var } from "gt-react";
 import { Minimize2Icon } from "lucide-react";
 import { useEffect, useRef, useState, type FocusEvent, type ToggleEvent } from "react";
 import { flushSync } from "react-dom";
@@ -29,12 +31,14 @@ import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { isElectron } from "~/env";
+import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
 import { useTurnItemDetail } from "~/state/queries";
 import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { observeResize } from "~/lib/observeResize";
+import { useNativeTitlebarHeight } from "~/lib/windowControlsOverlay";
 
 const commandFailure = (result: {
   readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
@@ -88,7 +92,9 @@ export function McpAppFrame(props: {
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { app } = props;
+  const gt = useGT();
   const theme = useHtmlRenderTheme();
+  const nativeTitlebarHeight = useNativeTitlebarHeight();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -125,7 +131,12 @@ export function McpAppFrame(props: {
   // The frame keeps its first URL: a re-minted one would reload the app.
   const [src, setSrc] = useState<string | null>(null);
   const asset = useLongLivedAssetUrl(src === null ? props.environmentId : null, resource);
-  if (src === null && asset._tag === "Success") setSrc(asset.url);
+  if (src === null && asset._tag === "Success") {
+    // The app paints before `ui/initialize`, so it reads the initial scheme from its URL.
+    const url = new URL(asset.url);
+    url.searchParams.set(MCP_APP_COLOR_SCHEME_PARAM, theme.appearance);
+    setSrc(url.toString());
+  }
 
   const detail = useTurnItemDetail({
     environmentId: props.environmentId,
@@ -277,7 +288,7 @@ export function McpAppFrame(props: {
           throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
         if (!info.value.readOnly) {
           const approved = await ask(
-            `Allow ${app.server} to run ${info.value.title ?? name}?\n${JSON.stringify(args, null, 2)}`,
+            `${m(msg("Allow {server} to run {tool}?", { server: app.server, tool: info.value.title ?? name }))}\n${JSON.stringify(args, null, 2)}`,
           );
           if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
         }
@@ -307,7 +318,9 @@ export function McpAppFrame(props: {
         const send = readLive().props.onSendMessage;
         if (send === undefined)
           throw new McpAppHostRefusal({ message: "Messages are not available here." });
-        const approved = await ask(`Send this message from ${app.server}?\n${text}`);
+        const approved = await ask(
+          `${m(msg("Send this message from {server}?", { server: app.server }))}\n${text}`,
+        );
         if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
         await send(text);
       },
@@ -342,7 +355,9 @@ export function McpAppFrame(props: {
       },
       downloadFile: async (files) => {
         const names = files.map((file) => file.name).join(", ");
-        const approved = await ask(`Save ${names} from ${app.server}?`);
+        const approved = await ask(
+          m(msg("Save {names} from {server}?", { names, server: app.server })),
+        );
         if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
         for (const file of files) {
           let bytes: Uint8Array | undefined;
@@ -374,7 +389,10 @@ export function McpAppFrame(props: {
           setDisplayMode("inline");
           return;
         }
-        void host.teardown().then(() => setClosed(true));
+        // A replacement document may have mounted while this one wound down.
+        void host.teardown().then(() => {
+          if (hostRef.current === host) setClosed(true);
+        });
       },
       onSizeChanged: (size) => {
         // Ignore fullscreen height when restoring inline sizing.
@@ -410,7 +428,11 @@ export function McpAppFrame(props: {
   if (closed) {
     return (
       <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2 text-muted-foreground text-xs">
-        <span>The {app.server} app was closed</span>
+        <span>
+          <T>
+            The <Var>{app.server}</Var> app was closed
+          </T>
+        </span>
         <Button
           size="xs"
           variant="ghost"
@@ -420,7 +442,7 @@ export function McpAppFrame(props: {
             setClosed(false);
           }}
         >
-          Show app
+          <T>Show app</T>
         </Button>
       </div>
     );
@@ -444,6 +466,8 @@ export function McpAppFrame(props: {
             ? "fixed inset-0 m-0 flex h-dvh max-h-none w-dvw max-w-none flex-col border-0 bg-background p-0"
             : "block! static! m-0 border-0 bg-transparent p-0 text-inherit",
         )}
+        // Keep the header clear of the native window controls.
+        style={fullscreen ? { paddingTop: nativeTitlebarHeight } : undefined}
       >
         {fullscreen ? (
           <div
@@ -452,7 +476,7 @@ export function McpAppFrame(props: {
           >
             <span className="truncate">{app.server}</span>
             <Button
-              aria-label="Exit full screen"
+              aria-label={gt("Exit full screen")}
               size="icon-sm"
               variant="ghost"
               onClick={() => setDisplayMode("inline")}
@@ -463,13 +487,15 @@ export function McpAppFrame(props: {
         ) : null}
         {navigatedAway ? (
           <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
-            The {app.server} app left its page and was stopped
+            <T>
+              The <Var>{app.server}</Var> app left its page and was stopped
+            </T>
           </p>
         ) : src !== null ? (
           <iframe
             ref={attachFrame}
             src={src}
-            title={`${app.server} app`}
+            title={gt("{server} app", { server: app.server })}
             // Omitting allow-same-origin isolates the app from the session.
             sandbox="allow-scripts allow-forms"
             allow={mcpAppAllowAttribute(app.permissions)}
@@ -479,7 +505,9 @@ export function McpAppFrame(props: {
           />
         ) : asset._tag === "Failure" ? (
           <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
-            Unable to load the {app.server} app
+            <T>
+              Unable to load the <Var>{app.server}</Var> app
+            </T>
           </p>
         ) : null}
       </div>
