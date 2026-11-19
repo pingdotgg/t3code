@@ -7,9 +7,9 @@ import {
   FileDiffIcon,
   PanelRightIcon,
 } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import type { ReactNode } from "react";
 import {
-  capitalizeTerm,
   sourceControlClients,
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -28,17 +28,20 @@ import {
   pullRequestChecksStatePresentation,
   resolvePullRequestState,
 } from "./pullRequestPresentation";
+import { resolveFilterOptions } from "./pullRequestListOptions";
 
-function GhostBar({ className }: { className?: string | undefined }) {
+import { changeRequestTermKind } from "./changeRequestTerm";
+
+export function GhostBar({ className }: { className?: string | undefined }) {
   return <div aria-hidden className={cn("h-3 rounded bg-muted-foreground/15", className)} />;
 }
 
 const TITLE_WIDTHS = ["w-3/5", "w-2/5", "w-1/2", "w-2/3", "w-2/5", "w-3/5", "w-1/2"];
 const META_WIDTHS = ["w-2/5", "w-1/3", "w-2/5", "w-1/4", "w-1/3", "w-2/5", "w-1/3"];
 const DEFAULT_DETAIL_TABS = [
-  { value: "summary", label: "Summary" },
-  { value: "timeline", label: "Timeline" },
-  { value: "code", label: "Code" },
+  { value: "summary", label: msg("Summary", { $context: "pull request tab" }) },
+  { value: "timeline", label: msg("Timeline", { $context: "pull request tab" }) },
+  { value: "code", label: msg("Code", { $context: "pull request tab" }) },
 ] as const;
 
 export function PullRequestListGhost({
@@ -54,11 +57,12 @@ export function PullRequestListGhost({
    */
   idle?: boolean;
 }) {
+  const gt = useGT();
   return (
     <div
       {...(idle
         ? { "aria-hidden": true }
-        : { role: "status", "aria-label": caption ?? "Loading pull requests" })}
+        : { role: "status", "aria-label": caption ?? gt("Loading pull requests") })}
       className="space-y-px"
     >
       {caption ? (
@@ -100,7 +104,7 @@ export function PullRequestDetailGhost({
   seed: entry,
   summary,
   actions,
-  tabs = DEFAULT_DETAIL_TABS,
+  tabs: requestedTabs,
   activeTab,
   number,
   onBack,
@@ -115,6 +119,9 @@ export function PullRequestDetailGhost({
   onBack?: (() => void) | undefined;
   onClose?: (() => void) | undefined;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
+  const tabs = requestedTabs ?? resolveFilterOptions(DEFAULT_DETAIL_TABS, resolve);
   const seed = summary
     ? {
         ...entry,
@@ -124,15 +131,18 @@ export function PullRequestDetailGhost({
     : entry;
   const terminology = sourceControlClients.get(seed?.provider).changeRequest;
   const statePresentation = seed
-    ? resolvePullRequestState({
-        state: seed.state,
-        isDraft: seed.isDraft ?? false,
-      })
+    ? resolvePullRequestState(
+        {
+          state: seed.state,
+          isDraft: seed.isDraft ?? false,
+        },
+        resolve,
+      )
     : null;
   // Passing list rollups can omit workflows awaiting approval; wait for detail.
   const checksPresentation =
     seed?.checksState === "failing" || seed?.checksState === "pending"
-      ? pullRequestChecksStatePresentation(seed.checksState)
+      ? pullRequestChecksStatePresentation(seed.checksState, resolve)
       : null;
   const changedFiles = summary?.changedFiles ?? null;
   const selectedTab =
@@ -141,7 +151,10 @@ export function PullRequestDetailGhost({
   return (
     <div
       role="status"
-      aria-label={`Loading ${terminology.singular}`}
+      aria-label={gt(
+        "Loading {term, select, mr {merge request} cr {change request} other {pull request}}",
+        { term: changeRequestTermKind(terminology) },
+      )}
       className={cn(
         "flex h-[calc(100%+var(--surface-top-inset,0px))] min-h-0 flex-col overflow-hidden bg-(--code-surface) pt-under-header",
         !seed && "motion-safe:animate-skeleton",
@@ -157,7 +170,10 @@ export function PullRequestDetailGhost({
                 variant="ghost-muted"
                 className="-ms-1.25"
                 onClick={onBack}
-                aria-label={`Back to this thread's ${terminology.plural}`}
+                aria-label={gt(
+                  "Back to this thread's {term, select, mr {merge requests} cr {change requests} other {pull requests}}",
+                  { term: changeRequestTermKind(terminology) },
+                )}
               >
                 <ArrowLeftIcon aria-hidden className="size-3.5" />
               </Button>
@@ -166,7 +182,13 @@ export function PullRequestDetailGhost({
               <>
                 <InlineButton
                   onClick={() => void readLocalApi()?.shell.openExternal(seed.url)}
-                  aria-label={`Open ${terminology.singular} #${seed.number} on host`}
+                  aria-label={gt(
+                    "Open {term, select, mr {merge request} cr {change request} other {pull request}} #{number} on host",
+                    {
+                      term: changeRequestTermKind(terminology),
+                      number: seed.number,
+                    },
+                  )}
                 >
                   <span className={statePresentation?.toneClassName}>#{seed.number}</span>
                   <ExternalLinkIcon aria-hidden className="size-2.5" />
@@ -187,7 +209,12 @@ export function PullRequestDetailGhost({
             size="icon-xs"
             variant="ghost"
             disabled
-            aria-label={`${capitalizeTerm(terminology.singular)} actions loading`}
+            aria-label={gt(
+              "{term, select, mr {Merge request} cr {Change request} other {Pull request}} actions loading",
+              {
+                term: changeRequestTermKind(terminology),
+              },
+            )}
           >
             <EllipsisIcon aria-hidden className="size-4" />
           </Button>
@@ -195,7 +222,10 @@ export function PullRequestDetailGhost({
             <Button
               size="icon-xs"
               variant="ghost"
-              aria-label={`Collapse ${terminology.singular} panel`}
+              aria-label={gt(
+                "Collapse {term, select, mr {merge request} cr {change request} other {pull request}} panel",
+                { term: changeRequestTermKind(terminology) },
+              )}
               onClick={onClose}
             >
               <PanelRightIcon aria-hidden className="size-3.5" />
@@ -230,7 +260,10 @@ export function PullRequestDetailGhost({
                     <MiddleTruncate value={seed.baseBranch} />
                   </code>
                   <ArrowLeftIcon
-                    aria-label="receives changes from"
+                    aria-label={gt("receives changes from", {
+                      $context:
+                        "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
+                    })}
                     className="size-3 shrink-0 @max-sm/pr-header:hidden"
                   />
                   <code className="min-w-0 truncate rounded-kbd bg-secondary px-1.5 py-px text-muted-foreground">
@@ -265,7 +298,10 @@ export function PullRequestDetailGhost({
 
         <nav
           className="col-span-2 flex min-h-12 min-w-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2"
-          aria-label={`${capitalizeTerm(terminology.singular)} tabs`}
+          aria-label={gt(
+            "{term, select, mr {Merge request} cr {Change request} other {Pull request}} tabs",
+            { term: changeRequestTermKind(terminology) },
+          )}
           inert
         >
           <ToggleGroup
@@ -328,7 +364,9 @@ export function PullRequestDetailGhost({
         <section>
           <div className="sticky top-0 z-10 flex w-full items-center bg-(--code-surface) pr-4">
             <div className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-left text-label text-foreground">
-              <span>Description</span>
+              <span>
+                <T>Description</T>
+              </span>
               <ChevronRightIcon
                 aria-hidden
                 className="size-3.5 rotate-90 text-muted-foreground/60"
@@ -351,10 +389,11 @@ export function PullRequestDetailGhost({
 }
 
 export function PullRequestPeopleGhost({ rows = 4 }: { rows?: number }) {
+  const gt = useGT();
   return (
     <div
       role="status"
-      aria-label="Loading people"
+      aria-label={gt("Loading people")}
       className="motion-safe:animate-skeleton space-y-1 p-1"
     >
       {Array.from({ length: rows }, (_, index) => (
@@ -368,10 +407,11 @@ export function PullRequestPeopleGhost({ rows = 4 }: { rows?: number }) {
 }
 
 export function PullRequestTimelineGhost({ rows = 6 }: { rows?: number }) {
+  const gt = useGT();
   return (
     <div
       role="status"
-      aria-label="Loading timeline"
+      aria-label={gt("Loading timeline")}
       className="motion-safe:animate-skeleton px-4 py-4"
     >
       {/* The timeline's own lines: the rail at 11.5px, dots centered on its 24px markers,
@@ -399,10 +439,14 @@ export function PullRequestConversationGhost({
   rows?: number;
   terminology: ChangeRequestTerminology;
 }) {
+  const gt = useGT();
   return (
     <div
       role="status"
-      aria-label={`Loading ${terminology.singular} conversation`}
+      aria-label={gt(
+        "Loading {term, select, mr {merge request} cr {change request} other {pull request}} conversation",
+        { term: changeRequestTermKind(terminology) },
+      )}
       className="motion-safe:animate-skeleton space-y-4 py-2"
     >
       {Array.from({ length: rows }, (_, index) => (

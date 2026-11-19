@@ -1,4 +1,4 @@
-import { msg, useMessages } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 import { ChevronRightIcon, SettingsIcon } from "lucide-react";
 
 import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
@@ -18,12 +18,13 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
 
 /** Identify the page while scope controls live with the settings content. */
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
+  const gt = useGT();
   const m = useMessages();
   const sectionLabel = settingsBreadcrumbLabel(pathname);
 
   return (
     <nav
-      aria-label="Settings breadcrumb"
+      aria-label={gt("Settings breadcrumb")}
       data-settings-breadcrumb
       className="flex min-w-0 items-center gap-1.75 text-label"
     >

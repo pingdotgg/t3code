@@ -22,6 +22,7 @@ import type {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { useMessages } from "gt-react";
 import {
   CheckIcon,
   ExternalLinkIcon,
@@ -46,7 +47,8 @@ export function SecretRequestCard(props: {
   readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
 }) {
   const { item } = props;
-  const display = secretRequestDisplay(item, props.visibility);
+  const messages = useMessages();
+  const display = secretRequestDisplay(item, props.visibility, messages);
   if (display.kind === "answered" || display.kind === "pending-elsewhere") {
     const Icon =
       display.kind === "pending-elsewhere"
@@ -74,8 +76,9 @@ const NO_SOURCES: ReadonlyArray<SecretRequestSource> = [];
 
 function useSecretRequestSources(environmentId: EnvironmentId) {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const messages = useMessages();
   return isSecretsFeatureEnabled
-    ? secretRequestSources(config, config?.settings.secretProviders ?? {})
+    ? secretRequestSources(config, config?.settings.secretProviders ?? {}, messages)
     : NO_SOURCES;
 }
 
@@ -84,6 +87,7 @@ function PendingSecretRequestForm(props: {
   readonly item: SecretRequestItem;
 }) {
   const { item } = props;
+  const messages = useMessages();
   const inputId = useId();
   const errorId = useId();
   const privacyId = useId();
@@ -119,7 +123,11 @@ function PendingSecretRequestForm(props: {
       return;
     }
     if (!isAtomCommandInterrupted(result)) {
-      pipe(squashAtomCommandFailure(result), secretRequestFailureMessage, setError);
+      pipe(
+        squashAtomCommandFailure(result),
+        (failure) => secretRequestFailureMessage(failure, messages),
+        setError,
+      );
     }
   };
 
@@ -213,7 +221,7 @@ function PendingSecretRequestForm(props: {
                 data-1p-ignore
                 data-lpignore="true"
                 data-bwignore
-                placeholder={item.placeholder ?? SECRET_REQUEST_DEFAULT_PLACEHOLDER}
+                placeholder={item.placeholder ?? messages(SECRET_REQUEST_DEFAULT_PLACEHOLDER)}
                 value={secret}
                 disabled={submitting}
                 aria-invalid={error !== null || undefined}

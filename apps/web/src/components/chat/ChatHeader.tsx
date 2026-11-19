@@ -10,6 +10,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT, Var } from "gt-react";
 import { PlusIcon, SquarePenIcon } from "lucide-react";
 import {
   memo,
@@ -75,7 +76,8 @@ export const ChatHeader = memo(function ChatHeader({
   onOpenProjectSettings,
   onFindInThread,
 }: ChatHeaderProps) {
-  const activeProjectName = activeProject?.isScratch ? "No project" : activeProject?.title;
+  const gt = useGT();
+  const activeProjectName = activeProject?.isScratch ? gt("No project") : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
   const canOperateThread = useEnvironmentScope(
@@ -127,7 +129,7 @@ export const ChatHeader = memo(function ChatHeader({
       originalTitle: renamingTitle ?? activeThreadTitle,
     });
     if (resolution.action === "reject-empty") {
-      toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
+      toastManager.add({ type: "warning", title: gt("Thread title cannot be empty") });
       return;
     }
     if (resolution.action === "noop") return;
@@ -139,8 +141,8 @@ export const ChatHeader = memo(function ChatHeader({
         const error = squashAtomCommandFailure(result);
         toastManager.add({
           type: "error",
-          title: "Failed to rename thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: gt("Failed to rename thread"),
+          description: error instanceof Error ? error.message : gt("An error occurred."),
         });
       }
     });
@@ -172,7 +174,7 @@ export const ChatHeader = memo(function ChatHeader({
       const api = readLocalApi();
       if (!api) return;
       void api.contextMenu
-        .show([{ id: "project-settings", label: "Project settings", icon: "settings" }], {
+        .show([{ id: "project-settings", label: gt("Project settings"), icon: "settings" }], {
           x: event.clientX,
           y: event.clientY,
         })
@@ -280,23 +282,32 @@ export const ChatHeader = memo(function ChatHeader({
                   variant="bare"
                   size="icon-xs"
                   data-pane-notch-add=""
-                  aria-label={`New thread in ${activeProjectName}`}
+                  aria-label={gt("New thread in {project}", { project: activeProjectName })}
                   onClick={onNewThreadInProject}
                 />
               }
             >
               <PlusIcon />
             </TooltipTrigger>
-            <TooltipPopup side="bottom">New thread in {activeProjectName}</TooltipPopup>
+            <TooltipPopup side="bottom">
+              <T>
+                New thread in <Var>{activeProjectName}</Var>
+              </T>
+            </TooltipPopup>
           </Tooltip>
         ) : null}
         {renamingTitle === null && activeThreadLinkOrigin ? (
           <Tooltip>
             <TooltipTrigger render={<Badge variant="info" size="sm" />}>
-              From {activeThreadLinkOrigin}
+              <T>
+                From <Var>{activeThreadLinkOrigin}</Var>
+              </T>
             </TooltipTrigger>
             <TooltipPopup side="top">
-              Started by an agent on {activeThreadLinkOrigin} through a linked environment.
+              <T>
+                Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
+                environment.
+              </T>
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -317,6 +328,7 @@ function ParentThreadTab({
   readonly link: { threadId: ThreadId; title: string };
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -324,7 +336,7 @@ function ParentThreadTab({
           <Button
             variant="ghost-muted"
             size="sm"
-            aria-label={`Open parent thread: ${link.title}`}
+            aria-label={gt("Open parent thread: {title}", { title: link.title })}
             onClick={() => onOpenThread(link.threadId)}
             className="min-w-0 max-w-40 shrink [-webkit-app-region:no-drag]"
           />

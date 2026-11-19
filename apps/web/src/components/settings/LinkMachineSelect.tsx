@@ -3,12 +3,15 @@ import {
   type LinkableMachine,
   linkDestination,
 } from "@t3tools/client-runtime/link-request";
+import { T, useGT } from "gt-react";
 import { useId } from "react";
 
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+
+const T3_CONNECT_NAME = "T3 Connect";
 
 /**
  * Shown wherever a link goes to an address this app does not already have for a
@@ -17,10 +20,14 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 export function LinkAddressWarning({ address }: { readonly address: string }) {
   return (
     <Alert variant="warning">
-      <AlertTitle>Check this address</AlertTitle>
+      <AlertTitle>
+        <T>Check this address</T>
+      </AlertTitle>
       <AlertDescription>
-        This app cannot confirm it is one of your machines. The pairing code you paste is sent
-        there.
+        <T>
+          This app cannot confirm it is one of your machines. The pairing code you paste is sent
+          there.
+        </T>
         <span className="block break-all">{linkDestination(address)}</span>
       </AlertDescription>
     </Alert>
@@ -29,17 +36,18 @@ export function LinkAddressWarning({ address }: { readonly address: string }) {
 
 /** Whether a machine is linked already, or how this app knows it when not connected to it. */
 export function LinkMachineBadge({ machine }: { readonly machine: LinkableMachine }) {
+  const gt = useGT();
   if (machine.linked) {
     return (
       <Badge variant="success" size="sm">
-        Linked
+        <T>Linked</T>
       </Badge>
     );
   }
   if (machine.connected) return null;
   return (
     <Badge variant="outline" size="sm">
-      {machine.connectOnly ? "T3 Connect" : "Not connected"}
+      {machine.connectOnly ? T3_CONNECT_NAME : gt("Not connected")}
     </Badge>
   );
 }
@@ -65,11 +73,12 @@ export function LinkMachineSelect({
   readonly onChange: (value: string) => void;
   readonly disabled: boolean;
 }) {
+  const gt = useGT();
   const labelId = useId();
   return (
     <div className="space-y-1.5">
       <span id={labelId} className="block text-caption text-foreground">
-        Machine
+        <T>Machine</T>
       </span>
       <Select
         value={value}
@@ -81,9 +90,13 @@ export function LinkMachineSelect({
         <SelectTrigger aria-labelledby={labelId}>
           <SelectValue>
             {(selected: string | null) => {
-              if (selected === ANOTHER_ADDRESS) return "Another address…";
+              if (selected === ANOTHER_ADDRESS) return gt("Another address…");
               const machine = machines.find((candidate) => candidate.environmentId === selected);
-              return machine === undefined ? "Choose a machine" : <MachineName machine={machine} />;
+              return machine === undefined ? (
+                gt("Choose a machine")
+              ) : (
+                <MachineName machine={machine} />
+              );
             }}
           </SelectValue>
         </SelectTrigger>
@@ -97,7 +110,7 @@ export function LinkMachineSelect({
             </SelectItem>
           ))}
           <SelectItem value={ANOTHER_ADDRESS} hideIndicator>
-            Another address…
+            <T>Another address…</T>
           </SelectItem>
         </SelectPopup>
       </Select>

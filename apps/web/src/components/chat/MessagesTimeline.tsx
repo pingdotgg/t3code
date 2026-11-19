@@ -1,3 +1,5 @@
+import { T, useGT, useMessages, Var } from "gt-react";
+import { threadErrorText } from "@t3tools/client-runtime/state/threads";
 import { ViewedImagesTimelineRow } from "./TimelineWorkEntryRow";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -457,6 +459,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   topFadeEnabled = false,
   historyControls,
 }: MessagesTimelineProps) {
+  const gt = useGT();
   const pendingRequest = pendingRequestProp?.blocking === false ? null : pendingRequestProp;
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   // Snapshot restore positions on identity changes; ongoing scroll writes must not move them.
@@ -1351,16 +1354,27 @@ const ConversationTimeline = memo(function ConversationTimeline({
       <div className="messages-timeline-row-frame">
         <div className="chat-content-lane pt-1 sm:pt-2">
           <TimelineSystemDivider
-            label={parentThreadLink.sideChat ? "Context from" : "Subagent of"}
+            label={
+              parentThreadLink.sideChat
+                ? gt("Context from", {
+                    $context: "divider label; the parent thread title follows as a link",
+                  })
+                : gt("Subagent of", {
+                    $context: "divider label; the parent thread title follows as a link",
+                  })
+            }
             detail={
               parentThreadLink.environmentLabel === undefined
                 ? parentThreadLink.title
-                : `${parentThreadLink.title} on ${parentThreadLink.environmentLabel}`
+                : gt("{title} on {environment}", {
+                    title: parentThreadLink.title,
+                    environment: parentThreadLink.environmentLabel,
+                  })
             }
             icon={parentThreadLink.sideChat ? MessagesSquareIcon : BotIcon}
             {...(parentThreadLink.open === undefined
               ? {}
-              : { actionLabel: "Open parent thread", onAction: parentThreadLink.open })}
+              : { actionLabel: gt("Open parent thread"), onAction: parentThreadLink.open })}
           />
         </div>
       </div>
@@ -1561,8 +1575,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
               <MessageSquareIcon />
             </EmptyMedia>
             <EmptyHeader>
-              <EmptyTitle>No messages yet</EmptyTitle>
-              <EmptyDescription>Send a message to start the conversation.</EmptyDescription>
+              <EmptyTitle>
+                <T>No messages yet</T>
+              </EmptyTitle>
+              <EmptyDescription>
+                <T>Send a message to start the conversation.</T>
+              </EmptyDescription>
             </EmptyHeader>
           </Empty>
         </div>
@@ -1660,6 +1678,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
 });
 
 function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
+  const gt = useGT();
+  const messages = useMessages();
   if (!props.hasMoreHistory && props.error === null) {
     return null;
   }
@@ -1670,20 +1690,20 @@ function TimelineHistoryControl(props: MessagesTimelineHistoryControls) {
           <button
             type="button"
             disabled={props.loading}
-            aria-label="Load earlier turns"
+            aria-label={gt("Load earlier turns")}
             onClick={() => props.onLoadEarlier()}
             className="flex w-full cursor-pointer items-center gap-3 py-1.5 text-dim-foreground text-xs hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:cursor-default"
           >
             <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
             <span className="shrink-0">
-              {props.loading ? "Loading earlier turns…" : "Load earlier turns"}
+              {props.loading ? gt("Loading earlier turns…") : gt("Load earlier turns")}
             </span>
             <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
           </button>
         ) : null}
         {props.error !== null ? (
           <p role="status" className="text-center text-muted-foreground text-xs">
-            {props.error}
+            {threadErrorText(props.error, messages)}
           </p>
         ) : null}
       </div>
@@ -1881,9 +1901,12 @@ function ContextCompactionTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "context-compaction" }>;
 }) {
+  const gt = useGT();
   const label =
-    row.title && row.label.startsWith("Context compacted")
-      ? row.title + row.label.slice("Context compacted".length)
+    row.title && row.compacted
+      ? row.tokenCounts
+        ? gt("{title} {before} → {after} tokens", { title: row.title, ...row.tokenCounts })
+        : row.title
       : row.label;
   const content = (
     <span className="flex min-w-0 flex-col items-center gap-1.5">
@@ -1895,9 +1918,19 @@ function ContextCompactionTimelineRow({
         )}
         {row.tokenCounts ? (
           <>
-            {row.title ?? "Context compacted"} {row.tokenCounts.before}
-            <ArrowRightIcon aria-hidden="true" className="size-3" />
-            {row.tokenCounts.after} tokens
+            {row.title ? (
+              <T>
+                <Var>{row.title}</Var> <Var>{row.tokenCounts.before}</Var>
+                <ArrowRightIcon aria-hidden="true" className="size-3" />
+                <Var>{row.tokenCounts.after}</Var> tokens
+              </T>
+            ) : (
+              <T>
+                Context compacted <Var>{row.tokenCounts.before}</Var>
+                <ArrowRightIcon aria-hidden="true" className="size-3" />
+                <Var>{row.tokenCounts.after}</Var> tokens
+              </T>
+            )}
           </>
         ) : (
           label
@@ -1932,6 +1965,7 @@ function useDeferredWorkLoading(
   row: { expanded: boolean; deferredWorkItemIds?: ReadonlyArray<string> },
   onToggle: () => void,
 ) {
+  const gt = useGT();
   const ctx = use(TimelineRowCtx);
   const loadWork = useAtomCommand(threadEnvironment.loadEarlierHistory, { reportFailure: false });
   const ref = parseScopedThreadKey(ctx.routeThreadKey);
@@ -1956,7 +1990,7 @@ function useDeferredWorkLoading(
   useEffect(() => {
     if (row.expanded && anchorsKey && environmentId && threadId) loadOnExpand();
   }, [row.expanded, anchorsKey, environmentId, threadId]);
-  const error = anchorsKey && failed ? "Couldn't load work. Click to retry." : null;
+  const error = anchorsKey && failed ? gt("Couldn't load work. Click to retry.") : null;
   const loading = ref !== null && row.expanded && anchorsKey !== "" && !failed;
   const toggle = () => {
     setFailed(false);
@@ -1968,8 +2002,9 @@ function useDeferredWorkLoading(
 }
 
 function WorkHistorySkeleton() {
+  const gt = useGT();
   return (
-    <div role="status" aria-label="Loading work history" className="space-y-2 px-1 pb-1 pt-3">
+    <div role="status" aria-label={gt("Loading work history")} className="space-y-2 px-1 pb-1 pt-3">
       {[0, 1, 2].map((index) => (
         <div key={index} className="flex items-center gap-2" aria-hidden="true">
           <Skeleton className="size-3 shrink-0" />
@@ -2029,7 +2064,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
       {loading ? <WorkHistorySkeleton /> : null}
       {row.ending === "stopped" ? (
         <p className="px-1 pt-2 text-body text-muted-foreground">
-          {row.diff ? "Stopped by you. Changes so far are kept." : "Stopped by you."}
+          {row.diff ? <T>Stopped by you. Changes so far are kept.</T> : <T>Stopped by you.</T>}
         </p>
       ) : row.ending === "limited" && row.resetAt ? (
         <TurnFoldRetryNotice
@@ -2072,7 +2107,9 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
           {row.label}
           {error ? <span className="block text-error-foreground">{error}</span> : null}
         </span>
-        <span className="text-2xs text-muted-foreground">Cut off by a steer</span>
+        <span className="text-2xs text-muted-foreground">
+          <T>Cut off by a steer</T>
+        </span>
       </button>
       {loading ? <WorkHistorySkeleton /> : null}
     </div>
@@ -2091,13 +2128,17 @@ function TurnFoldRetryNotice({
   resetAt: string;
   timestampFormat: TimestampFormat;
 }) {
+  const messages = useMessages();
   const nowMinute = useNowMinute();
   const nowMs = Date.parse(`${nowMinute}:00Z`);
   const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const resetTime = formatUpcomingTimestamp(resetAt, timestampFormat, nowMs, timeZone);
+  const resetTime = formatUpcomingTimestamp(resetAt, timestampFormat, nowMs, timeZone, messages);
   return (
     <p className="whitespace-pre-wrap break-words px-1 pt-2 text-body text-muted-foreground">
-      {message ? `${message} ` : ""}Retry after {resetTime} ({timeZone}).
+      {message ? `${message} ` : ""}
+      <T>
+        Retry after <Var>{resetTime}</Var> (<Var>{timeZone}</Var>).
+      </T>
     </p>
   );
 }
@@ -2109,6 +2150,8 @@ function TurnFoldUsageLimit({
   limit: TimelineUsageLimit;
   timestampFormat: TimestampFormat;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const nowMinute = useNowMinute();
   const nowMs = Date.parse(`${nowMinute}:00Z`);
   const resetPassed = useDeadlinePassed(limit.resetAt === null ? null : Date.parse(limit.resetAt));
@@ -2117,8 +2160,13 @@ function TurnFoldUsageLimit({
   return (
     <>
       <span className="shrink-0 text-meta text-muted-foreground">
-        resumes {formatUpcomingTimestamp(limit.resetAt, timestampFormat, nowMs, timeZone)} (
-        {timeZone})
+        <T>
+          resumes{" "}
+          <Var>
+            {formatUpcomingTimestamp(limit.resetAt, timestampFormat, nowMs, timeZone, messages)}
+          </Var>{" "}
+          (<Var>{timeZone}</Var>)
+        </T>
       </span>
       {limit.onToggleSnooze ? (
         <WorkingBarChip
@@ -2126,7 +2174,9 @@ function TurnFoldUsageLimit({
           aria-pressed={limit.snoozed}
           onClick={limit.onToggleSnooze}
         >
-          {limit.snoozed ? "Snoozed" : "Snooze"}
+          {limit.snoozed
+            ? gt("Snoozed", { $context: "usage limit retry is snoozed" })
+            : gt("Snooze", { $context: "verb, snooze the usage limit retry" })}
         </WorkingBarChip>
       ) : null}
     </>

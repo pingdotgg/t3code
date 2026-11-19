@@ -3,6 +3,7 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { useGT } from "gt-react";
 import {
   FolderPlusIcon,
   FoldersIcon,
@@ -55,6 +56,7 @@ export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
+  const gt = useGT();
   const projects = useProjects();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -239,12 +241,12 @@ export function DraftHeroHeadline({
 
   // The hero used to be a sentence; screen readers still get one.
   const headingLabel = isScratchDraft
-    ? "What should we work on?"
+    ? gt("What should we work on?")
     : hasResolvedProject
-      ? `What should we build in ${activeProjectTitle}?`
+      ? gt("What should we build in {project}?", { project: activeProjectTitle })
       : canChooseProject
-        ? "Choose a project to start"
-        : "Add a project to start";
+        ? gt("Choose a project to start")
+        : gt("Add a project to start");
 
   if (isScratchDraft && isTriageDraftPrompt) {
     const environment = environments.find(
@@ -263,7 +265,7 @@ export function DraftHeroHeadline({
       <h1 className="sr-only">{headingLabel}</h1>
       <div
         role="list"
-        aria-label="Projects"
+        aria-label={gt("Projects")}
         className="flex min-h-0 flex-col gap-0.5 overflow-y-auto"
       >
         {pinnedEntries.length > 0 ? (

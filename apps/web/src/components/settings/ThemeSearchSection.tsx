@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -38,6 +39,8 @@ import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { m } from "../../i18n/messages";
 
 const DOWNLOAD_FORMAT = new Intl.NumberFormat(undefined, {
   notation: "compact",
@@ -45,10 +48,10 @@ const DOWNLOAD_FORMAT = new Intl.NumberFormat(undefined, {
 });
 const SUGGESTED_SEARCHES = ["Dracula", "Catppuccin", "Nord", "Tokyo Night"];
 const SORT_OPTIONS: ReadonlyArray<{ value: OpenVsxThemeSort; label: string }> = [
-  { value: "downloadCount", label: "Most downloaded" },
-  { value: "rating", label: "Best rated" },
-  { value: "timestamp", label: "Newest" },
-  { value: "relevance", label: "Most relevant" },
+  { value: "downloadCount", label: msg("Most downloaded") },
+  { value: "rating", label: msg("Best rated") },
+  { value: "timestamp", label: msg("Newest") },
+  { value: "relevance", label: msg("Most relevant") },
 ];
 const SEARCH_DEBOUNCE_MS = 350;
 
@@ -183,7 +186,11 @@ export function createThemeSearch(
           view.setSearchFailure?.({ query: searchQuery, unreachable: isUnreachableError(cause) });
           view.setResults(null);
           shownKey = null;
-          view.setError(cause instanceof Error ? cause.message : "Open VSX search failed.");
+          view.setError(
+            cause instanceof Error
+              ? (thrownErrorMessage(cause, m) ?? cause.message)
+              : m(msg("Open VSX search failed.")),
+          );
         },
       )
       .then(() => {
@@ -288,6 +295,8 @@ export function ThemeSearchSection({
   signal: AbortSignal;
   onInstalled: (themes: ReadonlyArray<ThemeDefinition>, context: { updated: boolean }) => void;
 }) {
+  const messages = useMessages();
+  const gt = useGT();
   const [query, setQuery] = useState("");
   const [sortBy, setSortBy] = useState<OpenVsxThemeSort>("downloadCount");
   const [results, setResults] = useState<ReadonlyArray<OpenVsxThemeExtension> | null>(null);
@@ -324,7 +333,11 @@ export function ThemeSearchSection({
     try {
       installedCollection = getStoredCustomThemeCollection(extension.collectionId);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Installed themes could not be read.");
+      setError(
+        cause instanceof Error
+          ? (thrownErrorMessage(cause, m) ?? cause.message)
+          : gt("Installed themes could not be read."),
+      );
       return;
     }
     const updated = installedCollection.length > 0;
@@ -345,7 +358,11 @@ export function ThemeSearchSection({
       }
     } catch (cause) {
       if (!installSignal.aborted) {
-        setError(cause instanceof Error ? cause.message : "That theme could not be added.");
+        setError(
+          cause instanceof Error
+            ? (thrownErrorMessage(cause, m) ?? cause.message)
+            : gt("That theme could not be added."),
+        );
       }
     }
     if (themeSearch.endInstall(installSignal)) setInstallingId(null);
@@ -355,10 +372,10 @@ export function ThemeSearchSection({
     <section className="space-y-3" aria-labelledby="theme-search-heading">
       <div>
         <h3 className="text-label text-strong-foreground" id="theme-search-heading">
-          Search community themes
+          <T>Search community themes</T>
         </h3>
         <p className="mt-0.5 text-meta text-muted-foreground">
-          Find open-source themes from Open VSX.
+          <T>Find open-source themes from Open VSX.</T>
         </p>
       </div>
       <InputGroup>
@@ -366,7 +383,7 @@ export function ThemeSearchSection({
           {isSearching ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
         </InputGroupAddon>
         <InputGroupInput
-          aria-label="Search Open VSX themes"
+          aria-label={gt("Search Open VSX themes")}
           autoFocus
           onChange={(event) => changeQuery(event.currentTarget.value)}
           onKeyDown={(event) => {
@@ -374,7 +391,7 @@ export function ThemeSearchSection({
             if (event.key === "Enter" && !isSearching && installingId === null)
               themeSearch.searchNow();
           }}
-          placeholder="Search themes..."
+          placeholder={gt("Search themes...")}
           size="lg"
           type="search"
           value={query}
@@ -384,7 +401,9 @@ export function ThemeSearchSection({
       {!isSearching || results !== null ? (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <p className="text-meta text-dim-foreground">Popular</p>
+            <p className="text-meta text-dim-foreground">
+              <T>Popular</T>
+            </p>
             {SUGGESTED_SEARCHES.map((suggestion) => (
               <Button
                 key={suggestion}
@@ -405,21 +424,23 @@ export function ThemeSearchSection({
           </div>
           {results && results.length > 0 ? (
             <div className="ml-auto flex shrink-0 items-center justify-end gap-2">
-              <p className="text-meta text-dim-foreground">Sort</p>
+              <p className="text-meta text-dim-foreground">
+                <T>Sort</T>
+              </p>
               <Select
                 disabled={installingId !== null}
                 value={sortBy}
                 onValueChange={handleSortChange}
               >
-                <SelectTrigger size="sm" className="w-44" aria-label="Sort themes">
+                <SelectTrigger size="sm" className="w-44" aria-label={gt("Sort themes")}>
                   <SelectValue>
-                    {SORT_OPTIONS.find((option) => option.value === sortBy)?.label}
+                    {messages(SORT_OPTIONS.find((option) => option.value === sortBy)?.label ?? "")}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   {SORT_OPTIONS.map((option) => (
                     <SelectItem key={option.value} hideIndicator value={option.value}>
-                      {option.label}
+                      {messages(option.label)}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -431,9 +452,12 @@ export function ThemeSearchSection({
 
       <div className="sr-only" role="status">
         {isSearching
-          ? "Searching themes..."
+          ? gt("Searching themes...")
           : results
-            ? `${results.length} supported ${results.length === 1 ? "theme" : "themes"} found.`
+            ? gt(
+                "{count, plural, one {{count} supported theme found.} other {{count} supported themes found.}}",
+                { count: results.length },
+              )
             : ""}
       </div>
 
@@ -456,26 +480,30 @@ export function ThemeSearchSection({
               }}
             >
               <RefreshIcon />
-              Try again
+              <T>Try again</T>
             </Button>
           }
-          description={searchFailure.unreachable ? "Check your connection, then try again." : error}
+          description={
+            searchFailure.unreachable ? gt("Check your connection, then try again.") : error
+          }
           icon={<WifiOffIcon />}
-          title={searchFailure.unreachable ? "Can’t reach Open VSX" : "Search didn’t finish"}
+          title={
+            searchFailure.unreachable ? gt("Can’t reach Open VSX") : gt("Search didn’t finish")
+          }
         />
       ) : isSearching && results === null ? (
-        <SearchStateBox icon={<Spinner />} title="Searching Open VSX…" />
+        <SearchStateBox icon={<Spinner />} title={gt("Searching Open VSX…")} />
       ) : results === null ? (
         <SearchStateBox
-          description="Type a name or pick a popular one."
+          description={gt("Type a name or pick a popular one.")}
           icon={<PaletteIcon />}
-          title="Open-source VS Code themes"
+          title={gt("Open-source VS Code themes")}
         />
       ) : results.length === 0 ? (
         <SearchStateBox
-          description="Only open-source color themes show up. Try a broader search."
+          description={gt("Only open-source color themes show up. Try a broader search.")}
           icon={<SearchXIcon />}
-          title={`No themes match “${query.trim()}”`}
+          title={gt("No themes match “{query}”", { query: query.trim() })}
         />
       ) : (
         <ul className="divide-y divide-border/50 rounded-xl border border-border/60">
@@ -484,8 +512,7 @@ export function ThemeSearchSection({
             const isInstalled = getCustomThemes().some(
               (theme) => theme.collection?.id === extension.collectionId,
             );
-            const action = isInstalled ? "Update" : "Install";
-            const progressAction = isInstalled ? "Updating" : "Installing";
+            const action = isInstalled ? gt("Update") : gt("Install");
             return (
               <li className="flex min-w-0 items-center gap-2.5 px-3 py-2.5" key={extension.id}>
                 <ThemeExtensionIcon key={extension.iconUrl} extension={extension} />
@@ -501,7 +528,11 @@ export function ThemeSearchSection({
                     </TooltipTrigger>
                     <TooltipPopup side="top">
                       <span className="grid gap-1">
-                        <span>{DOWNLOAD_FORMAT.format(extension.downloadCount)} downloads</span>
+                        <span>
+                          <T>
+                            <Var>{DOWNLOAD_FORMAT.format(extension.downloadCount)}</Var> downloads
+                          </T>
+                        </span>
                         {extension.description ? <span>{extension.description}</span> : null}
                       </span>
                     </TooltipPopup>
@@ -509,7 +540,7 @@ export function ThemeSearchSection({
                 </div>
                 {extension.sourceUrl ? (
                   <Button
-                    aria-label={`View source for ${extension.name}`}
+                    aria-label={gt("View source for {name}", { name: extension.name })}
                     render={<a href={extension.sourceUrl} rel="noreferrer" target="_blank" />}
                     size="icon-micro"
                     variant="ghost-muted"
@@ -518,14 +549,22 @@ export function ThemeSearchSection({
                   </Button>
                 ) : null}
                 <Button
-                  aria-label={`${isInstalling ? progressAction : action} ${extension.name}`}
+                  aria-label={
+                    isInstalled
+                      ? isInstalling
+                        ? gt("Updating {name}", { name: extension.name })
+                        : gt("Update {name}", { name: extension.name })
+                      : isInstalling
+                        ? gt("Installing {name}", { name: extension.name })
+                        : gt("Install {name}", { name: extension.name })
+                  }
                   disabled={installingId !== null}
                   size="xs"
                   variant="secondary"
                   onClick={() => void handleInstall(extension, false)}
                 >
                   {isInstalling ? <Spinner /> : isInstalled ? <RefreshIcon /> : <PackagePlusIcon />}
-                  {isInstalling ? `${progressAction}...` : action}
+                  {isInstalling ? (isInstalled ? gt("Updating...") : gt("Installing...")) : action}
                 </Button>
               </li>
             );
@@ -541,14 +580,22 @@ export function ThemeSearchSection({
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
-            <AlertDialogTitle>Update “{pendingUpdate?.name}”?</AlertDialogTitle>
+            <AlertDialogTitle>
+              <T>
+                Update “<Var>{pendingUpdate?.name}</Var>”?
+              </T>
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This replaces its installed variants, including any local edits. Variants no longer in
-              the extension will be removed.
+              <T>
+                This replaces its installed variants, including any local edits. Variants no longer
+                in the extension will be removed.
+              </T>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="secondary" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="secondary" />}>
+              <T>Cancel</T>
+            </AlertDialogClose>
             <Button
               onClick={() => {
                 const extension = pendingUpdate;
@@ -556,7 +603,7 @@ export function ThemeSearchSection({
                 if (extension) void handleInstall(extension, true);
               }}
             >
-              Update theme
+              <T>Update theme</T>
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

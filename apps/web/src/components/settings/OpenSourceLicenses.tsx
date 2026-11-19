@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
@@ -7,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import { Atom } from "effect/reactivity";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useState } from "react";
 
 import {
@@ -17,6 +19,7 @@ import {
   type ThirdPartyLicenseEntry,
 } from "@t3tools/shared/thirdPartyLicenses";
 
+import { m } from "../../i18n/messages";
 import { Button, ContentButton } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Badge } from "../ui/badge";
@@ -43,15 +46,22 @@ const licenseManifestAtom = Atom.make(
     );
     if (response.status < 200 || response.status >= 300) {
       return yield* new LicenseManifestLoadError({
-        message: `The license manifest request failed with status ${String(response.status)}.`,
+        message: m(
+          msg("The license manifest request failed with status {status}.", {
+            status: String(response.status),
+          }),
+        ),
       });
     }
     const body = yield* response.json;
     return yield* Effect.try({
-      try: () => decodeThirdPartyLicenseManifest(body),
+      try: () => decodeThirdPartyLicenseManifest(body, m),
       catch: (error) =>
         new LicenseManifestLoadError({
-          message: error instanceof Error ? error.message : "The license manifest could not load.",
+          message:
+            error instanceof Error
+              ? (thrownErrorMessage(error, m) ?? error.message)
+              : m(msg("The license manifest could not load.")),
         }),
     });
   }).pipe(
@@ -63,7 +73,9 @@ const licenseManifestAtom = Atom.make(
       duration: "30 seconds",
       orElse: () =>
         Effect.fail(
-          new LicenseManifestLoadError({ message: "The license manifest took too long to load." }),
+          new LicenseManifestLoadError({
+            message: m(msg("The license manifest took too long to load.")),
+          }),
         ),
     }),
     Effect.provide(FetchHttpClient.layer),
@@ -80,6 +92,7 @@ function LicenseNoticeRow({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const messages = useMessages();
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <article>
@@ -93,7 +106,9 @@ function LicenseNoticeRow({
                 >
                   {entry.version}
                 </TooltipTrigger>
-                <TooltipPopup side="top">{formatLicenseBundles(entry.bundles)}</TooltipPopup>
+                <TooltipPopup side="top">
+                  {formatLicenseBundles(entry.bundles, messages)}
+                </TooltipPopup>
               </Tooltip>
             </span>
             <Badge
@@ -120,7 +135,7 @@ function LicenseNoticeRow({
                   variant="secondary"
                 >
                   <ExternalLinkIcon aria-hidden />
-                  Project source
+                  <T>Project source</T>
                 </Button>
               ) : null}
               <pre className="max-w-[76ch] whitespace-pre-wrap break-words font-mono text-xs/5 text-foreground">
@@ -136,8 +151,9 @@ function LicenseNoticeRow({
 
 /** T3 Code's own repository and license, above the third-party notices. */
 function ProjectSourceSection() {
+  const gt = useGT();
   return (
-    <SettingsSection title="Project source">
+    <SettingsSection title={gt("Project source")}>
       <ContentButton
         variant="card-row"
         render={
@@ -160,19 +176,22 @@ function LicenseManifestError({ message, onRetry }: { message: string; onRetry: 
   return (
     <div className="flex flex-col items-start gap-3 px-3 py-5 sm:px-4">
       <div className="flex flex-col gap-1">
-        <h3 className="text-label text-foreground">Open-source notices are unavailable</h3>
+        <h3 className="text-label text-foreground">
+          <T>Open-source notices are unavailable</T>
+        </h3>
         <p className="max-w-[70ch] text-pretty text-meta leading-normal text-muted-foreground">
           {message}
         </p>
       </div>
       <Button type="button" size="xs" variant="secondary" onClick={onRetry}>
-        Try again
+        <T>Try again</T>
       </Button>
     </div>
   );
 }
 
 export function OpenSourceLicensesPanel() {
+  const gt = useGT();
   const result = useAtomValue(licenseManifestAtom);
   const retry = useAtomRefresh(licenseManifestAtom);
   const [query, setQuery] = useState("");
@@ -183,7 +202,7 @@ export function OpenSourceLicensesPanel() {
   const errorMessage =
     result._tag === "Failure" && !result.waiting
       ? Option.match(Cause.findErrorOption(result.cause), {
-          onNone: () => "The license manifest could not load.",
+          onNone: () => gt("The license manifest could not load."),
           onSome: (error) => error.message,
         })
       : null;
@@ -191,10 +210,14 @@ export function OpenSourceLicensesPanel() {
   return (
     <SettingsPageContainer>
       <SettingsToolbar>
-        <SettingsSearchField value={query} onChange={setQuery} placeholder="Search licenses" />
+        <SettingsSearchField
+          value={query}
+          onChange={setQuery}
+          placeholder={gt("Search licenses")}
+        />
       </SettingsToolbar>
       <ProjectSourceSection />
-      <SettingsSection title="Third-party notices">
+      <SettingsSection title={gt("Third-party notices")}>
         {manifest ? (
           <div className="divide-y divide-divider">
             {filteredEntries.length > 0 ? (
@@ -211,14 +234,16 @@ export function OpenSourceLicensesPanel() {
               })
             ) : (
               <SettingsNoMatches onClear={() => setQuery("")}>
-                No licenses match “{query.trim()}”.
+                <T>
+                  No licenses match “<Var>{query.trim()}</Var>”.
+                </T>
               </SettingsNoMatches>
             )}
           </div>
         ) : errorMessage !== null ? (
           <LicenseManifestError message={errorMessage} onRetry={retry} />
         ) : (
-          <SettingsLoadingRows label="Loading open-source notices" />
+          <SettingsLoadingRows label={gt("Loading open-source notices")} />
         )}
       </SettingsSection>
     </SettingsPageContainer>

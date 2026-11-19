@@ -1,4 +1,5 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
+import { T, useGT } from "gt-react-native";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -67,6 +68,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
   readonly wordBreak: boolean;
   readonly onLongPress?: () => void;
 }) {
+  const gt = useGT();
   const selectable = props.onLongPress === undefined;
   const row = (
     <View
@@ -139,7 +141,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
   return onLongPress ? (
     <Pressable
       onLongPress={onLongPress}
-      accessibilityActions={[{ name: "longpress", label: "Select text" }]}
+      accessibilityActions={[{ name: "longpress", label: gt("Select text") }]}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === "longpress") onLongPress();
       }}
@@ -182,7 +184,9 @@ function SourceHighlightStatusView(props: { readonly status: SourceHighlightStat
   if (props.status === "error") {
     return (
       <View className="border-b border-border bg-card px-4 py-2">
-        <Text className="text-2xs font-t3-medium text-foreground-muted">Plain text</Text>
+        <Text className="text-2xs font-t3-medium text-foreground-muted">
+          <T>Plain text</T>
+        </Text>
       </View>
     );
   }

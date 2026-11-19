@@ -6,6 +6,7 @@ import {
   type ProjectIconColor,
   type ProjectIconOverride,
 } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { SearchIcon } from "lucide-react";
 import { createElement, useState } from "react";
 import {
@@ -86,6 +87,8 @@ function ProjectIconPickerBody({
   readonly onClose: () => void;
   readonly onSelect: (icon: ProjectIconOverride) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const automatic = deriveProjectIdentity(projectName);
   const [mode, setMode] = useState<ProjectIconOverride["kind"]>(current?.kind ?? "lucide");
   const [iconName, setIconName] = useState<string>(
@@ -120,12 +123,16 @@ function ProjectIconPickerBody({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Choose project icon</DialogTitle>
-        <DialogDescription>Choose an icon, emoji, or monogram.</DialogDescription>
+        <DialogTitle>
+          <T>Choose project icon</T>
+        </DialogTitle>
+        <DialogDescription>
+          <T>Choose an icon, emoji, or monogram.</T>
+        </DialogDescription>
       </DialogHeader>
       <DialogPanel className="flex min-h-0 flex-col">
         <ToggleGroup
-          aria-label="Icon type"
+          aria-label={gt("Icon type")}
           variant="segmented"
           className="w-full *:flex-1"
           value={[mode]}
@@ -134,9 +141,15 @@ function ProjectIconPickerBody({
             if (value === "lucide" || value === "emoji" || value === "monogram") setMode(value);
           }}
         >
-          <Toggle value="lucide">Icons</Toggle>
-          <Toggle value="emoji">Emoji</Toggle>
-          <Toggle value="monogram">Monogram</Toggle>
+          <Toggle value="lucide">
+            <T>Icons</T>
+          </Toggle>
+          <Toggle value="emoji">
+            <T>Emoji</T>
+          </Toggle>
+          <Toggle value="monogram">
+            <T>Monogram</T>
+          </Toggle>
         </ToggleGroup>
 
         {mode === "lucide" ? (
@@ -148,8 +161,8 @@ function ProjectIconPickerBody({
               <InputGroupInput
                 type="search"
                 value={query}
-                aria-label="Search Lucide icons"
-                placeholder="Search all Lucide icons"
+                aria-label={gt("Search Lucide icons")}
+                placeholder={gt("Search all Lucide icons")}
                 onChange={(event) => setQuery(event.currentTarget.value)}
               />
             </InputGroup>
@@ -176,7 +189,9 @@ function ProjectIconPickerBody({
               </div>
             </ScrollArea>
             {icons.length === 0 ? (
-              <p className="py-8 text-center text-body text-muted-foreground">No icons found.</p>
+              <p className="py-8 text-center text-body text-muted-foreground">
+                <T>No icons found.</T>
+              </p>
             ) : null}
           </>
         ) : mode === "monogram" ? (
@@ -188,7 +203,7 @@ function ProjectIconPickerBody({
             />
             <div className="flex-1 space-y-2">
               <label htmlFor="project-monogram" className="text-label">
-                Letters
+                <T>Letters</T>
               </label>
               <Input
                 id="project-monogram"
@@ -199,7 +214,7 @@ function ProjectIconPickerBody({
                 autoComplete="off"
               />
               <p id="project-monogram-hint" className="text-meta text-muted-foreground">
-                One or two letters or numbers.
+                <T>One or two letters or numbers.</T>
               </p>
             </div>
           </div>
@@ -211,7 +226,7 @@ function ProjectIconPickerBody({
                   <button
                     key={option.emoji}
                     type="button"
-                    aria-label={option.label}
+                    aria-label={m(option.label)}
                     aria-pressed={emoji === option.emoji}
                     className={cn(
                       "flex aspect-square items-center justify-center rounded-item border border-transparent text-xl outline-none hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
@@ -225,11 +240,13 @@ function ProjectIconPickerBody({
               </div>
             </ScrollArea>
             <div>
-              <div className="mb-2 text-meta text-dim-foreground">Or paste any emoji</div>
+              <div className="mb-2 text-meta text-dim-foreground">
+                <T>Or paste any emoji</T>
+              </div>
               <Input
                 value={customEmoji}
-                aria-label="Custom emoji"
-                placeholder="Paste an emoji"
+                aria-label={gt("Custom emoji")}
+                placeholder={gt("Paste an emoji")}
                 onChange={(event) => {
                   const value = event.currentTarget.value;
                   setCustomEmoji(value);
@@ -242,17 +259,19 @@ function ProjectIconPickerBody({
         )}
         {mode !== "emoji" ? (
           <div>
-            <div className="mb-2 text-meta text-muted-foreground">Color</div>
+            <div className="mb-2 text-meta text-muted-foreground">
+              <T>Color</T>
+            </div>
             <div
               className="grid auto-cols-fr grid-flow-col justify-items-center"
               role="group"
-              aria-label="Icon color"
+              aria-label={gt("Icon color")}
             >
               {PROJECT_ICON_COLORS.map((option) => (
                 <button
                   key={option.value}
                   type="button"
-                  aria-label={option.label}
+                  aria-label={m(option.label)}
                   aria-pressed={color === option.value}
                   className={cn(
                     "flex size-5.5 items-center justify-center rounded-full border border-transparent outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
@@ -292,10 +311,10 @@ function ProjectIconPickerBody({
         </span>
         <span className="flex gap-2">
           <Button variant="secondary" onClick={onClose}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button onClick={save} disabled={mode === "monogram" && !validMonogram}>
-            Save
+            <T>Save</T>
           </Button>
         </span>
       </DialogFooter>

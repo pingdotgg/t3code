@@ -19,6 +19,7 @@ import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
+import { T, useGT } from "gt-react";
 import { memo, useState, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
@@ -92,6 +93,7 @@ interface ThreadDetailsPanelProps extends Pick<
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const visible = useClientSettings(resolveThreadDetailsVisibility);
+  const gt = useGT();
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
@@ -176,7 +178,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           <>
             <div className="group/details-items thread-details-stack flex flex-col gap-1">
               {Object.values(show).some(Boolean) || visible.usage || visible.context ? (
-                <section aria-label="Workspace" className="surface-tray rounded-pane p-1">
+                <section aria-label={gt("Workspace")} className="surface-tray rounded-pane p-1">
                   <div className="surface-composer rounded-lg p-0.5">
                     {show.environment ? (
                       <div className="flex min-w-0 items-center">
@@ -305,7 +307,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   }}
                 >
                   <SlidersHorizontalIcon aria-hidden />
-                  <MenuItemLabel>Choose what to show</MenuItemLabel>
+                  <MenuItemLabel>
+                    <T>Choose what to show</T>
+                  </MenuItemLabel>
                 </ThreadDetailsControl>
               </div>
             </div>

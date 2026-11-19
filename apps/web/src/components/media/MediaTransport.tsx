@@ -6,6 +6,7 @@ import {
   Volume2Icon,
   VolumeXIcon,
 } from "lucide-react";
+import { useGT } from "gt-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { cn } from "~/lib/utils";
@@ -108,6 +109,7 @@ export function MediaScrubber(props: {
   readonly trackClassName: string;
   readonly playedClassName: string;
 }) {
+  const gt = useGT();
   const { duration, currentTime } = props.state;
   const progress = duration > 0 ? Math.min(1, currentTime / duration) : 0;
   return (
@@ -124,7 +126,10 @@ export function MediaScrubber(props: {
       <input
         type="range"
         aria-label={props.label}
-        aria-valuetext={`${formatPlaybackTime(currentTime)} of ${formatPlaybackTime(duration)}`}
+        aria-valuetext={gt("{current} of {duration}", {
+          current: formatPlaybackTime(currentTime),
+          duration: formatPlaybackTime(duration),
+        })}
         min={0}
         max={duration > 0 ? duration : 0}
         step="any"
@@ -146,6 +151,7 @@ export function VideoTransport(props: {
   readonly video: HTMLVideoElement | null;
   readonly fullscreenTarget: HTMLElement | null;
 }) {
+  const gt = useGT();
   const { state, togglePlay, seek, toggleMuted } = useMediaPlayback(props.video);
   const [fullscreen, setFullscreen] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to the browser's fullscreen state for this player and remove the listener on cleanup.
@@ -174,7 +180,11 @@ export function VideoTransport(props: {
       <ContentButton
         variant="transport"
         type="button"
-        aria-label={state.paused ? "Play" : "Pause"}
+        aria-label={
+          state.paused
+            ? gt("Play", { $context: "verb, plays the video" })
+            : gt("Pause", { $context: "verb, pauses the video" })
+        }
         onClick={togglePlay}
       >
         {state.paused ? (
@@ -189,14 +199,18 @@ export function VideoTransport(props: {
       <MediaScrubber
         state={state}
         onSeek={seek}
-        label="Seek video"
+        label={gt("Seek video")}
         trackClassName="bg-white/20"
         playedClassName="bg-white"
       />
       <ContentButton
         variant="transport"
         type="button"
-        aria-label={state.muted ? "Unmute" : "Mute"}
+        aria-label={
+          state.muted
+            ? gt("Unmute", { $context: "verb, turns the video sound on" })
+            : gt("Mute", { $context: "verb, turns the video sound off" })
+        }
         aria-pressed={state.muted}
         onClick={toggleMuted}
       >
@@ -210,7 +224,7 @@ export function VideoTransport(props: {
         <ContentButton
           variant="transport"
           type="button"
-          aria-label={fullscreen ? "Exit full screen" : "Full screen"}
+          aria-label={fullscreen ? gt("Exit full screen") : gt("Full screen")}
           onClick={toggleFullscreen}
         >
           {fullscreen ? (

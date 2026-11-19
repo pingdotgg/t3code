@@ -2,6 +2,7 @@ import { useLegendListRef } from "~/hooks/useLegendListRef";
 import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { T, useGT } from "gt-react";
 
 import { CheckIcon, CloudIcon, GitBranchIcon } from "lucide-react";
 
@@ -70,6 +71,7 @@ export function BranchPicker({
   /** Compose the existing searchable list into a larger context menu. */
   renderPopup?: ((content: ReactNode) => ReactNode) | undefined;
 }) {
+  const gt = useGT();
   const highlightedValueRef = useRef<string | null>(null);
   const startFromOriginSwitchId = useId();
   const handleOpenChange = (nextOpen: boolean) => {
@@ -98,7 +100,7 @@ export function BranchPicker({
     <>
       <ComboboxSearchInput
         variant="inset"
-        placeholder="Search refs..."
+        placeholder={gt("Search refs...")}
         value={query}
         onChange={(event) => {
           highlightedValueRef.current = null;
@@ -124,7 +126,9 @@ export function BranchPicker({
         }}
       />
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <ComboboxEmpty>No refs found.</ComboboxEmpty>
+        <ComboboxEmpty>
+          <T>No refs found.</T>
+        </ComboboxEmpty>
         <div className="relative flex min-h-0 w-full max-h-56 flex-1 flex-col overflow-hidden">
           <ComboboxListVirtualized className="flex size-full min-h-0 min-w-0 flex-col">
             <LegendList<string>
@@ -176,18 +180,24 @@ export function BranchPicker({
                     id={startFromOriginSwitchId}
                     checked={originControl.checked}
                     size="sm"
-                    aria-label="Start worktree from remote"
+                    aria-label={gt("Start worktree from remote")}
                     onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
                   />
-                  <span className="min-w-0 flex-1 truncate">Start from remote</span>
-                  <span className="text-caption text-dim-foreground">fetches first</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    <T>Start from remote</T>
+                  </span>
+                  <span className="text-caption text-dim-foreground">
+                    <T>fetches first</T>
+                  </span>
                 </label>
               }
             />
             <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-              Uses the latest commit of the base branch’s tracked remote branch, even if its name
-              differs. Otherwise uses the same-named branch on origin. Uses your local branch if
-              that remote branch is missing.
+              <T>
+                Uses the latest commit of the base branch’s tracked remote branch, even if its name
+                differs. Otherwise uses the same-named branch on origin. Uses your local branch if
+                that remote branch is missing.
+              </T>
             </TooltipPopup>
           </Tooltip>
         ) : null}
@@ -258,15 +268,24 @@ export function BranchPickerRefItem({
   onClick: ComponentProps<typeof ComboboxItem>["onClick"];
   onContextMenu?: ComponentProps<typeof ComboboxItem>["onContextMenu"];
 }) {
+  const gt = useGT();
   const itemValue = refName.name;
   const hasSecondaryWorktree =
     refName.worktreePath && activeProjectCwd && refName.worktreePath !== activeProjectCwd;
-  const badge = refName.current ? "current" : hasSecondaryWorktree ? "worktree" : null;
+  const badge = refName.current
+    ? gt("current", { $context: "git ref badge, the checked-out branch" })
+    : hasSecondaryWorktree
+      ? gt("worktree", { $context: "git ref badge, checked out in another worktree" })
+      : null;
   const relative = useRelativeTimeState(
     refName.lastCommitAt === undefined ? null : new Date(refName.lastCommitAt * 1000).toISOString(),
   );
   const age =
-    relative.status === "relative" ? (relative.suffix === null ? "now" : relative.value) : null;
+    relative.status === "relative"
+      ? relative.suffix === null
+        ? gt("now", { $context: "relative time" })
+        : relative.value
+      : null;
   const RefIcon = refName.isRemote ? CloudIcon : GitBranchIcon;
   return (
     <div>

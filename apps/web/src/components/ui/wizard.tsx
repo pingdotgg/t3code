@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { CheckIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
@@ -94,9 +95,10 @@ export function WizardSteps({
   readonly isStepDisabled?: (step: number) => boolean;
   readonly onStepChange?: (step: number) => void;
 }) {
+  const gt = useGT();
   const Step = onStepChange ? "button" : "div";
   return (
-    <ol className="flex shrink-0 items-center gap-1.5" aria-label="Setup progress">
+    <ol className="flex shrink-0 items-center gap-1.5" aria-label={gt("Setup progress")}>
       {steps.map((step, index) => (
         <li key={step}>
           <Step
@@ -104,7 +106,15 @@ export function WizardSteps({
               ? { type: "button" as const, disabled: isStepDisabled?.(index) }
               : {})}
             aria-current={index === currentStep ? "step" : undefined}
-            aria-label={`${step}, step ${index + 1}${index < currentStep && summaries?.[index] ? `, ${summaries[index]}` : ""}`}
+            aria-label={
+              index < currentStep && summaries?.[index]
+                ? gt("{step}, step {number}, {summary}", {
+                    step,
+                    number: index + 1,
+                    summary: summaries[index],
+                  })
+                : gt("{step}, step {number}", { step, number: index + 1 })
+            }
             onClick={onStepChange ? () => onStepChange(index) : undefined}
             className={cn(
               "flex h-6 items-center gap-1.5 rounded-full border border-transparent ps-1 pe-2.5 text-meta outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",

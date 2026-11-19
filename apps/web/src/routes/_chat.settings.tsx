@@ -1,6 +1,7 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import { RestoreDeviceDefaultsButton } from "../components/settings/SettingsPanels";
 
 import { AppRouteModal, AppRouteModalClose } from "../components/AppRouteModal";
@@ -28,6 +29,8 @@ import {
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
   const { scope, connectedEnvironments } = useSettingsScope();
   const { environments } = useEnvironments();
+  const gt = useGT();
+  const m = useMessages();
   const hash = useLocation({ select: (location) => location.hash });
   const searchTarget = getSettingsSearchTargetScope(hash);
   const autoSettlementAvailability = searchTarget?.requiresThreadAutoSettlement
@@ -46,8 +49,13 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
         eligibleEnvironmentIds={autoSettlementAvailability.eligibleEnvironmentIds}
       >
         {autoSettlementAvailability.eligibleEnvironmentIds.length > 0
-          ? `${searchTarget.title} requires a supporting environment. Choose one to continue.`
-          : `${searchTarget.title} requires a supporting environment. Connect or update an environment to continue.`}
+          ? gt("{title} requires a supporting environment. Choose one to continue.", {
+              title: m(searchTarget.title),
+            })
+          : gt(
+              "{title} requires a supporting environment. Connect or update an environment to continue.",
+              { title: m(searchTarget.title) },
+            )}
       </SettingsScopeNotice>
     );
   }
@@ -64,7 +72,10 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
         : "all";
     return (
       <SettingsScopeNotice target={target} targetId={hash}>
-        {`${searchTarget.title} is not available for the selected target. Choose its owning scope to continue.`}
+        {gt(
+          "{title} is not available for the selected target. Choose its owning scope to continue.",
+          { title: m(searchTarget.title) },
+        )}
       </SettingsScopeNotice>
     );
   }
@@ -81,7 +92,9 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     return (
       <SettingsPageContainer>
         <p className="text-body text-muted-foreground">
-          Reconnect {scope.label} to change its settings.
+          <T>
+            Reconnect <Var>{scope.label}</Var> to change its settings.
+          </T>
         </p>
       </SettingsPageContainer>
     );
@@ -90,7 +103,8 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
 }
 
 function SettingsContentLayout() {
-  const contentArea = workspaceAreaProps("settings", 1, "Settings content");
+  const gt = useGT();
+  const contentArea = workspaceAreaProps("settings", 1, gt("Settings content"));
   const location = useLocation();
   const { search, environment } = useSettingsScope();
   const contentScopeKey =
@@ -100,7 +114,7 @@ function SettingsContentLayout() {
   const [restoreSignal, setRestoreSignal] = useState(0);
 
   return (
-    <AppRouteModal label="Settings" variant="app-panel">
+    <AppRouteModal label={gt("Settings")} variant="app-panel">
       <div className="relative flex min-h-0 flex-1">
         <SettingsSidebarNav pathname={location.pathname} />
         <div

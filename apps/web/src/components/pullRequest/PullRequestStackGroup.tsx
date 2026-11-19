@@ -1,4 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { useGT } from "gt-react";
 import { ArrowRightIcon, ChevronDownIcon } from "lucide-react";
 import { Fragment, useState, type ComponentProps } from "react";
 
@@ -6,6 +7,7 @@ import { cn } from "~/lib/utils";
 
 import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import type { EnvironmentPullRequestEntry } from "./pullRequestList.logic";
 import { PullRequestChangeBreakdownRows } from "./PullRequestChangeBreakdownStat";
 import {
@@ -140,6 +142,7 @@ export function PullRequestStackGroup({
   isSelected: (entry: EnvironmentPullRequestEntry) => boolean;
   rowProps: (entry: EnvironmentPullRequestEntry) => RowProps;
 }) {
+  const gt = useGT();
   const holdsSelection = entries.some(isSelected);
   const [open, setOpen] = useState(holdsSelection);
   const [wasSelected, setWasSelected] = useState(holdsSelection);
@@ -178,7 +181,14 @@ export function PullRequestStackGroup({
     <button
       type="button"
       aria-expanded={open}
-      aria-label={`Stack of ${entries.length} ${terminology.plural} from #${bottom.number}`}
+      aria-label={gt(
+        "{count, plural, other {Stack of {count} {term, select, mr {merge requests} cr {change requests} other {pull requests}} from {reference}}}",
+        {
+          count: entries.length,
+          term: changeRequestTermKind(terminology),
+          reference: `#${bottom.number}`,
+        },
+      )}
       onClick={() => setOpen((value) => !value)}
       className={cn(
         PULL_REQUEST_ROW_CLASS,
@@ -275,7 +285,9 @@ export function PullRequestStackGroup({
           allDrafts ? (
             <span className="flex items-center gap-1.25">
               <PullRequestGlyph.draft aria-hidden className="size-3 shrink-0" />
-              {entries.length === 2 ? "Both drafts" : `All ${entries.length} drafts`}
+              {entries.length === 2
+                ? gt("Both drafts", { $context: "a stack of two draft pull requests" })
+                : gt("{count, plural, other {All {count} drafts}}", { count: entries.length })}
             </span>
           ) : (
             pullRequestRowStatus(worst, sameRank ? "" : `#${worst.number}: `)

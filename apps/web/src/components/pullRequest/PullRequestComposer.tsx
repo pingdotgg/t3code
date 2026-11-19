@@ -1,7 +1,4 @@
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 /** Comment and review drafts stay separate across verdict switches and dock dismissal. */
 import type {
   EnvironmentId,
@@ -10,6 +7,7 @@ import type {
   PullRequestReviewVerdict,
 } from "@t3tools/contracts";
 import { MessageSquareIcon, MessageSquareTextIcon, XIcon } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { useRef, useState } from "react";
 
 import { Button } from "../ui/button";
@@ -23,6 +21,8 @@ import {
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
+
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 export function PullRequestComposer({
   environmentId,
@@ -46,7 +46,8 @@ export function PullRequestComposer({
   onReviewSubmitted: () => void;
   openReviewRequest?: number | undefined;
 }) {
-  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const gt = useGT();
+  const term = changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest);
   // "review" is open from a review request, which offers the review over a plain comment.
   const [popover, setPopover] = useState<"closed" | "open" | "review">("closed");
   const open = popover !== "closed";
@@ -88,14 +89,17 @@ export function PullRequestComposer({
     (verdicts.includes("comment") && (reviewStarted || reviewRequested));
 
   const close = (
-    <PopoverClose render={<Button size="icon-xs" variant="ghost" />} aria-label="Close composer">
+    <PopoverClose
+      render={<Button size="icon-xs" variant="ghost" />}
+      aria-label={gt("Close composer")}
+    >
       <XIcon className="size-3.5" />
     </PopoverClose>
   );
   const modePicker =
     modes.length > 1 ? (
       <ToggleGroup
-        aria-label="Composer mode"
+        aria-label={gt("Composer mode")}
         variant="segmented"
         value={[mode]}
         onValueChange={(next) => {
@@ -105,7 +109,11 @@ export function PullRequestComposer({
       >
         {modes.map((value) => (
           <Toggle key={value} value={value}>
-            {value === "comment" ? "Comment" : value === "approve" ? "Approve" : "Request changes"}
+            {value === "comment"
+              ? gt("Comment", { $context: "review verdict" })
+              : value === "approve"
+                ? gt("Approve", { $context: "review verdict" })
+                : gt("Request changes")}
           </Toggle>
         ))}
       </ToggleGroup>
@@ -123,10 +131,19 @@ export function PullRequestComposer({
         render={<Button size="icon" variant="floating" />}
         aria-label={
           pendingComments.length > 0
-            ? `Review ${term}, ${pendingComments.length} ${pendingComments.length === 1 ? "comment" : "comments"} pending`
+            ? gt(
+                "{count, plural, one {Review {term, select, mr {merge request} cr {change request} other {pull request}}, {count} comment pending} other {Review {term, select, mr {merge request} cr {change request} other {pull request}}, {count} comments pending}}",
+                { count: pendingComments.length, term },
+              )
             : reviewStarted || !canComment
-              ? `Review ${term}`
-              : `Comment on ${term}`
+              ? gt(
+                  "Review {term, select, mr {merge request} cr {change request} other {pull request}}",
+                  { term },
+                )
+              : gt(
+                  "Comment on {term, select, mr {merge request} cr {change request} other {pull request}}",
+                  { term },
+                )
         }
       >
         <MessageSquareIcon className="size-4" />
@@ -146,7 +163,10 @@ export function PullRequestComposer({
         sideOffset={8}
         width="lg"
         initialFocus={sendsReview ? reviewRef : commentRef}
-        aria-label={`${capitalizeTerm(term)} composer`}
+        aria-label={gt(
+          "{term, select, mr {Merge request} cr {Change request} other {Pull request}} composer",
+          { term },
+        )}
       >
         {/* With line comments waiting, the review header takes the title row and the verdicts
             sit under it; otherwise the verdicts, or the plain title, share the row with close. */}
@@ -154,10 +174,14 @@ export function PullRequestComposer({
           <>
             <div className="mb-2 flex items-center gap-2 text-body">
               <MessageSquareTextIcon aria-hidden className="size-4 text-muted-foreground" />
-              <PopoverTitle>Your review</PopoverTitle>
+              <PopoverTitle>
+                <T>Your review</T>
+              </PopoverTitle>
               <span className="min-w-0 flex-1 truncate text-meta text-muted-foreground">
-                {pendingComments.length} pending{" "}
-                {pendingComments.length === 1 ? "comment" : "comments"}
+                {gt(
+                  "{count, plural, one {{count} pending comment} other {{count} pending comments}}",
+                  { count: pendingComments.length },
+                )}
               </span>
               {close}
             </div>
@@ -166,7 +190,17 @@ export function PullRequestComposer({
         ) : (
           <div className="mb-3 flex items-center justify-between gap-2">
             {modePicker ?? (
-              <PopoverTitle>{sendsReview ? `Review ${term}` : `Comment on ${term}`}</PopoverTitle>
+              <PopoverTitle>
+                {sendsReview
+                  ? gt(
+                      "Review {term, select, mr {merge request} cr {change request} other {pull request}}",
+                      { term },
+                    )
+                  : gt(
+                      "Comment on {term, select, mr {merge request} cr {change request} other {pull request}}",
+                      { term },
+                    )}
+              </PopoverTitle>
             )}
             {close}
           </div>

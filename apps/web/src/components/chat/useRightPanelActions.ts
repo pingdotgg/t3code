@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ThreadPreviewState } from "../../previewStateStore";
@@ -115,8 +118,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open browser",
-            description: error.message,
+            title: m(msg("Unable to open browser")),
+            description: errorDisplayMessage(error, m) ?? error.message,
           }),
         );
       }

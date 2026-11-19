@@ -4,7 +4,9 @@ import {
   CHATGPT_WORKSPACE_ADMIN_REQUEST,
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
 } from "@t3tools/shared/usageLimits";
+import { msg } from "gt-react";
 import { CircleAlertIcon } from "lucide-react";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { toastManager } from "../ui/toast";
 import { Button } from "../ui/button";
@@ -13,14 +15,18 @@ import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 export function copyAdminRequest() {
-  void writeTextToClipboard(CHATGPT_WORKSPACE_ADMIN_REQUEST, "admin request").then(
+  void writeTextToClipboard(CHATGPT_WORKSPACE_ADMIN_REQUEST, {
+    target: "admin request",
+    unavailableMessage: msg("Clipboard API is unavailable while copying admin request."),
+    failureMessage: msg("Failed to copy admin request to the clipboard."),
+  }).then(
     () =>
       toastManager.add({
         type: "success",
-        title: "Request copied",
-        description: "Send it to your workspace admin.",
+        title: m(msg("Request copied")),
+        description: m(msg("Send it to your workspace admin.")),
       }),
-    () => toastManager.add({ type: "error", title: "Could not copy the request" }),
+    () => toastManager.add({ type: "error", title: m(msg("Could not copy the request")) }),
   );
 }
 
@@ -72,23 +78,26 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
  * exact diagnostics open in the notice's details popover. Retry sends the failed
  * run's prompt again when the thread can run.
  */
-export function threadErrorBannerItem({
-  bannerKey,
-  error,
-  errorClass,
-  errorCode,
-  onDismiss,
-  onRetry,
-  retrying = false,
-}: {
-  bannerKey: string | null;
-  error: string | null;
-  errorClass?: OrchestrationV2ProviderFailureClass | null;
-  errorCode?: string | null;
-  onDismiss?: () => void;
-  onRetry?: (() => void) | null;
-  retrying?: boolean;
-}): ComposerBannerStackItem | null {
+export function threadErrorBannerItem(
+  {
+    bannerKey,
+    error,
+    errorClass,
+    errorCode,
+    onDismiss,
+    onRetry,
+    retrying = false,
+  }: {
+    bannerKey: string | null;
+    error: string | null;
+    errorClass?: OrchestrationV2ProviderFailureClass | null;
+    errorCode?: string | null;
+    onDismiss?: () => void;
+    onRetry?: (() => void) | null;
+    retrying?: boolean;
+  },
+  resolve: MessageResolver = m,
+): ComposerBannerStackItem | null {
   if (!error || bannerKey === null) return null;
   const message = getThreadErrorBannerMessage(error);
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
@@ -97,9 +106,13 @@ export function threadErrorBannerItem({
     id: `thread-error:${bannerKey}`,
     variant: errorClass === "usage_limit" || chatGptLimit ? "warning" : "error",
     icon: chatGptLimit ? <OpenAI aria-hidden="true" /> : <CircleAlertIcon />,
-    title: chatGptLimit ? "ChatGPT usage limit reached" : "Run failed",
+    title: chatGptLimit ? resolve(msg("ChatGPT usage limit reached")) : resolve(msg("Run failed")),
     description: workspaceLimit
-      ? "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits."
+      ? resolve(
+          msg(
+            "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits.",
+          ),
+        )
       : chatGptLimit
         ? null
         : message,
@@ -109,16 +122,16 @@ export function threadErrorBannerItem({
       ) : undefined,
     actions: workspaceLimit ? (
       <Button variant="default" size="xs" onClick={copyAdminRequest}>
-        Copy request for admin
+        {resolve(msg("Copy request for admin"))}
       </Button>
     ) : chatGptLimit ? (
       <ChatGptUsageButton variant="secondary" size="xs" />
     ) : onRetry ? (
       <Button size="xs" variant="default" disabled={retrying} onClick={onRetry}>
-        {retrying ? "Retrying..." : "Retry"}
+        {retrying ? resolve(msg("Retrying...")) : resolve(msg("Retry"))}
       </Button>
     ) : undefined,
-    dismissLabel: "Dismiss error",
+    dismissLabel: resolve(msg("Dismiss error")),
     ...(onDismiss ? { onDismiss } : {}),
   };
 }

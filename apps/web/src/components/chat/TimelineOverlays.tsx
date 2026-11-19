@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { ChevronDownIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -31,7 +32,7 @@ export function ScrollToEndButton(props: {
           }
         >
           <ChevronDownIcon className="size-3.5" />
-          Scroll to end
+          <T>Scroll to end</T>
         </TooltipTrigger>
         <TooltipPopup>
           {props.summary.length
@@ -40,7 +41,7 @@ export function ScrollToEndButton(props: {
                   {part}
                 </span>
               ))
-            : "Scroll to end"}
+            : <T>Scroll to end</T>}
         </TooltipPopup>
       </Tooltip>
     </div>
