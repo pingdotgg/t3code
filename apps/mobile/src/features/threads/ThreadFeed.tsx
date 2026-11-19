@@ -255,6 +255,7 @@ import {
   ThreadDisclosureChevron,
   THREAD_DISCLOSURE_TRANSITION_MS,
   ThreadWorkGroupToggle,
+  ThreadWebSources,
   ThreadThinkingRow,
   ThreadWorkLog,
   WORK_GROUP_TOGGLE_HEIGHT,
@@ -2148,6 +2149,18 @@ function renderFeedEntry(
           </View>
         ))}
       </View>
+    );
+  }
+
+  if (entry.type === "web-sources") {
+    return (
+      <ThreadWebSources
+        rowSizing={props.workRowSizing}
+        iconSubtleColor={iconSubtleColor}
+        sources={entry.sources}
+        expanded={entry.expanded}
+        onToggle={() => props.onToggleWorkGroup(entry.id, entry.id)}
+      />
     );
   }
 

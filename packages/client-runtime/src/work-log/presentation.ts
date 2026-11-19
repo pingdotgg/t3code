@@ -454,6 +454,43 @@ export function workEntriesViewedImagePaths(
   return [...new Set(entries.flatMap((entry) => workEntryViewedImagePath(entry) ?? []))];
 }
 
+export interface WebSource {
+  readonly url: string;
+  readonly title: string;
+  readonly host: string;
+}
+
+/** Distinct http(s) pages a tool group's web searches returned, in result order. */
+export function workEntriesWebSources(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+): WebSource[] {
+  const sources = new Map<string, WebSource>();
+  for (const entry of entries) {
+    const item = entry.structuredPayload;
+    if (item?.type !== "web_search") continue;
+    for (const result of item.results ?? []) {
+      const source = webSource(result.url, result.title);
+      if (source && !sources.has(source.url)) sources.set(source.url, source);
+    }
+  }
+  return [...sources.values()];
+}
+
+function webSource(rawUrl: string | undefined, title: string | undefined): WebSource | null {
+  if (!rawUrl) return null;
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  const host = url.hostname.replace(/^www\./, "");
+  // Anchors into one page are one source.
+  const href = url.href.split("#")[0]!;
+  return { url: href, title: title?.trim() || host, host };
+}
+
 export interface ViewedImageAsset {
   readonly resource: Extract<AssetResource, { readonly _tag: "media-file" }>;
   readonly alt: string;

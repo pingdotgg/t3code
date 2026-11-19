@@ -31,6 +31,8 @@ import {
   summarizeToolGroup,
   toolGroupSummaryKind,
   workEntriesViewedImagePaths,
+  workEntriesWebSources,
+  type WebSource,
   type ToolGroupSummaryKind,
   type WorkLogPresentationEntry,
   type WorkLogToolLifecycleStatus,
@@ -240,6 +242,15 @@ type ThreadFeedEntryContent =
       readonly live: boolean;
       readonly shimmer: boolean;
       readonly thought?: string;
+    }
+  | {
+      /** Pages the tool group above found on the web, kept visible while the group is collapsed. */
+      readonly type: "web-sources";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly sources: ReadonlyArray<WebSource>;
+      readonly expanded: boolean;
     }
   | {
       /** Images the agent opened in the tool group above, kept visible while the group is collapsed. */
@@ -1422,7 +1433,7 @@ const trailingReasoningGroups = new WeakMap<ThreadFeedActivityGroup, ThreadFeedA
 function settleSupersededReasoning(
   entry: Exclude<
     ThreadFeedEntry,
-    { readonly type: "run-fold" | "work-toggle" | "thinking" | "viewed-images" }
+    { readonly type: "run-fold" | "work-toggle" | "thinking" | "viewed-images" | "web-sources" }
   >,
   tail: boolean,
 ) {
@@ -1728,7 +1739,7 @@ export function deriveThreadFeedPresentation(
   const retainedFeed: Array<
     Exclude<
       ThreadFeedEntry,
-      { readonly type: "run-fold" | "work-toggle" | "thinking" | "viewed-images" }
+      { readonly type: "run-fold" | "work-toggle" | "thinking" | "viewed-images" | "web-sources" }
     >
   > = [];
   const retainedFeedIndices: number[] = [];
@@ -1746,7 +1757,8 @@ export function deriveThreadFeedPresentation(
       entry.type === "run-fold" ||
       entry.type === "work-toggle" ||
       entry.type === "thinking" ||
-      entry.type === "viewed-images"
+      entry.type === "viewed-images" ||
+      entry.type === "web-sources"
     )
       continue;
     const runId = feedEntryRunId(entry);
@@ -2127,7 +2139,7 @@ function appendPresentedFeedEntry(
   result: ThreadFeedEntry[],
   entry: Exclude<
     ThreadFeedEntry,
-    { readonly type: "run-fold" | "work-toggle" | "thinking" | "viewed-images" }
+    { readonly type: "run-fold" | "work-toggle" | "thinking" | "viewed-images" | "web-sources" }
   >,
   expandedWorkGroupIds: ReadonlySet<string>,
   activeRunId: RunId | null,
@@ -2223,7 +2235,8 @@ function appendActivityGroupRows(
       activeTail && isTrailingRun,
       resolve,
     );
-    const paths = workEntriesViewedImagePaths(groupableRun.map((activity) => activity.workEntry));
+    const workEntries = groupableRun.map((activity) => activity.workEntry);
+    const paths = workEntriesViewedImagePaths(workEntries);
     if (paths.length > 0) {
       result.push({
         type: "viewed-images",
@@ -2231,6 +2244,18 @@ function appendActivityGroupRows(
         createdAt: groupableRun[0]!.createdAt,
         runId: groupableRun[0]!.runId,
         paths,
+      });
+    }
+    const sources = workEntriesWebSources(workEntries);
+    if (sources.length > 0) {
+      const sourcesId = `${groupId}:web-sources`;
+      result.push({
+        type: "web-sources",
+        id: sourcesId,
+        createdAt: groupableRun[0]!.createdAt,
+        runId: groupableRun[0]!.runId,
+        sources,
+        expanded: expandedWorkGroupIds.has(sourcesId),
       });
     }
     groupableRun = [];

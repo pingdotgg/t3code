@@ -28,6 +28,8 @@ import {
   toolGroupSummaryKind,
   contextCompactionTokenCounts,
   workEntriesViewedImagePaths,
+  workEntriesWebSources,
+  type WebSource,
   type ToolGroupSummaryKind,
   liveThoughtLine,
   workEntryHiddenByToolCallVisibility,
@@ -588,6 +590,14 @@ type MessagesTimelineRowContent =
       hasFailure: boolean;
     }
   | {
+      /** Pages the tool group above found on the web, kept visible while the group is collapsed. */
+      kind: "web-sources";
+      id: string;
+      createdAt: string;
+      sources: ReadonlyArray<WebSource>;
+      expanded: boolean;
+    }
+  | {
       /** Images the agent opened in the tool group above, kept visible while the group is collapsed. */
       kind: "viewed-images";
       id: string;
@@ -715,15 +725,31 @@ function expandedWorkGroupRow(
   };
 }
 
-function viewedImagesRows(
+function groupFindingsRows(
   groupId: string,
   createdAt: string,
   groupedEntries: ReadonlyArray<WorkLogEntry>,
-): Array<Extract<MessagesTimelineRow, { kind: "viewed-images" }>> {
+  expandedWorkGroupIds: ReadonlySet<string> | undefined,
+): Array<Extract<MessagesTimelineRow, { kind: "viewed-images" | "web-sources" }>> {
   const paths = workEntriesViewedImagePaths(groupedEntries);
-  return paths.length === 0
-    ? []
-    : [{ kind: "viewed-images", id: `${groupId}:viewed-images`, createdAt, paths }];
+  const sources = workEntriesWebSources(groupedEntries);
+  const sourcesId = `${groupId}:web-sources`;
+  return [
+    ...(paths.length === 0
+      ? []
+      : [{ kind: "viewed-images" as const, id: `${groupId}:viewed-images`, createdAt, paths }]),
+    ...(sources.length === 0
+      ? []
+      : [
+          {
+            kind: "web-sources" as const,
+            id: sourcesId,
+            createdAt,
+            sources,
+            expanded: expandedWorkGroupIds?.has(sourcesId) ?? false,
+          },
+        ]),
+  ];
 }
 
 export function resolveAssistantMessageCopyState({
@@ -1904,10 +1930,11 @@ export function deriveMessagesTimelineRows(
       );
     }
     nextRows.push(
-      ...viewedImagesRows(
+      ...groupFindingsRows(
         activeWorkRow.groupId,
         activeWorkRow.createdAt,
         activeWorkRow.groupedEntries,
+        input.expandedWorkGroupIds,
       ),
     );
   };
@@ -2178,10 +2205,11 @@ export function deriveMessagesTimelineRows(
           }
         }
         nextRows.push(
-          ...viewedImagesRows(
+          ...groupFindingsRows(
             workGroupId(timelineEntry.id),
             timelineEntry.createdAt,
             visibleGroupedEntries,
+            input.expandedWorkGroupIds,
           ),
         );
       }
@@ -2388,7 +2416,14 @@ export function deriveMessagesTimelineRows(
       if (expanded) {
         nextRows.push(expandedWorkGroupRow(groupId, failedGroupAnchor.createdAt, groupedEntries));
       }
-      nextRows.push(...viewedImagesRows(groupId, failedGroupAnchor.createdAt, groupedEntries));
+      nextRows.push(
+        ...groupFindingsRows(
+          groupId,
+          failedGroupAnchor.createdAt,
+          groupedEntries,
+          input.expandedWorkGroupIds,
+        ),
+      );
     } else {
       const waitingOn =
         unsettledRunId === null
@@ -2808,6 +2843,19 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "proposed-plan":
       return a.proposedPlan === (b as typeof a).proposedPlan;
+
+    case "web-sources": {
+      const bw = b as typeof a;
+      return (
+        a.createdAt === bw.createdAt &&
+        a.expanded === bw.expanded &&
+        a.sources.length === bw.sources.length &&
+        a.sources.every(
+          (source, index) =>
+            source.url === bw.sources[index]!.url && source.title === bw.sources[index]!.title,
+        )
+      );
+    }
 
     case "viewed-images": {
       const bv = b as typeof a;

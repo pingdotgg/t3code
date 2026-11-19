@@ -64,6 +64,7 @@ import {
 } from "@t3tools/client-runtime/work-log/command-label";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { T3Wordmark } from "../../components/T3Wordmark";
 import { BrowserAppIcon } from "./BrowserAppIcon";
 import { useAppActive, useReduceMotionEnabled } from "../../lib/appState";
@@ -90,6 +91,7 @@ import {
   toolGroupAction,
   type ToolGroupSummaryKind,
   workEntryViewedImagePath,
+  type WebSource,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
@@ -1441,6 +1443,60 @@ export function ThreadWorkGroupToggle(props: {
         </View>
         {props.trailing}
       </View>
+    </WorkLogBlock>
+  );
+}
+
+export function ThreadWebSources(props: {
+  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+  readonly iconSubtleColor: ColorValue;
+  readonly sources: ReadonlyArray<WebSource>;
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+}) {
+  const gt = useGT();
+  return (
+    <WorkLogBlock>
+      <WorkLogPressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: props.expanded }}
+        onPress={() => {
+          void Haptics.selectionAsync();
+          props.onToggle();
+        }}
+        rowSizing={props.rowSizing}
+      >
+        <WorkLogIconSlot>
+          <WorkLogIcon icon="browser" color={props.iconSubtleColor} />
+        </WorkLogIconSlot>
+        <WorkLogLabel>{gt("Sources · {count}", { count: props.sources.length })}</WorkLogLabel>
+        <ThreadDisclosureChevron
+          expanded={props.expanded}
+          collapsedDirection="right"
+          size={11}
+          tintColor={props.iconSubtleColor}
+        />
+      </WorkLogPressable>
+      {props.expanded ? (
+        <View className="ms-8 gap-px pb-1">
+          {props.sources.map((source) => (
+            <Pressable
+              key={source.url}
+              accessibilityRole="link"
+              accessibilityHint={source.url}
+              onPress={() => void tryOpenExternalUrl(source.url, "web-source")}
+              className="flex-row items-baseline gap-2 rounded-md px-0.5 py-1 active:bg-subtle"
+            >
+              <Text numberOfLines={1} className="min-w-0 shrink text-sm text-foreground">
+                {source.title}
+              </Text>
+              <Text numberOfLines={1} className="shrink-0 text-xs text-foreground-muted">
+                {source.host}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
     </WorkLogBlock>
   );
 }

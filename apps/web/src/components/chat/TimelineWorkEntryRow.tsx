@@ -1,5 +1,5 @@
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
-import { WorkLogDetails, WorkLogRow } from "./WorkLog";
+import { WorkLogButton, WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
   getQuestionAnswerPreview,
   getQuestionAnswerText,
@@ -37,7 +37,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { workGroupImageGallery } from "./markdownImageGallery";
-import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
+import { ChevronRightIcon, CircleAlertIcon, GlobeIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { useThreadShell } from "../../state/entities";
@@ -274,6 +274,51 @@ export function ViewedImagesTimelineRow({
           />
         ) : null;
       })}
+    </div>
+  );
+}
+
+export function WebSourcesTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "web-sources" }>;
+}) {
+  const { onToggleWorkGroup } = use(TimelineRowCtx);
+  const gt = useGT();
+  return (
+    <div>
+      <WorkLogButton
+        aria-expanded={row.expanded}
+        onClick={() => onToggleWorkGroup(row.id, row.id)}
+        icon={<GlobeIcon aria-hidden className="size-4 shrink-0 stroke-2 text-icon-muted" />}
+        label={gt("Sources · {count}", { count: row.sources.length })}
+        trailing={
+          <ChevronRightIcon
+            aria-hidden
+            className={cn(
+              "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+              row.expanded && "rotate-90",
+            )}
+          />
+        }
+      />
+      {row.expanded ? (
+        <ul className="ms-8 flex min-w-0 flex-col gap-0.5 py-1">
+          {row.sources.map((source) => (
+            <li key={source.url} className="min-w-0">
+              <a
+                href={source.url}
+                target="_blank"
+                rel="noreferrer"
+                className="flex min-w-0 items-baseline gap-2 text-sm hover:underline"
+              >
+                <span className="truncate text-foreground">{source.title}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{source.host}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

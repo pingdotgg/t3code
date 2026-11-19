@@ -9,6 +9,7 @@ import {
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
+  workEntriesWebSources,
 } from "./presentation.js";
 
 function commandItem(
@@ -202,5 +203,47 @@ describe("resolveWorkEntryToolPresentation", () => {
         toolData: { server: "another-server", tool: "preview_click" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("workEntriesWebSources", () => {
+  it("keeps distinct web pages across a group's searches", () => {
+    const search = (
+      results: NonNullable<Extract<OrchestrationV2TurnItem, { type: "web_search" }>["results"]>,
+    ): WorkLogPresentationEntry => {
+      const { input: _input, ...base } = commandItem() as Extract<
+        OrchestrationV2TurnItem,
+        { type: "command_execution" }
+      >;
+      return {
+        id: "search",
+        createdAt: "2026-09-08T00:00:00.000Z",
+        label: "Searched the web",
+        tone: "tool",
+        itemType: "web_search",
+        structuredPayload: { ...base, type: "web_search", results },
+      };
+    };
+
+    expect(
+      workEntriesWebSources([
+        search([
+          { title: " Node.js releases ", url: "https://nodejs.org/en/about/previous-releases" },
+          { url: "https://www.example.com/post#section" },
+          { title: "Local file", url: "file:///etc/passwd" },
+          { title: "Not a URL", url: "nodejs.org" },
+          { title: "No URL" },
+        ]),
+        { id: "command", createdAt: "2026-09-08T00:00:00.000Z", label: "ls", tone: "tool" },
+        search([{ title: "Same page", url: "https://www.example.com/post#other" }]),
+      ]),
+    ).toEqual([
+      {
+        url: "https://nodejs.org/en/about/previous-releases",
+        title: "Node.js releases",
+        host: "nodejs.org",
+      },
+      { url: "https://www.example.com/post", title: "example.com", host: "example.com" },
+    ]);
   });
 });
