@@ -70,6 +70,8 @@ interface ThreadDetailsPanelProps extends Pick<
   gitCwd: string | null;
   workspaceMutationId: string | null;
   isGitRepo: boolean;
+  // The thread's folder was removed: its git actions have nothing to act on until it is rebound.
+  threadCheckoutMissing: boolean;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
@@ -176,6 +178,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           pullRequests: !(offersGit && props.isGitRepo) && visible.branch,
           git:
             offersGit &&
+            !props.threadCheckoutMissing &&
             props.activeProjectName !== undefined &&
             (visible.gitActions || (visible.changes && props.isGitRepo)),
         };
