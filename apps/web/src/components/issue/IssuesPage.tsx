@@ -31,6 +31,7 @@ import {
   LayersIcon,
   PenLineIcon,
   Plug2Icon,
+  SearchIcon,
   UserCheckIcon,
   UsersIcon,
 } from "lucide-react";
@@ -516,6 +517,23 @@ export function IssuesPage() {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [focusedRef, keybindings]);
 
+  const listFiltered =
+    search.status !== "open" ||
+    search.who !== "all" ||
+    scopedProject !== undefined ||
+    search.host !== undefined ||
+    (search.label?.length ?? 0) > 0 ||
+    search.assignee !== undefined;
+  const clearListFilters = () =>
+    updateSearch({
+      status: "open",
+      who: "all",
+      issueServer: undefined,
+      issueProject: undefined,
+      host: undefined,
+      label: undefined,
+      assignee: undefined,
+    });
   const showTracker = groups.length > 1;
   const noneAnswered = list.answers.length === 0;
 
@@ -603,15 +621,35 @@ export function IssuesPage() {
                 {note(`${error.projectTitle}: ${error.message}`, "error")}
               </Fragment>
             ))}
-            {group.tracker.configured && group.rows.length === 0 && group.errors.length === 0
-              ? note(
-                  debouncedQuery ? (
-                    <T>Nothing matches that.</T>
-                  ) : (
-                    <T>No issues under these filters.</T>
-                  ),
-                )
-              : null}
+            {group.tracker.configured && group.rows.length === 0 && group.errors.length === 0 ? (
+              debouncedQuery ? (
+                <PullRequestListNotice
+                  icon={SearchIcon}
+                  title={<T>Nothing matches that.</T>}
+                  description={null}
+                >
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => updateSearch({ q: undefined })}
+                  >
+                    <T>Clear search</T>
+                  </Button>
+                </PullRequestListNotice>
+              ) : (
+                <PullRequestListNotice
+                  icon={IssueGlyph.issue}
+                  title={<T>No issues under these filters.</T>}
+                  description={null}
+                >
+                  {listFiltered ? (
+                    <Button size="sm" variant="secondary" onClick={clearListFilters}>
+                      <T>Clear filters</T>
+                    </Button>
+                  ) : null}
+                </PullRequestListNotice>
+              )
+            ) : null}
             {group.rows.map((row, index) => {
               const key = issueEntryKey(row);
               const selected =

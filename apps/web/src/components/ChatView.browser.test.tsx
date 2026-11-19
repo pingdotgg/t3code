@@ -226,7 +226,7 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   await userEvent.hover(badge);
   const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
   const previewLink = page.getByRole("link", { name: issueName });
-  await userEvent.hover(previewLink.getByText("sam", { exact: true }));
+  await userEvent.hover(previewLink);
   await expect.element(previewLink).toBeVisible();
   const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
   await act(() => previewLink.element().dispatchEvent(contextMenu));

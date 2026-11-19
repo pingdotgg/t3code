@@ -154,8 +154,8 @@ function LinkedIssueRow({
   ) : (
     // The linked items panel's pull request row: content on the panel's 16px lines.
     <div className={cn(PULL_REQUEST_ROW_CLASS, "relative ps-2.5 pr-2.5 hover:surface-ghost-hover")}>
-      {glyph}
-      <a {...anchorProps} className="flex min-w-0 flex-1">
+      <a {...anchorProps} className="flex min-w-0 flex-1 items-center gap-2">
+        {glyph}
         {rowLines}
       </a>
     </div>
