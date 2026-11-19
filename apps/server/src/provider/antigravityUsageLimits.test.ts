@@ -10,7 +10,7 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
-import { makeAntigravityUsageProbe } from "./antigravityUsageLimits.ts";
+import { decodeGoKeyringSecret, makeAntigravityUsageProbe } from "./antigravityUsageLimits.ts";
 
 const summary = {
   groups: [
@@ -66,6 +66,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     userInfoAt?: number;
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
+    keyringSecret?: string;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -111,7 +112,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual({ project: "project-id" });
+      expect(JSON.parse(body)).toEqual(options.missingToken ? {} : { project: "project-id" });
       expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
       return HttpClientResponse.fromWeb(
         request,
@@ -132,6 +133,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const usage = yield* makeAntigravityUsageProbe({
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
+    readKeyringSecret: Effect.succeed(options.keyringSecret),
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
   return { ...usage, requests, writeToken, tokenPath };
 });
@@ -681,6 +683,42 @@ describe("Antigravity subscription limits", () => {
       expect(limits.unavailable?.reason).not.toBe("unsupported");
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
+
+  it.effect("reads the native CLI's keyring sign-in and reports when it has expired", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      const keyringSecret = (expiry: string) =>
+        JSON.stringify({ token: { access_token: "access-token", refresh_token: "r", expiry } });
+      const signedIn = yield* fixture({
+        missingToken: true,
+        userId: "google-user-1",
+        keyringSecret: keyringSecret("2026-10-09T14:00:00.123456789+01:00"),
+      });
+      const limits = yield* signedIn.probe;
+      expect(limits.unavailable).toBeUndefined();
+      expect(limits.windows).toHaveLength(4);
+      expect(signedIn.requests.some((request) => request.url.endsWith("/token"))).toBe(false);
+
+      const expired = yield* fixture({
+        missingToken: true,
+        keyringSecret: keyringSecret("2026-10-09T12:00:30Z"),
+      });
+      expect((yield* expired.probe).unavailable?.reason).toBe("probeFailed");
+      expect(expired.requests).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it("decodes go-keyring's macOS encodings", () => {
+    const value = '{"token":{}}';
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    expect(decodeGoKeyringSecret(bytes(value))).toBe(value);
+    expect(
+      decodeGoKeyringSecret(bytes(`go-keyring-base64:${Buffer.from(value).toString("base64")}`)),
+    ).toBe(value);
+    expect(
+      decodeGoKeyringSecret(bytes(`go-keyring-encoded:${Buffer.from(value).toString("hex")}`)),
+    ).toBe(value);
+  });
 
   it.effect("does not make network requests for API keys or missing sign-ins", () =>
     Effect.gen(function* () {
