@@ -614,37 +614,41 @@ describe("GitHubCredentials", () => {
       Layer.provide(Layer.succeed(HttpClient.HttpClient, unexpectedHttp)),
     );
 
-  it.effect("does not cache a gh failure that is not about signing in", () => {
-    let calls = 0;
-    return Effect.gen(function* () {
-      const credentials = yield* GitHubCredentials.GitHubCredentials;
-      const first = yield* Effect.flip(credentials.get("github.com"));
-      expect(first._tag).toBe("GitHubCliFailedError");
-      expect((yield* credentials.get("github.com")).source).toBe("gh");
-      expect(calls).toBe(2);
-    }).pipe(
-      Effect.provide(
-        credentialsWith(() =>
-          ++calls === 1
-            ? Effect.fail(
-                new VcsProcessTimeoutError({
-                  operation: "GitHubCredentials.get",
-                  command: "gh",
-                  cwd: "/",
-                  timeoutMs: 10_000,
+  it.effect(
+    "reports a gh timeout as a timeout, not a sign-in problem, and does not cache it",
+    () => {
+      let calls = 0;
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const first = yield* Effect.flip(credentials.get("github.com"));
+        expect(first.message).not.toContain("gh auth status");
+        expect(first.message).toMatch(/in time|within|timed out/i);
+        expect((yield* credentials.get("github.com")).source).toBe("gh");
+        expect(calls).toBe(2);
+      }).pipe(
+        Effect.provide(
+          credentialsWith(() =>
+            ++calls === 1
+              ? Effect.fail(
+                  new VcsProcessTimeoutError({
+                    operation: "GitHubCredentials.get",
+                    command: "gh",
+                    cwd: "/",
+                    timeoutMs: 10_000,
+                  }),
+                )
+              : Effect.succeed({
+                  exitCode: ChildProcessSpawner.ExitCode(0),
+                  stdout: "token\n",
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
                 }),
-              )
-            : Effect.succeed({
-                exitCode: ChildProcessSpawner.ExitCode(0),
-                stdout: "token\n",
-                stderr: "",
-                stdoutTruncated: false,
-                stderrTruncated: false,
-              }),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 
   it.effect("fails with GitHubNotSignedInError when gh prints no token", () =>
     Effect.gen(function* () {
