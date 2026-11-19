@@ -300,7 +300,7 @@ describe("DesktopConnectionCatalogStore", () => {
   );
 
   const emptyCatalog =
-    '{"schemaVersion":1,"targets":[],"profiles":[],"credentials":[],"remoteDpopTokens":[],"disabledEnvironmentIds":[]}';
+    '{"schemaVersion":1,"targets":[],"profiles":[],"credentials":[],"disabledEnvironmentIds":[]}';
   const savedFilesHolding = Effect.fn(function* (stateDir: string, contents: string) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -323,7 +323,7 @@ describe("DesktopConnectionCatalogStore", () => {
         const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
         assert.isTrue(
           yield* store.set(
-            '{"schemaVersion":1,"targets":[{"_tag":"FutureConnectionTarget","environmentId":"remote"}],"profiles":[],"credentials":[],"remoteDpopTokens":[],"disabledEnvironmentIds":[]}',
+            '{"schemaVersion":1,"targets":[{"_tag":"FutureConnectionTarget","environmentId":"remote"}],"profiles":[],"credentials":[],"disabledEnvironmentIds":[]}',
           ),
         );
         const original = yield* fileSystem.readFileString(catalogPath);

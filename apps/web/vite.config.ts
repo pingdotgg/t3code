@@ -90,6 +90,7 @@ const unitTestProject = {
     setupFiles: [
       "../../packages/shared/src/testing/longTempDir.ts",
       "../../packages/shared/src/testing/providerEnv.ts",
+      "../../packages/shared/src/testing/gitEnv.ts",
     ],
   },
 } satisfies TestProjectInlineConfiguration;
@@ -106,6 +107,7 @@ const browserTestProject = {
   optimizeDeps: {
     include: [
       "vite-plus/test/browser",
+      "@pierre/trees/react",
       "@base-ui/react/autocomplete",
       "saxes",
       "@betteroffice/docx/editor",
@@ -119,7 +121,7 @@ const browserTestProject = {
       "fast-xml-parser",
       "entities",
       "dompurify",
-      "heic-to/next",
+      "heic-to/csp",
       "jszip",
       "pdfjs-dist",
       "sql.js",
@@ -353,6 +355,7 @@ export default defineConfig(({ command }) => {
         "@pierre/diffs/edit",
         "@pierre/diffs/react",
         "@pierre/diffs/worker/worker.js",
+        "@pierre/trees/react",
         "effect/Array",
         "effect/Order",
         "react-dom/client",

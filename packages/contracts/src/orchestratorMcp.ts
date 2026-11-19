@@ -179,7 +179,10 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     description: "Self-contained task for one delegated child agent/subagent.",
   }),
   profileId: Schema.optional(OrchestratorMcpProfileId),
-  target: Schema.optional(OrchestratorMcpTarget),
+  // Some providers send the whole target object as JSON text.
+  target: Schema.optional(
+    Schema.Union([OrchestratorMcpTarget, Schema.fromJsonString(OrchestratorMcpTarget)]),
+  ),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
   isolation: Schema.optional(

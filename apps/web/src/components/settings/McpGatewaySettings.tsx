@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { Link } from "@tanstack/react-router";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
@@ -634,7 +635,13 @@ function DesktopMcpGatewaySettings() {
   const [launch] = useState(() => window.desktopBridge?.getMcpGatewayLaunchConfig?.() ?? null);
   const [failedCopy, setFailedCopy] = useState<string | null>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<string>({
-    target: "MCP gateway configuration",
+    target: {
+      target: "MCP gateway configuration",
+      unavailableMessage: msg(
+        "Clipboard API is unavailable while copying MCP gateway configuration.",
+      ),
+      failureMessage: msg("Failed to copy MCP gateway configuration to the clipboard."),
+    },
     onCopy: () => setFailedCopy(null),
     onError: (_error, value) => setFailedCopy(value),
   });

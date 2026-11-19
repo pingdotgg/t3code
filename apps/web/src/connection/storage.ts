@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import {
   clearConnectOnlyEnvironments,
   ConnectionCatalogDocument,
@@ -43,6 +44,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import { m } from "../i18n/messages";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
 
 /** Environments dropped from the catalog because T3 Connect was their only route; read once. */
@@ -101,38 +103,52 @@ const encodeStoredServerConfig = Schema.encodeEffect(StoredServerConfigJson);
 const decodeStoredVcsRefs = Schema.decodeUnknownEffect(StoredVcsRefsJson);
 const encodeStoredVcsRefs = Schema.encodeEffect(StoredVcsRefsJson);
 
-function catalogError(operation: string, cause: unknown) {
+const CATALOG_FAILURE = {
+  open: msg("Could not open the local connection catalog: {cause}"),
+  read: msg("Could not read the local connection catalog: {cause}"),
+  write: msg("Could not write the local connection catalog: {cause}"),
+  remove: msg("Could not remove the local connection catalog: {cause}"),
+  decode: msg("Could not decode the local connection catalog: {cause}"),
+  encode: msg("Could not encode the local connection catalog: {cause}"),
+  load: msg("Could not load the local connection catalog: {cause}"),
+  save: msg("Could not save the local connection catalog: {cause}"),
+  "save pull request routing permissions in": msg(
+    "Could not save pull request routing permissions in the local connection catalog: {cause}",
+  ),
+};
+
+function catalogError(operation: keyof typeof CATALOG_FAILURE, cause: unknown) {
   return new ConnectionTransientError({
     reason: "remote-unavailable",
-    detail: `Could not ${operation} the local connection catalog: ${String(cause)}`,
+    detail: m(CATALOG_FAILURE[operation], { cause: String(cause) }),
   });
 }
 
-function persistenceError(
-  operation:
-    | "list-targets"
-    | "list-disabled-targets"
-    | "register-connection"
-    | "set-connection-routes"
-    | "remove-connection"
-    | "set-connection-enabled"
-    | "load-shell"
-    | "save-shell"
-    | "load-thread"
-    | "save-thread"
-    | "remove-thread"
-    | "load-server-config"
-    | "save-server-config"
-    | "load-vcs-refs"
-    | "save-vcs-refs"
-    | "remove-vcs-refs"
-    | "clear-vcs-refs"
-    | "clear-environment",
-  cause: unknown,
-) {
+const PERSISTENCE_FAILURE = {
+  "list-targets": msg("Could not list targets: {cause}"),
+  "list-disabled-targets": msg("Could not list disabled targets: {cause}"),
+  "register-connection": msg("Could not register connection: {cause}"),
+  "set-connection-routes": msg("Could not set connection routes: {cause}"),
+  "remove-connection": msg("Could not remove connection: {cause}"),
+  "set-connection-enabled": msg("Could not set connection enabled: {cause}"),
+  "load-shell": msg("Could not load shell: {cause}"),
+  "save-shell": msg("Could not save shell: {cause}"),
+  "load-thread": msg("Could not load thread: {cause}"),
+  "save-thread": msg("Could not save thread: {cause}"),
+  "remove-thread": msg("Could not remove thread: {cause}"),
+  "load-server-config": msg("Could not load server config: {cause}"),
+  "save-server-config": msg("Could not save server config: {cause}"),
+  "load-vcs-refs": msg("Could not load vcs refs: {cause}"),
+  "save-vcs-refs": msg("Could not save vcs refs: {cause}"),
+  "remove-vcs-refs": msg("Could not remove vcs refs: {cause}"),
+  "clear-vcs-refs": msg("Could not clear vcs refs: {cause}"),
+  "clear-environment": msg("Could not clear environment: {cause}"),
+};
+
+function persistenceError(operation: keyof typeof PERSISTENCE_FAILURE, cause: unknown) {
   return new Persistence.ConnectionPersistenceError({
     operation,
-    message: `Could not ${operation.replaceAll("-", " ")}: ${String(cause)}`,
+    message: m(PERSISTENCE_FAILURE[operation], { cause: String(cause) }),
   });
 }
 
@@ -140,7 +156,9 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
   return yield* Effect.callback<IDBDatabase, ConnectionTransientError>((resume) => {
     if (typeof indexedDB === "undefined") {
       resume(
-        Effect.fail(catalogError("open", "IndexedDB is unavailable in this browser context.")),
+        Effect.fail(
+          catalogError("open", m(msg("IndexedDB is unavailable in this browser context."))),
+        ),
       );
       return;
     }
@@ -169,7 +187,9 @@ const openDatabase = Effect.fn("web.connectionStorage.openDatabase")(function* (
         }
       });
       request.addEventListener("error", () => {
-        resume(Effect.fail(catalogError("open", request.error ?? "Unknown IndexedDB error")));
+        resume(
+          Effect.fail(catalogError("open", request.error ?? m(msg("Unknown IndexedDB error")))),
+        );
       });
       request.addEventListener("success", () => {
         resume(Effect.succeed(request.result));
@@ -253,7 +273,11 @@ function readDatabaseValueOnConnection(database: IDBDatabase, storeName: string,
     try {
       const request = database.transaction(storeName, "readonly").objectStore(storeName).get(key);
       request.addEventListener("error", () => {
-        resume(Effect.fail(catalogError("read", request.error ?? "Unknown IndexedDB read error")));
+        resume(
+          Effect.fail(
+            catalogError("read", request.error ?? m(msg("Unknown IndexedDB read error"))),
+          ),
+        );
       });
       request.addEventListener("success", () => {
         resume(Effect.succeed(request.result));
@@ -276,7 +300,9 @@ function writeDatabaseValueOnConnection(
       // Commit failures can fire abort without error; every failed write fires abort.
       transaction.addEventListener("abort", () => {
         resume(
-          Effect.fail(catalogError("write", transaction.error ?? "Unknown IndexedDB write error")),
+          Effect.fail(
+            catalogError("write", transaction.error ?? m(msg("Unknown IndexedDB write error"))),
+          ),
         );
       });
       transaction.addEventListener("complete", () => {
@@ -300,7 +326,7 @@ function removeDatabaseValueOnConnection(
       transaction.addEventListener("abort", () => {
         resume(
           Effect.fail(
-            catalogError("remove", transaction.error ?? "Unknown IndexedDB remove error"),
+            catalogError("remove", transaction.error ?? m(msg("Unknown IndexedDB remove error"))),
           ),
         );
       });
@@ -325,7 +351,7 @@ function removeDatabaseValuesInRangeOnConnection(
       transaction.addEventListener("abort", () => {
         resume(
           Effect.fail(
-            catalogError("remove", transaction.error ?? "Unknown IndexedDB cursor error"),
+            catalogError("remove", transaction.error ?? m(msg("Unknown IndexedDB cursor error"))),
           ),
         );
       });
@@ -335,7 +361,9 @@ function removeDatabaseValuesInRangeOnConnection(
       const request = transaction.objectStore(storeName).openCursor(range);
       request.addEventListener("error", () => {
         resume(
-          Effect.fail(catalogError("remove", request.error ?? "Unknown IndexedDB cursor error")),
+          Effect.fail(
+            catalogError("remove", request.error ?? m(msg("Unknown IndexedDB cursor error"))),
+          ),
         );
       });
       request.addEventListener("success", () => {
@@ -370,7 +398,9 @@ function saveQueryOnConnection(
       const transaction = database.transaction(QUERY_STORE_NAME, "readwrite");
       transaction.addEventListener("abort", () => {
         resume(
-          Effect.fail(catalogError("write", transaction.error ?? "Unknown IndexedDB write error")),
+          Effect.fail(
+            catalogError("write", transaction.error ?? m(msg("Unknown IndexedDB write error"))),
+          ),
         );
       });
       transaction.addEventListener("complete", () => {
@@ -511,7 +541,7 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
               : Effect.fail(
                   catalogError(
                     "save",
-                    "Desktop secure storage is unavailable in this system context.",
+                    m(msg("Desktop secure storage is unavailable in this system context.")),
                   ),
                 ),
           ),
@@ -683,7 +713,7 @@ export function makeBrowserPullRequestRoutingPermissions(
       if (connectionKey === null)
         return yield* new ConnectionBlockedError({
           reason: "configuration",
-          detail: "This environment does not have a saved connection endpoint.",
+          detail: m(msg("This environment does not have a saved connection endpoint.")),
         });
       return yield* write(
         entry.target.environmentId,

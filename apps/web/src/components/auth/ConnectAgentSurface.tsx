@@ -5,16 +5,19 @@ import {
   AuthMcpClientAccess,
   AuthMcpAuthorizationRequest,
   isRuntimeModeAbove,
-  managedRuntimeModeCeilingMessage,
   parseMcpApprovalCode,
 } from "@t3tools/contracts";
+import { managedRuntimeModeCeilingMessage } from "@t3tools/client-runtime/contract-labels";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { EyeIcon, type LucideIcon } from "lucide-react";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { type ReactNode, useEffect, useState } from "react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 import { PrimaryEnvironmentHttpClient } from "~/environments/primary/httpClient";
 import { runPrimaryHttp } from "~/lib/runtime";
@@ -34,8 +37,8 @@ export const accessConfig: Record<
   { readonly label: string; readonly description: string; readonly icon: LucideIcon }
 > = {
   "read-only": {
-    label: "Read only",
-    description: "Read projects and threads. Cannot start, message or change anything.",
+    label: msg("Read only"),
+    description: msg("Read projects and threads. Cannot start, message or change anything."),
     icon: EyeIcon,
   },
   ...runtimeModeConfig,
@@ -50,7 +53,7 @@ type Loaded =
   | { readonly status: "invalid"; readonly message: string }
   | { readonly status: "ready"; readonly details: AuthMcpApprovalDetails };
 
-const UNREACHABLE = "Could not reach this environment. Try again.";
+const UNREACHABLE = msg("Could not reach this environment. Try again.");
 const isApprovalError = Schema.is(AuthMcpApprovalError);
 
 type Answer<A> =
@@ -74,7 +77,7 @@ function runApproval<A>(
       Effect.catch((error) =>
         Effect.succeed<Answer<A>>({
           kind: "error",
-          message: isApprovalError(error) ? error.message : UNREACHABLE,
+          message: isApprovalError(error) ? error.message : m(UNREACHABLE),
         }),
       ),
     ),
@@ -88,6 +91,8 @@ function readAuthorizationRequest(): AuthMcpAuthorizationRequest {
 }
 
 export function ConnectAgentSurface() {
+  const gt = useGT();
+  const messages = useMessages();
   const [authorization] = useState(readAuthorizationRequest);
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
   const [requestedAccess, setAccess] = useState<AuthMcpClientAccess | null>(null);
@@ -146,8 +151,8 @@ export function ConnectAgentSurface() {
     return (
       <StandalonePage>
         <ConnectAgentHeading
-          title="Checking the sign-in request"
-          description="One moment while this environment verifies the agent's request."
+          title={gt("Checking the sign-in request")}
+          description={gt("One moment while this environment verifies the agent's request.")}
         />
         <Spinner className="mt-6" size="lg" tone="muted" />
       </StandalonePage>
@@ -157,9 +162,12 @@ export function ConnectAgentSurface() {
   if (loaded.status === "invalid") {
     return (
       <StandalonePage>
-        <ConnectAgentHeading title="This sign-in cannot continue" description={loaded.message} />
+        <ConnectAgentHeading
+          title={gt("This sign-in cannot continue")}
+          description={loaded.message}
+        />
         <p className="mt-4 text-sm text-muted-foreground">
-          Close this page and start the sign-in again from your agent.
+          <T>Close this page and start the sign-in again from your agent.</T>
         </p>
       </StandalonePage>
     );
@@ -174,7 +182,7 @@ export function ConnectAgentSurface() {
   return (
     <StandalonePage>
       <ConnectAgentHeading
-        title={`Connect ${details.clientName}`}
+        title={gt("Connect {app}", { app: details.clientName })}
         description={
           <>
             This agent wants to use the threads in every project on{" "}
@@ -183,13 +191,19 @@ export function ConnectAgentSurface() {
         }
       />
       <dl className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
-        <dt className="text-muted-foreground">App</dt>
+        <dt className="text-muted-foreground">
+          <T context="the app requesting access">App</T>
+        </dt>
         <dd className="min-w-0 break-words">
-          {details.clientName} <span className="text-muted-foreground">· name set by the app</span>
+          <T>
+            <Var>{details.clientName}</Var>{" "}
+            <span className="text-muted-foreground">· name set by the app</span>
+          </T>
         </dd>
-        <dt className="text-muted-foreground">Access goes to</dt>
+        <dt className="text-muted-foreground">
+          <T>Access goes to</T>
+        </dt>
         <dd className="min-w-0 break-words font-medium">
-          {details.redirectHost}
           {redirectsToThisComputer(details.redirectHost) ? (
             <span className="font-normal text-muted-foreground">
               {" "}
@@ -198,7 +212,9 @@ export function ConnectAgentSurface() {
           ) : null}
         </dd>
       </dl>
-      <p className="mt-2 text-xs text-muted-foreground">Only approve a sign-in you just started.</p>
+      <p className="mt-2 text-xs text-muted-foreground">
+        <T>Only approve a sign-in you just started.</T>
+      </p>
 
       <form
         className="mt-6 space-y-5"
@@ -231,13 +247,15 @@ export function ConnectAgentSurface() {
 
         {codeAccess ? (
           <p className="text-sm">
-            <span className="text-muted-foreground">Access</span>{" "}
-            <span className="font-medium">{accessConfig[codeAccess].label}</span>
+            <span className="text-muted-foreground">
+              <T context="access level">Access</T>
+            </span>{" "}
+            <span className="font-medium">{messages(accessConfig[codeAccess].label)}</span>
           </p>
         ) : (
           <div className="space-y-2">
             <span id="connect-agent-access-label" className="text-sm font-medium">
-              What it may do
+              <T>What it may do</T>
             </span>
             <RadioGroup
               aria-labelledby="connect-agent-access-label"
@@ -249,13 +267,15 @@ export function ConnectAgentSurface() {
                   key={option}
                   access={option}
                   selected={option === access}
-                  disabledReason={ceilingReason(details, option)}
+                  disabledReason={ceilingReason(details, option, messages)}
                 />
               ))}
             </RadioGroup>
             <p className="text-xs text-muted-foreground">
-              Beyond read only, it can start, message and stop threads, and none of them can run
-              with more than the mode you pick.
+              <T>
+                Beyond read only, it can start, message and stop threads, and none of them can run
+                with more than the mode you pick.
+              </T>
             </p>
           </div>
         )}
@@ -280,7 +300,7 @@ export function ConnectAgentSurface() {
             type="button"
             variant="outline"
           >
-            {pending === "deny" ? "Denying…" : "Deny"}
+            {pending === "deny" ? gt("Denying…") : gt("Deny")}
           </Button>
         </div>
       </form>
@@ -295,17 +315,24 @@ function ConnectAgentHeading({
   readonly title: string;
   readonly description: ReactNode;
 }) {
-  return <StandalonePageHeader context="Agent sign-in" title={title} description={description} />;
+  const gt = useGT();
+  return (
+    <StandalonePageHeader context={gt("Agent sign-in")} title={title} description={description} />
+  );
 }
 
 /** Why a managed policy keeps `access` from being granted, or undefined when it may be. */
-function ceilingReason(details: AuthMcpApprovalDetails, access: AuthMcpClientAccess) {
+function ceilingReason(
+  details: AuthMcpApprovalDetails,
+  access: AuthMcpClientAccess,
+  resolve: MessageResolver,
+) {
   const ceiling = details.runtimeModeCeiling;
   return ceiling === undefined ||
     access === "read-only" ||
     !isRuntimeModeAbove(access, ceiling.maxRuntimeMode)
     ? undefined
-    : managedRuntimeModeCeilingMessage(ceiling.organization, ceiling.maxRuntimeMode);
+    : managedRuntimeModeCeilingMessage(ceiling.organization, ceiling.maxRuntimeMode, resolve);
 }
 
 /** One access level in a radio group; `description` replaces the level's own, null hides it. */
@@ -320,9 +347,11 @@ export function AccessOption({
   readonly disabledReason: string | undefined;
   readonly description?: string | null;
 }) {
+  const messages = useMessages();
   const { label, icon: Icon } = accessConfig[access];
   const detail =
-    disabledReason ?? (description === undefined ? accessConfig[access].description : description);
+    disabledReason ??
+    (description === undefined ? messages(accessConfig[access].description) : description);
   return (
     <RadioPrimitive.Root
       value={access}
@@ -343,7 +372,7 @@ export function AccessOption({
         )}
       />
       <span className="min-w-0">
-        <span className="block text-sm font-medium text-foreground">{label}</span>
+        <span className="block text-sm font-medium text-foreground">{messages(label)}</span>
         {detail === null ? null : (
           <span className="block text-xs text-muted-foreground">{detail}</span>
         )}

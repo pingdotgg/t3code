@@ -85,6 +85,12 @@ export interface IssuedBearerSession {
 const MCP_CLIENT_SUBJECT = "mcp-client";
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
 
+// A device pairing with its DPoP key renews the session itself, so the token can be short and
+// the device stays signed in while used. One idle for the whole window pairs again.
+const RENEWABLE_ACCESS_TOKEN_TTL = Duration.hours(1);
+const RENEWABLE_SESSION_WINDOW = Duration.days(30);
+const PAIRING_LINK_SUBJECT = "one-time-token";
+
 export interface McpClientSession {
   readonly sessionId: AuthSessionId;
   readonly label: string;
@@ -414,6 +420,14 @@ export class EnvironmentAuth extends Context.Service<
       AuthAccessTokenResult,
       ServerAuthInvalidCredentialError | ServerAuthInvalidRequestError | ServerAuthInternalError
     >;
+    readonly renewAccessToken: (
+      accessToken: string,
+      proofKeyThumbprint: string,
+      consumeProof: Effect.Effect<void, ServerAuthInvalidCredentialError | ServerAuthInternalError>,
+    ) => Effect.Effect<
+      AuthAccessTokenResult,
+      ServerAuthInvalidCredentialError | ServerAuthInternalError
+    >;
     readonly createPairingLink: (input?: {
       readonly ttl?: Duration.Duration;
       readonly label?: string;
@@ -468,6 +482,9 @@ export class EnvironmentAuth extends Context.Service<
     readonly listClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<ReadonlyArray<AuthClientSession>, ServerAuthInternalError>;
+    readonly revokeClient: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<boolean, ServerAuthInternalError>;
     readonly revokeClientSession: (
       currentSessionId: AuthSessionId,
       targetSessionId: AuthSessionId,
@@ -573,16 +590,15 @@ const rejectMcpClientAudience = <S extends { readonly subject: string }>(session
       ).pipe(Effect.tap(() => Effect.logWarning("Rejected an MCP client session outside /mcp.")))
     : Effect.succeed(session);
 
+const toSessionVerificationError = (cause: SessionStore.SessionCredentialError) =>
+  SessionStore.isSessionCredentialInvalidError(cause)
+    ? new ServerAuthInvalidCredentialError({ cause })
+    : new ServerAuthSessionCredentialValidationError({ cause });
+
 const mapSessionVerificationErrors = <A, R>(
   effect: Effect.Effect<A, SessionStore.SessionCredentialError, R>,
 ): Effect.Effect<A, ServerAuthInvalidCredentialError | ServerAuthInternalError, R> =>
-  effect.pipe(
-    Effect.mapError((cause) =>
-      SessionStore.isSessionCredentialInvalidError(cause)
-        ? new ServerAuthInvalidCredentialError({ cause })
-        : new ServerAuthSessionCredentialValidationError({ cause }),
-    ),
-  );
+  effect.pipe(Effect.mapError(toSessionVerificationError));
 
 export function parseBearerToken(request: HttpServerRequest.HttpServerRequest): string | null {
   const header = request.headers["authorization"];
@@ -957,6 +973,43 @@ export const make = Effect.gen(function* () {
     );
   };
 
+  const toAccessTokenResult = (session: SessionStore.IssuedSession) =>
+    DateTime.now.pipe(
+      Effect.map(
+        (now) =>
+          ({
+            access_token: session.token,
+            issued_token_type: AuthAccessTokenType,
+            token_type: session.proofKeyThumbprint ? "DPoP" : "Bearer",
+            expires_in: Math.max(
+              0,
+              Math.floor((session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000),
+            ),
+            scope: encodeOAuthScope(session.scopes),
+          }) satisfies AuthAccessTokenResult,
+      ),
+    );
+
+  const renewAccessToken: EnvironmentAuth["Service"]["renewAccessToken"] = Effect.fn(
+    "EnvironmentAuth.renewAccessToken",
+  )(function* (accessToken, proofKeyThumbprint, consumeProof) {
+    const session = yield* sessions
+      .renew(accessToken, {
+        proofKeyThumbprint,
+        ttl: RENEWABLE_ACCESS_TOKEN_TTL,
+        renewalWindow: RENEWABLE_SESSION_WINDOW,
+        consumeProof,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          isServerAuthCredentialError(cause) || isServerAuthInternalError(cause)
+            ? cause
+            : toSessionVerificationError(cause),
+        ),
+      );
+    return yield* toAccessTokenResult(session);
+  });
+
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
       return resolveBootstrapGrant(credential, {
@@ -973,17 +1026,23 @@ export const make = Effect.gen(function* () {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
             yield* admitRedeemed(grant);
+            const renewable =
+              input?.proofKeyThumbprint !== undefined &&
+              grant.method === "one-time-token" &&
+              grant.subject === PAIRING_LINK_SUBJECT;
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
                 subject: grant.subject,
                 scopes: grantedScopes,
                 ...(grant.brokeredBy === undefined ? {} : { brokeredBy: grant.brokeredBy }),
-                // DPoP sessions keep the default lifetime so LAN and tailnet routes outlive a
-                // sleeping client.
                 ...(input?.proofKeyThumbprint
-                  ? { proofKeyThumbprint: input.proofKeyThumbprint }
+                  ? {
+                      proofKeyThumbprint: input.proofKeyThumbprint,
+                      ...(renewable ? { ttl: RENEWABLE_ACCESS_TOKEN_TTL } : {}),
+                    }
                   : {}),
+                ...(renewable ? { renewalWindow: RENEWABLE_SESSION_WINDOW } : {}),
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
                 client: {
                   ...requestMetadata,
@@ -997,25 +1056,7 @@ export const make = Effect.gen(function* () {
               );
           }),
         ),
-        Effect.flatMap((session) =>
-          DateTime.now.pipe(
-            Effect.map(
-              (now) =>
-                ({
-                  access_token: session.token,
-                  issued_token_type: AuthAccessTokenType,
-                  token_type: input?.proofKeyThumbprint ? "DPoP" : "Bearer",
-                  expires_in: Math.max(
-                    0,
-                    Math.floor(
-                      (session.expiresAt.epochMilliseconds - now.epochMilliseconds) / 1000,
-                    ),
-                  ),
-                  scope: encodeOAuthScope(session.scopes),
-                }) satisfies AuthAccessTokenResult,
-            ),
-          ),
-        ),
+        Effect.flatMap(toAccessTokenResult),
         Effect.withSpan("EnvironmentAuth.exchangeBootstrapCredentialForAccessToken"),
       );
     };
@@ -1209,6 +1250,8 @@ export const make = Effect.gen(function* () {
       ),
       Effect.withSpan("EnvironmentAuth.listClientSessions"),
     );
+
+  const revokeClient: EnvironmentAuth["Service"]["revokeClient"] = revokeSession;
 
   const revokeClientSession: EnvironmentAuth["Service"]["revokeClientSession"] = Effect.fn(
     "EnvironmentAuth.revokeClientSession",
@@ -1454,6 +1497,7 @@ export const make = Effect.gen(function* () {
     getSessionState,
     createBrowserSession,
     exchangeBootstrapCredentialForAccessToken,
+    renewAccessToken,
     createPairingLink,
     issuePairingCredential,
     issueStartupPairingCredential,
@@ -1463,6 +1507,7 @@ export const make = Effect.gen(function* () {
     listSessions,
     revokeSession,
     listClientSessions,
+    revokeClient,
     revokeClientSession,
     revokeOtherClientSessions,
     authenticateHttpRequest,

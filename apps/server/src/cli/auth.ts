@@ -1,4 +1,9 @@
-import { AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthAccessWriteScope,
+  AuthRevokePairingLinkInput,
+  AuthSessionId,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -23,10 +28,11 @@ import {
   DurationFromString,
   resolveCliAuthConfig,
 } from "./config.ts";
+import * as RunningServer from "./runningServer.ts";
 
-const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E>(
+const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function* <A, E, R>(
   flags: CliAuthLocationFlags,
-  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  run: (environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E, R>,
   options?: {
     readonly quietLogs?: boolean;
   },
@@ -39,13 +45,19 @@ const runWithEnvironmentAuth = Effect.fn("auth.runWithEnvironmentAuth")(function
     return yield* run(environmentAuth);
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(EnvironmentAuth.layerRuntime).pipe(
-        Layer.provide(ServerConfig.layer(config)),
+      EnvironmentAuth.layerRuntime.pipe(
+        Layer.provideMerge(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
       ),
     ),
   );
 });
+
+/** Access changes go through a running server, which applies them to its open connections. */
+const changeAccess = <A, E, R, E2, R2>(change: {
+  readonly viaServer: (client: RunningServer.ServerClient) => Effect.Effect<A, E, R>;
+  readonly locally: Effect.Effect<A, E2, R2>;
+}) => RunningServer.changeState({ scopes: [AuthAccessWriteScope], ...change });
 
 const ttlFlag = Flag.String("ttl").pipe(
   Flag.withSchema(DurationFromString),
@@ -144,13 +156,23 @@ const pairingListCommand = Command.make("list", {
 
 const pairingRevokeCommand = Command.make("revoke", {
   ...authLocationFlags,
-  id: Argument.String("id").pipe(Argument.withDescription("Pairing credential id to revoke.")),
+  id: Argument.String("id").pipe(
+    Argument.withDescription("Pairing credential id to revoke."),
+    // Same schema the server applies, so both paths revoke the same id.
+    Argument.withSchema(AuthRevokePairingLinkInput.fields.id),
+  ),
 }).pipe(
   Command.withDescription("Revoke an active client pairing token."),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const revoked = yield* environmentAuth.revokePairingLink(flags.id);
+        const revoked = yield* changeAccess({
+          viaServer: (client) =>
+            client.auth
+              .revokePairingLink({ headers: {}, payload: { id: flags.id } })
+              .pipe(Effect.map((result) => result.revoked)),
+          locally: environmentAuth.revokePairingLink(flags.id),
+        });
         yield* Console.log(
           revoked
             ? `Revoked pairing credential ${flags.id}.\n`
@@ -232,7 +254,13 @@ const sessionRevokeCommand = Command.make("revoke", {
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const revoked = yield* environmentAuth.revokeSession(flags.sessionId);
+        const revoked = yield* changeAccess({
+          viaServer: (client) =>
+            client.auth
+              .revokeClient({ headers: {}, payload: { sessionId: flags.sessionId } })
+              .pipe(Effect.map((result) => result.revoked)),
+          locally: environmentAuth.revokeClient(flags.sessionId),
+        });
         yield* Console.log(
           revoked
             ? `Revoked session ${flags.sessionId}.\n`

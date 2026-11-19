@@ -1,2 +1,4 @@
+import { msg } from "gt-i18n";
+
 /** For a host that stopped answering on an open connection, so the network path was already working. */
-export const UNRESPONSIVE_HOST_HINT = "It may be overloaded, asleep, or off the network.";
+export const UNRESPONSIVE_HOST_HINT = msg("It may be overloaded, asleep, or off the network.");

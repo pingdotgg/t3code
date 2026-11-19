@@ -1,29 +1,45 @@
 import { scheduledTaskArchiveLabel } from "@t3tools/client-runtime/scheduled-task-archive";
 import { scheduledTaskDeletesAt, type ScheduledTask } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-export function formatScheduledTaskInterval(everyMs: number): string {
-  const units = [
-    [7 * DAY, "week"],
-    [DAY, "day"],
-    [HOUR, "hour"],
-    [MINUTE, "minute"],
-    [1_000, "second"],
-    [1, "millisecond"],
-  ] as const;
+const INTERVAL_UNITS = [
+  [7 * DAY, msg("Every week"), msg("{count, plural, one {{count} week} other {{count} weeks}}")],
+  [DAY, msg("Every day"), msg("{count, plural, one {{count} day} other {{count} days}}")],
+  [HOUR, msg("Every hour"), msg("{count, plural, one {{count} hour} other {{count} hours}}")],
+  [
+    MINUTE,
+    msg("Every minute"),
+    msg("{count, plural, one {{count} minute} other {{count} minutes}}"),
+  ],
+  [
+    1_000,
+    msg("Every second"),
+    msg("{count, plural, one {{count} second} other {{count} seconds}}"),
+  ],
+  [
+    1,
+    msg("Every millisecond"),
+    msg("{count, plural, one {{count} millisecond} other {{count} milliseconds}}"),
+  ],
+] as const;
+
+export function formatScheduledTaskInterval(everyMs: number, resolve: MessageResolver = m): string {
   let remaining = everyMs;
   const parts: string[] = [];
-  for (const [size, unit] of units) {
+  for (const [size, every, amount] of INTERVAL_UNITS) {
     const count = Math.floor(remaining / size);
     if (count === 0) continue;
-    if (count === 1 && remaining === everyMs && remaining === size) return `Every ${unit}`;
-    parts.push(`${count} ${unit}${count === 1 ? "" : "s"}`);
+    if (count === 1 && remaining === everyMs && remaining === size) return resolve(every);
+    parts.push(resolve(amount, { count }));
     remaining %= size;
   }
-  return `Every ${parts.join(" ")}`;
+  return resolve(msg("Every {duration}", { duration: parts.join(" ") }));
 }
 
 function localCalendarDay(date: Date): number {
@@ -31,20 +47,34 @@ function localCalendarDay(date: Date): number {
   return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / DAY;
 }
 
-export function formatNextScheduledTaskRun(nextRunAt: string, now: number): string {
+export function formatNextScheduledTaskRun(
+  nextRunAt: string,
+  now: number,
+  resolve: MessageResolver = m,
+): string {
   const next = new Date(nextRunAt);
   const current = new Date(now);
   const remaining = next.getTime() - now;
-  if (!Number.isFinite(remaining)) return "Next run unavailable";
-  if (remaining <= 0) return "Next run due";
+  if (!Number.isFinite(remaining)) return resolve(msg("Next run unavailable"));
+  if (remaining <= 0) return resolve(msg("Next run due"));
 
   const days = localCalendarDay(next) - localCalendarDay(current);
   if (days === 0) {
-    if (remaining < MINUTE) return "Next run in less than a minute";
+    if (remaining < MINUTE) return resolve(msg("Next run in less than a minute"));
     const minutes = Math.round(remaining / MINUTE);
-    const unit = minutes < 60 ? "minute" : "hour";
-    const count = minutes < 60 ? minutes : Math.round(remaining / HOUR);
-    return `Next run in ${count} ${unit}${count === 1 ? "" : "s"}`;
+    if (minutes < 60) {
+      return resolve(
+        msg(
+          "{count, plural, one {Next run in {count} minute} other {Next run in {count} minutes}}",
+          { count: minutes },
+        ),
+      );
+    }
+    return resolve(
+      msg("{count, plural, one {Next run in {count} hour} other {Next run in {count} hours}}", {
+        count: Math.round(remaining / HOUR),
+      }),
+    );
   }
 
   const time = next.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -58,7 +88,7 @@ export function formatNextScheduledTaskRun(nextRunAt: string, now: number): stri
     day: "numeric",
     ...(next.getFullYear() !== current.getFullYear() ? { year: "numeric" as const } : {}),
   });
-  return `Next run ${date} at ${time}`;
+  return resolve(msg("Next run {date} at {time}", { date, time }));
 }
 
 export function formatScheduledTaskArchive(

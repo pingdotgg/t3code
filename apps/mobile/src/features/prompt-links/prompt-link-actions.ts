@@ -1,6 +1,11 @@
 import * as Dialog from "../../components/ui/Dialog";
+import * as Linking from "expo-linking";
 import type { LinkedPrompt } from "@t3tools/shared/promptLinks";
+import { msg } from "gt-react-native";
 
+import { m } from "../../i18n/messages";
+
+import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import {
   getComposerDraftSnapshot,
   setComposerDraftText,
@@ -9,7 +14,7 @@ import {
 import { linkedThreadDraftAction } from "./prompt-link-model";
 
 export function showPromptLinkNotice(notice: string): void {
-  Dialog.alert("Prompt from a link", notice);
+  Dialog.alert(m(msg("Prompt from a link")), notice);
 }
 
 export async function applyLinkedPromptToThreadDraft(
@@ -20,7 +25,10 @@ export async function applyLinkedPromptToThreadDraft(
   try {
     await waitForComposerDraftsLoaded();
   } catch {
-    Dialog.alert("Could not open link", "Drafts could not be loaded, so the prompt was not added.");
+    Dialog.alert(
+      m(msg("Could not open link")),
+      m(msg("Drafts could not be loaded, so the prompt was not added.")),
+    );
     return;
   }
   const action = linkedThreadDraftAction(getComposerDraftSnapshot(draftKey).text, prompt.text);
@@ -29,8 +37,21 @@ export async function applyLinkedPromptToThreadDraft(
     showPromptLinkNotice(notice);
     return;
   }
-  Dialog.alert("Linked prompt ready. Replace draft?", notice, [
-    { text: "Keep mine", style: "cancel" },
-    { text: "Replace", onPress: () => setComposerDraftText(draftKey, prompt.text) },
+  Dialog.alert(m(msg("Linked prompt ready. Replace draft?")), notice, [
+    { text: m(msg("Keep mine")), style: "cancel" },
+    {
+      text: m(msg("Replace", { $context: "verb, replaces the draft" })),
+      onPress: () => setComposerDraftText(draftKey, prompt.text),
+    },
   ]);
+}
+
+export async function copyPromptLink(prompt: string): Promise<void> {
+  if (
+    !(await tryCopyTextWithHaptic(Linking.createURL("new", { queryParams: { prompt } }), {
+      target: "prompt link",
+    }))
+  ) {
+    Dialog.alert(m(msg("Could not copy")), m(msg("Try again.")));
+  }
 }

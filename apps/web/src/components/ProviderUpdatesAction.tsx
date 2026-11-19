@@ -5,6 +5,7 @@ import {
   type UpdateCheckItem,
 } from "@t3tools/client-runtime/update-check";
 import { useRef, useState } from "react";
+import { T } from "gt-react";
 
 import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
@@ -135,7 +136,7 @@ export function ProviderUpdatesAction() {
             disabled={isPending}
             onClick={() => void handleUpdate()}
           >
-            {isPending ? "Updating…" : "Update all"}
+            {isPending ? <T>Updating…</T> : <T>Update all</T>}
           </Button>
         }
       />

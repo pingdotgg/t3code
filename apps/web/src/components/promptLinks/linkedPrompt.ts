@@ -1,6 +1,8 @@
 import type { LinkedPrompt } from "@t3tools/shared/promptLinks";
+import { msg } from "gt-react";
 
 import { type ComposerThreadTarget, useComposerDraftStore } from "~/composerDraftStore";
+import { m } from "~/i18n/messages";
 
 import { toastManager } from "../ui/toast";
 import { APP_NAME } from "@t3tools/shared/branding";
@@ -25,8 +27,8 @@ export function placeLinkedPrompt(
     useComposerDraftStore.getState().setPrompt(target, prompt.text);
     toastManager.add({
       type: "info",
-      title: "Prompt added from a link",
-      description: ["Read it before you send.", ...notes].join(" "),
+      title: m(msg("Prompt added from a link")),
+      description: [m(msg("Read it before you send.")), ...notes].join(" "),
     });
   };
   const existing = useComposerDraftStore.getState().getComposerDraft(target)?.prompt ?? "";
@@ -36,11 +38,11 @@ export function placeLinkedPrompt(
   }
   const id = toastManager.add({
     type: "info",
-    title: "Linked prompt ready",
-    description: "This thread already has a draft. Replace it with the linked prompt?",
+    title: m(msg("Linked prompt ready")),
+    description: m(msg("This thread already has a draft. Replace it with the linked prompt?")),
     timeout: 0,
     actionProps: {
-      children: "Replace draft",
+      children: m(msg("Replace draft")),
       onClick: () => {
         toastManager.close(id);
         place();

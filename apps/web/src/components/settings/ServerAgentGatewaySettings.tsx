@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { agentGatewayStatusLabel, type GatewayScope } from "@t3tools/client-runtime/gateway";
 import {
@@ -79,7 +80,13 @@ function ServerAgentGatewayRow({
   const rotate = useAtomCommand(serverEnvironment.rotateAgentGatewayToken);
   const [pending, setPending] = useState(false);
   const [token, setToken] = useState<string | null>(null);
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "gateway token" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: {
+      target: "gateway token",
+      unavailableMessage: msg("Clipboard API is unavailable while copying gateway token."),
+      failureMessage: msg("Failed to copy gateway token to the clipboard."),
+    },
+  });
   if (status === null || (status.host === "desktop" && !includeDesktopHosted)) return null;
 
   const run = async <A, E>(

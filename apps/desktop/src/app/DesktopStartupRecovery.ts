@@ -8,11 +8,13 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import type * as Electron from "electron";
+import { msg } from "gt-i18n";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import { m } from "../i18n/messages.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import type { BackendStartupFailure } from "../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -82,11 +84,17 @@ const actionLink = (action: StartupRecoveryAction, label: string, primary = fals
 function describeOffer(offer: StartupRecoveryOffer): { text: string; action: string } {
   switch (offer._tag) {
     case "Checking":
-      return { text: "Checking for a newer version…", action: "" };
+      return { text: m(msg("Checking for a newer version…")), action: "" };
     case "Update":
       return {
-        text: `Version ${offer.version} is available. It can contain a fix.`,
-        action: actionLink("update", `Update to ${offer.version}`, true),
+        text: m(msg("Version {version} is available. It can contain a fix."), {
+          version: offer.version,
+        }),
+        action: actionLink(
+          "update",
+          m(msg("Update to {version}"), { version: offer.version }),
+          true,
+        ),
       };
     case "Downloading":
       return {
@@ -95,13 +103,22 @@ function describeOffer(offer: StartupRecoveryOffer): { text: string; action: str
       };
     case "Reinstall":
       return {
-        text: `Version ${offer.version} started correctly on this computer. Download it and install it to go back.`,
-        action: actionLink("reinstall", `Download ${offer.version}`, true),
+        text: m(
+          msg(
+            "Version {version} started correctly on this computer. Download it and install it to go back.",
+          ),
+          { version: offer.version },
+        ),
+        action: actionLink(
+          "reinstall",
+          m(msg("Download {version}"), { version: offer.version }),
+          true,
+        ),
       };
     case "Releases":
       return {
-        text: "Get a different version from the releases page.",
-        action: actionLink("releases", "Open releases", true),
+        text: m(msg("Get a different version from the releases page.")),
+        action: actionLink("releases", m(msg("Open releases")), true),
       };
     case "ManagedPolicy":
       return {

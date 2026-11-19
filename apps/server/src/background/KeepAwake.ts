@@ -1,7 +1,10 @@
 import { APP_NAME } from "@t3tools/shared/branding";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schedule from "effect/Schedule";
@@ -18,14 +21,45 @@ import * as Settings from "../serverSettings.ts";
 // Bridges gaps between back-to-back runs, so a long-idle machine does not sleep mid-queue.
 const RELEASE_GRACE = Duration.seconds(60);
 
-/** Each command holds its inhibitor until it exits, and exits on its own if the server dies. */
+// ES_CONTINUOUS | ES_SYSTEM_REQUIRED, held by the calling thread until the script ends.
+const WINDOWS_HOLD_SCRIPT = `$t = Add-Type -Name Power -Namespace T3 -PassThru -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; [void]$t::SetThreadExecutionState([uint32]2147483649); [Console]::Out.WriteLine()`;
+
+/**
+ * Each command writes a line to stdout once it holds its inhibitor, holds it until it exits, and
+ * exits on its own if the server dies.
+ */
 function inhibitorCommand(
   platform: NodeJS.Platform,
   serverPid: number,
-): { readonly command: string; readonly args: ReadonlyArray<string> } | undefined {
+  isWsl: boolean,
+):
+  | {
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+      readonly stdin: "ignore" | "pipe";
+    }
+  | undefined {
+  // logind inside the WSL VM cannot block Windows sleep. Windows cannot wait on a Linux pid, so
+  // the hold ends when its stdin pipe closes, which also happens if the server dies.
+  if (isWsl) {
+    return {
+      command: "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `${WINDOWS_HOLD_SCRIPT}; [void][Console]::In.ReadToEnd()`,
+      ],
+      stdin: "pipe",
+    };
+  }
   switch (platform) {
     case "darwin":
-      return { command: "caffeinate", args: ["-i", "-w", String(serverPid)] };
+      return {
+        command: "sh",
+        args: ["-c", 'echo && exec caffeinate -i -w "$0"', String(serverPid)],
+        stdin: "ignore",
+      };
     case "linux":
       return {
         command: "systemd-inhibit",
@@ -34,11 +68,13 @@ function inhibitorCommand(
           `--who=${APP_NAME}`,
           "--why=Agents are working",
           "--mode=block",
-          "tail",
-          `--pid=${serverPid}`,
-          "-f",
-          "/dev/null",
+          // systemd-inhibit starts this only after logind grants the lock.
+          "sh",
+          "-c",
+          'echo && exec tail --pid="$0" -f /dev/null',
+          String(serverPid),
         ],
+        stdin: "ignore",
       };
     case "win32":
       return {
@@ -47,9 +83,9 @@ function inhibitorCommand(
           "-NoProfile",
           "-NonInteractive",
           "-Command",
-          // ES_CONTINUOUS | ES_SYSTEM_REQUIRED, held by this thread until Wait-Process returns.
-          `$t = Add-Type -Name Power -Namespace T3 -PassThru -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; [void]$t::SetThreadExecutionState([uint32]2147483649); Wait-Process -Id ${serverPid}`,
+          `${WINDOWS_HOLD_SCRIPT}; Wait-Process -Id ${serverPid}`,
         ],
+        stdin: "ignore",
       };
     default:
       return undefined;
@@ -92,12 +128,25 @@ const retryWithBackoff =
 
 class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExited>()(
   "KeepAwakeInhibitorExited",
-  { exitCode: Schema.Number },
-) {}
+  { exitCode: Schema.Number, stderr: Schema.String },
+) {
+  override get message(): string {
+    return `sleep inhibitor exited with code ${this.exitCode}${this.stderr ? `: ${this.stderr}` : ""}`;
+  }
+}
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const command = inhibitorCommand(yield* HostProcess.Platform, process.pid);
+    const platform = yield* HostProcess.Platform;
+    const fileSystem = yield* FileSystem.FileSystem;
+    // Services started by systemd lack WSL_DISTRO_NAME and WSL_INTEROP; the kernel release does not.
+    const isWsl =
+      platform === "linux" &&
+      (yield* fileSystem.readFileString("/proc/sys/kernel/osrelease").pipe(
+        Effect.map((release) => release.toLowerCase().includes("microsoft")),
+        Effect.orElseSucceed(() => false),
+      ));
+    const command = inhibitorCommand(platform, process.pid, isWsl);
     if (command === undefined) return;
     const settings = yield* Settings.ServerSettingsService;
     const events = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -154,29 +203,42 @@ export const layer = Layer.effectDiscard(
       }),
     );
 
-    const holdOnce = spawner
-      .spawn(
+    const holdOnce = Effect.gen(function* () {
+      const child = yield* spawner.spawn(
         ChildProcess.make(command.command, command.args, {
           detached: false,
           shell: false,
-          stdin: "ignore",
-          stdout: "ignore",
-          stderr: "ignore",
+          stdin: command.stdin,
+          stdout: "pipe",
+          stderr: "pipe",
         }),
-      )
-      .pipe(
-        Effect.tap((child) =>
-          Effect.logInfo("keep-awake holding sleep inhibitor", { pid: Number(child.pid) }),
-        ),
-        Effect.tap(() =>
-          Effect.addFinalizer(() => Effect.logInfo("keep-awake released sleep inhibitor")),
-        ),
-        Effect.flatMap((child) => child.exitCode),
-        Effect.flatMap((exitCode) =>
-          Effect.fail(new KeepAwakeInhibitorExited({ exitCode: Number(exitCode) })),
-        ),
-        Effect.scoped,
       );
+      const stderr = yield* child.stderr.pipe(
+        Stream.decodeText(),
+        Stream.mkString,
+        Effect.forkScoped,
+      );
+      const held = yield* Ref.make(false);
+      yield* Effect.addFinalizer(() =>
+        Effect.when(Effect.logInfo("keep-awake released sleep inhibitor"), Ref.get(held)),
+      );
+      yield* child.stdout.pipe(
+        Stream.take(1),
+        Stream.runForEach(() =>
+          Ref.set(held, true).pipe(
+            Effect.andThen(
+              Effect.logInfo("keep-awake holding sleep inhibitor", { pid: Number(child.pid) }),
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      const exitCode = yield* child.exitCode;
+      return yield* new KeepAwakeInhibitorExited({
+        exitCode: Number(exitCode),
+        stderr: (yield* Fiber.join(stderr)).trim(),
+      });
+    }).pipe(Effect.scoped);
     const hold = holdOnce.pipe(
       retryWithBackoff("keep-awake sleep inhibitor stopped"),
       Effect.ignore,

@@ -26,7 +26,7 @@ import {
 import type { TurnDiffSummary } from "../../types";
 import { describe, expect, it } from "vite-plus/test";
 import { MessageId, RunId } from "@t3tools/contracts";
-import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
+
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -36,7 +36,6 @@ import {
   isTimelineMinimapTurnVisible,
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
-  threadReadLabelPrefix,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
@@ -5147,17 +5146,6 @@ describe("subagent continued by a later turn", () => {
       `turn-fold:${run2}`,
       "closing-2",
     ]);
-  });
-});
-
-describe("threadReadLabelPrefix", () => {
-  it("recognizes every label the thread-read tool shows", () => {
-    const definition = resolveT3McpToolDefinition("mcp__t3-code__t3_thread_read");
-    if (definition === null) throw new Error("thread-read tool is not registered");
-    const [action, running, completed, detail] = definition.labels;
-    for (const verb of [action, running, completed]) {
-      expect(threadReadLabelPrefix(`${verb} ${detail}`)).toBe(`${verb} thread`);
-    }
   });
 });
 
