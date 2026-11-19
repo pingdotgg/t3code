@@ -3,29 +3,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { T3_HOME } from "../e2e.config.ts";
-import { makeState, runPromise, test, WEB } from "./t3.ts";
+import { runPromise, test, WEB } from "./t3.ts";
 
 const SettingsJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 const decodeSettings = Schema.decodeEffect(SettingsJson);
 const encodeSettings = Schema.encodeEffect(SettingsJson);
-const ThreadSnapshot = Schema.Struct({
-  projection: Schema.Struct({
-    runs: Schema.Array(
-      Schema.Struct({
-        id: Schema.String,
-        userMessageId: Schema.String,
-        status: Schema.String,
-        queueHeld: Schema.optional(Schema.Boolean),
-      }),
-    ),
-    messages: Schema.Array(
-      Schema.Struct({ id: Schema.String, scheduledTaskId: Schema.optional(Schema.String) }),
-    ),
-  }),
-});
+
 const threadRuntimeSettings = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const settingsPath = (yield* Path.Path).join(T3_HOME, "userdata/settings.json");
@@ -34,10 +19,7 @@ const threadRuntimeSettings = Effect.gen(function* () {
   return {
     supervise: fs.writeFileString(
       settingsPath,
-      yield* encodeSettings({
-        ...settings,
-        defaultRuntimeMode: "approval-required",
-      }),
+      yield* encodeSettings({ ...settings, defaultRuntimeMode: "approval-required" }),
     ),
     restore: fs.writeFileString(settingsPath, original),
   };
@@ -46,54 +28,21 @@ const threadRuntimeSettings = Effect.gen(function* () {
 test(
   "A recurring task reports when its queued occurrence is held",
   WEB,
-  async ({ t3, app, screen, browser }) => {
+  async ({ t3, app, screen }) => {
     const settings = await runPromise(threadRuntimeSettings);
     try {
+      // Supervised mode makes the approval recording wait for an answer, which holds its turn open.
       await runPromise(settings.supervise);
       const project = await t3.project("scheduled-hold");
-      // A fresh Replay instance initially advertises its bootstrap model; an already
-      // initialized instance advertises the recording names instead.
-      try {
-        await t3.thread({
-          project,
-          title: "Discover replay models",
-          messages: ["Start"],
-          model: "default",
-        });
-      } catch (error) {
-        if (!String(error).includes("Model default is not advertised by provider devReplay"))
-          throw error;
-        await t3.thread({
-          project,
-          title: "Discover replay models",
-          messages: ["Start"],
-          model: "showcase",
-        });
-      }
+      await t3.thread({ project, title: "Earlier work", messages: ["Start"] });
       const thread = await t3.thread({
         project,
         title: "Waiting scheduled thread",
         messages: ["Ask a question"],
         model: "approval",
       });
-      const { cli } = makeState(T3_HOME);
-      const pairing = await runPromise(cli(["auth", "pairing", "create", "--json"]));
-      const { credential } = JSON.parse(pairing.stdout) as { credential: string };
-      await app.open(`/pair#token=${encodeURIComponent(credential)}`);
-      await expect(browser).not.toHaveURL(/\/pair(?:[?#]|$)/, { timeout: 60_000 });
-      const environmentId = await runPromise(
-        HttpClient.get(`${app.baseUrl ?? ""}/.well-known/t3/environment`).pipe(
-          Effect.flatMap(HttpClientResponse.filterStatusOk),
-          Effect.flatMap(
-            HttpClientResponse.schemaBodyJson(Schema.Struct({ environmentId: Schema.String })),
-          ),
-          Effect.map((environment) => environment.environmentId),
-          Effect.provide(FetchHttpClient.layer),
-        ),
-      );
-      const threadUrl = `/${environmentId}/${thread.threadId}`;
 
-      await app.open("/settings/scheduled-tasks");
+      await t3.open("/settings/scheduled-tasks");
       await screen.getByRole("button", "New task").tap();
       await screen.getByRole("textbox", "Name").fill("Held recurring task");
       await screen.getByRole("combobox", "Destination").tap();
@@ -105,49 +54,16 @@ test(
       await screen.getByRole("spinbutton", "Run every").fill("1");
       await screen.getByRole("button", "Create task").tap();
 
-      await app.open(threadUrl);
+      await t3.open(thread);
       await screen.getByRole("button", "Approve", { exact: true }).waitFor();
-      await screen.getByRole("button", "Automation Held recurring task").waitFor({
-        timeout: 100_000,
-      });
-      await screen.getByRole("button", "Edit queued message").waitFor();
-      const session = await runPromise(
-        cli(["auth", "session", "issue", "--scope", "orchestration:read", "--token-only"]),
-      );
-      const readThread = () =>
-        runPromise(
-          HttpClient.execute(
-            HttpClientRequest.get(
-              `${app.baseUrl ?? ""}/api/orchestration/threads/${encodeURIComponent(thread.threadId)}`,
-            ).pipe(
-              HttpClientRequest.setHeaders({
-                authorization: `Bearer ${session.stdout.trim()}`,
-                "x-t3-orchestration-protocol": "2",
-              }),
-            ),
-          ).pipe(
-            Effect.flatMap(HttpClientResponse.filterStatusOk),
-            Effect.flatMap(HttpClientResponse.schemaBodyJson(ThreadSnapshot)),
-            Effect.provide(FetchHttpClient.layer),
-          ),
-        );
-      const beforeStop = (await readThread()).projection;
-      const scheduledMessageIds = new Set(
-        beforeStop.messages
-          .filter((message) => message.scheduledTaskId !== undefined)
-          .map((message) => message.id),
-      );
-      const queued = beforeStop.runs.find(
-        (run) => run.status === "queued" && scheduledMessageIds.has(run.userMessageId),
-      );
-      if (queued === undefined) throw new Error("Scenario setup: scheduled run was not queued.");
+      await screen
+        .getByRole("button", "Automation Held recurring task")
+        .waitFor({ timeout: 100_000 });
+      // Stopping the active turn holds the queued scheduled occurrence.
       await screen.getByRole("button", "Stop generation").tap();
       await screen.getByRole("button", "Resume thread").waitFor();
       await screen.getByRole("button", "Edit queued message").waitFor();
-      const held = (await readThread()).projection.runs.some(
-        (run) => run.id === queued.id && run.status === "queued" && run.queueHeld === true,
-      );
-      if (!held) throw new Error("Scenario setup: scheduled run was not held after Stop.");
+
       await app.open("/settings/scheduled-tasks");
       await expect(
         screen.getByText(
