@@ -98,8 +98,9 @@ Antigravity. Antigravity cannot rewind its own conversation, so the next turn
 starts a fresh Antigravity session and T3 Code sends it the kept conversation,
 without the turns you removed.
 
-Manual context compaction is unavailable through Antigravity's ACP runtime, even
-though its CLI has `/compact`. Send `/clear` when you need a fresh context.
+Use `/compact` to summarize a long conversation when your Antigravity runtime
+offers that command. If it is unavailable, update Antigravity in provider settings
+or send `/clear` when you need a fresh context.
 
 ### Skills and attachments
 
