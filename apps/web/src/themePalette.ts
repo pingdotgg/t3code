@@ -1634,6 +1634,11 @@ export function renameTheme(theme: ThemeDefinition, name: string): ThemeDefiniti
   });
 }
 
+// A theme keeps its id across renames.
+export function themeFileName(theme: ThemeDefinition): string {
+  return `${themeIdFromName(theme.label)}.json`;
+}
+
 export function serializeThemeFile(theme: ThemeDefinition): string {
   const canonicalTheme = canonicalizeThemeDefinition(theme);
   const file: ThemeFile = {
