@@ -1385,6 +1385,7 @@ it.effect("record reads filter notification sources without dropping matching me
       ["monitor", "user", "monitor"],
       ["system", "user", "system"],
       ["assistant-monitor", "assistant", "monitor"],
+      ["wake", "user", "wake"],
     ] as const) {
       yield* store.apply({
         id: EventId.make(`notification-filter:${id}`),
@@ -1406,13 +1407,21 @@ it.effect("record reads filter notification sources without dropping matching me
           updatedAt: now,
           ...(kind === null
             ? {}
-            : {
-                notification: {
-                  source: { kind },
-                  outcome: "updated",
-                  summary: "Background notification",
-                },
-              }),
+            : kind === "wake"
+              ? {
+                  delegatedCompletion: {
+                    parentRunId: RunId.make("run:wake-parent"),
+                    generation: 1,
+                    taskIds: [],
+                  },
+                }
+              : {
+                  notification: {
+                    source: { kind },
+                    outcome: "updated",
+                    summary: "Background notification",
+                  },
+                }),
         },
       });
     }
@@ -1424,11 +1433,19 @@ it.effect("record reads filter notification sources without dropping matching me
       matching.messages.map((message) => [message.id, message.text]),
       [["monitor", "Complete body for monitor"]],
     );
+    const delegatedTaskMessages = yield* store.getThreadRecords(threadId, ["messages"], {
+      messageRoles: ["user"],
+      delegatedTaskMessagesOnly: true,
+    });
+    assert.deepEqual(
+      delegatedTaskMessages.messages.map((message) => message.id),
+      ["monitor", "wake"],
+    );
     const { statements, tracer } = traceSqlStatements();
     const userMessages = yield* store
       .getThreadRecords(threadId, ["messages"], { messageRoles: ["user"] })
       .pipe(Effect.withTracer(tracer));
-    assert.lengthOf(userMessages.messages, 3);
+    assert.lengthOf(userMessages.messages, 4);
     const ordinalLookup = statements.find((statement) => statement.includes("MIN(ordinal)"));
     // User-only reads must seek the message-ordinal index instead of scanning every turn item.
     yield* assertReadsThroughMessageOrdinalIndex(ordinalLookup, ["thread_id=?", "<expr>=?"]);
@@ -1442,7 +1459,7 @@ it.effect("record reads filter notification sources without dropping matching me
       .pipe(Effect.withTracer(withItems.tracer));
     assert.deepEqual(ordered.messages, userMessages.messages);
     assert.isFalse(withItems.statements.some((statement) => statement.includes("MIN(ordinal)")));
-    assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 4);
+    assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 5);
     assert.lengthOf(
       (yield* store.getThreadRecords(threadId, ["messages"], {
         monitorNotificationsOnly: true,
@@ -1453,7 +1470,7 @@ it.effect("record reads filter notification sources without dropping matching me
       (yield* store.getThreadRecords(threadId, ["messages"], {
         monitorNotificationsOnly: false,
       })).messages,
-      4,
+      5,
     );
   }).pipe(Effect.provide(layerTest)),
 );

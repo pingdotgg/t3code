@@ -14649,9 +14649,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
    */
   const finalizeAppOwnedSubagentTask = Effect.fn("Orchestrator.finalizeAppOwnedSubagentTask")(
     function* (
-      childControls: ProjectionRecords<
-        "runs" | "messages" | "subagents" | "providerThreads" | "providerTurns" | "attempts"
-      >,
+      childControls: ProjectionRecords<"runs" | "messages" | "subagents" | "providerThreads">,
       options: {
         readonly settledContinuationOf?: RunId;
         readonly syncRunId?: RunId;
@@ -14760,19 +14758,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const resultRunIds = [childRun.id, ...reportRuns.map((run) => run.id)];
       const childResult = yield* projectionStore.getThreadRecords(
         childThreadId,
-        ["messages", "turnItems"],
+        ["messages", "turnItems", "providerTurns", "attempts"],
         {
           messageRoles: ["assistant"],
           messageRunIds: resultRunIds,
           turnItemRunIds: resultRunIds,
           turnItemTypes: ["assistant_message", "error", "system_notice"],
+          providerTurnAttemptIds: [childRun, ...reportRuns].flatMap(
+            (run) => run.activeAttemptId ?? [],
+          ),
+          attemptIds: childRun.activeAttemptId === null ? [] : [childRun.activeAttemptId],
         },
       );
+      // A steered run's attempt can point at a provider turn that another attempt started.
+      const attemptTurnId = childResult.attempts[0]?.providerTurnId;
+      const steeredTurns =
+        attemptTurnId == null ||
+        childResult.providerTurns.some((turn) => turn.runAttemptId === childRun.activeAttemptId)
+          ? []
+          : (yield* projectionStore.getThreadRecords(childThreadId, ["providerTurns"], {
+              providerTurnIds: [attemptTurnId],
+            })).providerTurns;
       const childProjection = {
         ...childControls,
         runs: reportRuns,
         messages: childResult.messages,
         turnItems: childResult.turnItems,
+        providerTurns: [...childResult.providerTurns, ...steeredTurns],
+        attempts: childResult.attempts,
       };
       const parentThreadId = childControls.thread.lineage.parentThreadId;
       // The task's node and turn item share its id.
@@ -14960,8 +14973,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) {
     const childControls = yield* projectionStore.getThreadRecords(
       childThreadId,
-      ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
-      { messageRoles: ["user"] },
+      ["runs", "messages", "subagents", "providerThreads"],
+      { messageRoles: ["user"], delegatedTaskMessagesOnly: true },
     );
     const parentThreadId = childControls.thread.lineage.parentThreadId;
     if (
