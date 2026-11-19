@@ -558,7 +558,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? [gt("Auto-settle merged threads")]
       : []),
     ...(settings.autoContinueHeavyThreads !== DEFAULT_UNIFIED_SETTINGS.autoContinueHeavyThreads
-      ? ["Continue context-heavy threads"]
+      ? [gt("Continue context-heavy threads")]
       : []),
     ...(settings.autoResumeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads
       ? [gt("Resume after usage limits")]
@@ -2111,8 +2111,10 @@ export function ThreadsSettingsPanel() {
           {!isProjectScope ? (
             <SettingsRow
               serverScoped
-              {...searchableSetting("auto-continue-heavy-threads")}
-              description="Let agents with T3 tools continue long tasks in a fresh thread with a handoff. Waits for active work to finish. Off by default."
+              {...setting("auto-continue-heavy-threads")}
+              description={gt(
+                "Let agents with T3 tools continue long tasks in a fresh thread with a handoff. Waits for active work to finish. Off by default.",
+              )}
               settingKeys={["autoContinueHeavyThreads"]}
               control={
                 <ScopedSwitch
@@ -2121,7 +2123,7 @@ export function ThreadsSettingsPanel() {
                   onCheckedChange={(checked) =>
                     updateSettings({ autoContinueHeavyThreads: Boolean(checked) })
                   }
-                  aria-label="Continue context-heavy threads"
+                  aria-label={gt("Continue context-heavy threads")}
                 />
               }
             />
