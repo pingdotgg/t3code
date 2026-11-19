@@ -9,7 +9,7 @@ import { Button } from "~/components/ui/button";
 import { renewDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
 import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile";
 import { deviceKeyboard, deviceModel } from "./deviceModels";
-import { fitDeviceFrame } from "./deviceFrameLayout";
+import { fitDeviceFrame, iphoneFrameCorners } from "./deviceFrameLayout";
 import { DeviceDuoViewport } from "./DeviceDuoViewport";
 import { DeviceDuoControls } from "./DeviceDuoControls";
 import { DeviceAndroidFoldControls } from "./DeviceAndroidFoldControls";
@@ -250,6 +250,10 @@ export function DeviceStreamView(props: {
     name: props.deviceName ?? "",
     portraitAspect: Math.min(aspect, 1 / aspect),
   });
+  const flatCorners =
+    profile.screenCornerRatio === undefined
+      ? undefined
+      : iphoneFrameCorners(frame, profile.screenCornerRatio);
 
   return (
     <div
@@ -351,8 +355,12 @@ export function DeviceStreamView(props: {
         }}
       >
         <div
-          className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
-          style={{ width: frame.width, height: frame.height }}
+          className={cn(
+            "relative select-none",
+            showPhone && "invisible pointer-events-none",
+            flatCorners && "overflow-hidden",
+          )}
+          style={{ width: frame.width, height: frame.height, ...flatCorners }}
           onPointerDown={(event) => {
             if (event.button !== 0 || !inputState.connected || activePointer.current !== null)
               return;
