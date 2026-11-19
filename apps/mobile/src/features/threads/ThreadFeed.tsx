@@ -2801,6 +2801,7 @@ function UserMessageContent(props: UserMessageContentProps) {
   const gt = useGT();
   const [selected, setSelected] = useState<{ contextId: string; label: string } | null>(null);
   const navigation = useNavigation();
+  const openThreadLink = useOpenThreadLink(props.environmentId);
   const { selectedThread } = useThreadSelection();
   const liveText = useLiveThreadLinkLabels(
     props.text,
@@ -2824,8 +2825,7 @@ function UserMessageContent(props: UserMessageContentProps) {
       return;
     }
     if (record?.kind === "thread" && "threadId" in record) {
-      // The feed's link handler decides between the thread itself and its linked read-only view.
-      props.linkHandlers.onLinkPress?.(hostedThreadLink(record));
+      openThreadLink(scopeThreadRef(record.environmentId, record.threadId));
       return;
     }
     const document = composerDocumentAttachmentRecord(record);
