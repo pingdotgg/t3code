@@ -1,9 +1,10 @@
+/// <reference lib="dom" />
 // `test` for web scenarios: e2e's web test plus `t3`, which seeds state and opens the signed-in
 // app. `t3-mobile.ts` is the same for the iOS app.
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeWS from "@effect/platform-node/NodeWS";
-import { test as base } from "@e2e-dev/web";
+import { test as base, type Browser } from "@e2e-dev/web";
 import { expect } from "e2e";
 import {
   CommandId,
@@ -58,6 +59,17 @@ export interface T3 extends T3State {
    * by its link is the reliable way to reach it: a sidebar row covers its own title text.
    */
   readonly open: (target?: string | T3Thread) => Promise<void>;
+}
+
+/** The editor renders in a shadow root that screen locators cannot reach. */
+export function readEditorText(browser: Browser) {
+  return browser.evaluate(() => {
+    for (const host of document.querySelectorAll("*")) {
+      const content = host.shadowRoot?.querySelector("[data-content]");
+      if (content) return content.textContent ?? "";
+    }
+    return null;
+  });
 }
 
 /** e2e's fixtures are promise functions; this is the one place an Effect becomes a promise. */

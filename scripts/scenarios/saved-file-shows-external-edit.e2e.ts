@@ -4,7 +4,7 @@ import { expect } from "e2e";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
-import { runPromise, test, WEB } from "./t3.ts";
+import { readEditorText, runPromise, test, WEB } from "./t3.ts";
 
 const chmod = (path: string, mode: number) =>
   runPromise(Effect.flatMap(FileSystem.FileSystem, (fs) => fs.chmod(path, mode)));
@@ -48,7 +48,7 @@ test(
         },
         { after, entry },
       );
-    // The file tree and editor render in shadow roots that locators do not reach.
+    // The file tree renders in a shadow root that locators do not reach.
     const openTreeRow = (path: string) =>
       browser.evaluate((path) => {
         for (const host of document.querySelectorAll("*")) {
@@ -60,15 +60,6 @@ test(
         }
         return false;
       }, path);
-    const editorText = () =>
-      browser.evaluate(() => {
-        for (const host of document.querySelectorAll("*")) {
-          const content = host.shadowRoot?.querySelector("[data-content]");
-          if (content) return content.textContent ?? "";
-        }
-        return null;
-      });
-
     const project = await t3.project("demo", { "notes.txt": "before save" });
     const notes = `${project}/notes.txt`;
     const thread = await t3.thread({ project, title: "Notes", messages: ["first"] });
@@ -77,7 +68,7 @@ test(
     await screen.getByRole("button", "Toggle right panel").tap();
     await screen.getByText("Files").tap();
     await expect.poll(() => openTreeRow("notes.txt")).toBe(true);
-    await expect.poll(editorText).toContain("before save");
+    await expect.poll(() => readEditorText(browser)).toContain("before save");
 
     // Requires a non-root server and in-place writes: autosave succeeds, confirmation read fails.
     await chmod(notes, 0o200);
@@ -96,6 +87,6 @@ test(
       .poll(() => loggedAfter("projects.readFile:Failure", "projects.readFile:Success"))
       .toBe(true);
     await app.screenshot("after-external-edit");
-    await expect.poll(editorText).toContain("external update");
+    await expect.poll(() => readEditorText(browser)).toContain("external update");
   },
 );
