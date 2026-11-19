@@ -3160,6 +3160,7 @@ it.live("reloads a symlinked settings file after its target directory is replace
     assert.isTrue(Option.isSome(reloaded));
   }).pipe(
     Effect.scoped,
+    // @effect-diagnostics-next-line multipleEffectProvide:off -- the settings layer reads the Node services provided below.
     Effect.provide(layerServerSettings()),
     Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   ),
