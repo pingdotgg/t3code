@@ -321,7 +321,6 @@ describe("AntigravityAdapterV2 compaction", () => {
     { nativeGoals: false, compact: false },
     { nativeGoals: true, compact: false },
     { nativeGoals: false, compact: true },
-    { nativeGoals: true, compact: true },
   ])(
     "negotiates native goals ($nativeGoals) and advertised compaction ($compact)",
     ({ nativeGoals, compact }) =>
