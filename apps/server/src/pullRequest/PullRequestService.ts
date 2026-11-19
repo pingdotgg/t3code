@@ -1715,7 +1715,8 @@ export const make = Effect.gen(function* () {
                 );
               }
               if (fetched.length === 0 && unresolved.has(key)) {
-                return quiet.has(key) && cursorOf(project) === undefined
+                // Only "all": a PR leaving a state view drops out of its search without a newer row.
+                return quiet.has(key) && input.state === "all" && cursorOf(project) === undefined
                   ? quietRead(project)
                   : readRepository(project);
               }

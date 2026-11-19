@@ -3323,7 +3323,7 @@ const quietWorkspace = (input: {
       }),
     ],
   });
-const everyListing = { state: "open" as const };
+const everyListing = { state: "all" as const };
 // Past the listing cache, so each list reads the host again.
 const afterListingCache = TestClock.adjust("31 seconds");
 
@@ -3532,6 +3532,14 @@ it.effect("reads a silent repository every time unless search vouches it quiet",
     yield* afterListingCache;
     yield* service.list(everyListing);
     assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/api", "acme/docs"]);
+
+    // A PR merged or closed elsewhere just leaves the Open search, so that view never reuses.
+    reads.length = 0;
+    const open = { state: "open" as const };
+    yield* service.list(open);
+    yield* afterListingCache;
+    yield* service.list(open);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/api", "acme/docs", "acme/docs"]);
   }),
 );
 
