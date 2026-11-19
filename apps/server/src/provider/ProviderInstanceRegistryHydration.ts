@@ -131,8 +131,7 @@ export const seedDevReplayInstance = Effect.fn(
 const vaultConfigs = (settings: ServerSettings) =>
   Object.entries(settings.secretProviders).map(([id, { kind, config }]) => [id, kind, config]);
 
-/** The host the hydrated provider drivers receive. */
-// A host built earlier lacks PortDiscovery; build this one fresh.
+// A host built earlier (for the ACP registry) lacks PortDiscovery; build this one fresh.
 export const providerHostLayer = Layer.fresh(ProviderHostLive.layer);
 
 export const layerSettingsWatcher = (
