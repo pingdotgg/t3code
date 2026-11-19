@@ -9,7 +9,8 @@ import {
   type HeldIssuePage,
 } from "@t3tools/client-runtime/issue-list";
 import { issueTrackerDetailText } from "@t3tools/client-runtime/state/issue-trackers";
-import { issueEntryKey } from "@t3tools/client-runtime/state/issues";
+import { issueEntryKey, type MergedIssueList } from "@t3tools/client-runtime/state/issues";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import type {
   EnvironmentId,
   IssueInvolvement,
@@ -78,6 +79,7 @@ import { SidebarInset } from "~/components/ui/sidebar";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { usePanelAnimationSettings, usePanelPresence } from "~/panelAnimations";
@@ -186,6 +188,42 @@ function hostOptionsFor(
   ];
 }
 
+// Keep row identities tied to the loaded list and its filters so opening a detail tab can
+// update the selected rows without projecting the whole list again.
+function useIssueGroups({
+  answers,
+  host,
+  query,
+  projects,
+  order,
+}: {
+  answers: MergedIssueList["answers"];
+  host: string | undefined;
+  query: string;
+  projects: ReadonlyArray<EnvironmentProject>;
+  order: IssueListSort;
+}) {
+  const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
+  const held = holdIssuePages(answers, pages);
+  const shown = host
+    ? new Map(
+        [...held].map(([environmentId, page]) => [
+          environmentId,
+          {
+            ...page,
+            answer: {
+              ...page.answer,
+              trackers: page.answer.trackers.filter(
+                (tracker) => tracker.host.toLowerCase() === host,
+              ),
+            },
+          },
+        ]),
+      )
+    : held;
+  return { held, shown, groups: groupIssues(shown, query, projects, order), setPages };
+}
+
 export function IssuesPage() {
   const gt = useGT();
   const resolve = useMessages();
@@ -235,8 +273,14 @@ export function IssuesPage() {
     { key: JSON.stringify(targets) },
   );
 
-  const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
-  const held = holdIssuePages(list.answers, pages);
+  // The server names every tracker so the menu can switch hosts, but reads only the chosen one.
+  const { held, shown, groups, setPages } = useIssueGroups({
+    answers: list.answers,
+    host: search.host?.toLowerCase(),
+    query: debouncedQuery,
+    projects,
+    order: search.order ?? "updated",
+  });
   const loadPage = useAtomCommand(issueEnvironment.listPage, { reportFailure: false });
   const [loadingMore, setLoadingMore] = useState<string | null>(null);
   // One tracker group's button carries on that tracker's scopes only.
@@ -267,27 +311,6 @@ export function IssuesPage() {
     });
   };
 
-  // Rows grouped per tracker account, so a tracker that cannot be read says so where its rows
-  // would be, and each tracker's rows carry on from their own cursors.
-  // The server names every tracker so the menu can switch hosts, but reads only the chosen one.
-  const chosenHost = search.host?.toLowerCase();
-  const shown = chosenHost
-    ? new Map(
-        [...held].map(([environmentId, page]) => [
-          environmentId,
-          {
-            ...page,
-            answer: {
-              ...page.answer,
-              trackers: page.answer.trackers.filter(
-                (tracker) => tracker.host.toLowerCase() === chosenHost,
-              ),
-            },
-          },
-        ]),
-      )
-    : held;
-  const groups = groupIssues(shown, debouncedQuery, projects, search.order ?? "updated");
   const filterScopes = issueFilterScopes(shown, projects, scopedProject);
 
   const hostOptions = hostOptionsFor(
@@ -387,7 +410,7 @@ export function IssuesPage() {
         : clearedSelection,
     );
 
-  const selectEntry = (entry: IssueRowTarget) => {
+  const selectEntry = useStableCallback((entry: IssueRowTarget) => {
     if (rightPanelRef === null) return;
     useRightPanelStore.getState().openIssue(rightPanelRef, entry);
     updateSearch({
@@ -398,7 +421,7 @@ export function IssuesPage() {
       scope: entry.scope,
       key: entry.key,
     });
-  };
+  });
 
   // A link into the page names an issue before any row was pressed.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the URL-linked issue in the right panel store
