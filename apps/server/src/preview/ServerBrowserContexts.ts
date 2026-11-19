@@ -66,8 +66,13 @@ interface Options {
   ) => Promise<{ readonly path: string; readonly release: () => Promise<void> } | undefined>;
   readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
+<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
   /** Chrome's environment on a display, or undefined to run headless. */
   readonly display?: (env: NodeJS.ProcessEnv) => Promise<NodeJS.ProcessEnv | undefined>;
+=======
+  /** Names Chrome in the browser's own user agent, which is all a service worker ever sends. */
+  readonly chrome: { readonly version: string; readonly platform: NodeJS.Platform };
+>>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
   /** Closes the shared browser once it has held no context for this long. */
   readonly idleBrowserMs?: number;
   readonly onContextClose?: (context: BrowserContext) => void;
@@ -79,18 +84,36 @@ const UA_PLATFORMS: Partial<Record<NodeJS.Platform, string>> = {
   win32: "Windows",
 };
 
+// Chrome froze its user agent apart from the major version.
+const UA_SYSTEMS: Partial<Record<NodeJS.Platform, string>> = {
+  darwin: "Macintosh; Intel Mac OS X 10_15_7",
+  linux: "X11; Linux x86_64",
+  win32: "Windows NT 10.0; Win64; x64",
+};
+
+const chromeToken = (major: string) => `Chrome/${major}.0.0.0`;
+
+const chromeUserAgent = (chrome: Options["chrome"]) => {
+  const major = /^\d+/.exec(chrome.version)?.[0];
+  const system = UA_SYSTEMS[chrome.platform];
+  return major && system
+    ? `Mozilla/5.0 (${system}) AppleWebKit/537.36 (KHTML, like Gecko) ${chromeToken(major)} Safari/537.36`
+    : null;
+};
+
 /** Change user agent and Sec-CH-UA together; sites block mismatches. */
 const chromeIdentity = (
-  headlessUserAgent: string,
+  browser: { readonly product: string; readonly userAgent: string },
   host: { readonly platform: NodeJS.Platform; readonly arch: string; readonly release: string },
 ) => {
-  const version = /HeadlessChrome\/((\d+)[\d.]*)/.exec(headlessUserAgent);
+  // A launch that already named Chrome in the user agent still reports the headless product.
+  const version = /^(?:Headless)?Chrome\/((\d+)[\d.]*)/.exec(browser.product);
   const fullVersion = version?.[1];
   const major = version?.[2];
   if (!version || !fullVersion || !major) return null;
   const brands = (names: (version: string) => string) => chromeBrands(Number(major), names);
   return {
-    userAgent: headlessUserAgent.replace(version[0], `Chrome/${major}.0.0.0`),
+    userAgent: browser.userAgent.replace(/HeadlessChrome\/[\d.]+/, chromeToken(major)),
     userAgentMetadata: {
       brands: brands((value) => value),
       fullVersionList: brands((value) => (value === major ? fullVersion : `${value}.0.0.0`)),
@@ -109,8 +132,8 @@ export const presentAsChrome = async (
   cdp: CDPSession,
   host: { readonly platform: NodeJS.Platform; readonly arch: string },
 ) => {
-  const { userAgent } = await cdp.send("Browser.getVersion");
-  const identity = chromeIdentity(userAgent, { ...host, release: NodeOS.release() });
+  const browser = await cdp.send("Browser.getVersion");
+  const identity = chromeIdentity(browser, { ...host, release: NodeOS.release() });
   if (identity) await cdp.send("Emulation.setUserAgentOverride", identity);
 };
 
@@ -131,7 +154,12 @@ export class ServerBrowserContexts {
   private async launchOptions() {
     const executable = await this.options.executable();
     const env = this.options.env ?? process.env;
+<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
     const display = await this.options.display?.(env);
+=======
+    // A page's override never reaches its workers, so the browser itself must name Chrome.
+    const userAgent = chromeUserAgent(this.options.chrome);
+>>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
     return {
       executable,
       env: display ?? env,
@@ -139,6 +167,7 @@ export class ServerBrowserContexts {
         "--disable-gpu",
         "--force-device-scale-factor=2",
         "--disable-blink-features=AutomationControlled",
+        ...(userAgent ? [`--user-agent=${userAgent}`] : []),
       ],
       ignoreDefaultArgs: ["--enable-automation"],
       headless: display === undefined,

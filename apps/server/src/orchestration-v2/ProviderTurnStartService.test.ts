@@ -1,3 +1,7 @@
+import {
+  serializeAssistantCitation,
+  expandAssistantCitationsForProvider,
+} from "@t3tools/shared/assistantCitations";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "vite-plus/test";
@@ -20,6 +24,8 @@ import {
   RunId,
   ThreadId,
   ProjectId,
+  EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -2268,9 +2274,18 @@ effectIt.effect.each([
       const resendsOriginal =
         "unsentResume" in sideChat &&
         (!("acceptedResume" in sideChat) || "restartedResume" in sideChat);
-      expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
-        withInlineContext(context, resendsOriginal ? "Original request" : ""),
-      ]);
+      const texts = harness.startTurn.mock.calls.map(([turn]) => turn.message.text);
+      expect(texts).toHaveLength(1);
+      if (resendsOriginal || context === "") {
+        expect(texts[0]).toBe(
+          withInlineContext(context, resendsOriginal ? "Original request" : ""),
+        );
+      } else {
+        // A resume that has to carry context still tells the agent to continue.
+        const contextPrefix = withInlineContext(context, "");
+        expect(texts[0]?.startsWith(contextPrefix)).toBe(true);
+        expect(texts[0]?.slice(contextPrefix.length).trim()).not.toBe("");
+      }
       expect(harness.startTurn.mock.calls[0]?.[0].resume === true).toBe(
         context === "" && !resendsOriginal,
       );
@@ -2997,11 +3012,20 @@ effectIt.effect("does not mistake a failed state read for a superseded run", () 
   }),
 );
 
-effectIt.effect(
-  "signs out the existing native provider before opening the newly selected provider",
-  () =>
+effectIt.effect.each(["not_loaded", "error"] as const)(
+  "signs out the existing native provider before opening the newly selected provider with status %s",
+  (providerThreadStatus) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({ text: "/logout", previousNativeSession: true });
+      const initial = harness.projection();
+      harness.setProjection({
+        ...initial,
+        providerThreads: initial.providerThreads.map((thread) =>
+          thread.id === "new-provider-thread"
+            ? { ...thread, status: providerThreadStatus }
+            : thread,
+        ),
+      });
 
       yield* harness.start;
       yield* harness.start;
@@ -3027,6 +3051,9 @@ effectIt.effect(
       ]);
       expect(projection.providerTurns).toEqual([]);
       expect(projection.checkpoints).toEqual([]);
+      expect(
+        projection.providerThreads.find((thread) => thread.id === "new-provider-thread")?.status,
+      ).toBe(providerThreadStatus);
     }),
 );
 
@@ -3055,3 +3082,36 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect("rejects citation expansion before opening a provider session", () =>
+  Effect.gen(function* () {
+    const marker = serializeAssistantCitation({
+      version: 1,
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make("assistant"),
+      text: "\u0001".repeat(8_000),
+      start: 0,
+      end: 8_000,
+      prefix: "",
+      suffix: "",
+    });
+    const text = "x".repeat(80_000) + marker;
+    expect(text.length).toBeLessThan(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+    expect(expandAssistantCitationsForProvider(text).length).toBeGreaterThan(
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+    );
+    const harness = makeLocalCommandHarness({ text });
+    yield* harness.start;
+    expect(harness.open).not.toHaveBeenCalled();
+    expect(harness.startTurn).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    expect(harness.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        failure: { class: "validation_error", message: expect.stringContaining("120,000") },
+      },
+    ]);
+    expect(harness.projection().messages[0]?.text).toBe(text);
+  }),
+);

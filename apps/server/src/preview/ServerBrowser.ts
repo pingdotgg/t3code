@@ -612,6 +612,7 @@ const make = Effect.gen(function* () {
     display: (env) => display.env(env),
     idleBrowserMs: 5 * 60_000,
     executable: () => runPromise(previewBrowser.executable),
+    chrome: { version: PreviewBrowser.VERSION, platform: host.platform },
     // An agent scope keeps Chrome out of the server's memory protection and OOM score.
     launcher: async (executable) => {
       const launch = await runPromise(
@@ -1145,7 +1146,7 @@ const make = Effect.gen(function* () {
     const cdp = await context.newCDPSession(page);
     await installPdfDocumentNavigation(cdp);
     // The desktop's page is already a normal browser. A popup's first request
-    // went out before it became a tab; everything after presents as Chrome.
+    // precedes this override, so its Sec-CH-UA brands still name HeadlessChrome.
     if (!desktop) await presentAsChrome(cdp, host);
     if (!desktop) await recordCopies(cdp);
     page.setDefaultTimeout(NAVIGATION_TIMEOUT_MS);
@@ -1244,8 +1245,15 @@ const make = Effect.gen(function* () {
       });
       await cdp.send("Page.enable");
     }
-    const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) =>
-      request.isNavigationRequest() && request.frame() === page.mainFrame();
+    // Playwright's `request.frame()` throws for a request issued before its frame exists, and a
+    // throw from a page listener is uncaught, so such a request is not a main-frame navigation.
+    const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) => {
+      try {
+        return request.isNavigationRequest() && request.frame() === page.mainFrame();
+      } catch {
+        return false;
+      }
+    };
     const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
       if (!isMainNavigation(request)) return;
@@ -3439,7 +3447,13 @@ const make = Effect.gen(function* () {
     } satisfies ServerBrowserViewer;
   });
 
-  yield* manager.events.pipe(Stream.runForEach(mirrorManagerEvent), Effect.forkScoped);
+  // Subscribe before forking: a forked stream subscribes only once it runs, so a tab opened
+  // right after startup would publish its `opened` event to no one and never load.
+  const managerEvents = yield* manager.subscribeEvents;
+  yield* Stream.fromSubscription(managerEvents).pipe(
+    Stream.runForEach(mirrorManagerEvent),
+    Effect.forkScoped,
+  );
   if (
     !PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment) &&
     (yield* PreviewBrowserHost.sandboxBlocked)

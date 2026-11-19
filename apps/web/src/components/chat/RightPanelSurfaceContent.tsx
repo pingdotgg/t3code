@@ -194,7 +194,7 @@ export function RightPanelSurfaceContent(props: {
       }
       return (
         <IssueDetailPanel
-          key={surface.id}
+          key={`${surface.environmentId ?? props.environmentId}:${surface.id}`}
           environmentId={
             (surface.environmentId as EnvironmentId | undefined) ?? props.environmentId
           }

@@ -1891,6 +1891,15 @@ describe("ClaudeAdapterV2 resumeThread", () => {
           },
         });
         assert.equal(missing.nativeThreadRef?.nativeId, "native-thread-missing");
+
+        // An imported session's history lives only in its transcript.
+        const missingImport = yield* Effect.flip(
+          runtime.resumeThread({
+            providerThread: { ...missing, id: providerThread.id },
+            importedNativeSession: true,
+          }),
+        );
+        assert.equal(missingImport._tag, "ProviderAdapterResumeThreadError");
       }),
     ).pipe(
       Effect.provide(
@@ -6875,10 +6884,34 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
           appContext: [{ key: "mcp_app_item-1", text: note }],
         });
+        return lastOffered();
+      });
+      const lastOffered = () => {
         const content = harness.offeredMessages.at(-1)?.message.content;
         return typeof content === "string"
           ? content
           : (content ?? []).map((block) => (block.type === "text" ? block.text : "")).join("\n");
+      };
+      const steer = Effect.fnUntraced(function* (ordinal: number, note: string) {
+        const attemptId = `mcp-app-context-${ordinal}`;
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: RunId.make(`run-${attemptId}`),
+          providerThread: harness.providerThread,
+          providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make(`steer-${attemptId}-${harness.offeredMessages.length}`),
+            text: "What did the app report now?",
+            attachments: [],
+          },
+          appContext: [{ key: "mcp_app_item-1", text: note }],
+        });
+        return lastOffered();
       });
       const finishTurn = Effect.fnUntraced(function* (ordinal: number) {
         yield* harness.offerAndWait(
@@ -6901,8 +6934,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* finishTurn(1);
       // Already in Claude's history: resending it every turn would only grow the context.
       assert.notInclude(yield* runTurn(2, "Created Jira issue PROJ-42"), "PROJ-42");
+      // regression: #38541 a note the app changes mid-turn rides on the next steer, once.
+      assert.notInclude(yield* steer(2, "Created Jira issue PROJ-42"), "PROJ-42");
+      assert.include(yield* steer(2, "Created Jira issue PROJ-44"), "PROJ-44");
+      assert.notInclude(yield* steer(2, "Created Jira issue PROJ-44"), "PROJ-44");
       yield* finishTurn(2);
-      assert.include(yield* runTurn(3, "Created Jira issue PROJ-43"), "PROJ-43");
+      assert.notInclude(yield* runTurn(3, "Created Jira issue PROJ-44"), "PROJ-44");
+      yield* finishTurn(3);
+      assert.include(yield* runTurn(4, "Created Jira issue PROJ-43"), "PROJ-43");
       yield* harness.offerAndWait(
         claudeSdkFrame({
           type: "system",
@@ -6912,9 +6951,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           session_id: WAKE_NATIVE_SESSION,
         }),
       );
-      yield* finishTurn(3);
+      yield* finishTurn(4);
       // Compaction summarizes the note away, so the next turn carries it again.
-      assert.include(yield* runTurn(4, "Created Jira issue PROJ-43"), "PROJ-43");
+      assert.include(yield* runTurn(5, "Created Jira issue PROJ-43"), "PROJ-43");
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -12431,6 +12470,57 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        // Claude moves a long foreground command to the background mid-turn.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_foreground_command",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "toolu_moved_build",
+                  name: "Bash",
+                  input: { command: "vp run build" },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "foreground-command-launch",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "moved-build",
+            tool_use_id: "toolu_moved_build",
+            description: "vp run build",
+            is_backgrounded: false,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000205",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [
+              { task_id: WAKE_TASK_ID, task_type: "local_bash", description: "Audit" },
+              { task_id: "moved-build", task_type: "local_bash", description: "vp run build" },
+            ],
+            uuid: "00000000-0000-4000-8000-000000000206",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* harness.awaitTerminal(1);
 
@@ -12455,6 +12545,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           itemId: command.turnItem.id,
         };
         assert.deepInclude(afterStart.at(-1)?.providerThread.pendingBackgroundTasks?.[0], details);
+        const movedCommand = harness.events.find(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "toolu_moved_build",
+        );
+        assert.equal(movedCommand?.type, "turn_item.updated");
+        if (movedCommand?.type !== "turn_item.updated") return;
+        assert.deepInclude(afterStart.at(-1)?.providerThread.pendingBackgroundTasks?.[1], {
+          taskId: "moved-build",
+          command: "vp run build",
+          itemId: movedCommand.turnItem.id,
+        });
         yield* harness.offerAndWait(
           claudeSdkFrame({
             type: "system",
@@ -18443,11 +18545,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* startTurn(1, false);
       for (const frame of [
         roster([agentEntry("run-1")]),
-        makeSubagentTaskStartedFrame({
-          taskId: TASK_ID,
-          toolUseId: LAUNCH,
-          uuid: "00000000-0000-4000-8000-000000016101",
-        }),
+        {
+          ...makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: LAUNCH,
+            uuid: "00000000-0000-4000-8000-000000016101",
+          }),
+          run_id: "run-1",
+        },
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000016102", result: "LAUNCHED" }),
       ]) {
         yield* harness.offerAndWait(frame);
@@ -18499,11 +18604,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
         roster([]),
         roster([agentEntry("run-2")]),
-        makeSubagentTaskStartedFrame({
-          taskId: TASK_ID,
-          toolUseId: LAUNCH,
-          uuid: "00000000-0000-4000-8000-000000016107",
-        }),
+        {
+          ...makeSubagentTaskStartedFrame({
+            taskId: TASK_ID,
+            toolUseId: LAUNCH,
+            uuid: "00000000-0000-4000-8000-000000016107",
+          }),
+          run_id: "run-2",
+        },
       ]) {
         yield* harness.offerAndWait(frame);
       }
@@ -18561,6 +18669,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       yield* harness.until(() => subagentUpdates().at(-1)?.result === "DONE");
       assert.equal(subagentUpdates().at(-1)?.status, "completed");
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) => event.type === "message.updated" && event.message.text === "DONE",
+        ),
+      );
+      const childMessageTexts = new Map<string, string>();
+      for (const event of harness.events) {
+        if (event.type === "message.updated" && event.message.threadId === routing.childThreadId) {
+          childMessageTexts.set(event.message.id, event.message.text);
+        }
+      }
+      assert.deepEqual(
+        [...childMessageTexts.values()].filter((text) => text === "WAITING" || text === "DONE"),
+        ["WAITING", "DONE"],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

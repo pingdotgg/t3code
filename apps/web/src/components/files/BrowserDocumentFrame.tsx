@@ -13,6 +13,7 @@ import {
   readFilePreviewScroll,
   type HtmlRenderShortcut,
   htmlRenderShortcutsMessage,
+  HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
@@ -28,6 +29,7 @@ import {
 } from "@t3tools/shared/keybindings";
 import {
   lazy,
+  type ReactNode,
   Suspense,
   useEffect,
   useEffectEvent,
@@ -84,9 +86,15 @@ function PdfDocument(props: {
   src: string;
   title: string;
   documentKey: string;
+<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
   readingKey: FileReadingKey | undefined;
 }) {
   const [view, setView] = usePdfReadingView(props.readingKey);
+=======
+  actions?: ReactNode;
+}) {
+  const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
+>>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
   return (
     <PdfDocumentRevision
       key={props.documentKey}
@@ -95,6 +103,7 @@ function PdfDocument(props: {
       positionKey={props.documentKey}
       initialView={view}
       onViewChange={setView}
+      actions={props.actions}
     />
   );
 }
@@ -106,6 +115,7 @@ function PdfDocumentRevision(props: {
   positionKey: string;
   initialView: PdfViewState;
   onViewChange: (view: PdfViewState) => void;
+  actions?: ReactNode;
 }) {
   const [src] = useState(props.src);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
@@ -130,6 +140,7 @@ function PdfDocumentRevision(props: {
         positionKey={props.positionKey}
         initialView={props.initialView}
         onViewChange={props.onViewChange}
+        actions={props.actions}
       />
     </Suspense>
   );
@@ -149,8 +160,13 @@ export function BrowserDocumentFrame(props: {
   readonly documentKey?: string | undefined;
   /** Resource identity without its revision, so PDF reloads can retain the reading position. */
   readonly documentId?: string | undefined;
+<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
   /** Saves the PDF.js reading position across reloads. */
   readonly readingKey?: FileReadingKey | undefined;
+=======
+  /** Toolbar actions for the in-app PDF viewer; Chromium's own viewer brings its own. */
+  readonly pdfActions?: ReactNode;
+>>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
@@ -159,7 +175,11 @@ export function BrowserDocumentFrame(props: {
       documentKey={key}
       src={props.src}
       title={props.title}
+<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
       readingKey={props.readingKey}
+=======
+      actions={props.pdfActions}
+>>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
     />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
@@ -293,12 +313,17 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onContentHeight?: (height: number) => void;
+  /** Keeps the page's scrollIntoView calls from scrolling the host, for frames inline in the chat. */
+  readonly containScroll?: boolean | undefined;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
+  const [src] = useState(
+    () =>
+      `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}${props.containScroll ? HTML_RENDER_CONTAIN_SCROLL_FRAGMENT : ""}`,
+  );
   const [loaded, setLoaded] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const postTheme = () => {

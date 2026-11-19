@@ -155,6 +155,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.issuesComments]: "issues",
   [WS_METHODS.issuesTemplates]: "issues",
   [WS_METHODS.issuesCandidates]: "issues",
+  [WS_METHODS.issuesLinkedThreads]: "issues",
   [WS_METHODS.issuesCreate]: "issues",
   [WS_METHODS.issuesComment]: "issues",
   [WS_METHODS.issuesUpdate]: "issues",
