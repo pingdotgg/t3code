@@ -3453,17 +3453,56 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   });
 
+  const awaitSettlingSteerEffects = Effect.fn("Orchestrator.awaitSettlingSteerEffects")(function* (
+    threadId: ThreadId,
+    runIds?: ReadonlyArray<RunId>,
+    excludeMessageId?: MessageId,
+  ) {
+    const { turnItems, runs } = yield* projectionStore.getThreadRecords(
+      threadId,
+      ["turnItems", "runs"],
+      {
+        turnItemTypes: ["user_message"],
+        turnItemStatuses: ["pending"],
+        ...(runIds === undefined ? {} : { turnItemRunIds: runIds }),
+      },
+    );
+    for (const item of turnItems) {
+      if (
+        item.type !== "user_message" ||
+        item.messageId === excludeMessageId ||
+        (item.inputIntent !== "steer" && item.inputIntent !== "promoted_queued_to_steer") ||
+        runs.some((run) => run.id === item.runId && isActiveRun(run))
+      )
+        continue;
+      const effect = Option.getOrUndefined(
+        yield* effectOutbox.firstSteer(threadId, item.messageId),
+      );
+      if (
+        effect?.request.type === "provider-turn.steer" &&
+        (effect.status === "pending" || effect.status === "running")
+      ) {
+        yield* effectOutbox.awaitSettled(effect.id);
+      }
+    }
+  });
+
   // A steer still pending after its run ended was never read: the provider marks one it read
   // completed, and one Stop dropped cancelled. It runs next, in its place among waiting messages.
   const requeueUnreadSteers = Effect.fn("Orchestrator.requeueUnreadSteers")(function* (
     threadId: ThreadId,
     runIds?: ReadonlyArray<RunId>,
   ) {
-    const { turnItems } = yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
-      turnItemTypes: ["user_message"],
-      turnItemStatuses: ["pending"],
+    const pendingTurnItems = {
+      turnItemTypes: ["user_message" as const],
+      turnItemStatuses: ["pending" as const],
       ...(runIds === undefined ? {} : { turnItemRunIds: runIds }),
-    });
+    };
+    const { turnItems } = yield* projectionStore.getThreadRecords(
+      threadId,
+      ["turnItems"],
+      pendingTurnItems,
+    );
     const unread = turnItems.filter(
       (item) =>
         item.type === "user_message" &&
@@ -3483,16 +3522,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           candidate.runId === item.runId,
       );
       if (run === undefined || message === undefined || isActiveRun(run)) continue;
-      const firstSteerEffect = Option.getOrUndefined(
-        yield* effectOutbox.firstSteer(threadId, message.id),
-      );
-      if (firstSteerEffect?.request.type === "provider-turn.steer") {
-        if (firstSteerEffect.status === "pending" || firstSteerEffect.status === "running") {
-          yield* effectOutbox.awaitSettled(firstSteerEffect.id);
-        }
-        const settledSteer = Option.getOrUndefined(yield* effectOutbox.get(firstSteerEffect.id));
-        if (settledSteer?.status === "succeeded") continue;
-      }
       // Stop drops a steer it reached; say so, as the adapter does for steers it still held.
       if (yield* projectionStore.hasRunInterruptRequest(threadId, run.id)) {
         const now = yield* DateTime.now;
@@ -16376,13 +16405,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // place ahead of later messages to the same thread.
     const message =
       command.type === "thread.metadata.update" ? metadataUpdateContinuation(command) : command;
-    if (message?.type === "message.dispatch")
+    if (message?.type === "message.dispatch") {
+      yield* awaitSettlingSteerEffects(message.threadId, undefined, message.messageId).pipe(
+        mapDispatchError(command),
+      );
       return yield* messageIntake.withLock(
         message.threadId,
         mayStartSubagentFollowup(message)
           ? withSubagentParentLock(message.threadId, dispatch)
           : dispatch,
       );
+    }
     // Answering a message-mode question can also start a follow-up.
     return yield* command.type === "runtime-request.respond"
       ? withSubagentParentLock(command.threadId, dispatch)
@@ -16398,6 +16431,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // while writing child events, so nesting parent inside child would invert the order.
       // The keyed semaphores are neither reentrant nor deadlock-aware.
       if (delegatedTaskTerminalStatus(run.status) !== null) {
+        yield* awaitSettlingSteerEffects(threadId, [run.id]);
         // Before the parent hears of the failure: a pending continuation keeps the task open.
         if (run.status === "failed" && run.restartContinuationOfRunId !== undefined) {
           yield* threadDispatch.withLock(threadId, retryContinuationStart(threadId, run.id)).pipe(
