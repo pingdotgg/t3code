@@ -12401,7 +12401,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               // The first CLI exits without writing a frame.
               messages:
                 opened === 1
-                  ? Stream.empty.pipe(Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)))
+                  ? Stream.fail(
+                      new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                        method: "fromAsyncIterable",
+                        cause: new ClaudeAdapterV2.ClaudeCodeStartupExitError({
+                          status: "Claude Code process exited with code 1",
+                          guidance: "Check the server logs for the provider's output.",
+                          cause: new Error("Claude Code process exited with code 1"),
+                        }),
+                      }),
+                    ).pipe(Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)))
                   : Stream.fromQueue(sdkMessages),
               offer: () => Effect.void,
               setModel: () => Effect.void,
@@ -12466,6 +12475,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.include(
             Cause.pretty(started.cause),
             "Claude provider query ended before the turn could start.",
+          );
+          assert.include(
+            makeProviderFailure({ cause: started.cause }).message,
+            "Claude Code process exited with code 1 before it started.",
           );
         }
         const followUp = yield* harness.runtime

@@ -225,6 +225,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
+  providerProcessExitGuidance,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
@@ -679,6 +680,19 @@ export class ClaudeCodeRootRefusalError extends Schema.TaggedError<ClaudeCodeRoo
   }
 }
 
+export class ClaudeCodeStartupExitError extends Schema.TaggedError<ClaudeCodeStartupExitError>()(
+  "ClaudeCodeStartupExitError",
+  {
+    status: Schema.String,
+    guidance: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `${this.status} before it started. ${this.guidance}`;
+  }
+}
+
 class ClaudeMcpRegistrationTimeoutError extends Schema.TaggedError<ClaudeMcpRegistrationTimeoutError>()(
   "ClaudeMcpRegistrationTimeoutError",
   { phase: Schema.Literals(["initialize", "setMcpServers"]) },
@@ -795,18 +809,24 @@ const CLAUDE_PROCESS_EXIT_ERROR_CLASSES: ReadonlySet<unknown> = new Set([
 ]);
 
 // The SDK's exit Error appends Claude's stderr tail to `message`; `telemetryMessage` omits it.
-function claudeProcessExitFailure(
-  cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
-): { readonly message: string; readonly code: string } | undefined {
-  const error = Cause.squash(cause);
-  const sdkError = isClaudeAgentSdkQueryRunnerError(error) ? error.cause : error;
+function claudeProcessExit(
+  sdkError: unknown,
+): { readonly status: string; readonly code: string } | undefined {
   if (typeof sdkError !== "object" || sdkError === null) return undefined;
   const { errorClass, telemetryMessage } = sdkError as Record<string, unknown>;
   return typeof errorClass === "string" &&
     CLAUDE_PROCESS_EXIT_ERROR_CLASSES.has(errorClass) &&
     typeof telemetryMessage === "string"
-    ? { message: `${telemetryMessage}.`, code: errorClass }
+    ? { status: telemetryMessage, code: errorClass }
     : undefined;
+}
+
+function claudeProcessExitFailure(
+  cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
+): { readonly message: string; readonly code: string } | undefined {
+  const error = Cause.squash(cause);
+  const exit = claudeProcessExit(isClaudeAgentSdkQueryRunnerError(error) ? error.cause : error);
+  return exit === undefined ? undefined : { message: `${exit.status}.`, code: exit.code };
 }
 
 function closeClaudeQuery(queryRuntime: ClaudeQuery) {
@@ -1530,8 +1550,17 @@ export const layerQueryRunner: Layer.Layer<
                       );
                     }
                     const refusedRoot = !answered && stderrTail.includes(CLAUDE_ROOT_REFUSAL);
+                    const startupExit = answered ? undefined : claudeProcessExit(cause);
                     return yield* queryRunnerError(
-                      refusedRoot ? new ClaudeCodeRootRefusalError({ cause }) : cause,
+                      refusedRoot
+                        ? new ClaudeCodeRootRefusalError({ cause })
+                        : startupExit !== undefined
+                          ? new ClaudeCodeStartupExitError({
+                              status: startupExit.status,
+                              guidance: providerProcessExitGuidance(stderrTail),
+                              cause,
+                            })
+                          : cause,
                       "fromAsyncIterable",
                     );
                   }),
@@ -4790,6 +4819,8 @@ interface ClaudeLiveQueryContext {
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
+  // Why the CLI's message stream failed, for a turn that could not attach to it.
+  exitCause: Cause.Cause<ClaudeAgentSdkQueryRunnerError> | undefined;
 }
 
 interface ActiveClaudeToolCall {
@@ -11987,6 +12018,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resolvedTurnCwd,
               hostPlatform,
             ),
+            exitCause: undefined,
           };
           // One step, so the replaced process cannot exit between the install and the handoff.
           yield* Ref.update(queryContext, (replaced) => {
@@ -12045,6 +12077,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
+                if (exit._tag === "Failure") context.exitCause = exit.cause;
                 const heldContext = yield* Ref.get(activeTurn);
                 if (
                   (yield* Ref.get(queryContext))?.query === querySession &&
@@ -12242,6 +12275,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver: CLAUDE_PROVIDER,
                   detail: CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL,
+                  ...(querySession.exitCause === undefined
+                    ? {}
+                    : { cause: Cause.squash(querySession.exitCause) }),
                 });
               }
               if (
