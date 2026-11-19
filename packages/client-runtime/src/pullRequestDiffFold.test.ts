@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  applyPullRequestDiffFold,
+  createPullRequestDiffFoldState,
   isFileDiffCollapsed,
-  preserveFileDiffFolds,
   withFileDiffFold,
 } from "./pullRequestDiffFold.ts";
 
@@ -44,28 +45,51 @@ describe("withFileDiffFold", () => {
   });
 });
 
-describe("preserveFileDiffFolds", () => {
+describe("applyPullRequestDiffFold", () => {
   it.each([
     { before: null, after: "expanded", hiddenFold: true },
+    { before: "folded", after: "expanded", hiddenFold: true },
     { before: "expanded", after: "folded", hiddenFold: false },
   ] as const)(
     "keeps hidden folds when switching from $before to $after",
     ({ before, after, hiddenFold }) => {
-      const kept = preserveFileDiffFolds(
-        new Map([
-          ["hidden-explicit", !hiddenFold],
-          ["shown", after === "expanded"],
-        ]),
-        before,
+      const initial = createPullRequestDiffFoldState();
+      const previous =
+        before === null ? initial : applyPullRequestDiffFold(initial, before, null, null);
+      const next = applyPullRequestDiffFold(
+        {
+          ...previous,
+          choices: new Map([
+            ["hidden-explicit", !hiddenFold],
+            ["shown-source", after === "expanded"],
+          ]),
+        },
+        after,
+        null,
         [
-          { key: "hidden-viewed", viewed: true },
-          { key: "hidden-explicit", viewed: true },
+          { key: "hidden-viewed", viewed: true, hidden: true },
+          { key: "hidden-explicit", viewed: true, hidden: true },
+          { key: "shown-test", viewed: true, hidden: false },
         ],
       );
-      expect(isFileDiffCollapsed("hidden-viewed", after, kept, false)).toBe(hiddenFold);
-      expect(isFileDiffCollapsed("hidden-explicit", after, kept, false)).toBe(!hiddenFold);
-      expect(isFileDiffCollapsed("shown", after, kept)).toBe(after === "folded");
-      expect(isFileDiffCollapsed("later-page", after, kept)).toBe(after === "folded");
+      expect(isFileDiffCollapsed("hidden-viewed", next.testOverride, next.choices, false)).toBe(
+        hiddenFold,
+      );
+      expect(isFileDiffCollapsed("hidden-explicit", next.testOverride, next.choices)).toBe(
+        !hiddenFold,
+      );
+      expect(isFileDiffCollapsed("shown-test", next.testOverride, next.choices)).toBe(
+        after === "folded",
+      );
+      expect(isFileDiffCollapsed("shown-source", next.sourceOverride, next.choices)).toBe(
+        after === "folded",
+      );
+      expect(isFileDiffCollapsed("later-source", next.sourceOverride, next.choices)).toBe(
+        after === "folded",
+      );
+      expect(isFileDiffCollapsed("later-test", next.testOverride, next.choices, true)).toBe(
+        hiddenFold,
+      );
     },
   );
 });

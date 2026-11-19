@@ -1,8 +1,8 @@
 import {
+  applyPullRequestDiffFold,
+  createPullRequestDiffFoldState,
   isFileDiffCollapsed,
-  preserveFileDiffFolds,
   withFileDiffFold,
-  type DiffFoldOverride,
   type FileDiffFoldChoices,
 } from "@t3tools/client-runtime/pull-request-diff-fold";
 import {
@@ -83,6 +83,7 @@ import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
+  buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
   fnv1a32,
@@ -239,6 +240,18 @@ type DiffModel = {
 };
 const diffModels = new WeakMap<ReadonlyArray<DiffSlice>, Map<string, DiffModel>>();
 const patchHashes = new WeakMap<DiffSlice, number>();
+
+const foldKeys = new WeakMap<FileDiffMetadata, string>();
+
+// A fold choice survives edits elsewhere on the page, but expires when its own patch changes.
+function fileDiffFoldKey(file: FileDiffMetadata): string {
+  let key = foldKeys.get(file);
+  if (key === undefined) {
+    key = `${buildFileDiffIdentityKey(file)}\u0000${buildFileDiffContentVersion(file)}`;
+    foldKeys.set(file, key);
+  }
+  return key;
+}
 
 // Hashing, ordering and counting every file of a huge pull request costs a second, and the tab
 // renders far more often than its slices change, so the model is kept per slice list.
@@ -453,12 +466,19 @@ function PullRequestCodeTab({
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
   }));
-  // Render keys change when any file on a page changes; fold choices follow file identity.
-  const [foldChoices, setFoldChoices] = useState<FileDiffFoldChoices>(() => new Map());
+  const [foldState, setFoldState] = useState(createPullRequestDiffFoldState);
+  const defaultFoldOverride = settings.diffFilesCollapsed ? "folded" : null;
+  const foldOverrideForPath = (path: string) =>
+    (isTestChangedFile(path) ? foldState.testOverride : foldState.sourceOverride) ??
+    defaultFoldOverride;
+  const setFoldChoices = (update: (choices: FileDiffFoldChoices) => FileDiffFoldChoices) => {
+    setFoldState((current) => {
+      const choices = update(current.choices);
+      return choices === current.choices ? current : { ...current, choices };
+    });
+  };
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
-  const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
-  const effectiveFoldOverride = foldOverride ?? (settings.diffFilesCollapsed ? "folded" : null);
   const diffLayout = settings.diffLayout;
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? settings.wordWrap;
@@ -499,8 +519,7 @@ function PullRequestCodeTab({
     setLastViewedFileKey(null);
     setDraft(null);
     setSelectedLines(null);
-    setFoldChoices(new Map());
-    setFoldOverride(null);
+    setFoldState(createPullRequestDiffFoldState());
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
@@ -709,7 +728,7 @@ function PullRequestCodeTab({
       if (hasCutLines(data.patch)) cutFiles.add(file);
     } else withheldStatuses.set(path, "empty");
   });
-  // Open a withheld patch on first load. Refreshes keep the choice for that file.
+  // Open a withheld patch on first load, then let the saved choice follow that patch.
   const newlyShown = [...withheldFiles].filter(([path]) => !withheldLoads.shownPaths.has(path));
   if (newlyShown.length > 0) {
     setWithheldLoads({
@@ -718,7 +737,7 @@ function PullRequestCodeTab({
     });
     setFoldChoices((current) =>
       newlyShown.reduce(
-        (next, [, file]) => withFileDiffFold(next, buildFileDiffIdentityKey(file), false),
+        (next, [, file]) => withFileDiffFold(next, fileDiffFoldKey(file), false),
         current,
       ),
     );
@@ -946,9 +965,9 @@ function PullRequestCodeTab({
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
       const collapsed = isFileDiffCollapsed(
-        buildFileDiffIdentityKey(fileDiff),
-        effectiveFoldOverride,
-        foldChoices,
+        fileDiffFoldKey(fileDiff),
+        foldOverrideForPath(path),
+        foldState.choices,
         foldsAsViewed(path),
       );
       const viewedMark = filesViewedEnabled
@@ -994,14 +1013,11 @@ function PullRequestCodeTab({
   const toggleFile = (fileKey: string) => {
     const file = annotatedFiles.find((file) => file.fileKey === fileKey);
     if (file === undefined) return;
-    const foldKey = buildFileDiffIdentityKey(file.fileDiff);
+    const foldKey = fileDiffFoldKey(file.fileDiff);
     const viewed = foldsAsViewed(file.path);
+    const override = foldOverrideForPath(file.path);
     setFoldChoices((current) =>
-      withFileDiffFold(
-        current,
-        foldKey,
-        !isFileDiffCollapsed(foldKey, effectiveFoldOverride, current, viewed),
-      ),
+      withFileDiffFold(current, foldKey, !isFileDiffCollapsed(foldKey, override, current, viewed)),
     );
   };
 
@@ -1021,8 +1037,8 @@ function PullRequestCodeTab({
         (next, file) =>
           withFileDiffFold(
             next,
-            buildFileDiffIdentityKey(file.fileDiff),
-            effectiveFoldOverride === null ? undefined : viewed,
+            fileDiffFoldKey(file.fileDiff),
+            foldOverrideForPath(file.path) === null ? undefined : viewed,
           ),
         current,
       ),
@@ -1039,23 +1055,35 @@ function PullRequestCodeTab({
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
     // Record the unfold even when already open, so a Viewed mark that loads later cannot fold it.
-    setFoldChoices((current) =>
-      withFileDiffFold(current, buildFileDiffIdentityKey(item.fileDiff), false),
-    );
+    setFoldChoices((current) => withFileDiffFold(current, fileDiffFoldKey(item.fileDiff), false));
     if (range) setSelectedLines({ id: item.id, range });
     codeViewReveal.request(item.id, range);
   };
 
   const toggleAllFiles = () => {
-    setFoldOverride(allFilesCollapsed ? "expanded" : "folded");
     const shownFiles = new Set(files);
-    const hiddenFiles = loadedFiles
-      .filter((file) => !shownFiles.has(file))
-      .map((file) => ({
-        key: buildFileDiffIdentityKey(file),
-        viewed: foldsAsViewed(resolveFileDiffPath(file)),
-      }));
-    setFoldChoices((current) => preserveFileDiffFolds(current, effectiveFoldOverride, hiddenFiles));
+    const filteredTests = hideTestFiles
+      ? loadedFiles.flatMap((file) => {
+          const path = resolveFileDiffPath(file);
+          return isTestChangedFile(path)
+            ? [
+                {
+                  key: fileDiffFoldKey(file),
+                  viewed: foldsAsViewed(path),
+                  hidden: !shownFiles.has(file),
+                },
+              ]
+            : [];
+        })
+      : null;
+    setFoldState((current) =>
+      applyPullRequestDiffFold(
+        current,
+        allFilesCollapsed ? "expanded" : "folded",
+        defaultFoldOverride,
+        filteredTests,
+      ),
+    );
   };
 
   const orderedCommits = // GitLab preserves UTC offsets, so compare instants.
@@ -1217,7 +1245,7 @@ function PullRequestCodeTab({
       nextItem: CodeViewItem<ReviewAnnotationGroup>,
     ) => {
       if (nextItem.type !== "diff") return;
-      const foldKey = buildFileDiffIdentityKey(nextItem.fileDiff);
+      const foldKey = fileDiffFoldKey(nextItem.fileDiff);
       setFoldChoices((current) => withFileDiffFold(current, foldKey, nextItem.collapsed === true));
     },
   };

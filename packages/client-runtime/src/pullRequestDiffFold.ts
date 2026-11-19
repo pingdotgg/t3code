@@ -24,13 +24,40 @@ export function withFileDiffFold(
   return next;
 }
 
-/** Keep the effective fold of files excluded from a bulk fold change. */
-export function preserveFileDiffFolds(
-  choices: FileDiffFoldChoices,
-  foldOverride: DiffFoldOverride,
-  files: ReadonlyArray<{ readonly key: string; readonly viewed: boolean }>,
-): FileDiffFoldChoices {
-  return new Map(
-    files.map(({ key, viewed }) => [key, isFileDiffCollapsed(key, foldOverride, choices, viewed)]),
-  );
+export interface PullRequestDiffFoldState {
+  readonly sourceOverride: DiffFoldOverride;
+  readonly testOverride: DiffFoldOverride;
+  readonly choices: FileDiffFoldChoices;
+}
+
+export function createPullRequestDiffFoldState(): PullRequestDiffFoldState {
+  return { sourceOverride: null, testOverride: null, choices: new Map() };
+}
+
+/** Scope the bulk override to the filter at click time, including for files that load later. */
+export function applyPullRequestDiffFold(
+  current: PullRequestDiffFoldState,
+  override: NonNullable<DiffFoldOverride>,
+  defaultOverride: DiffFoldOverride,
+  filteredTests: ReadonlyArray<{
+    readonly key: string;
+    readonly viewed: boolean;
+    readonly hidden: boolean;
+  }> | null,
+): PullRequestDiffFoldState {
+  const choices = new Map<string, boolean>();
+  const previousTestOverride = current.testOverride ?? defaultOverride;
+  for (const { key, viewed, hidden } of filteredTests ?? []) {
+    choices.set(
+      key,
+      hidden
+        ? isFileDiffCollapsed(key, previousTestOverride, current.choices, viewed)
+        : override === "folded",
+    );
+  }
+  return {
+    sourceOverride: override,
+    testOverride: filteredTests === null ? override : current.testOverride,
+    choices,
+  };
 }
