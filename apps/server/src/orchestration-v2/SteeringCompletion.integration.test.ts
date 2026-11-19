@@ -1205,10 +1205,10 @@ it.effect("force sends multiple queued messages and can force send a requeued me
           targetRunId: started[0]!.runId,
         });
       });
-      yield* promote("one", "promote-one");
-      yield* promote("two", "promote-two");
       const firstConsumed = yield* consumedSteer(MessageId.make("message:one"));
       const secondConsumed = yield* consumedSteer(MessageId.make("message:two"));
+      yield* promote("one", "promote-one");
+      yield* promote("two", "promote-two");
       yield* worker.drain();
       yield* Fiber.join(firstConsumed);
       yield* Fiber.join(secondConsumed);
@@ -1223,8 +1223,8 @@ it.effect("force sends multiple queued messages and can force send a requeued me
         )?.status,
         "pending",
       );
-      yield* promote("one", "promote-one-again");
       const reconsumed = yield* consumedSteer(MessageId.make("message:one"));
+      yield* promote("one", "promote-one-again");
       yield* worker.drain();
       yield* Fiber.join(reconsumed);
       assert.deepEqual(steered, ["one", "two", "one"]);

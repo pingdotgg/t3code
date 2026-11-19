@@ -2543,20 +2543,34 @@ export const layerWithOptions = (
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
-              Effect.tap(() =>
+              Effect.andThen(() =>
                 runtime.reportsSteerStatus
                   ? Effect.void
-                  : publishToSubscribers(eventSubscribers, {
-                      type: "event",
-                      event: {
-                        type: "steer.updated",
-                        driver: runtime.driver,
+                  : providerEventIngestor
+                      .ingestNormalized({
+                        providerSessionId,
+                        providerInstanceId: runtime.instanceId,
                         threadId: input.threadId,
-                        runId: input.runId,
-                        messageId: input.message.messageId,
-                        status: "completed",
-                      },
-                    }),
+                        event: {
+                          type: "steer.updated",
+                          driver: runtime.driver,
+                          threadId: input.threadId,
+                          runId: input.runId,
+                          messageId: input.message.messageId,
+                          status: "completed",
+                        },
+                      })
+                      .pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new ProviderAdapter.ProviderAdapterEventStreamError({
+                              driver: runtime.driver,
+                              providerSessionId,
+                              raisedByT3: true,
+                              cause,
+                            }),
+                        ),
+                      ),
               ),
             ),
           // A provider starved of memory can stop answering, so no caller may wait on it unbounded.
