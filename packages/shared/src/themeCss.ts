@@ -12,7 +12,9 @@ const URL_OR_STRING = String.raw`url\((?![ \t\n\f\r]*["'])([^)]*)|url\([ \t\n\f\
 const CSS_TOKENS = new RegExp(String.raw`\/\*[\s\S]*?\*\/|${URL_OR_STRING}`, "gi");
 
 /**
- * Keep only the text needed for the stylesheet diagnostic or the stricter declaration guard.
+ * The code with its strings and comments removed, keeping `url(` where a quoted url() can load a
+ * file. A declaration value keeps a comment or quoted url() that holds an escape. In a stylesheet
+ * an unquoted url() is judged by its address too.
  */
 function withoutStrings(code: string, stylesheet: boolean): string {
   return code.replace(CSS_TOKENS, (token, address?: string, urlString?: string) => {
