@@ -607,7 +607,7 @@ describe("finite environment subscription lifecycle", () => {
 
 describe("environment query lifecycle", () => {
   it.effect(
-    "terminal metadata waits for snapshots and retains known sessions across restarts",
+    "terminal metadata retains known sessions until a new snapshot and keeps the manager identity",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeEnvironmentQueryHarness(Effect.void);
@@ -638,10 +638,9 @@ describe("environment query lifecycle", () => {
         const session = { ...QUERY_RPC_SESSION, client };
         yield* SubscriptionRef.set(harness.supervisorSession, Option.some(session));
         const atoms = createTerminalEnvironmentAtoms(harness.runtime);
-        const atom = atoms.metadata({
-          environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: null,
-        });
+        const target = { environmentId: QUERY_ENVIRONMENT.environmentId, input: null };
+        const atom = atoms.metadata(target);
+        const feed = atoms.metadataFeed(target);
         const registry = AtomRegistry.make();
         const observed: Array<ReadonlyArray<TerminalSummary>> = [];
         const unsubscribe = registry.subscribe(
@@ -665,9 +664,15 @@ describe("environment query lifecycle", () => {
         expect(selectEnvironmentQueryData(registry.get(atom))).toBeNull();
         expect(observed).toEqual([]);
 
-        yield* Queue.offer(events, { type: "snapshot", terminals: [checkout] });
+        yield* Queue.offer(events, {
+          type: "snapshot",
+          terminals: [checkout],
+          managerId: "manager-1",
+        });
         yield* Deferred.await(receivedCheckout);
         expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([checkout]);
+        const initialSnapshotId = selectEnvironmentQueryData(registry.get(feed))?.snapshotId;
+        expect(initialSnapshotId).toBe("manager-1");
 
         yield* SubscriptionRef.set(harness.supervisorSession, Option.some({ ...session }));
         yield* Queue.take(started);
@@ -677,9 +682,10 @@ describe("environment query lifecycle", () => {
         yield* Queue.take(started);
         expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([checkout]);
 
-        yield* Queue.offer(events, { type: "snapshot", terminals: [] });
+        yield* Queue.offer(events, { type: "snapshot", terminals: [], managerId: "manager-1" });
         yield* Deferred.await(receivedEmpty);
         expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([]);
+        expect(selectEnvironmentQueryData(registry.get(feed))?.snapshotId).toBe(initialSnapshotId);
       }),
   );
 
