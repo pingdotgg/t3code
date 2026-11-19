@@ -451,9 +451,13 @@ export const layer: Layer.Layer<
             projection.runs.some(
               (source) =>
                 source.id === handoff.targetRunId &&
-                (source.status === "failed" ||
+                // A settled delivery retires it: the session that took it holds it, and a
+                // fresh session starts from a full summary that covers it.
+                (((source.status === "failed" ||
                   source.status === "interrupted" ||
-                  source.status === "cancelled" ||
+                  source.status === "cancelled") &&
+                  handoff.delivery?.status !== "injected" &&
+                  handoff.delivery?.status !== "inline") ||
                   (source.status === "completed" &&
                     handoff.delivery === undefined &&
                     // Compaction and /goal turns defer history to the next turn.
