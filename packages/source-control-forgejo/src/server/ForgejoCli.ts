@@ -18,6 +18,9 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
 
+// A Gitea list page can hold 50 pull request bodies; tea's output is otherwise capped at 1 MB.
+const API_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+
 const encodeApiBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 export class ForgejoCliError extends Schema.TaggedError<ForgejoCliError>()("ForgejoCliError", {
@@ -184,7 +187,7 @@ export function matchForgejoLogin(
   requestedHost?: string,
   hostOnly = false,
 ) {
-  const matches = [
+  let matches = [
     ...new Map(
       logins
         .filter((login) => {
@@ -204,6 +207,13 @@ export function matchForgejoLogin(
         .map((login) => [login.name, login]),
     ).values(),
   ];
+  if (!remote.ssh && remote.path) {
+    // A root login matches every path on its host; the instance mounted deepest owns the remote.
+    const depth = (login: (typeof matches)[number]) =>
+      parseForgejoRemote(login.url)?.path.length ?? 0;
+    const deepest = Math.max(...matches.map(depth));
+    matches = matches.filter((login) => depth(login) === deepest);
+  }
   return matches.length === 1
     ? matches[0]
     : new Set(matches.map((login) => login.url)).size === 1
@@ -724,6 +734,7 @@ export const make = Effect.gen(function* () {
         `${repository.baseUrl}/api/v1/${path}`,
       ],
       ...(stdin === undefined ? {} : { stdin }),
+      maxOutputBytes: API_MAX_OUTPUT_BYTES,
     });
     // tea reports HTTP failures with exit code zero; use its response status.
     const status = Number(/^HTTP\/\S+ (\d{3})/m.exec(result.stderr)?.[1]);
@@ -756,6 +767,13 @@ export const make = Effect.gen(function* () {
                     : `Forgejo API request failed (HTTP ${status}).`,
       });
     }
+    if (result.stdoutTruncated)
+      return yield* new ForgejoCliError({
+        command: "tea",
+        cwd: input.cwd,
+        reason: "invalid-response",
+        detail: "Forgejo API response exceeded the output size limit.",
+      });
     return result;
   });
   return ForgejoCli.of({ execute, listLogins, getAccount, resolveRepository, api });

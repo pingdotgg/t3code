@@ -90,7 +90,7 @@ export const CursorProviderCapabilitiesV2 = {
   threads: {
     canCreateEmptyThread: true,
     canReadThreadSnapshot: true,
-    canRollbackThread: false,
+    canRollbackThread: true,
     canForkThread: false,
     canForkFromTurn: false,
     canForkFromSubagentThread: false,
@@ -162,8 +162,8 @@ export const CursorProviderCapabilitiesV2 = {
   checkpointing: {
     appCanCheckpointFilesystem: true,
     supportsNestedCheckpointScopes: true,
-    providerCanRollbackConversation: false,
-    providerRollbackReturnsSnapshot: false,
+    providerCanRollbackConversation: true,
+    providerRollbackReturnsSnapshot: true,
     providerCanReadConversationSnapshot: true,
   },
   identity: {
@@ -323,7 +323,12 @@ export function makeCursorAgentOptions(input: {
     local: {
       ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
       autoReview: policy.autoReview,
-      settingSources: [...CURSOR_AGENT_SETTING_SOURCES],
+      settingSources:
+        input.runtimePolicy.runtimeMode === "full-access" &&
+        !policy.autoReview &&
+        !policy.sandboxEnabled
+          ? [...CURSOR_AGENT_SETTING_SOURCES]
+          : CURSOR_AGENT_SETTING_SOURCES.filter((source) => source !== "project"),
       sandboxOptions: {
         enabled: policy.sandboxEnabled,
       },
@@ -969,8 +974,9 @@ interface ActiveCursorTurn {
   readonly assistant: ActiveCursorTextStream;
   assistantReply: CursorTransportFailure;
   readonly reasoning: ActiveCursorTextStream;
-  /** The user text this run sent, before runtime instructions; absent for /compress. */
+  /** The user text this run sent, before runtime instructions; absent for /compress and resume. */
   readonly prompt: string | undefined;
+  readonly message: string | SDKUserMessage;
   interrupted: boolean;
   finalized: boolean;
   /** The agent's latest turn ended and no new work has started since. */
@@ -1054,11 +1060,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly orchestration: boolean;
           readonly device: boolean;
         } | null>(null);
-        // Cursor drops a cancelled run from the conversation, so the next message carries its prompt.
+        // Cursor drops a run cancelled before its first checkpoint, so the next message carries its prompt.
         const interruptedPrompt = yield* Ref.make<{
           readonly agent: string;
+          readonly runId: string;
           readonly text: string;
+          readonly message: string | SDKUserMessage;
         } | null>(null);
+        // A native resume's own run may stop before it checkpoints; the request is still in history.
+        const resumedAgent = yield* Ref.make<string | null>(null);
         const warnedUnsupportedSandbox = yield* Ref.make(false);
         const activeTurn = yield* Ref.make<ActiveCursorTurn | null>(null);
         const planIds = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact["id"]>());
@@ -2452,7 +2462,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           if (input.status === "interrupted" && input.context.prompt !== undefined) {
             yield* Ref.set(interruptedPrompt, {
               agent: input.context.run.agentId,
+              runId: input.context.run.runId,
               text: input.context.prompt,
+              message: input.context.message,
             });
           }
           yield* Ref.update(activeTurn, (current) =>
@@ -2702,16 +2714,49 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const delivered =
               known?.agent === agent.nativeThreadId
                 ? known
-                : { orchestration: turnInput.runOrdinal > 1, device: false };
+                : {
+                    orchestration: turnInput.nativeThreadHasTurns ?? turnInput.runOrdinal > 1,
+                    device: false,
+                  };
             const interrupted = yield* Ref.get(interruptedPrompt);
-            const { message, prompt } = yield* resolveUserMessage(
-              turnInput,
-              mcpServers,
-              hasDeviceTools,
-              delivered,
-              interrupted?.agent === agent.nativeThreadId ? interrupted.text : undefined,
-            );
-            const compacted = prompt === undefined;
+            const runCheckpointed = (runId?: string) =>
+              agent.session.runCheckpointed?.(runId) ?? Effect.succeed(false);
+            const dropped =
+              interrupted?.agent === agent.nativeThreadId &&
+              !(yield* runCheckpointed(interrupted.runId))
+                ? interrupted
+                : undefined;
+            // Cursor's ResumeAction continues from the latest checkpoint, which only holds a stopped
+            // request once that run checkpointed; an earlier stop replays the request it dropped.
+            const resume =
+              turnInput.resume !== true
+                ? undefined
+                : dropped !== undefined
+                  ? ("replay" as const)
+                  : interrupted?.agent === agent.nativeThreadId ||
+                      (yield* Ref.get(resumedAgent)) === agent.nativeThreadId ||
+                      (yield* runCheckpointed())
+                    ? ("native" as const)
+                    : undefined;
+            if (turnInput.resume === true && resume === undefined) {
+              return yield* new ProviderAdapter.ProviderResumeUnsupportedError({
+                driver: CursorAgentSdk.CURSOR_PROVIDER,
+                providerThreadId: turnInput.providerThread.id,
+              });
+            }
+            const { message, prompt } =
+              resume === "native"
+                ? { message: "", prompt: undefined }
+                : resume === "replay"
+                  ? { message: dropped!.message, prompt: dropped!.text }
+                  : yield* resolveUserMessage(
+                      turnInput,
+                      mcpServers,
+                      hasDeviceTools,
+                      delivered,
+                      dropped?.text,
+                    );
+            const compacted = resume === undefined && prompt === undefined;
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
             // A send-time set replaces the create-time set, so the workspace servers go only here and are
@@ -2724,6 +2769,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               .send({
                 message,
                 summarize: compacted,
+                resume: resume === "native",
                 options: {
                   model: cursorSdkModelSelection(
                     turnInput.modelSelection,
@@ -2744,13 +2790,19 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 },
               })
               .pipe(Effect.mapError(classifyCursorModelRejection(turnInput.modelSelection)));
-            yield* Ref.set(told, {
-              agent: agent.nativeThreadId,
-              orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
-              device: !compacted && hasDeviceTools,
-            });
-            if (!compacted) {
+            // A resume sends no new instructions, and a native one still continues the stopped request.
+            if (resume === undefined) {
+              yield* Ref.set(told, {
+                agent: agent.nativeThreadId,
+                orchestration: !compacted && (delivered.orchestration || mcpServers !== undefined),
+                device: !compacted && hasDeviceTools,
+              });
+            }
+            if (!compacted && resume !== "native") {
               yield* Ref.set(interruptedPrompt, null);
+            }
+            if (!compacted) {
+              yield* Ref.set(resumedAgent, resume === "native" ? agent.nativeThreadId : null);
             }
             const startedAt = yield* DateTime.now;
             const completed = yield* Deferred.make<void, never>();
@@ -2777,6 +2829,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 nextSegment: 0,
               },
               prompt,
+              message,
               interrupted: false,
               finalized: false,
               turnEnded: false,
@@ -3009,6 +3062,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               ),
           ),
           startTurn,
+          resumeTurn: (input) => startTurn(ProviderAdapter.resumeTurnInput(input)),
           compactThread: (turnInput) =>
             startTurn({
               ...turnInput,
@@ -3194,15 +3248,106 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 ),
               ),
           ),
-          rollbackThread: (rollbackInput) =>
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterRollbackThreadError({
-                driver: CursorAgentSdk.CURSOR_PROVIDER,
-                providerThreadId: rollbackInput.providerThread.id,
-                checkpointId: rollbackInput.target.checkpointId,
-                cause: "Cursor Agent SDK does not expose conversation rollback.",
-              }),
-            ),
+          rollbackThread: Effect.fn("CursorAdapterV2.rollbackThread")(
+            function* (rollbackInput: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) {
+              const current = yield* Ref.get(activeTurn);
+              if (current !== null) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CursorAgentSdk.CURSOR_PROVIDER,
+                  detail: `Cannot roll back Cursor provider thread ${rollbackInput.providerThread.id} while turn ${current.providerTurnId} is active.`,
+                });
+              }
+              const threadId = rollbackInput.providerThread.appThreadId ?? input.threadId;
+              const { target } = rollbackInput;
+              // The kept turns may predate a compaction, so the instructions are sent again.
+              const forgetConversation = (agent: string) =>
+                Effect.all([
+                  Ref.set(told, { agent, orchestration: false, device: false }),
+                  Ref.set(interruptedPrompt, null),
+                  Ref.set(resumedAgent, null),
+                ]);
+              const now = yield* DateTime.now;
+              if (target.type === "provider_turn") {
+                const keptRunId = target.providerTurn.nativeTurnRef?.nativeId;
+                if (keptRunId == null) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CursorAgentSdk.CURSOR_PROVIDER,
+                    detail: `Provider turn ${target.providerTurn.id} has no Cursor run id.`,
+                  });
+                }
+                const agent = yield* openAgent({
+                  operation: "resume",
+                  agentId: nativeThreadId(rollbackInput.providerThread),
+                  storeCwd: rollbackInput.providerThread.nativeMetadata?.cursorStoreCwd,
+                  threadId,
+                  modelSelection: input.modelSelection,
+                  runtimePolicy: input.runtimePolicy,
+                });
+                if (agent.session.rewindAfterRun === undefined) {
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CursorAgentSdk.CURSOR_PROVIDER,
+                    detail: "This Cursor SDK session cannot rewind its conversation.",
+                  });
+                }
+                yield* agent.session.rewindAfterRun(keptRunId);
+                yield* forgetConversation(agent.nativeThreadId);
+                yield* agent.session.close.pipe(Effect.ignore);
+                yield* Ref.set(liveAgent, null);
+                return {
+                  providerThread: {
+                    ...rollbackInput.providerThread,
+                    providerSessionId: input.providerSessionId,
+                    status: "idle" as const,
+                    updatedAt: now,
+                  },
+                  providerTurns: [],
+                  messages: [],
+                  runtimeRequests: [],
+                };
+              }
+              // The first run starts without a checkpoint, so there is nothing to rewind onto.
+              const opened = yield* openAgent({
+                operation: "create",
+                threadId,
+                modelSelection: input.modelSelection,
+                runtimePolicy: input.runtimePolicy,
+              });
+              yield* forgetConversation(opened.nativeThreadId);
+              return {
+                providerThread: {
+                  ...rollbackInput.providerThread,
+                  providerSessionId: input.providerSessionId,
+                  nativeThreadRef: {
+                    driver: CursorAgentSdk.CURSOR_PROVIDER,
+                    nativeId: opened.nativeThreadId,
+                    strength: "strong" as const,
+                  },
+                  nativeConversationHeadRef: null,
+                  nativeMetadata: {
+                    ...rollbackInput.providerThread.nativeMetadata,
+                    cursorStoreCwd: opened.storeCwd,
+                  },
+                  status: "idle" as const,
+                  updatedAt: now,
+                },
+                providerTurns: [],
+                messages: [],
+                runtimeRequests: [],
+              };
+            },
+            (effect, rollbackInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                      driver: CursorAgentSdk.CURSOR_PROVIDER,
+                      providerThreadId: rollbackInput.providerThread.id,
+                      checkpointId: rollbackInput.target.checkpointId,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
           forkThread: (forkInput) =>
             Effect.fail(
               new ProviderAdapter.ProviderAdapterForkThreadError({
