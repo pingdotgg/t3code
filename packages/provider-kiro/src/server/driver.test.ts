@@ -139,6 +139,6 @@ it.layer(layerTest)("KiroDriver binary path", (it) => {
         [path.join("/test-home", ".local", "bin", "kiro-cli")],
       );
       assert.isTrue(snapshot.installed);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
