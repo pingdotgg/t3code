@@ -7,8 +7,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Context from "effect/Context";
+import { McpSchema } from "effect/ai";
 
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 
 it.effect("reports other missing capabilities with the neutral error", () => {
   const invocation: McpInvocationContext.McpInvocationScope = {
@@ -94,4 +97,46 @@ it("acts at an administrator's ceiling for a client approved above it", () => {
   ).toEqual({ runtimeMode: "approval-required", interactionMode: "plan" });
   expect(modes(scope("auto-accept-edits"), "auto").runtimeMode).toBe("auto-accept-edits");
   expect(modes(scope("full-access")).runtimeMode).toBe("full-access");
+});
+
+it.effect("hides fleet tools only while fleet management is off", () => {
+  const scope = (fleetAvailable?: boolean): McpInvocationContext.McpInvocationScope => ({
+    environmentId: EnvironmentId.make("environment-1"),
+    requestNamespace: "client:session-1",
+    thread: undefined,
+    client: undefined,
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 1,
+    ...(fleetAvailable === undefined ? {} : { fleetAvailable }),
+  });
+  const visible = (fleetAvailable?: boolean) =>
+    Effect.sync(() => McpInvocationContext.hiddenWhileFleetOff()).pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, scope(fleetAvailable)),
+    );
+
+  return Effect.gen(function* () {
+    expect(yield* visible(false)).toBe(false);
+    expect(yield* visible(true)).toBe(true);
+    expect(yield* visible(undefined)).toBe(true);
+
+    const enabledWhen = (name: string): boolean => {
+      const tool = OrchestratorToolkit.tools[name as keyof typeof OrchestratorToolkit.tools];
+      return Context.getOrUndefined(tool.annotations, McpSchema.EnabledWhen) !== undefined;
+    };
+    for (const fleetTool of [
+      "t3_environment_spawn",
+      "t3_environment_remove",
+      "t3_environment_list",
+    ]) {
+      expect(enabledWhen(fleetTool)).toBe(true);
+    }
+    for (const coreTool of [
+      "orchestrator_capabilities",
+      "t3_thread_list",
+      "list_scheduled_tasks",
+      "t3_thread_wait",
+    ]) {
+      expect(enabledWhen(coreTool)).toBe(false);
+    }
+  });
 });
