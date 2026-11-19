@@ -69,7 +69,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   const forwardable =
     useEnvironmentScope(props.environmentId, AuthTerminalOperateScope) &&
     environment?.connection.phase === "connected" &&
-    canForwardPorts(environment.entry.target);
+    canForwardPorts(environment);
   const locality = useForwardLocality(forwardable ? props.environmentId : null);
   const canForward = locality === "remote";
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
