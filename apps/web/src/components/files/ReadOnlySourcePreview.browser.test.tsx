@@ -88,31 +88,38 @@ describe("ReadOnlySourcePreview", () => {
     expect(copiedText(rows()[0]!)).toBe(contents);
   });
 
-  it("copies a partial selection after its rows scroll out of the mounted window", async () => {
-    await getSyntaxHighlighterPromise("text");
-    await using screen = await render(
-      <div className="flex h-[400px] flex-col">
-        <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
-      </div>,
-    );
-    const root = screen.container.querySelector("diffs-container")!.shadowRoot!;
-    const rows = () => root.querySelectorAll("[data-line]");
-    await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("line 1"));
+  it.each([
+    { contents: text, height: 400 },
+    { contents: text.split("\n").slice(0, 163).join("\n"), height: 800 },
+  ])(
+    "restores and copies a partial selection after scrolling away and back ($height px)",
+    async ({ contents, height }) => {
+      await getSyntaxHighlighterPromise("text");
+      await using screen = await render(
+        <div className="flex flex-col" style={{ height }}>
+          <ReadOnlySourcePreview name="notes.txt" text={contents} wordWrap={false} />
+        </div>,
+      );
+      const root = screen.container.querySelector("diffs-container")!.shadowRoot!;
+      const rows = () => root.querySelectorAll("[data-line]");
+      await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("line 1"));
 
-    const rowText = (line: number) =>
-      [...rows()].find((row) => row.textContent === `line ${line}`)!.querySelector("span")!
-        .firstChild!;
-    document.getSelection()!.setBaseAndExtent(rowText(5), 0, rowText(20), "line 20".length);
-    const selected = Array.from({ length: 16 }, (_, index) => `line ${index + 5}`).join("\n");
+      const rowText = (line: number) =>
+        [...rows()].find((row) => row.textContent === `line ${line}`)!.querySelector("span")!
+          .firstChild!;
+      document.getSelection()!.setBaseAndExtent(rowText(5), 0, rowText(20), "line 20".length);
+      const selected = Array.from({ length: 16 }, (_, index) => `line ${index + 5}`).join("\n");
 
-    const scroller = screen.container.querySelector(".file-preview-virtualizer")!;
-    scroller.scrollTop = scroller.scrollHeight;
-    await vi.waitFor(() => expect(rows()[0]?.textContent).not.toBe("line 1"));
-    scroller.scrollTop = 0;
-    await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("line 1"));
+      const scroller = screen.container.querySelector(".file-preview-virtualizer")!;
+      scroller.scrollTop = scroller.scrollHeight;
+      await vi.waitFor(() => expect(rows()[0]?.textContent).not.toBe("line 1"));
+      scroller.scrollTop = 0;
+      await vi.waitFor(() => expect(rows()[0]?.textContent).toBe("line 1"));
 
-    expect(copiedText(rows()[0]!) ?? document.getSelection()!.toString()).toBe(selected);
-  });
+      expect(document.getSelection()!.toString()).toBe(selected);
+      expect(copiedText(rows()[0]!) ?? document.getSelection()!.toString()).toBe(selected);
+    },
+  );
 
   it("drops a selection scrolled out of the mounted window when a click lands on its edge", async () => {
     await getSyntaxHighlighterPromise("text");
