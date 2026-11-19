@@ -442,6 +442,7 @@ export interface ThreadManagementServiceShape {
   readonly getThreadHistoryPage: Orchestrator.OrchestratorV2["Service"]["getThreadHistoryPage"];
   readonly getTimelinePage: Orchestrator.OrchestratorV2["Service"]["getTimelinePage"];
   readonly getMessageCount: Orchestrator.OrchestratorV2["Service"]["getMessageCount"];
+  readonly getRunCount: Orchestrator.OrchestratorV2["Service"]["getRunCount"];
   readonly getMessagesById: Orchestrator.OrchestratorV2["Service"]["getMessagesById"];
   readonly getTurnItem: (input: {
     readonly threadId: ThreadId;
@@ -1066,23 +1067,25 @@ const make = Effect.gen(function* () {
       input.freshContext && (input.mode === "steer" || input.mode === "restart")
         ? "queue"
         : input.mode;
+    const explicitSteer = mode === "steer" || mode === "restart";
+    const missingSteeringTarget = explicitSteer && steerableRun === undefined;
+    // A command receipt outlives its target turn. Dispatch validates and replays it.
+    if (missingSteeringTarget && !(yield* hasReceipt(input.commandId))) {
+      return yield* new ThreadManagementNoSteerableRunError({
+        threadId: input.threadId,
+        mode,
+      });
+    }
+
     let dispatchMode: Extract<
       OrchestrationV2Command,
       { readonly type: "message.dispatch" }
     >["dispatchMode"];
-    if (mode === "steer" || mode === "restart") {
-      if (steerableRun === undefined) {
-        return yield* new ThreadManagementNoSteerableRunError({
-          threadId: input.threadId,
-          mode,
-        });
-      }
+    if ((explicitSteer || mode === "auto") && steerableRun !== undefined) {
       dispatchMode = {
-        type: mode === "steer" ? "steer_active" : "restart_active",
+        type: mode === "restart" ? "restart_active" : "steer_active",
         targetRunId: steerableRun.id,
       };
-    } else if (mode === "auto" && steerableRun !== undefined) {
-      dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
     } else {
       dispatchMode = {
         type: mode === "queue" ? "queue_after_active" : "start_immediately",
@@ -1090,8 +1093,8 @@ const make = Effect.gen(function* () {
     }
 
     // Turn start would fail on its own after the send reported success; a replay keeps its answer.
-    // A live steer starts no turn, so it needs no workspace.
-    if (dispatchMode.type !== "steer_active") {
+    // A live steer and a receipt replay without a target turn need no workspace.
+    if (!missingSteeringTarget && dispatchMode.type !== "steer_active") {
       yield* worktreeRestore
         .restore(target.thread)
         .pipe(
@@ -1980,6 +1983,11 @@ const make = Effect.gen(function* () {
     getMessageCount: Effect.fn("ThreadManagementService.getMessageCount")(function (threadId) {
       return ensureProjectionTranscript(threadId).pipe(
         Effect.andThen(orchestrator.getMessageCount(threadId)),
+      );
+    }),
+    getRunCount: Effect.fn("ThreadManagementService.getRunCount")(function (threadId) {
+      return ensureProjectionTranscript(threadId).pipe(
+        Effect.andThen(orchestrator.getRunCount(threadId)),
       );
     }),
     getMessagesById: Effect.fn("ThreadManagementService.getMessagesById")(

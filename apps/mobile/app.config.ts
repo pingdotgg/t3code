@@ -238,6 +238,7 @@ const config: ExpoConfig = {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
+      UIViewControllerBasedStatusBarAppearance: true,
       NSLocalNetworkUsageDescription: `Allow ${APP_NAME} to connect to your environments on your local network or tailnet.`,
       NSPhotoLibraryAddUsageDescription: `Allow ${APP_NAME} to save images to your photo library.`,
       // System picture in picture needs background audio outside the app.

@@ -1,3 +1,5 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { msg, T, useMessages } from "gt-react";
 import { APP_NAME, CLI_COMMAND } from "@t3tools/shared/branding";
 import { useState } from "react";
 
@@ -9,9 +11,10 @@ import {
 } from "~/state/desktopCliCommand";
 import { useEnvironmentQuery } from "~/state/query";
 import { Button } from "../ui/button";
+import { m } from "../../i18n/messages";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const FAILURE_TITLES = {
   install: `Could not install ${CLI_COMMAND}`,
@@ -34,8 +37,11 @@ export function useDesktopCliCommand() {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: FAILURE_TITLES[action],
-            description: error instanceof Error ? error.message : "Something went wrong.",
+            title: m(FAILURE_TITLES[action]),
+            description:
+              error instanceof Error
+                ? (thrownErrorMessage(error, m) ?? error.message)
+                : m(msg("Something went wrong.")),
           }),
         );
       })
@@ -50,7 +56,9 @@ export function useDesktopCliCommand() {
 }
 
 export function CliCommandSettingsRow() {
+  const searchableSetting = useSearchableSetting();
   const { state, busy, run } = useDesktopCliCommand();
+  const resolve = useMessages();
 
   if (!state?.supported) return null;
   const installed = state.installedPath !== null;
@@ -76,7 +84,7 @@ export function CliCommandSettingsRow() {
         <div className="flex gap-2">
           {state.pathSetup && !state.pathSetup.added ? (
             <Button size="sm" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
-              Add to PATH
+              <T>Add to PATH</T>
             </Button>
           ) : null}
           <Button
@@ -85,7 +93,9 @@ export function CliCommandSettingsRow() {
             disabled={busy || (!installed && Boolean(state.shadowedBy))}
             onClick={() => run(installed ? "uninstall" : "install")}
           >
-            {installed ? "Remove" : "Install"}
+            {installed
+              ? resolve(msg("Remove", { $context: "verb, uninstalls the t3 command" }))
+              : resolve(msg("Install", { $context: "verb, installs the t3 command" }))}
           </Button>
         </div>
       }

@@ -15,32 +15,45 @@ Ada can run [fx](https://fx.sh). fx uses the login on the machine that runs the 
 
 If `fx` is not on the server's `PATH`, set **Binary path** to the executable.
 
+Ada supports fx 0.0.13 and later. Use the latest release when you can. macOS needs version 15 or later for fx releases after 0.0.13.
+
 Every fx instance on the same machine shares that machine's fx login. Ada does not keep a separate login per instance.
 
-## Models and effort
+## Update fx
 
-The model picker lists **Default** first. That option runs the model `fx status` reports on the server's machine. A model set only for one project in fx's settings is not picked up, so choose it from the list instead. If the thread's fx backend does not offer that model, the thread keeps its current one. The other entries come from `fx models`. A custom model you add in the provider settings goes to fx as is, and fx reports an error if its backend does not offer it.
+When a newer fx release is out, the fx card in **Settings → Providers** shows it. For standalone installs, **Update now** runs the instance's selected executable with `upgrade`, including one set in **Binary path**. For Homebrew's `fx-agent` formula, it uses the owning Homebrew installation to run `brew upgrade fx-agent` and checks Homebrew's release version. If that ownership cannot be confirmed, update through your package manager yourself. For mise-managed installs, Ada checks stable releases but leaves updates to your mise configuration. MacPorts and Nix installs are also left to their package manager.
+
+To update a standalone install manually, run `fx upgrade` on the server's machine. If **Binary path** is set, run that exact executable instead, for example `"/path/to/fx" upgrade`. Standalone version checks cover stable releases only. Use the same manual command to get newer dev builds on fx's dev channel. On macOS 14 or earlier, which newer fx releases do not support, Ada does not offer fx updates.
+
+## Backends, models, and effort
+
+fx can run models through several backends: Vercel AI Gateway, a Codex subscription, a Grok subscription, and any OpenAI-compatible endpoint you configure in fx's settings. In the model picker, the fx tab lists each backend under its own heading. Open a backend to see the models it offers, then pick one. Search lists every backend's models together.
+
+The backend is part of each thread's model choice, so two threads can run on different backends at the same time. Switching it in Ada changes only that thread's fx session. It never changes the default `fx provider` sets for your terminal.
+
+Sign-ins are different: every fx instance on a machine shares that machine's fx login. A backend you are signed out of shows as unavailable, with the command to run on that machine, such as `fx login grok`. Refresh the provider after signing in.
+
+**Default** runs whatever fx would start a new session on in the thread's project folder, including a model fx's settings give only that folder. Its label shows the machine-wide default. A custom model you add in the provider settings goes to fx as is, on the thread's current backend, and fx reports an error if that backend does not offer it.
 
 fx also has an **Effort** control. A new thread starts at Medium.
 
-Ada does not show fx's backend selector. To use Codex, Grok, or Vercel AI Gateway, run `fx provider` on the environment's machine.
-
-Type `$` in the composer to list the skills fx finds in its skill folders, in the order fx's own skill menu shows them. When two different skills share a name, the menu lists the one fx loads for that name: the first copy in fx's folder order, starting with the workspace. The menu shows one skill per name regardless of case; to run a skill whose name differs only in case, such as `Review` next to `review`, type its exact name.
+Type `$` in the composer to list the skills fx finds in its skill folders, in the order fx's own skill menu shows them. When two different skills share a name, the menu lists the one fx loads for that name: the first copy in fx's folder order, starting with the workspace. The menu shows one skill per name regardless of case. To run a skill whose name differs only in case, such as `Review` next to `review`, type its exact name.
 
 fx threads load the MCP servers from fx's profile config, `~/.fx/mcp.json`, on the machine that runs the Ada server.
 
 ## Permission modes
 
-fx offers two composer modes.
+| Mode            | Behavior                                                                            |
+| --------------- | ----------------------------------------------------------------------------------- |
+| **Supervised**  | fx asks before it changes files or runs commands. Read requests run without asking. |
+| **Auto**        | fx handles routine actions itself. Anything it still asks about reaches you.        |
+| **Full access** | fx runs every action without asking. Needs fx 0.0.14 or later.                      |
 
-| Mode           | Behavior                                                                            |
-| -------------- | ----------------------------------------------------------------------------------- |
-| **Supervised** | fx asks before it changes files or runs commands. Read requests run without asking. |
-| **Auto**       | fx handles routine actions itself. Anything it still asks about reaches you.        |
+Ada offers **Full access** only when the server's fx reports it. After you upgrade fx, refresh the provider in **Settings → Providers** to see it. On an older fx, or before the provider check finishes, a thread set to **Full access** runs in **Supervised**.
 
-Ada does not offer **Full access** or **Auto-accept edits** for fx. A thread already set to one of those runs in **Supervised**. Changing the permission mode restarts the connection and reloads the same fx session.
+Ada does not offer **Auto-accept edits** for fx. A thread already set to it runs in **Supervised**. Changing the permission mode restarts the connection and reloads the same fx session.
 
-On fx versions after [vercel-labs/fx#1189](https://github.com/vercel-labs/fx/pull/1189), fx saves the mode Ada sets as its default permission mode. Ada sets it each time it opens an fx thread, so fx in the terminal then starts in that thread's mode.
+On fx 0.0.14 and later, fx saves the mode Ada sets as its default permission mode. Ada sets it each time it opens an fx thread, so fx in the terminal then starts in that thread's mode.
 
 A message steered into a running turn stops that turn, and fx answers the new message in the same session.
 
@@ -52,7 +65,6 @@ fx doesn't pass on a sub-agent's permission requests, so a sub-agent that needs 
 
 ## Not supported yet
 
-- **Full access**.
 - **Auto-accept edits**.
 - Commit messages, pull request text, branch names, and thread titles. Pick another provider for those.
 

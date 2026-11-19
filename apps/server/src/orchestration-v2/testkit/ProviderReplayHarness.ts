@@ -361,6 +361,7 @@ export function layerWithRegistry<Error>(
         Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
           getInstance: () => Effect.undefined,
         }),
+        McpAppModelContext.layerEmpty,
         layerStores,
         layerEventSinkProvided,
         IdAllocator.layer,
@@ -457,6 +458,7 @@ export function layerWithRegistry<Error>(
         layerStores,
         layerProviderSessionManagerProvided,
         layerServerSettings,
+        McpAppModelContext.layerEmpty,
       ),
     ),
   );

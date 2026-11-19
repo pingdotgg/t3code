@@ -532,31 +532,35 @@ describe("mergePathValues", () => {
     expect(mergePathValues("/opt/bin :/opt/bin", "/opt/bin :/usr/bin", "linux")).toBe(
       "/opt/bin :/opt/bin:/usr/bin",
     );
+    expect(mergePathValues('/opt/bin"', "/opt/bin", "linux")).toBe('/opt/bin":/opt/bin');
   });
 });
 
 effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
-  it.effect("finds executables in a POSIX PATH directory ending in whitespace", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = yield* fs.makeTempDirectoryScoped({ directory: ".", prefix: "t3-path-" });
-      const directory = `${cwd}/bin \u00a0`;
-      yield* fs.makeDirectory(directory);
-      const executable = `${directory}/audit-command`;
-      yield* fs.writeFileString(executable, "#!/bin/sh\n");
-      yield* fs.chmod(executable, 0o755);
-      const env = { PATH: directory };
+  // Windows rejects `"` in file names.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "finds executables in a POSIX PATH directory ending in whitespace and quotes",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.makeTempDirectoryScoped({ directory: ".", prefix: "t3-path-" });
+        const directory = `${cwd}/bin \u00a0"`;
+        yield* fs.makeDirectory(directory);
+        const executable = `${directory}/audit-command`;
+        yield* fs.writeFileString(executable, "#!/bin/sh\n");
+        yield* fs.chmod(executable, 0o755);
+        const env = { PATH: directory };
 
-      expect(
-        yield* resolveCommandPath("audit-command", { env }).pipe(
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.provideService(CommandResolutionCache, new Map()),
-        ),
-      ).toBe(path.join(directory, "audit-command"));
-      const resolveExecutable = yield* SpawnExecutableResolution;
-      expect(resolveExecutable("audit-command", "linux", env)).toBe(executable);
-    }),
+        expect(
+          yield* resolveCommandPath("audit-command", { env }).pipe(
+            Effect.provideService(HostProcess.Platform, "linux"),
+            Effect.provideService(CommandResolutionCache, new Map()),
+          ),
+        ).toBe(path.join(directory, "audit-command"));
+        const resolveExecutable = yield* SpawnExecutableResolution;
+        expect(resolveExecutable("audit-command", "linux", env)).toBe(executable);
+      }),
   );
 
   const recordProbes = (env: NodeJS.ProcessEnv) =>
@@ -664,6 +668,17 @@ describe("runsGitWithoutConsole", () => {
 
   it.each([
     [["rev-parse", "--git-path", "index"], true],
+    [
+      [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "index",
+        "--git-common-dir",
+        "--show-toplevel",
+      ],
+      true,
+    ],
     [["--git-dir", "C:\\repo\\.git", "symbolic-ref", "refs/remotes/origin/HEAD"], true],
     [["remote", "get-url", "--", "origin"], true],
     [["config", "--get", "branch.main.pushRemote"], true],

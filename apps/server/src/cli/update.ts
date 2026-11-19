@@ -43,6 +43,7 @@ import {
 } from "../service/pinnedRuntime.ts";
 import {
   compareExactServiceVersions,
+  decodeServiceUnit,
   isExactServiceVersion,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_UNIT_ENV,
@@ -761,7 +762,9 @@ export const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // A handed-off service install rewrites the unit later, while the old launcher may be stopped.
   if (servicePlan?.handedOff !== true) {
     // A stopped service's unit still names the launcher runtime it will start.
-    const unit = yield* fs.readFileString(status.unitPath).pipe(Effect.option);
+    const unit = yield* fs
+      .readFile(status.unitPath)
+      .pipe(Effect.map(decodeServiceUnit), Effect.option);
     yield* prunePinnedRuntimes({
       baseDir: input.baseDir,
       keep: [currentVersion, targetVersion],

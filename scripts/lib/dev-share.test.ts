@@ -36,8 +36,8 @@ const spawnerLayer = (input: {
   readonly serve?: CallResult;
   readonly serveStatus?: string;
   readonly calls?: Array<ReadonlyArray<string>>;
-}) =>
-  Layer.succeed(
+}) => {
+  const spawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
       const args = "args" in command ? (command.args as ReadonlyArray<string>) : [];
@@ -70,6 +70,8 @@ const spawnerLayer = (input: {
       );
     }),
   );
+  return spawner;
+};
 
 /** Answers for targets in `live`; anything else refuses the connection. */
 const httpLayer = (live: ReadonlyArray<string> = []) =>

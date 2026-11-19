@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   type AtomCommandResult,
@@ -6,9 +7,11 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
+import { msg } from "gt-react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { currentClientMetadata } from "~/connection/platform";
+import { m } from "~/i18n/messages";
 import { projectEnvironment } from "~/state/projects";
 import { serverEnvironment } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -50,7 +53,7 @@ export function useStartTriage() {
   ) => {
     if (isAtomCommandInterrupted(result)) return;
     const error = squashAtomCommandFailure(result);
-    fail(error instanceof Error ? error.message : "An error occurred.");
+    fail(thrownErrorMessage(error, m) ?? m(msg("An error occurred.")));
   };
 
   // `routeChanged` tells the steps the user went elsewhere while they waited;
@@ -72,7 +75,7 @@ export function useStartTriage() {
 
   return async (environmentId: EnvironmentId) => {
     if (scratchWorkspaceRootFor(environmentId) === null) {
-      fail("This machine cannot start threads without a project.");
+      fail(m(msg("This machine cannot start threads without a project.")));
       return;
     }
     const requestingRouteHref = router.state.location.href;
@@ -82,7 +85,7 @@ export function useStartTriage() {
     const pendingTimer = setTimeout(() => {
       pendingToastId = toastManager.add({
         type: "loading",
-        title: "Starting triage…",
+        title: m(msg("Starting triage…")),
         timeout: 0,
       });
     }, 400);

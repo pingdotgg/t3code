@@ -1,5 +1,7 @@
 import { MOBILE_APP_NAME } from "../../lib/mobileBranding";
+import { useGT, useMessages } from "gt-react-native";
 import { useAtom, useAtomValue } from "@effect/atom-react";
+import { serverUpdateFailureText } from "@t3tools/client-runtime/state/server";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -29,6 +31,8 @@ export function OutdatedServerUpdateSection({
   readonly environmentId: EnvironmentId;
   readonly label: string;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const describe = useAtomCommand(describeOutdatedServer, { reportFailure: false });
   const update = useAtomCommand(updateOutdatedServer, { reportFailure: false });
   const state = useAtomValue(serverEnvironment.updateStateAtom(environmentId));
@@ -57,9 +61,9 @@ export function OutdatedServerUpdateSection({
       `Update ${label}?`,
       `Install ${MOBILE_APP_NAME} ${targetVersion}. It restarts on that machine and reconnects. Running threads may be interrupted.`,
       [
-        { text: "Cancel", style: "cancel" },
+        { text: gt("Cancel"), style: "cancel" },
         {
-          text: "Update",
+          text: gt("Update", { $context: "verb, install an update" }),
           onPress: () => {
             setCheckErrorDismissed(true);
             void update({
@@ -77,15 +81,17 @@ export function OutdatedServerUpdateSection({
     <SettingsSection title={MOBILE_APP_NAME}>
       <View className="gap-1 p-4">
         <Text className="text-base text-foreground">
-          {release ? `Version ${release.fromVersion}` : "Update required"}
+          {release
+            ? gt("Version {version}", { version: release.fromVersion })
+            : gt("Update required")}
         </Text>
         <Text className="text-sm text-foreground-muted">
           {state.status === "running"
             ? state.stage === "resuming"
-              ? "Restarting and reconnecting…"
+              ? gt("Restarting and reconnecting…")
               : state.stage === "installing"
-                ? "Installing update…"
-                : "Downloading update…"
+                ? gt("Installing update…")
+                : gt("Downloading update…")
             : release
               ? release.targetVersion
                 ? `Version ${release.targetVersion} is available.`
@@ -94,13 +100,13 @@ export function OutdatedServerUpdateSection({
         </Text>
         {error || state.status === "failed" ? (
           <Text selectable accessibilityRole="alert" className="text-sm text-danger-foreground">
-            {error ?? (state.status === "failed" ? state.message : null)}
+            {error ?? (state.status === "failed" ? serverUpdateFailureText(state, messages) : null)}
           </Text>
         ) : null}
       </View>
       <SettingsActionRow
         icon="arrow.clockwise"
-        label="Check for updates"
+        label={gt("Check for updates")}
         disabled={busy}
         loading={checking}
         onPress={check}
@@ -108,7 +114,11 @@ export function OutdatedServerUpdateSection({
       {release?.targetVersion ? (
         <SettingsActionRow
           icon="arrow.up.circle"
-          label={state.status === "failed" ? "Retry update" : `Update to ${release.targetVersion}`}
+          label={
+            state.status === "failed"
+              ? gt("Retry update")
+              : gt("Update to {version}", { version: release.targetVersion })
+          }
           disabled={busy}
           loading={state.status === "running"}
           onPress={requestUpdate}

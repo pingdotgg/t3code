@@ -1,7 +1,10 @@
+import { m } from "../i18n/messages";
 import * as Dialog from "../components/ui/Dialog";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import { msg } from "gt-react-native";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 
@@ -54,14 +57,14 @@ export async function pairEnvironment(
     return { ok: true, error: null };
   }
   const error = Cause.squash(result.cause);
-  const message = error instanceof Error ? error.message : "Failed to pair with the environment.";
+  const message = errorDisplayMessage(error, m) ?? m(msg("Failed to pair with the environment."));
   if (
     error !== null &&
     typeof error === "object" &&
     "reason" in error &&
     error.reason === "unsupported"
   ) {
-    Dialog.alert("Client not supported", message);
+    Dialog.alert(m(msg("Client not supported")), message);
     return { ok: false, error: null };
   }
   return { ok: false, error: message };
@@ -170,16 +173,21 @@ export function useRemoteConnections() {
       return;
     }
     const remove = {
-      text: "Remove",
+      text: m(msg("Remove")),
       style: "destructive",
       onPress: () => {
         void controller.removeEnvironment(environmentId);
       },
     } as const;
     Dialog.alert(
-      "Remove from this device?",
-      `Forget ${environment.environmentLabel} and its cached threads on this device. Switch it off instead to keep it saved.`,
-      [{ text: "Cancel", style: "cancel" }, remove],
+      m(msg("Remove from this device?")),
+      m(
+        msg(
+          "Forget {name} and its cached threads on this device. Switch it off instead to keep it saved.",
+          { name: environment.environmentLabel },
+        ),
+      ),
+      [{ text: m(msg("Cancel")), style: "cancel" }, remove],
     );
   };
 

@@ -98,7 +98,7 @@ it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accel
         secondsPer30s,
       },
     };
-    const cpuBenchmark = `Speed: ${secondsPer30s.cpu === undefined ? "update server" : secondsPer30s.cpu === null ? "not benchmarked" : `${secondsPer30s.cpu} s / 30 s`}`;
+    const cpuBenchmark = `Speed: ${secondsPer30s.cpu === undefined ? "update server for this benchmark" : secondsPer30s.cpu === null ? "not benchmarked" : `${secondsPer30s.cpu} s / 30 s`}`;
     const gpuBenchmark = `Speed: ${secondsPer30s.accelerated === null ? "not benchmarked" : `${secondsPer30s.accelerated} s / 30 s`}`;
     const fetch = globalThis.fetch;
     using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
@@ -206,9 +206,9 @@ it("tests the selected model after download and preserves its transcript across 
     supportsStreaming: false,
     supportsTranslation: false,
     acceleration: "cpu",
+    benchmarkTier: "cpu",
     modelUnloadTimeout: "never",
     gpuDevices: [],
-    benchmarkTier: "cpu",
   } satisfies EnvironmentSpeechStatus;
   let installed = false;
   const fetch = globalThis.fetch;
@@ -240,7 +240,7 @@ it("tests the selected model after download and preserves its transcript across 
                         en: { grade: "A-", errorPercent: 4 },
                         fr: { grade: "B+", errorPercent: 5.5 },
                       },
-                      secondsPer30s: { cpu: 5, accelerated: 2.1 },
+                      secondsPer30s: { accelerated: 2.1, cpu: 5 },
                     },
                   }
                 : {}),
@@ -369,9 +369,9 @@ it("recovers from a failed download progress poll without notifying, but reports
     supportsStreaming: false,
     supportsTranslation: false,
     acceleration: "cpu",
+    benchmarkTier: "cpu",
     modelUnloadTimeout: "never",
     gpuDevices: [],
-    benchmarkTier: "cpu",
   };
   const unavailable = () => new Response(null, { status: 503 });
   const readModels = vi

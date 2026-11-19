@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import hermesLogo from "./logos/hermes.png";
 import openClawLogo from "./logos/openclaw.png";
 
@@ -31,9 +32,9 @@ export const MCP_APPS: readonly McpApp[] = [
       "openclaw gateway start",
     ],
     steps: [
-      "Open the Control UI, then + and Plugins, and choose Add MCP server.",
-      "Paste the URL, and choose Streamable HTTP and OAuth.",
-      "Select Sign in for it under Settings → MCP.",
+      msg("Open the Control UI, then + and Plugins, and choose Add MCP server."),
+      msg("Paste the URL, and choose Streamable HTTP and OAuth."),
+      msg("Select Sign in for it under Settings → MCP."),
     ],
     docs: "https://docs.openclaw.ai/tools/mcp",
   },
@@ -47,10 +48,10 @@ export const MCP_APPS: readonly McpApp[] = [
       `hermes mcp add t3code --url ${url} --auth oauth --connect-timeout 315`,
     ],
     steps: [
-      "Add t3code under mcp_servers in ~/.hermes/config.yaml, with the URL and auth: oauth.",
-      "Run hermes mcp login t3code.",
+      msg("Add t3code under mcp_servers in ~/.hermes/config.yaml, with the URL and auth: oauth."),
+      msg("Run hermes mcp login t3code."),
     ],
-    note: "On a remote host, paste the final URL back when asked.",
+    note: msg("On a remote host, paste the final URL back when asked."),
     docs: "https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp",
   },
 ];

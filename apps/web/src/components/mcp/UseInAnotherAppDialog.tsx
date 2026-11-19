@@ -1,11 +1,17 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { m } from "~/i18n/messages";
+import { namedClipboardTarget } from "~/hooks/useCopyToClipboard";
 import { useAtomValue } from "@effect/atom-react";
+import {
+  managedCapabilityDenial,
+  managedRuntimeModeDenial,
+} from "@t3tools/client-runtime/contract-labels";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import {
   AuthAccessWriteScope,
   AuthMcpClientAccess,
   type EnvironmentId,
-  managedCapabilityDenial,
-  managedRuntimeModeDenial,
   mcpClientScopes,
   sessionGrantsScope,
 } from "@t3tools/contracts";
@@ -88,6 +94,7 @@ function Wizard({
   readonly environment: EnvironmentPresentation;
   readonly title: string;
 }) {
+  const gt = useGT();
   const gate = resolveMcpGate({
     connected: environment.connection.phase === "connected",
     serverConfig: environment.serverConfig ?? undefined,
@@ -118,9 +125,9 @@ function Wizard({
           <AppStep choice={choice} onChoose={setChoice} />
         ) : step === 1 ? (
           <section className="space-y-3">
-            <h3 className="text-sm font-medium">What can {appName} do?</h3>
+            <h3 className="text-sm font-medium">{gt("What can {appName} do?", { appName })}</h3>
             <RadioGroup
-              aria-label={`What can ${appName} do?`}
+              aria-label={gt("What can {appName} do?", { appName })}
               value={access}
               onValueChange={(value) => setPicked(value as AuthMcpClientAccess)}
             >
@@ -131,7 +138,9 @@ function Wizard({
                   selected={level === access}
                   disabledReason={levels.get(level)}
                   description={
-                    level === "full-access" ? "Runs commands and edits files without asking" : null
+                    level === "full-access"
+                      ? gt("Runs commands and edits files without asking")
+                      : null
                   }
                 />
               ))}
@@ -152,11 +161,13 @@ function Wizard({
         >
           {step === 1 ? (
             <Button variant="outline" onClick={() => setStep(0)}>
-              Back
+              <T>Back</T>
             </Button>
           ) : null}
           {step === 2 ? (
-            <Button onClick={close}>Done</Button>
+            <Button onClick={close}>
+              <T>Done</T>
+            </Button>
           ) : (
             <Button
               disabled={step === 0 ? choice === null : access === null}
@@ -185,20 +196,26 @@ function useGrantableLevels(environment: EnvironmentPresentation) {
   const session = useEnvironmentSessionState(environmentId).data;
   const canMint = useEnvironmentScope(environmentId, AuthAccessWriteScope);
   const policy = useManagedPolicy(environmentId);
+  const gt = useGT();
+  const messages = useMessages();
   // The server refuses codes for any level when its policy keeps remote clients out.
-  const remoteDenial = managedCapabilityDenial(policy, "remoteClients");
+  const remoteDenial = managedCapabilityDenial(policy, "remoteClients", messages);
   return new Map(
     AuthMcpClientAccess.literals.flatMap((level) => {
       const reason =
         remoteDenial ??
         (!canMint
-          ? `This device needs the Manage access permission on ${environment.label}.`
+          ? gt("This device needs the Manage access permission on {environment}.", {
+              environment: environment.label,
+            })
           : session === null ||
               !mcpClientScopes(level).every((scope) => sessionGrantsScope(session, scope))
-            ? `This device cannot grant this on ${environment.label}.`
+            ? gt("This device cannot grant this on {environment}.", {
+                environment: environment.label,
+              })
             : level === "read-only"
               ? undefined
-              : managedRuntimeModeDenial(policy, level));
+              : managedRuntimeModeDenial(policy, level, messages));
       return reason === undefined ? [] : [[level, reason] as const];
     }),
   );
@@ -272,7 +289,9 @@ function AppStep({
 }) {
   return (
     <section className="space-y-3">
-      <h3 className="text-sm font-medium">Which app?</h3>
+      <h3 className="text-sm font-medium">
+        <T>Which app?</T>
+      </h3>
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
         {MCP_APPS.map((app) => (
           <button
@@ -299,7 +318,7 @@ function AppStep({
         onClick={() => onChoose("other")}
         className="w-full rounded-lg border border-border px-3 py-2.5 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:border-primary aria-pressed:bg-primary/8"
       >
-        Something else…
+        <T>Something else…</T>
       </button>
     </section>
   );
@@ -317,6 +336,8 @@ function ConnectStep({
   readonly access: AuthMcpClientAccess;
 }) {
   const [anotherWay, setAnotherWay] = useState(choice === "other");
+  const gt = useGT();
+  const m = useMessages();
   const app = choice === "other" ? null : choice;
   const code = (
     <ApprovalCode
@@ -333,15 +354,17 @@ function ConnectStep({
         <TailnetOnlyNote />
         <ol className="list-decimal space-y-1 ps-5 text-sm">
           {(app?.steps ?? OTHER_MCP_APP_STEPS).map((step) => (
-            <li key={step}>{step}</li>
+            <li key={step}>{m(step)}</li>
           ))}
         </ol>
         {app === null ? (
           <p className="text-xs text-muted-foreground">
-            Apps that require their own client ID cannot connect.
+            <T>Apps that require their own client ID cannot connect.</T>
           </p>
         ) : app.docs ? (
-          <TextButton onClick={() => openLink(app.docs ?? "")}>{app.name} help</TextButton>
+          <TextButton onClick={() => openLink(app.docs ?? "")}>
+            {gt("{app} help", { app: app.name })}
+          </TextButton>
         ) : null}
         {code}
         {app === null ? null : (
@@ -357,7 +380,9 @@ function ConnectStep({
       <CopyRow label="URL" value={mcpUrl} />
       <TailnetOnlyNote />
       {code}
-      <TextButton onClick={() => setAnotherWay(true)}>Set up another way</TextButton>
+      <TextButton onClick={() => setAnotherWay(true)}>
+        <T>Set up another way</T>
+      </TextButton>
       <LinkedLine environment={environment} access={access} />
     </section>
   );
@@ -387,8 +412,8 @@ function openLink(url: string) {
     .catch((error: unknown) =>
       toastManager.add({
         type: "error",
-        title: "Could not open the link",
-        description: error instanceof Error ? error.message : url,
+        title: m(msg("Could not open the link")),
+        description: thrownErrorMessage(error, m) ?? url,
       }),
     );
 }
@@ -428,6 +453,8 @@ function ApprovalCode({
     readonly credential: string;
     readonly expiresAt: number;
   } | null>(null);
+  const gt = useGT();
+  const m = useMessages();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const now = useNowSecond();
@@ -443,7 +470,7 @@ function ApprovalCode({
         expiresAt: result.success.expiresAt.epochMilliseconds,
       });
     } else {
-      setError(`Could not get a code from ${name}. Try again.`);
+      setError(gt("Could not get a code from {environment}. Try again.", { environment: name }));
     }
   };
   const left = code === null ? 0 : Math.max(0, Math.floor((code.expiresAt - now) / 1000));
@@ -451,24 +478,33 @@ function ApprovalCode({
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm">
-          Code to approve <span className="font-medium">{accessConfig[access].label}</span>
+          <T>
+            Code to approve{" "}
+            <span className="font-medium">
+              <Var>{m(accessConfig[access].label)}</Var>
+            </span>
+          </T>
         </span>
         {live ? null : (
           <Button size="sm" variant="outline" disabled={pending} onClick={() => void mint()}>
-            {pending ? "Getting code…" : code === null ? "Get code" : "New code"}
+            {pending ? gt("Getting code…") : code === null ? gt("Get code") : gt("New code")}
           </Button>
         )}
       </div>
       {code !== null ? (
         live ? (
           <>
-            <CopyRow label="Code" value={code.credential} />
+            <CopyRow label={gt("Code", { $context: "approval code" })} value={code.credential} />
             <p className="text-xs text-muted-foreground">
-              Expires {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} · one use
+              {gt("Expires {time} · one use", {
+                time: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`,
+              })}
             </p>
           </>
         ) : (
-          <p className="text-xs text-muted-foreground">The code expired.</p>
+          <p className="text-xs text-muted-foreground">
+            <T>The code expired.</T>
+          </p>
         )
       ) : null}
       {error ? <p className="text-xs text-destructive-foreground">{error}</p> : null}
@@ -477,7 +513,11 @@ function ApprovalCode({
 }
 
 function CopyRow({ label, value }: { readonly label: string; readonly value: string }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500, target: label });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    timeout: 1500,
+    target: namedClipboardTarget(label),
+  });
+  const gt = useGT();
   return (
     <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2">
       <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
@@ -485,7 +525,7 @@ function CopyRow({ label, value }: { readonly label: string; readonly value: str
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label={`Copy ${label}`}
+        aria-label={gt("Copy {label}", { label })}
         onClick={() => copyToClipboard(value, undefined)}
       >
         {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
@@ -511,6 +551,7 @@ function LinkedLine({
       : null,
   ).data?.links;
   const identities = useEnvironmentIdentities();
+  const gt = useGT();
   if (!offered || links === undefined || links.length === 0) return null;
   const named = links.map((link) => {
     const name =
@@ -520,7 +561,11 @@ function LinkedLine({
     const level = levelRank(link.access) < levelRank(access) ? link.access : access;
     return `${name} · ${link.status === "expired" ? "Expired" : accessConfig[level].label}`;
   });
-  return <p className="text-xs text-muted-foreground">Linked: {named.join(", ")}</p>;
+  return (
+    <p className="text-xs text-muted-foreground">
+      {gt("Linked: {environments}", { environments: named.join(", ") })}
+    </p>
+  );
 }
 
 /** Opens Sharing & access on this environment, where its clients live. */
