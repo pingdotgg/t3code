@@ -165,14 +165,19 @@ function sessionUsedPercent(provider: ServerProvider): number {
   return Math.max(0, ...windows.map((w) => w.usedPercent ?? 0));
 }
 
-/** Weekly windows with a known reset that limit `model`; a one-model window counts only for it. */
-function weeklyWindows(provider: ServerProvider, model: string) {
-  return (provider.usageLimits?.windows ?? []).filter(
-    (w) =>
-      w.kind === "weekly" &&
-      Number.isFinite(Date.parse(w.resetsAt ?? "")) &&
-      usageWindowLimitsModel(provider, w, model),
-  );
+/**
+ * Weekly windows that limit `model` (a one-model window counts only for it) and when each
+ * resets. A window that has not started reports no reset; it would run its full length from now.
+ */
+function weeklyWindows(provider: ServerProvider, model: string, now: number) {
+  return (provider.usageLimits?.windows ?? []).flatMap((w) => {
+    if (w.kind !== "weekly" || !usageWindowLimitsModel(provider, w, model)) return [];
+    const resetsAt =
+      w.resetsAt === undefined
+        ? now + (w.windowDurationMins ?? Number.NaN) * MINUTE
+        : Date.parse(w.resetsAt);
+    return Number.isFinite(resetsAt) ? [{ usedPercent: w.usedPercent, resetsAt }] : [];
+  });
 }
 
 /**
@@ -181,15 +186,15 @@ function weeklyWindows(provider: ServerProvider, model: string) {
  * weekly data.
  */
 function weeklyPace(provider: ServerProvider, model: string, now: number): number | undefined {
-  const paces = weeklyWindows(provider, model).map(
-    (w) => (100 - w.usedPercent) / (Math.max(Date.parse(w.resetsAt!) - now, MINUTE) / HOUR),
+  const paces = weeklyWindows(provider, model, now).map(
+    (w) => (100 - w.usedPercent) / (Math.max(w.resetsAt - now, MINUTE) / HOUR),
   );
   return paces.length > 0 ? Math.min(...paces) : undefined;
 }
 
 /** When the soonest weekly window resets; unused weekly quota is lost then. */
-function weeklyResetAt(provider: ServerProvider, model: string): number {
-  return Math.min(...weeklyWindows(provider, model).map((w) => Date.parse(w.resetsAt!)));
+function weeklyResetAt(provider: ServerProvider, model: string, now: number): number {
+  return Math.min(...weeklyWindows(provider, model, now).map((w) => w.resetsAt));
 }
 
 /** The higher pace first; paces within 15% tie, and an account without weekly data goes last. */
@@ -214,7 +219,7 @@ function compareInstances(a: ServerProvider, b: ServerProvider, model: string, n
   if (pace !== 0) return pace;
   const session = sessionUsedPercent(b) - sessionUsedPercent(a);
   if (Math.abs(session) >= SESSION_BAND_PERCENT) return session;
-  const weekly = weeklyResetAt(a, model) - weeklyResetAt(b, model);
+  const weekly = weeklyResetAt(a, model, now) - weeklyResetAt(b, model, now);
   if (Number.isFinite(weekly) && weekly !== 0) return weekly;
   return session || peakUsedPercent(a) - peakUsedPercent(b);
 }
