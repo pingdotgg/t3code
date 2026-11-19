@@ -74,15 +74,10 @@ export function IssueDetailGhost({ seed }: { seed?: IssueListEntry | null }) {
         <GhostBar className="h-3.5 w-full" />
         <GhostBar className="h-3.5 w-5/6" />
         <GhostBar className="h-3.5 w-2/3" />
-        {/* The labels and assignees block, in the loaded panel's grid. */}
-        <div className="@container/issue-facts">
-          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-1 @xl/issue-facts:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
-            {["w-10", "w-24", "w-16", "w-28"].map((width) => (
-              <div key={width} className="flex h-6 items-center">
-                <GhostBar className={width} />
-              </div>
-            ))}
-          </div>
+        {/* The labels and assignees line. */}
+        <div className="-mt-1 flex h-6 items-center gap-4">
+          <GhostBar className="w-20" />
+          <GhostBar className="w-24" />
         </div>
         <GhostBar className="mt-4 w-16" />
         {[0, 1].map((row) => (

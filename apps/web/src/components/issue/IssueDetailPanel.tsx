@@ -71,6 +71,7 @@ import { PullRequestEditButton } from "../pullRequest/PullRequestEditButton";
 import { PullRequestMarkdownEditor } from "../pullRequest/PullRequestMarkdownEditor";
 import { PullRequestReviewEntry } from "../pullRequest/PullRequestQuietEntries";
 import { WorkItemTitleEditor } from "../pullRequest/PullRequestTitleEditor";
+import { WorkItemFacts } from "../workItem/WorkItemFacts";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
 import { pullRequestLabelColor } from "../pullRequest/pullRequestList.logic";
 import {
@@ -351,35 +352,6 @@ function IssueAssigneePicker({
         </>
       )}
     </PullRequestCandidatePicker>
-  );
-}
-
-/**
- * Labels and assignees as one block under the description: each fact's name, then its values and
- * the control that adds to them. A wide pane sets the two side by side.
- */
-function IssueFacts({ labels, assignees }: { labels: ReactNode; assignees: ReactNode }) {
-  const gt = useGT();
-  if (labels === null && assignees === null) return null;
-  return (
-    <div className="@container/issue-facts mt-3">
-      <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-1 text-meta @xl/issue-facts:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
-        {labels === null ? null : (
-          <>
-            <dt className="flex h-6 items-center text-muted-foreground">{gt("Labels")}</dt>
-            <dd className="flex min-h-6 min-w-0 flex-wrap items-center gap-1">{labels}</dd>
-          </>
-        )}
-        {assignees === null ? null : (
-          <>
-            <dt className="flex h-6 items-center text-muted-foreground">{gt("Assignees")}</dt>
-            <dd className="flex min-h-6 min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
-              {assignees}
-            </dd>
-          </>
-        )}
-      </dl>
-    </div>
   );
 }
 
@@ -793,27 +765,23 @@ export function IssueDetailPanel({
               />
             </div>
           ) : null}
-          <IssueFacts
-            labels={
-              detail.labels.length > 0 || detail.capabilities.labels ? (
-                <>
-                  {detail.labels.map((label) => (
-                    <PullRequestLabelChip
-                      key={label.name}
-                      label={label}
-                      size="default"
-                      className="max-w-48"
-                      focusable
-                    />
-                  ))}
-                  {detail.labels.length === 0 && !canLabel ? (
-                    <span className="text-muted-foreground">
-                      <T>No labels</T>
-                    </span>
-                  ) : null}
-                  {canLabel ? (
-                    // The written control lines its icon up with the values a filled row starts with.
-                    <span className={cn("flex", detail.labels.length === 0 && "-ml-1.75")}>
+          <WorkItemFacts
+            facts={[
+              detail.labels.length > 0 || detail.capabilities.labels
+                ? {
+                    name: gt("Labels"),
+                    values: detail.labels.map((label) => ({
+                      key: label.name,
+                      node: (
+                        <PullRequestLabelChip
+                          label={label}
+                          size="default"
+                          className="max-w-48"
+                          focusable
+                        />
+                      ),
+                    })),
+                    control: canLabel ? (
                       <IssueLabelPicker
                         environmentId={environmentId}
                         reference={reference}
@@ -824,28 +792,19 @@ export function IssueDetailPanel({
                         }
                         text={detail.labels.length === 0 ? gt("Add labels") : undefined}
                       />
-                    </span>
-                  ) : null}
-                </>
-              ) : null
-            }
-            assignees={
-              detail.assignees.length > 0 || detail.capabilities.assignees ? (
-                <>
-                  {detail.assignees.map((actor) => (
-                    <PullRequestActorLabel
-                      key={actor.login}
-                      actor={actor}
-                      profileUrl={profileUrl(actor)}
-                    />
-                  ))}
-                  {detail.assignees.length === 0 && !canAssign ? (
-                    <span className="text-muted-foreground">
-                      <T>No one assigned</T>
-                    </span>
-                  ) : null}
-                  {canAssign ? (
-                    <span className={cn("flex", detail.assignees.length === 0 && "-ml-1.75")}>
+                    ) : undefined,
+                    emptyText: <T>No labels</T>,
+                  }
+                : null,
+              detail.assignees.length > 0 || detail.capabilities.assignees
+                ? {
+                    name: gt("Assignees"),
+                    people: true,
+                    values: detail.assignees.map((actor) => ({
+                      key: actor.login,
+                      node: <PullRequestActorLabel actor={actor} profileUrl={profileUrl(actor)} />,
+                    })),
+                    control: canAssign ? (
                       <IssueAssigneePicker
                         environmentId={environmentId}
                         reference={reference}
@@ -856,11 +815,11 @@ export function IssueDetailPanel({
                         }
                         text={detail.assignees.length === 0 ? gt("Add assignees") : undefined}
                       />
-                    </span>
-                  ) : null}
-                </>
-              ) : null
-            }
+                    ) : undefined,
+                    emptyText: <T>No one assigned</T>,
+                  }
+                : null,
+            ]}
           />
         </PullRequestSection>
 

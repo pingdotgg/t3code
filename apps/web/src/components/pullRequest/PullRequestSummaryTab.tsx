@@ -27,7 +27,6 @@ import {
   ListFilterIcon,
   MessageSquarePlusIcon,
   RefreshCwIcon,
-  TagIcon,
 } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
@@ -62,6 +61,7 @@ import {
   PullRequestReviewOutcomeBadge,
 } from "./pullRequestPresentation";
 import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
+import { WorkItemFacts } from "../workItem/WorkItemFacts";
 import { ReviewThreadCard } from "./PullRequestReviewAnnotation";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
@@ -1141,38 +1141,37 @@ export function PullRequestSummaryTab({
             )}
           </div>
           {/* Labels ride under the description, where the pull request says what it is about. The
-            row is shown empty only where a label could be put on it from here, and then it is only
-            the picker, saying what it adds. */}
-          {detail.labels.length === 0 && detail.capabilities.labels === true ? (
-            <div className="mt-3 -ml-1.75 flex min-w-0">
-              <PullRequestLabelPicker
-                environmentId={environmentId}
-                reference={reference}
-                allowed={detail.viewerPermissions.labels !== false}
-                text={gt("Add labels")}
-              />
-            </div>
-          ) : detail.labels.length > 0 ? (
-            <div className="mt-3 flex min-w-0 flex-wrap items-center gap-1 text-meta">
-              <TagIcon aria-hidden className="mr-0.5 size-3.5 text-muted-foreground" />
-              {detail.labels.map((label) => (
-                <PullRequestLabelChip
-                  key={label.name}
-                  label={label}
-                  size="default"
-                  className="max-w-48"
-                  focusable
-                />
-              ))}
-              {detail.capabilities.labels === true ? (
-                <PullRequestLabelPicker
-                  environmentId={environmentId}
-                  reference={reference}
-                  allowed={detail.viewerPermissions.labels !== false}
-                />
-              ) : null}
-            </div>
-          ) : null}
+            row is shown empty only where a label could be put on it from here. */}
+          <WorkItemFacts
+            facts={[
+              detail.labels.length > 0 || detail.capabilities.labels === true
+                ? {
+                    name: gt("Labels"),
+                    values: detail.labels.map((label) => ({
+                      key: label.name,
+                      node: (
+                        <PullRequestLabelChip
+                          label={label}
+                          size="default"
+                          className="max-w-48"
+                          focusable
+                        />
+                      ),
+                    })),
+                    control:
+                      detail.capabilities.labels === true ? (
+                        <PullRequestLabelPicker
+                          environmentId={environmentId}
+                          reference={reference}
+                          allowed={detail.viewerPermissions.labels !== false}
+                          text={detail.labels.length === 0 ? gt("Add labels") : undefined}
+                        />
+                      ) : undefined,
+                    emptyText: null,
+                  }
+                : null,
+            ]}
+          />
         </PullRequestSection>
 
         {attachments.length > 0 ? (
