@@ -174,6 +174,8 @@ export type OrchestrationEffectStatusV2 = typeof OrchestrationEffectStatusV2.Typ
 /** Receipts deduplicate retries, and restart re-enqueues need far less than a week. Retain failed rows to keep deleted-thread worktrees. */
 export const SETTLED_EFFECT_RETENTION = Duration.days(7);
 const PRUNE_BATCH_SIZE = 500;
+// How long a resumed run that has not started yet counts against the restart continuation limit.
+const RESTART_CONTINUATION_START_WINDOW = Duration.minutes(2);
 
 export interface OrchestrationEffectV2 {
   readonly id: string;
@@ -334,9 +336,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
-    // A continuation holds a slot until its run stops working; one waiting on the user does not.
+    // A continuation holds a slot only while its run is starting, and for a bounded time, so long
+    // or stuck resumed runs cannot keep other interrupted threads from resuming.
     // pruneSettled keeps the succeeded continue effect while its run is live.
-    const restartContinuationsAtCapacity = (maxActive: number) => sql`(
+    const restartContinuationsAtCapacity = (maxActive: number, startedAfter: string) => sql`(
       SELECT COUNT(*)
       FROM orchestration_v2_effect_outbox AS resuming
       WHERE resuming.effect_type = 'provider-runtime.continue'
@@ -344,11 +347,12 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           resuming.status = 'running'
           OR (
             resuming.status = 'succeeded'
+            AND resuming.completed_at > ${startedAfter}
             AND EXISTS (
               SELECT 1
               FROM orchestration_v2_projection_runs AS resuming_run
               WHERE resuming_run.thread_id = resuming.thread_id
-                AND resuming_run.status IN ('preparing', 'starting', 'running')
+                AND resuming_run.status IN ('preparing', 'starting')
                 AND json_extract(resuming_run.payload_json, '$.restartContinuationOfRunId') =
                   json_extract(resuming.payload_json, '$.sourceRunId')
             )
@@ -357,12 +361,16 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
     ) >= ${maxActive}`;
     // Retry backoff must block later effects so turns cannot race a pending rollback.
     const claimableCandidatePredicate = (
+      now: DateTime.Utc,
       availableBefore?: string,
       excludeRestartContinuations = false,
       maxRunningTitleGenerations?: number,
       maxActiveRestartContinuations?: number,
-    ) =>
-      sql`
+    ) => {
+      const continuationStartedAfter = DateTime.formatIso(
+        DateTime.subtractDuration(now, RESTART_CONTINUATION_START_WINDOW),
+      );
+      return sql`
         ${
           availableBefore === undefined
             ? sql`1 = 1`
@@ -389,7 +397,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                     ? sql`1 = 1`
                     : sql`NOT (
                         active.effect_type = 'provider-runtime.continue'
-                        AND ${restartContinuationsAtCapacity(maxActiveRestartContinuations)}
+                        AND ${restartContinuationsAtCapacity(maxActiveRestartContinuations, continuationStartedAfter)}
                       )`
                 }
               )
@@ -424,10 +432,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             ? sql`1 = 1`
             : sql`(
                 candidate.effect_type != 'provider-runtime.continue'
-                OR NOT ${restartContinuationsAtCapacity(maxActiveRestartContinuations)}
+                OR NOT ${restartContinuationsAtCapacity(maxActiveRestartContinuations, continuationStartedAfter)}
               )`
         }
       `;
+    };
 
     const cancellationSignal = (effectId: string) => {
       const existing = cancellationSignals.get(effectId);
@@ -617,6 +626,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               SELECT candidate.effect_id
               FROM orchestration_v2_effect_outbox AS candidate
               WHERE ${claimableCandidatePredicate(
+                now,
                 nowIso,
                 excludeRestartContinuations,
                 maxRunningTitleGenerations,
@@ -662,10 +672,12 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           readonly maxRunningTitleGenerations?: number;
           readonly maxActiveRestartContinuations?: number;
         } = {}) {
+          const now = yield* DateTime.now;
           const rows = yield* sql<{ readonly available_at: string | null }>`
             SELECT MIN(candidate.available_at) AS available_at
             FROM orchestration_v2_effect_outbox AS candidate
             WHERE ${claimableCandidatePredicate(
+              now,
               undefined,
               false,
               maxRunningTitleGenerations,

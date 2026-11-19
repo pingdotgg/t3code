@@ -3405,7 +3405,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect("holds restart continuations while resumed runs are working", () =>
+  it.effect("holds restart continuations while resumed runs are starting", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const sql = yield* SqlClient.SqlClient;
@@ -3425,19 +3425,30 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       });
       const sourceRunOf = (thread: string) =>
         RunId.make(`run:foundation-continuation-cap:${thread}`);
+      const resumedRunOf = (thread: string) =>
+        RunId.make(`run:foundation-continuation-cap:${thread}-resumed`);
       const resume = (thread: string) =>
         effect(`${thread}-continue`, thread, {
           type: "provider-runtime.continue",
           sourceRunId: sourceRunOf(thread),
         });
+      const insertResumedRun = (thread: string) => sql`
+        INSERT INTO orchestration_v2_projection_runs
+          (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES (${resumedRunOf(thread)}, ${threadOf(thread)}, 2, 'codex', 'starting',
+          '2026-01-01T00:00:00.000Z',
+          ${JSON.stringify({ restartContinuationOfRunId: sourceRunOf(thread) })})
+      `;
       const cleanup = effect("b-cleanup", "b", { type: "terminal.cleanup" });
-      const resumedRunId = RunId.make("run:foundation-continuation-cap:a-resumed");
-      const start = effect("a-start", "a", { type: "provider-turn.start", runId: resumedRunId });
+      const start = effect("a-start", "a", {
+        type: "provider-turn.start",
+        runId: resumedRunOf("a"),
+      });
       const claimId = Effect.map(
         outbox.claimNext({ workerId, ...cap }),
         (claimed) => Option.getOrUndefined(claimed)?.id,
       );
-      yield* outbox.enqueue([resume("a"), resume("b"), cleanup]);
+      yield* outbox.enqueue([resume("a"), resume("b"), resume("c"), cleanup]);
 
       assert.strictEqual(yield* claimId, resume("a").id);
       // The held continuation does not hold up newer work on its own thread.
@@ -3446,24 +3457,24 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       assert.isTrue(Option.isNone(yield* outbox.nextClaimableAt(cap)));
       yield* outbox.succeed({ effectId: cleanup.id, workerId });
 
-      yield* sql`
-        INSERT INTO orchestration_v2_projection_runs
-          (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
-        VALUES (${resumedRunId}, ${threadOf("a")}, 2, 'codex', 'starting', '2026-01-01T00:00:00.000Z',
-          ${JSON.stringify({ restartContinuationOfRunId: sourceRunOf("a") })})
-      `;
+      yield* insertResumedRun("a");
       yield* outbox.enqueue([start]);
       yield* outbox.succeed({ effectId: resume("a").id, workerId });
       assert.strictEqual(yield* claimId, start.id);
       assert.isUndefined(yield* claimId);
-
       yield* outbox.succeed({ effectId: start.id, workerId });
-      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'running' WHERE run_id = ${resumedRunId}`;
-      // A resumed run keeps its slot after its start settles, until it stops working.
-      assert.isUndefined(yield* claimId);
-      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'waiting' WHERE run_id = ${resumedRunId}`;
+
+      // A resumed run that is working no longer holds a slot, however long it runs.
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'running' WHERE run_id = ${resumedRunOf("a")}`;
       assert.strictEqual(yield* claimId, resume("b").id);
+      yield* insertResumedRun("b");
       yield* outbox.succeed({ effectId: resume("b").id, workerId });
+      assert.isUndefined(yield* claimId);
+
+      // A resumed run stuck starting gives up its slot after a bounded wait.
+      yield* TestClock.adjust(Duration.minutes(3));
+      assert.strictEqual(yield* claimId, resume("c").id);
+      yield* outbox.succeed({ effectId: resume("c").id, workerId });
     }),
   );
 
