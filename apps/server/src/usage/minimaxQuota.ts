@@ -8,6 +8,8 @@ import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
 
 const optionalNumber = Schema.optional(Schema.Number);
 const Response = Schema.Struct({
@@ -59,8 +61,21 @@ export function miniMaxWindows(body: typeof Response.Type): ServerProviderUsageW
   return windows;
 }
 
+/**
+ * A MiniMax source carries no account e-mail, so two sources that use different keys would
+ * otherwise share one account key and the second reading would replace the first. A digest of
+ * the key gives each account its own identity without exposing the key itself.
+ */
+const miniMaxAccountFingerprint = Effect.fnUntraced(function* (key: string) {
+  const digester = yield* Digest.Digest;
+  return yield* digester
+    .digest(Digest.sha256, new TextEncoder().encode(`minimax\0${key}`))
+    .pipe(Effect.map(Hex.encode), Effect.orDie);
+});
+
 export const readMiniMaxQuota = Effect.fn("MiniMaxQuota.read")(function* (key: string) {
   const client = yield* HttpClient.HttpClient;
+  const credentialFingerprint = yield* miniMaxAccountFingerprint(key);
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const body = yield* client
     .execute(
@@ -89,6 +104,7 @@ export const readMiniMaxQuota = Effect.fn("MiniMaxQuota.read")(function* (key: s
       usageLimits: {
         checkedAt,
         windows,
+        credentialFingerprint,
         ...(windows.length === 0
           ? {
               unavailable: {

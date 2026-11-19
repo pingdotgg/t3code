@@ -19,11 +19,16 @@ it.effect("reads per-model totals without duplicating the session total or inven
       cache_write_tokens INTEGER, reasoning_tokens INTEGER, cost_status TEXT, actual_cost_usd REAL);
     INSERT INTO sessions VALUES ('s', 100);
     INSERT INTO session_model_usage VALUES ('s', 'MiniMax-M3', NULL, 10, 20, 30, 4, 5, 'unknown', 0);
-    INSERT INTO session_model_usage VALUES ('s', 'other-model', NULL, 99, 99, 0, 0, 0, 'actual', 2);`);
+    INSERT INTO session_model_usage VALUES ('s', 'other-model', NULL, 99, 99, 0, 0, 0, 'actual', 2);
+    ALTER TABLE session_model_usage ADD COLUMN billing_provider TEXT DEFAULT '';
+    ALTER TABLE session_model_usage ADD COLUMN billing_base_url TEXT DEFAULT '';
+    ALTER TABLE session_model_usage ADD COLUMN billing_mode TEXT DEFAULT '';
+    ALTER TABLE session_model_usage ADD COLUMN task TEXT DEFAULT ''; `);
     db.close();
     {
       const records = readMiniMaxHistory(path);
       expect(records).toHaveLength(1);
+      expect(readMiniMaxHistory(path, 200000)).toHaveLength(0);
       expect(records[0]).toMatchObject({
         model: "MiniMax-M3",
         rateModel: "minimax/MiniMax-M3",
@@ -71,5 +76,21 @@ it.effect("reads no history when no ACP registry instance is configured", () =>
     // An unconfigured driver must not pick up the host's own ~/.hermes directory.
     expect(yield* reader.scan(input(false))).toHaveLength(0);
     expect(yield* reader.scan(input(true))).not.toHaveLength(0);
+    const multipleHomes = {
+      settings: {} as never,
+      windowStartMs: 0,
+      retentionCutoffMs: 0,
+      awaitRefresh: false,
+      instances: ["/missing/hermes-one", "/missing/hermes-two", "/missing/hermes-one"].map(
+        (home) => ({
+          ...instance(true),
+          environment: { HERMES_HOME: home },
+        }),
+      ),
+    };
+    expect((yield* reader.scan(multipleHomes)).map((scan) => scan.dir)).toEqual([
+      "/missing/hermes-one",
+      "/missing/hermes-two",
+    ]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

@@ -25,15 +25,28 @@ export function miniMaxRateModel(model: string): string {
   return `minimax/${name.toLowerCase() === "minimax-m2.7" ? "MiniMax-M3" : name}`;
 }
 
-/** @public */
-export function readMiniMaxHistory(path: string): UsageRecord[] {
+/**
+ * Reads MiniMax rows from a Hermes history database. `retentionCutoffMs` bounds the scan to
+ * the retained window, so the query does not grow with the lifetime of the database.
+ *
+ * @public
+ */
+export function readMiniMaxHistory(path: string, retentionCutoffMs?: number): UsageRecord[] {
   const db = new NodeSqlite.DatabaseSync(path, { readOnly: true });
   try {
+    // The cutoff is compared against the same effective timestamp each row reports, in seconds.
+    const cutoffSeconds =
+      retentionCutoffMs === undefined ? undefined : Math.floor(retentionCutoffMs / 1000);
     const rows = db
-      .prepare(`SELECT u.*, COALESCE(u.first_seen, s.started_at) AS timestamp
+      .prepare(
+        `SELECT u.session_id, u.model, u.billing_provider, u.billing_base_url, u.billing_mode,
+      u.task, u.input_tokens, u.cache_read_tokens, u.cache_write_tokens, u.output_tokens,
+      u.reasoning_tokens, u.actual_cost_usd, u.cost_status, COALESCE(u.first_seen, s.started_at) AS timestamp
       FROM session_model_usage u JOIN sessions s ON s.id = u.session_id
-      WHERE lower(u.model) LIKE '%minimax%'`)
-      .all();
+      WHERE lower(u.model) LIKE '%minimax%'
+        AND (? IS NULL OR COALESCE(u.first_seen, s.started_at) >= ?)`,
+      )
+      .all(cutoffSeconds ?? null, cutoffSeconds ?? null);
     return rows.map((row) => {
       const count = (key: string) =>
         typeof row[key] === "number" && Number.isFinite(row[key]) ? Math.max(0, row[key]) : 0;
@@ -79,42 +92,51 @@ export const minimaxUsageReader: ProviderUsageReader<AcpRegistrySettings, Path.P
   provider: "minimax",
   scan: Effect.fn("MiniMaxUsage.scan")(function* ({
     instances,
+    retentionCutoffMs,
   }: ProviderUsageScanInput<AcpRegistrySettings>) {
     const pathService = yield* Path.Path;
     // Only read history when an ACP registry instance is configured. Without that gate every
     // environment, including CI, would pick up the host's own ~/.hermes directory.
     const configured = instances.filter((instance) => instance.configured);
     if (configured.length === 0) return [];
-    const environment = configured.find(
-      (instance) => instance.environment.HERMES_HOME,
-    )?.environment;
-    const dir = environment?.HERMES_HOME || pathService.join(NodeOS.homedir(), ".hermes");
-    const path = pathService.join(dir, "state.db");
-    return yield* Effect.try({
-      try: () => readMiniMaxHistory(path),
-      catch: (cause) =>
-        new UsageReadError({
-          reason: "scanFailed",
-          detail: "Could not read Hermes MiniMax usage history.",
-          cause,
-        }),
-    }).pipe(
-      Effect.map((records) => [
-        {
-          dir,
-          files: [{ path, records }],
-          message:
-            "Hermes cumulative per-model totals are attributed to the first recorded activity; hourly timing is approximate. Costs use MiniMax's first-party rates unless Hermes reports an actual charge.",
-        },
-      ]),
-      Effect.orElseSucceed(() => [
-        {
-          dir,
-          files: null,
-          status: "failed" as const,
-          message: "Could not read Hermes MiniMax usage history.",
-        },
-      ]),
-    );
+    const directories = [
+      ...new Set(
+        configured.map((instance) =>
+          pathService.resolve(
+            instance.environment.HERMES_HOME || pathService.join(NodeOS.homedir(), ".hermes"),
+          ),
+        ),
+      ),
+    ];
+    const scans = yield* Effect.forEach(directories, (dir) => {
+      const path = pathService.join(dir, "state.db");
+      return Effect.try({
+        try: () => readMiniMaxHistory(path, retentionCutoffMs),
+        catch: (cause) =>
+          new UsageReadError({
+            reason: "scanFailed",
+            detail: "Could not read Hermes MiniMax usage history.",
+            cause,
+          }),
+      }).pipe(
+        Effect.map((records) => [
+          {
+            dir,
+            files: [{ path, records }],
+            message:
+              "Hermes cumulative per-model totals are attributed to the first recorded activity; hourly timing is approximate. Costs use MiniMax's first-party rates unless Hermes reports an actual charge.",
+          },
+        ]),
+        Effect.orElseSucceed(() => [
+          {
+            dir,
+            files: null,
+            status: "failed" as const,
+            message: "Could not read Hermes MiniMax usage history.",
+          },
+        ]),
+      );
+    });
+    return scans.flat();
   }),
 };

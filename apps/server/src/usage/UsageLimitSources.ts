@@ -22,6 +22,7 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
+import * as Digest from "effect/crypto/Digest";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -103,6 +104,7 @@ function missingManagementKey(config: UsageLimitSourceConfig): string {
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
   const client = yield* HttpClient.HttpClient;
+  const digester = yield* Digest.Digest;
   const settingsService = yield* Settings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -142,7 +144,10 @@ export const make = Effect.gen(function* () {
     }
     const accounts = yield* (
       config.kind === "minimax"
-        ? readMiniMaxQuota(managementKey).pipe(Effect.provideService(HttpClient.HttpClient, client))
+        ? readMiniMaxQuota(managementKey).pipe(
+            Effect.provideService(HttpClient.HttpClient, client),
+            Effect.provideService(Digest.Digest, digester),
+          )
         : api.readAccounts({ url: config.url, managementKey })
     ).pipe(Effect.result);
     if (accounts._tag === "Failure") {

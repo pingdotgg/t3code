@@ -198,6 +198,9 @@ On web or desktop, open **Settings → Providers → Usage providers → Add sou
 appear under **Usage → Limits** when MiniMax reports them. The key is stored on the selected server.
 
 MiniMax token history is read from Hermes’s `state.db` on the server (`HERMES_HOME`, or `~/.hermes`).
+History is read only when an ACP registry instance is configured for the environment; adding a
+MiniMax quota source alone does not enable it. See [ACP providers](./providers-acp.md) for how
+to add a registry instance.
 The Usage dashboard includes each recorded MiniMax model, including auxiliary tasks. Hermes stores
 cumulative per-model totals, so activity is attributed to its first recorded timestamp; hourly timing
 is approximate. Costs are priced at MiniMax’s first-party rates unless Hermes reports an actual
