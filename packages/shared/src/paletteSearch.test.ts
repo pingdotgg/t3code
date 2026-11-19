@@ -591,7 +591,7 @@ describe("rankSearchGroups with keywords and picks", () => {
     ).toBeNull();
     expect(scoreThreadSearch("arch", thread("Research notes"), NOW)?.quality).toBe(0.3);
     // Except a number's last digits in a name, never in a pull request number.
-    expect(scoreSearchTerms("120", ["33120", "/home/joseph/CMU/33120"])?.quality).toBe(0.3);
+    expect(scoreSearchTerms("120", ["33120", "~/courses/33120"])?.quality).toBe(0.3);
     expect(scoreThreadSearch("120", thread("33120 notes"), NOW)?.quality).toBe(0.3);
     expect(scoreSearchTerms("312", ["33120"])).toBeNull();
     expect(scoreSearchTerms("20", ["33120"])).toBeNull();
