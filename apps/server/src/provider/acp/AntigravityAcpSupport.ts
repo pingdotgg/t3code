@@ -276,25 +276,15 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
     const listed = antigravityModelOptions(configOptions).some(
       (option) => option.value === resolved,
     );
-    const legacyFamily = listed ? undefined : legacyAntigravityFamily(configOptions, resolved);
+    if (listed) {
+      yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
+      return resolved;
+    }
     // A live session's choices go stale when the account gains models; let the agent decide.
-    if (legacyFamily !== undefined || (explicit && !listed)) {
-      yield* input.runtime
-        .setConfigOption("model", resolved, { allowUnlistedValue: true })
-        .pipe(Effect.mapError(input.mapError));
-      return legacyFamily ?? resolved;
-    }
-    if (!listed) {
-      return yield* Effect.fail(
-        input.mapError(
-          EffectAcpErrors.AcpRequestError.invalidParams(
-            `Antigravity model '${resolved}' is unavailable for this Google account. Select an available model.`,
-          ),
-        ),
-      );
-    }
-    yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
-    return resolved;
+    yield* input.runtime
+      .setConfigOption("model", resolved, { allowUnlistedValue: true })
+      .pipe(Effect.mapError(input.mapError));
+    return legacyAntigravityFamily(configOptions, resolved) ?? resolved;
   },
 );
 
