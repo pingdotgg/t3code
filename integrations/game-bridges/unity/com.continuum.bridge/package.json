@@ -1,0 +1,11 @@
+{
+  "name": "com.continuum.bridge",
+  "version": "1.0.0",
+  "displayName": "Continuum Bridge",
+  "description": "Lets Continuum's agents inspect and edit this project, run tests, and control Play Mode through the Continuum bridge on this computer.",
+  "unity": "2021.3",
+  "dependencies": {
+    "com.unity.test-framework": "1.1.33"
+  },
+  "author": { "name": "Continuum IDE contributors" }
+}

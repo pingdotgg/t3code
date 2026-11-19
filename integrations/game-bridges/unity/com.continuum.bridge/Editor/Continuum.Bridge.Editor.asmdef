@@ -1,0 +1,14 @@
+{
+  "name": "Continuum.Bridge.Editor",
+  "rootNamespace": "Continuum.Bridge",
+  "references": ["UnityEditor.TestRunner", "UnityEngine.TestRunner"],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

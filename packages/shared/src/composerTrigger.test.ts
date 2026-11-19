@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   detectComposerTrigger,
+  parseImproveCommand,
   parseSideChatCommand,
   serializeComposerFileLink,
 } from "./composerTrigger.ts";
@@ -135,5 +136,17 @@ describe("parseSideChatCommand", () => {
     expect(parseSideChatCommand("/sidebar")).toBeNull();
     expect(parseSideChatCommand("/btwx")).toBeNull();
     expect(parseSideChatCommand("ask /side later")).toBeNull();
+  });
+});
+
+describe("parseImproveCommand", () => {
+  it("keeps a multiline prompt and ignores lookalike commands", () => {
+    expect(parseImproveCommand("/improve")).toEqual({ prompt: "" });
+    expect(parseImproveCommand("/improve fix the login\n\n- keep the API\n- add a test")).toEqual({
+      prompt: "fix the login\n\n- keep the API\n- add a test",
+    });
+    expect(parseImproveCommand("/improve\nsecond line")).toEqual({ prompt: "second line" });
+    expect(parseImproveCommand("/improvement plan")).toBeNull();
+    expect(parseImproveCommand("please /improve this")).toBeNull();
   });
 });

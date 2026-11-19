@@ -178,6 +178,12 @@ export function isClearComposerCommand(text: string): boolean {
 }
 
 /** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message. */
+/** `/improve <prompt>`; the prompt keeps its line breaks. */
+export function parseImproveCommand(text: string): { prompt: string } | null {
+  const match = /^\/improve(?:[ \t]+|\n|$)([\s\S]*)$/i.exec(text.trimStart());
+  return match ? { prompt: match[1]?.trim() ?? "" } : null;
+}
+
 export function parseSideChatCommand(text: string): { prompt: string } | null {
   const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());
   return match ? { prompt: match[1]?.trim() ?? "" } : null;

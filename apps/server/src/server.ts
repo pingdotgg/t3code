@@ -209,6 +209,10 @@ import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAcco
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as OllamaService from "./ollama/OllamaService.ts";
+import * as GameDevService from "./gameDev/GameDevService.ts";
+import * as SuperchargeService from "./supercharge/SuperchargeService.ts";
+import * as ImproveService from "./improve/ImproveService.ts";
+import * as MobileAccessService from "./mobileAccess/MobileAccessService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
 import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
 import * as UsageSharing from "./usageSharing/UsageSharingService.ts";
@@ -808,6 +812,9 @@ const layerRuntimeCoreWithSharing = UsageSharing.layer.pipe(
 
 const layerRuntimeDependencies = layerRuntimeCoreWithSharing.pipe(
   Layer.provideMerge(MemoryVaultService.layer),
+  Layer.provideMerge(SuperchargeService.layer),
+  Layer.provideMerge(MobileAccessService.layer),
+  Layer.provideMerge(GameDevService.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(
     OllamaService.layer.pipe(
@@ -875,7 +882,11 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
+  // Watches supercharged runs and starts their verify, fix, and review turns.
+  SuperchargeService.runnerLayer,
 ).pipe(
+  // /improve rewrites a prompt and opens a session; WebSocket clients start it.
+  Layer.provide(ImproveService.layer),
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
   ),

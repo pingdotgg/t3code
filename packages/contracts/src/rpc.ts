@@ -455,6 +455,52 @@ import {
   OllamaSetAgentIntegrationInput,
   OllamaStatus,
 } from "./ollama.ts";
+import {
+  GameDevAssetImportInput,
+  GameDevAssetImportResult,
+  GameDevAssetPreviewInput,
+  GameDevAssetsInput,
+  GameAsset,
+  GameDevBindSessionInput,
+  GameDevCapture,
+  GameDevCaptureInput,
+  GameDevCheckpointCreateInput,
+  GameDevCheckpointRefInput,
+  GameCheckpoint,
+  GameCheckpointDiff,
+  GameDevCommandInput,
+  GameDevCommandResult,
+  GameDevDetectProjectsInput,
+  GameDevError,
+  GameDevForgeGuiKeyInput,
+  GameDevForgeGuiTestResult,
+  GameDevInstallInput,
+  GameDevLocateInput,
+  GameDevOpenProjectInput,
+  GameDevOpenProjectResult,
+  GameDevOverview,
+  GameDevResolveApprovalInput,
+  GameDevSettingsPatch,
+  GameDevWorkspace,
+  GameDevWorkspaceInput,
+  GameInstallEvent,
+  GameProject,
+} from "./gameDev.ts";
+import {
+  SuperchargeConfigureInput,
+  SuperchargeError,
+  SuperchargeThreadInput,
+  SuperchargeThreadState,
+} from "./supercharge.ts";
+import {
+  ImproveDismissInput,
+  ImproveError,
+  ImproveJob,
+  ImproveListInput,
+  ImproveRetryInput,
+  ImproveStartInput,
+} from "./improve.ts";
+import { MobileAccessStatus } from "./mobileAccess.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -600,6 +646,37 @@ export const WS_METHODS = {
   ollamaPullModel: "ollama.pullModel",
   ollamaDeleteModel: "ollama.deleteModel",
   ollamaSetAgentIntegration: "ollama.setAgentIntegration",
+
+  gameDevGetOverview: "gameDev.getOverview",
+  gameDevDetectProjects: "gameDev.detectProjects",
+  gameDevInstall: "gameDev.install",
+  gameDevLocate: "gameDev.locate",
+  gameDevOpenProject: "gameDev.openProject",
+  gameDevBindSession: "gameDev.bindSession",
+  gameDevUpdateSettings: "gameDev.updateSettings",
+  gameDevWorkspace: "gameDev.workspace",
+  gameDevCommand: "gameDev.command",
+  gameDevGetCapture: "gameDev.getCapture",
+  gameDevResolveApproval: "gameDev.resolveApproval",
+  gameDevCheckpointCreate: "gameDev.checkpointCreate",
+  gameDevCheckpointDiff: "gameDev.checkpointDiff",
+  gameDevCheckpointRestore: "gameDev.checkpointRestore",
+  gameDevAssets: "gameDev.assets",
+  gameDevAssetPreview: "gameDev.assetPreview",
+  gameDevAssetImport: "gameDev.assetImport",
+  gameDevSetForgeGuiKey: "gameDev.setForgeGuiKey",
+  gameDevTestForgeGui: "gameDev.testForgeGui",
+
+  superchargeGet: "supercharge.get",
+  superchargeConfigure: "supercharge.configure",
+  superchargeStop: "supercharge.stop",
+
+  improveStart: "improve.start",
+  improveRetry: "improve.retry",
+  improveList: "improve.list",
+  improveDismiss: "improve.dismiss",
+
+  mobileAccessStatus: "mobileAccess.status",
 
   providerRuntimesStatus: "providerRuntimes.status",
   providerRuntimesUpdateSettings: "providerRuntimes.updateSettings",
@@ -1247,6 +1324,150 @@ const WsOllamaSetAgentIntegrationRpc = Rpc.make(WS_METHODS.ollamaSetAgentIntegra
   payload: OllamaSetAgentIntegrationInput,
   success: OllamaStatus,
   error: OllamaRpcError,
+});
+
+const GameDevRpcError = Schema.Union([GameDevError, EnvironmentAuthorizationError]);
+const gameDevRpc = <const Tag extends string, P extends Schema.Top, S extends Schema.Top>(
+  tag: Tag,
+  payload: P,
+  success: S,
+) => Rpc.make(tag, { payload, success, error: GameDevRpcError });
+
+const WsGameDevGetOverviewRpc = gameDevRpc(
+  WS_METHODS.gameDevGetOverview,
+  Schema.Struct({}),
+  GameDevOverview,
+);
+const WsGameDevDetectProjectsRpc = gameDevRpc(
+  WS_METHODS.gameDevDetectProjects,
+  GameDevDetectProjectsInput,
+  Schema.Array(GameProject),
+);
+const WsGameDevInstallRpc = Rpc.make(WS_METHODS.gameDevInstall, {
+  payload: GameDevInstallInput,
+  success: GameInstallEvent,
+  error: GameDevRpcError,
+  stream: true,
+});
+const WsGameDevLocateRpc = gameDevRpc(WS_METHODS.gameDevLocate, GameDevLocateInput, GameDevOverview);
+const WsGameDevOpenProjectRpc = gameDevRpc(
+  WS_METHODS.gameDevOpenProject,
+  GameDevOpenProjectInput,
+  GameDevOpenProjectResult,
+);
+const WsGameDevBindSessionRpc = gameDevRpc(
+  WS_METHODS.gameDevBindSession,
+  GameDevBindSessionInput,
+  GameDevWorkspace,
+);
+const WsGameDevUpdateSettingsRpc = gameDevRpc(
+  WS_METHODS.gameDevUpdateSettings,
+  GameDevSettingsPatch,
+  GameDevOverview,
+);
+const WsGameDevWorkspaceRpc = gameDevRpc(
+  WS_METHODS.gameDevWorkspace,
+  GameDevWorkspaceInput,
+  GameDevWorkspace,
+);
+const WsGameDevCommandRpc = gameDevRpc(
+  WS_METHODS.gameDevCommand,
+  GameDevCommandInput,
+  GameDevCommandResult,
+);
+const WsGameDevGetCaptureRpc = gameDevRpc(
+  WS_METHODS.gameDevGetCapture,
+  GameDevCaptureInput,
+  GameDevCapture,
+);
+const WsGameDevResolveApprovalRpc = gameDevRpc(
+  WS_METHODS.gameDevResolveApproval,
+  GameDevResolveApprovalInput,
+  Schema.Struct({ resolved: Schema.Boolean }),
+);
+const WsGameDevCheckpointCreateRpc = gameDevRpc(
+  WS_METHODS.gameDevCheckpointCreate,
+  GameDevCheckpointCreateInput,
+  GameCheckpoint,
+);
+const WsGameDevCheckpointDiffRpc = gameDevRpc(
+  WS_METHODS.gameDevCheckpointDiff,
+  GameDevCheckpointRefInput,
+  GameCheckpointDiff,
+);
+const WsGameDevCheckpointRestoreRpc = gameDevRpc(
+  WS_METHODS.gameDevCheckpointRestore,
+  GameDevCheckpointRefInput,
+  GameCheckpointDiff,
+);
+const WsGameDevAssetsRpc = gameDevRpc(
+  WS_METHODS.gameDevAssets,
+  GameDevAssetsInput,
+  Schema.Array(GameAsset),
+);
+const WsGameDevAssetPreviewRpc = gameDevRpc(
+  WS_METHODS.gameDevAssetPreview,
+  GameDevAssetPreviewInput,
+  GameDevCapture,
+);
+const WsGameDevAssetImportRpc = gameDevRpc(
+  WS_METHODS.gameDevAssetImport,
+  GameDevAssetImportInput,
+  GameDevAssetImportResult,
+);
+const WsGameDevSetForgeGuiKeyRpc = gameDevRpc(
+  WS_METHODS.gameDevSetForgeGuiKey,
+  GameDevForgeGuiKeyInput,
+  GameDevOverview,
+);
+const WsGameDevTestForgeGuiRpc = gameDevRpc(
+  WS_METHODS.gameDevTestForgeGui,
+  Schema.Struct({}),
+  GameDevForgeGuiTestResult,
+);
+
+const SuperchargeRpcError = Schema.Union([SuperchargeError, EnvironmentAuthorizationError]);
+const WsSuperchargeGetRpc = Rpc.make(WS_METHODS.superchargeGet, {
+  payload: SuperchargeThreadInput,
+  success: SuperchargeThreadState,
+  error: SuperchargeRpcError,
+});
+const WsSuperchargeConfigureRpc = Rpc.make(WS_METHODS.superchargeConfigure, {
+  payload: SuperchargeConfigureInput,
+  success: SuperchargeThreadState,
+  error: SuperchargeRpcError,
+});
+const WsSuperchargeStopRpc = Rpc.make(WS_METHODS.superchargeStop, {
+  payload: SuperchargeThreadInput,
+  success: SuperchargeThreadState,
+  error: SuperchargeRpcError,
+});
+
+const ImproveRpcError = Schema.Union([ImproveError, EnvironmentAuthorizationError]);
+const WsImproveStartRpc = Rpc.make(WS_METHODS.improveStart, {
+  payload: ImproveStartInput,
+  success: ImproveJob,
+  error: ImproveRpcError,
+});
+const WsImproveRetryRpc = Rpc.make(WS_METHODS.improveRetry, {
+  payload: ImproveRetryInput,
+  success: ImproveJob,
+  error: ImproveRpcError,
+});
+const WsImproveListRpc = Rpc.make(WS_METHODS.improveList, {
+  payload: ImproveListInput,
+  success: Schema.Array(ImproveJob),
+  error: ImproveRpcError,
+});
+const WsImproveDismissRpc = Rpc.make(WS_METHODS.improveDismiss, {
+  payload: ImproveDismissInput,
+  error: ImproveRpcError,
+});
+
+const WsMobileAccessStatusRpc = Rpc.make(WS_METHODS.mobileAccessStatus, {
+  payload: Schema.Struct({}),
+  success: MobileAccessStatus,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsServerRefreshUsageRatesRpc = Rpc.make(WS_METHODS.serverRefreshUsageRates, {
@@ -2398,6 +2619,33 @@ export const WsRpcGroup = RpcGroup.make(
   WsOllamaPullModelRpc,
   WsOllamaDeleteModelRpc,
   WsOllamaSetAgentIntegrationRpc,
+  WsGameDevGetOverviewRpc,
+  WsGameDevDetectProjectsRpc,
+  WsGameDevInstallRpc,
+  WsGameDevLocateRpc,
+  WsGameDevOpenProjectRpc,
+  WsGameDevBindSessionRpc,
+  WsGameDevUpdateSettingsRpc,
+  WsGameDevWorkspaceRpc,
+  WsGameDevCommandRpc,
+  WsGameDevGetCaptureRpc,
+  WsGameDevResolveApprovalRpc,
+  WsGameDevCheckpointCreateRpc,
+  WsGameDevCheckpointDiffRpc,
+  WsGameDevCheckpointRestoreRpc,
+  WsGameDevAssetsRpc,
+  WsGameDevAssetPreviewRpc,
+  WsGameDevAssetImportRpc,
+  WsGameDevSetForgeGuiKeyRpc,
+  WsGameDevTestForgeGuiRpc,
+  WsSuperchargeGetRpc,
+  WsSuperchargeConfigureRpc,
+  WsSuperchargeStopRpc,
+  WsImproveStartRpc,
+  WsImproveRetryRpc,
+  WsImproveListRpc,
+  WsImproveDismissRpc,
+  WsMobileAccessStatusRpc,
   WsProviderRuntimesStatusRpc,
   WsProviderRuntimesUpdateSettingsRpc,
   WsProviderRuntimesCheckNowRpc,

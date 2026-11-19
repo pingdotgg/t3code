@@ -1,0 +1,17 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0.0",
+  "FriendlyName": "Continuum Bridge",
+  "Description": "Lets Continuum's agents inspect and edit levels and assets, start Play In Editor, and run automation tests through the Continuum bridge on this computer.",
+  "Category": "Editor",
+  "CreatedBy": "Continuum IDE contributors",
+  "CanContainContent": true,
+  "EnabledByDefault": true,
+  "IsBetaVersion": false,
+  "Installed": false,
+  "Plugins": [
+    { "Name": "PythonScriptPlugin", "Enabled": true },
+    { "Name": "EditorScriptingUtilities", "Enabled": true }
+  ]
+}

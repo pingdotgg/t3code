@@ -127,6 +127,11 @@ import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as OllamaService from "./ollama/OllamaService.ts";
+import * as GameDevService from "./gameDev/GameDevService.ts";
+import * as SuperchargeService from "./supercharge/SuperchargeService.ts";
+import { DEFAULT_SUPERCHARGE_CONFIG } from "@t3tools/contracts";
+import * as ImproveService from "./improve/ImproveService.ts";
+import * as MobileAccessService from "./mobileAccess/MobileAccessService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
 import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
 import * as UsageSharing from "./usageSharing/UsageSharingService.ts";
@@ -873,6 +878,10 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ThreadSearch.ThreadSearch)({}),
   Layer.mock(UsageService.UsageService)({}),
   Layer.mock(OllamaService.OllamaService)({}),
+  Layer.mock(GameDevService.GameDevService)({ core: undefined as never }),
+  Layer.mock(SuperchargeService.SuperchargeService)({ started: undefined as never, active: () => null, config: () => DEFAULT_SUPERCHARGE_CONFIG }),
+  Layer.mock(ImproveService.ImproveService)({}),
+  Layer.mock(MobileAccessService.MobileAccessService)({}),
   Layer.mock(MemoryVaultService.MemoryVaultService)({}),
   Layer.mock(ProviderRuntimeUpdater.ProviderRuntimeUpdater)({}),
   Layer.mock(UsageSharing.UsageSharingService)({}),

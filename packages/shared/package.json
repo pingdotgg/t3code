@@ -586,6 +586,26 @@
     "./secretRedaction": {
       "types": "./src/secretRedaction.ts",
       "import": "./src/secretRedaction.ts"
+    },
+    "./gameDevCatalog": {
+      "types": "./src/gameDevCatalog.ts",
+      "import": "./src/gameDevCatalog.ts"
+    },
+    "./gameDevRecipes": {
+      "types": "./src/gameDevRecipes.ts",
+      "import": "./src/gameDevRecipes.ts"
+    },
+    "./superchargeWorkflow": {
+      "types": "./src/superchargeWorkflow.ts",
+      "import": "./src/superchargeWorkflow.ts"
+    },
+    "./improvePrompt": {
+      "types": "./src/improvePrompt.ts",
+      "import": "./src/improvePrompt.ts"
+    },
+    "./entertainment": {
+      "types": "./src/entertainment.ts",
+      "import": "./src/entertainment.ts"
     }
   },
   "scripts": {

@@ -82,6 +82,8 @@ import {
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
   OllamaError,
+  GameDevError,
+  type GameInstallEvent,
   type OllamaInstallEvent,
   type OllamaPullEvent,
   type ServerConfig as ClientServerConfig,
@@ -248,6 +250,10 @@ import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
 import type { TelemetryOwner } from "./telemetry/Identify.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as OllamaService from "./ollama/OllamaService.ts";
+import * as GameDevService from "./gameDev/GameDevService.ts";
+import * as SuperchargeService from "./supercharge/SuperchargeService.ts";
+import * as ImproveService from "./improve/ImproveService.ts";
+import * as MobileAccessService from "./mobileAccess/MobileAccessService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
 import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
 import * as UsageSharing from "./usageSharing/UsageSharingService.ts";
@@ -1506,6 +1512,10 @@ export const layerWsRpc = (
             );
       const usage = yield* UsageService.UsageService;
       const ollama = yield* OllamaService.OllamaService;
+      const gameDev = yield* GameDevService.GameDevService;
+      const supercharge = yield* SuperchargeService.SuperchargeService;
+      const improve = yield* ImproveService.ImproveService;
+      const mobileAccess = yield* MobileAccessService.MobileAccessService;
       const memoryVaults = yield* MemoryVaultService.MemoryVaultService;
       const providerRuntimes = yield* ProviderRuntimeUpdater.ProviderRuntimeUpdater;
       const usageSharing = yield* UsageSharing.UsageSharingService;
@@ -2758,6 +2768,54 @@ export const layerWsRpc = (
         [WS_METHODS.ollamaDeleteModel]: (input) => ollama.deleteModel(input.model),
         [WS_METHODS.ollamaSetAgentIntegration]: (input) =>
           ollama.setAgentIntegration(input.enabled),
+        [WS_METHODS.gameDevGetOverview]: (_input) => gameDev.overview,
+        [WS_METHODS.gameDevDetectProjects]: (input) => gameDev.detectProjects(input.root),
+        [WS_METHODS.gameDevInstall]: (input) =>
+          Stream.callback<GameInstallEvent, GameDevError>((queue) =>
+            gameDev
+              .install(input, (event) => {
+                Queue.offerUnsafe(queue, event);
+              })
+              .pipe(
+                Effect.andThen(Queue.end(queue)),
+                Effect.catchTags({ GameDevError: (error) => Queue.fail(queue, error) }),
+              ),
+          ),
+        [WS_METHODS.gameDevLocate]: (input) => gameDev.locate(input.target, input.path),
+        [WS_METHODS.gameDevOpenProject]: (input) => gameDev.openProject(input),
+        [WS_METHODS.gameDevBindSession]: (input) =>
+          gameDev.bindSession(input.sessionId, input.projectRoot),
+        [WS_METHODS.gameDevUpdateSettings]: (input) => gameDev.updateSettings(input),
+        [WS_METHODS.gameDevWorkspace]: (input) => gameDev.workspace(input.projectRoot),
+        [WS_METHODS.gameDevCommand]: (input) => gameDev.userCommand(input),
+        [WS_METHODS.gameDevGetCapture]: (input) => gameDev.capture(input.captureId),
+        [WS_METHODS.gameDevResolveApproval]: (input) =>
+          gameDev.resolveApproval(input.approvalId, input.approve),
+        [WS_METHODS.gameDevCheckpointCreate]: (input) => gameDev.checkpointCreate(input),
+        [WS_METHODS.gameDevCheckpointDiff]: (input) =>
+          gameDev.checkpointDiff(input.projectRoot, input.checkpointId),
+        [WS_METHODS.gameDevCheckpointRestore]: (input) =>
+          gameDev.checkpointRestore(input.projectRoot, input.checkpointId),
+        [WS_METHODS.gameDevAssets]: (input) => gameDev.assets(input.projectRoot),
+        [WS_METHODS.gameDevAssetPreview]: (input) =>
+          gameDev.assetPreview(input.projectRoot, input.assetId, input.revision),
+        [WS_METHODS.gameDevAssetImport]: (input) =>
+          gameDev.assetImport({ ...input, confirmReplace: input.confirmReplace === true }),
+        [WS_METHODS.gameDevSetForgeGuiKey]: (input) => gameDev.setForgeGuiKey(input.apiKey),
+        [WS_METHODS.gameDevTestForgeGui]: (_input) => gameDev.testForgeGui,
+        [WS_METHODS.superchargeGet]: (input) => supercharge.get(input.threadId),
+        [WS_METHODS.superchargeConfigure]: (input) =>
+          supercharge.configure(input.threadId, input.config),
+        [WS_METHODS.superchargeStop]: (input) =>
+          SuperchargeService.stopThread(input.threadId).pipe(
+            Effect.provideService(SuperchargeService.SuperchargeService, supercharge),
+            Effect.provideService(ThreadManagementService.ThreadManagementService, threadManagement),
+          ),
+        [WS_METHODS.improveStart]: (input) => improve.start(input),
+        [WS_METHODS.improveRetry]: (input) => improve.retry(input),
+        [WS_METHODS.improveList]: (input) => improve.list(input.sourceThreadId),
+        [WS_METHODS.improveDismiss]: (input) => improve.dismiss(input.requestId),
+        [WS_METHODS.mobileAccessStatus]: (_input) => mobileAccess.status,
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),
@@ -3627,6 +3685,7 @@ export const layer = Layer.unwrap(
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
+    const improveService = yield* ImproveService.ImproveService;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -3635,6 +3694,14 @@ export const layer = Layer.unwrap(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const url = requestUrl(request);
         if (Option.isNone(url) || !hasCompatibleOrchestrationProtocol(url.value)) {
+          if (Option.isSome(url)) {
+            yield* MobileAccessService.MobileAccessService.pipe(
+              Effect.flatMap((mobile) =>
+                mobile.recordRejection({ url: url.value, outcome: "protocol-mismatch", reason: null }),
+              ),
+              Effect.ignore,
+            );
+          }
           return HttpServerResponse.jsonUnsafe(
             {
               code: "orchestration_protocol_incompatible",
@@ -3648,6 +3715,16 @@ export const layer = Layer.unwrap(
         const sessions = yield* SessionStore.SessionStore;
         const analytics = yield* AnalyticsService.AnalyticsService;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request, "rpc").pipe(
+          Effect.tapError((error) =>
+            EnvironmentAuth.isServerAuthCredentialError(error) && error._tag !== "ServerAuthMissingCredentialError"
+              ? MobileAccessService.MobileAccessService.pipe(
+                  Effect.flatMap((mobile) =>
+                    mobile.recordRejection({ url: url.value, outcome: "credential-rejected", reason: null }),
+                  ),
+                  Effect.ignore,
+                )
+              : Effect.void,
+          ),
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
@@ -3716,6 +3793,7 @@ export const layer = Layer.unwrap(
               ),
               Layer.provide(Layer.succeed(PeerLinks.PeerLinks, peerLinks)),
               Layer.provide(Layer.succeed(PeerLinkRequests.PeerLinkRequests, peerLinkRequests)),
+              Layer.provide(Layer.succeed(ImproveService.ImproveService, improveService)),
               Layer.provide(
                 SourceControlDiscovery.layer.pipe(
                   Layer.provide(

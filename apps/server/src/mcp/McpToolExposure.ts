@@ -12,6 +12,9 @@ const DIRECT_TOOLS: ReadonlySet<string> = new Set([
   "continuum_memory_search",
   "continuum_memory_read",
   "continuum_memory_update",
+  // Game work starts by asking what the connected editor can do.
+  "continuum_game_status",
+  "continuum_game_call",
   TOOL_SEARCH,
 ]);
 

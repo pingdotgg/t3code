@@ -36,6 +36,7 @@ import {
 import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as MemoryVaultService from "../memoryVaults/MemoryVaultService.ts";
+import * as SuperchargeService from "../supercharge/SuperchargeService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -205,6 +206,7 @@ export const layer: Layer.Layer<
     const projects = yield* ProjectService.ProjectService;
     // Optional so hosts and tests without vaults build this service unchanged.
     const memoryVaults = yield* Effect.serviceOption(MemoryVaultService.MemoryVaultService);
+    const supercharge = yield* Effect.serviceOption(SuperchargeService.SuperchargeService);
     const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -901,6 +903,11 @@ export const layer: Layer.Layer<
                 Effect.orElseSucceed(() => null),
               ),
             });
+      // Supercharge turns carry their workflow; the run is watched to decide follow-ups.
+      const superchargeContext =
+        goalCommand || Option.isNone(supercharge)
+          ? ""
+          : yield* supercharge.value.contextForTurn({ threadId: projection.thread.id, runId: run.id });
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
@@ -1772,6 +1779,7 @@ export const layer: Layer.Layer<
             restartNote,
             compact || turnInput.resume ? "" : memoryContext,
             compact || turnInput.resume ? "" : agentEyesNarrationContext(narration),
+            compact || turnInput.resume ? "" : superchargeContext,
           ]
             .filter((part) => part !== "")
             .join("\n\n");
