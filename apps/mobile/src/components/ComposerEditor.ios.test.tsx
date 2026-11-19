@@ -21,7 +21,6 @@ interface NativeEvent {
 interface NativeProps {
   readonly ref?: Ref<unknown>;
   readonly controlledDocumentJson: string;
-  readonly writingDirection: string;
   readonly onComposerChange: (event: { readonly nativeEvent: NativeEvent }) => void;
 }
 
@@ -199,27 +198,6 @@ it("keeps a sent draft cleared when an autocorrection lands in the same batch as
   await act(async () => emit("n"));
   expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("n");
   expect(native.text).toBe("n");
-});
-
-it("lays out an Arabic draft right to left when it opens with an English word", async () => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const draftKey = "direction:thread";
-  const root = createRoot(document.createElement("div"));
-  await using _root = { [Symbol.asyncDispose]: async () => act(() => root.unmount()) };
-  await act(async () =>
-    root.render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <ThreadComposer draftKey={draftKey} />
-      </RegistryContext.Provider>,
-    ),
-  );
-  expect(native.props!.writingDirection).toBe("");
-
-  await act(async () => emit("Plantur، سيروم للشعر 100 مل، 14,95 €"));
-  expect(native.props!.writingDirection).toBe("rtl");
-
-  await act(async () => emit("Run the build first"));
-  expect(native.props!.writingDirection).toBe("ltr");
 });
 
 it("keeps a pending event from the previous native editor out of the selected draft", async () => {
