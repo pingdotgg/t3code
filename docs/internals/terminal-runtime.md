@@ -22,6 +22,15 @@ discarded chunk references immediately, even if array compaction happens later.
 Client buffers have a separate 512 KiB cap. Measure throughput with full scrollback
 when changing this path.
 
+The server holds the text of an unfinished control sequence until it ends, and limits
+how much it holds. The limit must not end a string. libghostty stays in an oversized
+string until its terminator and prints none of it as text, so history that resumed
+early would replay output the live screen never showed. A CSI longer than the limit can
+still run in libghostty at its final byte. History leaves it out, because it may be a
+query. Below the limit each chunk copies the held string. The string limit in code
+units is the client buffer's limit in bytes, so raising that buffer raises the cost
+with its square.
+
 Restoration must read only the bounded tail of current or legacy history files,
 skip any incomplete UTF-8 prefix, and apply the line limit. Close the read handle
 before rewriting the capped file. Reading whole old logs would defeat the memory
