@@ -1,5 +1,6 @@
 import {
   AuthRelayReadScope,
+  AuthRelayConfigureScope,
   AuthRelayWriteScope,
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentHttpApi,
@@ -117,7 +118,7 @@ export const layer = HttpApiBuilder.group(
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
-          yield* requireEnvironmentScope(AuthRelayWriteScope);
+          yield* requireEnvironmentScope(AuthRelayConfigureScope);
           const request = yield* HttpServerRequest.HttpServerRequest;
           const proof = yield* toHttpError(cloudLink.linkProof(payload, request));
           yield* appendCloudCredentialResponseHeaders;
@@ -125,9 +126,10 @@ export const layer = HttpApiBuilder.group(
         }),
       )
       .handle("relayConfig", ({ payload }) =>
-        requireEnvironmentScope(AuthRelayWriteScope).pipe(
-          Effect.andThen(toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload))),
-        ),
+        Effect.gen(function* () {
+          yield* requireEnvironmentScope(AuthRelayConfigureScope);
+          return yield* toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload));
+        }),
       )
       .handle("linkState", () =>
         Effect.gen(function* () {
@@ -148,6 +150,13 @@ export const layer = HttpApiBuilder.group(
       .handle("preferences", ({ payload }) =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
           Effect.andThen(toHttpError(cloudLink.updatePreferences(payload))),
+        ),
+      )
+      .handle("liveActivityPreference", ({ payload }) =>
+        requireEnvironmentScope(AuthRelayWriteScope).pipe(
+          Effect.andThen(
+            toHttpError(cloudLink.updateLiveActivityPreference(payload.liveActivitiesEnabled)),
+          ),
         ),
       )
       .handle("health", ({ payload }) =>

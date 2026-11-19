@@ -3,6 +3,7 @@ import type {
   RelayManagedEndpoint,
   RelayManagedEndpointProviderKind,
 } from "@t3tools/contracts/relay";
+import { parseUrl } from "@t3tools/shared/url";
 
 // Require managed discovery: stale tunnel config after a publish-only switch causes endpoint_provider_not_managed.
 export function isManagedTunnelActive(
@@ -14,6 +15,23 @@ export function isManagedTunnelActive(
     linkState.linkRevoked !== true &&
     localManagedTunnel &&
     (relayProviderKind === undefined || relayProviderKind === "cloudflare_tunnel")
+  );
+}
+
+/**
+ * Whether reaching `desired` links or relinks the environment, which needs `relay:configure`.
+ * Unlinking and preference changes on the current link only need `relay:write`.
+ */
+export function cloudChangeReplacesLink(
+  linkState: EnvironmentCloudLinkStateResult,
+  relayProviderKind: RelayManagedEndpointProviderKind | undefined,
+  desired: { readonly managedTunnel: boolean; readonly publish: boolean },
+) {
+  return (
+    (desired.managedTunnel || desired.publish) &&
+    (!linkState.linked ||
+      linkState.linkRevoked === true ||
+      isManagedTunnelActive(linkState, relayProviderKind) !== desired.managedTunnel)
   );
 }
 
@@ -31,9 +49,9 @@ export function t3ConnectMcpUrl(input: {
   readonly relayEndpoint: RelayManagedEndpoint | undefined;
 }): string | null {
   const url = input.thisMachine
-    ? URL.parse(`https://${input.tunnelHostname ?? ""}`)
+    ? parseUrl(`https://${input.tunnelHostname ?? ""}`)
     : input.relayEndpoint?.providerKind === "cloudflare_tunnel"
-      ? URL.parse(input.relayEndpoint.httpBaseUrl)
+      ? parseUrl(input.relayEndpoint.httpBaseUrl)
       : null;
   return url?.protocol === "https:" && TUNNEL_HOSTNAME.test(url.hostname)
     ? `${url.origin}/mcp`

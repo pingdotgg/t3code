@@ -19,6 +19,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentSubscriptionAtomFamily,
+  isAtomCommandInterrupted,
   runAtomCommand,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -64,6 +65,8 @@ export function createTerminalEnvironmentAtoms<R, E>(
     }),
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
+      // The server sizes the PTY to every attached viewer, so a closed view must detach now.
+      idleTtlMs: 0,
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalAttach>) => {
         // Retry an unanswered first attach unchanged so it can still open the shell.
         let replied = false;
@@ -272,7 +275,7 @@ export function createTerminalSession(
   // Only a successful resize of the current measured grid may release initial input.
   let shellResized: ReturnType<typeof runAtomCommand> | null = null;
 
-  const sendResize = () => {
+  const sendResize = (retry = false) => {
     const registry = commandRegistry;
     if (generation === null || registry === null || !options.canOperate()) return;
     const resized = runAtomCommand(registry, atoms.resize, {
@@ -281,6 +284,17 @@ export function createTerminalSession(
     });
     shellResized = resized;
     void resized.then((result) => {
+      // Only a new grid or generation sends again, so retry a failure once, unless a newer
+      // resize already replaced this one.
+      if (
+        !retry &&
+        resized === shellResized &&
+        result._tag === "Failure" &&
+        !isAtomCommandInterrupted(result)
+      ) {
+        sendResize(true);
+        return;
+      }
       const data = options.initialInput;
       if (
         result._tag !== "Success" ||
