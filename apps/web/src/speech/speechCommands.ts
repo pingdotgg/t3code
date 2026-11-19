@@ -124,9 +124,10 @@ const setUpModel = Effect.fn("web.speech.setUpModel")(function* (
     );
     if (!input.isCurrent()) return yield* Effect.interrupt;
   }
-  const status = yield* awaitAtomResult(registry, speechStatusAtom(input.prepared), {
-    refresh: true,
-  });
+  const statusAtom = speechStatusAtom(input.prepared);
+  // A read already in flight can predate the selection, so restart it rather than join it.
+  registry.refresh(statusAtom);
+  const status = yield* awaitAtomResult(registry, statusAtom);
   return {
     ready:
       installed &&

@@ -686,6 +686,10 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       yield* refreshAgentAwarenessRegistration();
       expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
       expect(saveAgentAwarenessRegistrationRecord).not.toHaveBeenCalled();
+
+      // A rollback cannot trust the saved record, so it reaches the relay anyway.
+      yield* updateAgentAwarenessRegistrationPreferences({}, { force: true });
+      expect(saveAgentAwarenessRegistrationRecord).toHaveBeenCalledTimes(1);
     }).pipe(Effect.provide(layerRelayTest));
   });
 

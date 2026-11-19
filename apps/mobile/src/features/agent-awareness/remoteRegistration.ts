@@ -161,6 +161,8 @@ interface DeviceRegistrationInput {
 
 interface RegisterDeviceInput extends DeviceRegistrationInput {
   readonly preferencesOverride?: Partial<Preferences>;
+  /** Send even when the saved registration matches, which may be stale after a failed save. */
+  readonly force?: boolean;
 }
 
 function mergeAgentAwarenessRegistrationPreferences(
@@ -389,6 +391,7 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
 const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWithRelay")(function* (
   body: RelayDeviceRegistrationRequest,
   expectedGeneration: number,
+  force = false,
 ): Effect.fn.Return<void, AgentAwarenessRegistrationError, AgentAwarenessRegistrationServices> {
   if (expectedGeneration !== deviceRegistrationGeneration) {
     return;
@@ -431,6 +434,7 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
     (androidDeviceReplayedAt === null ||
       now - androidDeviceReplayedAt >= ACTIVITY_TOKEN_REREGISTER_INTERVAL_MS);
   if (
+    !force &&
     persisted &&
     persisted.identity === identity &&
     persisted.signature === signature &&
@@ -764,6 +768,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       preferences,
     }),
     expectedGeneration,
+    input.force,
   );
 });
 
@@ -859,10 +864,11 @@ export function refreshAgentAwarenessRegistration(): Effect.Effect<
 
 export function updateAgentAwarenessRegistrationPreferences(
   preferencesOverride: Partial<Preferences>,
+  options: { readonly force?: boolean } = {},
 ): Effect.Effect<void, AgentAwarenessRegistrationError, AgentAwarenessRegistrationServices> {
   return Effect.suspend(() => {
     const generation = deviceRegistrationGeneration;
-    return registerDevice({ preferencesOverride }, generation).pipe(
+    return registerDevice({ preferencesOverride, ...options }, generation).pipe(
       Effect.tapError((error) =>
         Effect.sync(() => {
           if (generation === deviceRegistrationGeneration && registrationStatus !== "registered") {

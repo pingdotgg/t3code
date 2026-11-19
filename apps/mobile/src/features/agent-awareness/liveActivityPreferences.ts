@@ -54,9 +54,11 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     });
 
     const restoreRelayPreference = Effect.fn("restoreRelayPreference")(function* () {
-      yield* updateAgentAwarenessRegistrationPreferences({
-        liveActivitiesEnabled: input.previousEnabled,
-      }).pipe(
+      // The forward registration may have reached the relay without saving its record.
+      yield* updateAgentAwarenessRegistrationPreferences(
+        { liveActivitiesEnabled: input.previousEnabled },
+        { force: true },
+      ).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Could not restore Live Activity device preference.", cause),
         ),

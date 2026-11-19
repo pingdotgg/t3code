@@ -100,9 +100,11 @@ describe("liveActivityPreferences", () => {
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(1, {
         liveActivitiesEnabled: false,
       });
-      expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(2, {
-        liveActivitiesEnabled: true,
-      });
+      expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenNthCalledWith(
+        2,
+        { liveActivitiesEnabled: true },
+        { force: true },
+      );
       expect(linkEnvironmentToCloudWithPreference).toHaveBeenNthCalledWith(1, {
         clerkToken: "clerk-token",
         connection,
