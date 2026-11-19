@@ -176,6 +176,54 @@ describe("GitHubGraphQlAuth", () => {
   );
 
   it.effect(
+    "keeps the user's rate limit when a strict call gets a partly withheld app answer",
+    () => {
+      const { layer, requests } = harness(
+        (request) =>
+          request.headers["authorization"] === "Bearer app-token"
+            ? json({
+                data: { repository: { pullRequest: stats } },
+                errors: [
+                  {
+                    type: "FORBIDDEN",
+                    path: ["repository", "pullRequest", "author"],
+                    message: "Resource not accessible by integration",
+                  },
+                ],
+              })
+            : json(
+                {
+                  data: null,
+                  errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }],
+                },
+                { headers: { "x-ratelimit-remaining": "0" } },
+              ),
+        { appToken: "app-token" },
+      );
+      return Effect.gen(function* () {
+        const client = yield* GraphQLClient.make(
+          PullRequestBatchesGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlAuth),
+        ).pipe(Effect.provide(GitHubGraphQlClient.layer));
+        // A strict call fails on any `errors`, so the app's answer is no use to it.
+        const error = yield* client
+          .PullRequestStats({ owner: "acme", name: "web", number: 7 })
+          .pipe(
+            Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
+              host: "github.com",
+              operation: "listPullRequests",
+            }),
+            Effect.flip,
+          );
+        expect(error._tag).toBe("GitHubApiRateLimitError");
+        expect(requests.map((request) => request.headers["authorization"])).toEqual([
+          "Bearer app-token",
+          "Bearer secret",
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
     "sends each host's lookups to its own endpoint with its token, never in one batch",
     () => {
       const { layer, requests } = harness(() =>

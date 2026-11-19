@@ -19,6 +19,7 @@ const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 /** Added to the answer, never sent: names the credential an errored answer was given to. */
 const CREDENTIAL_SOURCE_HEADER = "x-t3code-credential-source";
 const isCredentialSource = Schema.is(GitHubCredentials.GitHubCredentialSource);
+const ALIAS = /^_\d+_/;
 
 /** One client serves all hosts; each call must supply its target. */
 export class GitHubGraphQlTarget extends Context.Service<
@@ -103,9 +104,19 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
                     headers: responseHeaders,
                     ...(answer.errors === undefined ? {} : { graphqlErrors: answer.errors }),
                   });
-                  const withheld = (answer.errors ?? []).some(
+                  const errors = answer.errors ?? [];
+                  const withheld = errors.some(
                     (error) => error["type"] === "NOT_FOUND" || error["type"] === "FORBIDDEN",
                   );
+                  // `GraphQLResolver.aliased` fails only the lookups whose `_<n>_` alias errored.
+                  const errored = new Set(errors.map((error) => error.path?.[0]));
+                  const separable =
+                    errors.every(
+                      (error) => typeof error.path?.[0] === "string" && ALIAS.test(error.path[0]),
+                    ) &&
+                    Object.keys(answer.data ?? {}).some(
+                      (field) => ALIAS.test(field) && !errored.has(field),
+                    );
                   return rateLimited
                     ? { _tag: "RateLimited" as const, status, headers: responseHeaders }
                     : {
@@ -119,6 +130,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
                               : Headers.set(responseHeaders, CREDENTIAL_SOURCE_HEADER, source),
                         },
                         withheld,
+                        separable,
                         status,
                         headers: responseHeaders,
                       };

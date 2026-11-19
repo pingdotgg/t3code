@@ -195,6 +195,8 @@ export type GitHubAnswer<A> = {
       readonly value: A;
       /** GitHub left part of the answer out as not found or forbidden for this credential. */
       readonly withheld?: boolean;
+      /** Each withheld part is its own batched lookup, so the rest can stand without it. */
+      readonly separable?: boolean;
     }
   | { readonly _tag: "RateLimited" | "Unauthorized" | "NotFound" }
   | { readonly _tag: "Failed"; readonly messages?: ReadonlyArray<string> | undefined }
@@ -447,7 +449,10 @@ export const make = Effect.gen(function* () {
                 return {
                   _tag: "Retry",
                   with: personal.value,
-                  partial: answer._tag === "Ok" ? Option.some(answer.value) : Option.none(),
+                  partial:
+                    answer._tag === "Ok" && answer.separable === true
+                      ? Option.some(answer.value)
+                      : Option.none(),
                 } as const;
               }
             }
