@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 import { expect } from "e2e";
 
 import { T3_HOME } from "../e2e.config.ts";
@@ -9,7 +10,7 @@ const CONTENT = "Handoff notes from the shared file";
 test(
   "A citation finds one file listed by two overlapping projects",
   WEB,
-  async ({ t3, app, screen }) => {
+  async ({ t3, app, browser, screen }) => {
     const repository = await t3.project("reports", { [`docs/${FILE}`]: CONTENT });
     const nested = `${repository}/docs`;
     const project = await t3.project("planning");
@@ -27,7 +28,16 @@ test(
 
       try {
         await expect
-          .poll(() => t3.editorText("[data-right-panel-surface-content]"))
+          .poll(() =>
+            browser.evaluate(() => {
+              const panel = document.querySelector("[data-right-panel-surface-content]");
+              for (const host of panel?.querySelectorAll("*") ?? []) {
+                const content = host.shadowRoot?.querySelector("[data-content]");
+                if (content) return content.textContent ?? "";
+              }
+              return panel?.textContent ?? "";
+            }),
+          )
           .toContain(CONTENT);
       } finally {
         await app.screenshot("citation-in-overlapping-projects");
