@@ -318,6 +318,15 @@ it.effect("gives each Scratch thread its own folder, named from its message", ()
       );
       assert.equal(path.dirname(pasted), root);
       assert.isAtMost(path.basename(pasted).length, 80);
+
+      const accented = Option.getOrThrow(
+        yield* scratch.folderForThread({
+          projectId,
+          threadId: ThreadId.make("thread-diacritics"),
+          text: "tìm kiếm skill",
+        }),
+      );
+      assert.match(path.basename(accented), /^\d{4}-\d{2}-\d{2}-tim-kiem-skill-/);
     }),
   ),
 );

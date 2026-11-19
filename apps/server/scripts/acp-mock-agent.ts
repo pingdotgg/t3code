@@ -18,6 +18,7 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+const harnessFailure = process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE;
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -70,6 +71,9 @@ const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
+const loadReplyDelayMs = Number(process.env.T3_ACP_LOAD_REPLY_DELAY_MS ?? "0");
+const loadNeverReplies = process.env.T3_ACP_LOAD_NEVER_REPLIES === "1";
+const rejectPromptUntilLoaded = process.env.T3_ACP_REJECT_PROMPT_UNTIL_LOADED === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 // JSON for the `data` of an "Internal error" response to `session/new`, as
 // Antigravity sends when its runtime cannot reach its local harness.
@@ -122,6 +126,7 @@ let currentAgent = "";
 let authenticated = !requiresAuthentication;
 let promptCount = 0;
 const cancelledSessions = new Set<string>();
+const sessionsLoading = new Set<string>();
 let configuredProvider: AcpSchema.ProviderCurrentConfig | null = null;
 
 function promptIdFromRequestMeta(
@@ -511,6 +516,16 @@ const program = Effect.gen(function* () {
       },
     });
 
+  const writeHarnessFailure = Effect.promise(
+    () =>
+      new Promise<void>((resolve) => {
+        process.stderr.write(
+          "I1022 11:04:37.910207 1865358 local_connection.py:551] harness stderr: Agent run failed: failed to handle call hook response: no pending hook for ID hook_request_2\n",
+          () => resolve(),
+        );
+      }),
+  );
+
   const finishPrompt = (
     targetSessionId: string,
     stopReason: AcpSchema.StopReason,
@@ -687,6 +702,7 @@ const program = Effect.gen(function* () {
   yield* agent.handleLoadSession((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      sessionsLoading.add(requestedSessionId);
       if (loadedCommandNames !== undefined) {
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
@@ -729,6 +745,13 @@ const program = Effect.gen(function* () {
           content: { type: "text", text: "replay" },
         },
       });
+      if (loadNeverReplies) {
+        return yield* Effect.never;
+      }
+      if (Number.isFinite(loadReplyDelayMs) && loadReplyDelayMs > 0) {
+        yield* Effect.sleep(`${loadReplyDelayMs} millis`);
+      }
+      sessionsLoading.delete(requestedSessionId);
       return {
         configOptions: configOptions(),
       };
@@ -868,6 +891,12 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (rejectPromptUntilLoaded && sessionsLoading.has(requestedSessionId)) {
+        return yield* new AcpError.AcpRequestError({
+          code: -32002,
+          errorMessage: `Resource not found: ${requestedSessionId}`,
+        });
+      }
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
       if (idleError === "grok-background" && promptCount === 1) {
@@ -986,6 +1015,18 @@ const program = Effect.gen(function* () {
           Effect.forkDetach,
         );
         return {};
+      }
+      if (
+        harnessFailure === "1" ||
+        harnessFailure === "pending" ||
+        harnessFailure === "after-end-turn"
+      ) {
+        if (harnessFailure === "after-end-turn") {
+          return yield* finishPrompt(requestedSessionId, "end_turn");
+        }
+        yield* writeHarnessFailure;
+        if (harnessFailure === "pending") return yield* Effect.never;
+        return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
       if (clientFsProbePath !== undefined && clientFsProbeLogPath !== undefined) {
@@ -1250,6 +1291,33 @@ const program = Effect.gen(function* () {
             status: "completed",
             rawInput: { query: "TODO", path: "apps/web" },
           },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-explicit-location",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "  README.md  " },
+            locations: [{ path: "README.md" }],
+            rawOutput: "# Title",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-query-only",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "TODO" },
+            rawOutput: "src/a.ts: TODO",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-query-no-output",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "FIXME" },
+          },
           // Grok backend searches: the query only arrives in the completed rawOutput.
           {
             sessionUpdate: "tool_call_update",
@@ -1315,6 +1383,43 @@ const program = Effect.gen(function* () {
             rawOutput: { commandLine: "cat probe.txt", exitCode: 0, combinedOutput: "after\n" },
           },
           {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-web-search",
+            title: "Web search",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "  top story on Hacker News today  " },
+            rawOutput:
+              "Sources:\n<https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz>.",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-run-search-web",
+            title: "Running search_web",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "top story on Hacker News today" },
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-web-search-streamed",
+            title: "Web search",
+            kind: "search",
+            status: "in_progress",
+            rawInput: { query: "streamed citations" },
+            rawOutput: "Sources: https://example.com/streamed_(detail)",
+          },
+          {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "antigravity-web-search-streamed",
+            content: { type: "content", content: { type: "text", text: " (updated)" } },
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-web-search-streamed",
+            status: "completed",
+          },
+          {
             sessionUpdate: "compaction_update",
             compactionId: "compact-1",
             status: "in_progress",
@@ -1348,8 +1453,27 @@ const program = Effect.gen(function* () {
             status: "in_progress",
           },
         });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-failed-tool",
+            title: "Failing command",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
         yield* Deferred.await(nativeCancelRequested);
         yield* Deferred.await(nativeCancelRelease);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-failed-tool",
+            status: "failed",
+            content: [{ type: "content", content: { type: "text", text: "Permission denied" } }],
+          },
+        });
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
@@ -1357,6 +1481,26 @@ const program = Effect.gen(function* () {
             toolCallId: "native-cancel-tool",
             status: "failed",
             content: [{ type: "content", content: { type: "text", text: "Cancelled." } }],
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-unseen-cancel-tool",
+            title: "Cancelled command",
+            kind: "execute",
+            status: "failed",
+            content: [{ type: "content", content: { type: "text", text: "Cancelled." } }],
+          },
+        });
+        // A later output-only update must not undo the interrupted status.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-cancel-tool",
+            content: [{ type: "content", content: { type: "text", text: "Cancelled. exit 130" } }],
           },
         });
         yield* agent.client.sessionUpdate({
@@ -1396,10 +1540,6 @@ const program = Effect.gen(function* () {
         }
       }
 
-      if (failPrompt || promptCount === failPromptOrdinal) {
-        return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
-      }
-
       if (emitTrackedToolCallKindThenHang !== undefined) {
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
@@ -1412,7 +1552,11 @@ const program = Effect.gen(function* () {
             rawInput: { command: "git status" },
           },
         });
-        return yield* Effect.never;
+        if (!failPrompt && promptCount !== failPromptOrdinal) return yield* Effect.never;
+      }
+
+      if (failPrompt || promptCount === failPromptOrdinal) {
+        return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 
       if (hangPromptForever || (emitEmptySuccessfulBashThenHang && promptCount === 2)) {
@@ -2017,7 +2161,9 @@ const program = Effect.gen(function* () {
             typeof params === "object" && params !== null ? Reflect.get(params, "code") : undefined;
           process.exit(typeof code === "number" ? code : 19);
         })
-      : Effect.void,
+      : method === "_test/harness-failure"
+        ? writeHarnessFailure
+        : Effect.void,
   );
 
   return yield* Effect.never;

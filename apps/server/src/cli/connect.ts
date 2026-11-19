@@ -1,9 +1,7 @@
 import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
-  type AuthEnvironmentScope,
   type EnvironmentConnectReachability,
-  EnvironmentHttpApi,
   formatConnectReachable,
   type RelayClientInstallProgressEvent,
   type RelayClientInstallProgressStage,
@@ -27,7 +25,6 @@ import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
-import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
@@ -56,7 +53,8 @@ import {
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { resolveCliCommand } from "./invocation.ts";
+import * as RunningServer from "./runningServer.ts";
+import { resolveHostCliHint } from "./invocation.ts";
 import * as CliService from "./service.ts";
 
 const jsonFlag = Flag.Boolean("json").pipe(
@@ -184,7 +182,11 @@ function formatRelayClientStatus(executable: RelayClient.RelayClientStatus): Rea
   }
 }
 
-function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: boolean }): string {
+function formatCloudStatus(
+  status: CloudCliStatus,
+  commands: { readonly link: string; readonly serviceStatus: string },
+  options?: { readonly json?: boolean },
+): string {
   if (options?.json) {
     return JSON.stringify(status, null, 2);
   }
@@ -198,11 +200,11 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
         : "not provisioned";
   const publishOnly = status.desired && status.linkMode === "publish_only";
   const nextStep = !status.authenticated
-    ? "Run `t3 connect link` to authorize and enable T3 Connect."
+    ? `Run \`${commands.link}\` to authorize and enable T3 Connect.`
     : status.revoked
-      ? "Run `t3 connect link` to link this environment again."
+      ? `Run \`${commands.link}\` to link this environment again.`
       : !status.desired
-        ? "Run `t3 connect link` to enable T3 Connect."
+        ? `Run \`${commands.link}\` to enable T3 Connect.`
         : !status.linked
           ? publishOnly
             ? "Start T3 to provision the environment link."
@@ -227,7 +229,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
         : status.reachability === null
           ? [
               "",
-              "No running server answered, so reachability was not checked. Check the background service with `t3 service status`.",
+              `No running server answered, so reachability was not checked. Check the background service with \`${commands.serviceStatus}\`.`,
             ]
           : status.reachability.status === "reachable"
             ? [
@@ -293,21 +295,6 @@ export const acquireRelayClientForLink = Effect.fn("cloud.cli.acquire_relay_clie
   },
 );
 
-const withCloudCliSessionToken = <A, E, R>(
-  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
-  scope: AuthEnvironmentScope,
-  run: (token: string) => Effect.Effect<A, E, R>,
-) =>
-  Effect.acquireUseRelease(
-    environmentAuth.issueSession({
-      scopes: [scope],
-      subject: "cloud-cli",
-      label: "t3 connect cli",
-    }),
-    (issued) => run(issued.token),
-    (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
-  );
-
 type LiveCloudActionResult =
   | { readonly status: "not-running" }
   | { readonly status: "server-gone" }
@@ -325,17 +312,11 @@ const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
     return { status: "server-gone" } satisfies LiveCloudActionResult;
   }
 
-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const result = yield* Effect.exit(
-    withCloudCliSessionToken(environmentAuth, AuthRelayWriteScope, (token) =>
-      HttpApiClient.make(EnvironmentHttpApi, {
-        baseUrl: runtimeState.value.origin,
-      }).pipe(
-        Effect.flatMap((client) =>
-          client.connect.unlink({ headers: { authorization: `Bearer ${token}` } }),
-        ),
-        Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
-      ),
+    RunningServer.serverClient(runtimeState.value.origin, [AuthRelayWriteScope]).pipe(
+      Effect.flatMap((client) => client.connect.unlink({ headers: {} })),
+      Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
+      Effect.scoped,
     ),
   );
   return Exit.isSuccess(result)
@@ -353,15 +334,12 @@ const checkLiveReachability = Effect.fn("cloud.cli.check_live_reachability")(fun
   const config = yield* ServerConfig.ServerConfig;
   const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
   if (Option.isNone(runtimeState)) return null;
-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  return yield* withCloudCliSessionToken(environmentAuth, AuthRelayReadScope, (token) =>
-    HttpApiClient.make(EnvironmentHttpApi, { baseUrl: runtimeState.value.origin }).pipe(
-      Effect.flatMap((client) =>
-        client.connect.checkReachability({ headers: { authorization: `Bearer ${token}` } }),
-      ),
-      Effect.timeout(CLOUD_CLI_REACHABILITY_TIMEOUT),
-    ),
-  ).pipe(Effect.orElseSucceed(() => null));
+  return yield* RunningServer.serverClient(runtimeState.value.origin, [AuthRelayReadScope]).pipe(
+    Effect.flatMap((client) => client.connect.checkReachability({ headers: {} })),
+    Effect.timeout(CLOUD_CLI_REACHABILITY_TIMEOUT),
+    Effect.scoped,
+    Effect.orElseSucceed(() => null),
+  );
 });
 
 function formatAlertBox(text: string): string {
@@ -667,7 +645,7 @@ const connectLinkCommand = Command.make("link", {
         yield* Console.log("T3 Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (linked) {
-          const serveCommand = yield* resolveCliCommand("serve");
+          const serveCommand = yield* resolveHostCliHint("serve", flags.baseDir);
           yield* Console.log(
             flags.publishOnly
               ? `✓ Authorized${connectedAs(linked.identity)}\n\nNext\n  Start T3 to publish agent activity (no managed tunnel).`
@@ -732,7 +710,11 @@ const connectStatusCommand = Command.make("status", {
           linkMode,
           reachability,
         };
-        yield* Console.log(formatCloudStatus(status, { json: flags.json }));
+        const commands = {
+          link: yield* resolveHostCliHint("connect link", flags.baseDir),
+          serviceStatus: yield* resolveHostCliHint("service status", flags.baseDir),
+        };
+        yield* Console.log(formatCloudStatus(status, commands, { json: flags.json }));
       }),
       {
         quietLogs: flags.json,
@@ -782,8 +764,9 @@ const connectPublishCommand = Command.make("publish", {
         }
 
         if (!(yield* tokens.hasCredential)) {
+          const loginCommand = yield* resolveHostCliHint("connect login", flags.baseDir);
           yield* Console.log(
-            "Run `t3 connect login` first so this environment can be authorized to publish.",
+            `Run \`${loginCommand}\` first so this environment can be authorized to publish.`,
           );
           return;
         }

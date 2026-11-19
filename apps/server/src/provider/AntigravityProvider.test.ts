@@ -302,7 +302,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         models: [],
         setup: { canAuthenticate: true, canInstall: true },
         showInteractionModeToggle: false,
-        supportsConversationRollback: false,
+        supportsConversationRollback: true,
         supportsTextGeneration: false,
       });
       expect(yield* Ref.get(harness.probeCalls)).toBe(0);
@@ -383,6 +383,23 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expectedCommands,
       );
       expect(yield* Ref.get(harness.probeCalls)).toBe(1);
+    }),
+  );
+
+  it.effect("keeps a workspace's native commands when the catalog reports its own", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      yield* harness.provider.onSessionStarted(started, "/workspace");
+      yield* harness.provider.onAvailableCommands(commands, "/workspace");
+      // The catalog probe runs in a scratch directory and reports no cwd.
+      yield* harness.provider.onAvailableCommands(commands.slice(1));
+      expect((yield* harness.provider.snapshotForCwd("/workspace")).slashCommands).toEqual(
+        expectedCommands,
+      );
+      expect((yield* harness.provider.snapshot.getSnapshot).slashCommands).toEqual(
+        expectedCommands.slice(1),
+      );
     }),
   );
 

@@ -13,6 +13,7 @@ import {
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
   decodeMergeRequestStatsJson,
+  decodeMergeRequestWatchFingerprintJson,
   decodeReferenceCandidatesJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
@@ -69,11 +70,18 @@ describe("decodeMergeRequestListJson", () => {
             reviewers: [{ username: "julius" }],
             labels: ["backend", "  "],
           },
+          {
+            iid: 43,
+            labels: [
+              { name: "bug", color: "#E24329", description: "Something is broken" },
+              { name: " ", color: "#000000" },
+            ],
+          },
         ]),
       ),
     );
 
-    expect(batch.items).toHaveLength(1);
+    expect(batch.items).toHaveLength(2);
     expect(batch.items[0]).toMatchObject({
       number: 42,
       author: { login: "bilal", name: "Bilal" },
@@ -85,6 +93,9 @@ describe("decodeMergeRequestListJson", () => {
       reviewRequestLogins: ["julius"],
       labels: [{ name: "backend", color: null }],
     });
+    expect(batch.items[1]?.labels).toEqual([
+      { name: "bug", color: "#E24329", description: "Something is broken" },
+    ]);
   });
 
   it("treats a merged timestamp as merged whatever the state says", () => {
@@ -125,6 +136,37 @@ describe("decodeMergeRequestListJson", () => {
 });
 
 describe("decodeMergeRequestDetailJson", () => {
+  it("preserves a required rebase while CI is running or successful", () => {
+    for (const status of ["running", "success"]) {
+      const detail = expectSuccess(
+        decodeMergeRequestDetailJson(
+          detailJson({
+            merge_status: "can_be_merged",
+            detailed_merge_status: "need_rebase",
+            has_conflicts: false,
+            head_pipeline: { status },
+          }),
+        ),
+      );
+      expect(detail.rebaseRequired).toBe(true);
+      expect(detail.mergeability).toBe("mergeable");
+    }
+  });
+
+  it("distinguishes a cleared rebase blocker from an inconclusive merge check", () => {
+    expect(
+      expectSuccess(
+        decodeMergeRequestDetailJson(detailJson({ detailed_merge_status: "mergeable" })),
+      ).rebaseRequired,
+    ).toBe(false);
+    for (const detailed_merge_status of [undefined, "checking", "ci_still_running"]) {
+      expect(
+        expectSuccess(decodeMergeRequestDetailJson(detailJson({ detailed_merge_status })))
+          .rebaseRequired,
+      ).toBeUndefined();
+    }
+  });
+
   it("reads the description, file count and pipeline", () => {
     const detail = expectSuccess(
       decodeMergeRequestDetailJson(
@@ -649,6 +691,7 @@ describe("decodeMergeRequestDiffsJson", () => {
 
     expect(result.truncated).toBe(true);
     expect(result.patch).toContain("diff --git a/big.bin b/big.bin");
+    expect(result.withheldPaths).toEqual(["big.bin"]);
   });
 
   it("reports how many files GitLab returned, so the caller can page", () => {
@@ -827,7 +870,7 @@ describe("decodeOwnAwardIdJson", () => {
   it("finds the reader's own award of that name, which is the one a removal deletes", () => {
     expect(
       expectSuccess(decodeOwnAwardIdJson(awards, { content: "thumbs-up", viewer: "bilal" })),
-    ).toBe(102);
+    ).toEqual({ id: 102, empty: false });
   });
 });
 
@@ -1155,7 +1198,7 @@ describe("decodeMergeRequestGraphqlListJson", () => {
                     conflicts: true,
                     mergeStatusEnum: "CHECKING",
                     author: { username: "bilal", name: "Bilal", avatarUrl: null },
-                    labels: { nodes: [{ title: "bug" }] },
+                    labels: { nodes: [{ title: "bug", color: "#E24329", description: null }] },
                     approved: false,
                     approvedBy: { nodes: [] },
                     reviewers: {
@@ -1184,7 +1227,7 @@ describe("decodeMergeRequestGraphqlListJson", () => {
         isDraft: true,
         mergeability: "conflicting",
         reviewRequestLogins: ["julius"],
-        labels: [expect.objectContaining({ name: "bug" })],
+        labels: [{ name: "bug", color: "#E24329", description: null }],
       }),
     ]);
     expect([...page.states]).toEqual([
@@ -1230,5 +1273,110 @@ describe("decodeMergeMessagesJson", () => {
     );
 
     expect(Result.isFailure(decoded)).toBe(true);
+  });
+});
+
+describe("decodeMergeRequestWatchFingerprintJson", () => {
+  const pipeline = (status: string, downstream: string, failed = 0, moreBridges = false) => ({
+    id: "gid://gitlab/Ci::Pipeline/9",
+    status,
+    succeeded: { count: 3 },
+    failed: { count: failed },
+    stopped: { count: 0 },
+    jobs: {
+      pageInfo: { hasNextPage: moreBridges },
+      nodes: [
+        {
+          name: "deploy",
+          status,
+          downstreamPipeline: { id: "gid://gitlab/Ci::Pipeline/10", status: downstream },
+        },
+      ],
+    },
+  });
+  const edit = (at: string, resolved = false) => ({
+    lastEditedAt: at,
+    lastEditedBy: { username: "reviewer" },
+    resolved,
+  });
+  const read = (overrides: Record<string, unknown>) =>
+    expectSuccess(
+      decodeMergeRequestWatchFingerprintJson(
+        JSON.stringify({
+          data: {
+            project: {
+              mergeRequest: {
+                state: "opened",
+                mergeStatusEnum: "CAN_BE_MERGED",
+                detailedMergeStatus: "MERGEABLE",
+                conflicts: false,
+                diffHeadSha: "a".repeat(40),
+                userPermissions: { updateMergeRequest: true },
+                headPipeline: pipeline("RUNNING", "RUNNING"),
+                userNotesCount: 2,
+                notes: {
+                  nodes: [
+                    edit("2026-07-02T00:00:00Z"),
+                    { lastEditedAt: null, lastEditedBy: null, resolved: null },
+                    edit("2026-07-01T00:00:00Z"),
+                  ],
+                },
+                ...overrides,
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+  // A remarks change makes the watch reread every comment, so pipeline progress must not touch it.
+  it("moves pipeline progress into status and comment edits into remarks", () => {
+    const base = read({});
+    const passed = read({ headPipeline: pipeline("SUCCESS", "RUNNING") });
+    const downstreamPassed = read({ headPipeline: pipeline("SUCCESS", "SUCCESS") });
+    const jobFailed = read({ headPipeline: pipeline("RUNNING", "RUNNING", 1) });
+    const edited = read({ notes: { nodes: [edit("2026-07-03T00:00:00Z")] } });
+    // Resolving a thread restamps its notes without an edit, so it must not reread comments.
+    const resolved = read({
+      notes: { nodes: [edit("2026-07-02T00:00:00Z"), edit("2026-07-03T00:00:00Z", true)] },
+    });
+
+    expect(base?.remarks).toBe("2 2026-07-02T00:00:00Z");
+    expect(passed?.status).not.toBe(base?.status);
+    expect(downstreamPassed?.status).not.toBe(passed?.status);
+    expect(jobFailed?.status).not.toBe(base?.status);
+    expect(passed?.remarks).toBe(base?.remarks);
+    expect(edited?.status).toBe(base?.status);
+    expect(edited?.remarks).not.toBe(base?.remarks);
+    expect(resolved?.remarks).toBe(base?.remarks);
+    expect(read({ userNotesCount: 3 })?.remarks).not.toBe(base?.remarks);
+    // A target branch moving on leaves merge_status at can_be_merged on fast-forward projects.
+    expect(read({ detailedMergeStatus: "NEED_REBASE" })?.status).not.toBe(base?.status);
+  });
+
+  // Only the REST read asks GitLab to recheck mergeability, and only for viewers who can update.
+  it("covers the detail read once merge status has settled or no read could settle it", () => {
+    expect(read({})?.coversDetail).toBe(true);
+    // A capped job count or a second bridge page can hide a job settling.
+    expect(read({ headPipeline: pipeline("RUNNING", "RUNNING", 1001) })?.coversDetail).toBe(false);
+    expect(read({ headPipeline: pipeline("RUNNING", "RUNNING", 0, true) })?.coversDetail).toBe(
+      false,
+    );
+    expect(read({ mergeStatusEnum: "UNCHECKED" })?.coversDetail).toBe(false);
+    expect(read({ mergeStatusEnum: "CHECKING", conflicts: true })?.coversDetail).toBe(true);
+    expect(
+      read({ mergeStatusEnum: "UNCHECKED", userPermissions: { updateMergeRequest: false } })
+        ?.coversDetail,
+    ).toBe(true);
+  });
+
+  it("answers null when GitLab returned no merge request", () => {
+    expect(
+      expectSuccess(
+        decodeMergeRequestWatchFingerprintJson(
+          JSON.stringify({ data: { project: { mergeRequest: null } } }),
+        ),
+      ),
+    ).toBeNull();
   });
 });
