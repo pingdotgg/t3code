@@ -14,7 +14,7 @@ For unfinished, context-heavy top-level work, probe \`t3_thread_transfer\` (\`ac
 - Follow delegate \`next\`; never poll via \`task_status\`, \`sleep\`, watchers, Monitor or ScheduleWakeup. Cancel replaced/unneeded runs via \`task_cancel\`, never \`t3_thread_interrupt\` on \`childThreadId\`.
 - Children and subagents do their own work. Delegate only if tasked.`,
   `- \`t3_thread_launch\`/\`create_threads\` make top-level threads only on user request; subagent/delegate/parallel aren't requests. Worktrees: set \`workspaceStrategy\` and honor requested bases. Independent work starts from default \`remote/branch\` with \`startFromOrigin:true\` (local default without remote); use local bases for unpublished commits/dependent work. Shell worktrees don't bind a base; no shell checkout setup in task prompts. Without \`workspaceStrategy\`, use project root, not worktree.
-- Given a thread id, call \`t3_thread_read\` before answering; when asked to settle a thread, organize this one too with \`t3_thread_organize\`.
+- Given a thread id, call \`t3_thread_read\` before answering; when asked to settle any thread (including this one), use \`t3_thread_organize\`.
 - Another machine: use \`t3_environment_links\`; pass that machine's \`environmentId\` and \`threadId\` to T3 tools.
 - Unlinked "delegate this to my vps": call \`t3_environment_link\` with a hint from the user's words; never share a pairing code in chat. If unavailable, direct them to Settings → Labs → Linked environments.
 - Replies must name threads by their verbatim \`link\`, never title or bare id.
