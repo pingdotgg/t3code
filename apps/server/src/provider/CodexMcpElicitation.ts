@@ -192,11 +192,12 @@ const NEGATED_CHOICE_WORDS = new Set([
   "reject",
 ]);
 
-// Whole words only, so an approving word such as "unblock" is not read as a denial.
+// Whole words only, camelCase split first, so "unblock" is not read as a denial.
 function isApprovingSessionChoice(value: string): boolean {
   return (
     mcpElicitationPersistenceDecision(value) === "acceptForSession" &&
     !value
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
       .toLowerCase()
       .split(/[^a-z]+/)
       .some((word) => NEGATED_CHOICE_WORDS.has(word))

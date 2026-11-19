@@ -165,7 +165,12 @@ describe("Codex MCP elicitation approvals", () => {
     NodeAssert.equal(mcpElicitationOffersSessionApproval(form(["once", "session"])), true);
     NodeAssert.equal(mcpElicitationOffersSessionApproval(form(["allow_for_this_session"])), true);
     NodeAssert.equal(mcpElicitationOffersSessionApproval(form(["unblock_for_session"])), true);
-    for (const denial of ["deny_for_session", "never_allow_for_session", "block_for_session"]) {
+    for (const denial of [
+      "deny_for_session",
+      "denyForSession",
+      "never_allow_for_session",
+      "block_for_session",
+    ]) {
       NodeAssert.equal(mcpElicitationOffersSessionApproval(form(["once", denial])), false);
     }
     NodeAssert.equal(mcpElicitationOffersSessionApproval(form(["once"])), false);
