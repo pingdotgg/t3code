@@ -3293,7 +3293,7 @@ const quietWorkspace = (input: {
   readonly reads: Array<string>;
   readonly quiet?: ReadonlyArray<string>;
   readonly failing?: string;
-  readonly pages?: Array<ReadonlyArray<ReturnType<typeof batchedChangeRequest>>>;
+  readonly pages?: Array<ReadonlyArray<ReturnType<typeof batchedChangeRequest>> | "fails">;
 }) =>
   makeService({
     projects: [
@@ -3316,6 +3316,7 @@ const quietWorkspace = (input: {
         },
         listChangeRequestsAcross: () => {
           const extra = input.pages?.shift() ?? [];
+          if (extra === "fails") return Effect.fail(requestFailed);
           const silent = ["acme/docs", "acme/api"].filter(
             (repository) => !extra.some((row) => row.repository === repository),
           );
@@ -3408,6 +3409,29 @@ it.effect("search rows of a quiet repository end the reuse of its earlier read",
     yield* pastListingCache;
     yield* service.list(everyListing);
     assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/docs", "acme/docs"]);
+  }),
+);
+
+it.effect("a failed search reads only the repositories without a reusable quiet read", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* quietWorkspace({ reads, pages: [[], "fails", "fails", []] });
+
+    yield* service.list(everyListing);
+    reads.length = 0;
+    yield* pastListingCache;
+    const fallback = yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, ["acme/web"]);
+    assert.deepStrictEqual(fallback.entries.map((entry) => entry.number).toSorted(), [7, 8, 8]);
+
+    // A filtered listing reuses nothing in the fallback, and the kept reads outlive it.
+    reads.length = 0;
+    yield* service.list({ ...everyListing, state: "open" as const });
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/docs", "acme/web"]);
+    reads.length = 0;
+    yield* pastListingCache;
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, []);
   }),
 );
 

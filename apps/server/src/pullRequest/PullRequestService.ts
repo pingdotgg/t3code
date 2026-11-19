@@ -1619,29 +1619,36 @@ export const make = Effect.gen(function* () {
       input.filters === undefined &&
       (input.query?.trim() ?? "") === "" &&
       (yield* routingCredential) === null;
+    const quietKey = (project: SupportedProject) =>
+      `${project.cursorKey}\n${viewers[project.host]}\n${limit}`;
+    const heldQuietRead = (project: SupportedProject, now: number): RepositoryBatch | undefined => {
+      const held = quietReads.get(quietKey(project));
+      if (
+        held === undefined ||
+        held.listingsEpoch !== listingsEpoch ||
+        held.generation !== quietGeneration(project.cursorKey) ||
+        now - held.at >= Duration.toMillis(QUIET_READ_TTL)
+      ) {
+        return undefined;
+      }
+      // Checkouts of one repository share the read; the rows belong to the one listed now.
+      return {
+        ...held.batch,
+        entries: held.batch.entries.map((entry) => ({
+          ...entry,
+          projectId: project.project.id,
+          projectTitle: project.project.title,
+        })),
+      };
+    };
     const quietRead = Effect.fn("PullRequestService.quietRead")(function* (
       project: SupportedProject,
     ) {
-      const key = `${project.cursorKey}\n${viewers[project.host]}\n${limit}`;
+      const key = quietKey(project);
       const generation = quietGeneration(project.cursorKey);
       const now = yield* Clock.currentTimeMillis;
-      const held = quietReads.get(key);
-      if (
-        held !== undefined &&
-        held.listingsEpoch === listingsEpoch &&
-        held.generation === generation &&
-        now - held.at < Duration.toMillis(QUIET_READ_TTL)
-      ) {
-        // Checkouts of one repository share the read; the rows belong to the one listed now.
-        return {
-          ...held.batch,
-          entries: held.batch.entries.map((entry) => ({
-            ...entry,
-            projectId: project.project.id,
-            projectTitle: project.project.title,
-          })),
-        };
-      }
+      const held = heldQuietRead(project, now);
+      if (held !== undefined) return held;
       const epochBefore = epochCounter;
       const batch = yield* readRepository(project);
       // Not kept if it failed, or if a turn, refresh or search row arrived while it was read.
@@ -1665,8 +1672,22 @@ export const make = Effect.gen(function* () {
     ): Effect.Effect<ReadonlyArray<RepositoryBatch>> => {
       const first = chunk[0]!;
       const readAcross = first.api.listChangeRequestsAcross;
+      // A failed search says nothing new about a repository, so a read kept since a page last
+      // named it quiet still stands in for it. What is read here is not kept: nothing vouches.
       const separately = () =>
-        Effect.forEach(chunk, readRepository, { concurrency: REPOSITORY_CONCURRENCY });
+        Effect.flatMap(Clock.currentTimeMillis, (now) =>
+          Effect.forEach(
+            chunk,
+            (project): Effect.Effect<RepositoryBatch> => {
+              const held =
+                reusesQuietReads && cursorOf(project) === undefined
+                  ? heldQuietRead(project, now)
+                  : undefined;
+              return held === undefined ? readRepository(project) : Effect.succeed(held);
+            },
+            { concurrency: REPOSITORY_CONCURRENCY },
+          ),
+        );
       if (readAcross === undefined) return separately();
       const viewer = viewers[first.host]!;
       const cursor = cursorOf(first);
