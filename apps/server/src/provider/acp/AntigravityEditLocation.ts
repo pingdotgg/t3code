@@ -78,15 +78,15 @@ export function readAntigravityPreEditFile(path: string): string | undefined {
   }
 }
 
-/** The line of the snippet's only match starting within `from`..`to`, if it spans whole lines. */
-function uniqueStartLine(
+/** The snippet's only match starting within lines `from`..`to`, if it spans whole lines. */
+function uniqueWholeLineMatch(
   text: string | undefined,
   snippet: string,
   from = 1,
   to = Number.POSITIVE_INFINITY,
-): number | undefined {
+): { readonly line: number; readonly index: number } | undefined {
   if (text === undefined || snippet === "") return undefined;
-  let found: { readonly line: number; readonly whole: boolean } | undefined;
+  let found: { readonly line: number; readonly index: number; readonly whole: boolean } | undefined;
   let line = 1;
   let lineStart = 0;
   let nextBreak = text.indexOf("\n");
@@ -103,9 +103,15 @@ function uniqueStartLine(
     // A hunk replaces whole lines.
     const whole =
       index === lineStart && (end === text.length || snippet.endsWith("\n") || text[end] === "\n");
-    found = { line, whole };
+    found = { line, index, whole };
   }
-  return found?.whole === true ? found.line : undefined;
+  return found?.whole === true ? { line: found.line, index: found.index } : undefined;
+}
+
+/** True when an occurrence of `other` in `text` covers the `length` characters at `start`. */
+function insideSnippet(text: string, start: number, length: number, other: string): boolean {
+  const index = text.indexOf(other, Math.max(0, start + length - other.length));
+  return index !== -1 && index <= start;
 }
 
 function snippetHunks(
@@ -185,11 +191,20 @@ export function antigravityEditPatch(input: {
       if (!fileRead) file = input.readPreEditFile(input.path)?.replaceAll("\r\n", "\n");
       fileRead = true;
       const target = chunk.TargetContent.replaceAll("\r\n", "\n");
-      start = uniqueStartLine(file, target, chunk.StartLine, chunk.EndLine);
-      // The runtime may write before T3 reads the file. A lone replacement starts on the same
-      // line before and after it, so an already-applied edit is placed by its new text.
+      const replacement = chunk.ReplacementContent.replaceAll("\r\n", "\n");
+      const match = uniqueWholeLineMatch(file, target, chunk.StartLine, chunk.EndLine);
+      // The runtime may write before T3 reads the file. A target found inside a written
+      // replacement could be either state, so it stays unplaced.
+      if (
+        match !== undefined &&
+        file !== undefined &&
+        (replacement === target || !insideSnippet(file, match.index, target.length, replacement))
+      )
+        start = match.line;
+      // A lone replacement starts on the same line before and after it, so an already-applied
+      // edit is placed by its new text.
       if (start === undefined && chunks.length === 1 && file?.includes(target) === false)
-        start = uniqueStartLine(file, chunk.ReplacementContent.replaceAll("\r\n", "\n"));
+        start = uniqueWholeLineMatch(file, replacement)?.line;
     }
     if (start === undefined) snippets.push(...hunks);
     else placed.push({ start, hunks });

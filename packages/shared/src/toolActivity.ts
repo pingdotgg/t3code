@@ -222,7 +222,7 @@ function extractPrimaryPath(data: Record<string, unknown> | undefined): string |
 
 /** A diff resent without a patch keeps the located patch an earlier update computed for its path. */
 function withLocatedDiffPatches(previous: unknown, next: ReadonlyArray<unknown>) {
-  const patches = new Map<string, Record<string, unknown>>();
+  const located = new Map<string, Record<string, unknown>>();
   for (const entry of Array.isArray(previous) ? previous : []) {
     const diff = asRecord(entry);
     const patch = asRecord(diff?.patch);
@@ -232,14 +232,16 @@ function withLocatedDiffPatches(previous: unknown, next: ReadonlyArray<unknown>)
       patch?.format === undefined &&
       typeof patch?.text === "string"
     )
-      patches.set(diff.path, patch);
+      located.set(diff.path, diff);
   }
-  if (patches.size === 0) return next;
+  if (located.size === 0) return next;
+  // An update that empties content would drop a patch a later normalizer can no longer compute.
+  if (next.length === 0) return [...located.values()];
   return next.map((entry) => {
     const diff = asRecord(entry);
     const patch =
       diff?.type === "diff" && diff.patch === undefined && typeof diff.path === "string"
-        ? patches.get(diff.path)
+        ? located.get(diff.path)?.patch
         : undefined;
     return patch === undefined ? entry : { ...diff, patch };
   });

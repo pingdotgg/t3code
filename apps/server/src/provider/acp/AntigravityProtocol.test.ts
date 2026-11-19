@@ -490,6 +490,19 @@ describe("Antigravity tool results", () => {
       expect(toolCall.status).toBe("completed");
       expect(acpToolCallDiffPatch(toolCall.data.content)).toBe(located(lines - 2));
     }
+    // A completion that empties content keeps the announcement's located patch.
+    const announced = normalizeAntigravityToolCall(
+      parseToolUpdate(frame(12, "in_progress")).toolCall,
+      () => fileOf(12, rawInput.Target),
+    );
+    const emptied = frame(12, "completed");
+    const completed = normalizeAntigravityToolCall(
+      mergeToolCallState(
+        announced,
+        parseToolUpdate({ ...emptied, update: { ...emptied.update, content: [] } }).toolCall,
+      ),
+    );
+    expect(acpToolCallDiffPatch(completed.data.content)).toBe(located(10));
     // Without a located announcement, uncut whole-file texts still render and cut ones stay hidden.
     const small = normalizeAntigravityToolCall(parseToolUpdate(frame(12, "completed")).toolCall);
     expect(acpToolCallDiffPatch(small.data.content)).toContain("@@ -7,6 +7,6 @@\n");

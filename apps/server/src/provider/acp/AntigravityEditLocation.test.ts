@@ -132,6 +132,25 @@ describe("antigravityEditPatch", () => {
     }
   });
 
+  it("leaves a target that a written replacement still contains unplaced", () => {
+    const rawInput = { Target: "old\n", Replacement: "added\nold\n" };
+    const preview = (written: string) =>
+      antigravityEditPatch({ path, rawInput, readPreEditFile: () => written });
+    expect(preview("header\nold\nfooter\n")).toBe(`${header}@@ -2,1 +2,2 @@\n+added\n old\n`);
+    // After the write, the target's match at line 3 is inside the replacement, not the edit.
+    expect(preview("header\nadded\nold\nfooter\n")).toBe(
+      `${header}@@ -1,1 +1,2 @@ snippet, line unknown\n+added\n old\n`,
+    );
+    // A replacement inside the target, as in a delete, is not a written edit.
+    expect(
+      antigravityEditPatch({
+        path,
+        rawInput: { Target: "keep\ndrop\n", Replacement: "keep\n" },
+        readPreEditFile: () => "header\nkeep\ndrop\nfooter\n",
+      }),
+    ).toBe(`${header}@@ -2,2 +2,1 @@\n keep\n-drop\n`);
+  });
+
   it("labels repeated or unmatched snippets instead of placing them at line 1", () => {
     const snippet = `${header}@@ -1,1 +1,1 @@ snippet, line unknown\n-const target = 10;\n+const target = 100;\n`;
     for (const readPreEditFile of [
