@@ -170,12 +170,12 @@ export const threadTitleEvaluationCases = [
   {
     id: "attachment-only-subject",
     source: "https://github.com/pingdotgg/t3code/issues/38614",
-    request: "Review an attached requirements document for missing parts.",
-    previousTitle: "Review requirements doc",
+    request: "Find what is missing from an attached requirements spec.",
+    previousTitle: "Review attached spec",
     messages: [
       {
         role: "user",
-        text: "Please review this requirements doc and tell me what is missing.",
+        text: "What is missing from this spec?",
         attachments: [
           {
             type: "file",
@@ -188,7 +188,7 @@ export const threadTitleEvaluationCases = [
       },
     ],
     rubric:
-      "Name a gap review of the requirements document. Only its metadata reaches the model, so a run that errors instead of titling fails.",
+      "Name a gap review of the requirements spec. The subject is only in the attachment, and only its metadata reaches the model, so a run that errors instead of titling fails.",
   },
 ] satisfies ReadonlyArray<{
   id: string;
