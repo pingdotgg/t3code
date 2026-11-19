@@ -129,12 +129,14 @@ describe("jiraAdf", () => {
   });
 
   it("reads reference links, and treats merged table cells as Jira-only", () => {
-    expect(markdownToAdf("[Guide][g]\n\n[g]: https://x.test").content).toEqual([
-      {
-        type: "paragraph",
-        content: [text("Guide", [{ type: "link", attrs: { href: "https://x.test" } }])],
-      },
-    ]);
+    expect(markdownToAdf("[Guide][g]\n\n[g]: https://x.test\n[g]: https://y.test").content).toEqual(
+      [
+        {
+          type: "paragraph",
+          content: [text("Guide", [{ type: "link", attrs: { href: "https://x.test" } }])],
+        },
+      ],
+    );
     const cell = (attrs?: Record<string, unknown>) => ({
       type: "table",
       content: [{ type: "tableRow", content: [{ type: "tableHeader", ...(attrs && { attrs }) }] }],

@@ -381,11 +381,12 @@ export function markdownToAdf(markdown: string) {
     extensions: [gfm()],
     mdastExtensions: [gfmFromMarkdown()],
   });
-  const definitions = new Map(
-    tree.children.flatMap((child) =>
-      child.type === "definition" ? [[child.identifier, child.url] as const] : [],
-    ),
-  );
+  // The first definition of an identifier wins, as in CommonMark.
+  const definitions = new Map<string, string>();
+  for (const child of tree.children) {
+    if (child.type === "definition" && !definitions.has(child.identifier))
+      definitions.set(child.identifier, child.url);
+  }
   resolveReferences(tree, definitions);
   return { type: "doc", version: 1, content: tree.children.flatMap(blockFromMdast) };
 }
