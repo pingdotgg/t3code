@@ -1,5 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
@@ -58,6 +58,7 @@ const state = vi.hoisted(() => ({
   connected: true,
   tasksLoaded: true,
   secondary: false,
+  secondaryDenied: false,
   remove: vi.fn(),
 }));
 const secondaryId = EnvironmentId.make("secondary");
@@ -68,6 +69,7 @@ function setup() {
   state.tasksLoaded = true;
   state.remove.mockReset().mockResolvedValue({ _tag: "Success", value: { id: task.id } });
   state.secondary = false;
+  state.secondaryDenied = false;
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
@@ -87,6 +89,7 @@ function environment() {
   return {
     environmentId,
     label: "Laptop",
+    entry: { target: { _tag: "PrimaryConnectionTarget" } },
     connection: { phase: state.connected ? "connected" : "disconnected" },
     serverConfig: state.connected
       ? { environment: { platform: "linux", capabilities: { oneTimeSchedules: true } } }
@@ -122,6 +125,8 @@ vi.mock(import("../../state/server"), async (original) => {
     ...actual,
     serverEnvironment: {
       ...actual.serverEnvironment,
+      scheduledTasksLive: (({ environmentId: id }: { environmentId: EnvironmentId }) =>
+        Atom.make(AsyncResult.success({ tasks: id === secondaryId ? [] : [task] }))) as never,
       deleteScheduledTask: {
         ...actual.serverEnvironment.deleteScheduledTask,
         run: state.remove,
@@ -161,6 +166,19 @@ vi.mock(import("../../state/environments"), async (original) => ({
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
   useProjects: (() => [{ id: projectId, environmentId, title: "Project" }]) as never,
+  useServerConfigs: (() =>
+    new Map(
+      state.secondaryDenied
+        ? [
+            [
+              secondaryId,
+              {
+                managedPolicy: { organization: "Example Corp", limits: { scheduledTasks: false } },
+              },
+            ],
+          ]
+        : [],
+    )) as never,
 }));
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
@@ -230,6 +248,16 @@ describe("ScheduledTasksSettings", () => {
     state.connected = false;
     await using screen = await render(<ScheduledTasksSettings />);
     await expect.element(screen.getByRole("button", { name: "New task" })).toBeDisabled();
+  });
+
+  it("names an environment with no tasks when its policy turns them off", async () => {
+    setup();
+    state.secondary = true;
+    state.secondaryDenied = true;
+    await using screen = await render(<ScheduledTasksSettings />);
+    await expect
+      .element(screen.getByText("Secondary: Example Corp's policy does not allow scheduled tasks."))
+      .toBeVisible();
   });
 
   it("keeps a linked task's unsaved edits across a disconnect and reconnect", async () => {

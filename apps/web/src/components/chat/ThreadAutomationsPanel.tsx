@@ -242,7 +242,10 @@ export function ThreadAutomationsPanel(props: {
                       part="icon"
                       aria-label={gt("Run {title} now", { title: task.title })}
                       disabled={
-                        !canOperate || busyTaskId !== null || task.lastRunStatus === "running"
+                        !canOperate ||
+                        busyTaskId !== null ||
+                        task.lastRunStatus === "running" ||
+                        task.blockedByPolicy !== undefined
                       }
                       onClick={() => void runNow(task)}
                     >

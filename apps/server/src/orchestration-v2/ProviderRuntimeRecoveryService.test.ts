@@ -529,6 +529,7 @@ it.effect.each([
   "starting-other-request",
   "starting-own-request",
   "starting-scheduled",
+  "starting-scheduled-blocked",
   "starting-steered",
   "running",
   "running-delegated",
@@ -545,6 +546,7 @@ it.effect.each([
   const resent = scenario === "starting-scheduled" || scenario === "running-delegated";
   const terminalized =
     status === "preparing" ||
+    scenario === "starting-scheduled-blocked" ||
     scenario === "starting-own-request" ||
     scenario === "starting-steered" ||
     scenario === "running-delegated-capped" ||
@@ -673,7 +675,9 @@ it.effect.each([
                 : scenario === "running-resume"
                   ? { createdBy: "agent", creationSource: "server" }
                   : { createdBy: "user" }),
-              ...(scenario === "starting-scheduled" ? { scheduledTaskId: "scheduled-task" } : {}),
+              ...(scenario.startsWith("starting-scheduled")
+                ? { scheduledTaskId: "scheduled-task" }
+                : {}),
             },
           ]
         : [],
@@ -691,7 +695,14 @@ it.effect.each([
         : [],
   } as unknown as OrchestrationV2ThreadProjection;
   const layer = ProviderRuntimeRecovery.layer.pipe(
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(
+      ServerSettings.layerTest(
+        {},
+        scenario === "starting-scheduled-blocked"
+          ? { organization: "Example Corp", lockedSettings: [], limits: { scheduledTasks: false } }
+          : undefined,
+      ),
+    ),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ProjectionStore.ProjectionStoreV2)({

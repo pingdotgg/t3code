@@ -53,6 +53,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2ModelSwitch,
@@ -81,6 +82,7 @@ import {
   TurnItemId,
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
+  managedPolicyDeniedMessage,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -2189,6 +2191,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     threadId: ThreadId,
     cause: unknown,
     queuedRunId?: RunId,
+    failureOverride?: OrchestrationV2ProviderFailure,
   ) {
     const projection = yield* projectionStore.getThreadRecords(
       threadId,
@@ -2225,11 +2228,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       "cause" in cause
         ? cause.cause
         : cause;
-    const failure = makeProviderFailure({
-      cause: failureCause,
-      code: handoffUnsupported ? "context_handoff_unsupported" : "queued_start_failed",
-      class: handoffUnsupported ? "validation_error" : "unknown",
-    });
+    const failure =
+      failureOverride ??
+      makeProviderFailure({
+        cause: failureCause,
+        code: handoffUnsupported ? "context_handoff_unsupported" : "queued_start_failed",
+        class: handoffUnsupported ? "validation_error" : "unknown",
+      });
     yield* writeSystemEvents([
       ...retainedUserItems.map((item) => ({
         type: "turn-item.updated" as const,
@@ -2459,6 +2464,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === storedQueuedRun.userMessageId,
       );
+      if (
+        queuedMessage?.scheduledTaskId !== undefined &&
+        managedPolicy?.limits?.scheduledTasks === false
+      ) {
+        return yield* failQueuedRunStart(threadId, undefined, storedQueuedRun.id, {
+          class: "validation_error",
+          message: managedPolicyDeniedMessage(managedPolicy.organization, "scheduled tasks"),
+          code: "scheduled_tasks_policy_denied",
+          retryable: false,
+        });
+      }
       const modelSelection = queuedRunModelSelection(projection, storedQueuedRun);
       const queuedRun = {
         ...storedQueuedRun,
@@ -7080,6 +7096,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
     }
+    const continuationSourceId =
+      command.restartContinuationOfRunId ?? command.usageLimitContinuationOfRunId;
+    if (continuationSourceId !== undefined) {
+      let scheduledOrigin = false;
+      if (managedPolicy?.limits?.scheduledTasks === false) {
+        const visited = new Set<RunId>();
+        const messageIds: Array<MessageId> = [];
+        let ancestor = projection.runs.find((run) => run.id === continuationSourceId);
+        while (ancestor !== undefined && !visited.has(ancestor.id)) {
+          visited.add(ancestor.id);
+          messageIds.push(ancestor.userMessageId);
+          const previousId: RunId | undefined =
+            ancestor.restartContinuationOfRunId ?? ancestor.usageLimitContinuationOfRunId;
+          ancestor = projection.runs.find((run) => run.id === previousId);
+        }
+        const messages = yield* projectionStore
+          .getMessagesById(command.threadId, messageIds)
+          .pipe(mapDispatchError(command));
+        scheduledOrigin = [...messages.values()].some(
+          (message) => message.scheduledTaskId !== undefined,
+        );
+      }
+
+      if (scheduledOrigin) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: projection.thread,
+        });
+        return;
+      }
+    }
     if (command.usageLimitContinuationOfRunId !== undefined) {
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const failure = latestRootProviderFailure(run, projection.turnItems);
@@ -7126,6 +7178,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     if (command.restartContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
+
       if (
         !source ||
         !(
@@ -11615,6 +11668,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: "Automatic completion deliveries cannot be promoted to Steer.",
+      });
+    }
+    if (
+      queuedMessage.scheduledTaskId !== undefined &&
+      managedPolicy?.limits?.scheduledTasks === false
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: managedPolicyDeniedMessage(managedPolicy.organization, "scheduled tasks"),
       });
     }
 

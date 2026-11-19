@@ -6,11 +6,15 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ScheduledTaskId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
+import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
@@ -154,7 +158,7 @@ const layerWithCeiling = Layer.mergeAll(
       managedPolicy: {
         schemaVersion: 1,
         organization: "Example Corp",
-        limits: { maxRuntimeMode: "auto-accept-edits" },
+        limits: { maxRuntimeMode: "auto-accept-edits", scheduledTasks: false },
       },
     },
   ),
@@ -354,6 +358,304 @@ it.layer(layerWithCeiling)("runtime mode ceiling", (it) => {
         (run) => run.id === waiting!.id,
       );
       assert.notEqual(started?.status, "queued");
+    }),
+  );
+
+  it.effect("refuses a persisted scheduled run without blocking the next user message", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("thread:scheduled-policy-queue");
+      yield* createThread(threadId);
+      yield* orchestrator.dispatch(sendMessage(threadId, "active"));
+      yield* orchestrator.dispatch({
+        ...sendMessage(threadId, "scheduled"),
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* orchestrator.dispatch({
+        ...sendMessage(threadId, "ordinary"),
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const { runs, messages } = yield* orchestrator.getThreadRecords(threadId, [
+        "runs",
+        "messages",
+      ]);
+      const active = runs.find((run) => run.userMessageId === MessageId.make("message:active"))!;
+      const scheduledRun = runs.find(
+        (run) => run.userMessageId === MessageId.make("message:scheduled"),
+      )!;
+      const scheduled = messages.find(
+        (message) => message.id === MessageId.make("message:scheduled"),
+      )!;
+      const occurredAt = yield* DateTime.now;
+      // Persisted before the administrator disabled scheduled tasks.
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:scheduled-policy-queue:message"),
+            type: "message.updated",
+            threadId,
+            occurredAt,
+            payload: {
+              ...scheduled,
+              scheduledTaskId: ScheduledTaskId.make("scheduled-task:before-policy"),
+            },
+          },
+        ],
+      });
+      const promoted = yield* orchestrator
+        .dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("promote:scheduled-policy-queue"),
+          threadId,
+          queuedRunId: scheduledRun.id,
+          targetRunId: active.id,
+        })
+        .pipe(Effect.flip);
+      assert.equal(promoted._tag, "OrchestratorDispatchError");
+      assert.equal(
+        "cause" in promoted ? promoted.cause : undefined,
+        "Example Corp's policy does not allow scheduled tasks.",
+      );
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:scheduled-policy-queue:complete"),
+            type: "run.updated",
+            threadId,
+            runId: active.id,
+            providerInstanceId: active.providerInstanceId,
+            occurredAt,
+            payload: { ...active, status: "completed" },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("resume:scheduled-policy-queue"),
+        threadId,
+      });
+      const refused = yield* orchestrator.getThreadRecords(threadId, ["runs", "turnItems"]);
+      assert.equal(
+        refused.runs.find((run) => run.userMessageId === scheduled.id)?.status,
+        "failed",
+      );
+      assert.ok(
+        refused.turnItems.some(
+          (item) =>
+            item.type === "error" &&
+            item.failure.message === "Example Corp's policy does not allow scheduled tasks.",
+        ),
+      );
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("resume:ordinary-policy-queue"),
+        threadId,
+      });
+      const ordinary = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs.find(
+        (run) => run.userMessageId === MessageId.make("message:ordinary"),
+      );
+      assert.equal(ordinary?.status, "starting");
+    }),
+  );
+  it.effect(
+    "refuses restart continuations of scheduled origins while allowing ordinary restarts",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        for (const scheduled of [false, true]) {
+          for (const chained of [false, true]) {
+            const suffix = String(scheduled) + String(chained);
+            const threadId = ThreadId.make("thread:restart-policy:" + suffix);
+            yield* createThread(threadId);
+            yield* orchestrator.dispatch(sendMessage(threadId, "origin:" + suffix));
+            const projection = yield* orchestrator.getThreadProjection(threadId);
+            const original = projection.runs[0]!;
+            const message = projection.messages.find((item) => item.id === original.userMessageId)!;
+            const occurredAt = yield* DateTime.now;
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make("cancel:" + suffix),
+                  type: "run.updated",
+                  threadId,
+                  runId: original.id,
+                  occurredAt,
+                  payload: { ...original, status: "cancelled", completedAt: occurredAt },
+                },
+                {
+                  id: EventId.make("origin:" + suffix),
+                  type: "message.updated",
+                  threadId,
+                  occurredAt,
+                  payload: {
+                    ...message,
+                    ...(scheduled
+                      ? { scheduledTaskId: ScheduledTaskId.make("task:before-policy") }
+                      : {}),
+                  },
+                },
+              ],
+            });
+            let sourceId = original.id;
+            if (chained) {
+              yield* TestClock.adjust("1 second");
+              yield* orchestrator.dispatch(sendMessage(threadId, "intermediate:" + suffix));
+              const intermediate = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make("intermediate:" + suffix),
+                    type: "run.updated",
+                    threadId,
+                    runId: intermediate.id,
+                    occurredAt,
+                    payload: {
+                      ...intermediate,
+                      status: "cancelled",
+                      completedAt: occurredAt,
+                      restartContinuationOfRunId: original.id,
+                    },
+                  },
+                ],
+              });
+              yield* sink.write({
+                events: [
+                  {
+                    id: EventId.make("compaction:" + suffix),
+                    type: "turn-item.updated",
+                    threadId,
+                    occurredAt: yield* DateTime.now,
+                    payload: {
+                      id: TurnItemId.make("compaction:" + suffix),
+                      type: "compaction",
+                      driver: ProviderDriverKind.make("codex"),
+                      threadId,
+                      runId: intermediate.id,
+                      nodeId: intermediate.rootNodeId,
+                      providerThreadId: null,
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 10,
+                      status: "completed",
+                      title: null,
+                      startedAt: intermediate.requestedAt,
+                      completedAt: intermediate.requestedAt,
+                      updatedAt: intermediate.requestedAt,
+                    },
+                  },
+                ],
+              });
+              sourceId = intermediate.id;
+            }
+            const before = yield* orchestrator.getThreadProjection(threadId);
+            yield* orchestrator.dispatch({
+              ...sendMessage(threadId, "continuation:" + suffix),
+              createdBy: "agent",
+              creationSource: "server",
+              restartContinuationOfRunId: sourceId,
+            });
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(after.runs.length, before.runs.length + (scheduled ? 0 : 1));
+            assert.equal(
+              after.messages.some(
+                (item) => item.id === MessageId.make("message:continuation:" + suffix),
+              ),
+              !scheduled,
+            );
+          }
+        }
+      }),
+  );
+  it.effect("refuses automatic usage-limit continuations of scheduled tasks", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      for (const scheduled of [false, true]) {
+        const suffix = String(scheduled);
+        const threadId = ThreadId.make("thread:usage-policy:" + suffix);
+        yield* createThread(threadId);
+        yield* orchestrator.dispatch(sendMessage(threadId, "limited:" + suffix));
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const run = projection.runs[0]!;
+        const message = projection.messages.find((item) => item.id === run.userMessageId)!;
+        const now = yield* DateTime.now;
+        const resetAt = DateTime.formatIso(DateTime.add(now, { seconds: 1 }));
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("limited-run:" + suffix),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...run, status: "failed", completedAt: now },
+            },
+            {
+              id: EventId.make("limited-message:" + suffix),
+              type: "message.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...message,
+                ...(scheduled ? { scheduledTaskId: ScheduledTaskId.make("task:limited") } : {}),
+              },
+            },
+            {
+              id: EventId.make("limited-error:" + suffix),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make("limited-error:" + suffix),
+                type: "error",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("arm:" + suffix),
+          threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: true },
+        });
+        yield* TestClock.adjust("1 second");
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const continuation = limitRecoveryCommand(
+          shell,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        assert.isNotNull(continuation);
+        yield* orchestrator.dispatch(continuation!);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).runs.length,
+          scheduled ? 1 : 2,
+        );
+      }
     }),
   );
 });

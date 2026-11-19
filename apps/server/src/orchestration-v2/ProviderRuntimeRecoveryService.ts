@@ -450,6 +450,10 @@ export const make = Effect.gen(function* () {
             queuedMessages.some(
               (message) =>
                 message.id === run.userMessageId &&
+                !(
+                  settings.managedPolicy?.limits?.scheduledTasks === false &&
+                  message.scheduledTaskId !== undefined
+                ) &&
                 !retryableMessageIds.has(message.id) &&
                 message.notification === undefined &&
                 message.delegatedCompletion === undefined &&

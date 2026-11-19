@@ -108,6 +108,12 @@ const policies = (): ReadonlyArray<Policy> => [
     toggle: "Connect",
   },
   {
+    id: "ScheduledTasks",
+    title: "Allow scheduled tasks",
+    help: "Disabled stops every scheduled task, webhook tasks included. Existing tasks are kept but do not run.",
+    toggle: "ScheduledTasks",
+  },
+  {
     id: "WebhookTasks",
     title: "Allow webhook tasks",
     help: "Disabled stops scheduled tasks from using webhook triggers. Existing webhook tasks are kept but do not run.",
