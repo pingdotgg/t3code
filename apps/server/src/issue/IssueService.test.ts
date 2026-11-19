@@ -1,9 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
+  type IssueListResult,
   IssueTrackerKind,
   type IssueTrackerProjectBinding,
   SourceControlProviderKind,
@@ -197,6 +203,55 @@ function makeService(input: {
 }
 
 describe("IssueService", () => {
+  it.effect("emits one bounded preview when a scope is still pending", () =>
+    Effect.gen(function* () {
+      const quick = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const events = yield* Queue.unbounded<{
+        readonly _tag: "preview" | "complete";
+        readonly list: IssueListResult;
+      }>();
+      const service = yield* makeService({
+        projects: [
+          project({ id: "fast", repository: "acme/fast" }),
+          project({ id: "slow", repository: "acme/slow" }),
+        ],
+        trackers: [
+          fakeTracker({
+            listIssues: ({ scope }) =>
+              scope === "acme/fast"
+                ? Deferred.succeed(quick, undefined).pipe(
+                    Effect.as({
+                      items: Array.from({ length: 10 }, (_, i) => issue(String(i))),
+                      nextCursor: "next",
+                    }),
+                  )
+                : Deferred.await(release).pipe(
+                    Effect.as({ items: [issue("slow")], nextCursor: null }),
+                  ),
+          }),
+        ],
+      });
+      const running = yield* service.listProgress({ state: "open" }).pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(quick);
+      yield* TestClock.adjust("40 millis");
+      const preview = yield* Queue.take(events);
+      expect(preview._tag).toBe("preview");
+      expect(preview.list.entries).toHaveLength(8);
+      expect(preview.list.nextCursors).toEqual({});
+
+      yield* Deferred.succeed(release, undefined);
+      const completed = yield* Queue.take(events);
+      expect(completed._tag).toBe("complete");
+      expect(completed.list.entries).toHaveLength(11);
+      expect(completed.list.nextCursors["github.com acme/fast"]).toBe("next");
+      yield* Fiber.join(running);
+    }),
+  );
+
   it.effect("places a project where its host keeps its issues", () =>
     Effect.gen(function* () {
       const azure = IssueTrackerKind.make("azure-devops");
