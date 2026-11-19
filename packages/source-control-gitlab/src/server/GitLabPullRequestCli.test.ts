@@ -495,6 +495,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       const path = argsOfCall(0)[1] ?? "";
       expect(path).not.toContain("updated_before=");
       expect(path).toContain("order_by=updated_at");
+      expect(path).toContain("with_labels_details=true");
       expect(path).toContain("per_page=11");
       expect(path).toContain("page=1");
     }),
@@ -718,6 +719,48 @@ layer("GitLabPullRequestCli.layer", (it) => {
         }
         expect(mockedExecute).toHaveBeenCalledTimes(mergeMethod === "rebase" ? 6 : 4);
       }),
+  );
+
+  it.effect("merges pinned to the head the caller reviewed, not the one it reads", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[0] === "api"
+              ? mergeRequestJson({
+                  diff_refs: { base_sha: "base", head_sha: "pushed-head", start_sha: "start" },
+                })
+              : "",
+          ),
+        ),
+      );
+      yield* cli.runMergeRequestAction({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        action: "merge",
+        mergeMethod: "squash",
+        expectedHeadSha: "reviewed-head",
+      });
+      const merge = mockedExecute.mock.calls.at(-1)?.[0].args ?? [];
+      expect(merge[merge.indexOf("--sha") + 1]).toBe("reviewed-head");
+
+      // A rebase cannot be pinned, so a head that moved refuses it before rebasing.
+      mockedExecute.mockClear();
+      const refused = yield* Effect.flip(
+        cli.runMergeRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          action: "merge",
+          mergeMethod: "rebase",
+          expectedHeadSha: "reviewed-head",
+        }),
+      );
+      expect(refused._tag).toBe("GitLabMutationRefusedError");
+      expect(mockedExecute.mock.calls.map(([call]) => call.args[1])).not.toContain("rebase");
+    }),
   );
 
   it.effect.each([
@@ -2330,6 +2373,63 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       expect(detail.maintainerCanModify).toBe(allowCollaboration);
       expect(detail.viewerCanEditMaintainerEdits).toBe(row.allowed);
+    }),
+  );
+
+  it.effect("asks GraphQL for merge request label colours the single REST GET cannot return", () =>
+    Effect.gen(function* () {
+      const restLabels = ["bug", ...Array.from({ length: 100 }, (_, index) => `extra-${index}`)];
+      const graphqlNodes = [
+        { title: "bug", color: "#E24329", description: "Something is broken" },
+        ...Array.from({ length: 99 }, (_, index) => ({
+          title: `extra-${index}`,
+          color: "#FFFFFF",
+        })),
+      ];
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[1] === "graphql"
+              ? JSON.stringify({
+                  data: {
+                    project: {
+                      mergeRequest: {
+                        userPermissions: { adminMergeRequest: false },
+                        labels: { nodes: graphqlNodes },
+                      },
+                    },
+                  },
+                })
+              : mergeRequestJson({ labels: restLabels }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+        maintainerEdits: false,
+      });
+
+      const graphql = mockedExecute.mock.calls.find(([call]) => call.args[1] === "graphql");
+      assert.isDefined(graphql);
+      expect(JSON.parse(graphql[0].stdin ?? "").query).toContain(
+        "labels(first: 100) { nodes { title color description } }",
+      );
+      expect(
+        mockedExecute.mock.calls.some(([call]) => call.args[1]?.includes("with_labels_details")),
+      ).toBe(false);
+      expect(detail.labels).toHaveLength(101);
+      expect(detail.labels[0]).toEqual({
+        name: "bug",
+        color: "#E24329",
+        description: "Something is broken",
+      });
+      expect(detail.labels[1]).toEqual({ name: "extra-0", color: "#FFFFFF", description: null });
+      expect(detail.labels.at(-1)).toEqual({ name: "extra-99", color: null });
     }),
   );
 
