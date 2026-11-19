@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Schema from "effect/Schema";
-import { HttpClient } from "effect/http";
+import { HttpClient, type HttpClientResponse } from "effect/http";
 import {
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentHttpBadRequestError,
@@ -10,13 +12,16 @@ import {
   EnvironmentHttpUnauthorizedError,
 } from "@t3tools/contracts";
 import {
+  RelayOkResponse,
   type RelayEnvironmentLinkResponse as RelayEnvironmentLinkResponseType,
   type RelayManagedEndpointProviderKind,
 } from "@t3tools/contracts/relay";
+import { EnvironmentSupervisor } from "@t3tools/client-runtime/connection";
 import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import { ManagedRelay, relayRequestFailureDetail } from "@t3tools/client-runtime/relay";
 import { makeEnvironmentHttpApiClient } from "@t3tools/client-runtime/rpc";
 
+import { executeConnectedEnvironmentHttpRequest } from "@t3tools/client-runtime/state/environmentHttpAuth";
 import { msg } from "gt-react-native";
 
 import { m } from "../../i18n/messages";
@@ -34,6 +39,7 @@ export class CloudEnvironmentLinkError extends Schema.TaggedError<CloudEnvironme
     message: Schema.String,
     cause: Schema.optional(Schema.Defect()),
     traceId: Schema.optional(Schema.String),
+    relayLinkCommitted: Schema.optionalKey(Schema.Literal(true)),
   },
 ) {}
 
@@ -51,7 +57,11 @@ const isEnvironmentCloudApiError = Schema.is(
 const MANAGED_ENDPOINT_PROVIDER_KIND =
   "cloudflare_tunnel" satisfies RelayManagedEndpointProviderKind;
 
-function cloudEnvironmentLinkError(message: string, withDetail: (detail: string) => string) {
+function cloudEnvironmentLinkError(
+  message: string,
+  withDetail: (detail: string) => string,
+  options?: { readonly relayLinkCommitted: true },
+) {
   return (cause: unknown) => {
     const environmentError = findEnvironmentCloudApiError(cause);
     const traceId = findErrorTraceId(cause);
@@ -61,6 +71,7 @@ function cloudEnvironmentLinkError(message: string, withDetail: (detail: string)
     return new CloudEnvironmentLinkError({
       message: detail,
       cause,
+      ...options,
       ...(traceId === null ? {} : { traceId }),
     });
   };
@@ -162,6 +173,60 @@ type LinkEnvironmentToCloudRequirements =
   | ManagedRelay.ManagedRelayClient
   | MobileStorage.MobileStorage;
 
+const decodeRelayOkResponse = Schema.decodeUnknownEffect(RelayOkResponse);
+
+export const updateLinkedEnvironmentLiveActivityPreference = Effect.fn(
+  "linkEnvironment.updateLinkedEnvironmentLiveActivityPreference",
+)(function* (liveActivitiesEnabled: boolean) {
+  const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+  if (Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))) {
+    return "disconnected" as const;
+  }
+
+  return yield* executeConnectedEnvironmentHttpRequest<
+    "connect",
+    HttpClientResponse.HttpClientResponse,
+    unknown,
+    never
+  >({
+    group: "connect",
+    method: "POST",
+    url: (urls) => urls.liveActivityPreference(),
+    timeoutMs: 8_000,
+    requestInit: { redirect: "error" },
+    isUnauthorizedResponse: (response) => response.status === 401,
+    request: ({ client, headers }) =>
+      client.liveActivityPreference({
+        headers,
+        payload: { liveActivitiesEnabled },
+        responseMode: "response-only",
+      }),
+  }).pipe(
+    Effect.flatMap((response) =>
+      Effect.gen(function* () {
+        if (response.status === 404) return "unsupported" as const;
+        if (response.status === 200) {
+          const json = yield* response.json;
+          const result = yield* decodeRelayOkResponse(json);
+          return result.ok ? ("updated" as const) : ("unlinked" as const);
+        }
+        return yield* new CloudEnvironmentLinkError({
+          message: m(msg("Environment returned HTTP {status}."), { status: response.status }),
+        });
+      }),
+    ),
+    Effect.mapError(
+      cloudEnvironmentLinkError(
+        m(msg("Could not update the environment's Live Activity preference.")),
+        (detail) =>
+          m(msg("Could not update the environment's Live Activity preference: {detail}"), {
+            detail,
+          }),
+      ),
+    ),
+  );
+});
+
 export const linkEnvironmentToCloudWithPreference = Effect.fn(
   "linkEnvironment.linkEnvironmentToCloudWithPreference",
 )(function* (
@@ -257,6 +322,7 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
         cloudEnvironmentLinkError(
           m(msg("Could not configure environment relay access.")),
           (detail) => m(msg("Could not configure environment relay access: {detail}", { detail })),
+          { relayLinkCommitted: true },
         ),
       ),
     );
