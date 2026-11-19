@@ -55,6 +55,7 @@ export type LinearHistoryEntry = IssueHistory;
 
 export const KIND = LINEAR_KIND;
 const DEFAULT_API_URL = "https://api.linear.app/graphql";
+const signedFileUrls = { headers: { "public-file-urls-expire-in": "3600" } };
 
 const LinearApiConfig = Config.all({
   apiUrl: Config.String("T3CODE_LINEAR_API_URL").pipe(Config.withDefault(DEFAULT_API_URL)),
@@ -234,6 +235,16 @@ const nextCursor = (pageInfo: {
   readonly endCursor: string | null;
 }) => (pageInfo.hasNextPage ? pageInfo.endCursor : null);
 
+/** Issue edits start with the Markdown returned by Linear, including temporary file signatures. */
+function stripFileSignatures(markdown: string): string {
+  return markdown.replace(/https:\/\/uploads\.linear\.app\/[^\s<>"\])]+/gu, (asset) => {
+    const url = new URL(asset);
+    if (!url.searchParams.has("signature")) return asset;
+    url.searchParams.delete("signature");
+    return url.href;
+  });
+}
+
 export const make = Effect.gen(function* () {
   // Only a default-carrying string: nothing in the environment can make it fail.
   const config = yield* LinearApiConfig.pipe(Effect.orDie);
@@ -320,7 +331,7 @@ export const make = Effect.gen(function* () {
     );
 
   const getIssue: LinearApi["Service"]["getIssue"] = (identifier, comments) =>
-    call("getIssue", (linear) => linear.T3Issue({ id: identifier, comments })).pipe(
+    call("getIssue", (linear) => linear.T3Issue({ id: identifier, comments }, signedFileUrls)).pipe(
       Effect.map((data) => data.issue),
       // Linear answers an unknown identifier with an error and no data, not with null.
       Effect.catchIf(
@@ -331,7 +342,10 @@ export const make = Effect.gen(function* () {
 
   const getComments: LinearApi["Service"]["getComments"] = (input) =>
     call("getComments", (linear) =>
-      linear.T3Comments({ id: input.identifier, first: input.first, after: input.after }),
+      linear.T3Comments(
+        { id: input.identifier, first: input.first, after: input.after },
+        signedFileUrls,
+      ),
     ).pipe(
       Effect.flatMap((data) =>
         data.issue === null
@@ -380,10 +394,15 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const updateIssue: LinearApi["Service"]["updateIssue"] = (identifier, input) =>
-    call("updateIssue", (linear) => linear.T3IssueUpdate({ id: identifier, input })).pipe(
-      Effect.flatMap(({ issueUpdate }) => applied("updateIssue", issueUpdate)),
-    );
+  const updateIssue: LinearApi["Service"]["updateIssue"] = (identifier, input) => {
+    const update =
+      typeof input.description === "string"
+        ? { ...input, description: stripFileSignatures(input.description) }
+        : input;
+    return call("updateIssue", (linear) =>
+      linear.T3IssueUpdate({ id: identifier, input: update }),
+    ).pipe(Effect.flatMap(({ issueUpdate }) => applied("updateIssue", issueUpdate)));
+  };
 
   const createComment: LinearApi["Service"]["createComment"] = (input) =>
     call("createComment", (linear) => linear.T3CommentCreate({ input })).pipe(

@@ -72,7 +72,10 @@ const bareDetail = (identifier: string) =>
 
 /** Answers each GraphQL document by its operation name, the way Linear would. */
 function fakeLinear(
-  answers: Record<string, (variables: Record<string, unknown>) => unknown>,
+  answers: Record<
+    string,
+    (variables: Record<string, unknown>, fileUrlLifetime: string | undefined) => unknown
+  >,
   stored: string | null = "lin_api_stored",
 ) {
   const requests: Array<{
@@ -90,7 +93,7 @@ function fakeLinear(
         const operation = /^(?:query|mutation) (\w+)/.exec(parsed.query)?.[1] ?? "?";
         requests.push({ authorization: request.headers.authorization, operation });
         const answer = answers[operation];
-        const answered = answer?.(parsed.variables);
+        const answered = answer?.(parsed.variables, request.headers["public-file-urls-expire-in"]);
         const response =
           answered instanceof Response
             ? answered
@@ -395,6 +398,53 @@ describe("LinearIssueTracker", () => {
 
       const missing = yield* Effect.flip(api.getIssue({ ...target, key: "123" }));
       expect(missing.reason).toBe("not-found");
+    }),
+  );
+
+  it.effect("reads signed issue images and saves edits with stable image URLs", () =>
+    Effect.gen(function* () {
+      const asset = "https://uploads.linear.app/workspace/file/image.png";
+      const stable = `![Screenshot](${asset})`;
+      const signed = `![Screenshot](${asset}?signature=temporary)`;
+      const comment = (body: string) => ({
+        id: "cmt_image",
+        body,
+        createdAt: "2026-07-02T01:00:00.000Z",
+        url: "https://linear.app/acme/issue/ENG-7#comment-cmt_image",
+        user: THEO,
+        botActor: null,
+        reactions: [],
+      });
+      const comments = (body: string) => ({
+        nodes: [comment(body)],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      });
+      const unrelated = "![External](https://example.test/image.png?signature=keep)";
+      const { tracker } = fakeLinear({
+        T3Issue: (_, fileUrlLifetime) => {
+          const body = Number(fileUrlLifetime) > 0 ? signed : stable;
+          return {
+            issue: { ...bareDetail("ENG-7"), description: body, comments: comments(body) },
+          };
+        },
+        T3Comments: (_, fileUrlLifetime) => ({
+          issue: { comments: comments(Number(fileUrlLifetime) > 0 ? signed : stable) },
+        }),
+        T3IssueUpdate: (variables) => {
+          expect(variables.input).toEqual({ description: `${stable}\n\n${unrelated}` });
+          return { issueUpdate: { success: true } };
+        },
+      });
+      const api = yield* tracker;
+      const issueTarget = { ...target, key: "ENG-7" };
+      const detail = yield* api.getIssue(issueTarget);
+      const older = yield* api.getComments({ ...issueTarget, cursor: "older" });
+      expect([detail.body, detail.comments[0]?.body, older.comments[0]?.body]).toEqual([
+        signed,
+        signed,
+        signed,
+      ]);
+      yield* api.update({ ...issueTarget, body: `${detail.body}\n\n${unrelated}` });
     }),
   );
 
