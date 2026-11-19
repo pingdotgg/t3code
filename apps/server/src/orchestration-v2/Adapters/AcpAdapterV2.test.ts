@@ -4647,17 +4647,24 @@ describe("AcpAdapterV2", () => {
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
         { title: "Searched TODO in web", pattern: "apps/web" },
       );
-      const explicitLocationSearch = items.find(
-        (item) =>
-          item.type === "file_search" &&
-          item.nativeItemRef?.nativeId?.endsWith("structured-search-explicit-location") === true,
-      );
-      assert.deepEqual(
-        explicitLocationSearch?.type === "file_search"
-          ? { pattern: explicitLocationSearch.pattern, results: explicitLocationSearch.results }
-          : null,
-        { pattern: "README.md", results: [{ fileName: "README.md", preview: "# Title" }] },
-      );
+      const fileSearch = (nativeId: string) => {
+        const item = items.find(
+          (candidate) =>
+            candidate.type === "file_search" &&
+            candidate.nativeItemRef?.nativeId?.endsWith(nativeId) === true,
+        );
+        return item?.type === "file_search"
+          ? { pattern: item.pattern, results: item.results }
+          : null;
+      };
+      assert.deepEqual(fileSearch("structured-search-explicit-location"), {
+        pattern: "README.md",
+        results: [{ fileName: "README.md", preview: "# Title" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-query-only"), {
+        pattern: "TODO",
+        results: undefined,
+      });
       const webItem = (nativeId: string, status: string) => {
         const item = items.findLast(
           (candidate) =>

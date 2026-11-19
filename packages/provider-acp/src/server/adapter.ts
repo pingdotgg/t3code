@@ -1327,13 +1327,13 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
 
 function resolvedPathInfo(
   toolCall: AcpToolCallState,
-): { path: string; isFallback: boolean } | undefined {
+): { readonly path: string; readonly fromQuery: boolean } | undefined {
   const locations = toolCall.data.locations;
   if (Array.isArray(locations)) {
     for (const location of locations) {
       const path = unknownRecord(location)?.path;
       if (typeof path === "string" && path.trim().length > 0) {
-        return { path: path.trim(), isFallback: false };
+        return { path: path.trim(), fromQuery: false };
       }
     }
   }
@@ -1341,13 +1341,13 @@ function resolvedPathInfo(
   for (const key of ["path", "filePath", "file_path", "url"]) {
     const candidate = rawInput?.[key];
     if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return { path: candidate.trim(), isFallback: false };
+      return { path: candidate.trim(), fromQuery: false };
     }
   }
   for (const key of ["query", "pattern"]) {
     const candidate = rawInput?.[key];
     if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return { path: candidate.trim(), isFallback: true };
+      return { path: candidate.trim(), fromQuery: true };
     }
   }
   return undefined;
@@ -1367,20 +1367,16 @@ function acpBackendWebSearch(
   const variant = typeof rawInput?.variant === "string" ? rawInput.variant.toLowerCase() : "";
   const rawOutputRecord = unknownRecord(rawOutput);
   const action = unknownRecord(rawOutputRecord?.action);
-  const normalizedTitle = title?.toLowerCase().trim() ?? "";
-  const isWebSearchTitle =
-    normalizedTitle === "web search" ||
-    normalizedTitle === "web_search" ||
-    normalizedTitle === "search_web" ||
-    normalizedTitle === "search the web" ||
-    normalizedTitle.startsWith("web search") ||
-    normalizedTitle.startsWith("search the web");
-  const isWebSearchVariant =
-    variant === "xsearch" ||
-    variant === "websearch" ||
-    variant === "web_search" ||
-    variant === "search_web" ||
-    variant === "web-search";
+  const isWebSearchTitle = /^\s*(?:web search|search the web|(?:web_search|search_web)\s*$)/iu.test(
+    title ?? "",
+  );
+  const isWebSearchVariant = [
+    "xsearch",
+    "websearch",
+    "web_search",
+    "search_web",
+    "web-search",
+  ].includes(variant);
   if (!isWebSearchVariant && action?.type !== "search" && !isWebSearchTitle) {
     return undefined;
   }
@@ -1396,15 +1392,14 @@ function acpBackendWebSearch(
     .filter(([, value]) => typeof value === "string" || typeof value === "number")
     .map(([key, value]) => `${key}: ${value}`)
     .join(", ");
-  const rawInputQuery =
-    typeof rawInput?.query === "string"
-      ? rawInput.query
-      : typeof rawInput?.search_query === "string"
-        ? rawInput.search_query
-        : typeof rawInput?.q === "string"
-          ? rawInput.q
-          : undefined;
-  const query = [action?.query, args?.query, rawInputQuery, argsText]
+  const query = [
+    action?.query,
+    args?.query,
+    rawInput?.query,
+    rawInput?.search_query,
+    rawInput?.q,
+    argsText,
+  ]
     .find((value): value is string => typeof value === "string" && value.trim().length > 0)
     ?.trim();
   const urls = new Set<string>();
@@ -1412,27 +1407,29 @@ function acpBackendWebSearch(
     const url = unknownRecord(source)?.url;
     if (typeof url === "string" && url.trim().length > 0) urls.add(url.trim());
   }
-  const outputText = textFromUnknown(rawOutput);
-  if (urls.size === 0 && outputText !== undefined) {
-    for (const match of outputText.matchAll(/https?:\/\/[^\s<>"]+/gu)) {
-      let url = match[0].replace(/[.,;:>]+$/u, "");
-      while (
-        url.endsWith(")") &&
-        (url.match(/\(/g) || []).length < (url.match(/\)/g) || []).length
-      ) {
-        url = url.slice(0, -1);
-      }
-      while (
-        url.endsWith("]") &&
-        (url.match(/\[/g) || []).length < (url.match(/\]/g) || []).length
-      ) {
-        url = url.slice(0, -1);
-      }
-      url = url.replace(/[.,;:>]+$/u, "");
-      if (url.length > 0) urls.add(url);
+  if (urls.size === 0) {
+    for (const match of textFromUnknown(rawOutput)?.matchAll(/https?:\/\/[^\s<>"]+/gu) ?? []) {
+      urls.add(trimCitationUrl(match[0]));
     }
   }
   return { query, results: [...urls].map((url) => ({ url })) };
+}
+
+// Prose citations end in punctuation or a closing bracket that is not part of the URL.
+function trimCitationUrl(raw: string): string {
+  let url = raw;
+  for (;;) {
+    const trimmed = url.replace(/[.,;:]+$/u, "");
+    const close = trimmed.at(-1);
+    const open = close === ")" ? "(" : close === "]" ? "[" : undefined;
+    if (open && close && trimmed.split(open).length < trimmed.split(close).length) {
+      url = trimmed.slice(0, -1);
+    } else if (trimmed === url) {
+      return url;
+    } else {
+      url = trimmed;
+    }
+  }
 }
 
 function providerRequestKind(kind: string | "unknown"): ProviderRequestKind {
@@ -4602,9 +4599,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 const backendSearch = acpBackendWebSearch(
                   rawInputRecord,
                   rawOutput,
-                  typeof toolCall.data.title === "string"
-                    ? toolCall.data.title
-                    : (title ?? toolCall.title),
+                  typeof toolCall.data.title === "string" ? toolCall.data.title : title,
                 );
                 if (backendSearch !== undefined) {
                   const label = nonEmptyText(toolCall.data.title, title ?? "Web search").replace(
@@ -4627,21 +4622,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   };
                   break;
                 }
-                const trimmedQuery =
-                  typeof rawInputRecord?.query === "string"
-                    ? rawInputRecord.query.trim()
-                    : undefined;
-                const trimmedPattern =
-                  typeof rawInputRecord?.pattern === "string"
-                    ? rawInputRecord.pattern.trim()
-                    : undefined;
-                const pathInfo = resolvedPathInfo(toolCall);
-                const isExplicitPath =
-                  changes.length > 0 || (pathInfo !== undefined && !pathInfo.isFallback);
-                const isPathFromQueryOrPattern =
-                  !isExplicitPath &&
-                  path !== undefined &&
-                  (trimmedQuery === path || trimmedPattern === path);
+                const pathIsQuery = resolvedPathInfo(toolCall)?.fromQuery === true;
                 turnItem = {
                   ...base,
                   title:
@@ -4652,7 +4633,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     }) ?? title,
                   type: "file_search",
                   ...(path === undefined ? {} : { pattern: path }),
-                  ...(path === undefined || isPathFromQueryOrPattern
+                  ...(path === undefined || pathIsQuery
                     ? {}
                     : {
                         results: [
