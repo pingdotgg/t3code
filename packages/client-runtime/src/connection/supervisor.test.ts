@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -169,6 +170,7 @@ function awaitState(
 
 const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?: {
   readonly networkStatus?: NetworkStatus;
+  readonly readNetworkStatus?: (read: number) => Effect.Effect<void>;
   readonly prepare?: (
     attempt: number,
     target: ConnectionTarget,
@@ -185,6 +187,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>(
     options?.networkStatus ?? "online",
   );
+  const networkStatusReads = yield* Ref.make(0);
   const prepareCount = yield* Ref.make(0);
   const sessionCount = yield* Ref.make(0);
   const releaseCount = yield* Ref.make(0);
@@ -200,7 +203,10 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   >([]);
 
   const connectivity = Connectivity.Connectivity.of({
-    status: SubscriptionRef.get(networkStatus),
+    status: Ref.updateAndGet(networkStatusReads, (count) => count + 1).pipe(
+      Effect.flatMap((read) => options?.readNetworkStatus?.(read) ?? Effect.void),
+      Effect.andThen(SubscriptionRef.get(networkStatus)),
+    ),
     changes: SubscriptionRef.changes(networkStatus),
   });
 
@@ -299,6 +305,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   return {
     dependencies: layerDependencies,
     prepareCount,
+    networkStatusReads,
     sessionCount,
     releaseCount,
     setNetworkStatus: (status: NetworkStatus) => SubscriptionRef.set(networkStatus, status),
@@ -314,6 +321,14 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
       const latest = sessions.at(-1);
       if (latest) {
         yield* Deferred.fail(latest, error);
+      }
+    }),
+    failLatestSessionCause: Effect.fn("TestConnectionHarness.failLatestSessionCause")(function* (
+      cause: Cause.Cause<ConnectionTransientError>,
+    ) {
+      const latest = (yield* Ref.get(closedSessions)).at(-1);
+      if (latest) {
+        yield* Deferred.failCause(latest, cause);
       }
     }),
   };
@@ -844,6 +859,53 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
       expect(Option.isSome(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("reconnects when a session closes with a failure and an interruption together", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.failLatestSessionCause(
+        Cause.combine(Cause.fail(transient("Config stream failed.")), Cause.interrupt(1)),
+      );
+      yield* TestClock.adjust("5 seconds");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps reconnecting after a network status read throws during an attempt", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        // A slow attempt reads the network status while it waits to be interrupted.
+        ready: (attempt) => (attempt === 2 ? Effect.sleep("1 second") : Effect.void),
+        readNetworkStatus: (read) =>
+          read === 2 ? Effect.die(new Error("navigator.onLine threw.")) : Effect.void,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.closeLatestSession();
+      yield* TestClock.adjust("5 seconds");
+      yield* supervisor.retryNow;
+      yield* TestClock.adjust("5 seconds");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+
+      expect(yield* Ref.get(harness.networkStatusReads)).toBeGreaterThanOrEqual(2);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
