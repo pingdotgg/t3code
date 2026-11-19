@@ -75,6 +75,7 @@ const loadReplyDelayMs = Number(process.env.T3_ACP_LOAD_REPLY_DELAY_MS ?? "0");
 const loadNeverReplies = process.env.T3_ACP_LOAD_NEVER_REPLIES === "1";
 const rejectPromptUntilLoaded = process.env.T3_ACP_REJECT_PROMPT_UNTIL_LOADED === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
+const echoAcceptedPrompt = process.env.T3_ACP_ECHO_ACCEPTED_PROMPT === "1";
 // JSON for the `data` of an "Internal error" response to `session/new`, as
 // Antigravity sends when its runtime cannot reach its local harness.
 const newSessionErrorData =
@@ -895,6 +896,15 @@ const program = Effect.gen(function* () {
         return yield* new AcpError.AcpRequestError({
           code: -32002,
           errorMessage: `Resource not found: ${requestedSessionId}`,
+        });
+      }
+      if (echoAcceptedPrompt) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            content: { type: "text", text: "Accepted test prompt" },
+          },
         });
       }
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
