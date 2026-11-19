@@ -56,6 +56,7 @@ const state = vi.hoisted(() => ({
   steps: {} as Record<string, ReadonlyArray<unknown>>,
   commands: [] as Array<readonly [label: string | undefined, input: unknown]>,
   permitted: true,
+  detailError: null as string | null,
 }));
 const canOperate = Atom.make(true);
 const cannotOperate = Atom.make(false);
@@ -68,6 +69,7 @@ function setup(
   state.steps = steps;
   state.commands = [];
   state.permitted = true;
+  state.detailError = null;
 }
 
 const environment = { environmentId, label: "Laptop" };
@@ -98,8 +100,10 @@ vi.mock(import("../../state/query"), async (original) => ({
     data:
       request === state.live
         ? state.snapshot
-        : { run: null, steps: state.steps[request.runId ?? ""] ?? [] },
-    error: null,
+        : state.detailError !== null
+          ? null
+          : { run: null, steps: state.steps[request.runId ?? ""] ?? [] },
+    error: request === state.live ? null : state.detailError,
     isPending: false,
     refresh: vi.fn(),
   })) as never,
@@ -200,6 +204,35 @@ describe("WorkflowRunsView", () => {
         ],
       ]),
     );
+  });
+
+  it("answers a question whose steps did not load, and says a linked run is not here", async () => {
+    setup({
+      runs: [run({ runId: "ship", title: "Release 1.2", status: "waiting", detail: "approve" })],
+      questions: [question],
+    });
+    state.detailError = "The server did not answer.";
+    await using _desktop = await desktop();
+    {
+      await using screen = await render(page("ship"));
+      await expect.element(screen.getByText("The server did not answer.")).toBeVisible();
+      await screen.getByRole("button", { name: "Ship", exact: true }).click();
+      await vi.waitFor(() =>
+        expect(state.commands).toEqual([
+          ["workflow answer", { runId: "ship", name: "approve", choice: "Ship" }],
+        ]),
+      );
+    }
+
+    // A link to a run this environment does not have never shows another run in its place.
+    const select = vi.fn();
+    await using screen = await render(page("gone", { select }));
+    await expect.element(screen.getByText("This run is not here")).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Ship", exact: true }))
+      .not.toBeInTheDocument();
+    await screen.getByRole("button", { name: "Back to the runs" }).click();
+    expect(select).toHaveBeenCalledWith(null);
   });
 
   it("turns the answers off for a session that may not operate", async () => {

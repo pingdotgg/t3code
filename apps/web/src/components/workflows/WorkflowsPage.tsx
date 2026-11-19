@@ -70,7 +70,13 @@ export function WorkflowsPage() {
     void navigate({ to: "/workflows", search: next, replace: true });
   // A level of the page, which the browser's Back should step out of again.
   const go = (next: WorkflowsSearch) => void navigate({ to: "/workflows", search: next });
-  const env = search.env === undefined ? {} : { env: search.env };
+  // Opening a run or file pins the environment it is on, so the same address never means another.
+  const pinned = environmentId ?? search.env;
+  const env = pinned === undefined ? {} : { env: pinned };
+  const away =
+    asked !== null && environmentId === null
+      ? (environments.find((environment) => environment.environmentId === asked)?.label ?? asked)
+      : null;
   const run = search.run === undefined ? {} : { run: search.run };
   const editing = search.definitions === true || search.file !== undefined;
   const [fileActions, setFileActions] = useState<HTMLElement | null>(null);
@@ -181,9 +187,10 @@ export function WorkflowsPage() {
                 </>
               )}
             </WorkspaceBreadcrumb>
-            {connected.length > 1 && environmentId !== null ? (
+            {(connected.length > 1 && environmentId !== null) ||
+            (away !== null && connected.length > 0) ? (
               <Select
-                value={environmentId}
+                value={environmentId ?? asked}
                 onValueChange={(value) => {
                   if (value !== null) select({ env: value });
                 }}
@@ -193,8 +200,10 @@ export function WorkflowsPage() {
                   aria-label={gt("Environment", { $context: "a T3 Code server to pick" })}
                 >
                   <SelectValue>
-                    {connected.find((environment) => environment.environmentId === environmentId)
-                      ?.label ?? environmentId}
+                    {away ??
+                      connected.find((environment) => environment.environmentId === environmentId)
+                        ?.label ??
+                      environmentId}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
@@ -216,7 +225,14 @@ export function WorkflowsPage() {
               </Button>
             )}
           </WorkspacePageHeader>
-          {environmentId === null ? (
+          {away !== null ? (
+            <WorkflowsEmpty
+              title={gt("{name} is not connected", { name: away })}
+              description={gt(
+                "Its workflows show again when it reconnects. Pick another environment to see its runs.",
+              )}
+            />
+          ) : environmentId === null ? (
             <WorkflowsEmpty
               title={gt("No environment connected")}
               description={gt("Connect an environment to see its workflow runs.")}

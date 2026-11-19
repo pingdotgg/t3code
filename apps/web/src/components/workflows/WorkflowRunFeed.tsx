@@ -400,12 +400,26 @@ export function WorkflowRunFeed({
         </p>
       </header>
 
-      {detail.error ? (
-        <p className="mt-4 text-xs text-destructive">{detail.error}</p>
-      ) : feed === null ? (
-        <p className="mt-4 text-xs text-muted-foreground" role="status">
-          <T>Loading steps…</T>
-        </p>
+      {detail.error || feed === null ? (
+        <>
+          {detail.error ? (
+            <p className="mt-4 text-xs text-destructive">{detail.error}</p>
+          ) : (
+            <p className="mt-4 text-xs text-muted-foreground" role="status">
+              <T>Loading steps…</T>
+            </p>
+          )}
+          {/* A question the run already asks is answerable without its step history. */}
+          {node.questions.map((question) => (
+            <div key={question.name} className="mt-4">
+              <WorkflowQuestionCard
+                environmentId={environmentId}
+                question={question}
+                onOpenThread={onOpenThread}
+              />
+            </div>
+          ))}
+        </>
       ) : (
         <div className="mt-4 flex flex-col gap-4 @2xl/feed:flex-row @2xl/feed:items-start">
           <WorkflowFlow
