@@ -450,6 +450,7 @@ export const make = Effect.gen(function* () {
       }
       if (initialRefs === undefined) return yield* loadLocalStatus(cwd);
       // Only a read made here can be certified; a cached result may predate the probe.
+      yield* workflow.invalidateLocalStatus(cwd);
       const { result, refs } = yield* withRefProbe(cwd, loadLocalStatus(cwd));
       initialRefs.refs = refs;
       return result;

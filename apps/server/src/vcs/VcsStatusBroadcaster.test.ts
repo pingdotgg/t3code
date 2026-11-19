@@ -2345,11 +2345,11 @@ it.effect("a first subscription's poll re-reads when its load reused a cached re
 });
 
 it.effect.each([
-  { refs: "unchanged", localReads: 1 },
-  { refs: "moved", localReads: 2 },
+  { refs: "unchanged", localReads: 1, invalidations: 1 },
+  { refs: "moved", localReads: 2, invalidations: 2 },
 ] as const)(
   "a first subscription's poll re-reads local status only when refs moved (%j)",
-  ({ refs, localReads }) => {
+  ({ refs, localReads, invalidations }) => {
     const state = newState();
     state.currentRemoteStatus = baseRemoteStatus;
     if (refs === "moved") {
@@ -2361,6 +2361,8 @@ it.effect.each([
       const b = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       yield* Deferred.await(yield* subscribeForFirstPoll(b));
       assert.strictEqual(state.localStatusCalls, localReads);
+      // The certified read must come from git, not the workflow's one-second cache.
+      assert.strictEqual(state.localInvalidationCalls, invalidations);
     }).pipe(Effect.provide(layerTestFor(state)));
   },
 );
