@@ -55,8 +55,9 @@ function expand<A>(value: A, resolve: (text: string) => string): A {
   return value;
 }
 
-// Only servers whose literal copy cannot start: the SDK also starts the file-defined copy and
-// loses its handle when it keeps the inline one, and inline configs drop envFile and enabledTools.
+// Only servers whose literal copy cannot start or would read another thread's id: the SDK also
+// starts the file-defined copy and loses its handle when it keeps the inline one, and inline
+// configs drop envFile and enabledTools.
 function needsWorkspaceExpansion(server: unknown): boolean {
   if (typeof server !== "object" || server === null) return false;
   if ("envFile" in server || "enabledTools" in server) return false;
