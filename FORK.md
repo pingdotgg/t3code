@@ -1648,6 +1648,27 @@ app). 133 files conflicted. Decisions worth keeping in mind:
   #38043), GitLab (#38383, #38101), Azure DevOps (#38387, #38069, #38019, #38018),
   Forgejo (#38211), Bitbucket, Linux desktop (`scripts/linux-glibc.ts`).
 
+### Upstream sync: 2026-11-19
+
+Merge of upstream `3a51807da0` (144 commits, through #38862) onto Nick's Tasks, Orbit
+profile events, conn-server grants, provider sign-in (#149), PR watching (#146) and
+transcript route (#148). 20 files conflicted. Decisions worth keeping in mind:
+
+- `react-native-screens` is on upstream's `5.0.0-t3.61` with a rebuilt `-conn.tgz`;
+  the Conn patch applied without changes.
+- `AppRouteModal`: upstream's keyboard-close focus return to the opener; Conn's shell
+  frame stays and still skips upstream's native titlebar inset.
+- `ThreadDetailsUsage`: upstream's row props and `/usage` link; hover, popup and
+  pressed rows use `--shell-highlight`.
+- `__root.tsx`: activation and web-link coordinators mount when the primary
+  environment is authenticated or the local one is disabled (upstream), main window
+  only (Conn).
+- `useOpenLocalWorkspace`: upstream's `localEnvironmentIdAtom`; Conn's router and
+  thread-shell lookup kept.
+- `agentContextBudget.json` `mcpToolListJsonBytes` stays 61,810 with the fork's
+  toolkits.
+- Catalogs: both sides' keys kept, `i18n:generate` in all three apps.
+
 ### Vendored dependency patches
 
 Upstream vendors some dependencies as tarballs in `apps/mobile/deps`, which pnpm
