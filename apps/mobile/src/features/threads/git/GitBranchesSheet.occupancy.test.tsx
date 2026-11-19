@@ -42,12 +42,18 @@ vi.mock("../../../state/use-thread-selection", () => ({
 vi.mock("../../../state/use-thread-detail", () => ({
   useSelectedThreadWorktreePath: () => checkout.worktreePath,
 }));
-vi.mock("../../../state/use-selected-thread-git-state", () => ({
-  useSelectedThreadGitState: () => ({
-    selectedThreadBranches: checkout.branches,
-    selectedThreadBranchesLoading: false,
-    gitOperationLabel: null,
+// A removed checkout is not a repository, so listing refs there finds none.
+vi.mock("../../../state/queries", () => ({
+  useBranches: ({ cwd }: { cwd: string | null }) => ({
+    data: { refs: cwd === checkout.removedPath ? [] : checkout.branches },
+    isPending: false,
   }),
+}));
+vi.mock("../../../state/use-vcs-action-state", () => ({
+  useVcsActionState: () => ({ currentLabel: null, hookName: null }),
+}));
+vi.mock("../../../state/sourceControl", () => ({
+  sourceControlEnvironment: { discovery: () => null },
 }));
 vi.mock("../../../state/use-selected-thread-git-actions", () => ({
   useSelectedThreadGitActions: () => ({ canChangeThreadBranch: true }),

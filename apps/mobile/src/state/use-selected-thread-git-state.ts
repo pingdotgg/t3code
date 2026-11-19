@@ -9,12 +9,12 @@ import { useEnvironmentQuery } from "./query";
 import { sourceControlEnvironment } from "./sourceControl";
 import { useVcsActionState } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
-import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
+import { useSelectedThreadGitCheckout } from "./use-selected-thread-worktree";
 
 export function useSelectedThreadGitState() {
   const messages = useMessages();
   const { selectedThread } = useThreadSelection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { selectedThreadCwd } = useSelectedThreadGitCheckout();
 
   const selectedThreadGitTarget = {
     environmentId: selectedThread?.environmentId ?? null,
