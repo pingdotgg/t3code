@@ -1122,6 +1122,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "provider-refresh": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Refreshed provider models {count} time} other {Refreshed provider models {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to refresh provider models {count} time} other {Tried to refresh provider models {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "theme-read": {
       const count = selected.length;
       label = done

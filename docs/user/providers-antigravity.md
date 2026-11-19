@@ -167,8 +167,9 @@ times. Limits refresh with provider status and include usage outside Ada.
 A server restart keeps your Google sign-in. The provider shows the saved account
 until a session, a refresh, or a sign-out reports something new.
 
-To check access and reload models, use **Refresh provider status** in web or desktop
-provider settings, or **Refresh models** in mobile thread settings. If asked to
+To check access and reload models, for example after a plan change, use **Refresh provider
+status** in web or desktop provider settings, or **Refresh providers** in mobile environment
+settings. An agent can do the same for you. If asked to
 sign in again, use provider settings on web or desktop, or **Settings > Providers** on mobile.
 
 If Google reports `SUBSCRIPTION_REQUIRED`, an account restriction, or a usage limit,

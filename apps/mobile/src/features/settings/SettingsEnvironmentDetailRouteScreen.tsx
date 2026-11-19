@@ -344,7 +344,7 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                           return;
                         const result = await refreshProviders({
                           environmentId,
-                          input: { reloadSecrets: true },
+                          input: { refreshModels: true, reloadSecrets: true },
                         });
                         if (AsyncResult.isFailure(result)) throw squashAtomCommandFailure(result);
                         return "Provider status refreshed.";
