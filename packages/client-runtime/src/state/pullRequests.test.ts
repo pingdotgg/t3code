@@ -3023,7 +3023,7 @@ it.effect("loads the diff again for a new guide head without sending the head", 
   }),
 );
 
-it.effect("reads a reused cursor from the new diff revision after reloading page one", () =>
+it.effect("reads a reused cursor from the new diff revision after page one changes", () =>
   Effect.gen(function* () {
     const inputs: unknown[] = [];
     let patch = "before-push";
@@ -3038,7 +3038,7 @@ it.effect("reads a reused cursor from the new diff revision after reloading page
           Effect.sync(() => {
             inputs.push(input);
             return input.cursor === undefined
-              ? { patch: "same first page", truncated: false, nextCursor: "2" }
+              ? { patch: `first page ${patch}`, truncated: false, nextCursor: "2" }
               : { patch, truncated: false, nextCursor: null };
           }),
       },
@@ -3082,11 +3082,12 @@ it.effect("reads a reused cursor from the new diff revision after reloading page
   }),
 );
 
-it.effect.each(["commit", "live"] as const)(
+it.effect.each(["commit", "unchanged", "pushed"] as const)(
   "restores only the saved continuation for the current %s diff offline",
   (kind) =>
     Effect.gen(function* () {
       const disk = new Map<string, string>();
+      let firstPatch = "first page";
       let continuationPatch = "original";
       const { atoms, registry, supervisor } = yield* makeTestRuntime(
         {} as WsRpcProtocolClient,
@@ -3101,7 +3102,7 @@ it.effect.each(["commit", "live"] as const)(
           load: (_prepared, input) =>
             Effect.sync(() =>
               input.cursor === undefined
-                ? { patch: "same first page", truncated: false, nextCursor: "2" }
+                ? { patch: firstPatch, truncated: false, nextCursor: "2" }
                 : { patch: continuationPatch, truncated: false, nextCursor: null },
             ),
         },
@@ -3142,10 +3143,13 @@ it.effect.each(["commit", "live"] as const)(
         "original",
       );
 
+      if (kind === "pushed") {
+        firstPatch = "pushed first page";
+        continuationPatch = "updated";
+      }
       registry.refresh(firstPage);
       const refreshed = yield* AtomRegistry.getResult(registry, firstPage, settled);
-      if (kind === "live") {
-        continuationPatch = "updated";
+      if (kind === "pushed") {
         expect(
           (yield* AtomRegistry.getResult(registry, continuation(refreshed), settled)).patch,
         ).toBe("updated");
@@ -3160,8 +3164,8 @@ it.effect.each(["commit", "live"] as const)(
       );
       const savedFirst = yield* AtomRegistry.getResult(offline, firstPage, settled);
       const savedPage = yield* AtomRegistry.getResult(offline, continuation(savedFirst), settled);
-      expect(savedPage.patch).toBe(kind === "commit" ? "original" : "updated");
-      if (kind === "live") {
+      expect(savedPage.patch).toBe(kind === "pushed" ? "updated" : "original");
+      if (kind === "pushed") {
         const oldPage = yield* AtomRegistry.getResult(offline, continuation(first), settled).pipe(
           Effect.result,
         );

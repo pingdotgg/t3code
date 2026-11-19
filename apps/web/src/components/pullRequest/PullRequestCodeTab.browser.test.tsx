@@ -367,7 +367,7 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
 });
 
 it.each(["manual", "background"] as const)(
-  "reads the new continuation after a %s refresh of an unchanged first page",
+  "reads the new continuation after a %s refresh changes the diff revision",
   async (refresh) => {
     setup({ paged: true });
     mocks.shortDiff = true;

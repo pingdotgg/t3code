@@ -37,7 +37,7 @@ import * as Schema from "effect/Schema";
 import { persistPullRequestStats } from "./pullRequestStatsPersistence.ts";
 import { persistQuery, type QueryPersistence } from "./queryPersistence.ts";
 import * as Option from "effect/Option";
-import * as Random from "effect/Random";
+import * as Hash from "effect/Hash";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
@@ -787,10 +787,9 @@ type PullRequestDiffCacheInput = PullRequestDiffInput & {
   readonly cacheRevision?: string;
 };
 
-// Only tells page chains of one diff apart, so it need not be unguessable.
-const createDiffRevision = Effect.map(Random.nextIntBetween(0, Number.MAX_SAFE_INTEGER), (value) =>
-  value.toString(36),
-);
+// An unchanged first page keeps its revision, so refetches and offline restores reuse its chain.
+const diffRevision = (diff: PullRequestDiffResult) =>
+  (Hash.string(JSON.stringify(diff)) >>> 0).toString(36);
 
 const diffPersistence = persistQuery(CachedPullRequestDiff);
 
@@ -1347,7 +1346,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       // Guide heads and pagination revisions namespace the client cache only.
       execute: ({ cacheHeadSha, cacheRevision, ...input }: PullRequestDiffCacheInput) =>
         loadDiff(input).pipe(
-          Effect.flatMap((diff): Effect.Effect<CachedPullRequestDiff> => {
+          Effect.map((diff): CachedPullRequestDiff => {
             if (
               diff.nextCursor !== null &&
               input.cursor === undefined &&
@@ -1355,11 +1354,9 @@ export function createPullRequestEnvironmentAtoms<R, E>(
               input.commit === undefined &&
               cacheHeadSha === undefined
             ) {
-              return Effect.map(createDiffRevision, (revision) => ({ ...diff, revision }));
+              return { ...diff, revision: diffRevision(diff) };
             }
-            return Effect.succeed(
-              cacheRevision === undefined ? diff : { ...diff, revision: cacheRevision },
-            );
+            return cacheRevision === undefined ? diff : { ...diff, revision: cacheRevision };
           }),
         ),
     }),
