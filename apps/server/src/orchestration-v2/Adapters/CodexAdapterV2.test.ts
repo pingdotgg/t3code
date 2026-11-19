@@ -2006,6 +2006,64 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // regression: #39092 a delegated result steered into an ended Codex turn was retried, then lost.
+  it.effect("declines a steer into a turn Codex already ended so it becomes a follow-up", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "steer-ended-thread";
+      const nativeTurnId = "steer-ended-turn";
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "steer-ended-turn",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Delegate." }),
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        }),
+      );
+      const turnInput = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("steer-ended-attempt"),
+        text: "Delegate.",
+      });
+      yield* harness.runtime.startTurn(turnInput);
+      yield* harness.firstTerminal;
+      const providerTurnId = harness.events.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0];
+      assert.isDefined(providerTurnId);
+      if (providerTurnId === undefined) return;
+      const error = yield* harness.runtime
+        .steerTurn({
+          ...turnInput,
+          providerTurnId,
+          message: { ...turnInput.message, text: "Delegated task finished." },
+        })
+        .pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterSteerDeclinedError");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("a speed change with no message updates Codex's next-turn settings", () =>
     Effect.gen(function* () {
       const nativeThreadId = "picker-tier-thread";
