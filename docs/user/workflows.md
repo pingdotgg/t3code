@@ -1,0 +1,94 @@
+# Workflows
+
+A workflow is a script that ties agents, plain code, schedules, webhooks and questions to you into
+one run that survives restarts. Each step's result is stored: a restart continues the run where it
+was, and a step that fails pauses the run until it is resumed, instead of losing the work before
+it. Workflows are an early feature: you start them from the `t3` command and follow them in
+the app.
+
+For one prompt on a timer or from a webhook, use a scheduled task. Reach for a workflow when the
+work has stages, such as triage, then a fix, then your approval, then a release.
+
+## Write a workflow
+
+Workflows are TypeScript files in the `workflows` folder of your T3 home, `~/.t3/workflows/` by
+default. Each file defines one or more workflows, and there is nothing to turn on.
+
+- **In the app:** open **Definitions** on the Workflows page. It lists the files, makes new ones
+  and edits them. Saving checks the file first: one with a mistake is not saved and says what is
+  wrong, and one that passes runs from then on without a restart.
+- **With an agent:** the [`t3-workflows` skill](../../skills/t3-workflows/SKILL.md) describes the
+  format with a full example. Copy that folder into your agent's skills directory (for example
+  `~/.claude/skills/` or `~/.agents/skills/`) and ask the agent to write the workflow.
+- **In your own editor:** the server picks up a changed file the same way.
+
+A file that is wrong never stops the others: its last good version keeps running, and the page
+says what is wrong with it. The check finds a file that does not load, a workflow defined twice,
+and a version removed while its runs are unfinished. It does not find a mistake inside a
+workflow's body; that shows when a run reaches it and pauses. To change the steps of a workflow
+that has unfinished runs, add the new body under a higher `version` and keep the old one until
+those runs end.
+
+Saving and deleting files in the app need a connection that may use the terminal, since the
+server runs these files. To keep the files somewhere else, start the server with
+`T3CODE_WORKFLOWS` set to that folder, or to a single file.
+
+Runs live on the machine that started them and only make progress while its server is running. For
+a schedule that must not be missed, run the server on a machine that stays on.
+
+## Run and steer
+
+```sh
+t3 workflow start <name> --input '<json>' --key <key>
+t3 workflow list
+t3 workflow show <run>
+t3 workflow resume <run>
+t3 workflow cancel <run>
+t3 workflow questions
+t3 workflow signal '{"choice":"yes"}' --run <run> --wait <question>
+t3 workflow hooks
+```
+
+Starting twice with the same key gives the same run, so a script that retries does not start a
+second one. A paused run names the step that failed and why; fix the cause and resume it, and only
+that step runs again.
+
+Each agent step works in an ordinary thread. Open it to read what the agent did or to help it.
+
+## Follow runs in the app
+
+Once a server has workflow runs, a **Workflows** button appears at the bottom of the sidebar. A
+number on it says how many runs wait on you: a question to answer, or a run paused by a failing
+step.
+
+The page lists runs under **Needs you**, **Running** and **All**, and can narrow to one workflow.
+Select a run to read it from top to bottom: each agent with what it said and returned, questions
+where they were asked, and the quick steps between them folded into a line. A run another run
+invoked is opened from that run. From a run you can answer its question, resume it when it is
+paused, or cancel it. **Transcript** on an agent opens its thread beside the run, where you can
+read its work and talk to it before you answer. Answering, resuming and cancelling need a
+connection that may operate threads.
+
+An agent's thread does not appear in the thread list. Open it from its run; the thread itself
+links back to the run.
+
+An agent step can run on another machine: give it the id of a
+[linked environment](remote-access.md#link-another-environment) and a project there. The run itself stays on the
+server that started it.
+
+Workflows can keep state between runs, such as a switch or a cursor. `t3 workflow store list`
+shows it, and `t3 workflow store set <key> '<json>'` changes it.
+
+## Issues and pull requests
+
+A workflow can start for each new issue or pull request of a project, and can read, comment on and
+change them. It uses the tracker and git host the project is already connected to under Settings,
+Source control & issues, so there is no webhook to set up. Only issues and pull requests opened
+after the workflow was first loaded start a run.
+
+## Webhooks
+
+`t3 workflow hooks` prints a URL path for each webhook a workflow listens on. Add your server's
+address in front of it, the same one a scheduled task's webhook uses. The path contains the hook's
+secret, so share it only with the sender. An organization policy that blocks webhook tasks blocks
+these too.
