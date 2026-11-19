@@ -98,6 +98,24 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 - Bring `secrets` and `settings.json` only if the flow under test needs them.
 - Copy in, never symlink. Data flows one way: into your sandbox, never back out.
 
+## Build and installer completion gate
+
+- For implementation work that changes a shipped client, build the matching installable artifact before handoff and include its path in the final report. This applies even when the request sounds like a small patch or focused checks pass. On Apple Silicon macOS, use `vp run dist:desktop:dmg:arm64`; use the matching `dist:desktop:*` target for other desktop platforms and architectures.
+- Build user-facing installers with T3 Connect enabled against the official T3 Code Clerk instance and relay. Patched-nightly builds take their public values from `.env.example` in the checked-out upstream source; do not inject a personal Clerk instance or relay. Verify `T3CODE_CLERK_PUBLISHABLE_KEY`, `T3CODE_CLERK_JWT_TEMPLATE`, `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID`, and `T3CODE_RELAY_URL` resolve through `scripts/lib/public-config.ts`. Never copy telemetry tokens or other credentials into build files or the environment.
+- GitHub Actions `CI` runs `Lint` for every pull request, but `.github/scripts/ci-changes.cjs` treats root Markdown files such as `AGENTS.md` as inert, so a docs-only change skips `Build and Typecheck`. When build verification is requested for a docs-only change, run `vp run build:desktop` locally and report that result separately from GitHub Actions.
+- Before merging source changes, wait for the GitHub Actions `Check` gate and the relevant `Build and Typecheck` job. A green docs-only `Check` does not prove the app builds.
+
+## Patched nightly commits
+
+- `.github/workflows/patched-nightly.yml` cherry-picks onto the latest upstream nightly every commit reachable from main, but not from `PATCH_BASE_SHA` or `LEGACY_MAIN_SHA`, whose subject starts exactly with `patch:`. Main is a merge-reconciled descendant of upstream nightly `PATCH_BASE`; there are no `.github/patches/` artifacts, so fork behavior lives in real `patch:` commits and re-anchoring means resolving a cherry-pick, not regenerating a diff. `LEGACY_MAIN_SHA` is main's pre-reconcile head, whose history has unrelated SHAs. Use `patch: short description` for a self-contained product change intended for the patched nightly; `patch(scope):` and ordinary `fix:` commits are not selected.
+- For pull requests that change product source, choose exactly one Patched nightly option in the PR template. CI requires `patch: description` in both the PR title and every commit subject when the change should ship in patched nightlies.
+- Keep each `patch:` source commit independently cherry-pickable onto the latest upstream nightly. Include code, tests, and fixtures needed for that product change; keep fork-only CI and workflow changes in their normal `ci:` commits so they are not copied into the app release.
+- Do not broaden the workflow to include every `fix:` commit: unrelated CI or maintenance fixes can then be applied to upstream nightly sources. Check the exact patch commit list and confirm it applies cleanly when changing the patch base or release workflow.
+- Never ship a patch the user has explicitly reverted or excluded; filter that commit from the nightly selection and keep the release notes accurate.
+- Every fork build and installer, local or CI, across web, desktop, and mobile, includes disconnected-environment thread filtering. The historical commit `6611d52bdf24eb30ae3708f8fc7718334d1892d5` conflicts with current upstream; maintain its port and coverage in the `patch: hide threads from disconnected environments and target fork updates` commit and keep the release-note entry. Never exclude the behavior from a fork build.
+- The workflow's `resolve` job needs the repository secret `PATCHED_NIGHTLY_RELEASE_TOKEN` to push release tags whose upstream source history adds workflow files. Use a fine-grained token limited to this repository with Contents and Workflows write access; pass it only to the `resolve` checkout/tag push. Keep installer asset uploads on `GITHUB_TOKEN`, and never print or commit the token.
+- Patched macOS nightlies must pass `--signed` and require the GitHub Actions secrets `MACOS_CSC_LINK`, `MACOS_CSC_KEY_PASSWORD`, `APPLE_API_KEY`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`. Export `.p12` files with OpenSSL's `-legacy` mode for runner compatibility, base64-encode them for `MACOS_CSC_LINK`, and validate with macOS Security.framework before storing; OpenSSL-only validation does not prove Apple's importer will accept it. Use a noninteractive `SecPKCS12Import` check so validation does not open a password prompt. Store `APPLE_API_KEY` as the raw `.p8` text; the macOS build step writes it to a mode-600 runner temp file for notarization. Map secrets only into that step and fail closed when any are missing. Developer ID signing/notarization does not need a provisioning profile; passkey entitlements are included only when one is configured. Squirrel.Mac requires an update to satisfy the current app's designated code requirement, so bootstrap users from an unsigned or invalidly signed fork build with one manual install of the signed DMG; never disable update signature validation.
+
 ## Verifying
 
 - Before you push, run `vp run check:changed`. It runs CI's fast checks for changed files: format, lint, knip, typecheck of affected packages and dependents, tests beside changes, and the cross-file checks those miss. CI still runs the full test suites.
@@ -150,7 +168,8 @@ For mobile verification, a missing or outdated native client is an install step,
 
 ## Pull requests
 
-- Never make a PR unless the developer explicitly asks you to do so.
+- Fork fixes that change application behavior or improve a feature carried in the patched-nightly build always get a PR in `louisefindlay23/t3code`; do not leave this work only on a local branch or wait for a separate PR request. Keep these contributions fork-only unless Louise explicitly asks for an upstream PR.
+- Run the relevant build for the exact patched source before opening the PR. After the PR is merged, trigger the matching build or release workflow and verify its result and published artifacts. Merge only after required checks and reviews pass, and only when Louise has asked to ship the change.
 - `origin` is not always GitHub. Check `git remote get-url origin` before your first forge command and use that forge's CLI and skill. See [Forge mirror](docs/operations/development.md#forge-mirror-optional).
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.

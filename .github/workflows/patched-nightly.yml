@@ -1,0 +1,519 @@
+name: Patched nightly desktop builds
+
+on:
+  schedule:
+    - cron: "23 20 * * *"
+  workflow_dispatch:
+  # PRs only replay the patches onto the latest upstream nightly; nothing is built or released.
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: patched-nightly-${{ github.event_name == 'pull_request' && github.ref || 'release' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    name: Prepare latest upstream nightly
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.prepare.outputs.should_build }}
+      source_tag: ${{ steps.prepare.outputs.source_tag }}
+      release_tag: ${{ steps.prepare.outputs.release_tag }}
+      version: ${{ steps.prepare.outputs.version }}
+    steps:
+      - name: Check out fork main
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.PATCHED_NIGHTLY_RELEASE_TOKEN || github.token }}
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - id: prepare
+        name: Resolve upstream source and prepare draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORK_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          # Upstream nightly main was merged with. Source nightlies must descend from it.
+          PATCH_BASE: v0.1.11-nightly.20261119.4941
+          PATCH_BASE_SHA: ff9efe89f6e793fed459d3d9c42f68450de78e95
+          # Head of main before it was reconciled with upstream. Its history has unrelated SHAs
+          # (upstream rewrote its history), so its old patch commits are already folded into the
+          # reconciled tree and must not be replayed.
+          LEGACY_MAIN_SHA: 26c16e60b97da2133017a00947d5240011fd232a
+        run: |
+          set -euo pipefail
+
+          source_tag="$(gh api repos/pingdotgg/t3code/releases?per_page=100 \
+            --jq '[.[] | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]{8}\\.[0-9]+$"))] | sort_by(.published_at) | last | .tag_name')"
+          if [[ -z "$source_tag" || "$source_tag" == "null" ]]; then
+            echo "No upstream nightly release was found." >&2
+            exit 1
+          fi
+
+          patch_commits=""
+          while IFS= read -r patch_commit; do
+            [[ -z "$patch_commit" ]] && continue
+            has_source_changes=false
+            while IFS= read -r changed_path; do
+              case "$changed_path" in
+                apps/server/*|apps/web/*|apps/desktop/*|apps/mobile/*|packages/*|native/*|scripts/*|packaging/*|patches/*|package.json|pnpm-lock.yaml|pnpm-workspace.yaml)
+                  has_source_changes=true
+                  break
+                  ;;
+              esac
+            done < <(git diff-tree --no-commit-id --name-only -r "$patch_commit")
+            if [[ "$has_source_changes" != "true" ]]; then
+              echo "Skipping $patch_commit; it changes no shipped source."
+              continue
+            fi
+            patch_commits+="${patch_commit}"$'\n'
+          done < <(git log --reverse --no-merges --format='%H%x09%s' "^$PATCH_BASE_SHA" "^$LEGACY_MAIN_SHA" "$WORKFLOW_SHA" \
+            | awk -F '\t' '$2 ~ /^patch: [^[:space:]]/ { print $1 }')
+          patch_commits="${patch_commits%$'\n'}"
+          if [[ -z "$patch_commits" ]]; then
+            echo "No patch commits were found after $PATCH_BASE." >&2
+            exit 1
+          fi
+          patch_set="$(printf '%s\n' "$patch_commits" | sha256sum | cut -c1-16)"
+
+          dry_run=false
+          [[ "$GITHUB_EVENT_NAME" == "pull_request" ]] && dry_run=true
+          if [[ "$dry_run" == "false" ]]; then
+          releases="$(gh api "repos/$FORK_REPOSITORY/releases?per_page=100")"
+          prior="$(jq -r --arg source "Source nightly: $source_tag" --arg patch_set "Patch set: $patch_set" \
+            '[.[] | select(((.body // "") | contains($source)) and ((.body // "") | contains($patch_set)))] | first // empty' <<<"$releases")"
+          if [[ -n "$prior" ]]; then
+            release_tag="$(jq -r '.tag_name' <<<"$prior")"
+            draft="$(jq -r '.draft' <<<"$prior")"
+            if [[ "$draft" != "true" ]]; then
+              echo "Upstream nightly $source_tag with patch set $patch_set is already published as $release_tag; no build needed."
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            version="${release_tag#v}"
+          else
+            source_version="${source_tag#v}"
+            if [[ ! "$source_version" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-nightly\.([0-9]{8})\.([0-9]+)$ ]]; then
+              echo "Unexpected upstream nightly version: $source_tag" >&2
+              exit 1
+            fi
+            product_version="${BASH_REMATCH[1]}"
+            nightly_date="${BASH_REMATCH[2]}"
+            source_number="${BASH_REMATCH[3]}"
+            prefix="v${product_version}-nightly.${nightly_date}."
+            fork_max="$(jq -r --arg prefix "$prefix" \
+              '[.[] | .tag_name | select(startswith($prefix)) | ltrimstr($prefix) | select(test("^[0-9]+$")) | tonumber] | max // 0' \
+              <<<"$releases")"
+            for existing_tag in $(git tag -l "${prefix}*"); do
+              tag_number="${existing_tag#"$prefix"}"
+              if [[ "$tag_number" =~ ^[0-9]+$ ]] && (( tag_number > fork_max )); then
+                fork_max="$tag_number"
+              fi
+            done
+            next_number=$((source_number + 1))
+            if (( fork_max >= next_number )); then next_number=$((fork_max + 1)); fi
+            version="${product_version}-nightly.${nightly_date}.${next_number}"
+            release_tag="v$version"
+          fi
+
+          printf 'should_build=true\nsource_tag=%s\nrelease_tag=%s\nversion=%s\n' \
+            "$source_tag" "$release_tag" "$version" >> "$GITHUB_OUTPUT"
+          if [[ -n "$prior" ]]; then
+            echo "Reusing incomplete draft release $release_tag for $source_tag."
+            exit 0
+          fi
+          fi
+
+          git fetch --no-tags https://github.com/pingdotgg/t3code.git "$source_tag"
+          source_sha="$(git rev-parse 'FETCH_HEAD^{commit}')"
+          if ! git merge-base --is-ancestor "$PATCH_BASE_SHA" "$source_sha"; then
+            echo "Upstream nightly $source_tag does not contain the patch base $PATCH_BASE; refusing to apply patches to an older source." >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --detach "$source_sha"
+          while IFS= read -r patch_commit; do
+            [[ -z "$patch_commit" ]] && continue
+            git cherry-pick "$patch_commit"
+          done <<<"$patch_commits"
+          if [[ "$dry_run" == "true" ]]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            echo "Patches replay cleanly onto $source_tag ($source_sha)."
+            exit 0
+          fi
+
+          if git show-ref --verify --quiet "refs/tags/$release_tag"; then
+            existing_sha="$(git rev-parse "$release_tag^{commit}")"
+            if [[ "$existing_sha" != "$(git rev-parse HEAD)" ]]; then
+              echo "Tag $release_tag already points at a different source commit." >&2
+              exit 1
+            fi
+          else
+            git tag "$release_tag"
+            git push origin "refs/tags/$release_tag"
+          fi
+          upstream_notes="$(gh api "repos/pingdotgg/t3code/releases/tags/$source_tag" --jq '.body // empty')"
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          Patched T3 Code nightly.
+
+          Source nightly: $source_tag
+          Source commit: $source_sha
+          Patch set: $patch_set
+
+          ## What's changed
+
+          ## Upstream improvements
+
+          Official T3 Code release notes for [$source_tag](https://github.com/pingdotgg/t3code/releases/tag/$source_tag):
+
+          $upstream_notes
+
+          ## Fork changes
+
+          Includes these fork fixes:
+          - Order active threads by the latest message or run activity.
+          - Hide threads from disconnected environments and restore them on reconnect.
+          - Render Codex memory citations as readable references.
+          - Hide settled or confirmed deleted child threads in Lineage; mark offline linked-environment children unavailable.
+          - Add named workspace agents, a Composer picker, a project default agent, and per-launch model or reasoning/economy tier selection.
+          - Allow named T3 delegate_task targets according to each lead agent's allowlist.
+          - Keep mobile thread rows on three lines: project, title, then branch and machine.
+          - Show Mark unread in the mobile thread hold menu instead of under More.
+          - Point the mobile app at the fork's bundle ID and Expo project so over-the-air updates reach fork builds.
+
+          Agent selection remains explicit. Automatic complexity-based routing is a separate follow-up. The named-target allowlist covers T3 delegate_task, not provider-native subagent tools.
+
+          The macOS installer is signed and notarized. The Windows installer is unsigned.
+          EOF
+          if gh release view "$release_tag" --repo "$FORK_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$release_tag" --repo "$FORK_REPOSITORY" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create "$release_tag" --repo "$FORK_REPOSITORY" \
+              --title "T3 Code Nightly $version (Patched)" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --draft --prerelease
+          fi
+
+  windows:
+    name: Build Windows installer
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+      BUILD_VERSION: ${{ needs.resolve.outputs.version }}
+      T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Check out fork workflow
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Check out prepared patched nightly source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$RELEASE_TAG"
+          git checkout --detach 'FETCH_HEAD^{commit}'
+
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Restore Windows resource monitor cache
+        id: resource_monitor_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe
+          key: resource-monitor-x86_64-pc-windows-msvc-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Set up Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install cargo-xwin
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283
+        with:
+          tool: cargo-xwin@0.23.1
+
+      - name: Build Windows resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        run: cargo xwin build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-pc-windows-msvc
+
+      - name: Save Windows resource monitor cache
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: native/resource-monitor/target/x86_64-pc-windows-msvc/release/t3-resource-monitor.exe
+          key: ${{ steps.resource_monitor_cache.outputs.cache-primary-key }}
+
+      - name: Load official upstream T3 Connect settings
+        shell: bash
+        run: cp .env.example .env
+
+      - name: Install Linux bundle build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libsecret-1-dev
+
+      - name: Build patched Windows installer
+        shell: bash
+        env:
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+          T3CODE_SERVER_UPDATE_VERSION: ${{ needs.resolve.outputs.source_tag }}
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true"
+        run: |
+          set -euo pipefail
+          export TMPDIR="$RUNNER_TEMP"
+          export T3CODE_SERVER_UPDATE_VERSION="${T3CODE_SERVER_UPDATE_VERSION#v}"
+          node scripts/build-desktop-artifact.ts \
+            --platform win --target nsis --arch x64 \
+            --build-version "$BUILD_VERSION" \
+            --keep-stage \
+            --verbose \
+            --output-dir release-patched
+          gh release upload "$RELEASE_TAG" release-patched/* \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Stage Windows runtime verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TMPDIR="$RUNNER_TEMP"
+          mkdir -p verify
+          unpacked="$(find "${TMPDIR:-/tmp}" -type d -path '*/t3code-desktop-win-stage-*/app/dist/win-unpacked' -print -quit)"
+          if [[ -z "$unpacked" ]]; then
+            echo "The staged Windows app directory was not found." >&2
+            exit 1
+          fi
+          tar -C "$(dirname "$unpacked")" -cf verify/unpacked.tar "$(basename "$unpacked")"
+          esbuild=scripts/node_modules/.bin/esbuild
+          banner="import{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);"
+          "$esbuild" scripts/verify-windows-desktop-artifact.ts --bundle --platform=node --format=esm \
+            --target=node24 --define:import.meta.main=false --banner:js="$banner" \
+            --outfile=verify/verify-windows-desktop-artifact.mjs
+
+      - name: Upload Windows runtime verification inputs
+        uses: actions/upload-artifact@v7
+        with:
+          name: patched-nightly-windows-verify
+          path: verify/*
+          if-no-files-found: error
+          compression-level: 1
+
+  windows_verify:
+    name: Verify Windows installer
+    needs: [resolve, windows]
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+    env:
+      BUILD_VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - name: Download Windows verification inputs
+        uses: actions/download-artifact@v8
+        with:
+          name: patched-nightly-windows-verify
+          path: verify
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Verify Windows packaged runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C verify -xf verify/unpacked.tar
+          node verify/verify-windows-desktop-artifact.mjs \
+            --app-dir "$(cygpath -w "$PWD/verify/win-unpacked")" \
+            --arch x64 --build-version "$BUILD_VERSION" --verbose
+
+  macos:
+    name: Build macOS installers
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            rust_target: aarch64-apple-darwin
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+      BUILD_VERSION: ${{ needs.resolve.outputs.version }}
+      T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Check out fork workflow
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Check out prepared patched nightly source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$RELEASE_TAG"
+          git checkout --detach 'FETCH_HEAD^{commit}'
+
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install desktop dependencies
+        run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      - name: Load official upstream T3 Connect settings
+        shell: bash
+        run: cp .env.example .env
+
+      - name: Build patched macOS installer
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+          T3CODE_SERVER_UPDATE_VERSION: ${{ needs.resolve.outputs.source_tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CSC_LINK:-}" || -z "${CSC_KEY_PASSWORD:-}" ]]; then
+            echo "Missing Developer ID signing secrets; refusing to build an unsigned macOS updater." >&2
+            exit 1
+          fi
+          if [[ -z "${APPLE_API_KEY:-}" || -z "${APPLE_API_KEY_ID:-}" || -z "${APPLE_API_ISSUER:-}" ]]; then
+            echo "Missing App Store Connect notarization secrets; refusing to publish an unnotarized macOS build." >&2
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          export APPLE_API_KEY="$key_path"
+          export T3CODE_SERVER_UPDATE_VERSION="${T3CODE_SERVER_UPDATE_VERSION#v}"
+          node scripts/build-desktop-artifact.ts \
+            --platform mac --target dmg --arch "${{ matrix.arch }}" \
+            --signed \
+            --build-version "$BUILD_VERSION" \
+            --output-dir "release-patched-${{ matrix.arch }}"
+          gh release upload "$RELEASE_TAG" "release-patched-${{ matrix.arch }}"/* \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
+  publish:
+    name: Publish completed nightly
+    needs: [resolve, windows, windows_verify, macos]
+    if: ${{ always() && needs.resolve.outputs.should_build == 'true' && needs.windows.result == 'success' && needs.windows_verify.result == 'success' && needs.macos.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORK_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          releases="$(gh api "repos/$FORK_REPOSITORY/releases?per_page=100")"
+          release_id="$(jq -r --arg tag "$RELEASE_TAG" \
+            '[.[] | select(.tag_name == $tag)] | first | .id // empty' <<<"$releases")"
+          if [[ -z "$release_id" || "$release_id" == "null" ]]; then
+            echo "Draft release $RELEASE_TAG was not found." >&2
+            exit 1
+          fi
+          gh api --method PATCH "repos/$FORK_REPOSITORY/releases/$release_id" \
+            -F draft=false -F prerelease=true >/dev/null
+
+  mobile_ota:
+    name: Publish mobile OTA update
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+      APP_VARIANT: development
+      # Must match the build installed on the devices so the app accepts the update.
+      T3CODE_MOBILE_IOS_BUNDLE_IDENTIFIER: com.louisefindlay23.t3code
+      T3CODE_MOBILE_UPDATE_CHANNEL: nightly
+    steps:
+      - name: Check out prepared patched nightly source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: refs/tags/${{ needs.resolve.outputs.release_tag }}
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          echo "$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin" >> "$GITHUB_PATH"
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+          packager: npm
+
+      - name: Publish OTA update
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          eas update \
+            --branch nightly \
+            --platform ios \
+            --message "Patched nightly $RELEASE_TAG" \
+            --non-interactive

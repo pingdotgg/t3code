@@ -15,6 +15,13 @@ reproduction steps or environment where relevant. -->
 <!-- Explain how this fixes the problem. If it spans components or clients,
 explain why those changes are needed for the same fix. Split independent fixes. -->
 
+## Patched nightly
+
+<!-- Product changes must choose exactly one. Included changes need `patch: description` in both the PR title and every commit subject. -->
+
+- [ ] Include this change in patched nightlies
+- [ ] Keep this change out of patched nightlies
+
 ## Scope
 
 <!-- We accept bug fixes, not features. Link the issue that shows the bug. For a

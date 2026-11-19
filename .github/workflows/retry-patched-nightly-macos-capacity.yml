@@ -1,0 +1,82 @@
+name: Retry patched nightly after macOS capacity failure
+
+on:
+  workflow_run:
+    workflows:
+      - Patched nightly desktop builds
+    types:
+      - completed
+
+concurrency:
+  group: patched-nightly-capacity-retry-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  retry:
+    name: Retry macOS after hosted capacity recovers
+    if: github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      actions: write
+      checks: read
+    steps:
+      - name: Confirm capacity failure, wait, then retry
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+
+          retryable_capacity_failure() {
+            local run_json jobs_json mac_job annotations attempt mac_job_id runner_name
+            run_json="$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID")"
+            [[ "$(jq -r '.name' <<<"$run_json")" == "Patched nightly desktop builds" ]] || return 1
+            [[ "$(jq -r '.repository.full_name' <<<"$run_json")" == "$REPOSITORY" ]] || return 1
+            [[ "$(jq -r '.head_branch' <<<"$run_json")" == "main" ]] || return 1
+            [[ "$(jq -r '.event' <<<"$run_json")" == "workflow_dispatch" || "$(jq -r '.event' <<<"$run_json")" == "schedule" ]] || return 1
+            [[ "$(jq -r '.conclusion' <<<"$run_json")" == "failure" ]] || return 1
+            attempt="$(jq -r '.run_attempt' <<<"$run_json")"
+            (( attempt < 3 )) || return 1
+
+            jobs_json="$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100")"
+            mac_job="$(jq -c '[.jobs[] | select(.name == "Build macOS installers (arm64, aarch64-apple-darwin)")][0] // empty' <<<"$jobs_json")"
+            [[ -n "$mac_job" ]] || return 1
+            [[ "$(jq -r '.conclusion' <<<"$mac_job")" == "cancelled" ]] || return 1
+            runner_name="$(jq -r '.runner_name // ""' <<<"$mac_job")"
+            [[ -z "$runner_name" ]] || return 1
+
+            mac_job_id="$(jq -r '.id' <<<"$mac_job")"
+            annotations="$(gh api "repos/$REPOSITORY/check-runs/$mac_job_id/annotations")"
+            jq -e 'any(.[]; .message == "The job was not acquired by Runner of type hosted even after multiple attempts") and any(.[]; (.message | contains("Due to capacity constraints")) and (.message | contains("macOS arm64")))' <<<"$annotations" >/dev/null || return 1
+
+            for job_name in "Prepare latest upstream nightly" "Build Windows installer" "Verify Windows installer"; do
+              jq -e --arg name "$job_name" 'any(.jobs[]; .name == $name and .conclusion == "success")' <<<"$jobs_json" >/dev/null || return 1
+            done
+            jq -e 'all(.jobs[]; .name == "Build macOS installers (arm64, aarch64-apple-darwin)" or .name == "Publish completed nightly" or .conclusion == "success" or .conclusion == "skipped")' <<<"$jobs_json" >/dev/null || return 1
+          }
+
+          if ! retryable_capacity_failure; then
+            echo "No retry: this was not an isolated macOS hosted-runner capacity failure."
+            exit 0
+          fi
+
+          expected_attempt="$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID" --jq '.run_attempt')"
+          echo "Confirmed macOS capacity failure on attempt $expected_attempt; waiting 30 minutes before retry."
+          sleep 1800
+
+          current_attempt="$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID" --jq '.run_attempt')"
+          if [[ "$current_attempt" != "$expected_attempt" ]]; then
+            echo "No retry: another attempt has already started."
+            exit 0
+          fi
+
+          if ! retryable_capacity_failure; then
+            echo "No retry: the run changed or no longer matches the capacity failure."
+            exit 0
+          fi
+
+          echo "Rerunning failed jobs for workflow run $RUN_ID."
+          gh api --method POST "repos/$REPOSITORY/actions/runs/$RUN_ID/rerun-failed-jobs"

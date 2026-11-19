@@ -1,0 +1,79 @@
+name: Patched nightly health
+
+# Read-only daily report. A failing run is the alert (GitHub emails workflow failures);
+# the fix-forward agent starts from that failure, not from a poll.
+on:
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  report:
+    name: Report nightly health
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FORK: ${{ github.repository }}
+      FIX_WEBHOOK_URL: ${{ secrets.NIGHTLY_FIX_WEBHOOK_URL }}
+    steps:
+      - name: Check latest run, release and upstream cadence
+        shell: bash
+        run: |
+          set -euo pipefail
+          problems=()
+          summary() { echo "$@" >> "$GITHUB_STEP_SUMMARY"; }
+
+          # PR runs are dry-run replays, so only scheduled and dispatched runs describe a release.
+          run="$(gh api "repos/$FORK/actions/workflows/patched-nightly.yml/runs?per_page=20&status=completed" \
+            --jq '[.workflow_runs[] | select(.event != "pull_request")] | first')"
+          run_id="$(jq -r .id <<<"$run")"
+          conclusion="$(jq -r .conclusion <<<"$run")"
+          summary "## Patched nightly health"
+          summary "Latest run: [$run_id]($(jq -r .html_url <<<"$run")) ($(jq -r .event <<<"$run")), $conclusion, $(jq -r .created_at <<<"$run")"
+          summary ""
+          summary "| Job | Result |"
+          summary "| --- | --- |"
+          gh api "repos/$FORK/actions/runs/$run_id/jobs" --jq '.jobs[] | "| \(.name) | \(.conclusion) |"' >> "$GITHUB_STEP_SUMMARY"
+          [[ "$conclusion" == "success" ]] || problems+=("latest run $run_id concluded $conclusion")
+
+          stalled="$(gh api "repos/$FORK/actions/workflows/patched-nightly.yml/runs?status=in_progress&per_page=20" \
+            --jq '[.workflow_runs[] | select(.event != "pull_request") | select(now - (.created_at | fromdateiso8601) > 14400)] | length')"
+          [[ "$stalled" == "0" ]] || problems+=("$stalled run(s) in progress for over 4 hours")
+
+          release="$(gh api "repos/$FORK/releases?per_page=10" --jq '[.[] | select(.draft == false)] | first')"
+          tag="$(jq -r .tag_name <<<"$release")"
+          source_tag="$(jq -r '.body // ""' <<<"$release" | sed -n 's/^Source nightly: //p' | head -n1)"
+          summary ""
+          summary "Latest public release: [$tag]($(jq -r .html_url <<<"$release")), source \`$source_tag\`"
+          for pattern in '\.dmg$' '\.zip$' '\.exe$' '^nightly\.yml$' '^nightly-mac\.yml$'; do
+            jq -e --arg p "$pattern" '[.assets[].name | select(test($p))] | length > 0' <<<"$release" >/dev/null \
+              || problems+=("release $tag has no asset matching $pattern")
+          done
+          grep -q '## Upstream improvements' <<<"$(jq -r '.body // ""' <<<"$release")" \
+            || problems+=("release $tag notes lack an Upstream improvements section")
+          grep -q '## Fork changes' <<<"$(jq -r '.body // ""' <<<"$release")" \
+            || problems+=("release $tag notes lack a Fork changes section")
+
+          # Upstream ships roughly every 6 hours and the fork builds once a day, so a gap is normal; report it.
+          latest_upstream="$(gh api 'repos/pingdotgg/t3code/releases?per_page=30' \
+            --jq '[.[] | select(.tag_name | test("nightly"))] | sort_by(.published_at) | last | .tag_name')"
+          summary "Newest upstream nightly: \`$latest_upstream\` (fork release is built from \`$source_tag\`)"
+
+          if (( ${#problems[@]} )); then
+            summary ""
+            summary "### Problems"
+            for p in "${problems[@]}"; do summary "- $p"; echo "::error::$p"; done
+            # Starts the fix-forward agent; without the secret the failed run alone is the alert.
+            if [[ -n "${FIX_WEBHOOK_URL:-}" ]]; then
+              jq -n --arg run "$run_id" --arg problems "$(printf '%s; ' "${problems[@]}")" '{run_id: $run, problems: $problems}' \
+                | curl -fsS -X POST -H 'Content-Type: application/json' --data @- "$FIX_WEBHOOK_URL" >/dev/null \
+                || echo "::warning::could not reach the fix-forward webhook"
+            fi
+            exit 1
+          fi
+          summary ""
+          summary "No problems found."
