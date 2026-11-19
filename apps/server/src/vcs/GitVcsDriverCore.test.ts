@@ -2002,6 +2002,11 @@ it.effect.each([
     attempts: 2,
   },
   {
+    name: "broken local ref",
+    stderr: "fatal: bad object refs/remotes/origin/dev 2",
+    expected: "broken local ref",
+  },
+  {
     name: "unrelated remote chatter",
     stderr:
       "remote: Help: authentication failed, connection refused, cannot lock ref\nremote: unrelated service error",
