@@ -386,16 +386,19 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
-  it.effect("shows a thread session's native commands in that workspace's snapshot", () =>
+  it.effect("keeps a workspace's native commands when the catalog reports its own", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
       yield* harness.initialize;
-      yield* harness.provider.snapshotForCwd("/workspace", []);
-      // The thread adapter reports the cwd on session start; command updates arrive without one.
       yield* harness.provider.onSessionStarted(started, "/workspace");
-      yield* harness.provider.onAvailableCommands(commands);
+      yield* harness.provider.onAvailableCommands(commands, "/workspace");
+      // The catalog probe runs in a scratch directory and reports no cwd.
+      yield* harness.provider.onAvailableCommands(commands.slice(1));
       expect((yield* harness.provider.snapshotForCwd("/workspace")).slashCommands).toEqual(
         expectedCommands,
+      );
+      expect((yield* harness.provider.snapshot.getSnapshot).slashCommands).toEqual(
+        expectedCommands.slice(1),
       );
     }),
   );

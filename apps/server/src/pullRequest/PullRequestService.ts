@@ -89,6 +89,8 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import {
   type ProviderChangeRequest,
   type ProviderChangeRequestDetail,
+  type ProviderCheckLog,
+  type ProviderCheckRerun,
   type ProviderDiffFilePaths,
   type ProviderFilterOptionPage,
   type ProviderListCursor,
@@ -208,7 +210,11 @@ export class PullRequestService extends Context.Service<
     readonly batchesReads: (input: PullRequestRef) => Effect.Effect<boolean>;
     readonly stack: (
       input: PullRequestRef,
-      options?: { readonly includeDetails?: boolean },
+      options?: {
+        readonly includeDetails?: boolean;
+        /** A merge pins these heads, so it must not read them from the cache. */
+        readonly bypassCache?: boolean;
+      },
     ) => Effect.Effect<PullRequestStack | null, PullRequestError>;
     readonly subscribeMerges: Effect.Effect<
       Stream.Stream<PullRequestMergeEvent>,
@@ -250,6 +256,8 @@ export class PullRequestService extends Context.Service<
     ) => Effect.Effect<PullRequestActivity, PullRequestError>;
     /** Emits when the host reports a change; empty where the host has no event feed. */
     readonly changes: (input: PullRequestRef) => Stream.Stream<void>;
+    /** Whether the project's checkout is on a forge T3 reads change requests from. */
+    readonly servesProject: (projectId: ProjectId) => Effect.Effect<boolean>;
     readonly threadComments: (
       input: PullRequestThreadCommentsInput,
     ) => Effect.Effect<PullRequestThreadCommentsResult, PullRequestError>;
@@ -271,6 +279,14 @@ export class PullRequestService extends Context.Service<
     readonly runAction: (
       input: PullRequestActionInput,
     ) => Effect.Effect<PullRequestSummary | undefined, PullRequestError>;
+    /** Tails of the failing checks' logs, or only the named check's. */
+    readonly checkLogs: (
+      input: PullRequestRef & { readonly check?: string; readonly tailLines: number },
+    ) => Effect.Effect<ReadonlyArray<ProviderCheckLog>, PullRequestError>;
+    /** Re-runs the failing checks, or only the named check. */
+    readonly rerunChecks: (
+      input: PullRequestRef & { readonly check?: string },
+    ) => Effect.Effect<ReadonlyArray<ProviderCheckRerun>, PullRequestError>;
     readonly update: (input: PullRequestUpdateInput) => Effect.Effect<void, PullRequestError>;
     readonly comment: (input: PullRequestCommentInput) => Effect.Effect<void, PullRequestError>;
     readonly updateComment: (
@@ -622,6 +638,12 @@ function withRateLimitBackoff(
       ? {}
       : { getFileRevisions: wrap("getFileRevisions", api.getFileRevisions) }),
     runAction: interactive("runAction", api.runAction),
+    ...(api.getCheckLogs === undefined
+      ? {}
+      : { getCheckLogs: interactive("getCheckLogs", api.getCheckLogs) }),
+    ...(api.rerunChecks === undefined
+      ? {}
+      : { rerunChecks: interactive("rerunChecks", api.rerunChecks) }),
     ...(api.updateChangeRequest === undefined
       ? {}
       : {
@@ -1130,6 +1152,13 @@ export const make = Effect.gen(function* () {
       repository: project.repository,
     };
   });
+
+  // A failed read keeps the tools: their calls report the failure.
+  const servesProject: PullRequestService["Service"]["servesProject"] = (projectId) =>
+    listWorkspaceProjects({ projectId }).pipe(
+      Effect.map(({ supported }) => supported.length > 0),
+      Effect.orElseSucceed(() => true),
+    );
 
   const changes: PullRequestService["Service"]["changes"] = (input) =>
     Stream.unwrap(
@@ -2255,7 +2284,32 @@ export const make = Effect.gen(function* () {
                     ),
                   )
                 : Effect.succeed(false);
-            return mergeSettings.pipe(
+            // Hosts that cannot pin a merge to a commit still refuse a head that already moved.
+            const headPinned =
+              input.expectedHeadSha === undefined
+                ? Effect.void
+                : project.api
+                    .getChangeRequest({
+                      cwd: project.project.workspaceRoot,
+                      repository: project.repository,
+                      host: project.host,
+                      number: input.number,
+                    })
+                    .pipe(
+                      Effect.mapError(toPullRequestError("runAction")),
+                      Effect.flatMap((current) =>
+                        current.headSha === input.expectedHeadSha
+                          ? Effect.void
+                          : Effect.fail(
+                              new PullRequestOperationError({
+                                operation: "runAction",
+                                detail: `The head is now ${current.headSha ?? "unknown"}, not ${input.expectedHeadSha}. Review the new commits first.`,
+                              }),
+                            ),
+                      ),
+                    );
+            return headPinned.pipe(
+              Effect.andThen(mergeSettings),
               Effect.flatMap((removeAgentCreditsOnMerge) =>
                 project.api
                   .runAction({
@@ -2269,6 +2323,9 @@ export const make = Effect.gen(function* () {
                     ...(input.expectedStackHeads === undefined
                       ? {}
                       : { expectedStackHeads: input.expectedStackHeads }),
+                    ...(input.expectedHeadSha === undefined
+                      ? {}
+                      : { expectedHeadSha: input.expectedHeadSha }),
                     ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
                     ...(input.updateMethod === undefined
                       ? {}
@@ -3159,12 +3216,14 @@ export const make = Effect.gen(function* () {
   );
 
   const stack: PullRequestService["Service"]["stack"] = (input, options) =>
-    persistedRead(
-      input,
-      `stack:${options?.includeDetails !== false}`,
-      stackCodec,
-      stackUncached(input, options),
-    );
+    options?.bypassCache === true
+      ? stackUncached(input, options)
+      : persistedRead(
+          input,
+          `stack:${options?.includeDetails !== false}`,
+          stackCodec,
+          stackUncached(input, options),
+        );
 
   const listCache = yield* Cache.makeWith(
     (key: string) => {
@@ -3785,6 +3844,111 @@ export const make = Effect.gen(function* () {
         );
         yield* SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
       });
+  const selectChecks = Effect.fn("PullRequestService.selectChecks")(function* (
+    project: SupportedProject,
+    input: PullRequestRef & { readonly check?: string },
+    operation: string,
+  ) {
+    const ref = {
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      number: input.number,
+    };
+    const { checks } = yield* (
+      project.api.getChangeRequestChecks === undefined
+        ? project.api.getChangeRequest(ref)
+        : project.api.getChangeRequestChecks(ref)
+    ).pipe(Effect.mapError(toPullRequestError(operation)));
+    const named = input.check?.trim().toLowerCase();
+    if (named === undefined) {
+      return checks
+        .filter((check) => check.status === "failure" || check.status === "cancelled")
+        .map(({ name, url }) => ({ name, url }));
+    }
+    const matches = checks.filter((check) => check.name.toLowerCase() === named);
+    if (matches.length === 0) {
+      return yield* new PullRequestOperationError({
+        operation,
+        detail: `No check is named ${input.check}. Checks: ${checks.map((check) => check.name).join(", ") || "none"}.`,
+      });
+    }
+    return matches.map(({ name, url }) => ({ name, url }));
+  });
+
+  const DEFAULT_CHECK_LOGS = 5;
+  const checkLogs: PullRequestService["Service"]["checkLogs"] = Effect.fn(
+    "PullRequestService.checkLogs",
+  )(function* (input) {
+    const project = yield* requireProject(input);
+    const read = project.api.getCheckLogs;
+    if (read === undefined) {
+      return yield* new PullRequestOperationError({
+        operation: "checkLogs",
+        detail: "This host cannot read check logs.",
+      });
+    }
+    const checks = yield* selectChecks(project, input, "checkLogs");
+    if (checks.length === 0) return [];
+    // Many failing checks would flood the agent's context; the rest stay a name away.
+    const [shown, rest] =
+      input.check === undefined
+        ? [checks.slice(0, DEFAULT_CHECK_LOGS), checks.slice(DEFAULT_CHECK_LOGS)]
+        : [checks, []];
+    const logs = yield* read({
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      checks: shown,
+      tailLines: input.tailLines,
+    }).pipe(Effect.mapError(toPullRequestError("checkLogs")));
+    return [
+      ...logs,
+      ...rest.map((check) => ({
+        ...check,
+        log: null,
+        truncated: false,
+        detail: "Not read, to keep the reply short. Ask for this check by name.",
+      })),
+    ];
+  });
+
+  const rerunChecks: PullRequestService["Service"]["rerunChecks"] = Effect.fn(
+    "PullRequestService.rerunChecks",
+  )(function* (input) {
+    const project = yield* requireProject(input);
+    const rerun = project.api.rerunChecks;
+    if (rerun === undefined) {
+      return yield* new PullRequestOperationError({
+        operation: "rerunChecks",
+        detail: "This host cannot re-run checks.",
+      });
+    }
+    const checks = yield* selectChecks(project, input, "rerunChecks");
+    if (checks.length === 0) return [];
+    const ref = yield* canonicalRef(input);
+    // A failure can follow a run that already restarted, so readers refresh either way.
+    return yield* rerun({
+      cwd: project.project.workspaceRoot,
+      repository: project.repository,
+      host: project.host,
+      checks,
+    }).pipe(
+      Effect.mapError(toPullRequestError("rerunChecks")),
+      Effect.ensuring(
+        readCache.invalidate(refScope(ref)).pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              bumpRefEpoch(ref);
+              listingsEpoch = ++epochCounter;
+              return SubscriptionRef.set(pullRequestRefreshes, listingsEpoch);
+            }),
+          ),
+        ),
+      ),
+    );
+  });
+
   const runActionAndInvalidate: PullRequestService["Service"]["runAction"] = Effect.fn(
     "PullRequestService.runActionAndInvalidate",
   )(function* (input) {
@@ -3977,6 +4141,7 @@ export const make = Effect.gen(function* () {
     ),
     activity: credentialCached(activity),
     changes,
+    servesProject,
     preview: credentialCached(preview),
     threadComments,
     diff: credentialCached(diff),
@@ -3987,6 +4152,8 @@ export const make = Effect.gen(function* () {
       Cache.get(changeBreakdownCache, refCacheKey(input)),
     ),
     runAction: runActionAndInvalidate,
+    checkLogs,
+    rerunChecks,
     update: invalidatedByMutation(update),
     comment: invalidatedByMutation(comment),
     updateComment: invalidatedByMutation(updateComment),
