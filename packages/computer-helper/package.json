@@ -1,0 +1,19 @@
+{
+  "name": "@t3tools/computer-helper",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./child": {
+      "types": "./src/child.ts",
+      "import": "./src/child.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

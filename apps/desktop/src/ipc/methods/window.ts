@@ -45,6 +45,7 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import { msg } from "gt-i18n";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import { macPermissionGranted } from "../../permissions/MacPermissionHelper.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import { m } from "../../i18n/messages.ts";
 import * as IpcChannels from "../channels.ts";
@@ -471,10 +472,13 @@ export const openSystemSettings = DesktopIpc.makeIpcMethod({
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.platform !== "darwin") return false;
     const owner = Electron.BrowserWindow.getFocusedWindow();
+    // Full Disk Access is proven by reading a file TCC protects; the others have a direct answer.
+    const isGranted =
+      pane === "full-disk-access" ? yield* safariPermissionCheck : () => macPermissionGranted(pane);
     const opened = yield* shell.openSystemSettings(pane);
-    if (opened && environment.isPackaged) {
+    // Automation's list appears only after an app has asked once, so there is nothing to drag into it.
+    if (opened && environment.isPackaged && pane !== "automation") {
       const permissions = yield* MacPermissions.MacPermissions;
-      const isGranted = yield* safariPermissionCheck;
       yield* permissions.showHelper(pane, owner, isGranted);
     }
     return opened;
@@ -623,9 +627,10 @@ export const checkSystemPermission = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL,
   payload: SystemSettingsPaneSchema,
   result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.checkSystemPermission")(function* () {
+  handler: Effect.fn("desktop.ipc.window.checkSystemPermission")(function* (pane) {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.platform !== "darwin") return false;
+    if (pane !== "full-disk-access") return macPermissionGranted(pane);
     const check = yield* safariPermissionCheck;
     return yield* Effect.promise(check);
   }),

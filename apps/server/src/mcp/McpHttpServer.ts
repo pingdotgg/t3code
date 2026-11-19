@@ -31,6 +31,7 @@ import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import { serverBuildVersion } from "../buildVersion.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ComputerService from "../computer/ComputerService.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
@@ -84,6 +85,12 @@ import {
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
+import * as ComputerHandlers from "./toolkits/computer/handlers.ts";
+import {
+  ComputerLookTool,
+  ComputerLookToolkit,
+  ComputerToolkit,
+} from "./toolkits/computer/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { MessageToolkit } from "./toolkits/message/tools.ts";
 import * as MessageHandlers from "./toolkits/message/handlers.ts";
@@ -801,11 +808,13 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
 });
 
 interface ImageToolResult {
-  readonly screenshot: {
+  /** Absent when a tool that can return an image returned none this time. */
+  readonly screenshot?: {
     readonly mimeType: "image/png";
     readonly data: string;
     readonly width: number;
     readonly height: number;
+    readonly [key: string]: unknown;
   };
   readonly [key: string]: unknown;
 }
@@ -906,25 +915,26 @@ const registerImageTool = Effect.fn("McpHttpServer.registerImageTool")(function*
             onFailure: imageToolFailure(tool.name, operation, failureText),
             onSuccess: ({ encodedResult }) => {
               const { screenshot, ...rest } = encodedResult as ImageToolResult;
-              const metadata = {
-                ...rest,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
-              };
+              const pixels = screenshot === undefined ? undefined : screenshot.data;
+              const metadata =
+                screenshot === undefined
+                  ? rest
+                  : { ...rest, screenshot: { ...screenshot, data: undefined } };
               return Effect.succeed(
                 new McpSchema.CallToolResult({
                   isError: false,
                   structuredContent: metadata,
                   content: [
                     { type: "text", text: JSON.stringify(metadata) },
-                    {
-                      type: "image" as const,
-                      data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                      mimeType: screenshot.mimeType,
-                    },
+                    ...(screenshot === undefined || pixels === undefined
+                      ? []
+                      : [
+                          {
+                            type: "image" as const,
+                            data: new Uint8Array(Buffer.from(pixels, "base64")),
+                            mimeType: screenshot.mimeType,
+                          },
+                        ]),
                   ],
                 }),
               );
@@ -961,6 +971,29 @@ const registerDeviceScreenshot = Effect.fn("McpHttpServer.registerDeviceScreensh
         ? `${error.message} Call device_list to check the device state, and device_open if it needs to be reopened.`
         : error.message;
     },
+  );
+});
+
+const registerComputerLook = Effect.fn("McpHttpServer.registerComputerLook")(function* () {
+  const computer = yield* ComputerService.ComputerService;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const built = yield* decodeAsAdvertised(ComputerLookToolkit);
+  yield* registerImageTool(
+    ComputerLookTool,
+    (payload) =>
+      built
+        .handle("computer_look", payload)
+        .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+    (effect) =>
+      effect.pipe(
+        Effect.provideService(ComputerService.ComputerService, computer),
+        Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+      ),
+    "look",
+    (error) =>
+      typeof error === "object" && error !== null && "message" in error
+        ? String(error.message)
+        : "Looking at the computer failed.",
   );
 });
 
@@ -1363,6 +1396,16 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+const layerComputerToolkitRegistration = toolkitRegistration(
+  ComputerToolkit,
+  ComputerHandlers.layer,
+);
+
+export const layerComputerToolkit = Layer.mergeAll(
+  layerComputerToolkitRegistration,
+  imageToolRegistration(registerComputerLook(), ComputerHandlers.layerLook),
+);
+
 /**
  * `McpServer` for in-process calls, which provide `McpInvocationContext`
  * around `callTool` as the auth middleware does for each /mcp request.
@@ -1408,6 +1451,7 @@ export const layerTools = layerInToolNameOrder(
     layerPullRequestsToolkit,
     layerIssuesToolkit,
     layerDeviceToolkit,
+    layerComputerToolkit,
     layerHtmlToolkit,
     layerMessageToolkit,
   ),

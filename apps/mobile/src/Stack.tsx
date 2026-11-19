@@ -108,6 +108,7 @@ import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnv
 import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowUpRouteScreen";
 import { SettingsLanguageRouteScreen } from "./features/settings/SettingsLanguageRouteScreen";
 import {
+  SettingsComputerUseRouteScreen,
   SettingsEnvironmentMaintenanceRouteScreen,
   SettingsThreadsRouteScreen,
   SettingsWorktreesRouteScreen,
@@ -177,6 +178,7 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   SettingsEnvironmentMaintenance: msg("Maintenance"),
   SettingsNotifications: msg("Notifications"),
   SettingsThreads: msg("Threads"),
+  SettingsComputerUse: msg("Computer use"),
   SettingsAbout: msg("About"),
   SettingsEnvironmentNew: msg("Add Environment"),
   SettingsArchive: msg("Archive", { $context: "noun, settings page of archived threads" }),
@@ -296,6 +298,11 @@ const SETTINGS_SCREENS = {
   SettingsThreads: createNativeStackScreen({
     screen: SettingsThreadsRouteScreen,
     linking: "settings/thread-preferences",
+    options: settingsPage(),
+  }),
+  SettingsComputerUse: createNativeStackScreen({
+    screen: SettingsComputerUseRouteScreen,
+    linking: "settings/computer-use",
     options: settingsPage(),
   }),
   SettingsAbout: createNativeStackScreen({

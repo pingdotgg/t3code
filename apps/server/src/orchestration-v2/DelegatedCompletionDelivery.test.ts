@@ -51,6 +51,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
+import * as ComputerService from "../computer/ComputerService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
@@ -133,6 +134,7 @@ const layerTest = Layer.mergeAll(
     }),
   ),
   Layer.provide(ProviderTurnStartServiceTestkit.layer),
+  Layer.provide(Layer.mock(ComputerService.ComputerService)({ stopForThread: () => Effect.void })),
   Layer.provide(
     Layer.succeed(ProjectEnrichmentService.ProjectEnrichmentService, {
       peek: () =>

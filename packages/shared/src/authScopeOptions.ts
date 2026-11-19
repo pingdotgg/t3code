@@ -1,6 +1,8 @@
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthComputerApproveScope,
+  AuthComputerHostScope,
   AuthDiagnosticsReadScope,
   AuthEnvironmentMaintainScope,
   AuthFilesystemReadScope,
@@ -92,6 +94,16 @@ export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
     scope: AuthAccessWriteScope,
     title: msg("Manage access"),
     description: msg("Issue and revoke credentials for other clients."),
+  },
+  {
+    scope: AuthComputerApproveScope,
+    title: "Approve computer use",
+    description: "Answer each consequential step on a computer this environment controls.",
+  },
+  {
+    scope: AuthComputerHostScope,
+    title: "This computer",
+    description: "Let this environment run computer-use steps on this device.",
   },
 ];
 

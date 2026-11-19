@@ -2,7 +2,19 @@ import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
-import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  ComputerAction,
+  ComputerAnswers,
+  ComputerGrant,
+  ComputerHostAccess,
+  ComputerHostConnectInput,
+  ComputerHostEvent,
+  ComputerHostFrame,
+  ComputerHostReply,
+  ComputerObservation,
+  ComputerQuestions,
+} from "./computer.ts";
+import { EnvironmentId, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -1078,8 +1090,120 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
-export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
+export const SystemSettingsPaneSchema = Schema.Literals([
+  "full-disk-access",
+  "accessibility",
+  "screen-recording",
+  "automation",
+]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
+
+/** The macOS grants computer use needs; each setting row opens its pane. */
+export const DesktopComputerPermissionSchema = Schema.Literals([
+  "accessibility",
+  "screen-recording",
+]);
+export type DesktopComputerPermission = typeof DesktopComputerPermissionSchema.Type;
+
+/**
+ * A computer this app offers to one environment. `hello` is what the environment's server is told about it.
+ * A refusal carries the sentence a person reads, and whether waiting could change it.
+ */
+export const DesktopComputerOfferSchema = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), hello: ComputerHostConnectInput }),
+  Schema.Struct({
+    ok: Schema.Literal(false),
+    reason: Schema.String,
+    retry: Schema.Literals(["wait", "never"]),
+  }),
+]);
+export type DesktopComputerOffer = typeof DesktopComputerOfferSchema.Type;
+
+/** One frame an environment's server sent its host, relayed by the renderer. */
+export const DesktopComputerFrameInputSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  frame: ComputerHostFrame,
+});
+export type DesktopComputerFrameInput = typeof DesktopComputerFrameInputSchema.Type;
+
+/**
+ * One thing the helper needs its environment to answer while it works: a decision's questions, one action's
+ * grant, or a step's progress. `closed` says the helper is gone, so the environment's host stream ends;
+ * `access` says this Mac's grants changed since it connected.
+ */
+export const DesktopComputerCallSchema = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("authorize"),
+    callId: Schema.String,
+    environmentId: EnvironmentId,
+    taskId: Schema.String,
+    step: NonNegativeInt,
+    observation: ComputerObservation,
+    action: ComputerAction,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("decide"),
+    callId: Schema.String,
+    environmentId: EnvironmentId,
+    taskId: Schema.String,
+    state: Schema.Unknown,
+    questions: ComputerQuestions,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("event"),
+    callId: Schema.String,
+    environmentId: EnvironmentId,
+    taskId: Schema.String,
+    event: ComputerHostEvent,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("closed"),
+    callId: Schema.String,
+    environmentId: EnvironmentId,
+    reason: Schema.String,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("access"),
+    callId: Schema.String,
+    environmentId: EnvironmentId,
+    access: ComputerHostAccess,
+  }),
+]);
+export type DesktopComputerCall = typeof DesktopComputerCallSchema.Type;
+
+/** The renderer's answer to one call: the server's grant or answers, or the sentence a failure carries. */
+export const DesktopComputerAnswerSchema = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("grant"), callId: Schema.String, grant: ComputerGrant }),
+  Schema.Struct({
+    type: Schema.Literal("answers"),
+    callId: Schema.String,
+    answers: ComputerAnswers,
+  }),
+  Schema.Struct({ type: Schema.Literal("done"), callId: Schema.String }),
+  Schema.Struct({ type: Schema.Literal("failed"), callId: Schema.String, message: Schema.String }),
+]);
+export type DesktopComputerAnswer = typeof DesktopComputerAnswerSchema.Type;
+
+/** The desktop's own computer, offered to the environments a person allowed it for. */
+export interface DesktopComputerBridge {
+  /** This Mac as a host for one environment, or why it cannot be one. */
+  prepare: (environmentId: EnvironmentId) => Promise<DesktopComputerOffer>;
+  /** One frame from the environment's server to this Mac's helper; a reply when the frame asks for one. */
+  sendFrame: (input: DesktopComputerFrameInput) => Promise<ComputerHostReply | null>;
+  /** The environment's host stream ended: end what it was running on this Mac. */
+  disconnect: (environmentId: EnvironmentId) => Promise<void>;
+  /** Answers a call the helper made while it worked. */
+  answer: (answer: DesktopComputerAnswer) => Promise<void>;
+  /** Calls the helper makes while hosting; one listener for the window. */
+  onCall: (listener: (call: DesktopComputerCall) => void) => () => void;
+}
+
+/** What the app's own process reports about the two grants computer use needs on macOS. */
+export const DesktopComputerPermissionsSchema = Schema.Struct({
+  accessibility: Schema.Boolean,
+  screenRecording: Schema.Boolean,
+});
+export type DesktopComputerPermissions = typeof DesktopComputerPermissionsSchema.Type;
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
@@ -1223,6 +1347,10 @@ export interface DesktopBridge {
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
   };
   preview: DesktopPreviewBridge;
+  /** Present when this build can host computer use; absent on older desktop shells. */
+  computerHost?: DesktopComputerBridge;
+  /** Accessibility and Screen Recording, as the app's own process (and its helper) sees them. */
+  getComputerPermissions?: () => Promise<DesktopComputerPermissions | null>;
 }
 
 /** Renderer callback invoked by Electron with a fresh user gesture before display-media capture. */

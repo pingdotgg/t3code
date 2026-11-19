@@ -5,6 +5,7 @@ import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text } from "../../components/ui/AppText";
+import { Chip } from "../../components/ui/Chip";
 import {
   type ResponseStreamingMode,
   type ServerSettings,
@@ -26,6 +27,7 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { BranchNamingSettings } from "./components/BranchNamingSettings";
 import { DatabaseStorageNotice } from "./components/DatabaseStorageNotice";
+import { ComputerUseHostsRow } from "./components/ComputerUseHostsRow";
 import { AgentGatewaySection } from "./components/AgentGatewaySection";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
@@ -47,13 +49,14 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 
-type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
+type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance" | "computer";
 
 const PAGE_TITLES: Record<SettingsPage, string> = {
   threads: msg("Threads", { $context: "settings page title" }),
   "source-control": msg("Source control & issues"),
   worktrees: msg("Worktrees"),
   maintenance: msg("Maintenance"),
+  computer: msg("Computer use"),
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
@@ -74,6 +77,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "branchNameInstructions",
   ],
   maintenance: ["continueThreadsAfterServerUpdate"],
+  computer: ["enableAgentComputerUse", "computerApprovals"],
 };
 
 const SUBMODULE_CHOICES: ReadonlyArray<{
@@ -185,6 +189,10 @@ export function SettingsWorktreesRouteScreen() {
 
 export function SettingsEnvironmentMaintenanceRouteScreen() {
   return <ServerSettingsDetail page="maintenance" />;
+}
+
+export function SettingsComputerUseRouteScreen() {
+  return <ServerSettingsDetail page="computer" />;
 }
 
 function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
@@ -412,6 +420,56 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   />
                 </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
+              </>
+            ) : null}
+
+            {props.page === "computer" ? (
+              <>
+                <SettingsSection
+                  title={gt("Agent access")}
+                  titleIcon={<Chip label={gt("Beta")} size="small" />}
+                  footer="Computer use is in early testing and may make mistakes. Keep approvals on for anything important."
+                >
+                  <SettingsSwitchRow
+                    icon="desktopcomputer"
+                    label={gt("Agent computer use")}
+                    subtitle={managedSubtitle(
+                      "enableAgentComputerUse",
+                      projectSelected
+                        ? "Let agents in this project use a connected computer. Applies when the agent session next starts."
+                        : "Let agents use a computer connected to this environment. Projects can override it.",
+                    )}
+                    value={uniform("enableAgentComputerUse")}
+                    disabled={disabledFor("enableAgentComputerUse")}
+                    onValueChange={(value) => write({ enableAgentComputerUse: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="exclamationmark.shield"
+                    label={gt("Ask before consequential actions")}
+                    subtitle={managedSubtitle(
+                      "computerApprovals",
+                      uniform("computerApprovals") === "skip"
+                        ? "Steps run as soon as the agent asks. Every consequential step is still in the activity log, and Stop still ends a task."
+                        : "A step that types, sends, buys or deletes waits for your tap, bound to that exact action. Fixed controls do not ask.",
+                    )}
+                    value={
+                      uniform("computerApprovals") === "ask"
+                        ? true
+                        : uniform("computerApprovals") === "skip"
+                          ? false
+                          : null
+                    }
+                    disabled={disabledFor("computerApprovals")}
+                    onValueChange={(ask) => write({ computerApprovals: ask ? "ask" : "skip" })}
+                  />
+                </SettingsSection>
+                <SettingsSection
+                  title={gt("Computers", { $context: "section title, connected computers" })}
+                >
+                  <ComputerUseHostsRow
+                    environmentIds={selectedTargets.map((target) => target.environmentId)}
+                  />
+                </SettingsSection>
               </>
             ) : null}
 

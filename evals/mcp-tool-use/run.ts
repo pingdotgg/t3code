@@ -64,6 +64,10 @@ import {
   assignedSkillIndexEntry,
 } from "../../apps/server/src/provider/AgentInstructionFiles.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
+import {
+  ComputerLookToolkit,
+  ComputerToolkit,
+} from "../../apps/server/src/mcp/toolkits/computer/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
@@ -87,6 +91,12 @@ import {
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
 import { type BackgroundWait, makeBackgroundWait } from "./backgroundWait.ts";
+import {
+  type ComputerTools,
+  type ComputerWorld,
+  isComputerTool,
+  makeComputerTools,
+} from "./computer.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
 import { FileLinksExpect, gradeFileLinks } from "./file-link-grading.ts";
 import {
@@ -300,6 +310,20 @@ const McpToolUseWorld = Schema.StructWithRest(
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
     deviceOwners: Schema.optional(Schema.Record(Schema.String, Schema.String)),
     /**
+     * The computer this thread may use, and what its next task does. With it, T3's computer tools
+     * answer from this world and its computer instructions are in the thread's prompt.
+     */
+    computer: Schema.optional(
+      Schema.Struct({
+        computerAgentAccess: Schema.optional(Schema.Boolean),
+        hostName: Schema.optional(Schema.String),
+        outcome: Schema.optional(Schema.Literals(["questions", "tap", "done", "blocked"])),
+        approvals: Schema.optional(Schema.Literals(["ask", "skip"])),
+        screenText: Schema.optional(Schema.String),
+        screen: Schema.optional(Contracts.ComputerLook),
+      }),
+    ),
+    /**
      * Task IDs of the background commands and Monitors still running on the agent's Claude
      * session. With them, T3's own t3_background_wait handler answers from this world.
      */
@@ -505,6 +529,8 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewToolkit,
   IssuesToolkit,
   DeviceToolkit,
+  ComputerToolkit,
+  ComputerLookToolkit,
   HtmlToolkit,
   MessageToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
@@ -589,7 +615,7 @@ const visibleT3Tools = (options: {
  * `browser` say whether the thread holds the `device` and `preview` capabilities, as agent device
  * and browser access decide.
  */
-const claudeQueryOptions = (model: Model, device = true, browser = true) => {
+const claudeQueryOptions = (model: Model, device = true, browser = true, computer = false) => {
   // Refs whose text follows a capability read its flag; older ones ignore it.
   const input: Parameters<typeof makeClaudeQueryOptions>[0] & {
     readonly deviceToolsAvailable?: boolean;
@@ -602,13 +628,14 @@ const claudeQueryOptions = (model: Model, device = true, browser = true) => {
     mcpServers: { "t3-code": { type: "http", url: "http://127.0.0.1/mcp" } },
     deviceToolsAvailable: device,
     browserToolsAvailable: browser,
+    computerToolsAvailable: computer,
   };
   return makeClaudeQueryOptions(input);
 };
 
 /** Text T3 appends to Claude Code's system prompt. Delegated children get the same text. */
-export const t3SystemAppend = (model: Model, device = true, browser = true) => {
-  const { systemPrompt } = claudeQueryOptions(model, device, browser);
+export const t3SystemAppend = (model: Model, device = true, browser = true, computer = false) => {
+  const { systemPrompt } = claudeQueryOptions(model, device, browser, computer);
   if (isRecord(systemPrompt) && systemPrompt.type === "preset" && systemPrompt.append) {
     return systemPrompt.append;
   }
@@ -699,6 +726,8 @@ export const buildBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
+    /** true: the thread holds computer use, so T3's text includes it. */
+    readonly computerAccess?: boolean;
   },
 ) => {
   const t3 = visibleT3Tools(options);
@@ -724,7 +753,7 @@ export const buildBase = (
   const { model } = options;
   const append = options.nativeSubagent
     ? ""
-    : t3SystemAppend(model, options.deviceAccess, options.browserAccess);
+    : t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.computerAccess);
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -795,6 +824,8 @@ const buildCodexBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
+    /** true: the thread holds computer use, so T3's text includes it. */
+    readonly computerAccess?: boolean;
   },
 ): Base => {
   const t3 = visibleT3Tools(options);
@@ -974,6 +1005,8 @@ type Sample = {
   secretRequests: number;
   /** T3's device tools, once `withDevices` builds them for a world with devices. */
   devices?: DeviceTools;
+  /** T3's computer tools, once `withComputerTools` builds them for this sample. */
+  computer?: ComputerTools;
   /** T3's results for prior device calls whose case result is "default". */
   readonly priorResults: Map<unknown, string>;
   /** Prior calls whose T3 result is an error, so the agent sees it as one. */
@@ -1066,6 +1099,25 @@ export const withDevices = Effect.fn("evaluateMcpToolUse.withDevices")(function*
   for (const call of (sample.testCase.setup.priorTurns ?? []).flatMap((t) => t.toolCalls ?? [])) {
     if (call.result !== "default" || !isDeviceTool(call.tool)) continue;
     sample.priorResults.set(call, (yield* sample.devices.call(call.tool, call.input)).text);
+  }
+});
+
+/**
+ * Builds T3's computer tools for one sample. A world without a computer still gets them, with the
+ * setting off, so a call is refused the way a thread that never enabled it is refused.
+ */
+export const withComputerTools = Effect.fn("evaluateMcpToolUse.withComputerTools")(function* (
+  sample: Sample,
+) {
+  const world: ComputerWorld = sample.testCase.setup.world?.computer ?? {
+    computerAgentAccess: false,
+  };
+  sample.computer = yield* makeComputerTools(world);
+  for (const call of (sample.testCase.setup.priorTurns ?? []).flatMap((t) => t.toolCalls ?? [])) {
+    if (call.result !== "default" || !isComputerTool(call.tool)) continue;
+    const result = yield* sample.computer.call(call.tool, isRecord(call.input) ? call.input : {});
+    sample.priorResults.set(call, result.text);
+    if (result.isError) sample.priorErrors.add(call);
   }
 });
 
@@ -1226,9 +1278,11 @@ export const buildMessages = (sample: Sample) => {
       if (tool === undefined) throw new Error(`${testCase.id}: unknown prior tool ${call.tool}.`);
       const builder = isDeviceTool(call.tool)
         ? "withDevices"
-        : call.tool === "t3_background_wait"
-          ? "withBackgroundWait"
-          : undefined;
+        : isComputerTool(call.tool)
+          ? "withComputerTools"
+          : call.tool === "t3_background_wait"
+            ? "withBackgroundWait"
+            : undefined;
       if (call.result === "default" && builder && !sample.priorResults.has(call)) {
         throw new Error(`${testCase.id}: prior ${call.tool} needs T3's result; run ${builder}.`);
       }
@@ -2153,6 +2207,10 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     const result = yield* sample.devices.call(name, input, failure);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
+  if (sample.computer && isT3Name(call.name) && isComputerTool(name) && fromWorld) {
+    const result = yield* sample.computer.call(name, input);
+    return result.isError ? failed(result.text) : toolResult(call.id, result.text);
+  }
   if (sample.backgroundWait && isT3Name(call.name) && name === "t3_background_wait" && fromWorld) {
     const result = yield* sample.backgroundWait(input);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
@@ -2684,6 +2742,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
 ) {
   const sample = { ...makeSample(testCase, base), shellUsage: spent.shellUsage };
   yield* withDevices(sample);
+  yield* withComputerTools(sample);
   yield* withBackgroundWait(sample);
   const runPromise = Effect.runPromiseWith(yield* Effect.context<HttpClient.HttpClient>());
   const messages = buildMessages(sample);
@@ -3061,6 +3120,7 @@ const main = Effect.gen(function* () {
     links: boolean,
     agents: boolean,
     forge: boolean,
+    computerAccess: boolean,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -3075,6 +3135,7 @@ const main = Effect.gen(function* () {
               forge,
               deviceAccess,
               browserAccess,
+              computerAccess,
             }),
           ),
         )
@@ -3090,6 +3151,7 @@ const main = Effect.gen(function* () {
               forge,
               deviceAccess,
               browserAccess,
+              computerAccess,
             });
             return role === "native-subagent"
               ? Effect.promise(() =>
@@ -3100,14 +3162,15 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.agentsTools === true}:${setup.forge !== false}`;
-  const base = yield* buildFor("top", true, true, false, false, true);
-  const bases = new Map<string, Base>([["top:true:true:false:false:true", base]]);
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.agentsTools === true}:${setup.forge !== false}:${setup.world?.computer !== undefined && setup.world.computer.computerAgentAccess !== false}`;
+  const base = yield* buildFor("top", true, true, false, false, true, false);
+  const bases = new Map<string, Base>([["top:true:true:false:false:true:false", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links, agents, forge] = key.split(":") as [
+    const [role = "top", device, browser, links, agents, forge, computer] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
+      string,
       string,
       string,
       string,
@@ -3123,6 +3186,7 @@ const main = Effect.gen(function* () {
         links === "true",
         agents === "true",
         forge === "true",
+        computer === "true",
       ),
     );
   }
@@ -3132,7 +3196,13 @@ const main = Effect.gen(function* () {
     // One JSON line per case. Without --case this also checks that every case builds.
     for (const testCase of selected) {
       const sample = makeSample(testCase, baseFor(testCase));
-      yield* Effect.scoped(Effect.andThen(withDevices(sample), withBackgroundWait(sample)));
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* withDevices(sample);
+          yield* withComputerTools(sample);
+          yield* withBackgroundWait(sample);
+        }),
+      );
       const messages = buildMessages(sample);
       const body = sample.base.codex
         ? codexRequest(sample.base, codexMessages(messages))

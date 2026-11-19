@@ -37,6 +37,7 @@ import * as ContextHandoffService from "../ContextHandoffService.ts";
 import * as EffectOutbox from "../EffectOutbox.ts";
 import * as SettlementCascade from "../SettlementCascade.ts";
 import * as EffectWorker from "../EffectWorker.ts";
+import * as ComputerService from "../../computer/ComputerService.ts";
 import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -579,6 +580,9 @@ export function layerWithRegistry<Error>(
     ThreadCommandExecutor.layer,
   ).pipe(
     Layer.provide(ProviderTurnStartServiceTestkit.layer),
+    Layer.provide(
+      Layer.mock(ComputerService.ComputerService)({ stopForThread: () => Effect.void }),
+    ),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 

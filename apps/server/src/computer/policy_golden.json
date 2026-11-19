@@ -134,7 +134,20 @@
     { "action": { "kind": "surface", "what": "tab", "name": "Inbox" }, "verdict": "auto" },
     { "action": { "kind": "surface", "what": "app", "name": "" }, "verdict": "refused" },
     { "action": { "kind": "surface", "what": "window", "name": "Safari" }, "verdict": "refused" },
-    { "action": { "kind": "shell", "text": "rm -rf ~" }, "verdict": "refused" }
+    { "action": { "kind": "shell", "text": "rm -rf ~" }, "verdict": "refused" },
+    { "action": { "kind": "press", "key": "up" }, "verdict": "auto" },
+    { "action": { "kind": "press", "key": "down" }, "verdict": "auto" },
+    { "action": { "kind": "press", "key": "left" }, "verdict": "auto" },
+    { "action": { "kind": "press", "key": "right" }, "verdict": "auto" },
+    { "action": { "kind": "press", "key": "cmd+l" }, "verdict": "auto" },
+    { "action": { "kind": "press", "key": "cmd+t" }, "verdict": "auto" },
+    { "action": { "kind": "press", "key": "cmd+w" }, "verdict": "tap" },
+    { "action": { "kind": "press", "key": "cmd+q" }, "verdict": "refused" },
+    { "action": { "kind": "open_url", "url": "https://example.com/a?b=1" }, "verdict": "auto" },
+    { "action": { "kind": "open_url", "url": "http://localhost:3000" }, "verdict": "auto" },
+    { "action": { "kind": "open_url", "url": "file:///etc/passwd" }, "verdict": "refused" },
+    { "action": { "kind": "open_url", "url": "javascript:alert(1)" }, "verdict": "refused" },
+    { "action": { "kind": "open_url", "url": "not a url" }, "verdict": "refused" }
   ],
   "after_judge": [
     { "p": 0.1, "verdict": "auto" },

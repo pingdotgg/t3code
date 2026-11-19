@@ -83,6 +83,7 @@ vi.mock("../threads/thread-settings-options", () => ({
 }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
+vi.mock("../../components/ui/Chip", () => ({ Chip: () => null }));
 vi.mock("../../components/ui/Button", () => ({
   Button: ({
     label,
@@ -107,6 +108,7 @@ vi.mock("./components/SettingsEnvironmentFilterHeader", () => ({
   }),
 }));
 vi.mock("./components/DatabaseStorageNotice", () => ({ DatabaseStorageNotice: () => null }));
+vi.mock("./components/ComputerUseHostsRow", () => ({ ComputerUseHostsRow: () => null }));
 vi.mock("./components/SettingsSection", () => ({ SettingsSection: Children }));
 vi.mock("../../components/ui/ListChoiceRow", () => ({ ListChoiceRow: () => null }));
 vi.mock("./components/SettingsSwitchRow", () => ({

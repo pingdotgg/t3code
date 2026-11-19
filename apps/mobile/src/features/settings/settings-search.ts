@@ -116,6 +116,15 @@ const SETTINGS_SEARCH_TERMS = {
     msg("steer", { $context: "settings search keyword" }),
     msg("while the agent is running", { $context: "settings search keyword" }),
   ],
+  SettingsComputerUse: [
+    msg("computer use", { $context: "settings search keyword" }),
+    msg("computer", { $context: "settings search keyword" }),
+    msg("control another computer", { $context: "settings search keyword" }),
+    msg("remote control", { $context: "settings search keyword" }),
+    msg("desktop", { $context: "settings search keyword" }),
+    msg("approvals", { $context: "settings search keyword" }),
+    msg("accessibility", { $context: "settings search keyword" }),
+  ],
   SettingsArchive: [
     msg("archive", { $context: "settings search keyword" }),
     msg("archived", { $context: "settings search keyword" }),

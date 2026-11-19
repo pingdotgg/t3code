@@ -33,6 +33,8 @@ export const DesktopBackendBootstrap = Schema.Struct({
   desktopBrowserFd: Schema.optionalKey(PositiveInt),
   desktopBrowserControlFd: Schema.optionalKey(PositiveInt),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
+  // The desktop app hosts this computer itself; absent means the server may offer it in process.
+  computerLocalHost: Schema.optionalKey(Schema.Boolean),
 });
 
 export type DesktopBackendBootstrap = typeof DesktopBackendBootstrap.Type;

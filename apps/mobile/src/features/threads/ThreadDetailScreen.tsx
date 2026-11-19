@@ -61,7 +61,12 @@ import {
   type ApprovalResponder,
   type ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
-import { useDeadlinePassed } from "../../lib/clock";
+import { useDeadlinePassed, useNowAfter } from "../../lib/clock";
+import {
+  computerLiveApprovals,
+  nextComputerApprovalDeadline,
+} from "@t3tools/client-runtime/state/computer";
+import { stopComputerTask, useThreadComputer } from "../../state/computer";
 import {
   BACKGROUND_WORK_STOP_RETRY_AFTER_MS,
   type BackgroundWorkStopRequest,
@@ -181,6 +186,7 @@ import type {
   ThreadFeedLatestRun,
 } from "../../lib/threadActivity";
 import { PendingApprovalCard } from "./PendingApprovalCard";
+import { ComputerApprovalCard } from "./ComputerApprovalCard";
 import { ComposerErrorNotice } from "./ComposerErrorNotice";
 import { ManagedRuntimeModeNotice } from "./ManagedRuntimeModeNotice";
 import { FreshSessionNotice } from "./FreshSessionNotice";
@@ -784,6 +790,24 @@ function ThreadDetailBody(
     };
   })();
   const statusLines = [backgroundLine, lifecycleLine].filter((line) => line !== null);
+  // Only this thread's task and taps: another thread's steps do not redraw this screen.
+  const { task: computerTask, approvals: pendingComputerApprovals } = useThreadComputer(
+    props.environmentId,
+    props.selectedThread.id,
+  );
+  const computerNowMs = useNowAfter(nextComputerApprovalDeadline(pendingComputerApprovals));
+  const computerApprovals = computerLiveApprovals(pendingComputerApprovals, computerNowMs);
+  const [computerStopping, setComputerStopping] = useState(false);
+  const stopComputerUse = async () => {
+    if (computerTask === null || computerStopping) return;
+    setComputerStopping(true);
+    const failure = await stopComputerTask({
+      environmentId: props.environmentId,
+      taskId: computerTask.taskId,
+    });
+    setComputerStopping(false);
+    if (failure !== null) Dialog.alert(gt("Could not stop computer use"), failure);
+  };
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus(
       {
@@ -825,6 +849,25 @@ function ThreadDetailBody(
                   }),
               }
             : null,
+      };
+    }
+    if (computerTask !== null && contentPresentationKind === "ready") {
+      return {
+        kind: "computer",
+        label: computerTask.goal,
+        accessibilityLabel: gt("Computer use on {environment}: {goal}", {
+          environment: props.environmentLabel ?? gt("this computer"),
+          goal: computerTask.goal,
+        }),
+        approvalsOff: computerTask.approvalsMode === "skip",
+        action: {
+          label: computerStopping
+            ? gt("Stopping…")
+            : gt("Stop", { $context: "button that stops a computer use task" }),
+          accessibilityLabel: gt("Stop computer use"),
+          disabled: computerStopping || !props.canOperateThread,
+          onPress: () => void stopComputerUse(),
+        },
       };
     }
     if (props.activePendingApproval !== null || props.activePendingUserInput !== null) {
@@ -1737,7 +1780,9 @@ function ThreadDetailBody(
                         />
                       </Animated.View>
                     ) : null}
-                    {props.activePendingApproval || props.activePendingUserInput ? (
+                    {props.activePendingApproval ||
+                    props.activePendingUserInput ||
+                    computerApprovals.length > 0 ? (
                       <Animated.View
                         className="shrink-0 gap-3 px-4 pb-3"
                         style={
@@ -1763,6 +1808,25 @@ function ThreadDetailBody(
                             />
                           </Animated.ScrollView>
                         ) : null}
+                        {computerApprovals.length === 0 ? null : (
+                          <Animated.ScrollView
+                            key={computerApprovals[0]!.id}
+                            style={approvalHeightStyle}
+                            keyboardShouldPersistTaps="handled"
+                            nestedScrollEnabled
+                          >
+                            <View className="gap-3">
+                              {computerApprovals.map((approval) => (
+                                <ComputerApprovalCard
+                                  key={approval.id}
+                                  environmentId={props.environmentId}
+                                  environmentLabel={props.environmentLabel ?? gt("This computer")}
+                                  approval={approval}
+                                />
+                              ))}
+                            </View>
+                          </Animated.ScrollView>
+                        )}
                         {props.activePendingUserInput ? (
                           <PendingUserInputCard
                             environmentId={props.environmentId}

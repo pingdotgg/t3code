@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./git.ts";
 import {
   AuthAccessWriteScope,
+  AuthComputerApproveScope,
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -102,11 +103,15 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverUpdateAgentGateway]: AuthAccessWriteScope,
   [WS_METHODS.serverRevealAgentGatewayToken]: AuthAccessWriteScope,
   [WS_METHODS.serverRotateAgentGatewayToken]: AuthAccessWriteScope,
+  // Reads a stored credential, as revealing the gateway token does.
+  [WS_METHODS.serverRevealComputerGrounderKey]: AuthAccessWriteScope,
   // A push carries only thread titles and states that a reader already sees.
   [WS_METHODS.pushRegistrationsRegister]: AuthOrchestrationReadScope,
   [WS_METHODS.pushRegistrationsUnregister]: AuthOrchestrationReadScope,
   // A session on another member, never past the caller's own grant; the server decides who may.
   [WS_METHODS.tailnetDevicesOpenDevice]: AuthOrchestrationReadScope,
+  // Answering a consequential step on someone's computer is its own grant.
+  [WS_METHODS.computerRespondToApproval]: AuthComputerApproveScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

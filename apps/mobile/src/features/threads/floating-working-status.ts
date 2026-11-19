@@ -24,6 +24,15 @@ export type FloatingWorkingStatus =
       readonly action: FloatingStatusAction | null;
     }
   | { readonly kind: "goal"; readonly label: string; readonly accessibilityLabel: string }
+  | {
+      /** A computer task this thread started: what it is doing, and Stop. */
+      readonly kind: "computer";
+      readonly label: string;
+      readonly accessibilityLabel: string;
+      /** Steps run without a tap because the setting is "skip". */
+      readonly approvalsOff: boolean;
+      readonly action: FloatingStatusAction;
+    }
   | { readonly kind: "extension"; readonly label: string; readonly onPress: () => void }
   | { readonly kind: "preparing"; readonly label: string }
   | {

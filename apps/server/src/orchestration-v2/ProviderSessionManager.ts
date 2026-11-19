@@ -474,7 +474,8 @@ export const layerWithOptions = (
           );
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
-          if (Option.isNone(serverSettings)) return { browser: true, device: false };
+          if (Option.isNone(serverSettings))
+            return { browser: true, device: false, computer: false };
           return yield* Effect.gen(function* () {
             const settings = yield* serverSettings.value.getSettings;
             const thread = yield* projectionStore.getThread(threadId);
@@ -496,19 +497,22 @@ export const layerWithOptions = (
                     settings.enableDeviceSupport &&
                     !deviceOverridden &&
                     settings.enableAgentDeviceAccess,
+                  // An override may be this project's, and its record is gone.
+                  computer: false,
                 };
             }
             const effective = resolveProjectSettings(settings, thread.projectId).settings;
             return {
               browser: effective.enableAgentBrowserAccess,
               device: settings.enableDeviceSupport && effective.enableAgentDeviceAccess,
+              computer: effective.enableAgentComputerUse,
             };
           }).pipe(
             Effect.catch((cause) =>
               Effect.logWarning(
-                "Could not resolve agent access; withholding browser and device tools.",
+                "Could not resolve agent access; withholding browser, device and computer tools.",
                 { threadId, cause },
-              ).pipe(Effect.as({ browser: false, device: false })),
+              ).pipe(Effect.as({ browser: false, device: false, computer: false })),
             ),
           );
         },
@@ -586,12 +590,16 @@ export const layerWithOptions = (
               threadId,
               Effect.gen(function* () {
                 // Live providers build MCP clients once; reuse credentials across workspace handoffs.
-                const { browser: browserToolsAvailable, device: deviceToolsAvailable } =
-                  yield* agentAccessSettings(threadId);
+                const {
+                  browser: browserToolsAvailable,
+                  device: deviceToolsAvailable,
+                  computer: computerToolsAvailable,
+                } = yield* agentAccessSettings(threadId);
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
                 >(["orchestration", "worktree", "pull-requests", "issues"]);
                 if (browserToolsAvailable) capabilities.add("preview");
+                if (computerToolsAvailable) capabilities.add("computer");
                 if (deviceToolsAvailable) capabilities.add("device");
                 const subagent = yield* projectionStore.getThread(threadId).pipe(
                   Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
@@ -618,6 +626,7 @@ export const layerWithOptions = (
                     resolved.thread.providerInstanceId === providerInstanceId &&
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
+                    resolved.capabilities.has("computer") === computerToolsAvailable &&
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent
                   ) {

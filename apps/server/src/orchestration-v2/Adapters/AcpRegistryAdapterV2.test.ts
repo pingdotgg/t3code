@@ -1738,7 +1738,12 @@ describe("AcpRegistryAdapterV2", () => {
               ordinal === 1
                 ? t3AcpPromptWithInstructions({
                     prompt: "test prompt",
-                    state: { interactionMode: "default", hasT3Mcp: false, hasDeviceTools: false },
+                    state: {
+                      interactionMode: "default",
+                      hasT3Mcp: false,
+                      hasDeviceTools: false,
+                      hasComputerTools: false,
+                    },
                   })
                 : "test prompt",
           },

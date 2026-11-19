@@ -18,7 +18,19 @@ const JUDGE_THRESHOLD = 0.3;
 
 const SCROLL_DIRECTIONS: ReadonlyArray<string> = ["up", "down", "top", "bottom"];
 const BENIGN_CLICK_ROLES: ReadonlyArray<string> = ["textbox", "tab", "row"];
-const PASSIVE_KEYS: ReadonlyArray<string> = ["space", "escape", "tab"];
+/** Keys that move or reveal, never submit: the address bar (⌘L) and a new tab (⌘T) included. */
+const PASSIVE_KEYS: ReadonlyArray<string> = [
+  "space",
+  "escape",
+  "tab",
+  "up",
+  "down",
+  "left",
+  "right",
+  "cmd+l",
+  "cmd+t",
+];
+const MAX_URL_BYTES = 4_000;
 
 const auto = (): ComputerDecision => ({ verdict: "auto", why: "" });
 const refused = (why: string): ComputerDecision => ({ verdict: "refused", why });
@@ -71,7 +83,10 @@ export function screen(action: ComputerAction): ComputerDecision {
       };
     case "press":
       if (PASSIVE_KEYS.includes(action.key ?? "")) return auto();
-      if (action.key !== "enter") return refused("a key other than Enter, Space, Escape or Tab");
+      if (action.key === "cmd+w")
+        return { verdict: "tap", why: "closing a tab or window can lose what is in it" };
+      if (action.key !== "enter")
+        return refused("a key other than Enter, Tab, Escape, Space, an arrow, ⌘L, ⌘T or ⌘W");
       if (action.fieldRole && searchField(action.fieldRole, action.fieldLabel ?? "")) return auto();
       return { verdict: "tap", why: "pressing Enter could send or submit what was typed" };
     case "type": {
@@ -83,6 +98,13 @@ export function screen(action: ComputerAction): ComputerDecision {
       if (searchField(action.role ?? "", label)) return auto();
       return { verdict: "tap", why: "typing into a field that is not a search or address box" };
     }
+    case "open_url": {
+      const url = action.url ?? "";
+      if (utf8Bytes(url) > MAX_URL_BYTES) return refused("an address longer than a page's");
+      return /^https?:\/\/[^\s/]+/i.test(url) && URL.canParse(url)
+        ? auto()
+        : refused("only a web address (http or https) is opened in the browser");
+    }
     case "click": {
       const why = consequential(label);
       if (why) return { verdict: "tap", why };
@@ -92,7 +114,7 @@ export function screen(action: ComputerAction): ComputerDecision {
     }
     default:
       return refused(
-        "not a step computer use takes (click, type, press, scroll, surface, pointer)",
+        "not a step computer use takes (click, type, press, scroll, surface, open_url, pointer)",
       );
   }
 }

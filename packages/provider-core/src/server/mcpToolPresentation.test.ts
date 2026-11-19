@@ -20,4 +20,23 @@ describe("mcpToolPresentation", () => {
       toolSource: { key: "mcp:weather", name: "weather", kind: "integration" },
     });
   });
+
+  it("presents Ada's own computer tools as computer use, not as an integration", () => {
+    for (const toolName of [
+      "mcp__t3-code__computer_use",
+      "mcp__t3-code__computer_control",
+      "mcp__t3-code__computer_status",
+      "mcp__t3-code__computer_stop",
+      "mcp__t3-code__computer_look",
+      "mcp__t3-code__computer_act",
+    ]) {
+      expect(mcpToolPresentation({ toolName })).toEqual({
+        toolSource: { key: "computer", name: "Computer use", kind: "computer" },
+      });
+    }
+    // Another server's tool of the same name is that server's business.
+    expect(mcpToolPresentation({ serverName: "weather", toolName: "computer_use" })).toMatchObject({
+      toolSource: { kind: "integration" },
+    });
+  });
 });

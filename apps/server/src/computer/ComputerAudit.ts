@@ -65,7 +65,7 @@ export const clip = (value: string): string => {
 };
 
 /** A step's action for the log: typed text as its digest, screen text clipped. */
-const actionAuditFields = (action: ComputerAction): Readonly<Record<string, unknown>> => ({
+export const actionAuditFields = (action: ComputerAction): Readonly<Record<string, unknown>> => ({
   kind: action.kind,
   ...(action.ref ? { ref: action.ref } : {}),
   ...(action.role ? { role: action.role } : {}),
@@ -77,6 +77,7 @@ const actionAuditFields = (action: ComputerAction): Readonly<Record<string, unkn
   ...(action.direction ? { direction: action.direction } : {}),
   ...(action.what ? { what: action.what } : {}),
   ...(action.name ? { name: clip(action.name) } : {}),
+  ...(action.url ? { url: clip(action.url) } : {}),
 });
 
 /** The fields an approval's audit line carries, whether it waited for a tap or ran with approvals off. */

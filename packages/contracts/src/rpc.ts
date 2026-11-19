@@ -23,6 +23,22 @@ import {
   McpGatewayUnavailableError,
 } from "./mcpGateway.ts";
 import {
+  ComputerAnswers,
+  ComputerAuditTailInput,
+  ComputerError,
+  ComputerHostAuthorizeInput,
+  ComputerHostConnectInput,
+  ComputerHostDecideInput,
+  ComputerHostAccessInput,
+  ComputerHostEventInput,
+  ComputerHostFrame,
+  ComputerHostRespondInput,
+  ComputerGrant,
+  ComputerRespondToApprovalInput,
+  ComputerSnapshot,
+  ComputerStopInput,
+} from "./computer.ts";
+import {
   McpAppCallToolInput,
   McpAppCallToolResult,
   McpAppReadResourceInput,
@@ -68,7 +84,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { SecretSourceCheckResult } from "./settingsSecretValue.ts";
+import { SecretSourceCheckResult, SettingsSecretValue } from "./settingsSecretValue.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
   ProviderAuthCancelInput,
@@ -613,6 +629,17 @@ export const WS_METHODS = {
   deviceDetail: "device.detail",
   deviceAction: "device.action",
 
+  computerSubscribe: "computer.subscribe",
+  computerStop: "computer.stop",
+  computerRespondToApproval: "computer.respondToApproval",
+  computerAuditTail: "computer.auditTail",
+  computerHostConnect: "computer.hostConnect",
+  computerHostRespond: "computer.hostRespond",
+  computerHostDecide: "computer.hostDecide",
+  computerHostAuthorize: "computer.hostAuthorize",
+  computerHostEvent: "computer.hostEvent",
+  computerHostAccess: "computer.hostAccess",
+
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverGetNpmRelease: "server.getNpmRelease",
@@ -654,6 +681,7 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverGetAgentSkills: "server.getAgentSkills",
+  serverRevealComputerGrounderKey: "server.revealComputerGrounderKey",
   serverMutateAgentLibrary: "server.mutateAgentLibrary",
   serverDiscoverSourceControl: "server.discoverSourceControl",
   serverCheckSecretSource: "server.checkSecretSource",
@@ -1160,6 +1188,13 @@ const WsSubscribeTailnetDevicesRpc = Rpc.make(WS_METHODS.subscribeTailnetDevices
 const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
   payload: Schema.Struct({}),
   success: ServerSettings,
+  error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
+});
+
+/** The decision endpoint's key as stored, so a client can share it with its other devices. */
+const WsServerRevealComputerGrounderKeyRpc = Rpc.make(WS_METHODS.serverRevealComputerGrounderKey, {
+  payload: Schema.Struct({}),
+  success: Schema.Struct({ apiKey: SettingsSecretValue }),
   error: Schema.Union([ServerSettingsError, EnvironmentAuthorizationError]),
 });
 
@@ -2255,6 +2290,63 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
+const WsComputerSubscribeRpc = Rpc.make(WS_METHODS.computerSubscribe, {
+  payload: Schema.Struct({}),
+  success: ComputerSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsComputerStopRpc = Rpc.make(WS_METHODS.computerStop, {
+  payload: ComputerStopInput,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerRespondToApprovalRpc = Rpc.make(WS_METHODS.computerRespondToApproval, {
+  payload: ComputerRespondToApprovalInput,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerAuditTailRpc = Rpc.make(WS_METHODS.computerAuditTail, {
+  payload: ComputerAuditTailInput,
+  success: Schema.Array(Schema.Record(Schema.String, Schema.Unknown)),
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerHostConnectRpc = Rpc.make(WS_METHODS.computerHostConnect, {
+  payload: ComputerHostConnectInput,
+  success: ComputerHostFrame,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsComputerHostRespondRpc = Rpc.make(WS_METHODS.computerHostRespond, {
+  payload: ComputerHostRespondInput,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerHostDecideRpc = Rpc.make(WS_METHODS.computerHostDecide, {
+  payload: ComputerHostDecideInput,
+  success: ComputerAnswers,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerHostAuthorizeRpc = Rpc.make(WS_METHODS.computerHostAuthorize, {
+  payload: ComputerHostAuthorizeInput,
+  success: ComputerGrant,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerHostEventRpc = Rpc.make(WS_METHODS.computerHostEvent, {
+  payload: ComputerHostEventInput,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
+const WsComputerHostAccessRpc = Rpc.make(WS_METHODS.computerHostAccess, {
+  payload: ComputerHostAccessInput,
+  error: Schema.Union([ComputerError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationGetCommandReceiptsRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getCommandReceipts,
   {
@@ -2708,6 +2800,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetStorageCleanupReportRpc,
   WsServerGetDatabaseStorageRpc,
   WsServerGetSettingsRpc,
+  WsServerRevealComputerGrounderKeyRpc,
   WsServerReclaimDatabaseSpaceRpc,
   WsServerClearWorktreeSharedPathRpc,
   WsServerGetThreadHistoryTrimRpc,
@@ -2918,6 +3011,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
+  WsComputerSubscribeRpc,
+  WsComputerStopRpc,
+  WsComputerRespondToApprovalRpc,
+  WsComputerAuditTailRpc,
+  WsComputerHostConnectRpc,
+  WsComputerHostRespondRpc,
+  WsComputerHostDecideRpc,
+  WsComputerHostAuthorizeRpc,
+  WsComputerHostEventRpc,
+  WsComputerHostAccessRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

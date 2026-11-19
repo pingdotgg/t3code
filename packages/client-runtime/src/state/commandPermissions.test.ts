@@ -9,6 +9,7 @@ import { vi } from "vite-plus/test";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthComputerApproveScope,
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -162,6 +163,8 @@ describe("command permissions", () => {
     { method: WS_METHODS.serverRotateAgentGatewayToken, scope: AuthAccessWriteScope },
     // A read-only app of the device network opens other members; the server caps the grant.
     { method: WS_METHODS.tailnetDevicesOpenDevice, scope: AuthOrchestrationReadScope },
+    // Answering a consequential step on someone's computer is its own grant.
+    { method: WS_METHODS.computerRespondToApproval, scope: AuthComputerApproveScope },
   ])("requires the destination $scope grant for $method", ({ method, scope }) =>
     Effect.gen(function* () {
       const registry = yield* setup;

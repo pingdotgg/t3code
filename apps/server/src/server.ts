@@ -101,6 +101,11 @@ import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
+import * as ComputerService from "./computer/ComputerService.ts";
+import * as ComputerApprovals from "./computer/ComputerApprovals.ts";
+import * as ComputerAudit from "./computer/ComputerAudit.ts";
+import * as ComputerDecider from "./computer/ComputerDecider.ts";
+import * as LocalComputerHost from "./computer/LocalComputerHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as PreviewTunnel from "./preview/PreviewTunnel.ts";
@@ -555,6 +560,14 @@ const layerPeerLinks = PeerMcpClient.layer.pipe(
 // Reaches other environments through connected apps, else over this server's own links.
 const layerMcpGatewayBroker = McpGatewayBroker.layer.pipe(Layer.provide(layerPeerLinks));
 
+// One computer-use capability for the server: hosts, tasks, approvals and their audit.
+const layerComputer = ComputerService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(ComputerApprovals.layer, ComputerAudit.layer, ComputerDecider.layer),
+  ),
+  Layer.provide(ProjectionStoreV2.layer),
+);
+
 const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   // Tasks split across machines reach the other environment through the same
   // broker the WebSocket routes serve (one memoized instance).
@@ -579,7 +592,12 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
 const layerOrchestrationApplication = Layer.merge(
   CheckpointDiffQuery.layer,
   NativeChildWorkQuery.layer,
-).pipe(Layer.provideMerge(layerCheckpointStore), Layer.provideMerge(layerOrchestrationV2Runtime));
+).pipe(
+  Layer.provideMerge(layerCheckpointStore),
+  Layer.provideMerge(layerOrchestrationV2Runtime),
+  // The effect worker's interrupt hook stops a thread's computer task; clients read the same instance.
+  Layer.provideMerge(layerComputer),
+);
 
 const layerThreadSettlementWorker = Layer.effectDiscard(
   ThreadSettlementService.make.pipe(Effect.flatMap((service) => service.start())),
@@ -666,6 +684,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.provide(ProcessRunner.layer),
   ),
   KeepAwake.layer,
+  // A macOS server outside the desktop app offers this computer to agents in process.
+  LocalComputerHost.layer,
   Layer.effectDiscard(
     Effect.gen(function* () {
       const service = yield* PullRequestSyncReactor.PullRequestSyncReactor;

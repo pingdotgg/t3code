@@ -427,6 +427,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: undefined,
+        computerLocalHost: false,
       });
     }),
   );
@@ -506,6 +507,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
         tailscaleServePort: undefined,
+        computerLocalHost: false,
       });
     }),
   );
@@ -743,6 +745,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         logWebSocketEvents: false,
         tailscaleServeEnabled: true,
         tailscaleServePort: undefined,
+        computerLocalHost: true,
       });
     }),
   );

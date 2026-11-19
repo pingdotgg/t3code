@@ -34,6 +34,42 @@ export const COMPUTER_USE_TOOL_SOURCE = {
   kind: "computer",
 } as const;
 
+/** Ada's own computer tools, so the work log reads "Computer use" rather than an integration's name. */
+const COMPUTER_TOOL_SOURCE = {
+  key: "computer",
+  name: "Computer use",
+  kind: "computer",
+} as const;
+
+const COMPUTER_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "computer_act",
+  "computer_look",
+  "computer_control",
+  "computer_use",
+  "computer_status",
+  "computer_stop",
+]);
+
+/** T3's MCP server as each harness names it. Another server's `computer_use` is not Ada's. */
+const T3_MCP_SERVERS: ReadonlySet<string> = new Set([
+  "t3-code",
+  "t3_code",
+  "t3code",
+  "t3-code-direct",
+  "t3_code_direct",
+]);
+
+/**
+ * Ada's computer source for one of its own computer tools, however the harness prefixes it
+ * (`mcp__t3-code__computer_use`, `t3-code.computer_use`); undefined for every other tool.
+ */
+export function computerToolSource(toolName: string | null | undefined, serverName?: string) {
+  if (toolName === null || toolName === undefined) return undefined;
+  if (serverName !== undefined && !T3_MCP_SERVERS.has(serverName.toLowerCase())) return undefined;
+  const bare = toolName.slice(Math.max(toolName.lastIndexOf("."), toolName.lastIndexOf("__")) + 1);
+  return COMPUTER_TOOL_NAMES.has(bare.trim()) ? COMPUTER_TOOL_SOURCE : undefined;
+}
+
 export function dynamicToolSurface(toolName: string | null | undefined, input: unknown) {
   if (toolName === "cua_repl.js") return "computer" as const;
   const code = asRecord(input)?.code;

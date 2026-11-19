@@ -547,6 +547,8 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       desktopAppUpdate: input.desktopAppUpdate,
       desktopBrowserFd: 6,
       desktopBrowserControlFd: 7,
+      // The desktop app hosts this computer itself; this server must not fork a second helper.
+      computerLocalHost: false,
       ...Option.match(input.resourceMonitorPath, {
         onNone: () => ({}),
         onSome: (resourceMonitorPath) => ({ resourceMonitorPath }),

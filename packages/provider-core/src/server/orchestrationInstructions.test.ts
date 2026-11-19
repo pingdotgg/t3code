@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  T3_CODE_COMPUTER_TOOL_INSTRUCTIONS,
+  T3_CODE_COMPUTER_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -49,8 +51,10 @@ describe("T3 device instructions", () => {
         prompt: "Check the login screen.",
         hasT3Mcp: true,
         hasDeviceTools,
+        hasComputerTools: false,
         orchestrationDelivered: false,
         deviceInstructionsDelivered: false,
+        computerInstructionsDelivered: false,
       });
     assert.include(firstRun(true), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
     assert.notInclude(firstRun(false), "## Ada devices");
@@ -60,8 +64,10 @@ describe("T3 device instructions", () => {
         prompt: "Check the login screen.",
         hasT3Mcp: true,
         hasDeviceTools: true,
+        hasComputerTools: false,
         orchestrationDelivered: true,
         deviceInstructionsDelivered,
+        computerInstructionsDelivered: false,
       });
     assert.include(laterRun(false), T3_CODE_DEVICE_TOOL_INSTRUCTIONS);
     assert.notInclude(laterRun(false), T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim());
@@ -69,7 +75,12 @@ describe("T3 device instructions", () => {
   });
 
   it("reach ACP agents again when device access changes mid-thread", () => {
-    const state = { interactionMode: "default", hasT3Mcp: true, hasDeviceTools: false } as const;
+    const state = {
+      interactionMode: "default",
+      hasT3Mcp: true,
+      hasDeviceTools: false,
+      hasComputerTools: false,
+    } as const;
     const withDevices = t3AcpPromptWithInstructions({
       prompt: "Check the login screen.",
       state: { ...state, hasDeviceTools: true },
@@ -81,5 +92,84 @@ describe("T3 device instructions", () => {
       "Again.",
     );
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## Ada devices");
+  });
+});
+
+describe("T3 computer instructions", () => {
+  it("route native-app work through computer_use and keep typed words in `text`", () => {
+    for (const intent of [
+      "`computer_use`",
+      "`computer_look`",
+      "`computer_act`",
+      "`osascript`",
+      "`text`",
+      "`decisionId`",
+      "`computer_control`",
+      "`computer_stop`",
+    ]) {
+      assert.include(T3_CODE_COMPUTER_TOOL_INSTRUCTIONS, intent);
+    }
+    // The card is the person's; an agent that thinks it can approve will retry around one.
+    assert.include(T3_CODE_COMPUTER_TOOL_INSTRUCTIONS, "you cannot approve it");
+    assert.notInclude(T3_CODE_COMPUTER_TOOL_INSTRUCTIONS, "ToolSearch");
+    const loadLine =
+      " Load them with ToolSearch `select:mcp__t3-code__computer_status,mcp__t3-code__computer_look,mcp__t3-code__computer_act,mcp__t3-code__computer_control,mcp__t3-code__computer_use,mcp__t3-code__computer_stop`.";
+    assert.include(T3_CODE_COMPUTER_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH, loadLine);
+    assert.equal(
+      T3_CODE_COMPUTER_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH.replace(loadLine, ""),
+      T3_CODE_COMPUTER_TOOL_INSTRUCTIONS,
+    );
+  });
+
+  it("reach a session only when it holds computer access", () => {
+    assert.include(t3OrchestrationSystemPrompt(true, false, true), "## Ada computer use");
+    assert.notInclude(t3OrchestrationSystemPrompt(true, true, false), "## Ada computer use");
+    assert.isUndefined(t3OrchestrationSystemPrompt(false, false, true));
+
+    const firstRun = (hasComputerTools: boolean) =>
+      t3OrchestrationPrompt({
+        prompt: "Send the draft in Notes.",
+        hasT3Mcp: true,
+        hasDeviceTools: false,
+        hasComputerTools,
+        orchestrationDelivered: false,
+        deviceInstructionsDelivered: false,
+        computerInstructionsDelivered: false,
+      });
+    assert.include(firstRun(true), T3_CODE_COMPUTER_TOOL_INSTRUCTIONS);
+    assert.notInclude(firstRun(false), "## Ada computer use");
+
+    const laterRun = (computerInstructionsDelivered: boolean) =>
+      t3OrchestrationPrompt({
+        prompt: "Send the draft in Notes.",
+        hasT3Mcp: true,
+        hasDeviceTools: false,
+        hasComputerTools: true,
+        orchestrationDelivered: true,
+        deviceInstructionsDelivered: false,
+        computerInstructionsDelivered,
+      });
+    assert.include(laterRun(false), T3_CODE_COMPUTER_TOOL_INSTRUCTIONS);
+    assert.equal(laterRun(true), "Send the draft in Notes.");
+  });
+
+  it("reach ACP agents again when computer access changes mid-thread", () => {
+    const state = {
+      interactionMode: "default",
+      hasT3Mcp: true,
+      hasDeviceTools: false,
+      hasComputerTools: false,
+    } as const;
+    const withComputer = t3AcpPromptWithInstructions({
+      prompt: "Send the draft in Notes.",
+      state: { ...state, hasComputerTools: true },
+      previousState: state,
+    });
+    assert.include(withComputer, T3_CODE_COMPUTER_TOOL_INSTRUCTIONS);
+    assert.equal(
+      t3AcpPromptWithInstructions({ prompt: "Again.", state, previousState: state }),
+      "Again.",
+    );
+    assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## Ada computer use");
   });
 });

@@ -380,6 +380,12 @@ export default defineConfig({
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
       },
       {
+        // The computer use host relay speaks the host stream and its answers directly: it is a
+        // transport, and the environment's server still authorizes every method it calls.
+        files: ["apps/web/src/computer/desktopHostBridge.ts"],
+        rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
+      },
+      {
         // The T3 Agents gateway is a command boundary of its own: agent tools act on an
         // environment it already connected to, and that server enforces scopes.
         files: ["packages/client-runtime/src/gateway/runtimePort.ts"],

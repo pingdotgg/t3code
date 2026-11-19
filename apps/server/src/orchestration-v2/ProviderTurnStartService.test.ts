@@ -68,6 +68,7 @@ import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ComputerService from "../computer/ComputerService.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
 import * as EventSink from "./EventSink.ts";
@@ -1647,6 +1648,7 @@ function layerStartEffectWorker(
         Layer.mock(ThreadManagementService.ThreadManagementService)({}),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
         Layer.mock(SettlementCascade.SettlementCascade)({}),
+        Layer.mock(ComputerService.ComputerService)({ stopForThread: () => Effect.void }),
         ServerSettings.layerTest(),
       ),
     ),

@@ -399,6 +399,8 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
   const desktopBrowserFd = bootstrap?.desktopBrowserFd;
   const desktopBrowserControlFd = bootstrap?.desktopBrowserControlFd;
   const resourceMonitorPath = bootstrap?.resourceMonitorPath;
+  // Never inside the desktop app, which hosts this computer itself; a terminal server is the only one that may.
+  const computerLocalHost = bootstrap === undefined ? true : (bootstrap.computerLocalHost ?? false);
   const autoBootstrapProjectFromCwd = Option.getOrElse(
     resolveOptionPrecedence(
       Option.fromUndefinedOr(options?.forceAutoBootstrapProjectFromCwd),
@@ -538,6 +540,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     desktopBrowserFd,
     desktopBrowserControlFd,
     resourceMonitorPath,
+    computerLocalHost,
     autoBootstrapProjectFromCwd,
     logWebSocketEvents,
     tailscaleServeEnabled,
