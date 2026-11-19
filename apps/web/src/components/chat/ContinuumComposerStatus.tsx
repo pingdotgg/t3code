@@ -13,6 +13,7 @@ import { commandFailureText } from "../continuum/commandFailure";
 import { Button } from "../ui/button";
 import { Textarea } from "../ui/textarea";
 import { SuperchargeRunStatus } from "./SuperchargeControl";
+import { SpeechPlaybackBar } from "../../speech/SpeechPlaybackBar";
 
 const PHASE_LABELS: Record<ImproveJob["phase"], string> = {
   rewriting: "Improving your prompt…",
@@ -33,6 +34,7 @@ export function ContinuumComposerStatus({ threadRef }: { readonly threadRef: Sco
   const jobs = (jobsQuery.data ?? []).slice(-3);
   return (
     <div className="flex flex-col gap-1 empty:hidden">
+      <SpeechPlaybackBar />
       <SuperchargeRunStatus threadRef={threadRef} />
       {jobs.map((job) => (
         <ImproveJobRow

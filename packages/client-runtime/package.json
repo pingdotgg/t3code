@@ -602,6 +602,10 @@
     "./state/mobileAccess": {
       "types": "./src/state/mobileAccess.ts",
       "default": "./src/state/mobileAccess.ts"
+    },
+    "./state/readAloud": {
+      "types": "./src/state/readAloud.ts",
+      "default": "./src/state/readAloud.ts"
     }
   },
   "scripts": {

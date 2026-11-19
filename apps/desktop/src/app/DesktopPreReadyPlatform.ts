@@ -161,6 +161,8 @@ export const make = Effect.gen(function* () {
       } catch {}
       // Chromium caches portal identity; set it before any asynchronous initialization.
       Electron.app.setDesktopName(linux.linuxDesktopEntryName);
+      // Web Speech voices on Linux come from speech-dispatcher, which Chromium leaves off.
+      Electron.app.commandLine.appendSwitch("enable-speech-dispatcher");
       if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
         Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
       }

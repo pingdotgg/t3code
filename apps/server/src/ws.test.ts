@@ -132,6 +132,7 @@ import * as SuperchargeService from "./supercharge/SuperchargeService.ts";
 import { DEFAULT_SUPERCHARGE_CONFIG } from "@t3tools/contracts";
 import * as ImproveService from "./improve/ImproveService.ts";
 import * as MobileAccessService from "./mobileAccess/MobileAccessService.ts";
+import * as ReadAloudService from "./readAloud/ReadAloudService.ts";
 import * as IweService from "./iwe/IweService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
 import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
@@ -887,6 +888,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   }),
   Layer.mock(ImproveService.ImproveService)({}),
   Layer.mock(MobileAccessService.MobileAccessService)({}),
+  Layer.mock(ReadAloudService.ReadAloudService)({}),
   Layer.mock(IweService.IweService)({ core: undefined as never }),
   Layer.mock(MemoryVaultService.MemoryVaultService)({}),
   Layer.mock(ProviderRuntimeUpdater.ProviderRuntimeUpdater)({}),

@@ -10,6 +10,7 @@ export * from "./environmentHttp.ts";
 export * from "./relayClient.ts";
 export * from "./ollama.ts";
 export * from "./gameDev.ts";
+export * from "./readAloud.ts";
 export * from "./supercharge.ts";
 export * from "./improve.ts";
 export * from "./mobileAccess.ts";

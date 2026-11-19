@@ -22,6 +22,7 @@ import {
   useQuietThreadShell,
 } from "../../state/entities";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { MessageSpeakButton } from "../../speech/MessageSpeakButton";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -250,6 +251,9 @@ function AssistantMessageMeta({
       ) : null}
       {!message.streaming && projectedItem ? (
         <AssistantReplyButton message={message} itemId={projectedItem.sourceItemId} />
+      ) : null}
+      {!message.streaming ? (
+        <MessageSpeakButton messageId={message.id} text={message.text} />
       ) : null}
       {!message.streaming && (
         <Tooltip>

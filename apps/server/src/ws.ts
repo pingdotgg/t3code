@@ -256,6 +256,7 @@ import * as GameDevService from "./gameDev/GameDevService.ts";
 import * as SuperchargeService from "./supercharge/SuperchargeService.ts";
 import * as ImproveService from "./improve/ImproveService.ts";
 import * as MobileAccessService from "./mobileAccess/MobileAccessService.ts";
+import * as ReadAloudService from "./readAloud/ReadAloudService.ts";
 import * as IweService from "./iwe/IweService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
 import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
@@ -1519,6 +1520,7 @@ export const layerWsRpc = (
       const supercharge = yield* SuperchargeService.SuperchargeService;
       const improve = yield* ImproveService.ImproveService;
       const mobileAccess = yield* MobileAccessService.MobileAccessService;
+      const readAloud = yield* ReadAloudService.ReadAloudService;
       const iwe = yield* IweService.IweService;
       const iweProjectRoot = (threadId: ThreadId) =>
         IweService.threadProjectRoot(threadId).pipe(
@@ -2828,6 +2830,9 @@ export const layerWsRpc = (
         [WS_METHODS.improveList]: (input) => improve.list(input.sourceThreadId),
         [WS_METHODS.improveDismiss]: (input) => improve.dismiss(input.requestId),
         [WS_METHODS.mobileAccessStatus]: (_input) => mobileAccess.status,
+        [WS_METHODS.readAloudStatus]: (_input) => readAloud.status,
+        [WS_METHODS.readAloudSpeak]: (input) => readAloud.speak(input),
+        [WS_METHODS.readAloudStop]: (_input) => readAloud.stop.pipe(Effect.as({})),
         [WS_METHODS.iweStatus]: (_input) => iwe.status,
         [WS_METHODS.iweInstall]: (_input) =>
           Stream.callback<IweInstallEvent, IweError>((queue) =>

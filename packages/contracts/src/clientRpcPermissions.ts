@@ -107,6 +107,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.iweAttach]: AuthOrchestrationOperateScope,
   [WS_METHODS.iweDetach]: AuthOrchestrationOperateScope,
   [WS_METHODS.iweSelectWorkspace]: AuthOrchestrationOperateScope,
+  // Read aloud plays audio on the host machine.
+  [WS_METHODS.readAloudSpeak]: AuthOrchestrationOperateScope,
+  [WS_METHODS.readAloudStop]: AuthOrchestrationOperateScope,
   // Supercharge and /improve start agent turns.
   [WS_METHODS.superchargeConfigure]: AuthOrchestrationOperateScope,
   [WS_METHODS.superchargeStop]: AuthOrchestrationOperateScope,

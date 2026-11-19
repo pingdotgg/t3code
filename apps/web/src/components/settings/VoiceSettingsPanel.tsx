@@ -1,3 +1,4 @@
+import { ReadAloudSettings } from "./ReadAloudSettings";
 import {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
@@ -1692,6 +1693,7 @@ export function VoiceSettingsPanel() {
           />
         ) : null}
       </SettingsSection>
+      <ReadAloudSettings />
     </SettingsPageContainer>
   );
 }

@@ -816,6 +816,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification sound alert completion input approval desktop"],
   },
   {
+    id: "read-aloud",
+    title: "Read aloud",
+    to: "/settings/voice",
+    searchTerms: ["text to speech tts read aloud voice narrator speak agent messages"],
+  },
+  {
     id: "notification-sound-volume",
     title: "Notification volume",
     to: "/settings/general",

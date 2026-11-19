@@ -75,7 +75,11 @@ export const DEFAULT_NOTIFICATION_SOUND_SETTINGS: NotificationSoundSettings = Sc
 export const SpeechReadMode = Schema.Literals(["completed", "streaming"]);
 export type SpeechReadMode = typeof SpeechReadMode.Type;
 
-export const SpeechEngine = Schema.Literals(["system", "server"]);
+/**
+ * `system`: this device's browser or OS voices (Web Speech). `host`: the speech engine of the
+ * machine running the Continuum server, for clients without voices such as Electron on Linux.
+ */
+export const SpeechEngine = Schema.Literals(["system", "host"]);
 export type SpeechEngine = typeof SpeechEngine.Type;
 
 /** A word the speech engine says differently, such as `nginx` → `engine x`. */
@@ -89,13 +93,11 @@ export const SpeechSettings = Schema.Struct({
   /** Read new agent messages aloud automatically. Replay buttons work either way. */
   autoRead: withDefault(Schema.Boolean, false),
   readMode: withDefault(SpeechReadMode, "completed"),
-  /**
-   * `system`: the browser or OS voices (Web Speech). `server`: the speech engine on the host the
-   * app connects to (`say`, Windows SAPI, or speech-dispatcher), for clients without voices.
-   */
   engine: withDefault(SpeechEngine, "system"),
-  /** The engine's voice id; empty picks the engine's default. */
+  /** The OS voice (`voiceURI`); empty uses the system default voice. */
   voice: withDefault(Schema.String, ""),
+  /** A voice id from the host engine; empty uses its default. */
+  hostVoice: withDefault(Schema.String, ""),
   rate: withDefault(Schema.Number.check(Schema.isBetween({ minimum: 0.5, maximum: 2.5 })), 1),
   pitch: withDefault(Schema.Number.check(Schema.isBetween({ minimum: 0.5, maximum: 1.5 })), 1),
   volume: withDefault(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })), 1),

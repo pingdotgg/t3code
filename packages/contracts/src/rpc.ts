@@ -502,6 +502,12 @@ import {
 } from "./improve.ts";
 import { MobileAccessStatus } from "./mobileAccess.ts";
 import {
+  ReadAloudError,
+  ReadAloudSpeakInput,
+  ReadAloudSpeakResult,
+  ReadAloudStatus,
+} from "./readAloud.ts";
+import {
   IweAttachInput,
   IweCompletion,
   IweCreateNoteInput,
@@ -701,6 +707,9 @@ export const WS_METHODS = {
   improveDismiss: "improve.dismiss",
 
   mobileAccessStatus: "mobileAccess.status",
+  readAloudStatus: "readAloud.status",
+  readAloudSpeak: "readAloud.speak",
+  readAloudStop: "readAloud.stop",
 
   iweStatus: "iwe.status",
   iweInstall: "iwe.install",
@@ -1555,6 +1564,23 @@ const WsMobileAccessStatusRpc = Rpc.make(WS_METHODS.mobileAccessStatus, {
   payload: Schema.Struct({}),
   success: MobileAccessStatus,
   error: EnvironmentAuthorizationError,
+});
+
+const ReadAloudRpcError = Schema.Union([ReadAloudError, EnvironmentAuthorizationError]);
+const WsReadAloudStatusRpc = Rpc.make(WS_METHODS.readAloudStatus, {
+  payload: Schema.Struct({}),
+  success: ReadAloudStatus,
+  error: ReadAloudRpcError,
+});
+const WsReadAloudSpeakRpc = Rpc.make(WS_METHODS.readAloudSpeak, {
+  payload: ReadAloudSpeakInput,
+  success: ReadAloudSpeakResult,
+  error: ReadAloudRpcError,
+});
+const WsReadAloudStopRpc = Rpc.make(WS_METHODS.readAloudStop, {
+  payload: Schema.Struct({}),
+  success: Schema.Struct({}),
+  error: ReadAloudRpcError,
 });
 
 const WsServerRefreshUsageRatesRpc = Rpc.make(WS_METHODS.serverRefreshUsageRates, {
@@ -2733,6 +2759,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsImproveListRpc,
   WsImproveDismissRpc,
   WsMobileAccessStatusRpc,
+  WsReadAloudStatusRpc,
+  WsReadAloudSpeakRpc,
+  WsReadAloudStopRpc,
   WsIweStatusRpc,
   WsIweInstallRpc,
   WsIwePrepareWorkspaceRpc,
