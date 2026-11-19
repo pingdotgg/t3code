@@ -342,3 +342,45 @@ it.effect.each(["response", "body read", "paused"] as const)(
       assert.strictEqual(recovered.items[0]?.mergeability, "mergeable");
     }),
 );
+
+it.effect("reads a row without a head revision every time instead of caching its merge state", () =>
+  Effect.gen(function* () {
+    const { source: _source, ...withoutHead } = pullRequestRow(1);
+    const row = { ...withoutHead, source: { branch: { name: "feat/1" } } };
+    let conflicts: ReadonlyArray<unknown> = [];
+    let reads = 0;
+    const provider = yield* BitbucketPullRequestProvider.make.pipe(
+      Effect.provide(
+        BitbucketPullRequestApi.layer.pipe(
+          Layer.provide(
+            Layer.mock(BitbucketApi.BitbucketApi)({
+              request: ({ url }) => {
+                if (url.includes("/conflicts")) {
+                  reads += 1;
+                  return Effect.succeed({
+                    body: JSON.stringify({ values: conflicts }),
+                    truncated: false,
+                  });
+                }
+                return Effect.succeed({
+                  body: JSON.stringify({ values: [row] }),
+                  truncated: false,
+                });
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+
+    const first = yield* provider.listChangeRequests(listInput);
+    conflicts = [{ path: "a.ts" }];
+    const second = yield* provider.listChangeRequests(listInput);
+
+    assert.deepStrictEqual(
+      [first.items[0]?.mergeability, second.items[0]?.mergeability],
+      ["mergeable", "conflicting"],
+    );
+    assert.strictEqual(reads, 2);
+  }),
+);
