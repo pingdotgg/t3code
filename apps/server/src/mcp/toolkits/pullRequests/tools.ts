@@ -7,6 +7,7 @@ import {
   PullRequestReviewGuideRun,
   PullRequestState,
   PullRequestUnavailableError,
+  PullRequestWatchUntil,
   ThreadPullRequestLinkSource,
   TrimmedNonEmptyString,
   ThreadId,
@@ -324,10 +325,20 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false);
 
+const WatchPullRequestInput = Schema.Struct({
+  ...PullRequestTargetInput.fields,
+  until: Schema.optional(
+    PullRequestWatchUntil.annotate({
+      description:
+        'How long this thread stays working. Omit it to keep the current value; a new watch starts at "checks". "checks": until checks finish, for a PR you hand to the user. "merged": until it merges or closes or you unwatch it, when you will act on it yourself, such as merging after someone else approves.',
+    }),
+  ),
+});
+
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
     "Watch an open PR for this thread, linking it first if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, or conflicts. Handle old comments first. Only later ones wake you. After this call, end your turn. The watch stays on after each wake, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
-  parameters: PullRequestTargetInput,
+  parameters: WatchPullRequestInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
   dependencies: watchDependencies,

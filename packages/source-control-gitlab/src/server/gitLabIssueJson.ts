@@ -35,6 +35,16 @@ const RawUserSchema = Schema.Struct({
   avatar_url: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+/** `with_labels_details=true` returns label objects; hosts that ignore it still send names. */
+const RawLabelRefSchema = Schema.Union([
+  Schema.String,
+  Schema.Struct({
+    name: Schema.String,
+    color: Schema.optional(Schema.NullOr(Schema.String)),
+    description: Schema.optional(Schema.NullOr(Schema.String)),
+  }),
+]);
+
 const RawIssueSchema = Schema.Struct({
   iid: Schema.Int,
   title: Schema.String,
@@ -46,7 +56,7 @@ const RawIssueSchema = Schema.Struct({
   updated_at: Schema.String,
   closed_at: Schema.optional(Schema.NullOr(Schema.String)),
   assignees: Schema.optional(Schema.NullOr(Schema.Array(RawUserSchema))),
-  labels: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  labels: Schema.optional(Schema.NullOr(Schema.Array(RawLabelRefSchema))),
   user_notes_count: Schema.optional(Schema.NullOr(Schema.Int)),
 });
 
@@ -97,6 +107,7 @@ const RawTemplateSchema = Schema.Struct({ content: Schema.optional(Schema.NullOr
 
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeIssue = decodeJsonResult(RawIssueSchema);
+const decodeIssueList = decodeJsonResult(Schema.Array(RawIssueSchema));
 const decodeIssueEntry = Schema.decodeUnknownExit(RawIssueSchema);
 const decodeNoteEntry = Schema.decodeUnknownExit(RawNoteSchema);
 const decodeLabelEventEntry = Schema.decodeUnknownExit(RawLabelEventSchema);
@@ -121,11 +132,18 @@ function toActor(raw: typeof RawUserSchema.Type | null | undefined): IssueActor 
     : { login, name: trimmed(raw?.name), avatarUrl: trimmed(raw?.avatar_url) };
 }
 
-/** GitLab returns label names only on an issue, so there is no colour to carry. */
-function toLabels(raw: ReadonlyArray<string> | null | undefined): ReadonlyArray<IssueLabel> {
-  return (raw ?? []).flatMap((label) => {
-    const name = trimmed(label);
-    return name === null ? [] : [{ name, color: null }];
+function toLabels(
+  raw: ReadonlyArray<typeof RawLabelRefSchema.Type> | null | undefined,
+): ReadonlyArray<IssueLabel> {
+  return (raw ?? []).flatMap((label): ReadonlyArray<IssueLabel> => {
+    if (typeof label === "string") {
+      const name = trimmed(label);
+      return name === null ? [] : [{ name, color: null }];
+    }
+    const name = trimmed(label.name);
+    return name === null
+      ? []
+      : [{ name, color: trimmed(label.color), description: trimmed(label.description) }];
   });
 }
 
@@ -173,13 +191,13 @@ interface GitLabIssueDetail extends TrackerIssueSummary {
   readonly body: string;
 }
 
-export function decodeIssueDetailJson(
+/** GitLab's GET /issues/:iid ignores `with_labels_details`, so the detail is read as an `iids[]` list. */
+export function decodeIssueDetailListJson(
   raw: string,
-): Result.Result<GitLabIssueDetail, DecodeFailure> {
-  return Result.map(decodeIssue(raw), (issue) => ({
-    ...toSummary(issue),
-    body: issue.description ?? "",
-  }));
+): Result.Result<GitLabIssueDetail | null, DecodeFailure> {
+  return Result.map(decodeIssueList(raw), ([issue]) =>
+    issue === undefined ? null : { ...toSummary(issue), body: issue.description ?? "" },
+  );
 }
 
 /** The ids of the users a `/users?username=` lookup answered with: one, or none. */

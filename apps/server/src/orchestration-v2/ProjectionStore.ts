@@ -365,6 +365,8 @@ export interface ProjectionRecordFilter {
   readonly includeLatestRun?: true;
   /** The thread's N highest-ordinal runs, plus any run `runStatuses` matches. Ignores `includeLatestRun`. */
   readonly latestRunLimit?: number;
+  /** Keeps the run `latestExecutedRun` picks even when `runStatuses` excludes it. Ignores `includeLatestRun`. */
+  readonly includeLatestExecutedRun?: true;
   readonly providerTurnThreadIds?: ReadonlyArray<ProviderThreadId>;
   /** Only the provider turn whose token usage was updated last. */
   readonly latestProviderTurnUsageOnly?: true;
@@ -726,6 +728,18 @@ export interface ProjectionStoreV2Shape {
     nodeId: NodeId,
   ) => Effect.Effect<
     ProjectionRecords<"runs" | "nodes" | "providerThreads" | "providerTurns" | "attempts">,
+    ProjectionStoreV2Error
+  >;
+  /** `getRunProviderRecords` and the thread's cards of one type, read together. */
+  readonly getRunCardRecords: (
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    cardType: "secret_request" | "link_request",
+  ) => Effect.Effect<
+    ProjectionRecords<
+      "runs" | "nodes" | "providerThreads" | "providerTurns" | "attempts" | "turnItems"
+    >,
     ProjectionStoreV2Error
   >;
   readonly isNodeStored: (
@@ -3976,13 +3990,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             (matchesNothing(filter?.runIds) ||
               (matchesNothing(filter?.runStatuses) &&
                 filter?.includeLatestRun !== true &&
+                filter?.includeLatestExecutedRun !== true &&
                 filter?.latestRunLimit === undefined)))
             ? Effect.succeed([])
             : window === undefined
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_runs
-            WHERE ${threadColumn(filter?.latestRunLimit === undefined ? filter?.runIds : [])} = ${threadId}
+            WHERE ${threadColumn(
+              filter?.latestRunLimit === undefined && filter?.includeLatestExecutedRun !== true
+                ? filter?.runIds
+                : [],
+            )} = ${threadId}
               ${filter?.runIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.runIds)}))`}
               ${
                 filter?.latestRunLimit !== undefined
@@ -4005,12 +4024,33 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     ORDER BY ordinal ASC`
                   : filter?.runStatuses === undefined
                     ? sql`ORDER BY ordinal ASC`
-                    : filter.includeLatestRun !== true
+                    : filter.includeLatestRun !== true && filter.includeLatestExecutedRun !== true
                       ? // `+ordinal` stops SQLite from walking every run in the (thread_id, ordinal)
                         // index to skip a sort; a status index reads only matching runs.
                         sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
                     ORDER BY +ordinal ASC`
-                      : sql`AND (status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
+                      : filter.includeLatestExecutedRun === true
+                        ? sql`AND run_id IN (
+                      SELECT run_id FROM orchestration_v2_projection_runs
+                      WHERE thread_id = ${threadId}
+                        AND status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
+                      UNION
+                      SELECT run_id FROM (
+                        SELECT run_id FROM orchestration_v2_projection_runs
+                        WHERE thread_id = ${threadId}
+                          AND status <> 'queued'
+                          AND NOT (
+                            status = 'cancelled'
+                            AND json_extract(payload_json, '$.startedAt') IS NULL
+                          )
+                        -- latestExecutedRun: the run that ended last (runRanAfter).
+                        ORDER BY completed_at IS NULL DESC, completed_at DESC, ordinal DESC,
+                          run_id DESC
+                        LIMIT 1
+                      )
+                    )
+                    ORDER BY ordinal ASC`
+                        : sql`AND (status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
                     OR run_id = (
                       SELECT run_id FROM orchestration_v2_projection_runs
                       WHERE thread_id = ${threadId}
@@ -4799,11 +4839,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             -- for one long thread; only threads with a usage-limit failure qualify.
             AND t.thread_id IN (
               SELECT failure.thread_id FROM orchestration_v2_projection_turn_items failure
+              -- Spelled as in 099_BackgroundRecoveryIndexes so the partial index serves it.
               WHERE failure.type = 'error' AND failure.status = 'failed'
-                AND json_extract(failure.payload_json, '$.failure.class') = 'usage_limit'
+                AND CASE WHEN json_valid(failure.payload_json) THEN
+                  json_extract(failure.payload_json, '$.failure.class') = 'usage_limit'
+                  ELSE 0 END
             )
             AND t.archived_at IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
+            AND json_valid(item.payload_json)
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
             AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
             AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
@@ -6675,6 +6719,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         return { ...controls, ...records, providerTurns };
       },
       (effect, threadId, _runId, _nodeId) =>
+        sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
+    );
+
+    const getRunCardRecords: ProjectionStoreV2Shape["getRunCardRecords"] = Effect.fn(
+      "ProjectionStore.getRunCardRecords",
+    )(
+      function* (threadId, runId, nodeId, cardType) {
+        const records = yield* getRunProviderRecords(threadId, runId, nodeId);
+        const { turnItems } = yield* getThreadRecords(threadId, ["turnItems"], {
+          turnItemTypes: [cardType],
+        });
+        return { ...records, turnItems };
+      },
+      (effect, threadId) =>
         sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
     );
 
@@ -9488,6 +9546,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),
       hasRunInterruptRequest: readOnReader(hasRunInterruptRequest),
       getRunProviderRecords: readOnReader(getRunProviderRecords),
+      getRunCardRecords: readOnReader(getRunCardRecords),
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
       getTranscriptByteFloor: readOnReader(getTranscriptByteFloor),

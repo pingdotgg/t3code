@@ -1359,6 +1359,10 @@ const runClaudeWorker = Effect.fn("runClaudeWorker")(function* (input: {
         },
       },
     ),
+    // Complete session histories have no status-probe size limit; stderr stays bounded.
+    input.method === "getSessionMessages"
+      ? { maxStdoutBytes: Number.POSITIVE_INFINITY }
+      : undefined,
   ).pipe(Effect.timeout("30 seconds"));
   if (result.code !== 0) {
     return yield* new ClaudeAgentSdkQueryRunnerError({
@@ -10274,10 +10278,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           activeContext: ActiveClaudeTurnContext | null,
           toolUseId: string | undefined,
         ): Pick<OrchestrationV2PendingBackgroundTask, "command" | "itemId" | "sourceThreadId"> => {
+          // A background subagent keeps launching shells after the root turn settles.
           const launch =
-            toolUseId === undefined || activeContext === null
+            toolUseId === undefined
               ? undefined
-              : findToolCall(activeContext, toolUseId);
+              : (activeContext?.toolCalls.get(toolUseId) ?? subagentToolCalls.get(toolUseId));
           const command =
             launch?.classification.itemType === "command_execution" ||
             launch?.toolName === "Monitor"
