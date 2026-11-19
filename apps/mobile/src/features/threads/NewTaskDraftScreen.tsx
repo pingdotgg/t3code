@@ -748,10 +748,7 @@ export function NewTaskDraftScreen(props: {
     navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
   };
   const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
-    if (
-      isComposerInteractionLocked ||
-      (routeName === "NewTaskBranch" && isDraftInteractionLocked)
-    ) {
+    if (isComposerInteractionLocked) {
       return;
     }
     promptInputRef.current?.blur();
