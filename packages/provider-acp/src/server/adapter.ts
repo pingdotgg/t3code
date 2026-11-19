@@ -500,6 +500,7 @@ export interface AcpAdapterV2Flavor {
     event: AcpSessionRuntime.AcpSessionRuntimeEvent,
   ) => Effect.Effect<void>;
   readonly subagentsIdleOnTurnCompletion?: boolean;
+  readonly backgroundTasksIdleOnTurnCompletion?: boolean;
   readonly supportsCompaction?: boolean;
   /** Sends `/compact` as a prompt, only to sessions whose advertised commands include `compact`. */
   readonly compactViaAdvertisedCommand?: boolean;
@@ -570,6 +571,8 @@ export interface AcpAdapterV2Flavor {
     readonly status: "running" | "completed" | "failed";
     readonly appendOutput: string;
   }>;
+  /** When true, a background mutation notice terminalizes the tool immediately with its status instead of waiting for hydration. */
+  readonly backgroundNoticesAreTerminal?: boolean;
   readonly extractSubagentEndNotice?: (text: string) =>
     | {
         readonly childSessionId: string;
@@ -1689,13 +1692,21 @@ function acpPostSettleMonitorPromptShouldSuppress(
 
 export function acpCompletedTurnShouldTerminalizeTool(
   tool: AcpToolCallState & { readonly backgroundCommandTaskId?: string },
-  flavor: Pick<AcpAdapterV2Flavor, "extractBackgroundTaskId" | "extractSubagentUpdate">,
+  flavor: Pick<
+    AcpAdapterV2Flavor,
+    "extractBackgroundTaskId" | "extractSubagentUpdate" | "backgroundTasksIdleOnTurnCompletion"
+  >,
 ): boolean {
   const status = toolStatus(tool.status);
   if (status !== "pending" && status !== "running") return false;
   // Progress output replaces the start ACK, so the registered task id outlives it.
-  if (tool.backgroundCommandTaskId !== undefined) return false;
-  if (flavor.extractBackgroundTaskId?.(tool) !== undefined) return false;
+  if (
+    flavor.backgroundTasksIdleOnTurnCompletion !== true &&
+    (tool.backgroundCommandTaskId !== undefined ||
+      flavor.extractBackgroundTaskId?.(tool) !== undefined)
+  ) {
+    return false;
+  }
   return flavor.extractSubagentUpdate?.(tool) === undefined;
 }
 
@@ -4243,6 +4254,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             const target =
               targetToolCallId !== undefined ? owner.tools.get(targetToolCallId) : undefined;
+            if (
+              backgroundCompletion.status === "running" &&
+              (yield* Ref.get(endedBackgroundTaskIds)).has(backgroundCompletion.taskId)
+            ) {
+              continue;
+            }
             if (target !== undefined && target.toolCallId !== toolCall.toolCallId) {
               const nextStatus =
                 backgroundCompletion.status === "running"
@@ -5891,7 +5908,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         : mutation.status === "failed"
                           ? ("failed" as const)
                           : ("completed" as const);
-                    if (nextStatus !== "inProgress") {
+                    if (flavor.backgroundNoticesAreTerminal === true) {
+                      context.awaitingBackgroundHydration.delete(mutation.taskId);
+                    } else if (nextStatus !== "inProgress") {
                       yield* markAwaitingBackgroundHydration(context, mutation.taskId);
                       nextStatus = "inProgress";
                     }
@@ -8118,9 +8137,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
+          if (flavor.backgroundTasksIdleOnTurnCompletion === true) {
+            yield* Ref.set(runningBackgroundTaskIds, new Set());
+          }
           if (settledStatus === "completed") {
             yield* terminalizeOpenForegroundTools(context);
-          } else if (settledStatus === "interrupted") {
+          } else if (settledStatus === "interrupted" || settledStatus === "cancelled") {
             yield* terminalizeOpenRunOwnedItems(context, {
               terminalizeSubagents: directStopQuarantine,
             });

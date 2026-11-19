@@ -38,6 +38,8 @@ import { normalizeAntigravitySessionUpdate } from "../../provider/acp/Antigravit
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { acpCompletedTurnShouldTerminalizeTool } from "@t3tools/provider-acp/server/adapter";
+import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import {
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
@@ -135,6 +137,75 @@ describe("AntigravityAdapterV2 flavor", () => {
       outcome: { outcome: "selected", optionId: "opt-dev" },
     });
   });
+
+  it("enables background task tracking and completion de-registration", () => {
+    assert.isTrue(flavor.backgroundTasksIdleOnTurnCompletion);
+    assert.isTrue(flavor.backgroundNoticesAreTerminal);
+    assert.isDefined(flavor.extractBackgroundTaskId);
+    assert.isDefined(flavor.extractBackgroundTaskCompletion);
+    assert.isDefined(flavor.extractBackgroundToolMutation);
+
+    const taskId = flavor.extractBackgroundTaskId?.({
+      toolCallId: "call-bg-1",
+      title: "run_command",
+      data: {
+        rawOutput:
+          "Tool is running as a background task with task id: 4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999",
+      },
+    });
+    assert.equal(taskId, "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999");
+
+    const completed = flavor.extractBackgroundTaskCompletion?.({
+      toolCallId: "call-kill-1",
+      title: "manage_task",
+      status: "completed",
+      data: {
+        rawInput: { Action: "kill", TaskId: "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999" },
+        rawOutput: 'Task "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999" cancelled.',
+      },
+    });
+    assert.deepEqual(completed, [
+      {
+        taskId: "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999",
+        status: "completed",
+        appendOutput: 'Task "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999" cancelled.',
+      },
+    ]);
+  });
+
+  it("terminalizes background task tools on turn completion when backgroundTasksIdleOnTurnCompletion is enabled", () => {
+    const bgTool = {
+      toolCallId: "bg-1",
+      title: "run_command",
+      status: "inProgress" as const,
+      data: {
+        rawOutput: "Tool is running as a background task with task id: task-1",
+      },
+    };
+    // Under Antigravity flavor (backgroundTasksIdleOnTurnCompletion: true), background tools terminalize on completed turn
+    assert.isTrue(acpCompletedTurnShouldTerminalizeTool(bgTool, flavor));
+
+    const updatedTool = {
+      ...bgTool,
+      backgroundCommandTaskId: "task-1",
+      data: { rawOutput: "progress output" },
+    };
+    assert.isTrue(acpCompletedTurnShouldTerminalizeTool(updatedTool, flavor));
+    assert.isFalse(
+      acpCompletedTurnShouldTerminalizeTool(updatedTool, {
+        ...flavor,
+        backgroundTasksIdleOnTurnCompletion: false,
+      }),
+    );
+
+    // Under a flavor where backgroundTasksIdleOnTurnCompletion is false/undefined, background tools are excluded
+    assert.isFalse(
+      acpCompletedTurnShouldTerminalizeTool(bgTool, {
+        ...flavor,
+        backgroundTasksIdleOnTurnCompletion: false,
+      }),
+    );
+  });
 });
 
 const layerSession = Layer.mergeAll(
@@ -145,6 +216,115 @@ const layerSession = Layer.mergeAll(
   TestProviderHost.layer().pipe(
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   ),
+);
+
+it.effect("keeps a failed background task terminal after a stale running status", () =>
+  Effect.gen(function* () {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+    const instanceId = ProviderInstanceId.make("antigravity-background-status-test");
+    const adapter = yield* makeAntigravityAdapterV2({
+      instanceId,
+      selfInvocation: yield* resolveSelfInvocation(),
+      makeRuntime: (input) =>
+        makeAntigravityAcpRuntime({
+          ...input,
+          childProcessSpawner,
+          spawn: {
+            command: process.execPath,
+            args: [mockAgentPath],
+            cwd: input.cwd,
+            env: { T3_ACP_ANTIGRAVITY: "1" },
+          },
+        }).pipe(
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+          Effect.map((runtime): RuntimeService => ({
+            ...runtime,
+            handleSessionUpdate: (handler) =>
+              Effect.sync(() => {
+                sessionUpdate = handler;
+              }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            prompt: () =>
+              Effect.gen(function* () {
+                if (sessionUpdate === undefined) return yield* Effect.die("missing update handler");
+                const send = sessionUpdate;
+                const update = (update: EffectAcpSchema.SessionUpdate) =>
+                  send({ sessionId: "mock-session-1", update });
+                yield* update({
+                  sessionUpdate: "tool_call",
+                  toolCallId: "background",
+                  title: "run_command",
+                  kind: "execute",
+                  status: "in_progress",
+                  rawOutput: "Tool is running as a background task with task id: task-1",
+                });
+                yield* update({
+                  sessionUpdate: "user_message_chunk",
+                  content: {
+                    type: "text",
+                    text: 'Task id "task-1" failed with result:\nThe command exited with code 1.',
+                  },
+                });
+                yield* update({
+                  sessionUpdate: "tool_call",
+                  toolCallId: "status",
+                  title: "manage_task",
+                  status: "completed",
+                  rawInput: { Action: "status", TaskId: "task-1" },
+                  rawOutput: "Task: task-1\nStatus: RUNNING",
+                });
+                return { stopReason: "end_turn" as const };
+              }),
+          })),
+        ),
+      withProcess: (_stop, task) => task,
+      defaultModel: Effect.undefined,
+    });
+    const threadId = ThreadId.make("thread-antigravity-background-status");
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId, model: "gemini-test-low" };
+    const session = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("session-background-status"),
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+    yield* session.startTurn(
+      makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        modelSelection,
+        now: yield* DateTime.now,
+      }),
+    );
+    const events = Array.from(
+      yield* session.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      ),
+    );
+    const statuses = events.flatMap((event) =>
+      event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "background"
+        ? [event.turnItem.status]
+        : [],
+    );
+    const failedIndex = statuses.indexOf("failed");
+    assert.isAtLeast(failedIndex, 0);
+    assert.isTrue(statuses.slice(failedIndex).every((status) => status === "failed"));
+  }).pipe(Effect.provide(layerSession)),
 );
 
 describe("AntigravityAdapterV2 compaction", () => {
