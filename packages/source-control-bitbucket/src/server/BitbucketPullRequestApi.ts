@@ -565,10 +565,13 @@ export const make = Effect.gen(function* () {
           ...(input.cursor?.seenAt ?? []).map((number) => `id != ${number}`),
         ];
         return listPage({
-          // Listings omit reviewers needed by `viewerReviewRequested`.
+          // Listings omit the reviewers behind `viewerReviewRequested` and the votes behind
+          // the review decision.
           url: `${path}/pullrequests?${stateParams(input.state)
             .map((state) => `state=${state}`)
-            .join("&")}&pagelen=${MAX_PAGE_SIZE}&sort=-updated_on&fields=%2Bvalues.reviewers${
+            .join(
+              "&",
+            )}&pagelen=${MAX_PAGE_SIZE}&sort=-updated_on&fields=%2Bvalues.reviewers,%2Bvalues.participants${
             predicates.length === 0 ? "" : `&q=${encodeURIComponent(predicates.join(" AND "))}`
           }`,
           limit: input.limit,
