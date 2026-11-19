@@ -28,7 +28,7 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 
@@ -375,6 +375,90 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
+);
+
+it.effect("keeps a held steer's failed settlement read apart from its decline", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:held-steer-settle");
+    const sessionId = ProviderSessionId.make("provider-session:held-steer-settle");
+    const providerTurnId = ProviderTurnId.make("provider-turn:held-steer-settle");
+    const attemptId = RunAttemptId.make("run-attempt:held-steer-settle");
+    const providerThread = {
+      id: ProviderThreadId.make("provider-thread:held-steer-settle"),
+      driver,
+      providerInstanceId,
+      providerSessionId: sessionId,
+    } as OrchestrationV2ProviderThread;
+    const projection = makeProjection({ now, threadId, providerThread, providerTurnId, attemptId });
+    const runtime = {
+      instanceId: providerInstanceId,
+      driver,
+      providerSessionId: sessionId,
+      steerTurn: (input: ProviderAdapter.ProviderAdapterV2SteerInput) =>
+        Effect.succeed({
+          delivered: Effect.fail(
+            new ProviderAdapter.ProviderAdapterSteerDeclinedError({
+              driver,
+              providerThreadId: input.providerThread.id,
+              providerTurnId: input.providerTurnId,
+            }),
+          ),
+        }),
+    } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+    const layerControl = ProviderTurnControlService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerProjectionStore(() =>
+            Effect.succeed({
+              providerThread,
+              providerTurn: projection.providerTurns[0],
+              attempt: projection.attempts[0],
+              message: {
+                id: MessageId.make("message:held-steer-settle"),
+                text: "Subagent finished.",
+                attachments: [],
+                createdBy: "agent",
+                creationSource: "mcp",
+              } as unknown as NonNullable<
+                ProjectionStore.ProjectionProviderControlContext["message"]
+              >,
+              run: {
+                id: RunId.make("run:held-steer-settle"),
+                status: "running",
+                activeAttemptId: attemptId,
+              } as OrchestrationV2Run,
+            }),
+          ),
+          layerSessions(sessionId, runtime),
+          // The decline waits for the turn to settle, and that read fails.
+          Layer.mock(EventSink.EventSinkV2)({
+            latestSequence: () => Effect.fail(new EventSink.EventSinkStreamError({ threadId })),
+          }),
+          Layer.mock(McpAppModelContext.McpAppModelContext)({
+            forThread: () => Effect.succeed([]),
+          }),
+        ),
+      ),
+    );
+
+    const failure = yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      const held = yield* control.steer({
+        threadId,
+        providerSessionId: sessionId,
+        providerThreadId: providerThread.id,
+        providerTurnId,
+        messageId: MessageId.make("message:held-steer-settle"),
+      });
+      assert.isDefined(held);
+      return yield* held!.delivered.pipe(Effect.flip);
+    }).pipe(Effect.provide(layerControl));
+
+    // Retryable: the worker settles again instead of treating it as the provider's answer.
+    assert.isTrue(failure.settlementUnavailable);
+    assert.isUndefined(failure.steerDeclined);
+  }),
 );
 
 it.effect("steers a running turn with the thread's MCP app model context", () =>

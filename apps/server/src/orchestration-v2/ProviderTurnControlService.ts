@@ -14,7 +14,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -45,6 +44,8 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
     steerDeclined: Schema.optional(Schema.Boolean),
     /** The provider never confirmed the stop; Force stop is the way out. */
     unresponsive: Schema.optional(Schema.Boolean),
+    /** A held steer's outcome is known, but reading its settled turn failed; reading again may work. */
+    settlementUnavailable: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -542,14 +543,13 @@ export const layer: Layer.Layer<
                       ? {}
                       : { attemptId: loaded.providerTurn.runAttemptId }),
                   }).pipe(
-                    // Only the provider's answer is final; a failed read is retried here.
-                    Effect.retry({ schedule: Schedule.exponential("1 second"), times: 4 }),
                     Effect.mapError(
                       (cause) =>
                         new ProviderTurnControlError({
                           threadId: input.threadId,
                           operation: "steer",
                           providerTurnId: input.providerTurnId,
+                          settlementUnavailable: true,
                           cause,
                         }),
                     ),

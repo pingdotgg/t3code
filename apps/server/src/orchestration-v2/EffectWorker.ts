@@ -341,10 +341,17 @@ export const layerExecutor: Layer.Layer<
                       // provider holds the steer; its delivery settles the message afterwards.
                       settleSteer(held.delivered).pipe(
                         // No outbox row retries this, so retry what was not the provider's answer.
+                        // Settling again rereads state; it never resends the steer.
                         Effect.retry({
-                          while: (error) => !isProviderTurnControlError(error.cause),
-                          schedule: Schedule.exponential("1 second"),
-                          times: 4,
+                          while: (error) =>
+                            !isProviderTurnControlError(error.cause) ||
+                            error.cause.settlementUnavailable === true,
+                          schedule: Schedule.exponential("1 second").pipe(
+                            Schedule.modifyDelay(({ duration }) =>
+                              Effect.succeed(Duration.min(duration, Duration.seconds(30))),
+                            ),
+                          ),
+                          times: 8,
                         }),
                         Effect.catchCause((cause) =>
                           Effect.logWarning(
