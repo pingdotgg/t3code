@@ -6,6 +6,8 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import { AsyncResult } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -21,7 +23,7 @@ function requireAttachmentWriteAccess<W extends { readonly environmentId: Enviro
         return AsyncResult.failure(
           Cause.fail(
             new EnvironmentAuthorizationError({
-              message: "This connection cannot change attachments.",
+              message: m(msg("This connection cannot change attachments.")),
               requiredScope: AuthOrchestrationOperateScope,
             }),
           ),

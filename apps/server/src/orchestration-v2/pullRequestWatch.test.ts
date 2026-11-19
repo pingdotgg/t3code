@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
+  pullRequestWatchEndMessage,
   pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
@@ -187,6 +188,51 @@ describe("evaluatePullRequestWatch", () => {
       { kind: "conflicting" },
       { kind: "needs-rebase" },
     ]);
+  });
+
+  it("reports failures on the first read only when CI was pending at the start", () => {
+    const red = detail({ checks: [check("lint", "failure"), check("test", "pending")] });
+    const pending = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      red,
+      noRemarks,
+    );
+    assert.deepEqual(pending.changes, [
+      { kind: "checks-failed", failed: [check("lint", "failure")] },
+    ]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        pending.next,
+        detail({ checks: [check("lint", "failure"), check("test", "success")] }),
+        noRemarks,
+      ).changes,
+      [],
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        watch({ awaitingBaseline: "all", checksPending: false }),
+        red,
+        noRemarks,
+      ).changes,
+      [],
+    );
+
+    // A read the host could not finish keeps the baseline and must keep the seed with it.
+    const placeholder = { ...check("Workflow approval status", "pending"), placeholder: true };
+    const incomplete = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      detail({ checks: [check("lint", "success"), placeholder] }),
+      noRemarks,
+    );
+    assert.deepEqual(incomplete.changes, []);
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        incomplete.next,
+        detail({ checks: [check("lint", "success"), check("gated", "failure")] }),
+        noRemarks,
+      ).changes,
+      [{ kind: "checks-failed", failed: [check("gated", "failure")] }],
+    );
   });
 
   it("baselines checks already awaiting approval", () => {
@@ -1006,5 +1052,44 @@ describe("evaluatePullRequestWatch", () => {
       ).next.checksPending;
     assert.isFalse(unanswered(null));
     assert.isTrue(unanswered(STARTED));
+  });
+});
+
+describe("pullRequestWatchEndMessage", () => {
+  const url = "https://git.cafe/pingdotgg/t3code/pull/7";
+  const end = (overrides: Partial<Parameters<typeof pullRequestWatchEndMessage>[0]["detail"]>) =>
+    pullRequestWatchEndMessage({
+      number: 7,
+      url,
+      detail: { state: "merged", baseBranch: "main", ...overrides },
+    });
+  const mergeCommitSha = "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9";
+
+  it("says how the pull request ended, with the merge commit and merger the host reports", () => {
+    const merged = end({
+      mergeCommitSha,
+      mergedBy: { login: "juliusmarminge", name: null, avatarUrl: null },
+    });
+    assert.equal(
+      merged.text,
+      `Pull request #7 (${url}) was merged into main by juliusmarminge as 3b2f958, so T3 Code stopped watching it.`,
+    );
+    assert.deepEqual(merged.notification, {
+      source: { kind: "monitor" },
+      outcome: "completed",
+      summary: "#7: merged, stopped watching",
+    });
+    // GitCafe reports a merge made on GitHub without who made it.
+    assert.equal(
+      end({ mergeCommitSha }).text,
+      `Pull request #7 (${url}) was merged into main as 3b2f958, so T3 Code stopped watching it.`,
+    );
+
+    const closed = end({ state: "closed" });
+    assert.equal(
+      closed.text,
+      `Pull request #7 (${url}) was closed without merging, so T3 Code stopped watching it. If it is reopened, call watch_pull_request to watch it again.`,
+    );
+    assert.equal(closed.notification.summary, "#7: closed, stopped watching");
   });
 });
