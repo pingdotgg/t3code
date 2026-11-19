@@ -367,7 +367,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       expect(h.releases).toEqual([h.first.version]);
       expect(h.launches.filter((launch) => launch.harnessPath !== undefined)).toHaveLength(1);
       expect((yield* fs.readDirectory(root)).length).toBe(1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.skipIf(windowsHost)(

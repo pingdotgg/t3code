@@ -348,7 +348,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect((yield* installation.resolve()).version).toBe("fixture-new");
       expect(validators).toHaveLength(1);
       for (const handle of validators) expect(yield* handle.isRunning).toBe(false);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([...new Set(["win32", hostPlatform])] as NodeJS.Platform[])(

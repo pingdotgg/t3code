@@ -36,7 +36,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityRunti
         Effect.provideService(HostProcess.ExecutablePath, path.join(root, "t3-server")),
         Effect.provideService(HostProcess.Environment, { PATH: "" }),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("preserves the provider environment when spawning cleanup", () =>
@@ -74,7 +74,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityRunti
       );
       yield* cleanup.drain;
       expect(yield* fs.exists(pending)).toBe(false);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps starting runs while cleanup stalls and preserves live siblings", () =>
@@ -119,7 +119,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityRunti
       yield* Scope.close(liveScope, Exit.void);
       yield* cleanup.drain;
       expect(yield* fs.readDirectory(directory)).toEqual([]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("retries failed cleanup without dropping pending directories", () =>
@@ -157,7 +157,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityRunti
       yield* TestClock.adjust("1 minute");
       yield* Queue.take(finished);
       expect(yield* fs.readDirectory(path.dirname(pending))).toEqual([]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("interrupts stalled cleanup on shutdown and recovers the directory on restart", () =>
@@ -200,6 +200,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityRunti
       const second = yield* AntigravityRuntimeTemp.make(directory);
       yield* second.drain;
       expect(yield* fs.readDirectory(directory)).toEqual([]);
-    }).pipe(Effect.scoped),
+    }),
   );
 });
