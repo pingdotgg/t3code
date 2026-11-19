@@ -6526,7 +6526,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...providerThread,
         providerInstanceId: input.modelSelection.instanceId,
         providerSessionId: nextProviderSessionId,
-        status: providerThread.status === "error" ? "error" : "not_loaded",
+        status: "not_loaded",
         updatedAt: now,
       };
       restartSessionTransition = {

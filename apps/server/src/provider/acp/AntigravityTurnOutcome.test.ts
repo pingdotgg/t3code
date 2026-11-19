@@ -40,6 +40,13 @@ const MISSING_SIGNATURE_ERROR = errorPayload(
 const INVALID_SIGNATURE_ERROR = errorPayload(
   'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.3.content.0: Invalid `signature` in `thinking` block"}}, Status: INVALID_ARGUMENT, Details: []',
 );
+// Context summarization replays a stored failed checkpoint step on every later prompt.
+const FAILED_CHECKPOINT_ERROR = errorPayload(
+  'context summarization: checkpoint step 841 failed: error executing cascade step: CORTEX_STEP_TYPE_CHECKPOINT: doRequest: error sending request: auth: "invalid_grant" "reauth related error (invalid_rapt)"',
+);
+const FAILED_CHECKPOINT_QUOTA_ERROR = errorPayload(
+  "context summarization: checkpoint step 841 failed: Error 429, Message: Quota exhausted for test model., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:googleapis.com metadata:map[quotaResetDelay:3600s] reason:QUOTA_EXHAUSTED]]",
+);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -148,6 +155,29 @@ describe("watchAntigravityPromptOutcome", () => {
         assert.equal(outcome?.failure.code, "INVALID_THINKING_SIGNATURE");
         assert.equal(outcome?.threadDisposition, "broken");
       }
+      const checkpoint = yield* turn([
+        [USER_INPUT, input],
+        [ERROR_MESSAGE, FAILED_CHECKPOINT_ERROR],
+      ]);
+      assert.equal(checkpoint?.failure.code, "CHECKPOINT_FAILED");
+      assert.equal(checkpoint?.threadDisposition, "broken");
+      // A checkpoint that failed on quota keeps the reset time usage-limit recovery waits for.
+      assert.deepEqual(
+        yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, FAILED_CHECKPOINT_QUOTA_ERROR],
+        ]),
+        {
+          failure: {
+            class: "usage_limit",
+            message: "You have reached your Antigravity quota for this period.",
+            code: "RESOURCE_EXHAUSTED",
+            retryable: true,
+            resetAt: "1970-01-01T01:00:00.000Z",
+          },
+          threadDisposition: "broken",
+        },
+      );
       // A completed tool keeps its usage, and the turn still fails.
       assert.equal(
         (yield* turn(
