@@ -3,6 +3,7 @@ import {
   downloadEnvironmentSpeechModel,
   getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
+  getSpeechModelDownloadOutcome,
   selectEnvironmentSpeechModel,
   voiceInputBlocksSubmission,
   type VoiceInputState,
@@ -14,15 +15,18 @@ import type {
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
   ProjectId,
+  SpeechBenchmarkTier,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { chooseSetupSpeechModel } from "@t3tools/shared/speech";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import { msg, useGT } from "gt-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { toastManager } from "../components/ui/toast";
+import { m } from "../i18n/messages";
 import {
   useClientSettings,
   useClientSettingsHydrated,
@@ -114,6 +118,7 @@ type HookInput = {
  * the recording is abandoned the moment that choice changes or its connection drops.
  */
 export function useVoiceTranscriptionDestination() {
+  const gt = useGT();
   const hydrated = useClientSettingsHydrated();
   const choice = useAudioChoice();
   const grant = choice === "off" ? null : choice;
@@ -136,7 +141,10 @@ export function useVoiceTranscriptionDestination() {
     grantId: grant?.id ?? null,
     label:
       provider && environment
-        ? `${CLOUD_SPEECH_LABELS[provider]} via ${environment.label}`
+        ? gt("{provider} via {environment}", {
+            provider: CLOUD_SPEECH_LABELS[provider],
+            environment: environment.label,
+          })
         : (environment?.label ?? null),
     prepared: supported && canDictate ? connection : null,
   };
@@ -253,7 +261,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         .then((result) => {
           if (disposed) return;
           const model = result.models.find((candidate) => candidate.id === setupModelId) ?? null;
-          if (model) setSetup((current) => ({ ...current, model }));
+          if (model)
+            setSetup((current) => ({
+              ...current,
+              model: { ...model, recommended: current.model?.recommended ?? false },
+            }));
         })
         .catch(() => undefined)
         .finally(() => {
@@ -347,27 +359,37 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       session.adopt(createTarget());
   }, [session, input.ownerKey, createTarget]);
   const loadSetupCatalog = useStableCallback(
-    async (connection: PreparedConnection, selectedModelId: string, request: number) => {
+    async (
+      connection: PreparedConnection,
+      selectedModelId: string,
+      benchmarkTier: SpeechBenchmarkTier,
+      request: number,
+    ) => {
       setSetup({ ...INITIAL_SETUP, open: true });
-      const catalog = await runEnvironmentSpeech(getEnvironmentSpeechModels(connection)).catch(
-        () => null,
-      );
+      const catalog = await runEnvironmentSpeech(
+        getEnvironmentSpeechModels(connection, true),
+      ).catch(() => null);
       if (request !== startRequestRef.current) return;
       const choice = chooseSetupSpeechModel(catalog?.models ?? [], {
         selectedModelId,
         intent: latestRef.current.clientSettings.speechLanguage,
         preferred: preferredSpeechLanguages(),
+        benchmarkTier,
       });
       setSetup((current) => ({
         ...current,
-        model: choice?.model ?? null,
+        model: choice ? { ...choice.model, recommended: choice.recommended } : null,
         language: choice?.language ?? null,
         catalogFailed: catalog === null,
         error: choice
           ? null
           : catalog
-            ? "No model matches your language. Choose a model or change the language in Voice settings."
-            : "Could not load transcription models. Check the connection and try again.",
+            ? m(
+                msg(
+                  "No model matches your language. Choose a model or change the language in Voice settings.",
+                ),
+              )
+            : m(msg("Could not load transcription models. Check the connection and try again.")),
       }));
     },
   );
@@ -401,7 +423,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       setQueuedStart(null);
       toastManager.add({
         type: "error",
-        title: "Could not start voice input",
+        title: m(msg("Could not start voice input")),
         description: error instanceof Error ? error.message : String(error),
       });
       return;
@@ -410,12 +432,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setStatus({ prepared, value: latestStatus });
     setQueuedStart(null);
     if (latestStatus.supported && latestStatus.state === "missing-model") {
-      return loadSetupCatalog(prepared, latestStatus.modelId, request);
+      return loadSetupCatalog(prepared, latestStatus.modelId, latestStatus.benchmarkTier, request);
     }
     if (!latestStatus.supported) {
       toastManager.add({
         type: "error",
-        title: "Voice input is not available",
+        title: m(msg("Voice input is not available")),
         description: latestStatus.reason,
       });
       return;
@@ -429,13 +451,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const request = ++startRequestRef.current;
     setSetup((current) => ({ ...current, downloading: true, error: null }));
     try {
-      const { models } = await runEnvironmentSpeech(
+      const downloaded = await runEnvironmentSpeech(
         downloadEnvironmentSpeechModel(prepared, modelId),
       );
       if (request !== startRequestRef.current) return;
-      // A download cancelled from elsewhere still resolves, so select the model only once it landed.
-      const installed = models.some(({ id, state }) => id === modelId && state === "installed");
-      if (installed && modelId !== currentStatus.modelId) {
+      const outcome = getSpeechModelDownloadOutcome(downloaded, modelId);
+      if (outcome === "needs-selection") {
         try {
           await runEnvironmentSpeech(selectEnvironmentSpeechModel(prepared, modelId));
         } catch {
@@ -443,7 +464,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           setSetup((current) => ({
             ...current,
             downloading: false,
-            error: "The model downloaded, but this environment could not select it. Try again.",
+            error: m(
+              msg("The model downloaded, but this environment could not select it. Try again."),
+            ),
           }));
           return;
         }
@@ -453,19 +476,24 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       if (request !== startRequestRef.current) return;
       setStatus({ prepared, value: next });
       const ready =
-        installed && next.supported && next.modelId === modelId && next.state !== "missing-model";
+        outcome !== "incomplete" &&
+        next.supported &&
+        next.modelId === modelId &&
+        next.state !== "missing-model";
       setSetup((current) => ({
         ...current,
         downloading: false,
         step: ready ? 1 : current.step,
-        error: ready ? null : "The model is not ready. Try downloading it again.",
+        error: ready ? null : m(msg("The model is not ready. Try downloading it again.")),
       }));
     } catch {
       if (request !== startRequestRef.current) return;
       setSetup((current) => ({
         ...current,
         downloading: false,
-        error: "Could not download the model. Check this environment's connection and try again.",
+        error: m(
+          msg("Could not download the model. Check this environment's connection and try again."),
+        ),
       }));
     }
   });
@@ -505,7 +533,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       setOpen: (open: boolean) => setSetup((current) => ({ ...current, open })),
       retryCatalog:
         setup.open && setup.catalogFailed && prepared && currentStatus?.supported
-          ? () => loadSetupCatalog(prepared, currentStatus.modelId, ++startRequestRef.current)
+          ? () =>
+              loadSetupCatalog(
+                prepared,
+                currentStatus.modelId,
+                currentStatus.benchmarkTier,
+                ++startRequestRef.current,
+              )
           : null,
       download: downloadSetupModel,
       cancelDownload: cancelSetupDownload,

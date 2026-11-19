@@ -73,7 +73,7 @@ export class GitHubAppSessionError extends Schema.TaggedError<GitHubAppSessionEr
   { host: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `Could not refresh the ${GitHubClient.APP_SIGN_IN.appName} sign-in for ${this.host}. Check the server's connection to GitHub, or sign in again in Settings → Source Control.`;
+    return `Could not refresh the ${GitHubClient.APP_SIGN_IN.appName} sign-in for ${this.host}. Check the server's connection to GitHub, or sign in again in Settings → Source control & issues.`;
   }
 }
 

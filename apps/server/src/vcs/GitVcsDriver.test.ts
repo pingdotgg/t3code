@@ -744,6 +744,48 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+// Root reads mode-000 files, so the permission failure only exists for other users.
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+  "checkpoint capture keeps the indexed version of files it cannot read",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-unreadable-",
+      });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* fileSystem.writeFileString(path.join(cwd, "locked.txt"), "committed\n");
+      yield* git(["add", "locked.txt"]);
+      yield* git(["commit", "-m", "locked"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "locked.txt"), "changed\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "secret.txt"), "untracked\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new\n");
+      yield* Effect.acquireRelease(
+        Effect.all([
+          fileSystem.chmod(path.join(cwd, "locked.txt"), 0),
+          fileSystem.chmod(path.join(cwd, "secret.txt"), 0),
+        ]),
+        () =>
+          Effect.all([
+            fileSystem.chmod(path.join(cwd, "locked.txt"), 0o644),
+            fileSystem.chmod(path.join(cwd, "secret.txt"), 0o644),
+          ]).pipe(Effect.orDie),
+      );
+
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:untracked.txt`])).stdout, "new\n");
+      assert.strictEqual(
+        (yield* git(["show", `${checkpointRef}:locked.txt`])).stdout,
+        "committed\n",
+      );
+      assert.strictEqual((yield* git(["ls-tree", checkpointRef, "--", "secret.txt"])).stdout, "");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect.skipIf(!symlinksSupported)(
   "checkpoint capture writes its index into the real git dir when cwd is a symlinked subdirectory",
   () =>
@@ -1382,6 +1424,83 @@ it.effect.each([1_700_000_000, 1_700_000_000.9999])(
       assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "after!\n");
       assert.deepEqual(yield* fileSystem.readFile(indexPath), originalIndex);
       assert.deepEqual((yield* fileSystem.stat(indexPath)).mtime, originalIndexMtime);
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.each(["local", "mixed", "exit"] as const)(
+  "checkpoint authorship uses local evidence or full fallback ($0)",
+  (mode) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-authorship-" });
+      const { git } = yield* makeCheckpointFixture(driver, cwd);
+      yield* git(["commit", "-am", "baseline"]);
+      const fromCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/authorship/from");
+      const toCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/authorship/to");
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: fromCheckpointRef });
+      if (mode === "mixed") {
+        yield* fs.writeFileString(path.join(cwd, "imported.txt"), "upstream\n");
+        yield* git(["add", "."]);
+        const tree = (yield* git(["write-tree"])).stdout.trim();
+        const imported = (yield* git([
+          "commit-tree",
+          tree,
+          "-p",
+          "HEAD",
+          "-m",
+          "upstream",
+        ])).stdout.trim();
+        yield* git([
+          "update-ref",
+          "--create-reflog",
+          "-m",
+          "fetch origin: fast-forward",
+          "refs/remotes/origin/main",
+          imported,
+        ]);
+        yield* git(["reset", "--hard", imported]);
+      }
+      yield* fs.writeFileString(path.join(cwd, "local.txt"), "local\n");
+      yield* git(["add", "."]);
+      yield* git(["commit", "-m", "local"]);
+      yield* driver.checkpoints.captureCheckpoint({
+        cwd,
+        checkpointRef: toCheckpointRef,
+        previousCheckpointRef: fromCheckpointRef,
+      });
+
+      const reflogScopes: string[] = [];
+      const queryDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) => {
+            if (!input.args.includes("--walk-reflogs")) return liveProcess.run(input);
+            const scope = input.args.includes("--all") ? "--all" : "HEAD";
+            reflogScopes.push(scope);
+            if (scope === "--all" || mode !== "exit") return liveProcess.run(input);
+            return Effect.fail(
+              new VcsProcessExitError({
+                operation: input.operation,
+                command: input.command,
+                cwd: input.cwd,
+                exitCode: 1,
+                detail: "HEAD reflog unavailable.",
+              }),
+            );
+          },
+        }),
+      );
+      assert.deepEqual(
+        yield* queryDriver.checkpoints.listAuthoredPaths({
+          cwd,
+          fromCheckpointRef,
+          toCheckpointRef,
+        }),
+        new Set(["local.txt"]),
+      );
+      assert.deepEqual(reflogScopes, mode === "local" ? ["HEAD"] : ["HEAD", "--all"]);
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 

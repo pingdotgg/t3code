@@ -30,6 +30,13 @@ describe("themeCssValueFetches", () => {
 });
 
 describe("themeCssLoadsRemoteFiles", () => {
+  it.each([
+    ['[data-chat-header]::after { content: "@import"; }', false],
+    ['@import "x.css";', true],
+  ])("%s", (css, loads) => {
+    expect(themeCssLoadsRemoteFiles(css)).toBe(loads);
+  });
+
   it("allows a url() inside a data: address", () => {
     expect(
       themeCssLoadsRemoteFiles(`.repro { background-image: url('${SVG_WITH_OWN_GRADIENT}'); }`),

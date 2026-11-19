@@ -652,6 +652,19 @@ const OWNED_RECOVERY_RETRY = {
   schedule: OWNED_RECONNECT_SCHEDULE,
   while: (error: unknown) => !isPermanentRecoveryError(error),
 };
+// Retries an owned server's request until it answers or the process exits.
+const whileAlive = <A, E, R>(
+  processExit: Effect.Effect<unknown> | undefined,
+  effect: Effect.Effect<A, E, R>,
+) =>
+  processExit === undefined
+    ? effect
+    : effect.pipe(
+        Effect.retry(OWNED_RECOVERY_RETRY),
+        Effect.raceFirst(
+          processExit.pipe(Effect.andThen(Effect.fail(new OpenCode2ServerExitedError()))),
+        ),
+      );
 class OpenCode2ServerExitedError extends Schema.TaggedError<OpenCode2ServerExitedError>()(
   "OpenCode2ServerExitedError",
   {},
@@ -1052,9 +1065,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         input: { sessionID: state.sessionId },
       });
       const goal = yield* decodeGoal(result.output);
-      yield* lock.withPermit(
+      return yield* lock.withPermit(
         Effect.gen(function* () {
-          if (state.goalRevision === revision) yield* updateGoal(state, goal);
+          if (state.goalRevision !== revision) return false;
+          yield* updateGoal(state, goal);
+          return true;
         }),
       );
     });
@@ -1497,6 +1512,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ...(summary === undefined || summary.length === 0 ? {} : { summary }),
         },
       });
+      // The pre-compaction step would otherwise settle the turn as its newest usage.
+      if (status === "completed") turn.lastStep = undefined;
+      if (status === "completed" && state.providerThread.contextUsage !== null) {
+        state.providerThread = {
+          ...state.providerThread,
+          contextUsage: null,
+          updatedAt,
+        };
+        yield* emitProviderThread(state);
+      }
       if (status !== "running") turn.compaction = undefined;
     });
 
@@ -3182,6 +3207,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ) {
       if (end.status === "completed" && (turn.steers.size > 0 || goalHoldsTurn(state))) {
         turn.heldEnd = end;
+        // OpenCode can pause a goal without telling this server, such as another process's
+        // restart sweep, so confirm the goal is still active before waiting on it.
+        if (goalHoldsTurn(state) && !state.goalRefreshing) yield* refreshGoal(state);
         return;
       }
       yield* finishTurn(state, end);
@@ -3191,6 +3219,33 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn.heldEnd !== undefined && turn.steers.size === 0 && !goalHoldsTurn(state)
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
+
+    // Holds a goal turn until OpenCode's goal is read again; a failed read releases it.
+    const refreshGoal = Effect.fnUntraced(function* (state: ThreadState) {
+      state.goalFresh = false;
+      state.goalRefreshing = true;
+      state.goalRevision += 1;
+      const revision = state.goalRevision;
+      yield* Effect.forkIn(
+        readGoal(state).pipe(
+          Effect.timeout(INVENTORY_TIMEOUT),
+          Effect.catch(() =>
+            Effect.logWarning("Could not refresh OpenCode goal state.").pipe(Effect.as(false)),
+          ),
+          Effect.flatMap((applied) =>
+            lock.withPermit(
+              Effect.gen(function* () {
+                if (state.goalRevision === revision) state.goalRefreshing = false;
+                // A newer goal event or a reconnect's read owns settlement now.
+                else if (!applied) return;
+                if (state.active !== undefined) yield* endIfSettled(state, state.active);
+              }),
+            ),
+          ),
+        ),
+        sessionScope,
+      );
+    });
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
       if (event.type === "shell.created") {
@@ -3353,33 +3408,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (!supportsNativeGoals()) return;
         const goal = yield* decodeGoal(event.data["goal"]).pipe(Effect.result);
         if (goal._tag === "Failure") {
-          state.goalFresh = false;
-          state.goalRefreshing = true;
-          state.goalRevision += 1;
-          const revision = state.goalRevision;
           yield* Effect.logWarning(
             "Could not decode an OpenCode goal update; refreshing its state.",
           );
-          yield* Effect.forkIn(
-            readGoal(state).pipe(
-              Effect.timeout(INVENTORY_TIMEOUT),
-              Effect.catch(() =>
-                Effect.logWarning(
-                  "Could not refresh OpenCode goal state after an unreadable update.",
-                ),
-              ),
-              Effect.ensuring(
-                lock.withPermit(
-                  Effect.gen(function* () {
-                    if (state.goalRevision === revision) state.goalRefreshing = false;
-                    if (state.active !== undefined) yield* endIfSettled(state, state.active);
-                  }),
-                ),
-              ),
-            ),
-            sessionScope,
-          );
-          return;
+          return yield* refreshGoal(state);
         }
         yield* updateGoal(state, goal.success);
         if (state.active !== undefined) yield* endIfSettled(state, state.active);
@@ -3758,7 +3790,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const scope = yield* Scope.make();
       const { next, stream } = yield* Effect.gen(function* () {
         const next = yield* borrow.pipe(Effect.provideService(Scope.Scope, scope));
-        return { next, stream: yield* next.events.pipe(Effect.provideService(Scope.Scope, scope)) };
+        const events = next.events.pipe(Effect.provideService(Scope.Scope, scope));
+        return { next, stream: yield* whileAlive(next.processExit, events) };
       }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
       const previous = currentScope;
       connection = next;
@@ -3794,15 +3827,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       // An owned process's exit, rather than a read deadline, bounds recovery; the bounded retry
       // below then borrows a restarted server. HTTP waits stay outside the event lock so Stop can still settle.
-      const exited = next.processExit;
-      yield* exited === undefined
+      yield* next.processExit === undefined
         ? reconcile().pipe(Effect.timeout(RECONCILE_TIMEOUT))
-        : reconcile().pipe(
-            Effect.retry(OWNED_RECOVERY_RETRY),
-            Effect.raceFirst(
-              exited.pipe(Effect.andThen(Effect.fail(new OpenCode2ServerExitedError()))),
-            ),
-          );
+        : whileAlive(next.processExit, reconcile());
       return stream;
     }).pipe(
       // Borrows and process exits stay bounded; only a live owned process is waited on above.
