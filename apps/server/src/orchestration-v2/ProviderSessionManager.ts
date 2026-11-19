@@ -23,6 +23,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -2774,11 +2775,13 @@ export const layerWithOptions = (
         };
       };
 
-      const startEventPump = (entry: LiveSessionEntry) => {
+      const startEventPump = (entry: LiveSessionEntry, sessionClosed: Deferred.Deferred<void>) => {
         let stoppedByProvider = false;
         let lastSessionStatus = entry.runtime.providerSession.status;
         const retryStalls = makeRetryStallWatch(entry);
         return entry.runtime.events.pipe(
+          // Several adapters never end their event stream, and a parked pump retains the whole session.
+          Stream.interruptWhen(Deferred.await(sessionClosed)),
           Stream.runForEach((nativeEvent) => {
             if (shutdownSignal.received) return Effect.void;
             // Live output bypasses persistence and subscribers so floods cannot delay domain events.
@@ -3043,6 +3046,9 @@ export const layerWithOptions = (
                 }
               });
               const sessionScope = yield* Scope.fork(sessionScopes);
+              // Added before the adapter's finalizers so it runs after them: the pump drains shutdown events first.
+              const sessionClosed = yield* Deferred.make<void>();
+              yield* Scope.addFinalizer(sessionScope, Deferred.done(sessionClosed, Exit.void));
               yield* agentScope.clear(input.threadId);
               const runtime = yield* installationGate
                 .execute(
@@ -3157,7 +3163,7 @@ export const layerWithOptions = (
                   ).pipe(logReleaseFailure(input.providerSessionId)),
                 ),
               );
-              yield* startEventPump(entry);
+              yield* startEventPump(entry, sessionClosed);
               yield* scheduleIdleRelease(input.providerSessionId);
               return exposedRuntime;
             }),
