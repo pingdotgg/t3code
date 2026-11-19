@@ -3,6 +3,7 @@ import * as NodeSqlite from "node:sqlite";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
   MessageId,
   EventId,
   NodeId,
@@ -3293,7 +3294,9 @@ it.effect.each([
   "changed-run",
   "stopped",
   "active-task",
+  "active-remote-task",
   "pending-delivery",
+  "acknowledged-delivery",
   "new-message",
   "watch",
   "background",
@@ -3366,8 +3369,14 @@ it.effect.each([
         },
       });
     }
-    if (scenario === "active-task" || scenario === "pending-delivery") {
-      const active = scenario === "active-task";
+    if (
+      scenario === "active-task" ||
+      scenario === "active-remote-task" ||
+      scenario === "pending-delivery" ||
+      scenario === "acknowledged-delivery"
+    ) {
+      const active = scenario === "active-task" || scenario === "active-remote-task";
+      const remote = scenario === "active-remote-task";
       const taskId = NodeId.make(`continuation:${scenario}:task`);
       yield* projections.apply({
         id: EventId.make(`continuation:${scenario}`),
@@ -3387,13 +3396,27 @@ it.effect.each([
           driver: ProviderDriverKind.make("codex"),
           providerInstanceId: instanceId,
           providerThreadId: null,
-          childThreadId: ThreadId.make(`continuation:${scenario}:child`),
+          childThreadId: remote ? null : ThreadId.make(`continuation:${scenario}:child`),
+          ...(remote
+            ? {
+                remoteChild: {
+                  environmentId: EnvironmentId.make(`continuation:${scenario}:environment`),
+                  threadId: ThreadId.make(`continuation:${scenario}:remote-child`),
+                  label: "remote",
+                },
+              }
+            : {}),
           nativeTaskRef: null,
           prompt: "Continue delegated work",
           title: null,
           model: null,
           status: active ? "running" : "completed",
-          completionDelivery: active ? undefined : { state: "pending", observedByRunId: null },
+          completionDelivery: active
+            ? undefined
+            : {
+                state: scenario === "acknowledged-delivery" ? "acknowledged" : "pending",
+                observedByRunId: null,
+              },
           result: active ? null : "done",
           startedAt: now,
           completedAt: active ? null : now,
@@ -3492,7 +3515,7 @@ it.effect.each([
         Effect.result,
       );
     const finalSource = yield* projections.getThreadProjection(sourceThreadId);
-    if (scenario !== "success") {
+    if (scenario !== "success" && scenario !== "acknowledged-delivery") {
       assert.isTrue(Result.isFailure(result));
       assert.notEqual(finalSource.thread.settledOverride, "settled");
       assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
