@@ -842,6 +842,19 @@ function makeToolCallState(
       ? title
       : undefined;
   const data: Record<string, unknown> = { toolCallId };
+  // ACP v2 clears a field set to null; mergeToolCallState consumes these markers.
+  const clearable = {
+    name: input.name,
+    title: input.title,
+    kind: input.kind,
+    status: input.status,
+    content: input.content,
+    rawInput: input.rawInput,
+    meta: input._meta,
+  };
+  for (const [key, value] of Object.entries(clearable)) {
+    if (value === null) data[key] = null;
+  }
   if (input.name != null) data.name = input.name;
   if (kind) {
     data.kind = kind;
@@ -929,9 +942,9 @@ export function mergeToolCallState(
   next: AcpToolCallState,
 ): AcpToolCallState {
   const nextKind = next.kind ?? (typeof next.data.kind === "string" ? next.data.kind : undefined);
-  const kind = nextKind ?? previous?.kind;
-  const title = next.title ?? previous?.title;
-  const status = next.status ?? previous?.status;
+  const kind = next.data.kind === null ? nextKind : (nextKind ?? previous?.kind);
+  const title = next.data.title === null ? next.title : (next.title ?? previous?.title);
+  const status = next.data.status === null ? next.status : (next.status ?? previous?.status);
   const command = next.command ?? previous?.command;
   const detail = next.detail ?? previous?.detail;
   const data = mergeToolActivityData(previous?.data, next.data) ?? next.data;
@@ -1075,11 +1088,14 @@ const T3_MCP_TITLE_SUFFIX_CALL =
   /^(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*?)(?: \(t3[-_ ]?code MCP Server\)(?::|$)|[-_.]t3[-_ ]?code$)/i;
 
 /**
- * glm and Kimi use bare names; Antigravity uses "Running <tool>". Kimi appends
- * streamed JSON arguments. Require a name or JSON opening brace so built-ins
- * titled "<tool>: <description>" cannot impersonate an inventory entry.
+ * glm and Kimi use bare names. Kimi appends streamed JSON arguments. Require a
+ * name or JSON opening brace so built-ins titled "<tool>: <description>" cannot
+ * impersonate an inventory entry.
  */
-const T3_MCP_BARE_TITLE_CALL = /^(?:Running )?(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
+const T3_MCP_BARE_TITLE_CALL = /^(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
+
+// Antigravity titles calls "Running <tool>" or, from agy 1.5.8, "Run mcp_<server>_<tool>"; prompts end in "?".
+const ANTIGRAVITY_TOOL_TITLE = /^Run(?:ning)? (?<name>[^\s?]+)\??$/;
 
 /** ACP lacks typed MCP calls; recognize provider metadata and terminal fallback commands. */
 export function extractMcpToolCallIdentity(
@@ -1172,10 +1188,11 @@ export function extractMcpToolCallIdentity(
     }
     if (qualified?.[1] && qualified[2] && !/^t3[-_ ]?code$/i.test(qualified[1]))
       return { server: qualified[1], tool: qualified[2] };
+    const name = ANTIGRAVITY_TOOL_TITLE.exec(trimmed)?.groups?.name ?? trimmed;
     const match =
-      T3_MCP_TITLE_CALL.exec(trimmed) ??
-      T3_MCP_TITLE_SUFFIX_CALL.exec(trimmed) ??
-      T3_MCP_BARE_TITLE_CALL.exec(trimmed);
+      T3_MCP_TITLE_CALL.exec(name) ??
+      T3_MCP_TITLE_SUFFIX_CALL.exec(name) ??
+      T3_MCP_BARE_TITLE_CALL.exec(name);
     const candidateTool = match?.groups?.tool;
     if (candidateTool !== undefined && T3_MCP_TOOL_NAMES.has(candidateTool)) {
       return { server: "t3-code", tool: candidateTool };

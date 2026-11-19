@@ -217,6 +217,7 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       const [task] = projection.subagents;
       assert.equal(task?.childThreadId, null);
       assert.deepEqual(task?.remoteChild, remoteChild);
+      assert.deepEqual(task?.modelSelection, modelSelection);
       assert.equal(task?.status, "running");
       const item = projection.turnItems.find((candidate) => candidate.type === "subagent");
       assert.deepEqual(item?.type === "subagent" ? item.remoteChild : undefined, remoteChild);
@@ -226,6 +227,13 @@ it.layer(layerTest)("a delegated task in a linked environment", (it) => {
       const index = yield* (yield* ProjectionStore.ProjectionStoreV2).listActiveShellIndex();
       assert.isTrue(index.find((entry) => entry.id === parent.threadId)?.hasRemoteTasks);
       assert.isFalse(index.find((entry) => entry.id === other.threadId)?.hasRemoteTasks);
+      // Nothing here can cancel the task there, so it must not block archiving.
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("command:archive:records"),
+        threadId: parent.threadId,
+      });
+      assert.isNotNull((yield* orchestrator.getThreadShell(parent.threadId))?.archivedAt);
     }),
   );
 

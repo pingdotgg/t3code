@@ -1,11 +1,16 @@
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { authScopeResponse, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  authScopeResponse,
+  AuthStandardClientScopes,
+  connectDeviceVerificationCode,
+} from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import { makeDpopKey } from "./dpop.testkit.ts";
@@ -300,6 +305,223 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
     );
 
+    it.effect(
+      "holds an untrusted T3 Connect device until it is approved, and revocation cuts it off",
+      () =>
+        Effect.gen(function* () {
+          const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+          const deviceKey = "Kq3vZ8sYbTn0eW1pLr5uXc7dHf9gJm2aQs4tVw6yBzE";
+          const admin = yield* serverAuth.issueSession({ label: "Owner" });
+          const exchange = (credential: string) =>
+            serverAuth.exchangeBootstrapCredentialForAccessToken(
+              credential,
+              undefined,
+              requestMetadata,
+              { proofKeyThumbprint: deviceKey },
+            );
+
+          // Relay mints can arrive together; they must share one request and one code.
+          const mint = serverAuth.issueConnectCredential({
+            proofKeyThumbprint: deviceKey,
+            requireApproval: true,
+          });
+          const [requested, concurrent] = yield* Effect.all([mint, mint], {
+            concurrency: "unbounded",
+          });
+          expect(concurrent.credential).toBe(requested.credential);
+          expect((yield* exchange(requested.credential).pipe(Effect.flip))._tag).toBe(
+            "ServerAuthConnectApprovalPendingError",
+          );
+          const [request] = (yield* serverAuth.listPairingLinks()).filter(
+            (link) => link.connectDeviceRequest !== undefined,
+          );
+          expect(request?.connectDeviceRequest).toEqual({
+            verificationCode: connectDeviceVerificationCode(deviceKey),
+            client: requestMetadata,
+          });
+          // A retry through the relay keeps the one request the approver is looking at.
+          const retried = yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: deviceKey,
+            requireApproval: true,
+          });
+          expect(retried.credential).toBe(requested.credential);
+
+          expect(yield* serverAuth.approveConnectDevice(request!.id)).toBe(true);
+          expect(
+            (yield* serverAuth.listPairingLinks()).some((link) => link.connectDeviceRequest),
+          ).toBe(false);
+          yield* exchange(requested.credential);
+          expect(
+            (yield* serverAuth.listConnectDevices()).map((device) => device.proofKeyThumbprint),
+          ).toEqual([deviceKey]);
+
+          const refreshed = yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: deviceKey,
+            requireApproval: true,
+          });
+          yield* exchange(refreshed.credential);
+
+          const deviceSessions = () =>
+            serverAuth
+              .listClientSessions(admin.sessionId)
+              .pipe(
+                Effect.map((sessions) =>
+                  sessions.filter(
+                    (session) => session.subject === EnvironmentAuth.CLOUD_CONNECT_SUBJECT,
+                  ),
+                ),
+              );
+          // A credential minted before revocation must not let the device back in afterwards.
+          const unspent = yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: deviceKey,
+            requireApproval: true,
+          });
+          const [oldestDeviceSession, newestDeviceSession] = yield* deviceSessions();
+          expect(newestDeviceSession).toBeDefined();
+          // Authorized clients lists T3 Connect sessions under this name.
+          expect(newestDeviceSession?.client.label).toBe("T3 Connect");
+          // Revoking any one of the device's sessions ends all of them and its trust.
+          expect(
+            yield* serverAuth.revokeClientSession(admin.sessionId, oldestDeviceSession!.sessionId),
+          ).toBe(true);
+          expect(yield* deviceSessions()).toEqual([]);
+          expect(yield* serverAuth.listConnectDevices()).toEqual([]);
+          expect((yield* exchange(unspent.credential).pipe(Effect.flip))._tag).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
+          expect(yield* serverAuth.listConnectDevices()).toEqual([]);
+          const afterRevoke = yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: deviceKey,
+            requireApproval: true,
+          });
+          expect((yield* exchange(afterRevoke.credential).pipe(Effect.flip))._tag).toBe(
+            "ServerAuthConnectApprovalPendingError",
+          );
+          // Deny sticks: retries get the dead request back instead of a fresh prompt.
+          const [denied] = (yield* serverAuth.listPairingLinks()).filter(
+            (link) => link.connectDeviceRequest !== undefined,
+          );
+          expect(yield* serverAuth.revokePairingLink(denied!.id)).toBe(true);
+          const afterDeny = yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: deviceKey,
+            requireApproval: true,
+          });
+          expect(afterDeny.credential).toBe(afterRevoke.credential);
+          expect((yield* exchange(afterDeny.credential).pipe(Effect.flip))._tag).toBe(
+            "ServerAuthInvalidCredentialError",
+          );
+          expect(
+            (yield* serverAuth.listPairingLinks()).some((link) => link.connectDeviceRequest),
+          ).toBe(false);
+        }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("renews a pairing-link DPoP session in place while its device keeps using it", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const admin = yield* serverAuth.issueSession({ label: "Owner" });
+        const key = makeDpopKey();
+        const other = makeDpopKey();
+        const pair = (proofKeyThumbprint?: string) =>
+          serverAuth
+            .issuePairingCredential({ scopes: ["orchestration:read"] })
+            .pipe(
+              Effect.flatMap((pairing) =>
+                serverAuth.exchangeBootstrapCredentialForAccessToken(
+                  pairing.credential,
+                  undefined,
+                  requestMetadata,
+                  proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
+                ),
+              ),
+            );
+        const sessionExpiry = (sessionId: string) =>
+          serverAuth
+            .listClientSessions(admin.sessionId)
+            .pipe(
+              Effect.map(
+                (sessions) =>
+                  sessions.find((session) => session.sessionId === sessionId)?.expiresAt
+                    .epochMilliseconds,
+              ),
+            );
+
+        const paired = yield* pair(key.thumbprint);
+        expect(paired.expires_in).toBe(60 * 60);
+        const { sessionId } = yield* sessions.verify(paired.access_token);
+        const pairedAt = (yield* DateTime.now).epochMilliseconds;
+        // Listed for the whole renewal window, so an idle device can still be revoked.
+        expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 30 * 24 * 60 * 60 * 1000);
+
+        yield* TestClock.adjust("20 days");
+        const replay = new EnvironmentAuth.ServerAuthInvalidCredentialError({
+          dpopFailureReason: "replay",
+        });
+        const rejected = yield* serverAuth
+          .renewAccessToken(paired.access_token, key.thumbprint, Effect.fail(replay))
+          .pipe(Effect.flip);
+        expect(rejected).toBe(replay);
+        expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 30 * 24 * 60 * 60 * 1000);
+
+        const renewed = yield* serverAuth.renewAccessToken(
+          paired.access_token,
+          key.thumbprint,
+          Effect.void,
+        );
+        expect(renewed.scope).toBe("orchestration:read");
+        const verified = yield* sessions.verify(renewed.access_token);
+        expect(verified.sessionId).toBe(sessionId);
+        expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 50 * 24 * 60 * 60 * 1000);
+
+        const refused = (token: string, thumbprint: string) =>
+          serverAuth
+            .renewAccessToken(
+              token,
+              thumbprint,
+              Effect.die("Invalid credentials cannot consume a proof."),
+            )
+            .pipe(
+              Effect.flip,
+              Effect.map((error) => error._tag),
+            );
+        expect(yield* refused(renewed.access_token, other.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        // Bearer and T3 Connect sessions keep their fixed lifetimes, so unlinking still cuts off.
+        const bearer = yield* pair();
+        expect(yield* refused(bearer.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+        const connect = yield* serverAuth.issueConnectCredential({
+          proofKeyThumbprint: key.thumbprint,
+          requireApproval: false,
+        });
+        const connected = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          connect.credential,
+          undefined,
+          requestMetadata,
+          { proofKeyThumbprint: key.thumbprint },
+        );
+        expect(yield* refused(connected.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+
+        // Inside the renewed window, so only the revocation can refuse it.
+        expect(yield* serverAuth.revokeClientSession(admin.sessionId, sessionId)).toBe(true);
+        expect(yield* refused(renewed.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+
+        // Idle past the window, the device pairs again.
+        const idle = yield* pair(key.thumbprint);
+        yield* TestClock.adjust("31 days");
+        expect(yield* refused(idle.access_token, key.thumbprint)).toBe(
+          "ServerAuthInvalidCredentialError",
+        );
+      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+    );
+
     it.effect("preserves pairing grants after rejecting scopes they do not grant", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -396,6 +618,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             { failure: { _tag: "ServerAuthMcpApprovalCodeError", reason: "unknown_or_used" } },
           ]);
         }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect("spends peer-link pairing codes only for the chosen link access", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const pairing = yield* serverAuth.issuePairingCredential({
+          access: "approval-required",
+          purpose: "peer-link",
+        });
+        expect(pairing.purpose).toBe("peer-link");
+
+        const ordinarySession = yield* serverAuth
+          .exchangeBootstrapCredentialForAccessToken(pairing.credential, undefined, requestMetadata)
+          .pipe(Effect.flip);
+        expect(ordinarySession._tag).toBe("ServerAuthInvalidCredentialError");
+
+        for (const input of [
+          { access: "approval-required", peerLink: false },
+          { access: "auto", peerLink: true },
+        ] as const) {
+          const rejected = yield* serverAuth
+            .consumeMcpApprovalCode(pairing.credential, input.access, input.peerLink)
+            .pipe(Effect.flip);
+          expect(rejected._tag).toBe("ServerAuthMcpApprovalCodeError");
+        }
+
+        expect(
+          yield* serverAuth.consumeMcpApprovalCode(pairing.credential, "approval-required", true),
+        ).toBe("approval-required");
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
 
     it.effect("narrows seeded desktop grants to the requested scopes", () =>
