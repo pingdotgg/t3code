@@ -65,10 +65,39 @@ function insightGrid(count: number) {
   const columns = count <= 2 ? 3 : Math.ceil(count / 2);
   const rows = count <= 2 ? 1 : 2;
   return {
+    columns,
+    rows,
     gridTemplateColumns: `repeat(${columns}, minmax(10rem, 1fr))`,
     lastSpan: rows === 2 ? columns * 2 - count + 1 : 1,
   };
 }
+
+/**
+ * Card style: only the group's four outer corners stay fully round; a corner that faces another
+ * block (beside or below) is half as round. Order: top-left, top-right, bottom-right, bottom-left.
+ */
+function blockRadius(
+  grid: { columns: number; rows: number; lastSpan: number },
+  index: number,
+  count: number,
+) {
+  const row = Math.floor(index / grid.columns);
+  const start = index % grid.columns;
+  const end = start + (index === count - 1 ? grid.lastSpan : 1);
+  const full = "var(--radius-lg)";
+  const half = "calc(var(--radius-lg) / 2)";
+  const top = row === 0;
+  const bottom = row === grid.rows - 1;
+  // One row of one or two numbers keeps three columns; its last block is still the right edge.
+  const right = end === grid.columns || (grid.rows === 1 && index === count - 1);
+  return [top && start === 0, top && right, bottom && right, bottom && start === 0]
+    .map((outer) => (outer ? full : half))
+    .join(" ");
+}
+
+/** A number's block, styled like a task card: lighter top border, card fill. */
+const INSIGHT_BLOCK =
+  "rounded-lg border border-(--shell-divider)! border-t-(--shell-card-edge)! bg-(--shell-card) px-3 pt-2.5 pb-2 dark:bg-(--shell-highlight)/70";
 
 /** The overall line in the expanded chart; per-provider lines need a per-provider history. */
 const TREND_COLOR = "var(--info)";
@@ -155,6 +184,8 @@ function InsightCard(props: {
   onExpand: () => void;
   /** Columns this cell spans, for the last cell on an odd count. */
   span: number;
+  /** Each corner's radius; a corner that faces another block is half as round. */
+  radius: string;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -165,16 +196,21 @@ function InsightCard(props: {
       <TooltipTrigger
         delay={400}
         render={
-          // No fill: a line left of and above each cell; the strip clips the outer ones.
           <button
             type="button"
             onClick={props.onExpand}
-            style={props.span > 1 ? { gridColumn: `span ${props.span}` } : undefined}
+            style={{
+              borderRadius: props.radius,
+              ...(props.span > 1 ? { gridColumn: `span ${props.span}` } : {}),
+            }}
             aria-label={gt("{label}: {value}. Show chart", {
               label: props.label,
               value: value ?? gt("not reported"),
             })}
-            className="flex min-w-0 cursor-pointer flex-col gap-1 border-s border-t px-4.5 pt-3.5 pb-3.25 text-left border-(--shell-divider)! transition-colors outline-none hover:bg-(--shell-highlight)/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+            className={cn(
+              "flex min-w-0 cursor-pointer flex-col gap-1 text-left transition-colors outline-none hover:bg-(--shell-card)/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset dark:hover:bg-(--shell-highlight)",
+              INSIGHT_BLOCK,
+            )}
           />
         }
       >
@@ -229,7 +265,7 @@ function InsightDetail(props: {
   ));
   return (
     <div
-      className="relative flex flex-col gap-1 px-4.5 pt-3.5 pb-3"
+      className={cn("relative flex flex-col gap-1", INSIGHT_BLOCK)}
       style={{ height: props.height }}
       onKeyDown={(event) => {
         if (event.key === "Escape") props.onBack();
@@ -241,7 +277,7 @@ function InsightDetail(props: {
         variant="ghost"
         aria-label={gt("Close {label} chart", { label: props.label })}
         onClick={props.onBack}
-        className="absolute top-2.5 right-3"
+        className="absolute top-1 right-1"
       >
         <XIcon className="size-4" />
       </Button>
@@ -262,6 +298,7 @@ function InsightDetail(props: {
             series={[{ name: gt("All providers"), color: TREND_COLOR, points: trend }]}
             format={format}
             label={gt("{label} over the period", { label: props.label })}
+            total={{ label: gt("Total"), points: trend }}
           />
         ) : (
           <p className="m-0 flex h-full items-center justify-center text-ui text-muted-foreground">
@@ -310,42 +347,52 @@ export function TasksInsightsStrip(props: { orbitProjectId: number | null; query
   return (
     <section
       aria-label={gt("Task insights, last {days} days", { days })}
-      className="@container scrollbar-inset shrink-0 overflow-x-auto overflow-y-hidden border-b border-(--shell-divider)!"
+      className="@container scrollbar-inset shrink-0 overflow-x-auto overflow-y-hidden border-b border-(--shell-divider)! p-2"
     >
-      {open ? (
-        <InsightDetail
-          spec={open}
-          label={messages(open.label)}
-          result={results[open.id]}
-          insights={insights}
-          // One row of cards is too short for a chart.
-          height={Math.max(gridHeight, 200)}
-          onBack={() => setExpanded(null)}
-        />
-      ) : (
-        <div
-          ref={gridRef}
-          className="-ms-px -mt-px grid"
-          style={{ gridTemplateColumns: grid.gridTemplateColumns }}
-        >
-          {shown.map((spec, index) => (
-            <InsightCard
-              key={spec.id}
-              spec={spec}
-              label={messages(spec.label)}
-              result={results[spec.id]}
-              trend={insightTrend(insights, spec.id)}
-              hint={hint(spec.id, insights)}
-              scope={scope}
-              span={index === shown.length - 1 ? grid.lastSpan : 1}
-              onExpand={() => {
-                setGridHeight(gridRef.current?.offsetHeight ?? 0);
-                setExpanded(spec.id);
-              }}
-            />
-          ))}
-        </div>
-      )}
+      {/* One lane-style container, a task-card block per number. */}
+      {/* min-w-min: on a narrow panel the container runs on under the blocks it scrolls to. */}
+      <div
+        className={cn(
+          "rounded-xl bg-(--shell-highlight)/60 p-1.5 dark:bg-(--shell-highlight)/30",
+          !open && "min-w-min",
+        )}
+      >
+        {open ? (
+          <InsightDetail
+            spec={open}
+            label={messages(open.label)}
+            result={results[open.id]}
+            insights={insights}
+            // One row of cards is too short for a chart.
+            height={Math.max(gridHeight, 200)}
+            onBack={() => setExpanded(null)}
+          />
+        ) : (
+          <div
+            ref={gridRef}
+            className="grid gap-1.5"
+            style={{ gridTemplateColumns: grid.gridTemplateColumns }}
+          >
+            {shown.map((spec, index) => (
+              <InsightCard
+                key={spec.id}
+                spec={spec}
+                label={messages(spec.label)}
+                result={results[spec.id]}
+                trend={insightTrend(insights, spec.id)}
+                hint={hint(spec.id, insights)}
+                scope={scope}
+                span={index === shown.length - 1 ? grid.lastSpan : 1}
+                radius={blockRadius(grid, index, shown.length)}
+                onExpand={() => {
+                  setGridHeight(gridRef.current?.offsetHeight ?? 0);
+                  setExpanded(spec.id);
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </section>
   );
 }

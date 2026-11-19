@@ -150,6 +150,9 @@ function measureLabel(text: string) {
   return width;
 }
 
+const formatPoint = (value: number | null | undefined, format: (value: number) => string) =>
+  value === null || value === undefined ? "–" : format(value);
+
 /**
  * One line per series over the period, one y-axis, recessive grid. A crosshair snaps to the
  * nearest point and the tooltip lists every series there. Fills its parent's height.
@@ -158,6 +161,8 @@ export function TrendChart(props: {
   series: ReadonlyArray<ChartSeries>;
   format: (value: number) => string;
   label: string;
+  /** The all-provider value per point, shown under the series in the tooltip. */
+  total?: { readonly label: string; readonly points: ReadonlyArray<TrendPoint> };
 }) {
   const [ref, { width, height }] = useBoxSize<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -203,8 +208,10 @@ export function TrendChart(props: {
                 x2={margin.left + plotWidth}
                 y1={y(tick)}
                 y2={y(tick)}
-                className="stroke-(--shell-divider)"
+                // Dashed, a little brighter than the dividers.
+                className="stroke-(--shell-chart-grid)"
                 strokeWidth={1}
+                strokeDasharray="3 3"
               />
               <text
                 x={labelWidth}
@@ -303,18 +310,28 @@ export function TrendChart(props: {
             const value = series.points[hover]?.value;
             return (
               <div key={series.name} className="flex items-center gap-2">
+                {/* The legend's dot. */}
                 <span
                   aria-hidden
-                  className="h-0.5 w-3 rounded-full"
+                  className="size-2 shrink-0 rounded-full"
                   style={{ backgroundColor: series.color }}
                 />
                 <span className="flex-1 text-foreground">{series.name}</span>
                 <span className="text-foreground tabular-nums">
-                  {value === null || value === undefined ? "–" : props.format(value)}
+                  {formatPoint(value, props.format)}
                 </span>
               </div>
             );
           })}
+          {props.total ? (
+            <div className="mt-1 flex items-center gap-2 border-t border-dashed border-t-(--popover-rule)! pt-1">
+              <span aria-hidden className="w-2 shrink-0" />
+              <span className="flex-1 font-medium text-foreground">{props.total.label}</span>
+              <span className="font-medium text-foreground tabular-nums">
+                {formatPoint(props.total.points[hover]?.value, props.format)}
+              </span>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

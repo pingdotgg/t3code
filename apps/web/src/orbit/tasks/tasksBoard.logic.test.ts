@@ -6,7 +6,7 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { fixtureOrbitTasksTransport } from "./orbitTasksFixtures";
-import { tasksBoardLanes } from "./tasksBoard.logic";
+import { taskCardDetail, tasksBoardLanes } from "./tasksBoard.logic";
 
 async function fixtureTasks() {
   const result = await createOrbitTasksClient(fixtureOrbitTasksTransport()).listTasks();
@@ -15,6 +15,22 @@ async function fixtureTasks() {
 }
 
 describe("tasks board", () => {
+  it("counts subtasks on a card only from two", async () => {
+    const task = (await fixtureTasks()).find((item) => item.workspace?.node);
+    if (!task?.workspace?.node) throw new Error("no fixture task on a machine");
+    const { workspace } = task;
+    const machine = workspace.node!;
+    const withCounts = (total: number, completed: number, node: string | null) => ({
+      ...task,
+      subtaskCounts: { ...task.subtaskCounts, total, completed },
+      workspace: node === null ? null : { ...workspace, node: { ...machine, name: node } },
+    });
+    expect(taskCardDetail(withCounts(2, 1, "beast"))).toBe("1/2 subtasks · beast");
+    expect(taskCardDetail(withCounts(1, 0, "beast"))).toBe("beast");
+    expect(taskCardDetail(withCounts(1, 1, null))).toBe("");
+    expect(taskCardDetail(withCounts(0, 0, null))).toBe("");
+  });
+
   it("lays fixture tasks out in lanes with their finer labels", async () => {
     const lanes = tasksBoardLanes(await fixtureTasks());
     expect(

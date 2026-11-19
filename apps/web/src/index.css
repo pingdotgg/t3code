@@ -2717,6 +2717,12 @@ html {
   --shell-divider-header: color-mix(in oklab, var(--sidebar) 84%, var(--foreground));
   /* Divider shared by the selected sidebar row's top edge and the toolbar flyout. */
   --shell-divider-raised: color-mix(in oklab, var(--sidebar) 80%, var(--foreground));
+  /* A card's top edge (task cards, insight blocks): the divider, a little lighter. */
+  --shell-card-edge: color-mix(in oklab, var(--shell-divider) 80%, white);
+  /* Chart gridlines: a little brighter than the dividers. */
+  --shell-chart-grid: color-mix(in oklab, var(--shell-divider) 93%, var(--foreground));
+  /* A rule inside a popover that still reads on its lighter fill. */
+  --popover-rule: color-mix(in oklab, var(--popover) 80%, var(--foreground));
   /* Settings cards (SettingsGroup) have their own fill. Light mode matches the selected-row
      fill (--sidebar-row-active); dark mode sits a notch darker so the card does not glare on
      the page. Dark mode derives the rest of the card from that fill (outer border, top edge and
@@ -2793,6 +2799,7 @@ html {
   /* The header runs on the lighter frame, so its stretch of divider is lighter. */
   --shell-divider-header: color-mix(in oklab, var(--sidebar) 82%, var(--foreground));
   --shell-divider-raised: color-mix(in oklab, var(--sidebar) 78%, var(--foreground));
+  --shell-card-edge: color-mix(in oklab, var(--shell-divider) 96.5%, white);
   /* A notch darker than the selected-row fill (22% toward the sidebar). */
   --shell-settings-card: color-mix(in oklab, var(--sidebar-row-active) 78%, var(--sidebar));
   /* One hairline for the outer border, top edge and row dividers: the card fill, 10% toward

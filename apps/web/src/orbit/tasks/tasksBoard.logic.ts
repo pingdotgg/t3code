@@ -37,10 +37,13 @@ export function tasksBoardLanes(
   });
 }
 
-/** The card's quiet line: subtask progress and the machine the task runs on. */
+/**
+ * The card's quiet line: subtask progress and the machine the task runs on. A task with one
+ * subtask is just the task, so the count shows from two subtasks. Empty when there is neither.
+ */
 export function taskCardDetail(task: OrbitTaskSummary): string {
   const { total, completed } = task.subtaskCounts;
-  const parts = [total > 0 ? `${completed}/${total} subtasks` : "No subtasks"];
+  const parts = total >= 2 ? [`${completed}/${total} subtasks`] : [];
   const machine = task.workspace?.node?.name;
   if (machine) parts.push(machine);
   return parts.join(" · ");

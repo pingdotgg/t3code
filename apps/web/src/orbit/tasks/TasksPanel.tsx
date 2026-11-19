@@ -256,7 +256,7 @@ function BoardToolbar() {
   const hidden = settings.hiddenLanes.length;
   return (
     // Sits under the tab bar like the file view's breadcrumb row.
-    <div className="flex shrink-0 items-center gap-2 border-b border-(--shell-divider)! px-4.5 py-toolbar">
+    <div className="flex shrink-0 items-center gap-2 border-b border-(--shell-divider)! px-2 py-toolbar">
       <InputGroup variant="soft" className="h-8 min-w-0 flex-1">
         <InputGroupAddon>
           <SearchIcon aria-hidden className="size-4 opacity-50" />
@@ -378,15 +378,17 @@ function TasksBoard(props: {
           onScrollEnd={(event) => {
             if (event.target === event.currentTarget) saveScroll();
           }}
-          className="scrollbar-inset flex min-h-64 flex-1 gap-2 overflow-x-auto p-4.5"
+          // The board pads its lanes by the gap between them (8px).
+          className="scrollbar-inset flex min-h-64 flex-1 gap-2 overflow-x-auto p-2"
         >
           {tasksBoardLanes(props.tasks, { query, hiddenLanes }).map((lane) => (
             <section
               key={lane.id}
               aria-label={lane.label}
-              className="flex min-w-48 flex-1 basis-0 flex-col rounded-xl bg-(--shell-highlight)/60 p-1.5 dark:bg-(--shell-highlight)/30"
+              className="flex min-w-48 flex-1 basis-0 flex-col rounded-xl bg-(--shell-highlight)/60 p-1.5 pt-0 dark:bg-(--shell-highlight)/30"
             >
-              <div className="flex h-8 shrink-0 items-center justify-between px-2 text-ui text-muted-foreground">
+              {/* 8px from the lane top and 8px above the first card. */}
+              <div className="flex shrink-0 items-center justify-between px-2 py-2 text-ui text-muted-foreground">
                 <span className="font-medium">{lane.label}</span>
                 <span className="tabular-nums">
                   {searching ? `${lane.tasks.length} of ${lane.total}` : lane.tasks.length}
@@ -436,7 +438,8 @@ function LaneList(props: {
           .getState()
           .save(props.threadKey, props.lane, event.currentTarget.scrollTop)
       }
-      className="scrollbar-inset m-0 flex min-h-0 flex-1 list-none flex-col gap-1.5 overflow-y-auto p-0"
+      // Lanes scroll without a visible scrollbar.
+      className="m-0 flex min-h-0 flex-1 list-none flex-col gap-1.5 overflow-y-auto p-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       {props.children}
     </ul>
@@ -501,6 +504,7 @@ function TaskCard(props: {
   const pr = task.pullRequest;
   const prState = pr?.state ? resolvePullRequestState({ state: pr.state, isDraft: false }) : null;
   const working = orbitTaskLane(task.status) === "in-progress" && task.attention === null;
+  const detail = taskCardDetail(task);
   const laneTop = (element: HTMLElement) => element.closest("ul")?.scrollTop ?? 0;
   const badge = pr ? (
     <>
@@ -517,7 +521,7 @@ function TaskCard(props: {
       <button
         type="button"
         onClick={(event) => props.onOpen(laneTop(event.currentTarget))}
-        className="flex w-full cursor-pointer flex-col gap-1.5 rounded-lg border border-(--shell-divider)! bg-(--shell-card) px-3 py-2.5 text-left transition-colors hover:bg-(--shell-card)/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none dark:bg-(--shell-highlight)/70 dark:hover:bg-(--shell-highlight)"
+        className="flex w-full cursor-pointer flex-col gap-1.5 rounded-lg border border-(--shell-divider)! border-t-(--shell-card-edge)! bg-(--shell-card) px-3 py-2.5 text-left transition-colors hover:bg-(--shell-card)/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none dark:bg-(--shell-highlight)/70 dark:hover:bg-(--shell-highlight)"
       >
         <span className="flex items-center gap-1.5 text-ui leading-4">
           <TaskProjectIcon project={task.project} />
@@ -537,15 +541,18 @@ function TaskCard(props: {
         >
           {task.title}
         </span>
-        <span className="flex items-center gap-2 text-ui leading-4 text-muted-foreground tabular-nums">
-          <span className="min-w-0 flex-1 truncate">{taskCardDetail(task)}</span>
-          {/* Holds the badge's place; the badge itself is its own button over the card. */}
-          {badge ? (
-            <span aria-hidden className="invisible flex shrink-0 items-center gap-1">
-              {badge}
-            </span>
-          ) : null}
-        </span>
+        {/* With no subtask count, machine or PR the line goes. */}
+        {detail || badge ? (
+          <span className="flex items-center gap-2 text-ui leading-4 text-muted-foreground tabular-nums">
+            <span className="min-w-0 flex-1 truncate">{detail}</span>
+            {/* Holds the badge's place; the badge itself is its own button over the card. */}
+            {badge ? (
+              <span aria-hidden className="invisible flex shrink-0 items-center gap-1">
+                {badge}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
       </button>
       {pr && badge ? (
         <button
