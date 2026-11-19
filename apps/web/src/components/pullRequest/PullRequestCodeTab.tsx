@@ -1446,11 +1446,11 @@ function PullRequestCodeTab({
           threadIds={new Set(orphanThreads.map((thread) => thread.id))}
           environmentId={environmentId}
           reference={reference}
+          onAddToChat={onAddToChat}
           onRefresh={onRefresh}
-          renderThread={(threadId) => {
-            const thread = orphanThreads.find((candidate) => candidate.id === threadId);
-            return thread === undefined ? null : renderThreadCard(thread);
-          }}
+          pendingFinding={pendingFinding ?? null}
+          fixFindingLabel={fixFindingLabel}
+          onFixFinding={onFixFinding}
         />
       </div>
     ) : null;

@@ -6,6 +6,13 @@ import {
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
+const state = vi.hoisted(() => ({ command: vi.fn() }));
+
+vi.mock(import("~/state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: (() => state.command) as never,
+}));
+
 import { render } from "../../../test/render";
 import "../../index.css";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
@@ -267,4 +274,152 @@ it("hides bot comments under the saved filter and shows them when the filter all
 
   await screen.rerender(timeline({ bots: true, resolved: false }));
   await expect.element(screen.getByText("1 comment")).toBeVisible();
+});
+
+it("adds a review thread to the chat as its whole conversation", async () => {
+  const note = { author: detail.author, createdAt: "2026-09-01T00:00:00Z", url: null };
+  const thread = {
+    id: "thread",
+    path: "src/a.ts",
+    line: 3,
+    side: "right" as const,
+    isResolved: false,
+    isOutdated: false,
+    comments: [
+      { ...note, id: "root", body: "Rename this." },
+      { ...note, id: "reply", body: "Done.", createdAt: "2026-09-02T00:00:00Z" },
+    ],
+  };
+  const value: PullRequestDetailView = { ...detail, commits: [], reviewThreads: [thread] };
+  const onAddToChat = vi.fn();
+  await using screen = await render(
+    <div style={{ height: 600 }}>
+      <PullRequestTimelineTab
+        scrollerRef={() => {}}
+        detail={value}
+        environmentId={EnvironmentId.make("environment")}
+        reference={value}
+        order="oldest"
+        onOpenCommit={() => {}}
+        onRefresh={() => {}}
+        onAddToChat={onAddToChat}
+      />
+    </div>,
+  );
+
+  await screen.getByRole("button", { name: "Add to chat" }).click();
+  expect(onAddToChat).toHaveBeenCalledWith({
+    kind: "thread",
+    thread: expect.objectContaining({
+      id: "thread",
+      comments: [expect.objectContaining({ id: "root" }), expect.objectContaining({ id: "reply" })],
+    }),
+  });
+});
+
+it("keeps an unsent reply when resolving the thread remounts its row", async () => {
+  const note = { author: detail.author, createdAt: "2026-09-01T00:00:00Z", url: null };
+  const value = (isResolved: boolean): PullRequestDetailView => ({
+    ...detail,
+    number: 77,
+    commits: [],
+    capabilities: {
+      ...detail.capabilities,
+      review: { ...detail.capabilities.review, reply: true },
+    },
+    viewerPermissions: { ...detail.viewerPermissions, comment: true },
+    reviewThreads: [
+      {
+        id: "draft-thread",
+        path: "src/a.ts",
+        line: 3,
+        side: "right",
+        isResolved,
+        isOutdated: false,
+        comments: [{ ...note, id: "draft-root", body: "Rename this." }],
+      },
+    ],
+  });
+  const timeline = (isResolved: boolean) => (
+    <div style={{ height: 600 }}>
+      <PullRequestTimelineTab
+        scrollerRef={() => {}}
+        detail={value(isResolved)}
+        environmentId={EnvironmentId.make("environment")}
+        reference={value(isResolved)}
+        order="oldest"
+        onOpenCommit={() => {}}
+        onRefresh={() => {}}
+      />
+    </div>
+  );
+  await using screen = await render(timeline(false));
+  await screen.getByRole("button", { name: "Reply", exact: true }).click();
+  await screen.getByRole("textbox", { name: "Reply to this conversation" }).fill("Unsent");
+
+  await screen.rerender(timeline(true));
+  await screen.getByRole("button", { name: /src\/a\.ts/ }).click();
+  await expect
+    .element(screen.getByRole("textbox", { name: "Reply to this conversation" }))
+    .toHaveValue("Unsent");
+});
+
+it("posts a reply once even when its row remounts while it is sending", async () => {
+  state.command.mockReset();
+  let finish = (_result: unknown) => {};
+  state.command.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+  const note = { author: detail.author, createdAt: "2026-09-01T00:00:00Z", url: null };
+  const value: PullRequestDetailView = {
+    ...detail,
+    number: 78,
+    commits: [],
+    capabilities: {
+      ...detail.capabilities,
+      review: { ...detail.capabilities.review, reply: true },
+    },
+    viewerPermissions: { ...detail.viewerPermissions, comment: true },
+    reviewThreads: [
+      {
+        id: "sending-thread",
+        path: "src/a.ts",
+        line: 3,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [{ ...note, id: "sending-root", body: "Rename this." }],
+      },
+    ],
+  };
+  const timeline = () => (
+    <div style={{ height: 600 }}>
+      <PullRequestTimelineTab
+        scrollerRef={() => {}}
+        detail={value}
+        environmentId={EnvironmentId.make("environment")}
+        reference={value}
+        order="oldest"
+        onOpenCommit={() => {}}
+        onRefresh={() => {}}
+      />
+    </div>
+  );
+  {
+    await using first = await render(timeline());
+    await first.getByRole("button", { name: "Reply", exact: true }).click();
+    await first.getByRole("textbox", { name: "Reply to this conversation" }).fill("Once");
+    await first.getByRole("button", { name: "Reply", exact: true }).click();
+    expect(state.command).toHaveBeenCalledTimes(1);
+  }
+
+  // The row mounts again while the reply is still on its way.
+  await using screen = await render(timeline());
+  const send = screen.getByRole("button", { name: "Reply", exact: true });
+  await expect.element(send).toBeDisabled();
+  expect(state.command).toHaveBeenCalledTimes(1);
+
+  finish({ _tag: "Success", value: undefined });
+  await expect
+    .element(screen.getByRole("textbox", { name: "Reply to this conversation" }))
+    .not.toBeInTheDocument();
+  expect(state.command).toHaveBeenCalledTimes(1);
 });

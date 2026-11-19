@@ -183,6 +183,85 @@ export function InlineReviewThreads({
   );
 }
 
+/** The reply box under a review thread, with dictation; shared by the Code tab and the Timeline. */
+export function PullRequestThreadReplyBox({
+  className,
+  environmentId,
+  reference,
+  threadId,
+  completionScope,
+  pending,
+  value,
+  onValueChange,
+  onSend,
+  onCancel,
+}: {
+  className?: string;
+  environmentId: EnvironmentId;
+  reference: PullRequestRef;
+  threadId: string;
+  completionScope: PullRequestCompletionScope | null;
+  pending: boolean;
+  value: string;
+  onValueChange: (value: string) => void;
+  onSend: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const gt = useGT();
+  const replyRef = useRef<HTMLTextAreaElement>(null);
+  return (
+    <SpeechTextField
+      environmentId={environmentId}
+      projectId={reference.projectId}
+      ownerKey={JSON.stringify(["pr-reply", environmentId, reference, threadId])}
+      text={value}
+      textareaRef={replyRef}
+      onTextChange={onValueChange}
+      disabled={pending}
+    >
+      {(speech) => (
+        <div className={className}>
+          <PullRequestMarkdownTextarea
+            ref={replyRef}
+            readOnly={speech.freezesEditor}
+            autoFocus
+            size="sm"
+            completionScope={completionScope}
+            value={value}
+            placeholder={gt("Reply", { $context: "noun, placeholder" })}
+            aria-label={gt("Reply to this conversation")}
+            onValueChange={onValueChange}
+            onKeyDown={submitKeys({
+              value,
+              pending,
+              allowEmpty: speech.blocksSubmission,
+              onSubmit: () => speech.submitAfterDictation(onSend),
+              onCancel: () => (speech.state.phase === "idle" ? onCancel() : speech.cancel()),
+            })}
+          />
+          <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+            <TextFieldSpeechControls speech={speech} disabled={pending} />
+            <Button size="xs" variant="ghost" onClick={onCancel}>
+              <T>Cancel</T>
+            </Button>
+            <Button
+              size="xs"
+              disabled={
+                speech.preparing ||
+                pending ||
+                (!speech.blocksSubmission && value.trim().length === 0)
+              }
+              onClick={() => speech.submitAfterDictation(onSend)}
+            >
+              <T context="verb, button">Reply</T>
+            </Button>
+          </div>
+        </div>
+      )}
+    </SpeechTextField>
+  );
+}
+
 export function ReviewThreadCard({
   thread,
   workspaceRoot,
@@ -238,7 +317,6 @@ export function ReviewThreadCard({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const sendingRef = useRef(false);
-  const replyRef = useRef<HTMLTextAreaElement>(null);
   const [loadedPage, setLoadedPage] = useState<
     (PullRequestThreadCommentsResult & { readonly threadId: string }) | null
   >(null);
@@ -436,56 +514,18 @@ export function ReviewThreadCard({
 
           {canReply ? (
             replying ? (
-              <SpeechTextField
+              <PullRequestThreadReplyBox
+                className="mt-2"
                 environmentId={environmentId}
-                projectId={reference.projectId}
-                ownerKey={JSON.stringify(["pr-reply", environmentId, reference, thread.id])}
-                text={reply}
-                textareaRef={replyRef}
-                onTextChange={setReply}
-                disabled={pending}
-              >
-                {(speech) => (
-                  <div className="mt-2">
-                    <PullRequestMarkdownTextarea
-                      ref={replyRef}
-                      readOnly={speech.freezesEditor}
-                      autoFocus
-                      size="sm"
-                      completionScope={completionScope}
-                      value={reply}
-                      placeholder={gt("Reply", { $context: "noun, placeholder" })}
-                      aria-label={gt("Reply to this conversation")}
-                      onValueChange={setReply}
-                      onKeyDown={submitKeys({
-                        value: reply,
-                        pending,
-                        allowEmpty: speech.blocksSubmission,
-                        onSubmit: () => speech.submitAfterDictation((text) => void send(text)),
-                        onCancel: () =>
-                          speech.state.phase === "idle" ? setReplying(false) : speech.cancel(),
-                      })}
-                    />
-                    <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-                      <TextFieldSpeechControls speech={speech} disabled={pending} />
-                      <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
-                        <T>Cancel</T>
-                      </Button>
-                      <Button
-                        size="xs"
-                        disabled={
-                          speech.preparing ||
-                          pending ||
-                          (!speech.blocksSubmission && reply.trim().length === 0)
-                        }
-                        onClick={() => speech.submitAfterDictation((text) => void send(text))}
-                      >
-                        <T context="verb, button">Reply</T>
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </SpeechTextField>
+                reference={reference}
+                threadId={thread.id}
+                completionScope={completionScope}
+                pending={pending}
+                value={reply}
+                onValueChange={setReply}
+                onSend={(text) => void send(text)}
+                onCancel={() => setReplying(false)}
+              />
             ) : (
               <Button size="xs" variant="ghost" className="mt-2" onClick={() => setReplying(true)}>
                 <T context="verb, button">Reply</T>
