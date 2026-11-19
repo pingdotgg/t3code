@@ -18,6 +18,7 @@ async fn running_parent(f: &Fixture) -> (Value, Caller) {
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
         preview: true,
+        device: false,
     });
     (parent, caller)
 }

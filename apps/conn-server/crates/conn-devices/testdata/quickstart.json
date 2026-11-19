@@ -1,0 +1,57 @@
+{
+ "quickStarts": [
+  {
+   "device": {
+    "hostId": "local",
+    "id": "11111111-2222-3333-4444-555555555555",
+    "platform": "ios",
+    "name": "iPhone 17 Pro",
+    "version": "iOS 26.0",
+    "booted": true,
+    "physical": false
+   },
+   "command": "/state/device/targets/t3-abc/agent-device",
+   "text": "The user is watching iPhone 17 Pro (iOS 26.0) in the Device panel.\nDrive it with /state/device/targets/t3-abc/agent-device. It is bound to this device and session, so it needs no --platform, --udid, --serial, --config or --session flags. Use this exact path; login shells may reset PATH.\nEvery app launch, deep link, tap, text entry, alert, setting, screenshot and recording on this device goes through it. Run open <bundle-or-package-id> (apps lists them) before snapshots, CLI screenshots or input; it starts the session they need. Use device_screenshot just to look.\n  /state/device/targets/t3-abc/agent-device open <bundle-or-package-id> --relaunch  # restarts the app; Expo dev clients connect to their Metro, --metro-port <port> picks it\n  /state/device/targets/t3-abc/agent-device open <bundle-or-package-id> <deep-link-url>\n  /state/device/targets/t3-abc/agent-device snapshot -i  # accessibility tree with @eN refs\n  /state/device/targets/t3-abc/agent-device press @e3 --settle\n  /state/device/targets/t3-abc/agent-device fill @e5 \"text\" --settle\n  /state/device/targets/t3-abc/agent-device alert accept\n  /state/device/targets/t3-abc/agent-device settings appearance dark  # also text-size, permission grant <name>\n  /state/device/targets/t3-abc/agent-device screenshot /tmp/shot.png  # iOS saves 1x points; add --pixel-density <n> (3 on most iPhones) for device resolution, or call device_screenshot to look\n  /state/device/targets/t3-abc/agent-device record start --scope device /tmp/run.mp4  # then record stop\n  /state/device/targets/t3-abc/agent-device install <app> <path-to-.app-or-.apk>\nPrefer snapshot refs over coordinates. Run /state/device/targets/t3-abc/agent-device help <command> for flags and /state/device/targets/t3-abc/agent-device help workflow for guides.\nDo not use simctl, idb, adb or ssh for those actions. They stay fine for builds, installs, code sync, Metro, port forwards, logs, test runners and what this command cannot do; come back to it for every UI action and screenshot so the user can watch.\nEach device_open returns its own command; opening another device does not retarget this one.\nThe command is removed when the device closes or T3 Code restarts. If it is missing, call device_open again.\nFirst use builds an XCTest runner and can take a couple of minutes; later commands are fast."
+  },
+  {
+   "device": {
+    "hostId": "local",
+    "id": "emulator-5554",
+    "platform": "android",
+    "name": "Pixel 9",
+    "version": "Android 16",
+    "booted": true,
+    "physical": false
+   },
+   "command": "/state/device/targets/t3-abc/agent-device",
+   "text": "The user is watching Pixel 9 (Android 16) in the Device panel.\nDrive it with /state/device/targets/t3-abc/agent-device. It is bound to this device and session, so it needs no --platform, --udid, --serial, --config or --session flags. Use this exact path; login shells may reset PATH.\nEvery app launch, deep link, tap, text entry, alert, setting, screenshot and recording on this device goes through it. Run open <bundle-or-package-id> (apps lists them) before snapshots, CLI screenshots or input; it starts the session they need. Use device_screenshot just to look.\n  /state/device/targets/t3-abc/agent-device open <bundle-or-package-id> --relaunch  # restarts the app; Expo dev clients connect to their Metro, --metro-port <port> picks it\n  /state/device/targets/t3-abc/agent-device open <bundle-or-package-id> <deep-link-url>\n  /state/device/targets/t3-abc/agent-device snapshot -i  # accessibility tree with @eN refs\n  /state/device/targets/t3-abc/agent-device press @e3 --settle\n  /state/device/targets/t3-abc/agent-device fill @e5 \"text\" --settle\n  /state/device/targets/t3-abc/agent-device alert accept\n  /state/device/targets/t3-abc/agent-device settings appearance dark  # also text-size, permission grant <name>\n  /state/device/targets/t3-abc/agent-device screenshot /tmp/shot.png  # or call device_screenshot to look\n  /state/device/targets/t3-abc/agent-device record start --scope device /tmp/run.mp4  # then record stop\n  /state/device/targets/t3-abc/agent-device install <app> <path-to-.app-or-.apk>\nPrefer snapshot refs over coordinates. Run /state/device/targets/t3-abc/agent-device help <command> for flags and /state/device/targets/t3-abc/agent-device help workflow for guides.\nDo not use simctl, idb, adb or ssh for those actions. They stay fine for builds, installs, code sync, Metro, port forwards, logs, test runners and what this command cannot do; come back to it for every UI action and screenshot so the user can watch.\nEach device_open returns its own command; opening another device does not retarget this one.\nThe command is removed when the device closes or T3 Code restarts. If it is missing, call device_open again.\nThe Android snapshot helper installs itself on first use."
+  },
+  {
+   "device": {
+    "hostId": "local",
+    "id": "11111111-2222-3333-4444-555555555555",
+    "platform": "ios",
+    "name": "iPad's \"Air\"",
+    "version": "iOS 26.0",
+    "booted": true,
+    "physical": false
+   },
+   "command": "/a path/with spaces/agent-device",
+   "text": "The user is watching iPad's \"Air\" (iOS 26.0) in the Device panel.\nDrive it with '/a path/with spaces/agent-device'. It is bound to this device and session, so it needs no --platform, --udid, --serial, --config or --session flags. Use this exact path; login shells may reset PATH.\nEvery app launch, deep link, tap, text entry, alert, setting, screenshot and recording on this device goes through it. Run open <bundle-or-package-id> (apps lists them) before snapshots, CLI screenshots or input; it starts the session they need. Use device_screenshot just to look.\n  '/a path/with spaces/agent-device' open <bundle-or-package-id> --relaunch  # restarts the app; Expo dev clients connect to their Metro, --metro-port <port> picks it\n  '/a path/with spaces/agent-device' open <bundle-or-package-id> <deep-link-url>\n  '/a path/with spaces/agent-device' snapshot -i  # accessibility tree with @eN refs\n  '/a path/with spaces/agent-device' press @e3 --settle\n  '/a path/with spaces/agent-device' fill @e5 \"text\" --settle\n  '/a path/with spaces/agent-device' alert accept\n  '/a path/with spaces/agent-device' settings appearance dark  # also text-size, permission grant <name>\n  '/a path/with spaces/agent-device' screenshot /tmp/shot.png  # iOS saves 1x points; add --pixel-density <n> (3 on most iPhones) for device resolution, or call device_screenshot to look\n  '/a path/with spaces/agent-device' record start --scope device /tmp/run.mp4  # then record stop\n  '/a path/with spaces/agent-device' install <app> <path-to-.app-or-.apk>\nPrefer snapshot refs over coordinates. Run '/a path/with spaces/agent-device' help <command> for flags and '/a path/with spaces/agent-device' help workflow for guides.\nDo not use simctl, idb, adb or ssh for those actions. They stay fine for builds, installs, code sync, Metro, port forwards, logs, test runners and what this command cannot do; come back to it for every UI action and screenshot so the user can watch.\nEach device_open returns its own command; opening another device does not retarget this one.\nThe command is removed when the device closes or T3 Code restarts. If it is missing, call device_open again.\nFirst use builds an XCTest runner and can take a couple of minutes; later commands are fast."
+  }
+ ],
+ "sessions": [
+  {
+   "threadId": "thread-1",
+   "hostId": "local",
+   "deviceId": "11111111-2222-3333-4444-555555555555",
+   "session": "t3-2ffe2ff5ef99447a75169377"
+  },
+  {
+   "threadId": "thread:β",
+   "hostId": "mac",
+   "deviceId": "emulator-5554",
+   "session": "t3-242c5731ac0d0f4052d634cc"
+  }
+ ]
+}

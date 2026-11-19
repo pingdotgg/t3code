@@ -20,6 +20,8 @@ pub struct ThreadCredentialRequest {
     pub thread_id: String,
     pub provider_instance_id: String,
     pub preview: bool,
+    /// Device tools, captured when the provider session starts (`agentAccessSettings`).
+    pub device: bool,
     /// A delegated child task.
     pub subagent: bool,
 }
@@ -60,6 +62,7 @@ impl Credentials {
             provider_instance_id: request.provider_instance_id,
             subagent: request.subagent,
             preview: request.preview,
+            device: request.device,
         };
         self.records.insert(
             hash(&token),
@@ -105,6 +108,7 @@ impl Credentials {
                 && caller.provider_instance_id == request.provider_instance_id
                 && caller.subagent == request.subagent
                 && caller.preview == request.preview
+                && caller.device == request.device
         })
     }
 

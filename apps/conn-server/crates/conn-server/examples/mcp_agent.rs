@@ -85,6 +85,7 @@ async fn run(state_dir: &Path, project: &Path, config_out: &Path) {
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
         preview: true,
+        device: false,
     });
     std::fs::write(config_out, entry.claude_mcp_config().to_string()).expect("write config");
     println!(

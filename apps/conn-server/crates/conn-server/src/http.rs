@@ -311,7 +311,7 @@ pub(crate) fn require_scope(
 }
 
 /// `EnvironmentScopeRequiredError`, 403.
-fn scope_required(scope: &str) -> Response {
+pub(crate) fn scope_required(scope: &str) -> Response {
     Json(json!({
         "_tag": "EnvironmentScopeRequiredError",
         "code": "insufficient_scope",
@@ -733,7 +733,7 @@ pub(crate) fn check_every(period: Duration) -> tokio::time::Interval {
 }
 
 /// Resolves once `session_id` is revoked or expires, here or by another process (the CLI).
-async fn revoked(auth: &AuthStore, session_id: &str) {
+pub(crate) async fn revoked(auth: &AuthStore, session_id: &str) {
     let mut changes = auth.subscribe();
     let mut check = check_every(Duration::from_secs(30));
     loop {
@@ -784,7 +784,7 @@ fn trace_id() -> String {
     auth::random_hex(16)
 }
 
-fn auth_invalid(reason: &str) -> Response {
+pub(crate) fn auth_invalid(reason: &str) -> Response {
     error(
         StatusCode::UNAUTHORIZED,
         "EnvironmentAuthInvalidError",

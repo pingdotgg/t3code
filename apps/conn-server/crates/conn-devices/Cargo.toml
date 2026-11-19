@@ -1,0 +1,34 @@
+[package]
+name = "conn-devices"
+description = "Device hosts for the Device panel and the device tools: simulators on this machine or on a Mac over SSH."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conn-support.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# `process`: simctl, ssh, npm and the hub run as child processes; `fs` for tokio's file reads.
+tokio = { workspace = true, features = ["process", "fs", "sync", "time", "rt", "macros"] }
+sha2.workspace = true
+# The hub and agent-device daemon answer HTTP on loopback; already in the tree, same versions
+# and features as conn-server and conn-preview.
+hyper = { version = "1", default-features = false, features = ["client", "http1"] }
+hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
+http-body-util = "0.1"
+# Signals a recorded hub or daemon pid; already in the tree with these features.
+rustix = { workspace = true, features = ["process"] }
+# Local interface addresses: an SSH host that is this machine is not listed twice (T3's
+# `isLocalSshDeviceHost`). Already in the tree with this feature.
+nix.workspace = true
+# The hub proxy's path allow-lists, T3's own patterns (generated). Already in the tree.
+regex-automata.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

@@ -50,8 +50,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
     table.stream("subscribeProjectClones", |_, _: Value| async {
         Ok(open_stream(vec![json!([])]))
     });
-    table.stream("subscribeDeviceState", |_, _: Value| async {
-        Ok(open_stream(vec![json!({
+    if deps.devices.is_none() {
+        table.stream("subscribeDeviceState", |_, _: Value| async {
+            Ok(open_stream(vec![json!({
             "hostStatus": "disabled",
             "hostStatuses": {},
             "hosts": [],
@@ -59,10 +60,11 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             "sessions": [],
             "onboardingCompleted": false,
             "agentAccessEnabled": false,
-            "hubBasePath": "",
-            "revision": 0,
-        })]))
-    });
+                "hubBasePath": "",
+                "revision": 0,
+            })]))
+        });
+    }
 
     // File reads, and on macOS two subprocesses: off the event loop.
     table.unary("server.getHostResources", |_, _: Value| async move {

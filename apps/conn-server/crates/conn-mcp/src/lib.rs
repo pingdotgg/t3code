@@ -67,6 +67,8 @@ pub struct McpConfig {
     pub test_logins: Option<conn_features::test_logins::TestLogins>,
     /// The broker also used by panels.requests and panels.respond.
     pub panels: Option<conn_features::panels::PanelBroker>,
+    /// Device hosts; without them the device tools answer that device access is off.
+    pub devices: Option<conn_devices::Devices>,
     /// The server's GitHub pull request panel; without it the watch and guide tools answer
     /// as T3 does when no host can be read.
     pub pull_requests: Option<PullRequestHost>,
@@ -113,6 +115,8 @@ pub struct ThreadCaller {
     pub provider_instance_id: String,
     /// Captured when the provider session starts, not re-read on each call.
     pub preview: bool,
+    /// The `device` capability, captured the same way.
+    pub device: bool,
     /// A delegated child: it hands its work back to its parent.
     pub subagent: bool,
 }

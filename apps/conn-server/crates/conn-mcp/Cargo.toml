@@ -18,6 +18,8 @@ conn-vcs.workspace = true
 conn-terminal.workspace = true
 # Scheduled tasks for `schedule_task` and its siblings.
 conn-features.workspace = true
+# The device service behind `device_list`, `device_open`, `device_screenshot` and `device_close`.
+conn-devices.workspace = true
 # The host definition registry: pull request keys, URLs and chains for the link tools.
 conn-source-control.workspace = true
 serde_json.workspace = true

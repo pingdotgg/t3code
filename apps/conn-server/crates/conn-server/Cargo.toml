@@ -30,6 +30,8 @@ conn-vcs.workspace = true
 conn-files.workspace = true
 conn-terminal.workspace = true
 conn-features.workspace = true
+# Device hosts: `device.*`, `subscribeDeviceState`, the hub proxy and the device tools.
+conn-devices.workspace = true
 # The scheduled tasks' time zone, as conn-features reads it (workspace dependency).
 jiff.workspace = true
 conn-source-control.workspace = true

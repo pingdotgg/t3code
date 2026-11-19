@@ -65,6 +65,7 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
     let preview = conn_preview::tabs::Preview::new(state.clone());
     let service = McpService::new(McpConfig {
         preview: Some(preview.clone()),
+        devices: None,
 
         test_logins: None,
         refresh_provider: None,
@@ -106,6 +107,7 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
             provider_instance_id: "claudeAgent".into(),
             subagent: false,
             preview: true,
+            device: false,
         });
         let headers = open(&service, &caller).await?;
         agents.push((caller, headers));

@@ -217,6 +217,7 @@ pub async fn serve_with_instances(
         terminals: terminals.clone(),
         environment: environment.clone(),
         scheduled_tasks: OnceLock::new(),
+        devices: OnceLock::new(),
     });
 
     let mut config = EngineConfig::new(state_dir.join("engine.sqlite"));
@@ -273,8 +274,12 @@ pub async fn serve_with_instances(
         vcs,
         terminals: Some(terminals.clone()),
         text_generators: Some(text_generators),
+        devices: Some(crate::methods::devices::start(environment.clone())),
         ..Deps::default()
     };
+    if let Some(devices) = &deps.devices {
+        let _ = host.devices.set(devices.clone());
+    }
     deps.mcp = crate::routes::mcp::service(&deps);
     if let Some(mcp) = &deps.mcp {
         let _ = host.mcp.set(mcp.clone());
@@ -336,6 +341,7 @@ pub async fn serve_with_instances(
         }
     }
 
+    let devices = state.deps.devices.clone();
     let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
     let server = axum::serve(listener, app).with_graceful_shutdown(async move {
@@ -367,6 +373,11 @@ pub async fn serve_with_instances(
     terminals.shutdown().await;
     engine.shutdown().await;
     preview.shutdown().await;
+    // Device hubs and agent daemons stop, here and on SSH hosts, as T3's finalizers do;
+    // bounded, so an unreachable host cannot hold the stop.
+    if let Some(devices) = devices {
+        let _ = tokio::time::timeout(Duration::from_secs(10), devices.stop_all()).await;
+    }
     let _ = tokio::task::spawn_blocking(move || runtime.clear(&state_dir)).await;
     if restart.requested() {
         // A failure exit also restarts units with Restart=on-failure.

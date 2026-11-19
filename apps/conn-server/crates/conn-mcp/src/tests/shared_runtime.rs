@@ -20,6 +20,7 @@ fn request(session: &AgentSession) -> ThreadCredentialRequest {
         provider_instance_id: session.provider_instance_id.clone(),
         subagent: session.subagent,
         preview: true,
+        device: false,
     }
 }
 

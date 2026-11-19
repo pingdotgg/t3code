@@ -20,6 +20,7 @@ mod annotations;
 pub(crate) mod attachments;
 mod background;
 mod create_threads;
+mod devices;
 mod html;
 mod manage;
 mod message;
@@ -53,6 +54,13 @@ pub(crate) enum ToolError {
     Message(String),
     #[error("{message}")]
     Preview { tag: &'static str, message: String },
+    /// A failed image tool (`imageToolFailure`): the text, and the tag in `structuredContent`.
+    #[error("{message}")]
+    Image {
+        tag: &'static str,
+        operation: &'static str,
+        message: String,
+    },
 }
 
 pub(crate) type ToolResult = Result<Value, ToolError>;
@@ -85,6 +93,10 @@ pub(crate) const HANDLED: &[&str] = &[
     "t3_workflow_stop",
     "html_render",
     "html_preview",
+    "device_list",
+    "device_open",
+    "device_screenshot",
+    "device_close",
     "preview_snapshot",
     "preview_act",
     "preview_wait_for",
@@ -199,6 +211,9 @@ pub(crate) async fn call(
         | "preview_wait_for"
         | "preview_recording_start"
         | "preview_recording_stop" => preview::call(&cx, name, &args).await,
+        "device_list" | "device_open" | "device_screenshot" | "device_close" => {
+            devices::call(&cx, name, &args).await
+        }
         "create_threads" => create_threads::create(&cx, &args).await,
         "t3_attachment_prepare_upload" => attachments::prepare(&cx, &args).await,
         "t3_attachment_discard" => attachments::discard(&cx, &args).await,

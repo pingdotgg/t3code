@@ -92,6 +92,8 @@ CI path filters and sync triggers are listed in [`docs/upkeep.md`](docs/upkeep.m
 | Text generation     | `node crates/conn-server/tools/textgen-diff.mjs target/release/examples/text_generation` | Text generator requests and answers, title prompts, contexts and titles equal T3's own code, on a loopback stub |
 | Registry            | `node crates/conn-source-control/tools/registry-diff.mjs target/release/examples/registry_cases` | GitHub and unknown-host fallback match T3's core registry with its GitHub definition, on every GitHub test literal and a fixed grid (8,901 cases) |
 | MCP parity          | `node crates/conn-mcp/tools/parity.mjs target/release/examples/replay_server`                                                   | `/mcp` answers as the T3 server's does, on the same calls                                            |
+| Devices current     | `node crates/conn-devices/tools/gen-devices.mjs --check` | The SSH bootstrap, the agent-device launcher, the tool pins and the hub proxy lists equal `apps/server`'s |
+| Device conformance  | `node crates/conn-devices/tools/conformance.mjs target/release/examples/replay_server` | `device.*`, the hub proxy and the four device tools answer as the T3 server's, and run the same ssh, npm and agent-device commands, on stand-ins |
 | Orbit idle check    | `node crates/conn-server/tools/idle-diff.mjs target/release/conn-server` | `/api/orchestration/shell` as Orbit's idle sleep and thread index read it equals the T3 server's in 14 states (no thread to a restart mid-turn) and 5 refusals; `/transcript` matches in status, refusals and decode, and is each server's own thread snapshot cut down, in 6 states and 4 refusals, and a run fork's transcript, thread snapshot and `subscribeThread` snapshot match T3's outline and fork marker; Codex on the conformance stub; differences listed in its `KNOWN` must stay exactly those |
 | Provider sign-in    | `node crates/conn-server/tools/provider-auth-diff.mjs target/release/conn-server` | every `provider.auth.*` reply for `claudeAgent`, `codex`, `grok` and an unknown id equals the T3 server's, and neither server runs a CLI for them (recording stubs) |
 | Codex instructions  | `node crates/conn-provider-codex/tools/gen-instructions.mjs --check`                                                             | T3's Codex `additionalContext` text is current, byte for byte                                         |
@@ -181,6 +183,7 @@ Release, which Orbit downloads.
 | `conn-server`           | Binary: HTTP, `/ws` session, pairing, method table, handlers          |
 | `conn-support`          | Helpers several crates share: time, hex, base64, SHA-256 and HMAC, atomic writes, v4 ids, the T3 secret store, URL text |
 | `conn-features`         | Scheduled tasks (webhook tasks too) and the Conn-only areas beside the engine; see its README |
+| `conn-devices`          | Device hosts (this machine, a Mac over SSH): `device.*`, the hub proxy rules, the device tools |
 
 Dependencies point one way: `conn-server` → `conn-engine` → `conn-provider` → `conn-contract`;
 `conn-provider-claude` → `conn-provider`; `conn-server` → `conn-wire`. `conn-wire` and

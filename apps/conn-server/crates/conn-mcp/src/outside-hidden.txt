@@ -35,3 +35,7 @@ mcp_connect
 create_threads
 t3_worktree_handoff
 t3_worktree_status
+device_list
+device_open
+device_screenshot
+device_close

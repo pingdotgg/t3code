@@ -289,6 +289,14 @@ async fn call(
             }
             json!({"content":content,"structuredContent":value,"isError":false})
         }
+        Ok(mut value) if name == "device_screenshot" => {
+            let data = value
+                .get_mut("screenshot")
+                .and_then(Value::as_object_mut)
+                .and_then(|s| s.remove("data"))
+                .unwrap_or(Value::Null);
+            json!({"content":[{"type":"text","text":value.to_string()},{"type":"image","data":data,"mimeType":"image/png"}],"structuredContent":value,"isError":false})
+        }
         Ok(mut value) if name == "html_preview" => {
             let data = value
                 .get_mut("screenshot")
@@ -303,6 +311,13 @@ async fn call(
                     .as_array()
                     .is_some_and(|tools| !tools.is_empty());
             json!({"content": [{"type": "text", "text": value.to_string()}], "structuredContent": value, "isError": false})
+        }
+        Err(tools::ToolError::Image {
+            tag,
+            operation,
+            message,
+        }) => {
+            json!({"content":[{"type":"text","text":message}],"structuredContent":{"error":{"_tag":tag,"operation":operation,"failureCount":1,"message":message}},"isError":true})
         }
         Err(tools::ToolError::Failure { message, .. }) if name == "html_preview" => {
             json!({"content":[{"type":"text","text":message}],"structuredContent":{"error":{"_tag":"OrchestratorMcpFailure","operation":"preview","failureCount":1,"message":message}},"isError":true})

@@ -128,6 +128,9 @@ Where they differ, because the engine does not do it yet:
   item, and the client shows its `sentMessage`. Our engine sends tool items whole (no wire
   projection, no bounded history yet), so the item reaches the client with its output.
 - Results keep the TS keys; serde_json sorts keys, so the `text` copy orders them differently.
+- Device tools (`tools/devices.rs`): the logic is `conn_devices::tool_api`; a thread has the
+  `device` capability when its provider session started with device support and agent access
+  on, as T3 grants it. `crates/conn-devices/tools/conformance.mjs` compares them with T3's.
 
 A tool we do not serve is not listed: an unknown tool is `-32602 Tool 'x' not found`, as the T3
 server answers a hidden one.
@@ -196,10 +199,10 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `preview_snapshot`, `preview_wait_for` (2) | not served | readsAsCaller | desktop client: previews | O |
 | `t3_preview_list` | not served | readsAsCaller | desktop client: previews | |
 | `t3_preview_close` | not served | actsAsCaller | desktop client: previews | |
-| `device_list` | not served | readsAsCaller | server: devices | D |
-| `device_open` | not served | actsAsCaller | server: devices | D |
-| `device_screenshot` | not served | readsAsCaller | server: devices | D |
-| `device_close` | not served | actsAsCaller | server: devices | |
+| `device_list` | served | readsAsCaller | `conn-devices` | D |
+| `device_open` | served | actsAsCaller | `conn-devices` | D |
+| `device_screenshot` | served | readsAsCaller | `conn-devices` | D |
+| `device_close` | served | actsAsCaller | `conn-devices` | |
 | `panel_open` | served | actsAsCaller | desktop client: panels | |
 | `database_query` | served | actsAsCaller | desktop client: panels (the database panel) | |
 | `mcp_connect` | not served | actsAsCaller | desktop client: panels (the MCP panel) | |

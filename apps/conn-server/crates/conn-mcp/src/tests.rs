@@ -63,6 +63,7 @@ fn fixture_with_provider(
     let engine = Arc::new(SqliteEngine::open(config).unwrap());
     let service = McpService::new(McpConfig {
         preview: Some(conn_preview::tabs::Preview::new(dir.clone())),
+        devices: None,
         refresh_provider: None,
         files: Some(files),
         worktrees: Some(crate::WorktreeConfig {
@@ -651,6 +652,7 @@ async fn an_agent_delegates_a_task_and_is_woken() {
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
         preview: true,
+        device: false,
     });
     assert_eq!(entry.url, "http://127.0.0.1:4711/mcp");
     let token = entry.authorization.strip_prefix("Bearer ").unwrap();
@@ -770,6 +772,7 @@ fn credentials_expire_when_idle_and_stay_bounded() {
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
         preview: true,
+        device: false,
     };
     let (token, _) = credentials.issue(request());
     assert!(credentials.resolve(&token).is_some());
@@ -793,6 +796,7 @@ fn a_credential_counts_idle_time_the_wall_clock_shows_after_a_freeze() {
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
         preview: true,
+        device: false,
     });
     credentials.jump_wall(Duration::from_secs(10 * 60));
     assert!(credentials.resolve(&token).is_some(), "10 minutes: alive");
@@ -828,6 +832,7 @@ fn caller_namespaces_key_idempotency_per_credential() {
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
         preview: true,
+        device: false,
     });
     assert_eq!(thread.namespace(), "p");
     assert_eq!(client(true).namespace(), "client:swamp");
@@ -860,6 +865,7 @@ fn agent_of(f: &Fixture, thread_id: &str) -> Caller {
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
         preview: true,
+        device: false,
     });
     let token = entry.authorization.strip_prefix("Bearer ").unwrap();
     Caller::Thread(f.service.resolve_thread_token(token).unwrap())
@@ -1717,9 +1723,6 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 const NAMED_NOT_SERVED: &[&str] = &[
     "ci_logs",
     "ci_rerun",
-    "device_list",
-    "device_open",
-    "device_screenshot",
     "fill_credential",
     "link_issue",
     "pull_request_create",
@@ -1789,6 +1792,7 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
     let config = &base.service.config;
     let service = McpService::new(McpConfig {
         preview: None,
+        devices: None,
         refresh_provider: None,
         worktrees: None,
         panels: Some(conn_features::panels::PanelBroker::default()),
@@ -2329,6 +2333,7 @@ async fn deferred_clients_load_tools_by_provider_session_and_receive_list_change
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
         preview: true,
+        device: false,
     });
     let client = Client::open(&f.service, caller.clone()).await;
     let session = client.session.as_deref().unwrap();
@@ -2995,6 +3000,7 @@ async fn html_preview_validates_before_launch_and_reads_without_a_live_turn() {
         subagent: false,
 
         preview: false,
+        device: false,
     });
     let mut agent = Client::open(&f.service, caller).await;
     client
@@ -3458,12 +3464,14 @@ fn preview_grant_is_retained_per_credential() {
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
         preview: false,
+        device: false,
     });
     let (granted, _) = credentials.issue(ThreadCredentialRequest {
         thread_id: "t".into(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
         preview: true,
+        device: false,
     });
     assert!(!credentials.resolve(&denied).unwrap().preview);
     assert!(credentials.resolve(&granted).unwrap().preview);

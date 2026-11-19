@@ -306,6 +306,7 @@ async fn read_task(cx: &Cx<'_>, parent: &str, task_id: &str, wait_timed_out: boo
                 provider_instance_id: String::new(),
                 subagent: false,
         preview: true,
+        device: false,
             }),
             &child_id,
             title,

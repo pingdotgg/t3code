@@ -168,6 +168,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "conn-devices"
+version = "0.2.0"
+dependencies = [
+ "conn-support",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "nix 0.31.3",
+ "regex-automata",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+]
+
+[[package]]
 name = "conn-engine"
 version = "0.2.0"
 dependencies = [
@@ -229,6 +246,7 @@ name = "conn-mcp"
 version = "0.2.0"
 dependencies = [
  "conn-contract",
+ "conn-devices",
  "conn-engine",
  "conn-features",
  "conn-files",
@@ -350,6 +368,7 @@ version = "0.2.0"
 dependencies = [
  "axum",
  "conn-contract",
+ "conn-devices",
  "conn-engine",
  "conn-features",
  "conn-files",

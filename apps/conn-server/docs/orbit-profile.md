@@ -23,12 +23,12 @@ pinned pair.
 | Target | Methods to build | `/mcp` tools to build | HTTP routes to build | Rough size [estimate] |
 | --- | --- | --- | --- | --- |
 | (a) Orbit container only | **0** of 67 needed (all served); 1 useful method remains | **0** needed or useful | **0** needed; 3 useful routes remain | Profile remainder not re-estimated; Orbit additions about 2 to 4 k (section 4) |
-| (b) Container and host, what the client really uses | **15** needed (51 with the useful ones the rip-out list keeps) | **9** needed (17 with the useful ones) | **0** needed (11 with the useful ones) | Remaining work not re-estimated |
-| (c) Full parity with the T3 server | **68**, including 1 unclassified method | **17** | **38** | Remaining work not re-estimated |
+| (b) Container and host, what the client really uses | **5** needed (41 with the useful ones the rip-out list keeps) | **5** needed (13 with the useful ones) | **0** needed (11 with the useful ones) | Remaining work not re-estimated |
+| (c) Full parity with the T3 server | **58**, including 1 unclassified method | **13** | **38** | Remaining work not re-estimated |
 
 The dated size basis is about 140 k lines of Rust [measured on 2026-11-14, `wc -l` over
-`crates/*/src`]. Current coverage is 169 of 237 methods, 70 of 87 tools and 19 of 57 HTTP
-contract routes, plus seven endpoints outside that HTTP contract. The original size
+`crates/*/src`]. Current coverage is 179 of 237 methods, 74 of 87 tools and 19 of 57 HTTP
+contract routes, plus eight endpoints outside that HTTP contract. The original size
 estimates are not estimates of the remaining work. Section 2 gives the current gaps;
 section 3 keeps the dated binary measurements.
 
@@ -259,7 +259,7 @@ includes it. Section 11 proposes what to hide or remove, independently of what i
 | attachments | 2 | 2 | 2 / 0 / 0 / 0 | 2 / 0 / 0 / 0 |
 | cloud | 2 | 0 | 0 / 0 / 2 / 0 | 0 / 0 / 2 / 0 |
 | credentials | 2 | 0 | 0 / 0 / 2 / 0 | 0 / 2 / 0 / 0 |
-| device | 10 | 0 | 0 / 0 / 10 / 0 | 10 / 0 / 0 / 0 |
+| device | 10 | 10 | 0 / 0 / 10 / 0 | 10 / 0 / 0 / 0 |
 | filesystem | 2 | 2 | 2 / 0 / 0 / 0 | 2 / 0 / 0 / 0 |
 | git | 3 | 3 | 0 / 1 / 0 / 2 | 3 / 0 / 0 / 0 |
 | guestShare | 1 | 0 | 0 / 0 / 1 / 0 | 0 / 0 / 1 / 0 |
@@ -283,32 +283,33 @@ includes it. Section 11 proposes what to hide or remove, independently of what i
 | testLogins | 5 | 5 | 0 / 0 / 5 / 0 | 0 / 5 / 0 / 0 |
 | vcs | 9 | 9 | 9 / 0 / 0 / 0 | 9 / 0 / 0 / 0 |
 | worktreeSetup | 1 | 1 | 1 / 0 / 0 / 0 | 1 / 0 / 0 / 0 |
-| **Total** | **237** | **169** | **67 / 43 / 96 / 30** | **152 / 68 / 16 / 0** |
+| **Total** | **237** | **179** | **67 / 43 / 96 / 30** | **152 / 68 / 16 / 0** |
 
 The C/H columns classify 236 methods; `server.getSettings` adds one unclassified method
 in the `server` area.
 
 - **Container:** all 67 needed methods are served. One useful method is not:
   `provider.consumeResetCredit`.
-- **Host:** 152 are needed, and 15 of them are not served: `device.*` (10),
-  `peerLinks.*` (4), and `preview.stopLocalServer`. The last stops only a server that
-  the port scan (`subscribeDiscoveredLocalServers`, useful, not served) listed; it comes with
-  that scan.
+- **Host:** 152 are needed, and 5 of them are not served: `peerLinks.*` (4) and
+  `preview.stopLocalServer`. The last stops only a server that the port scan
+  (`subscribeDiscoveredLocalServers`, useful, not served) listed; it comes with that scan.
+  `device.*` is served since 2026-11-19.
 - **Not needed anywhere: 16 methods.** These are T3 Connect (`cloud.*`, `guestShare`), the
   ACP registry's download and install (9; Nick ruled out installs), the Electron tab relay
   (`preview.desktop*`, 3) and `server.commitDesktopUpdate`.
 
-### `/mcp` tools (87; 70 served) [measured counts]
+### `/mcp` tools (87; 74 served) [measured counts]
 
 | | N | U | X | O |
 | --- | --- | --- | --- | --- |
 | Container | 21 (all served) | 44 (all served) | 14 (2 served) | 8 (3 served) |
-| Host | 67 (58 served) | 20 (12 served) | 0 | 0 |
+| Host | 67 (62 served) | 20 (12 served) | 0 | 0 |
 
 - Every needed or useful container tool is served.
-- On a host, 9 needed tools are missing: `device_*` (4), linked machines
+- On a host, 5 needed tools are missing: linked machines
   (`t3_environment_link/links/unlink/preferences_update`, 4) and `write_pull_request_guides`
-  (no review guide generator yet). PR watching and guide reads are served since 2026-11-19.
+  (no review guide generator yet). PR watching and guide reads are served since 2026-11-19, and
+  the `device_*` tools (4) too.
 
 ### HTTP routes (57 contract routes; 19 served) [measured counts]
 
@@ -319,7 +320,7 @@ in the `server` area.
 
 - Every needed route is served. `threads/:id/transcript` (context import in the composer),
   `POST /api/pull-requests/diff` and all four webhook routes are served.
-- Appendix C also lists seven served endpoints outside `EnvironmentHttpApi`; these do not
+- Appendix C also lists eight served endpoints outside `EnvironmentHttpApi`; these do not
   add gaps or C/H verdicts to the profile.
 - Not needed on either: the 16 voice routes, the 10 T3 Connect routes (with
   `connect-devices`) and `browser-session`.
@@ -356,7 +357,6 @@ implemented areas have no remaining-size estimate.
 | --- | --- | --- |
 | Review guide writing | `write_pull_request_guides` (and `pullRequests.generateReviewGuide` for real) | Not estimated: T3's guide generator, a temporary checkout and the guide normalization |
 | Agent browser and previews | `preview.stopLocalServer` | Not re-estimated; browser tools and eight preview methods are registered |
-| Devices | 10 methods, 4 tools | 5 to 7 k (T3's `device/` was about 8,400 lines) |
 | Peer links, linked environments, MCP OAuth | 4 methods, 4 tools, 8 useful routes | 3 to 5 k |
 | Provider sign-in | 6 methods | 1.5 to 2.5 k |
 | The rest | useful features in appendices A to C | Not re-estimated |
@@ -651,7 +651,7 @@ remain separate from registration):
 | Git actions control (commit, push, PR) | `git.runStackedAction` | Registered; commit is served, push and PR creation return a typed error |
 | Thread PR panel, when a PR is linked | `pullRequests.*` | All 35 methods are registered; disabled guide generation and unavailable actions return typed errors |
 | Provider sign-in and install in Settings | `provider.auth.*`, `provider.install.*` | Sign-in is served as in T3: Claude, Codex and Grok are CLI-owned (`setup.canAuthenticate: false`), so the UI shows no sign-in and every `provider.auth.*` call answers T3's `ProviderSetupError`. Install actions fail; the UI follows `providers[].auth.status` |
-| Device panel | `device.*` | The stream is served; the actions fail |
+| Device panel | `device.*` | Served on this machine and on SSH hosts; Expo and Simlock hosts are not offered |
 | Test logins and credentials | `testLogins.*`, `credentials.*` | Test-login methods are served; the two site-credential methods remain unserved |
 | Secret request card | `secrets.answerRequest` | Served |
 | MCP App frames, agent panels | `mcpApps.*`, `panels.*` | Registered; panel browser URL/tab automation returns `capability_denied` |
@@ -968,16 +968,16 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `cloud.installRelayClient` | no | X | X | L | T3 Connect relay (Clerk); Orbit gives WireGuard |
 | `credentials.fillForSite` | no | X | U | M | autofill test logins into preview tabs |
 | `credentials.listForSite` | no | X | U | M | autofill test logins into preview tabs |
-| `device.action` | no | X | N | L | iOS simulators on the Mac (device/ is about 8,400 lines in T3) |
-| `device.close` | no | X | N | L | iOS simulators on the Mac (device/ is about 8,400 lines in T3) |
-| `device.configure` | no | X | N | L | iOS simulators on the Mac (device/ is about 8,400 lines in T3) |
-| `device.detail` | no | X | N | L | iOS simulators on the Mac (device/ is about 8,400 lines in T3) |
-| `device.easAccount` | no | X | N | L | iOS simulators on the Mac (device/ is about 8,400 lines in T3) |
-| `device.list` | no | X | N | L | iOS simulators on the Mac (device/ is about 8,400 lines in T3) |
-| `device.open` | no | X | N | L | iOS simulators on the Mac (device/ is about 8,400 lines in T3) |
-| `device.shutdown` | no | X | N | L | iOS simulators on the Mac (device/ is about 8,400 lines in T3) |
-| `device.simlockIdentity` | no | X | N | L | iOS simulators on the Mac (device/ is about 8,400 lines in T3) |
-| `device.testHost` | no | X | N | L | iOS simulators on the Mac (device/ is about 8,400 lines in T3) |
+| `device.action` | yes | X | N |  | simulators on this machine or an SSH host |
+| `device.close` | yes | X | N |  | simulators on this machine or an SSH host |
+| `device.configure` | yes | X | N |  | simulators on this machine or an SSH host |
+| `device.detail` | yes | X | N |  | simulators on this machine or an SSH host |
+| `device.easAccount` | yes | X | N |  | typed error: no Expo or Simlock hosts |
+| `device.list` | yes | X | N |  | simulators on this machine or an SSH host |
+| `device.open` | yes | X | N |  | simulators on this machine or an SSH host |
+| `device.shutdown` | yes | X | N |  | simulators on this machine or an SSH host |
+| `device.simlockIdentity` | yes | X | N |  | typed error: no Expo or Simlock hosts |
+| `device.testHost` | yes | X | N |  | simulators on this machine or an SSH host |
 | `filesystem.browse` | yes | N | N |  | project and file pickers |
 | `filesystem.getMetadata` | yes | N | N |  | project and file pickers |
 | `git.preparePullRequestThread` | yes | O | N |  | pull request checkout into a thread |
@@ -1159,7 +1159,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `sourceControl.star` | yes | X | U |  | stars |
 | `sourceControl.starred` | yes | X | U |  | stars |
 | `subscribeAuthAccess` | yes | N | N |  | connection streams |
-| `subscribeDeviceState` | yes | U | N |  | device panel opens setup when this fails |
+| `subscribeDeviceState` | yes | U | N |  | device panel state; real state since 2026-11-19 |
 | `subscribeDiscoveredLocalServers` | no | X | U | M | port scan for previews |
 | `subscribePreviewEvents` | yes | X | N |  | preview tabs |
 | `subscribeProjectClones` | yes | X | U |  |  |
@@ -1206,10 +1206,10 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `database_query` | yes | U | U |  | Conn database panel |
 | `delegate_task` | yes | N | N |  | core orchestration |
 | `delete_scheduled_task` | yes | U | N |  | scheduled tasks |
-| `device_close` | no | X | N | L | simulators |
-| `device_list` | no | X | N | L | simulators |
-| `device_open` | no | X | N | L | simulators |
-| `device_screenshot` | no | X | N | L | simulators |
+| `device_close` | yes | X | N |  | simulators |
+| `device_list` | yes | X | N |  | simulators |
+| `device_open` | yes | X | N |  | simulators |
+| `device_screenshot` | yes | X | N |  | simulators |
 | `fill_credential` | no | X | U | M | test logins |
 | `html_preview` | yes | U | N |  | charts; needs headless Chromium on the server |
 | `html_render` | yes | U | N |  | charts; needs headless Chromium on the server |
@@ -1289,7 +1289,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 
 ## Appendix C. Every HTTP route
 
-The first table covers all 57 `EnvironmentHttpApi` routes. The seven additional served
+The first table covers all 57 `EnvironmentHttpApi` routes. The eight additional served
 endpoints below it are outside that contract and the dated C/H classification. GET routes
 also accept HEAD (explicitly for webhooks); the router handles OPTIONS for CORS. Neither is
 counted as a separate profile row.
@@ -1363,5 +1363,6 @@ counted as a separate profile row.
 | `GET /api/assets/:token/*name` | yes | signed assets, including HTML renders |
 | `POST /api/attachments/upload/:token` | yes | attachment upload |
 | `GET /api/preview-stream/ws` | yes | authenticated browser stream |
+| `* /api/device-hub/*` | yes | Device panel streams, input and screenshots, proxied to the host's hub |
 | `POST /mcp` | yes | MCP requests |
 | `DELETE /mcp` | yes | MCP session close |

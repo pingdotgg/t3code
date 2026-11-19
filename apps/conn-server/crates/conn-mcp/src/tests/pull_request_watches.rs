@@ -33,6 +33,7 @@ fn with_host(base: Fixture, state: &'static str) -> Fixture {
     let config = &base.service.config;
     let service = McpService::new(McpConfig {
         preview: None,
+        devices: None,
         refresh_provider: None,
         worktrees: None,
         panels: None,
@@ -117,6 +118,7 @@ async fn watches_start_link_and_stop_as_t3() {
         provider_instance_id: "claudeAgent".into(),
         subagent: true,
         preview: false,
+        device: false,
     });
     let token = entry.authorization.strip_prefix("Bearer ").unwrap();
     let child = Caller::Thread(f.service.resolve_thread_token(token).unwrap());

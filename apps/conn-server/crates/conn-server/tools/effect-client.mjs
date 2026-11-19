@@ -49,6 +49,22 @@ NodeFS.writeFileSync(
   JSON.stringify({ providerInstances: { codex: { driver: "codex", enabled: false } } }),
 );
 const serverEnv = { ...sealedEnv(stateDir), CONN_CODEX_STATUS_PROBE: "on" };
+// A stand-in `ssh` that refuses every connection: `device.testHost` gets its typed error and
+// no check reaches a network host.
+const sshStub = NodePath.join(stateDir, "ssh-stub");
+NodeFS.mkdirSync(sshStub, { recursive: true });
+NodeFS.writeFileSync(
+  NodePath.join(sshStub, "ssh"),
+  [
+    "#!/bin/sh",
+    'for arg in "$@"; do [ "$arg" = -G ] && { printf "hostname 192.0.2.10\\nport 22\\n"; exit 0; }; done',
+    'echo "ssh: connect to host 192.0.2.10 port 22: Connection refused" >&2',
+    "exit 255",
+    "",
+  ].join("\n"),
+  { mode: 0o755 },
+);
+serverEnv.PATH = `${sshStub}:${serverEnv.PATH}`;
 const workflowScript = NodePath.join(serverEnv.HOME, ".claude", "projects", "effect-client.js");
 NodeFS.mkdirSync(NodePath.dirname(workflowScript), { recursive: true });
 NodeFS.writeFileSync(workflowScript, "// workflow script fixture\n");
@@ -439,6 +455,18 @@ const decodeEach = (client) =>
       annotation: { id: "effect-client-a1", comment: "Make the button bigger", source: "browser" },
     });
     yield* call("annotations.remove", { projectId: "effect-client-p1", ids: ["effect-client-a1"] });
+    // Devices, with device support off and no host but this machine: states and typed errors.
+    yield* call("device.list", {});
+    yield* call("device.list", { inspectOnly: true });
+    yield* call("device.configure", { onboardingCompleted: true });
+    yield* call("device.testHost", { kind: "ssh", id: "mac", label: "Mac", target: "192.0.2.10" });
+    yield* call("device.open", { threadId: none, hostId: "missing", deviceId: "d", platform: "ios" });
+    yield* call("device.close", { threadId: none });
+    yield* call("device.shutdown", { hostId: "missing", deviceId: "d", platform: "ios" });
+    yield* call("device.detail", { hostId: "missing", deviceId: "d" });
+    yield* call("device.action", { hostId: "missing", deviceId: "d", type: "setAppearance", value: "dark" });
+    yield* call("device.easAccount", {});
+    yield* call("device.simlockIdentity", {});
     yield* call("projects.writeFile", { cwd: repo, relativePath: "b.txt", contents: "b\n" });
     yield* call("projects.listIgnoredFiles", { cwd: repo });
     yield* call("review.getDiffFileContents", {

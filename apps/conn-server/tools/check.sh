@@ -162,6 +162,7 @@ fi
 # The checks against the monorepo: its contract, apps/server and the web client.
 run 2 120 "gen-contract --check" node crates/conn-contract/tools/gen-contract.mjs --check
 run 2 120 "gen-tools --check" node crates/conn-mcp/tools/gen-tools.mjs --check
+run 2 120 "gen-devices --check" node crates/conn-devices/tools/gen-devices.mjs --check
 run 2 120 "gen-keybindings --check" node crates/conn-server/tools/gen-keybindings.mjs --check
 run 2 120 "gen-upstream --check" node tools/gen-upstream.mjs --check
 # GitHub's GraphQL operation texts, printed from T3's generated modules by effect/graphql.
@@ -202,6 +203,9 @@ run 4 120 "webhook-diff" node crates/conn-features/tools/webhook-diff.mjs "$rele
 run 4 120 "limits-diff" node crates/conn-server/tools/limits-diff.mjs
 run 3 180 "parity" \
   node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"
+# Devices: both servers on stand-in ssh and npm (a stand-in Mac, hub and daemon); no device.
+run 3 240 "device conformance" \
+  node crates/conn-devices/tools/conformance.mjs "$release/examples/replay_server"
 # Orbit's idle check: the shell route in 14 states on both servers, Codex on a stub (no model).
 run 4 180 "idle-diff" node crates/conn-server/tools/idle-diff.mjs "$release/conn-server"
 # Provider sign-in: every provider.auth.* reply and the CLI runs on both servers (stub CLIs).

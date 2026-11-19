@@ -424,12 +424,13 @@ mod tests {
         let table = crate::method_table(&deps);
         assert!(table.get("server.probe").is_some());
         // The T3 server checks a scope inside these handlers, outside the table (the bump
-        // report lists new ones). Serving one means applying that rule in the handler.
+        // report lists new ones). A served one applies that rule in its handler; list it here.
         const IN_HANDLER: &[(&str, &str)] = &[("requiredScopeForDeviceList", "device.list")];
+        const APPLIED: &[&str] = &["device.list"];
         for &(rule, tag) in IN_HANDLER {
             if generated::IN_HANDLER_RULES.contains(&rule) {
                 assert!(
-                    table.get(tag).is_none(),
+                    table.get(tag).is_none() || APPLIED.contains(&tag),
                     "`{tag}` is served: apply {rule} in its handler, then change this test"
                 );
             }

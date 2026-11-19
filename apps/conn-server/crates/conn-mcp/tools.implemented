@@ -72,3 +72,7 @@ t3_thread_send_attachments
 t3_worktree_handoff
 t3_worktree_list
 t3_worktree_status
+device_list
+device_open
+device_screenshot
+device_close

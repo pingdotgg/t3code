@@ -214,6 +214,8 @@ export const RUN_SET = [
 export const RUN_DROPPED = [
   "CONN_SERVER_BROWSER_PATH", "T3CODE_SERVER_BROWSER_SANDBOX", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDE_BIN", "CAFE_TOKEN", "T3_ACP_MCP_ENDPOINT",
   "T3_ACP_MCP_AUTHORIZATION", "PROGRAMDATA", "HOSTNAME", "GIT_CONFIG_COUNT",
+  // The Android SDK and emulator options of this machine (conn-devices, the local host).
+  "ANDROID_HOME", "ANDROID_SDK_ROOT", "LOCALAPPDATA", "EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS",
 ];
 
 /** The prefix of the cargo runner's temp folders: `conn-run-<runner pid>-XXXXXX`. */

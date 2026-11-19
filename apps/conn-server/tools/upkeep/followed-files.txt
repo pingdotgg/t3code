@@ -10,6 +10,12 @@
 # upstream file is mapped would be red every night. The report lists new upstream files that
 # no part follows, as a short list to read.
 
+[crates/conn-devices]
+apps/server/src/device
+apps/server/src/mcp/toolkits/device
+packages/contracts/src/device.ts
+packages/ssh/src/command.ts
+
 [crates/conn-provider/src/tool_output.rs]
 packages/shared/src/toolOutput.ts
 packages/shared/src/t3McpToolPresentation.ts
