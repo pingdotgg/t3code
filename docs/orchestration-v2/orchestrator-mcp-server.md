@@ -352,8 +352,13 @@ its own under the environment's Scratch project. A new worktree with `startFromO
 `startFromOrigin: false`. The new thread may not run with broader runtime or
 interaction modes than the caller. As for `delegate_task`, a runtime mode the
 provider does not offer is refused, and an inherited or default one steps down
-to the broadest mode it offers. Launch has no retry key, so inspect existing threads after a failed or lost response before
-launching again. `create_threads` remains the batch option for a shared checkout.
+to the broadest mode it offers. `create_threads` remains the batch option for a
+shared checkout.
+
+Set `clientRequestId` on the initial launch to make it retryable. After an error
+or a lost reply, resend the same request with the same key from the same
+provider session. This reuses any thread already created by that request. If the
+initial request had no key, check for the thread before launching again.
 
 ### `t3_thread_list`
 
