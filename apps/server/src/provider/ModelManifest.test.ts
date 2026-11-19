@@ -431,13 +431,34 @@ describe("ModelManifest service", () => {
   );
 
   it.effect.each([
-    { env: "off", fetchedFrom: [], manifest: "bundled" },
     {
-      env: "https://models.example.test/manifest.json",
+      name: "off",
+      env: { T3CODE_MODEL_MANIFEST_URL: "off" },
+      fetchedFrom: [],
+      manifest: "bundled",
+    },
+    {
+      name: "a custom URL",
+      env: { T3CODE_MODEL_MANIFEST_URL: "https://models.example.test/manifest.json" },
       fetchedFrom: ["https://models.example.test/manifest.json"],
       manifest: "remote",
     },
-  ])("T3CODE_MODEL_MANIFEST_URL=$env decides where the manifest is fetched", (input) =>
+    {
+      name: "standalone",
+      env: { T3CODE_STANDALONE: "true" },
+      fetchedFrom: [],
+      manifest: "bundled",
+    },
+    {
+      name: "standalone with a custom URL",
+      env: {
+        T3CODE_STANDALONE: "true",
+        T3CODE_MODEL_MANIFEST_URL: "https://models.example.test/manifest.json",
+      },
+      fetchedFrom: ["https://models.example.test/manifest.json"],
+      manifest: "remote",
+    },
+  ])("$name decides where the manifest is fetched", (input) =>
     Effect.gen(function* () {
       const fetchedFrom: Array<string> = [];
       const service = yield* ModelManifest.make.pipe(
@@ -468,7 +489,7 @@ describe("ModelManifest service", () => {
       ),
       Effect.provideService(
         ConfigProvider.ConfigProvider,
-        ConfigProvider.fromEnv({ env: { T3CODE_MODEL_MANIFEST_URL: input.env } }),
+        ConfigProvider.fromEnv({ env: input.env }),
       ),
     ),
   );
