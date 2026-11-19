@@ -26,6 +26,8 @@ import {
   type MessageId,
   type OrchestrationV2ProviderTurnTokenUsage,
 } from "@t3tools/contracts";
+import { t3OrchestrationInstructions } from "@t3tools/provider-core/server/orchestrationInstructions";
+import { T3_PI_ORCHESTRATION_INSTRUCTIONS_ENV } from "./mcpExtensionSource.ts";
 import { PiSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -537,8 +539,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return yield* Effect.gen(function* () {
           const launch = buildPiRpcLaunch({
             launchArgs: resolvedLaunchArgs.args,
-            // PortScanner.AGENT_THREAD_ENV, as a literal because this package cannot reach apps/server.
-            environment: { ...options.environment, T3CODE_THREAD_ID: input.threadId },
+            environment: {
+              ...options.environment,
+              // PortScanner.AGENT_THREAD_ENV, as a literal because this package cannot reach apps/server.
+              T3CODE_THREAD_ID: input.threadId,
+              [T3_PI_ORCHESTRATION_INSTRUCTIONS_ENV]: t3OrchestrationInstructions(
+                (yield* host.settings.get).visualInstructions,
+              ).trim(),
+            },
             mcpSession,
             extensionPath,
             sessionPath,
