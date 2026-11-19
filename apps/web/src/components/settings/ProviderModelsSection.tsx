@@ -379,7 +379,9 @@ export function ProviderModelsSection({
                       count: favoriteCount,
                     })}
                   </span>
-                  <span>{gt("{count, plural, other {{count} hidden}}", { count: hiddenCount })}</span>
+                  <span>
+                    {gt("{count, plural, other {{count} hidden}}", { count: hiddenCount })}
+                  </span>
                 </span>
               </TooltipPopup>
             </Tooltip>
