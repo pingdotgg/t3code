@@ -597,6 +597,7 @@ describe("AcpRegistryAdapterV2", () => {
               used: 100,
               size: 1000,
             }),
+            claudeMarker("reply ended"),
           ],
           gate,
           true,
@@ -627,10 +628,14 @@ describe("AcpRegistryAdapterV2", () => {
         // The model can be silent longer than the finalize debounce before it goes on.
         yield* TestClock.adjust("10 seconds");
         gate.release("reply");
-        const output = yield* session.until(
-          (event) => event.type === "message.updated" && event.message.text === "Command approved.",
+        // The closing usage_update must be handled before the clock moves, or its debounce never fires.
+        const output = yield* session.throughMarker("reply ended");
+        assert.isTrue(
+          output.some(
+            (event) =>
+              event.type === "message.updated" && event.message.text === "Command approved.",
+          ),
         );
-        assert.isTrue(output.some((event) => event.type === "message.updated"));
         assert.isFalse(output.some((event) => event.type === "turn.terminal"));
         yield* TestClock.adjust("3 seconds");
         assert.equal((yield* session.terminal).status, "completed");
