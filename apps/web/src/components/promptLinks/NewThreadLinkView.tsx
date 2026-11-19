@@ -1,8 +1,15 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { getCloneDestinationPath } from "@t3tools/client-runtime/operations/projects";
 import {
-  findPromptLinkProject,
+  getAddProjectInitialQuery,
+  getCloneDestinationPath,
+  getCloneDirectoryPath,
+} from "@t3tools/client-runtime/operations/projects";
+import {
+  findPromptLinkProjects,
   findPromptLinkPullRequestThread,
+  pickPromptLinkPullRequestThread,
   resolvePromptLinkModelSelection,
 } from "@t3tools/client-runtime/prompt-links";
 import {
@@ -10,6 +17,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import {
   type NewThreadLink,
   type PromptLinkRepository,
@@ -17,6 +25,8 @@ import {
 } from "@t3tools/shared/promptLinks";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { Atom } from "effect/reactivity";
+import { T, useGT } from "gt-react";
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -28,8 +38,9 @@ import { useProjects, useThreadShells, waitForProject } from "~/state/entities";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { environmentPresentations } from "~/state/presentation";
-import { allReachableShellsLiveAtom } from "~/state/shell";
+import { allReachableShellsLiveAtom, environmentShell } from "~/state/shell";
 import { sourceControlEnvironment } from "~/state/sourceControl";
+import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { usePullRequestHandoffs } from "../pullRequest/usePullRequestActions";
@@ -38,6 +49,7 @@ import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { SidebarInset } from "../ui/sidebar";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { suggestAppAccessForRemote } from "../sourceControlAppAccessToast";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { placeLinkedPrompt, warnAboutHiddenCharacters } from "./linkedPrompt";
 
@@ -52,15 +64,49 @@ type LinkState =
     };
 
 type LinkLaunch =
-  | { readonly kind: "thread"; readonly thread: ReturnType<typeof useThreadShells>[number] }
+  | {
+      readonly kind: "thread";
+      readonly thread: Pick<ReturnType<typeof useThreadShells>[number], "environmentId" | "id">;
+    }
   | { readonly kind: "draft"; readonly project: EnvironmentProject }
   | { readonly kind: "scratch" }
   | { readonly kind: "settled" };
 
 const openedLinkKeys = new Set<string>();
 
+type PullRequestThreadLookup = {
+  readonly targets: ReadonlyArray<readonly [environmentId: EnvironmentId, projectId: ProjectId]>;
+  readonly repository: string;
+  readonly number: number;
+};
+
+// A pull request's thread can be an older settled thread no shell holds, so ask every
+// environment with the repository.
+const pullRequestThreadLookupAtom = Atom.family((key: string) => {
+  const { targets, repository, number } = JSON.parse(key) as PullRequestThreadLookup;
+  return Atom.make((get) =>
+    pickPromptLinkPullRequestThread(
+      targets
+        // A shell that is not live cannot answer, and its lookup would wait forever.
+        .filter(([environmentId]) => get(environmentShell.statusAtom(environmentId)) === "live")
+        .map(([environmentId, projectId]) => ({
+          environmentId,
+          result: get(
+            pullRequestEnvironment.linkedThreadsUncached({
+              environmentId,
+              input: { projectId, repository, number },
+            }),
+          ),
+        })),
+    ),
+  ).pipe(Atom.withLabel(`web-prompt-link-pull-request-thread:${key}`));
+});
+
+const NO_PULL_REQUEST_THREAD_LOOKUP = Atom.make(null);
+
 export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   const locationKey = useLocation({ select: (location) => location.state.__TSR_key ?? "" });
+  const gt = useGT();
   const navigate = useNavigate();
   const ready = useAtomValue(allReachableShellsLiveAtom);
   const projects = useProjects();
@@ -99,7 +145,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       replace: true,
     }).catch(() => null);
     if (opened === null) {
-      setState({ status: "failed", message: "T3 Code could not open a new thread." });
+      setState({ status: "failed", message: gt("T3 Code could not open a new thread.") });
       return;
     }
     setState({ status: "opened" });
@@ -122,8 +168,14 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       if (resolved === null || !resolved.exact) {
         notes.push(
           resolved === null
-            ? `The link asked for ${link.provider}, which is not set up here, so your default model is used.`
-            : `The link asked for ${link.model}, which ${link.provider} does not offer here, so its default model is used.`,
+            ? gt(
+                "The link asked for {provider}, which is not set up here, so your default model is used.",
+                { provider: link.provider },
+              )
+            : gt(
+                "The link asked for {model}, which {provider} does not offer here, so its default model is used.",
+                { model: link.model, provider: link.provider },
+              ),
         );
       }
     }
@@ -137,13 +189,12 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   };
 
   const openScratchDraft = async () => {
-    const environmentId =
-      scratchEnvironmentId(lastActiveEnvironmentId()) ?? scratchEnvironmentId(null);
+    const environmentId = scratchEnvironmentId(lastActiveEnvironmentId());
     const project = environmentId === null ? null : await openScratchProject(environmentId);
     if (project === null) {
       setState({
         status: "failed",
-        message: "None of your machines can start a thread without a project right now.",
+        message: gt("None of your machines can start a thread without a project right now."),
       });
       return;
     }
@@ -161,29 +212,33 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   const cloneRepository = async (repository: PromptLinkRepository) => {
     const environmentId = lastActiveEnvironmentId();
     const environment = environments.find((entry) => entry.environmentId === environmentId);
-    const newProjectsRoot = environment?.serverConfig?.newProjectsRoot ?? null;
-    if (
-      environmentId === null ||
-      newProjectsRoot === null ||
-      environment?.serverConfig?.environment.capabilities.projectCloneTracking !== true
-    ) {
+    const serverConfig = environment?.serverConfig ?? null;
+    const newProjectsRoot = serverConfig?.newProjectsRoot ?? null;
+    if (environmentId === null || serverConfig === null || newProjectsRoot === null) {
       setState({
         status: "failed",
-        message:
+        message: gt(
           "This machine cannot clone from a link. Update T3 Code on it, or clone the repository from the command palette.",
+        ),
       });
       return;
     }
     setState({ status: "opening" });
-    const projectId = newProjectId();
+    const remoteUrl = `https://github.com/${repository.owner}/${repository.name}.git`;
+    const settings = serverConfig.settings;
     const result = await startProjectClone({
       environmentId,
       input: {
-        projectId,
+        projectId: newProjectId(),
         title: repository.name,
         createdAt: new Date().toISOString(),
-        remoteUrl: `https://github.com/${repository.owner}/${repository.name}.git`,
-        destinationPath: getCloneDestinationPath(newProjectsRoot, repository.name),
+        remoteUrl,
+        destinationPath: getCloneDestinationPath(
+          settings.ghqCloneLayout
+            ? getAddProjectInitialQuery(settings.addProjectBaseDirectory)
+            : newProjectsRoot,
+          getCloneDirectoryPath(remoteUrl, settings.ghqCloneLayout === true),
+        ),
       },
     });
     if (result._tag === "Failure") {
@@ -192,41 +247,73 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Clone failed",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: gt("Clone failed"),
+            description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           }),
         );
       }
       setState({ status: "missing-repository", repository });
       return;
     }
-    const project = await waitForProject(scopeProjectRef(environmentId, projectId), 5_000).catch(
-      () => null,
+    void suggestAppAccessForRemote(
+      environmentId,
+      `https://github.com/${repository.owner}/${repository.name}.git`,
     );
+    const project = await waitForProject(
+      scopeProjectRef(environmentId, result.value.projectId),
+      5_000,
+    ).catch(() => null);
     if (project === null) {
-      setState({ status: "failed", message: "The clone started, but its project did not appear." });
+      setState({
+        status: "failed",
+        message: gt("The clone started, but its project did not appear."),
+      });
       return;
     }
     if (link.kind === "pull-request") {
       setState({
         status: "failed",
-        title: `Cloning ${repository.owner}/${repository.name}`,
-        message: "Open this link again when the clone finishes.",
+        title: gt("Cloning {repository}", {
+          repository: `${repository.owner}/${repository.name}`,
+        }),
+        message: gt("Open this link again when the clone finishes."),
       });
       return;
     }
     await openDraft(project);
   };
 
-  if (ready && state.status === "opening" && !started) {
+  const localPullRequestThread =
+    ready && link.kind === "pull-request"
+      ? findPromptLinkPullRequestThread(threads, link.pullRequest)
+      : undefined;
+  // Mounted only while deciding, so "Open it again" asks the server again.
+  const lookupProjects =
+    ready &&
+    state.status === "opening" &&
+    !started &&
+    link.kind === "pull-request" &&
+    localPullRequestThread === undefined
+      ? findPromptLinkProjects(recentProjects(), link.pullRequest)
+      : [];
+  const serverPullRequestThread = useAtomValue(
+    link.kind === "pull-request" && lookupProjects.length > 0
+      ? pullRequestThreadLookupAtom(
+          JSON.stringify({
+            targets: lookupProjects.map((project) => [project.environmentId, project.id]),
+            repository: `${link.pullRequest.owner}/${link.pullRequest.name}`,
+            number: link.pullRequest.number,
+          } satisfies PullRequestThreadLookup),
+        )
+      : NO_PULL_REQUEST_THREAD_LOOKUP,
+  );
+
+  if (ready && serverPullRequestThread !== undefined && state.status === "opening" && !started) {
     setStarted(true);
-    const pullRequestThread =
-      link.kind === "pull-request"
-        ? findPromptLinkPullRequestThread(threads, link.pullRequest)
-        : undefined;
+    const pullRequestThread = localPullRequestThread ?? serverPullRequestThread ?? undefined;
     const repository = link.kind === "new" ? link.repository : link.pullRequest;
     const project =
-      repository === null ? undefined : findPromptLinkProject(recentProjects(), repository);
+      repository === null ? undefined : findPromptLinkProjects(recentProjects(), repository)[0];
     if (pullRequestThread !== undefined) {
       setState({ status: "opened" });
       setLaunch({ kind: "thread", thread: pullRequestThread });
@@ -266,8 +353,8 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
     }
   });
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs each launch decision once: navigates to the thread or opens a draft
   useEffect(() => {
-    // Strict Mode replays effects; each launch opens at most once.
     if (launch === null || launchedRef.current === launch) return;
     launchedRef.current = launch;
     runLaunch(launch);
@@ -275,10 +362,10 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
 
   switch (state.status) {
     case "opening":
-      return <LinkPage title="Opening the link..." />;
+      return <LinkPage title={gt("Opening the link...")} />;
     case "opened":
       return (
-        <LinkPage title="This link is open">
+        <LinkPage title={gt("This link is open")}>
           <Button
             size="sm"
             variant="outline"
@@ -288,26 +375,29 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
               setState({ status: "opening" });
             }}
           >
-            Open it again
+            <T>Open it again</T>
           </Button>
         </LinkPage>
       );
     case "failed":
       return (
-        <LinkPage title={state.title ?? "Could not open the link"} description={state.message} />
+        <LinkPage
+          title={state.title ?? gt("Could not open the link")}
+          description={state.message}
+        />
       );
     case "missing-repository": {
       const name = `${state.repository.owner}/${state.repository.name}`;
       return (
         <LinkPage
-          title={`You don't have ${name}`}
-          description="Clone it to work on it here, or start without a project."
+          title={gt("You don't have {repository}", { repository: name })}
+          description={gt("Clone it to work on it here, or start without a project.")}
         >
           <Button size="sm" onClick={() => void cloneRepository(state.repository)}>
-            Clone {name}
+            {gt("Clone {repository}", { repository: name })}
           </Button>
           <Button size="sm" variant="outline" onClick={openWithoutProject}>
-            Use without project
+            <T>Use without project</T>
           </Button>
         </LinkPage>
       );
@@ -319,10 +409,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   }
 }
 
-/**
- * The checkout runs the project's setup script on code from the pull request, so a link alone
- * never starts it.
- */
+/** Checkout runs setup from PR code, so links alone must not start it. */
 function PullRequestLinkCheckout({
   link,
   project,
@@ -338,7 +425,9 @@ function PullRequestLinkCheckout({
       url: promptLinkPullRequestUrl(link.pullRequest),
     },
   });
+  const gt = useGT();
   const warnedRef = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- shows the hidden-characters warning toast once per linked prompt
   useEffect(() => {
     if (warnedRef.current || link.prompt === null) return;
     warnedRef.current = true;
@@ -347,8 +436,10 @@ function PullRequestLinkCheckout({
   const { owner, name, number } = link.pullRequest;
   return (
     <LinkPage
-      title={`Check out ${owner}/${name}#${number}?`}
-      description="This puts the pull request's code in a new worktree and runs your project's setup script on it."
+      title={gt("Check out {pullRequest}?", { pullRequest: `${owner}/${name}#${number}` })}
+      description={gt(
+        "This puts the pull request's code in a new worktree and runs your project's setup script on it.",
+      )}
     >
       <Button
         size="sm"
@@ -360,7 +451,7 @@ function PullRequestLinkCheckout({
           )
         }
       >
-        {handoff !== null ? "Checking out..." : "Check out"}
+        {handoff !== null ? gt("Checking out...") : gt("Check out")}
       </Button>
     </LinkPage>
   );

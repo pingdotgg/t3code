@@ -72,10 +72,12 @@ export function buildFileReviewComment(input: {
   return {
     id: input.id,
     sectionId: `file:${input.filePath}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- stored in the review comment record sent to the agent
     sectionTitle: "File comment",
     filePath: input.filePath,
     startIndex: startLine - 1,
     endIndex: endLine - 1,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- stored in the review comment record sent to the agent
     rangeLabel: startLine === endLine ? `L${startLine}` : `L${startLine} to L${endLine}`,
     text: input.text.trim(),
     diff: selectedLines.join("\n"),
@@ -375,6 +377,46 @@ export function resolveDiffReviewPosition(
   }
 }
 
+function reviewHunkIndex(fileDiff: FileDiffMetadata, position: PullRequestReviewPosition): number {
+  const [side, line] =
+    position.kind === "deleted"
+      ? (["left", position.oldLine] as const)
+      : (["right", position.newLine] as const);
+  return fileDiff.hunks.findIndex((hunk) =>
+    side === "left"
+      ? line >= hunk.deletionStart && line < hunk.deletionStart + hunk.deletionCount
+      : line >= hunk.additionStart && line < hunk.additionStart + hunk.additionCount,
+  );
+}
+
+/**
+ * Where a review comment on `range` is anchored. With `ranged`, a selection inside one hunk
+ * keeps its first line, in diff order, as `startPosition`, because hosts refuse a range that
+ * crosses hunks. Otherwise the comment sits on the line the selection ended on.
+ */
+export function resolveDiffReviewAnchor(
+  fileDiff: FileDiffMetadata,
+  range: SelectedLineRange,
+  ranged: boolean,
+): {
+  readonly position: PullRequestReviewPosition;
+  readonly startPosition?: PullRequestReviewPosition;
+} | null {
+  const endSide = range.endSide ?? range.side;
+  const last = resolveDiffReviewPosition(fileDiff, range.end, endSide);
+  if (last === null) return null;
+  const first = ranged ? resolveDiffReviewPosition(fileDiff, range.start, range.side) : null;
+  if (first === null) return { position: last };
+  const startIndex = findDiffReviewLineIndex(fileDiff, range.start, range.side);
+  const endIndex = findDiffReviewLineIndex(fileDiff, range.end, endSide);
+  if (startIndex === endIndex) return { position: last };
+  const [start, end] = startIndex < endIndex ? [first, last] : [last, first];
+  const hunk = reviewHunkIndex(fileDiff, end);
+  return hunk >= 0 && reviewHunkIndex(fileDiff, start) === hunk
+    ? { position: end, startPosition: start }
+    : { position: last };
+}
+
 function getDiffRange(
   lines: ReadonlyArray<DiffReviewLine>,
   key: "oldLineNumber" | "newLineNumber",
@@ -410,6 +452,10 @@ function formatDiffReviewRangeLabel(lines: ReadonlyArray<DiffReviewLine>): strin
   return firstNumber === lastNumber
     ? `${marker}${firstNumber}`
     : `${marker}${firstNumber} to ${marker}${lastNumber}`;
+}
+
+export function diffReviewSelectionId(fileKey: string, range: SelectedLineRange): string {
+  return `${fileKey}:${range.side ?? "additions"}:${range.start}:${range.endSide ?? range.side ?? "additions"}:${range.end}`;
 }
 
 export function buildDiffReviewComment(input: {
@@ -472,10 +518,10 @@ export function buildReviewCommentRenderablePatch(comment: ReviewCommentContext)
   if ((comment.fenceLanguage ?? "diff") !== "diff") {
     return "";
   }
-  const diff = comment.diff.trim();
-  if (diff.length === 0) {
+  if (comment.diff.trim().length === 0) {
     return "";
   }
+  const diff = comment.diff.trimStart().replace(/\n+$/, "");
   if (diff.startsWith("diff --git ")) {
     return diff;
   }

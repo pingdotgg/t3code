@@ -1,11 +1,15 @@
+import * as DateTime from "effect/DateTime";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  codexMessageResetAt,
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
   codexRateLimitsToUpdate,
-  codexUsageLimitMessage,
+  codexTimeZone,
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
 
@@ -38,6 +42,40 @@ describe("codexRateLimitsToLimits", () => {
       }),
     ).toEqual({ checkedAt, windows });
     expect(codexRateLimitsToUpdate(snapshot)).toEqual({ windows });
+  });
+
+  it("keeps a seat-based workspace with a zero credit cap usable while its plan windows have room", () => {
+    const usageLimits = codexRateLimitsToLimits({
+      checkedAt,
+      snapshot: {
+        limitId: "codex",
+        planType: "team",
+        rateLimitReachedType: null,
+        primary: { usedPercent: 0, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+        secondary: { usedPercent: 14, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+        individualLimit: { remainingPercent: 0, resetsAt: 1_796_083_200 },
+      },
+    });
+    expect(
+      exhaustedUsageWindow(
+        {
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt,
+          models: [],
+          slashCommands: [],
+          skills: [],
+          usageLimits,
+        },
+        Date.parse(checkedAt),
+        "gpt-6.1-sol",
+      ),
+    ).toBeUndefined();
   });
 
   it("maps primary and secondary onto the session and weekly windows", () => {
@@ -129,6 +167,29 @@ describe("codexRateLimitsToLimits", () => {
 });
 
 describe("codexRateLimitsToUpdate", () => {
+  it("does not republish cached windows over a newer account probe", () => {
+    const cached = {
+      primary: { usedPercent: 0, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+      secondary: { usedPercent: 20, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+    };
+    expect(codexRateLimitsToUpdate(cached)?.windows).toHaveLength(2);
+    expect(codexRateLimitsToUpdate(structuredClone(cached), cached)).toBeUndefined();
+
+    const changed = { ...cached, secondary: { ...cached.secondary, usedPercent: 21 } };
+    expect(codexRateLimitsToUpdate(changed, cached)?.windows.map((window) => window.id)).toEqual([
+      "secondary",
+    ]);
+    expect(codexRateLimitsToUpdate({ primary: cached.primary }, cached)).toBeUndefined();
+    expect(
+      codexRateLimitsToUpdate({ primary: { ...cached.primary, resetsAt: 1_784_001_000 } }, cached)
+        ?.windows,
+    ).toHaveLength(1);
+    expect(
+      codexRateLimitsToUpdate({ primary: { ...cached.primary, usedPercent: 76 } }, cached)
+        ?.windows[0]?.usedPercent,
+    ).toBe(76);
+  });
+
   it("carries only the windows the notification names", () => {
     expect(
       codexRateLimitsToUpdate({
@@ -185,50 +246,6 @@ describe("codexRateLimitsFailureMessage", () => {
         }),
       ),
     ).toBe("Codex could not read usage (JSON-RPC -32603).");
-  });
-});
-
-describe("codexUsageLimitMessage", () => {
-  const at = "2026-01-01T00:00:00.000Z";
-  const atSeconds = Date.parse(at) / 1000;
-
-  it("names the exhausted window and the workspace's missing credits", () => {
-    expect(
-      codexUsageLimitMessage(
-        {
-          limitId: "codex",
-          rateLimitReachedType: "workspace_owner_credits_depleted",
-          primary: { usedPercent: 40, resetsAt: atSeconds + 3_600, windowDurationMins: 300 },
-          secondary: {
-            usedPercent: 100,
-            resetsAt: atSeconds + 5 * 86_400 + 5 * 3_600,
-            windowDurationMins: 10_080,
-          },
-        },
-        at,
-      ),
-    ).toBe(
-      "Codex usage limit reached. The weekly limit resets in 5d 5h. The workspace has no credits to continue sooner: ask your workspace owner to add credits, or send the message again once the limit resets.",
-    );
-  });
-
-  it("points a reached spend cap at the workspace owner", () => {
-    expect(
-      codexUsageLimitMessage(
-        {
-          limitId: "codex",
-          rateLimitReachedType: "workspace_member_usage_limit_reached",
-          primary: {
-            usedPercent: 100,
-            resetsAt: atSeconds + 3 * 3_600 + 20 * 60,
-            windowDurationMins: 300,
-          },
-        },
-        at,
-      ),
-    ).toBe(
-      "Codex usage limit reached. The session limit resets in 3h 20m. The workspace spend limit is reached: ask your workspace owner to raise it, or send the message again once the limit resets.",
-    );
   });
 });
 
@@ -297,5 +314,63 @@ describe("codexUsageLimitResetAt", () => {
     expect(
       codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }),
     ).toBeNull();
+  });
+});
+
+describe("codexMessageResetAt", () => {
+  const dhaka = DateTime.zoneMakeNamedUnsafe("Asia/Dhaka");
+  const at = (iso: string) => DateTime.makeUnsafe(iso);
+  const failedAt = at("2026-11-07T03:00:00Z"); // 09:00 in Dhaka
+
+  // Codex prints local time without seconds, so the parsed reset is the minute after.
+  it("reads Codex's same-day and dated reset text in Codex's zone", () => {
+    expect(
+      codexMessageResetAt("You’ve hit your usage limit. Try again at 3:37 PM.", failedAt, dhaka),
+    ).toBe("2026-11-07T09:38:00.000Z");
+    expect(
+      codexMessageResetAt("Upgrade, or try again at Dec 1st, 2026 12:05 AM.", failedAt, dhaka),
+    ).toBe("2026-11-30T18:06:00.000Z");
+    expect(codexMessageResetAt("Try again at 12:30 PM.", failedAt, dhaka)).toBe(
+      "2026-11-07T06:31:00.000Z",
+    );
+  });
+
+  it("dates today's form by when Codex failed, across local midnight", () => {
+    expect(codexMessageResetAt("Try again at 11:59 PM.", at("2026-11-07T17:59:59Z"), dhaka)).toBe(
+      "2026-11-07T18:00:00.000Z",
+    );
+  });
+
+  it("takes the later instant of a repeated DST hour", () => {
+    // 1:30 AM occurs twice in New York on Nov 1st, 2026: 05:30Z (EDT) and 06:30Z (EST).
+    const newYork = DateTime.zoneMakeNamedUnsafe("America/New_York");
+    for (const iso of ["2026-11-01T05:15:00Z", "2026-11-01T06:15:00Z"]) {
+      expect(codexMessageResetAt("Try again at 1:30 AM.", at(iso), newYork)).toBe(
+        "2026-11-01T06:31:00.000Z",
+      );
+    }
+  });
+
+  it("leaves the reset unknown without reset text or once it has passed", () => {
+    expect(
+      codexMessageResetAt("You’ve hit your usage limit. Try again later.", failedAt, dhaka),
+    ).toBeNull();
+    expect(
+      codexMessageResetAt(
+        "exceeded retry limit, last status: 429 Too Many Requests",
+        failedAt,
+        dhaka,
+      ),
+    ).toBeNull();
+    expect(codexMessageResetAt("Try again at 8:15 AM.", failedAt, dhaka)).toBeNull();
+  });
+});
+
+describe("codexTimeZone", () => {
+  it("uses Codex's TZ and falls back to the server's zone", () => {
+    const local = DateTime.zoneToString(DateTime.zoneMakeLocal());
+    expect(DateTime.zoneToString(codexTimeZone({ TZ: ":Asia/Dhaka" }))).toBe("Asia/Dhaka");
+    expect(DateTime.zoneToString(codexTimeZone({ TZ: "not/a-zone" }))).toBe(local);
+    expect(DateTime.zoneToString(codexTimeZone({}))).toBe(local);
   });
 });

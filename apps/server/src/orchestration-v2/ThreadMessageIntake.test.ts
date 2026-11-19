@@ -1,14 +1,16 @@
+import * as DocumentText from "../provider/DocumentText.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
-  AgentId,
   ChatAttachmentId,
   CommandId,
   EventId,
-  ProjectId,
+  GuestMessageId,
+  MessageId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -19,10 +21,12 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
+import {
+  createAttachmentId,
+  createPendingAttachmentId,
+  resolveAttachmentPath,
+} from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
@@ -30,113 +34,33 @@ import {
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import * as ProjectService from "../project/ProjectService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
 
 const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
 }).pipe(
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
   Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provideMerge(Layer.mock(ProjectService.ProjectService)({})),
 );
+
+const layerFailingDispatchHandler =
+  (captured: OrchestrationV2ServerCommand[]) => (command: OrchestrationV2ServerCommand) => {
+    captured.push(command);
+    return Effect.fail(
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Stop after intake",
+      }),
+    );
+  };
 
 const layerFailingDispatch = (captured: OrchestrationV2ServerCommand[]) =>
   Layer.mock(ThreadManagementService.ThreadManagementService)({
-    dispatch: (command) => {
-      captured.push(command);
-      return Effect.fail(
-        new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: "Stop after intake",
-        }),
-      );
-    },
+    dispatch: layerFailingDispatchHandler(captured),
   });
 
 const NOW = DateTime.makeUnsafe("2026-09-13T00:00:00.000Z");
-
-it.layer(NodeServices.layer)("delegated task agent policy", (it) => {
-  it.effect("enforces a custom lead agent's allowlist for named targets", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-delegation-" });
-      const agentDirectory = NodePath.join(root, ".agents");
-      yield* fs.makeDirectory(agentDirectory, { recursive: true });
-      yield* fs.writeFileString(
-        NodePath.join(agentDirectory, "lead.agent.md"),
-        [
-          "---",
-          "id: lead",
-          "name: Lead",
-          "description: Delegates to the allowed reviewer.",
-          "canDelegateTo: [reviewer]",
-          "---",
-          "Coordinate the work.",
-        ].join("\n"),
-      );
-      yield* fs.writeFileString(
-        NodePath.join(agentDirectory, "reviewer.agent.md"),
-        [
-          "---",
-          "id: reviewer",
-          "name: Reviewer",
-          "description: Reviews changes.",
-          "---",
-          "Review.",
-        ].join("\n"),
-      );
-      yield* fs.writeFileString(
-        NodePath.join(agentDirectory, "coder.agent.md"),
-        ["---", "id: coder", "name: Coder", "description: Writes code.", "---", "Code."].join("\n"),
-      );
-
-      const projectId = ProjectId.make("project:agent-delegation");
-      const parentThreadId = ThreadId.make("thread:agent-delegation");
-      const dispatched: Array<OrchestrationV2ServerCommand> = [];
-      const parentShell = {
-        id: parentThreadId,
-        projectId,
-        agentId: AgentId.make("lead"),
-        deletedAt: null,
-      } as never;
-      const layer = Layer.mergeAll(
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-delegation-" }).pipe(
-          Layer.provideMerge(NodeServices.layer),
-        ),
-        ServerSettings.layerTest(),
-        Layer.mock(ProjectService.ProjectService)({
-          getById: () => Effect.succeed(Option.some({ workspaceRoot: root } as never)),
-        }),
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getCommandReceipt: () => Effect.succeed(null),
-          getThreadShell: () => Effect.succeed(parentShell),
-          dispatch: (command) =>
-            Effect.sync(() => {
-              dispatched.push(command);
-              return {} as never;
-            }),
-        }),
-      );
-      const delegate = (targetAgentId: string) =>
-        dispatchCommand({
-          type: "delegated_task.request",
-          commandId: CommandId.make(`command:${targetAgentId}`),
-          parentThreadId,
-          targetAgentId: AgentId.make(targetAgentId),
-        } as never);
-
-      const rejected = yield* delegate("coder").pipe(Effect.flip, Effect.provide(layer));
-      expect(rejected).toBeInstanceOf(OrchestratorDispatchError);
-      expect(rejected.cause).toContain("canDelegateTo");
-      expect(dispatched).toHaveLength(0);
-
-      yield* delegate("reviewer").pipe(Effect.provide(layer));
-      expect(dispatched).toHaveLength(1);
-    }),
-  );
-});
 
 const answeredRespondEvents = (input: {
   readonly threadId: ThreadId;
@@ -212,7 +136,7 @@ it.effect("claims question uploads and passes readable paths through the V2 requ
     expect(NodeFS.readFileSync(path!)).toEqual(Buffer.from([1, 2, 3]));
     expect(command.answers?.q).toEqual([
       "Selected option",
-      `Attached image "screen.png": "${path}"`,
+      `Attached image "screen.png": ${JSON.stringify(path)}`,
     ]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
@@ -447,5 +371,107 @@ it.effect("a retried response re-claims the preserved pending uploads", () =>
         entry.startsWith("thread-retry-"),
       ),
     ).toHaveLength(2);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("sends a guest message with the guest's files, never ones the client names", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const guestFile = {
+      type: "image" as const,
+      id: ChatAttachmentId.make(createAttachmentId("thread-guest")!),
+      name: "screen.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    };
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${guestFile.id}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const guestMessageId = GuestMessageId.make("guest-message:files");
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const layerGuestShare = Layer.mock(ThreadManagementService.ThreadManagementService)({
+      dispatch: layerFailingDispatchHandler(captured),
+      // Only the share is read.
+      getThreadSnapshotWindow: () =>
+        Effect.succeed({
+          projection: {
+            thread: {
+              guestShare: {
+                messages: [{ id: guestMessageId, status: "pending", attachments: [guestFile] }],
+              },
+            },
+          },
+        } as unknown as Effect.Success<
+          ReturnType<
+            ThreadManagementService.ThreadManagementServiceShape["getThreadSnapshotWindow"]
+          >
+        >),
+    });
+    yield* dispatchCommand({
+      type: "message.dispatch",
+      commandId: CommandId.make("send-guest-message"),
+      threadId: ThreadId.make("thread-guest"),
+      messageId: MessageId.make("message-guest"),
+      guestMessageId,
+      text: "",
+      attachments: [{ ...guestFile, id: ChatAttachmentId.make("thread-guest-owner-file") }],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+    }).pipe(Effect.provide(layerGuestShare), Effect.result);
+    const command = captured[0];
+    if (command?.type !== "message.dispatch") throw new Error("Expected a message dispatch.");
+    expect(command.attachments).toHaveLength(1);
+    // The guest's file, which is already the thread's.
+    expect(command.attachments).toEqual([guestFile]);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("refuses a queued edit that keeps a file another edit already deleted", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const storedFile = (name: string) => ({
+      type: "image" as const,
+      id: ChatAttachmentId.make(createAttachmentId("thread-queued-edit")!),
+      name,
+      mimeType: "image/png",
+      sizeBytes: 3,
+    });
+    const kept = storedFile("kept.png");
+    const deleted = storedFile("deleted.png");
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${kept.id}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const captured: OrchestrationV2ServerCommand[] = [];
+    const edit = (attachments: ReadonlyArray<typeof kept>) =>
+      dispatchCommand({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`queued-edit-${attachments.length}`),
+        threadId: ThreadId.make("thread-queued-edit"),
+        runId: RunId.make("run-queued-edit"),
+        text: "Edited from a stale view.",
+        attachments,
+      }).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            hasReceipt: (commandId) =>
+              Effect.succeed(captured.some((command) => command.commandId === commandId)),
+          }),
+        ),
+        Effect.result,
+      );
+
+    yield* edit([kept]);
+    expect(captured).toHaveLength(1);
+    const result = yield* edit([kept, deleted]);
+    expect(result._tag).toBe("Failure");
+    expect(captured).toHaveLength(1);
+    // A retry of the accepted edit replays its receipt even after a later cleanup removed its file.
+    NodeFS.rmSync(NodePath.join(config.attachmentsDir, `${kept.id}.png`));
+    yield* edit([kept]);
+    expect(captured).toHaveLength(2);
   }).pipe(Effect.provide(layerIntakeTest)),
 );

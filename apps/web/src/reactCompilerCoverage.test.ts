@@ -18,8 +18,8 @@ const webSourceFiles = NodeFS.readdirSync(NodePath.join(repoRoot, "apps/web/src"
   .filter((file) => !file.endsWith(".gen.ts"))
   .map((file) => `apps/web/src/${file}`);
 
-// ChatView is ~9k lines. Compiling it takes ~9s on a fast machine and passes the
-// 15s project timeout on loaded CI runners.
+// ChatView is ~9k lines. Compiling it takes ~9s on a fast machine and can pass the
+// 15s project limit on loaded CI runners, so slow files get a 60s limit below.
 const slowFiles = new Set(["apps/web/src/components/ChatView.tsx"]);
 
 const compile = async (file: string) => {

@@ -1,98 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { deriveActiveWorkStartedAt, deriveSubagentElapsedMs } from "./orchestrationTiming.ts";
+import { deriveSubagentElapsedMs, formatDuration } from "./orchestrationTiming.ts";
 
-describe("deriveActiveWorkStartedAt", () => {
-  it.each([null, "2026-09-06T23:34:00.000Z"])(
-    "does not time a superseded turn when the active turn differs",
-    (sendStartedAt) => {
-      expect(
-        deriveActiveWorkStartedAt(
-          {
-            runId: "old",
-            requestedAt: "2026-09-06T23:33:00.000Z",
-            startedAt: null,
-            completedAt: null,
-          },
-          { orchestrationStatus: "running", activeRunId: "new" },
-          sendStartedAt,
-        ),
-      ).toBe(sendStartedAt);
-    },
-  );
-
-  it("stops timing a turn that failed before its provider started", () => {
-    expect(
-      deriveActiveWorkStartedAt(
-        {
-          runId: "turn-1",
-          requestedAt: "2026-09-06T23:33:00.000Z",
-          startedAt: null,
-          completedAt: "2026-09-06T23:33:05.000Z",
-        },
-        { orchestrationStatus: "error", activeRunId: null },
-        null,
-      ),
-    ).toBeNull();
-  });
-  it("counts from requestedAt while the provider is still starting", () => {
-    expect(
-      deriveActiveWorkStartedAt(
-        {
-          runId: "turn-1",
-          requestedAt: "2026-09-06T23:33:00.000Z",
-          startedAt: null,
-          completedAt: null,
-        },
-        { orchestrationStatus: "starting", activeRunId: null },
-        null,
-      ),
-    ).toBe("2026-09-06T23:33:00.000Z");
-  });
-
-  it("prefers the turn's own startedAt once the provider reports it", () => {
-    expect(
-      deriveActiveWorkStartedAt(
-        {
-          runId: "turn-1",
-          requestedAt: "2026-09-06T23:33:00.000Z",
-          startedAt: "2026-09-06T23:33:05.000Z",
-          completedAt: null,
-        },
-        { orchestrationStatus: "running", activeRunId: "turn-1" },
-        null,
-      ),
-    ).toBe("2026-09-06T23:33:05.000Z");
-  });
-
-  it("stops counting once the turn has settled", () => {
-    expect(
-      deriveActiveWorkStartedAt(
-        {
-          runId: "turn-1",
-          requestedAt: "2026-09-06T23:33:00.000Z",
-          startedAt: "2026-09-06T23:33:05.000Z",
-          completedAt: "2026-09-06T23:33:09.000Z",
-        },
-        { orchestrationStatus: "idle", activeRunId: null },
-        null,
-      ),
-    ).toBeNull();
-  });
-
-  it("does not count a settled turn while a session is starting again", () => {
-    expect(
-      deriveActiveWorkStartedAt(
-        {
-          runId: "turn-1",
-          requestedAt: "2026-09-06T23:33:00.000Z",
-          startedAt: "2026-09-06T23:33:05.000Z",
-          completedAt: "2026-09-06T23:33:09.000Z",
-        },
-        { orchestrationStatus: "starting", activeRunId: null },
-        null,
-      ),
-    ).toBeNull();
+describe("formatDuration", () => {
+  it.each([
+    [59_000, "59s"],
+    [59_500, "1m 0s"],
+    [60_000, "1m 0s"],
+    [720_000, "12m 0s"],
+    [736_000, "12m 16s"],
+    [3_600_000, "1h"],
+    [3_660_000, "1h 1m 0s"],
+  ])("formats %i milliseconds as %s", (durationMs, expected) => {
+    expect(formatDuration(durationMs)).toBe(expected);
   });
 });
 

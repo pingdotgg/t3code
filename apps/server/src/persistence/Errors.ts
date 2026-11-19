@@ -83,10 +83,7 @@ function sqliteCondition(cause: unknown): string | undefined {
   return undefined;
 }
 
-/**
- * A rejected payload must never reach diagnostics, so a schema failure contributes only its
- * issue tags, and a driver failure only its normalized condition.
- */
+// Keep rejected payloads out of diagnostics; report only schema issue tags or normalized driver conditions.
 function describeSqlCause(cause: unknown): string | undefined {
   if (Schema.isSchemaError(cause)) return summarizeSchemaIssue(cause.issue);
   return sqliteCondition(cause);
@@ -118,6 +115,7 @@ export type ProviderSessionRuntimeRepositoryError = PersistenceSqlError | Persis
 export type AuthPairingLinkRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 export type AuthSessionRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 export type PullRequestFilesViewedRepositoryError = PersistenceSqlError | PersistenceDecodeError;
+export type IssueTrackerBindingsRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 export type PullRequestReviewGuideRepositoryError = PersistenceSqlError | PersistenceDecodeError;
 
 export type ProjectionRepositoryError = PersistenceSqlError | PersistenceDecodeError;

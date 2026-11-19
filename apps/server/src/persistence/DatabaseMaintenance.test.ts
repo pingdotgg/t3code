@@ -1,6 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -9,9 +12,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
 import * as Sqlite from "./Sqlite.ts";
-import * as EventStore from "../orchestration-v2/EventStore.ts";
-import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
-import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 
 it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))(
   "DatabaseMaintenance",
@@ -28,7 +28,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         yield* fs.writeFileString(dbPath, "not a database");
         const failure = yield* Effect.flip(maintenance.inspect(dbPath));
         assert.equal(failure._tag, "DatabaseInspectError");
-      }).pipe(Effect.scoped),
+      }),
     );
 
     it.effect("reports and deletes only the database from before 0.1.0", () =>
@@ -41,7 +41,10 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const legacy = path.join(userdata, "state.sqlite");
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
+          yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY)`;
+          yield* sql`CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY)`;
           yield* sql`CREATE TABLE retained_data (value TEXT)`;
+          yield* sql`INSERT INTO retained_data VALUES ('keep')`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
         assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
 
@@ -50,24 +53,147 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           const sql = yield* SqlClient.SqlClient;
           yield* sql`PRAGMA journal_mode = WAL`;
           yield* sql`CREATE TABLE v1_data (value TEXT)`;
+          yield* sql`INSERT INTO v1_data VALUES ('rollback')`;
+          yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, deleted_at TEXT)`;
+          yield* sql`CREATE TABLE projection_threads (thread_id TEXT PRIMARY KEY, deleted_at TEXT)`;
+          yield* sql`INSERT INTO projection_projects VALUES ('legacy-project', NULL)`;
+          yield* sql`INSERT INTO projection_threads VALUES ('legacy-thread', NULL), ('deleted-thread', '2026-10-01')`;
         }).pipe(Effect.provide(openLegacy));
         assert.isAbove((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes ?? 0, 0);
 
-        // A version before 0.1.0 still running against it keeps it.
+        assert.deepEqual((yield* maintenance.inspect(dbPath)).legacyOnlyRecords, {
+          projects: 1,
+          threads: 1,
+        });
+        const missing = yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
+        assert.equal(missing._tag, "LegacyDatabaseHasUnmigratedRecordsError");
+        assert.isTrue(yield* fs.exists(legacy));
+
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`INSERT INTO projection_projects VALUES ('legacy-project')`;
+          yield* sql`INSERT INTO orchestration_v2_projection_threads VALUES ('legacy-thread')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+        assert.deepEqual((yield* maintenance.inspect(dbPath)).legacyOnlyRecords, {
+          projects: 0,
+          threads: 0,
+        });
+
         const refused = yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`SELECT value FROM v1_data`;
-          return yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
+          const failure = yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
+          assert.deepEqual(yield* sql`SELECT value FROM v1_data`, [{ value: "rollback" }]);
+          return failure;
         }).pipe(Effect.provide(openLegacy));
         assert.equal(refused._tag, "DatabaseInUseError");
         assert.isTrue(yield* fs.exists(legacy));
 
-        yield* maintenance.removeLegacyDatabase(dbPath);
+        yield* Effect.flatMap(DatabaseMaintenance.DatabaseMaintenance, (service) =>
+          service.removeLegacyDatabase(dbPath),
+        ).pipe(
+          Effect.provide(Layer.fresh(DatabaseMaintenance.layer)),
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            remove: (target, options) =>
+              Effect.gen(function* () {
+                if (target === legacy) {
+                  yield* Effect.gen(function* () {
+                    const sql = yield* SqlClient.SqlClient;
+                    yield* sql`PRAGMA busy_timeout = 0`;
+                    yield* sql`BEGIN EXCLUSIVE`;
+                    yield* sql`COMMIT`;
+                  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: legacy })));
+                  // Create sidecars after the probe closes so only Doctor can remove them.
+                  yield* fs.writeFileString(`${legacy}-wal`, "leftover WAL");
+                  yield* fs.writeFileString(`${legacy}-shm`, "leftover SHM");
+                }
+                yield* fs.remove(target, options);
+              }),
+          }),
+        );
         assert.isFalse(yield* fs.exists(legacy));
         assert.isFalse(yield* fs.exists(`${legacy}-wal`));
+        assert.isFalse(yield* fs.exists(`${legacy}-shm`));
         assert.isTrue(yield* fs.exists(dbPath));
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          assert.deepEqual(yield* sql`SELECT value FROM retained_data`, [{ value: "keep" }]);
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })));
         assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
-      }).pipe(Effect.scoped),
+      }),
+    );
+
+    it.effect("runs a repair requested from Settings once and keeps its failure for Settings", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-requested-reclaim-" });
+        const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
+        const files = DatabaseMaintenance.reclaimFiles(path, dbPath);
+        yield* Effect.void.pipe(Effect.provide(Sqlite.layerFromPath(dbPath)));
+        const autoVacuum = Effect.flatMap(
+          SqlClient.SqlClient,
+          (sql) => sql<{ readonly auto_vacuum: number }>`PRAGMA auto_vacuum`,
+        ).pipe(
+          Effect.map((rows) => rows[0]?.auto_vacuum),
+          Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })),
+        );
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`PRAGMA auto_vacuum = NONE`;
+          yield* sql`VACUUM`;
+          yield* sql`CREATE TABLE retained_data (value TEXT)`;
+          yield* sql`INSERT INTO retained_data VALUES ('keep')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+
+        // Every server exit runs this; without a request it must leave the database alone.
+        yield* DatabaseMaintenance.runRequestedReclaim(dbPath);
+        assert.equal(yield* autoVacuum, 0);
+
+        yield* fs.writeFileString(files.request, "");
+        yield* fs.writeFileString(files.failure, "an earlier failure");
+        yield* DatabaseMaintenance.runRequestedReclaim(dbPath);
+        assert.isFalse(yield* fs.exists(files.request));
+        assert.isFalse(yield* fs.exists(files.failure));
+        assert.equal(yield* autoVacuum, 2);
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          assert.deepEqual(yield* sql`SELECT value FROM retained_data`, [{ value: "keep" }]);
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })));
+
+        const brokenPath = path.join(baseDir, "broken", "statev2.sqlite");
+        const broken = DatabaseMaintenance.reclaimFiles(path, brokenPath);
+        yield* fs.makeDirectory(path.dirname(brokenPath));
+        yield* fs.writeFileString(brokenPath, "not a database");
+        yield* fs.writeFileString(broken.request, "");
+        yield* DatabaseMaintenance.runRequestedReclaim(brokenPath);
+        assert.isFalse(
+          yield* fs.exists(broken.request),
+          "a failed repair must not rerun on every exit",
+        );
+        assert.equal(
+          yield* fs.readFileString(broken.failure),
+          new DatabaseMaintenance.DatabaseCompactError({ path: brokenPath, cause: null }).message,
+        );
+      }),
+    );
+
+    it.effect("refuses a repair whose copies would not fit on disk", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dbPath = path.join(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-reclaim-space-" }),
+          "statev2.sqlite",
+        );
+        assert.isNull(yield* DatabaseMaintenance.reclaimSpaceShortfall(dbPath, 1024));
+        const huge = 2 ** 60;
+        const shortfall = yield* DatabaseMaintenance.reclaimSpaceShortfall(dbPath, huge);
+        assert.isAtLeast(shortfall?.neededBytes ?? 0, huge);
+        assert.isBelow(shortfall?.freeBytes ?? Infinity, huge);
+      }),
     );
 
     it.effect("compacts an existing database offline only once its server has stopped", () =>
@@ -77,18 +203,8 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
         const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-compact-" });
         const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
-        // A migrated database created before incremental auto_vacuum, with free pages.
-        yield* Effect.flatMap(
-          ProjectionMaintenance.ProjectionMaintenanceV2,
-          (projections) => projections.rebuild,
-        ).pipe(
-          Effect.provide(
-            ProjectionMaintenance.layer.pipe(
-              Layer.provide(Layer.merge(EventStore.layer, ProjectionStore.layer)),
-              Layer.provideMerge(Sqlite.layerFromPath(dbPath)),
-            ),
-          ),
-        );
+        // Opening the database migrates it.
+        yield* Effect.void.pipe(Effect.provide(Sqlite.layerFromPath(dbPath)));
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`PRAGMA auto_vacuum = NONE`;
@@ -98,10 +214,31 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           yield* sql`CREATE TABLE discarded_data (value BLOB)`;
           yield* sql`INSERT INTO discarded_data VALUES (zeroblob(4194304))`;
           yield* sql`DROP TABLE discarded_data`;
+          yield* sql`
+            INSERT INTO orchestration_v2_projection_messages (
+              message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json
+            )
+            VALUES (
+              'message-1', 'thread-1', NULL, NULL, 'user', 0,
+              '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', '{"text":"needle"}'
+            )
+          `;
+          // An index that drifted from its rows, as a renumbering VACUUM would leave it.
+          yield* sql`
+            INSERT INTO orchestration_v2_message_search (orchestration_v2_message_search)
+            VALUES ('delete-all')
+          `;
           yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+          yield* sql`INSERT INTO orchestration_v2_legacy_imports (
+            thread_id, source_updated_at, shell_imported_at, transcript_imported_at, imported_message_count
+          ) VALUES ('imported', '2026-10-17', '2026-10-17', '2026-10-17', 0)`;
+          yield* sql`WITH RECURSIVE history(n) AS (
+            SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 51
+          ) INSERT INTO orchestration_command_receipts (
+            command_id, aggregate_kind, aggregate_id, accepted_at, result_sequence, status, command_type
+          ) SELECT 'legacy-' || n, 'thread', 'imported', '2026-10-17', 0, 'accepted', 'legacy' FROM history`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
 
-        // A server that merely has the database open, like an idle one, is enough to refuse.
         const sizeBefore = (yield* fs.stat(dbPath)).size;
         const refused = yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
@@ -111,15 +248,43 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         assert.equal(refused._tag, "DatabaseInUseError");
         assert.equal((yield* fs.stat(dbPath)).size, sizeBefore);
 
-        const result = yield* maintenance.compact(dbPath);
-        // The 4 MiB of free pages are returned to the filesystem.
+        const clock = yield* Clock.Clock;
+        const pauses: number[] = [];
+        let activeNanos = 0n;
+        const steps: string[] = [];
+        const result = yield* maintenance
+          .compact(dbPath, (step) => Effect.sync(() => steps.push(step)))
+          .pipe(
+            Effect.provideService(Clock.Clock, {
+              ...clock,
+              // Exceed the background budget whenever the compactor checks elapsed time.
+              monotonicTimeNanos: Effect.sync(() => (activeNanos += 30_000_000n)),
+              sleep: (duration) =>
+                Effect.sync(() => {
+                  pauses.push(Duration.toMillis(duration));
+                }),
+            }),
+          );
+        assert.deepEqual(pauses, [], "offline doctor must not throttle compaction");
+        assert.deepEqual(steps, ["prune-events", "vacuum", "rebuild-search", "checkpoint"]);
+        assert.equal(result.deletedReceiptCount, 51);
         assert.isBelow(result.afterBytes, result.beforeBytes - 3 * 1024 * 1024);
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           assert.deepEqual(yield* sql`PRAGMA auto_vacuum`, [{ auto_vacuum: 2 }]);
           assert.deepEqual(yield* sql`SELECT value FROM retained_data`, [{ value: "keep" }]);
+          assert.deepEqual(
+            yield* sql`
+              SELECT messages.message_id AS "messageId"
+              FROM orchestration_v2_message_search AS search
+              INNER JOIN orchestration_v2_projection_messages AS messages
+                ON messages.rowid = search.rowid
+              WHERE orchestration_v2_message_search MATCH '"needle"'
+            `,
+            [{ messageId: "message-1" }],
+          );
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })));
-      }).pipe(Effect.scoped),
+      }),
     );
   },
 );

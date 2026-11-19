@@ -19,8 +19,7 @@ for (const [network, prefix] of [
 ] as const) {
   LOCAL_ADDRESSES.addSubnet(network, prefix, "ipv4");
 }
-// Also the IPv6 ranges that carry an IPv4 address a translator may route to
-// without checking it: IPv4-compatible, local-use NAT64, and Teredo.
+// Block IPv4-carrying IPv6 ranges that translators may route without checking.
 for (const [network, prefix] of [
   ["::", 96],
   ["64:ff9b:1::", 48],
@@ -31,6 +30,11 @@ for (const [network, prefix] of [
 ] as const) {
   LOCAL_ADDRESSES.addSubnet(network, prefix, "ipv6");
 }
+
+// Clash and Mihomo fake-IP DNS answers from here, inside the blocked 198.18.0.0/15.
+const FAKE_IP = new NodeNet.BlockList();
+FAKE_IP.addSubnet("198.18.0.0", 15, "ipv4");
+const MAX_FAKE_IP_HOSTS = 3;
 
 const NAT64 = new NodeNet.BlockList();
 NAT64.addSubnet("64:ff9b::", 96, "ipv6");
@@ -52,11 +56,7 @@ const ipv6Groups = (address: string) => {
   );
 };
 
-/**
- * The IPv4 address a NAT64 or 6to4 address stands for, which a translator
- * will route to, so it is checked as well. Public NAT64 targets stay
- * reachable, as on IPv6-only networks.
- */
+// Check the translated IPv4 too, while allowing public NAT64 targets on IPv6-only networks.
 const embeddedIPv4 = (address: string) => {
   const at = NAT64.check(address, "ipv6") ? 6 : SIX_TO_FOUR.check(address, "ipv6") ? 1 : -1;
   if (at === -1) return undefined;
@@ -81,17 +81,21 @@ const isLocal = (address: string, family: number): boolean => {
   return embedded !== undefined && isLocal(embedded, 4);
 };
 
-/**
- * The caller connects only to addresses checked here, so a name that later resolves elsewhere
- * (DNS rebinding) changes nothing.
- */
-const publicAddresses = async (host: string) => {
+// Connect only to checked addresses to prevent DNS rebinding.
+const publicAddresses = async (host: string, fakeIpHosts: Map<string, string>) => {
   const addresses = NodeNet.isIP(host)
     ? [{ address: host, family: NodeNet.isIP(host) }]
     : await NodeDnsPromises.lookup(host, { all: true, verbatim: true }).catch(() => []);
   if (addresses.length === 0) return undefined;
   const local = addresses.some(({ address, family }) => isLocal(address, family));
-  return local ? undefined : addresses;
+  if (!local) return addresses;
+  const fake =
+    !NodeNet.isIP(host) &&
+    addresses.every(({ address, family }) => family === 4 && FAKE_IP.check(address, "ipv4"));
+  if (fake && fakeIpHosts.size < MAX_FAKE_IP_HOSTS && !fakeIpHosts.has(host)) {
+    fakeIpHosts.set(host, addresses[0]!.address);
+  }
+  return undefined;
 };
 
 // SOCKS5 (RFC 1928) replies: success, refused by rule, host unreachable, command unsupported.
@@ -121,16 +125,18 @@ const readRequest = (data: Buffer) => {
   return { command: data[1], host, port: data.readUInt16BE(end - 2), rest: data.subarray(end) };
 };
 
-/**
- * Chrome's Local Network Access misses some requests, such as speculation-rules prefetches;
- * nothing misses this.
- */
+/** Covers requests Chrome's Local Network Access misses, including speculation prefetches. */
 export const publicProxy = Effect.acquireRelease(
   Effect.callback<
-    { readonly server: NodeNet.Server; readonly sockets: Set<NodeNet.Socket> },
+    {
+      readonly server: NodeNet.Server;
+      readonly sockets: Set<NodeNet.Socket>;
+      readonly fakeIpHosts: ReadonlyMap<string, string>;
+    },
     Error
   >((resume) => {
     const sockets = new Set<NodeNet.Socket>();
+    const fakeIpHosts = new Map<string, string>();
     const track = (socket: NodeNet.Socket) => {
       sockets.add(socket);
       socket.on("close", () => sockets.delete(socket));
@@ -166,13 +172,12 @@ export const publicProxy = Effect.acquireRelease(
           early.push(chunk);
         };
         client.on("data", holdEarly);
-        void publicAddresses(request.host).then((addresses) => {
+        void publicAddresses(request.host, fakeIpHosts).then((addresses) => {
           if (client.destroyed) return;
           client.off("data", holdEarly);
           if (addresses === undefined) return refuse(client, 2);
           client.pause();
-          // Tries every checked address, IPv6 and IPv4 alike, so a host is
-          // still reached on a network whose IPv6 route is broken.
+          // Try all checked addresses so broken IPv6 routes do not block IPv4 access.
           const upstream = track(
             NodeNet.connect({
               host: request.host,
@@ -202,7 +207,7 @@ export const publicProxy = Effect.acquireRelease(
     });
     server.listen(0, "127.0.0.1", () => {
       listening = true;
-      resume(Effect.succeed({ server, sockets }));
+      resume(Effect.succeed({ server, sockets, fakeIpHosts }));
     });
   }),
   ({ server, sockets }) =>
@@ -211,8 +216,9 @@ export const publicProxy = Effect.acquireRelease(
       server.close(() => resume(Effect.void));
     }),
 ).pipe(
-  Effect.map(({ server }) => {
+  Effect.map(({ server, fakeIpHosts }) => {
     const address = server.address();
-    return typeof address === "object" && address !== null ? address.port : 0;
+    const port = typeof address === "object" && address !== null ? address.port : 0;
+    return { port, fakeIpHosts };
   }),
 );

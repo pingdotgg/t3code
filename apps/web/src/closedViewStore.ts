@@ -83,12 +83,24 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
             typeof surface.target.name === "string" &&
             (surface.target.platform === "ios" || surface.target.platform === "android")))
       );
+    case "side-chat":
+      return typeof surface.threadId === "string" && surface.id === `side-chat:${surface.threadId}`;
     case "pull-request":
       return (
         typeof surface.projectId === "string" &&
         typeof surface.repository === "string" &&
         Number.isSafeInteger(surface.number) &&
         surface.number > 0 &&
+        (surface.environmentId === undefined || typeof surface.environmentId === "string") &&
+        (surface.host === undefined || typeof surface.host === "string") &&
+        (surface.url === undefined || typeof surface.url === "string")
+      );
+    case "issue":
+      return (
+        typeof surface.projectId === "string" &&
+        typeof surface.tracker === "string" &&
+        typeof surface.scope === "string" &&
+        typeof surface.key === "string" &&
         (surface.environmentId === undefined || typeof surface.environmentId === "string") &&
         (surface.host === undefined || typeof surface.host === "string") &&
         (surface.url === undefined || typeof surface.url === "string")

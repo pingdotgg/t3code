@@ -6,7 +6,8 @@ import type {
   SnapShotSource,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { CircleAlertIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
+import { T, useGT, useMessages } from "gt-react";
+import { CircleAlertIcon, ImageIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
 import { type ComponentProps, useLayoutEffect, useRef } from "react";
 
 import {
@@ -16,7 +17,11 @@ import {
   composerFileNeedsReattach,
 } from "../../composerDraftStore";
 import { retryAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
-import { formatAttachmentUploadProgress } from "../../lib/attachmentUploadState";
+import {
+  attachmentUploadFailureText,
+  type AttachmentUploadState,
+} from "../../lib/attachmentUploadState";
+import { useAttachmentUploadProgress } from "../../hooks/useAttachmentUploadProgress";
 import { isHeicImageFile } from "../../lib/imageCompression";
 import {
   type PendingSnapShotAnimation,
@@ -34,6 +39,7 @@ import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import type { PreparingComposerImage } from "./preparingComposerImages";
 import {
   attachVideoThumbnail,
   buildExpandedImagePreview,
@@ -45,6 +51,31 @@ import {
   SnapShotAttachmentDetails,
 } from "./SnapShotAttachmentDetails";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
+
+function ComposerAttachmentUploadProgress({
+  id,
+  upload,
+  fallback,
+}: {
+  id: string;
+  upload: AttachmentUploadState | undefined;
+  fallback?: string;
+}) {
+  return useAttachmentUploadProgress(id, upload) ?? fallback ?? null;
+}
+
+function ComposerImageFallback() {
+  const gt = useGT();
+  return (
+    <span
+      role="img"
+      aria-label={gt("Image attachment")}
+      className="flex size-full items-center justify-center p-3 text-secondary-label"
+    >
+      <ImageIcon aria-hidden="true" className="size-4" />
+    </span>
+  );
+}
 
 function ComposerVideoThumbnail({ file }: { file: File }) {
   const setVideo = (video: HTMLVideoElement | null) => {
@@ -80,6 +111,7 @@ function SnapShotAttachmentFrame({
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the mounted tile into view and registers it as the SnapShot animation destination
   useLayoutEffect(() => {
     const frame = frameRef.current;
     if (!frame || (!animationId && !arrival)) return;
@@ -109,6 +141,7 @@ function SnapShotAttachmentFrame({
 export function ComposerAttachmentMediaRow({
   images,
   expandedImages,
+  preparingImages,
   videos,
   pendingSnapShotAnimations,
   pendingSnapShotIds,
@@ -121,12 +154,14 @@ export function ComposerAttachmentMediaRow({
   attachmentDraftTarget,
   canOperateThread,
   onExpandImage,
+  onCopySnapshot,
   onFileOpen,
   onRemoveImage,
   onRemoveFile,
 }: {
   readonly images: ReadonlyArray<ComposerImageAttachment>;
   readonly expandedImages: ReadonlyArray<ComposerImageAttachment>;
+  readonly preparingImages: ReadonlyArray<PreparingComposerImage>;
   readonly videos: ReadonlyArray<ComposerFileAttachment>;
   readonly pendingSnapShotAnimations: ReadonlyArray<PendingSnapShotAnimation>;
   readonly pendingSnapShotIds: ReadonlyArray<string>;
@@ -138,11 +173,14 @@ export function ComposerAttachmentMediaRow({
   readonly environmentId: EnvironmentId;
   readonly attachmentDraftTarget: ScopedThreadRef | DraftId;
   readonly canOperateThread: boolean;
+  readonly onCopySnapshot: (imageId: string) => Promise<void>;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
   readonly onFileOpen: (attachment: ChatFileAttachment) => void;
   readonly onRemoveImage: (imageId: string) => void;
   readonly onRemoveFile: (fileId: string) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const pendingSnapShotIdSet = new Set(pendingSnapShotIds);
   const nonPersistedImageIdSet = new Set(nonPersistedImageIds);
@@ -156,14 +194,20 @@ export function ComposerAttachmentMediaRow({
           : "flex-wrap",
       )}
     >
-      {expandedImages
-        .map((image) => {
-          const upload = supportsAttachmentUploads ? uploadsByImageId[image.id] : undefined;
+      {/* A preparing image renders through the same tile, keyed by the id its compressed image
+          takes, so the thumbnail element survives the swap. */}
+      {[
+        ...expandedImages.map((image) => ({ image, ready: image })),
+        ...preparingImages.map((image) => ({ image, ready: null })),
+      ]
+        .map(({ image, ready }) => {
+          const upload =
+            ready && supportsAttachmentUploads ? uploadsByImageId[image.id] : undefined;
+          const source = ready?.source;
           const snapShotAnimationPending =
-            image.source?.kind === "snap-shot" && pendingSnapShotIdSet.has(image.id);
+            source?.kind === "snap-shot" && pendingSnapShotIdSet.has(image.id);
           const snapShotArrival =
-            image.source?.kind === "snap-shot" &&
-            shouldAnimateSnapShotArrival(image.source.capturedAt);
+            source?.kind === "snap-shot" && shouldAnimateSnapShotArrival(source.capturedAt);
           return (
             <SnapShotAttachmentFrame
               key={image.id}
@@ -173,22 +217,23 @@ export function ComposerAttachmentMediaRow({
               arrival={snapShotArrival}
               animateArrival={snapShotAnimations && !snapShotAnimationPending && snapShotArrival}
               animationId={snapShotAnimationPending ? image.id : undefined}
-              animationSource={snapShotAnimationPending ? image.source : undefined}
+              animationSource={snapShotAnimationPending ? source : undefined}
               className={cn(
                 "group/attachment shrink-0 snap-start bg-background",
-                image.source?.kind === "snap-shot"
+                source?.kind === "snap-shot"
                   ? SNAP_SHOT_ATTACHMENT_FRAME_CLASS
                   : "relative h-16 w-16 overflow-hidden rounded-lg border border-border/80",
                 snapShotAnimationPending && "invisible",
               )}
             >
-              {image.previewUrl ? (
+              {!ready || ready.previewUrl ? (
                 <button
                   type="button"
-                  className="h-full w-full cursor-zoom-in"
-                  aria-label={`Preview ${image.name}`}
+                  className={cn("h-full w-full", ready && "cursor-zoom-in")}
+                  aria-label={gt("Preview {name}", { name: image.name })}
+                  disabled={!ready}
                   onClick={() => {
-                    const preview = buildExpandedImagePreview(images, image.id);
+                    const preview = buildExpandedImagePreview(images, image.id, onCopySnapshot);
                     if (!preview) return;
                     onExpandImage(preview);
                   }}
@@ -198,30 +243,27 @@ export function ComposerAttachmentMediaRow({
                     alt={image.name}
                     className="h-full w-full object-cover"
                     fallback={
-                      isHeicImageFile({ name: image.name, type: image.mimeType }) ? (
+                      ready && isHeicImageFile({ name: ready.name, type: ready.mimeType }) ? (
                         <AttachmentImage
-                          name={image.name}
-                          mimeType={image.mimeType}
-                          src={image.previewUrl}
-                          alt={image.name}
+                          name={ready.name}
+                          mimeType={ready.mimeType}
+                          src={ready.previewUrl}
+                          alt=""
                           className="h-full w-full object-cover"
                         />
                       ) : (
-                        <span className="flex h-full items-center justify-center px-1 text-3xs text-secondary-label">
-                          {image.name}
-                        </span>
+                        <ComposerImageFallback />
                       )
                     }
                   />
                 </button>
               ) : (
-                <div className="flex h-full w-full items-center justify-center px-1 text-center text-3xs text-secondary-label">
-                  {image.name}
-                </div>
+                <ComposerImageFallback />
               )}
-              {image.source?.kind === "snap-shot" ? (
+              {source?.kind === "snap-shot" ? (
                 <SnapShotAttachmentDetails
-                  source={image.source}
+                  source={source}
+                  onCopySnapshot={ready ? () => onCopySnapshot(ready.id) : undefined}
                   className={cn(
                     upload?.status === "uploading" && "bottom-4",
                     upload?.status === "failed" && "bottom-8",
@@ -234,7 +276,7 @@ export function ComposerAttachmentMediaRow({
                     render={
                       <span
                         role="img"
-                        aria-label="Draft attachment may not persist"
+                        aria-label={gt("Draft attachment may not persist")}
                         className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-warning-foreground"
                       >
                         <CircleAlertIcon className="size-3" />
@@ -242,16 +284,24 @@ export function ComposerAttachmentMediaRow({
                     }
                   />
                   <TooltipPopup side="top">
-                    Draft attachment could not be saved locally and may be lost on navigation.
+                    <T>
+                      Draft attachment could not be saved locally and may be lost on navigation.
+                    </T>
                   </TooltipPopup>
                 </Tooltip>
               )}
-              {upload?.status === "uploading" && (
+              {(!ready || upload?.status === "uploading") && (
                 <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-3xs text-foreground">
-                  {formatAttachmentUploadProgress(upload.progress)}
+                  {upload?.status === "uploading" ? (
+                    <ComposerAttachmentUploadProgress id={image.id} upload={upload} />
+                  ) : (
+                    gt("Preparing", {
+                      $context: "attachment status while an image is being processed",
+                    })
+                  )}
                 </span>
               )}
-              {upload?.status === "failed" && (
+              {ready && upload?.status === "failed" && (
                 <Tooltip>
                   <TooltipTrigger
                     render={
@@ -262,24 +312,26 @@ export function ComposerAttachmentMediaRow({
                         onClick={() =>
                           retryAttachmentUpload({
                             environmentId,
-                            image,
+                            image: ready,
                             draftTarget: attachmentDraftTarget,
                           })
                         }
                         disabled={!canOperateThread}
-                        aria-label={`Retry upload for ${image.name}`}
+                        aria-label={gt("Retry upload for {name}", { name: image.name })}
                       />
                     }
                   >
                     <RefreshIcon />
                   </TooltipTrigger>
-                  <TooltipPopup side="top">{upload.reason}</TooltipPopup>
+                  <TooltipPopup side="top">
+                    {attachmentUploadFailureText(upload, messages)}
+                  </TooltipPopup>
                 </Tooltip>
               )}
               <span
                 className={cn(
                   "absolute right-1 top-1 flex",
-                  image.source?.kind === "snap-shot" &&
+                  source?.kind === "snap-shot" &&
                     "opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover/attachment:opacity-100 group-focus-within/attachment:opacity-100",
                 )}
               >
@@ -287,7 +339,7 @@ export function ComposerAttachmentMediaRow({
                   variant="media-close"
                   size="icon-xs"
                   onClick={() => onRemoveImage(image.id)}
-                  aria-label={`Remove ${image.name}`}
+                  aria-label={gt("Remove {name}", { name: image.name })}
                 >
                   <XIcon />
                 </Button>
@@ -325,7 +377,7 @@ export function ComposerAttachmentMediaRow({
             <button
               type="button"
               className="flex h-full w-full cursor-zoom-in flex-col items-center justify-center gap-1 px-1 text-white"
-              aria-label={`Play ${file.name}`}
+              aria-label={gt("Play {name}", { name: file.name })}
               onClick={() => {
                 if (file.file !== null) {
                   const preview = buildExpandedImagePreview([file], file.id);
@@ -346,7 +398,7 @@ export function ComposerAttachmentMediaRow({
             </button>
             {upload?.status === "uploading" && (
               <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-background/85 px-1 text-center text-3xs text-foreground">
-                {formatAttachmentUploadProgress(upload.progress)}
+                <ComposerAttachmentUploadProgress id={file.id} upload={upload} />
               </span>
             )}
             {upload?.status === "failed" && (
@@ -365,13 +417,15 @@ export function ComposerAttachmentMediaRow({
                         })
                       }
                       disabled={!canOperateThread}
-                      aria-label={`Retry upload for ${file.name}`}
+                      aria-label={gt("Retry upload for {name}", { name: file.name })}
                     />
                   }
                 >
                   <RefreshIcon />
                 </TooltipTrigger>
-                <TooltipPopup side="top">{upload.reason}</TooltipPopup>
+                <TooltipPopup side="top">
+                  {attachmentUploadFailureText(upload, messages)}
+                </TooltipPopup>
               </Tooltip>
             )}
             <Button
@@ -379,7 +433,7 @@ export function ComposerAttachmentMediaRow({
               size="icon-xs"
               className="absolute right-1 top-1"
               onClick={() => onRemoveFile(file.id)}
-              aria-label={`Remove ${file.name}`}
+              aria-label={gt("Remove {name}", { name: file.name })}
             >
               <XIcon />
             </Button>
@@ -414,6 +468,8 @@ export function ComposerAttachmentFileList({
   readonly onPreviewFile: (fileId: string) => void;
   readonly onRemoveFile: (fileId: string) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   return (
     <div className="mb-3 flex flex-col gap-1">
@@ -440,13 +496,21 @@ export function ComposerAttachmentFileList({
               {file.name}
             </button>
             <span className="shrink-0 text-xs text-secondary-label">
-              {needsReattach
-                ? canReattachFile
-                  ? "Attach again"
-                  : "Remove to send"
-                : upload?.status === "uploading"
-                  ? formatAttachmentUploadProgress(upload.progress)
-                  : formatAttachmentSize(file.sizeBytes)}
+              {needsReattach ? (
+                canReattachFile ? (
+                  gt("Attach again")
+                ) : (
+                  gt("Remove to send")
+                )
+              ) : upload?.status === "uploading" ? (
+                <ComposerAttachmentUploadProgress
+                  id={file.id}
+                  upload={upload}
+                  fallback={formatAttachmentSize(file.sizeBytes, messages)}
+                />
+              ) : (
+                formatAttachmentSize(file.sizeBytes, messages)
+              )}
             </span>
             {!needsReattach && upload?.status === "failed" ? (
               <Tooltip>
@@ -463,20 +527,22 @@ export function ComposerAttachmentFileList({
                         })
                       }
                       disabled={!canOperateThread}
-                      aria-label={`Retry upload for ${file.name}`}
+                      aria-label={gt("Retry upload for {name}", { name: file.name })}
                     />
                   }
                 >
                   <RefreshIcon />
                 </TooltipTrigger>
-                <TooltipPopup side="top">{upload.reason}</TooltipPopup>
+                <TooltipPopup side="top">
+                  {attachmentUploadFailureText(upload, messages)}
+                </TooltipPopup>
               </Tooltip>
             ) : null}
             <Button
               variant="ghost"
               size="icon-xs"
               onClick={() => onRemoveFile(file.id)}
-              aria-label={`Remove ${file.name}`}
+              aria-label={gt("Remove {name}", { name: file.name })}
             >
               <XIcon />
             </Button>
@@ -496,6 +562,7 @@ export function ComposerFilePreviewDialog({
   readonly onRemove: (fileId: string) => void;
   readonly onPreviewFileIdChange: (fileId: string | null) => void;
 }) {
+  const gt = useGT();
   const onClose = () => onPreviewFileIdChange(null);
   return (
     <Dialog
@@ -516,7 +583,7 @@ export function ComposerFilePreviewDialog({
           mimeType={file.mimeType}
           sizeBytes={file.sizeBytes}
           file={file.file}
-          origin="Draft"
+          origin={gt("Draft", { $context: "where an attachment comes from: the unsent message" })}
           {...(file.uploadedAttachmentId && file.uploadEnvironmentId
             ? {
                 asset: {
@@ -542,14 +609,17 @@ export function ComposerRestingImagePreviews({
   allImages,
   resolvedTheme,
   onExpandImage,
+  onCopySnapshot,
   onShowMore,
 }: {
   readonly images: ReadonlyArray<ComposerImageAttachment>;
   readonly allImages: ReadonlyArray<ComposerImageAttachment>;
   readonly resolvedTheme: "light" | "dark";
+  readonly onCopySnapshot: (imageId: string) => Promise<void>;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
   readonly onShowMore: () => void;
 }) {
+  const gt = useGT();
   const counts = getRestingComposerImagePreviewCounts(images.length);
   const visibleImages = images.slice(0, counts.visibleCount);
   return (
@@ -559,10 +629,10 @@ export function ComposerRestingImagePreviews({
           key={image.id}
           type="button"
           className="relative size-7 shrink-0 cursor-zoom-in overflow-hidden rounded-md border border-border/70 bg-muted/60"
-          aria-label={`Preview ${image.name}`}
+          aria-label={gt("Preview {name}", { name: image.name })}
           onPointerDown={(event) => event.preventDefault()}
           onClick={() => {
-            const preview = buildExpandedImagePreview(allImages, image.id);
+            const preview = buildExpandedImagePreview(allImages, image.id, onCopySnapshot);
             if (preview) onExpandImage(preview);
           }}
         >
@@ -604,7 +674,12 @@ export function ComposerRestingImagePreviews({
         <button
           type="button"
           className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-border/70 bg-muted/60 font-medium text-secondary-label text-xs tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-          aria-label={`Show ${String(counts.overflowCount)} more image attachments`}
+          aria-label={gt(
+            "{count, plural, one {Show {count} more image attachments} other {Show {count} more image attachments}}",
+            {
+              count: counts.overflowCount,
+            },
+          )}
           onPointerDown={(event) => event.preventDefault()}
           onClick={onShowMore}
         >
@@ -626,6 +701,7 @@ export function ComposerQueuedAttachmentRow({
   }>;
   readonly onRemove: (attachmentId: string) => void;
 }) {
+  const gt = useGT();
   return (
     <div className="mb-3 flex flex-wrap gap-2">
       {attachments.map(({ attachment, url }) => (
@@ -645,7 +721,7 @@ export function ComposerQueuedAttachmentRow({
             size="icon-xs"
             className="absolute right-1 top-1"
             onClick={() => onRemove(attachment.id)}
-            aria-label={`Remove ${attachment.name}`}
+            aria-label={gt("Remove {name}", { name: attachment.name })}
           >
             <XIcon />
           </Button>
@@ -662,6 +738,7 @@ export function ComposerAttachButton({
   readonly addComposerAttachments: (files: File[]) => Promise<boolean>;
   readonly focusComposer: () => void;
 }) {
+  const gt = useGT();
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -690,13 +767,16 @@ export function ComposerAttachButton({
               size="icon-sm"
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => inputRef.current?.click()}
-              aria-label="Attach files"
+              aria-label={gt("Attach files")}
             />
           }
         >
-          <PaperclipIcon />
+          {/* The clip's weight sits in its upper loop; 1px down reads as centered on the row. */}
+          <PaperclipIcon className="translate-y-px" />
         </TooltipTrigger>
-        <TooltipPopup>Attach files</TooltipPopup>
+        <TooltipPopup>
+          <T>Attach files</T>
+        </TooltipPopup>
       </Tooltip>
     </>
   );

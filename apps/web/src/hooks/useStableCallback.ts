@@ -1,16 +1,14 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useInsertionEffect, useRef, useState } from "react";
 
-/**
- * Only call it from event handlers and effects; during render it would see the
- * previous commit's `fn`. The forwarder is created once so its identity does not
- * depend on the React Compiler, and it keeps no render scope alive: V8 shares one
- * scope between all closures of a render.
- */
+/** Call only from handlers and effects; render sees the previous commit's fn. */
 export function useStableCallback<Args extends ReadonlyArray<unknown>, Result>(
   fn: (...args: Args) => Result,
 ): (...args: Args) => Result {
   const latest = useRef(fn);
-  useLayoutEffect(() => {
+  // Insertion effects run before every layout effect in the commit, so a
+  // child's layout effect already calls this render's fn.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- updates the ref during commit, before any layout effect can call the stable callback
+  useInsertionEffect(() => {
     latest.current = fn;
   });
   const [stable] = useState(

@@ -1,5 +1,6 @@
+// oxlint-disable t3code/no-untranslated-copy -- fork-only custom-agent copy is English only
 import { memo } from "react";
-import { BotIcon } from "lucide-react";
+import { BotIcon, ChevronDownIcon } from "lucide-react";
 import type { AgentId, AgentSummary } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
@@ -13,12 +14,7 @@ import {
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
-import {
-  ComposerControl,
-  ComposerControlChevron,
-  ComposerControlIcon,
-  type ComposerControlSize,
-} from "./ComposerControl";
+import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 
@@ -250,7 +246,7 @@ export const AgentPicker = memo(function AgentPicker({
             {activeAgent.tier === "economy" ? "Economy" : "Reasoning"}
           </Badge>
         ) : null}
-        <ComposerControlChevron size={size} />
+        <ComposerControlIcon icon={ChevronDownIcon} size={size} />
       </MenuTrigger>
 
       <MenuPopup align="start" {...menuProps} className="w-64 max-w-[calc(100vw-2rem)]">

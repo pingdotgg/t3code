@@ -2,20 +2,17 @@ import { remapComposerContextAttachments } from "@t3tools/shared/composerContext
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
 import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
-import * as AgentService from "../agent/AgentService.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
-import * as ProjectService from "../project/ProjectService.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import * as Option from "effect/Option";
 
-// These dispatcher failures occur in receipt validation or planning, before
-// commitCommand. Generic dispatch errors can follow a commit and remain uncertain.
+// These failures precede commitCommand; generic dispatch errors can follow commits and remain ambiguous.
 function dispatchWasNotAccepted(
   error: Orchestrator.OrchestratorV2Error | ThreadManagement.ThreadManagementError,
 ) {
@@ -28,7 +25,10 @@ function dispatchWasNotAccepted(
     case "OrchestratorCommandIdConflictError":
     case "OrchestratorSubagentThreadReadOnlyError":
     case "OrchestratorThreadAboveModeLimitError":
+    case "OrchestratorProviderSelectionBusyError":
+    case "OrchestratorRuntimeModeAboveCeilingError":
     case "ThreadManagementProviderInstanceDisabledError":
+    case "ThreadManagementWorktreeRestoreError":
       return true;
     default:
       return false;
@@ -44,80 +44,52 @@ const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")
   if (claimedPaths.length === 0) return;
   const config = yield* ServerConfig.ServerConfig;
   const retained = new Set(
-    accepted.map((attachment) =>
-      resolveAttachmentPath({
+    accepted.flatMap((attachment) => {
+      const path = resolveAttachmentPath({
         attachmentsDir: config.attachmentsDir,
         attachment,
-      }),
-    ),
+      });
+      return path ? [path, `${path}.txt`] : [];
+    }),
   );
   yield* AttachmentClaims.releaseClaimedAttachments(
     claimedPaths.filter((path) => !retained.has(path)),
   );
 });
 
-const validateDelegatedTaskAgent = Effect.fn("ThreadMessageIntake.validateDelegatedTaskAgent")(
-  function* (
-    command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
-  ) {
-    const threads = yield* ThreadManagement.ThreadManagementService;
-    const existingReceipt = yield* threads.getCommandReceipt(command.commandId);
-    if (existingReceipt !== null && existingReceipt.status === "accepted") {
-      return;
-    }
-    const parent = yield* threads.getThreadShell(command.parentThreadId);
-    if (parent === null) return;
-
-    const projects = yield* ProjectService.ProjectService;
-    const project = yield* projects.getById(parent.projectId);
-    const definitions = yield* AgentService.listAgentDefinitions(
-      Option.getOrUndefined(project)?.workspaceRoot ?? null,
+/**
+ * A guest message goes out with the files the guest attached, never ones a client names. They
+ * are already the thread's attachments. A message no longer waiting gets none; the orchestrator
+ * then refuses or replays the send.
+ */
+const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments")(function* (
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+) {
+  if (command.guestMessageId === undefined) return command;
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  // Only the thread record is needed; the window keeps the read small.
+  const { projection } = yield* threads
+    .getThreadSnapshotWindow(command.threadId, { rowLimit: 1 })
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new AttachmentClaims.AttachmentClaimError({
+            message: "Failed to read the guest message.",
+            cause,
+          }),
+      ),
     );
-    const leadAgent =
-      parent.agentId === undefined
-        ? undefined
-        : definitions.find((candidate) => candidate.id === parent.agentId);
-    const targetAgent =
-      command.targetAgentId === undefined
-        ? undefined
-        : definitions.find((candidate) => candidate.id === command.targetAgentId);
-    const reject = (cause: string) =>
-      Effect.fail(
-        new Orchestrator.OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause,
-        }),
-      );
-
-    if (parent.agentId !== undefined && leadAgent === undefined) {
-      return yield* reject(
-        `Custom lead agent ${parent.agentId} is no longer available; delegation is disabled.`,
-      );
-    }
-    if (
-      leadAgent !== undefined &&
-      (command.targetAgentId === undefined ||
-        !leadAgent.canDelegateTo.includes(command.targetAgentId))
-    ) {
-      return yield* reject(
-        `Custom lead agent ${leadAgent.id} may delegate only to agents listed in its canDelegateTo policy.`,
-      );
-    }
-    if (command.targetAgentId !== undefined && targetAgent === undefined) {
-      return yield* reject(
-        `Agent ${command.targetAgentId} was not found in .agents, .github/agents, or AGENTS.md.`,
-      );
-    }
-  },
-);
+  const message = projection.thread.guestShare?.messages.find(
+    (candidate) => candidate.id === command.guestMessageId && candidate.status === "pending",
+  );
+  return { ...command, attachments: message?.attachments ?? [] };
+});
 
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
-  command: OrchestrationV2Command,
+  incoming: OrchestrationV2Command,
 ) {
-  if (command.type === "delegated_task.request") {
-    yield* validateDelegatedTaskAgent(command);
-  }
+  const command =
+    incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
@@ -156,12 +128,8 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
       })
       .pipe(
         Effect.tap((result) => {
-          // A replayed receipt reports the first attempt's answer, so this
-          // attempt's copies go unreferenced and are released. The resolved
-          // turn item proves the respond was applied; questionAnswer is only
-          // recorded when the accepted command carried attachments, so its
-          // absence means the accepted answer referenced no copies. With no
-          // resolved item at all the outcome is ambiguous and everything stays.
+          // Replayed receipts refer to the first answer; release this attempt's unused copies only with a resolved item.
+          // Missing questionAnswer means no accepted attachments; missing resolution leaves delivery ambiguous.
           const answeredItems = result.storedEvents.flatMap(({ event }) =>
             event.type === "turn-item.updated" &&
             event.payload.type === "user_input_request" &&
@@ -192,6 +160,24 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     (command.type !== "queued-run.edit" || command.attachments === undefined)
   )
     return yield* threads.dispatch(command);
+  // An accepted edit's retry replays its receipt even if a later cleanup removed its files.
+  if (command.type === "queued-run.edit" && !(yield* threads.hasReceipt(command.commandId))) {
+    const config = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    // A stale view can keep a file that another client's edit dropped and deleted.
+    for (const attachment of command.attachments ?? []) {
+      if (AttachmentClaims.attachmentIsPendingUpload(attachment)) continue;
+      const path = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
+      if (
+        path !== null &&
+        !(yield* fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false)))
+      ) {
+        return yield* new AttachmentClaims.AttachmentClaimError({
+          message: `Attachment '${attachment.name}' cannot be sent: attachment not found.`,
+        });
+      }
+    }
+  }
   const claimed = yield* AttachmentClaims.claimPendingAttachments({
     threadId: command.threadId,
     attachments: command.attachments ?? [],
@@ -287,8 +273,7 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
         if (error._tag === "ThreadManagementProviderInstanceDisabledError") {
           return AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths);
         }
-        // Project/receipt reads precede message dispatch. The create-thread error
-        // also wraps post-message projection reads, so its tag alone is not proof.
+        // Project/receipt reads precede dispatch; create-thread errors can wrap post-message reads and prove nothing alone.
         const notAccepted =
           error.operation === "resolve-project" ||
           error.operation === "read-receipt" ||

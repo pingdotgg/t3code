@@ -1,9 +1,12 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { type DesktopBridge, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
-import type { DesktopSnapShotBridge } from "../../lib/desktopSnapShot";
+import {
+  DraftId,
+  hydrateImagesFromPersisted,
+  useComposerDraftStore,
+} from "../../composerDraftStore";
 import * as imageCompression from "../../lib/imageCompression";
 import {
   questionAttachmentDraftId,
@@ -126,7 +129,7 @@ describe("open question delivery", () => {
   };
   const makeBridge = (readSnapShot: () => Promise<typeof capture> = async () => capture) => {
     const acknowledgeSnapShot = vi.fn(async () => undefined);
-    const bridge = { readSnapShot, acknowledgeSnapShot } as unknown as DesktopSnapShotBridge;
+    const bridge = { readSnapShot, acknowledgeSnapShot } as unknown as DesktopBridge;
     return { bridge, acknowledgeSnapShot };
   };
 
@@ -143,6 +146,9 @@ describe("open question delivery", () => {
       expect(store.getComposerDraft(first)?.images.map(({ id }) => id)).toEqual([capture.id]);
       expect(store.getComposerDraft(threadRef)?.images ?? []).toHaveLength(0);
       expect(acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id);
+      const repeat = hydrateImagesFromPersisted([{ ...capture, id: "repeat" }]);
+      expect(store.addImages(first, repeat)).toEqual([]);
+      expect(store.getComposerDraft(first)?.images.map(({ id }) => id)).toEqual([capture.id]);
     } finally {
       untrack();
     }
@@ -226,7 +232,7 @@ describe("durable snapshot delivery", () => {
       const bridge = {
         readSnapShot: async () => capture,
         acknowledgeSnapShot,
-      } as unknown as DesktopSnapShotBridge;
+      } as unknown as DesktopBridge;
       const write = storage.setItem.getMockImplementation()!;
       storage.setItem.mockImplementation(() => {
         throw new Error("QuotaExceededError");

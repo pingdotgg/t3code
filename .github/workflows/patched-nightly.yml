@@ -39,8 +39,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           FORK_REPOSITORY: ${{ github.repository }}
           WORKFLOW_SHA: ${{ github.sha }}
-          PATCH_BASE: v0.1.2-nightly.20261022.3526
-          PATCH_BASE_SHA: f054d1b8018721bd997d99cbb918a7b17bf098a4
+          # Upstream nightly main was merged with. Source nightlies must descend from it.
+          PATCH_BASE: v0.1.11-nightly.20261119.4941
+          PATCH_BASE_SHA: ff9efe89f6e793fed459d3d9c42f68450de78e95
+          # Head of main before it was reconciled with upstream. Its history has unrelated SHAs
+          # (upstream rewrote its history), so its old patch commits are already folded into the
+          # reconciled tree and must not be replayed.
+          LEGACY_MAIN_SHA: c4afed3e330a9795185d7800ce602cb8c430da6b
         run: |
           set -euo pipefail
 
@@ -51,24 +56,9 @@ jobs:
             exit 1
           fi
 
-          # These changes are carried by portable-nightly-fixes.patch because their original commits conflict upstream.
-          # Patch-only artifacts live in the fork workflow checkout and are applied separately below.
           patch_commits=""
           while IFS= read -r patch_commit; do
             [[ -z "$patch_commit" ]] && continue
-            if [[ "$patch_commit" == "6611d52bdf24eb30ae3708f8fc7718334d1892d5" \
-              || "$patch_commit" == "31a1311b2017ccb5e1b9a86735699b766069fa48" \
-              || "$patch_commit" == "78e8c7c9ddb1"* \
-              || "$patch_commit" == "69a119dc1b"* \
-              || "$patch_commit" == "01ef456545"* ]]; then
-              echo "Skipping $patch_commit; its behavior is carried by portable-nightly-fixes.patch."
-              continue
-            fi
-            # This commit is the fork-source copy of direct-apns-push.patch, which is re-anchored for upstream.
-            if [[ "$patch_commit" == "a165c53a2b"* || "$patch_commit" == "4291a714e5"* ]]; then
-              echo "Skipping $patch_commit; its behavior is carried by direct-apns-push.patch."
-              continue
-            fi
             has_source_changes=false
             while IFS= read -r changed_path; do
               case "$changed_path" in
@@ -79,37 +69,18 @@ jobs:
               esac
             done < <(git diff-tree --no-commit-id --name-only -r "$patch_commit")
             if [[ "$has_source_changes" != "true" ]]; then
-              echo "Skipping patch artifact commit $patch_commit; patch files are applied separately."
+              echo "Skipping $patch_commit; it changes no shipped source."
               continue
             fi
             patch_commits+="${patch_commit}"$'\n'
-          done < <(git log --reverse --format='%H%x09%s' "$PATCH_BASE_SHA..$WORKFLOW_SHA" \
+          done < <(git log --reverse --no-merges --format='%H%x09%s' "^$PATCH_BASE_SHA" "^$LEGACY_MAIN_SHA" "$WORKFLOW_SHA" \
             | awk -F '\t' '$2 ~ /^patch: [^[:space:]]/ { print $1 }')
           patch_commits="${patch_commits%$'\n'}"
           if [[ -z "$patch_commits" ]]; then
             echo "No patch commits were found after $PATCH_BASE." >&2
             exit 1
           fi
-          compatibility_patch="$RUNNER_TEMP/portable-nightly-fixes.patch"
-          git show "$WORKFLOW_SHA:.github/patches/portable-nightly-fixes.patch" > "$compatibility_patch"
-          compatibility_patch_sha="$(sha256sum "$compatibility_patch" | cut -d' ' -f1)"
-          lineage_agent_patch="$RUNNER_TEMP/lineage-custom-agents.patch"
-          git show "$WORKFLOW_SHA:.github/patches/lineage-custom-agents.patch" > "$lineage_agent_patch"
-          lineage_agent_patch_sha="$(sha256sum "$lineage_agent_patch" | cut -d' ' -f1)"
-          thread_list_patch="$RUNNER_TEMP/mobile-thread-list.patch"
-          git show "$WORKFLOW_SHA:.github/patches/mobile-thread-list.patch" > "$thread_list_patch"
-          thread_list_patch_sha="$(sha256sum "$thread_list_patch" | cut -d' ' -f1)"
-          fork_config_patch="$RUNNER_TEMP/mobile-fork-config.patch"
-          git show "$WORKFLOW_SHA:.github/patches/mobile-fork-config.patch" > "$fork_config_patch"
-          fork_config_patch_sha="$(sha256sum "$fork_config_patch" | cut -d' ' -f1)"
-          remote_delegate_patch="$RUNNER_TEMP/remote-delegate-worktree.patch"
-          git show "$WORKFLOW_SHA:.github/patches/remote-delegate-worktree.patch" > "$remote_delegate_patch"
-          remote_delegate_patch_sha="$(sha256sum "$remote_delegate_patch" | cut -d' ' -f1)"
-          direct_apns_patch="$RUNNER_TEMP/direct-apns-push.patch"
-          git show "$WORKFLOW_SHA:.github/patches/direct-apns-push.patch" > "$direct_apns_patch"
-          direct_apns_patch_sha="$(sha256sum "$direct_apns_patch" | cut -d' ' -f1)"
-          patch_set="$( { printf '%s\n' "$patch_commits"; printf '%s\n' "$compatibility_patch_sha"; printf '%s\n' "$lineage_agent_patch_sha"; printf '%s\n' "$thread_list_patch_sha"; printf '%s\n' "$fork_config_patch_sha"; printf '%s\n' "$remote_delegate_patch_sha"; printf '%s\n' "$direct_apns_patch_sha"; } \
-            | sha256sum | cut -c1-16)"
+          patch_set="$(printf '%s\n' "$patch_commits" | sha256sum | cut -c1-16)"
 
           dry_run=false
           [[ "$GITHUB_EVENT_NAME" == "pull_request" ]] && dry_run=true
@@ -170,43 +141,8 @@ jobs:
           git checkout --detach "$source_sha"
           while IFS= read -r patch_commit; do
             [[ -z "$patch_commit" ]] && continue
-            if [[ "$patch_commit" == "bfdc8821b7a6dda5f5b293dbf0b2e7dbe885582b" ]] \
-              && git grep -q 'gitfile does not point to a valid repository' -- apps/server/src/vcs/GitVcsDriverCore.ts \
-              && git grep -q 'isNonRepositoryGitStderr(result.stderr)' -- apps/server/src/storageCleanup.ts; then
-              echo "Selected upstream already handles both broken-worktree diagnostics; skipping the duplicate patch commit."
-              continue
-            fi
-            if [[ "$patch_commit" == "c5826fef3d"* ]] \
-              && git grep -q 'gitfile does not point to a valid repository' -- apps/server/src/vcs/GitVcsDriverCore.ts \
-              && git grep -q 'isNonRepositoryGitStderr(result.stderr)' -- apps/server/src/storageCleanup.ts; then
-              echo "Selected upstream already handles both broken-worktree diagnostics; skipping the duplicate patch commit."
-              continue
-            fi
-            if [[ "$patch_commit" == "d7afd796203feea11e62d22c2925ca81c73fb4dd" \
-              || "$patch_commit" == "1bb59c3810"* ]]; then
-              # Upstream rewrote this test file; keep its version while replaying the implementation.
-              git cherry-pick -X ours "$patch_commit"
-            elif [[ "$patch_commit" == "928b4493bc"* ]]; then
-              # Upstream relabelled the Model field; keep its markup while replaying the effort picker.
-              git cherry-pick -X ours "$patch_commit"
-            else
-              git cherry-pick "$patch_commit"
-            fi
+            git cherry-pick "$patch_commit"
           done <<<"$patch_commits"
-          git apply --check "$compatibility_patch"
-          git apply "$compatibility_patch"
-          git apply --check "$lineage_agent_patch"
-          git apply "$lineage_agent_patch"
-          git apply --check "$thread_list_patch"
-          git apply "$thread_list_patch"
-          git apply --check "$fork_config_patch"
-          git apply "$fork_config_patch"
-          git apply --check "$remote_delegate_patch"
-          git apply "$remote_delegate_patch"
-          git apply --check "$direct_apns_patch"
-          git apply "$direct_apns_patch"
-          git add -A
-          git commit -m "patch: apply portable fork fixes to upstream nightly"
           if [[ "$dry_run" == "true" ]]; then
             echo "should_build=false" >> "$GITHUB_OUTPUT"
             echo "Patches replay cleanly onto $source_tag ($source_sha)."

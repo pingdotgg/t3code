@@ -21,6 +21,7 @@ const OpenCodeServerEntry = Schema.Struct({
   pid: Schema.Int,
   startTime: Schema.String,
   command: Schema.String,
+  args: Schema.optionalKey(Schema.Array(Schema.String)),
   port: Schema.Int,
   stateDir: Schema.String,
   owner: ProcessIdentity,
@@ -54,7 +55,7 @@ interface ObservedProcess {
   readonly zombie: boolean;
 }
 
-// `ps -o lstart` prints e.g. `Sat Sep  6 20:51:57 2026`; C locale and UTC keep it stable.
+// ps lstart needs C locale and UTC for stable parsing.
 const DARWIN_PS_LINE =
   /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\w{3} \w{3} +\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/;
 
@@ -72,6 +73,11 @@ const parseDarwinPs = (output: string): ReadonlyArray<ObservedProcess> =>
       },
     ];
   });
+
+// A wrapper's forked child keeps the wrapper's command line until it execs; the
+// serve arguments survive the exec, so they identify the server either way.
+const runsServe = (observed: ObservedProcess, args: ReadonlyArray<string>) =>
+  observed.command.endsWith(` ${args.join(" ")}`);
 
 const signalGroup = (pgid: number, signal: NodeJS.Signals) => {
   try {
@@ -144,7 +150,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         Effect.orElseSucceed(() => undefined),
       );
     }
-    return Effect.succeed(undefined);
+    return Effect.undefined;
   };
 
   const observeGroup = (pgid: number): Effect.Effect<ReadonlyArray<ObservedProcess>> => {
@@ -187,17 +193,13 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
     function* (server) {
       if (!recordable) return Effect.void;
       const pgid = server.pid;
-      // The spawned process leads the group. If it already exited (a wrapper
-      // that left the server running), any live member identifies the group:
-      // a group id is not reused while the group has members.
+      // Any live member identifies a leaderless group; pgid cannot be reused while members remain.
       const leader = yield* observe(pgid);
       const members =
         leader !== undefined && !leader.zombie && leader.pgid === pgid
           ? [leader]
           : (yield* observeGroup(pgid)).filter((candidate) => !candidate.zombie);
-      const member =
-        members.find((candidate) => candidate.command.endsWith(` ${server.args.join(" ")}`)) ??
-        members[0];
+      const member = members.find((candidate) => runsServe(candidate, server.args)) ?? members[0];
       if (owner === undefined || member === undefined) {
         if (groupExists(pgid)) {
           yield* Effect.logWarning(
@@ -214,6 +216,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         pid: member.pid,
         startTime: member.startTime,
         command: member.command,
+        args: server.args,
         port: server.port,
         stateDir: input.stateDir,
         owner,
@@ -241,7 +244,8 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   );
 
   // Signals only a group whose recorded member still has the same pid, start
-  // time, group, and full command line, so a recycled pid is never touched.
+  // time, and group and still has the same command line or serve arguments, so
+  // a recycled pid is never touched.
   const stopOrphan = Effect.fn("OpenCodeServerLedger.stopOrphan")(function* (
     entry: OpenCodeServerEntry,
   ) {
@@ -251,7 +255,8 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       observed.zombie ||
       observed.startTime !== entry.startTime ||
       observed.pgid !== entry.pgid ||
-      observed.command !== entry.command
+      (observed.command !== entry.command &&
+        (entry.args === undefined || !runsServe(observed, entry.args)))
     ) {
       return;
     }
@@ -308,5 +313,9 @@ export const layer = (input: { readonly stateDir: string }) =>
 
 export const layerTest = Layer.succeed(
   OpenCodeServerLedger,
-  OpenCodeServerLedger.of({ track: () => Effect.succeed(Effect.void) }),
+  OpenCodeServerLedger.of({
+    track: Effect.fn("OpenCodeServerLedger.track")(function () {
+      return Effect.succeed(Effect.void);
+    }),
+  }),
 );

@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 import type { BrowserImportFailureReason, BrowserImportSource } from "@t3tools/contracts";
 
 export interface WizardTargetProfile {
@@ -45,7 +48,12 @@ export type ImportOutcome =
       readonly skippedDomains: ReadonlyArray<string>;
       readonly targetName: string;
     }
-  | { readonly kind: "blocked"; readonly reason: BrowserImportFailureReason };
+  | {
+      readonly kind: "blocked";
+      readonly reason: BrowserImportFailureReason;
+      /** Shown instead of the reason's copy, such as a managed policy's refusal. */
+      readonly message?: string;
+    };
 
 export type WizardStep =
   | { readonly step: "quit" }
@@ -64,7 +72,11 @@ export type WizardStep =
       readonly skippedDomains: ReadonlyArray<string>;
       readonly targetName: string;
     }
-  | { readonly step: "blocked"; readonly reason: BrowserImportFailureReason };
+  | {
+      readonly step: "blocked";
+      readonly reason: BrowserImportFailureReason;
+      readonly message?: string;
+    };
 
 export function canCloseWizard(step: WizardStep): boolean {
   return step.step !== "importing";
@@ -94,7 +106,9 @@ export function outcomeToStep(outcome: ImportOutcome): WizardStep {
   if (outcome.reason === "needsFullDiskAccess") {
     return { step: "fullDiskAccess", resume: "import", checked: true };
   }
-  return { step: "blocked", reason: outcome.reason };
+  return outcome.message === undefined
+    ? { step: "blocked", reason: outcome.reason }
+    : { step: "blocked", reason: outcome.reason, message: outcome.message };
 }
 
 export function refreshedSourceStep(source: BrowserImportSource | undefined): WizardStep {
@@ -131,9 +145,23 @@ export function isRetryableReason(reason: BrowserImportFailureReason): boolean {
   }
 }
 
-export function formatSkippedDomains(domains: ReadonlyArray<string>): string {
+export function formatSkippedDomains(
+  domains: ReadonlyArray<string>,
+  resolve: MessageResolver = m,
+): string {
   if (domains.length === 0) return "";
   if (domains.length === 1) return domains[0]!;
-  if (domains.length <= 3) return `${domains.slice(0, -1).join(", ")} and ${domains.at(-1)}`;
-  return `${domains.slice(0, 3).join(", ")} and ${domains.length - 3} more`;
+  if (domains.length <= 3)
+    return resolve(
+      msg("{domains} and {last}", {
+        domains: domains.slice(0, -1).join(", "),
+        last: domains.at(-1),
+      }),
+    );
+  return resolve(
+    msg("{count, plural, one {{domains} and {count} more} other {{domains} and {count} more}}", {
+      domains: domains.slice(0, 3).join(", "),
+      count: domains.length - 3,
+    }),
+  );
 }

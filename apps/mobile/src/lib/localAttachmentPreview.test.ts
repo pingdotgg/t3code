@@ -24,7 +24,14 @@ vi.mock("expo-file-system", () => ({
   },
 }));
 
-import { loadLocalAttachmentPreview } from "./localAttachmentPreview";
+import { AtomRegistry, type AsyncResult } from "effect/reactivity";
+
+import {
+  loadLocalAttachmentPreview,
+  localAttachmentPreviewAtom,
+  type LocalAttachmentPreviewState,
+  localAttachmentPreviewState,
+} from "./localAttachmentPreview";
 
 const attachment = {
   type: "file" as const,
@@ -92,4 +99,52 @@ describe("loadLocalAttachmentPreview", () => {
       expect(releaseShare).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+describe("localAttachmentPreviewAtom", () => {
+  const settled = (
+    registry: AtomRegistry.AtomRegistry,
+    target: typeof attachment,
+  ): { state: Promise<LocalAttachmentPreviewState>; unsubscribe: () => void } => {
+    const atom = localAttachmentPreviewAtom(target);
+    const { promise, resolve } = Promise.withResolvers<LocalAttachmentPreviewState>();
+    const onChange = (result: AsyncResult.AsyncResult<unknown, unknown>) => {
+      if (result._tag !== "Initial") resolve(localAttachmentPreviewState(registry.get(atom)));
+    };
+    const unsubscribe = registry.subscribe(atom, onChange, { immediate: true });
+    return { state: promise, unsubscribe };
+  };
+
+  it("shares one lease per file and releases it when the last reader leaves", async () => {
+    const released = Promise.withResolvers<void>();
+    const release = vi.fn(() => released.resolve());
+    mocks.retain.mockReturnValueOnce(release);
+    const registry = AtomRegistry.make();
+    const first = settled(registry, attachment);
+    // A metadata update on the same draft file reads the same lease.
+    const renamed = settled(registry, { ...attachment, name: "renamed.mov" });
+    expect((await first.state).uri).toContain("/Documents/");
+    expect((await renamed.state).uri).toBe((await first.state).uri);
+    expect(mocks.retain).toHaveBeenCalledTimes(1);
+    first.unsubscribe();
+    expect(release).not.toHaveBeenCalled();
+    renamed.unsubscribe();
+    // The scope finalizer runs on the Effect scheduler; await the release itself.
+    await released.promise;
+    expect(release).toHaveBeenCalledTimes(1);
+    registry.dispose();
+  });
+
+  it("reports a missing file as an error", async () => {
+    mocks.exists.mockReturnValue(false);
+    const registry = AtomRegistry.make();
+    const reader = settled(registry, { ...attachment, id: "missing" });
+    const state = await reader.state;
+    expect(state.uri).toBeNull();
+    expect(state.error?.message).toBe(
+      "This attachment is no longer available. Attach the file again.",
+    );
+    reader.unsubscribe();
+    registry.dispose();
+  });
 });

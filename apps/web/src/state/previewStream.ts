@@ -13,6 +13,8 @@ import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSession } from "./session";
 
+const ACCESS_RETRY_INTERVAL_MS = 10_000;
+
 const previewStreamAccessAtom = Atom.family((environmentId: EnvironmentId) =>
   connectionAtomRuntime
     .atom((get) => {
@@ -25,8 +27,29 @@ const previewStreamAccessAtom = Atom.family((environmentId: EnvironmentId) =>
     .pipe(Atom.setIdleTTL(60_000), Atom.withLabel(`preview-stream-access:${environmentId}`)),
 );
 
-export function usePreviewStreamAccess(environmentId: EnvironmentId): DeviceHubAccess | null {
-  const result = useAtomValue(previewStreamAccessAtom(environmentId));
+// Only a surface the user is looking at retries a failed lookup; one-shot readers such as
+// picture-in-picture see the failure at once.
+const retryingPreviewStreamAccessAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const access = previewStreamAccessAtom(environmentId);
+    const result = get(access);
+    if (AsyncResult.isFailure(result)) {
+      const timer = setTimeout(() => get.refresh(access), ACCESS_RETRY_INTERVAL_MS);
+      get.addFinalizer(() => clearTimeout(timer));
+    }
+    return result;
+  }),
+);
+
+export function usePreviewStreamAccess(
+  environmentId: EnvironmentId,
+  options?: { readonly retry: boolean },
+): DeviceHubAccess | null {
+  const result = useAtomValue(
+    options?.retry
+      ? retryingPreviewStreamAccessAtom(environmentId)
+      : previewStreamAccessAtom(environmentId),
+  );
   return AsyncResult.isSuccess(result) ? result.value : null;
 }
 

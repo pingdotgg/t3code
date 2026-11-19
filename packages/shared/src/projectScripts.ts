@@ -20,18 +20,6 @@ export function resolveProjectScripts(
   return legacy ?? (project.scripts.length > 0 ? project.scripts : settings.defaultProjectScripts);
 }
 
-export function projectScriptsInheritDefaults(
-  settings: ProjectScriptSettings,
-  project: { id: ProjectId; scripts: readonly ProjectScript[] },
-): boolean {
-  if (settings.projectSettingsOverrides[project.id]?.defaultProjectScripts !== undefined) {
-    return false;
-  }
-  if (settings.projectSettingsFolded) return true;
-  const legacy = settings.projectScriptOverrides[project.id];
-  return legacy === null || (legacy === undefined && project.scripts.length === 0);
-}
-
 interface ProjectScriptRuntimeEnvInput {
   project: {
     cwd: string;
@@ -66,14 +54,6 @@ export function projectScriptRuntimeEnv(
 
 export function setupProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnWorktreeCreate) ?? null;
-}
-
-export function projectScriptMenuLabel(script: ProjectScript): string {
-  const roles = [
-    ...(script.runOnWorktreeCreate ? ["setup"] : []),
-    ...(script.runOnSettle ? ["on settle"] : []),
-  ];
-  return roles.length === 0 ? script.name : `${script.name} (${roles.join(", ")})`;
 }
 
 export function settleProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {

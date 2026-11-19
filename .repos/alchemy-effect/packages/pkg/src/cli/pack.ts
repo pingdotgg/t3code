@@ -1,18 +1,17 @@
+import { gunzipSync, gzipSync } from "node:zlib";
+import { exec } from "alchemy/Util/exec";
+import { sha256 } from "alchemy/Util/sha256";
 import * as Config from "effect/Config";
-import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import * as ChildProcess from "effect/process/ChildProcess";
-import { exec } from "alchemy/Util/exec";
-import { sha256 } from "alchemy/Util/sha256";
 import { packTar, unpackTar, type TarHeader } from "modern-tar";
-import { gunzipSync, gzipSync } from "node:zlib";
 import {
   GroupName,
   MANIFEST_FILE,
@@ -48,8 +47,7 @@ export const Group = Schema.String.pipe(
           .split(",")
           .map((attribute) => attribute.trim())
           .filter((attribute) => attribute.length > 0);
-        return match &&
-          attributes.every((attribute) => attribute === "Collapsed")
+        return match && attributes.every((attribute) => attribute === "Collapsed")
           ? Effect.succeed({
               name: match[1]!,
               pattern: match[3]!,
@@ -64,9 +62,7 @@ export const Group = Schema.String.pipe(
             );
       },
       encode: (group) =>
-        Effect.succeed(
-          `${group.name}${group.collapsed ? "[Collapsed]" : ""}=${group.pattern}`,
-        ),
+        Effect.succeed(`${group.name}${group.collapsed ? "[Collapsed]" : ""}=${group.pattern}`),
     }),
   ),
 );
@@ -86,9 +82,7 @@ export const DEPENDENCY_SECTIONS = [
   "optionalDependencies",
 ] as const;
 
-const DependencyMap = Schema.optionalKey(
-  Schema.Record(Schema.String, Schema.String),
-);
+const DependencyMap = Schema.optionalKey(Schema.Record(Schema.String, Schema.String));
 
 export const DependencySections = Schema.Struct({
   dependencies: DependencyMap,
@@ -167,8 +161,7 @@ export const selectPackages = (
     changedFiles.some((file) =>
       [...REBUILD_ALL_PATHS, ...rebuildAllPaths].some((pattern) =>
         pattern.endsWith("/**")
-          ? file === pattern.slice(0, -3) ||
-            file.startsWith(pattern.slice(0, -2))
+          ? file === pattern.slice(0, -3) || file.startsWith(pattern.slice(0, -2))
           : file === pattern,
       ),
     )
@@ -180,9 +173,7 @@ export const selectPackages = (
       .filter((pkg) =>
         changedFiles.some(
           (file) =>
-            file === pkg.dir ||
-            file.startsWith(`${pkg.dir}/`) ||
-            pkg.dir.startsWith(`${file}/`),
+            file === pkg.dir || file.startsWith(`${pkg.dir}/`) || pkg.dir.startsWith(`${file}/`),
         ),
       )
       .map((pkg) => pkg.name),
@@ -218,9 +209,7 @@ export const expandBraces = (pattern: string): string[] => {
     .split(",")
     .map((alternative) => alternative.trim())
     .filter((alternative) => alternative.length > 0)
-    .flatMap((alternative) =>
-      expandBraces(`${match[1]}${alternative}${match[3]}`),
-    );
+    .flatMap((alternative) => expandBraces(`${match[1]}${alternative}${match[3]}`));
 };
 
 /**
@@ -236,10 +225,7 @@ const expand = Effect.fn("expandGlob")(function* (cwd: string, glob: string) {
   return [...new Set(results)];
 });
 
-const expandPattern = Effect.fn("expandPattern")(function* (
-  cwd: string,
-  pattern: string,
-) {
+const expandPattern = Effect.fn("expandPattern")(function* (cwd: string, pattern: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   if (pattern.includes("**")) {
@@ -312,6 +298,91 @@ export const discover = Effect.fn("discoverPackages")(function* (
   return [...found.values()];
 });
 
+/** Display group of workspace dependencies packed without being listed by `--group`. */
+export const TRANSITIVE_GROUP: Group = {
+  name: "Transitive Dependencies",
+  pattern: "",
+  collapsed: true,
+};
+
+/** Sections a consumer installs, so a workspace dependency in one has to be published too. */
+const INSTALLED_SECTIONS = ["dependencies", "peerDependencies", "optionalDependencies"] as const;
+
+/**
+ * Add every `workspace:` dependency the discovered packages install,
+ * transitively, so a listed package never links to a version that was
+ * not published alongside it. Each dependency is resolved the way Node
+ * would, through the `node_modules` link the package manager created,
+ * walking up no further than `root`. Added packages join
+ * {@link TRANSITIVE_GROUP}.
+ */
+export const discoverWorkspaceDependencies = Effect.fn("discoverWorkspaceDependencies")(function* (
+  cwd: string,
+  root: string,
+  packages: ReadonlyArray<WorkspacePackage>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const decode = Schema.decodeUnknownEffect(
+    Schema.fromJsonString(Schema.Struct({ ...PackageJson.fields, ...DependencySections.fields })),
+  );
+  // Links resolve to real paths, so compare everything by real path.
+  const realCwd = yield* fs.realPath(cwd);
+  const realRoot = yield* fs.realPath(root);
+  const found = new Map(packages.map((pkg) => [pkg.name, pkg]));
+  const realDirs = new Map<string, string>();
+  for (const pkg of packages) realDirs.set(pkg.name, yield* fs.realPath(pkg.absDir));
+  const added: WorkspacePackage[] = [];
+
+  const resolve = Effect.fn(function* (from: string, name: string) {
+    let dir = from;
+    while (true) {
+      const link = path.join(dir, "node_modules", name);
+      if (yield* fs.exists(link)) return yield* fs.realPath(link);
+      const relative = path.relative(realRoot, dir);
+      if (relative === "" || relative.startsWith("..")) break;
+      dir = path.dirname(dir);
+    }
+    return yield* new WorkspaceError({
+      message: `Cannot resolve workspace dependency ${name} from ${from}: install dependencies before packing`,
+    });
+  });
+
+  const pending = [...packages];
+  for (const dependent of pending) {
+    const manifest = yield* decode(
+      yield* fs.readFileString(path.join(dependent.absDir, "package.json")),
+    );
+    const names = INSTALLED_SECTIONS.flatMap((section) =>
+      Object.entries(manifest[section] ?? {})
+        .filter(([, spec]) => spec.startsWith("workspace:"))
+        .map(([name]) => name),
+    );
+    for (const name of [...new Set(names)].sort()) {
+      if (found.has(name)) continue;
+      const absDir = yield* resolve(realDirs.get(dependent.name)!, name);
+      const dependency = yield* decode(yield* fs.readFileString(path.join(absDir, "package.json")));
+      if (dependency.private) {
+        return yield* new WorkspaceError({
+          message: `${dependent.name} depends on private workspace package ${name}, which cannot be published`,
+        });
+      }
+      const pkg: WorkspacePackage = {
+        name,
+        version: dependency.version ?? "0.0.0",
+        dir: path.relative(realCwd, absDir).split(path.sep).join("/"),
+        absDir,
+        group: TRANSITIVE_GROUP.name,
+      };
+      found.set(name, pkg);
+      realDirs.set(name, absDir);
+      added.push(pkg);
+      pending.push(pkg);
+    }
+  }
+  return added;
+});
+
 export class GitError extends Data.TaggedError("GitError")<{
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
@@ -324,10 +395,7 @@ export class GitError extends Data.TaggedError("GitError")<{
 }
 
 /** Run `git` in `cwd` and return trimmed stdout. */
-export const git = Effect.fn("git")(function* (
-  cwd: string,
-  args: ReadonlyArray<string>,
-) {
+export const git = Effect.fn("git")(function* (cwd: string, args: ReadonlyArray<string>) {
   const { exitCode, stdout, stderr } = yield* exec(
     ChildProcess.make("git", [...args], { cwd, shell: false }),
   ).pipe(Effect.scoped);
@@ -338,8 +406,7 @@ export const git = Effect.fn("git")(function* (
 });
 
 /** Absolute path of the repository (or submodule) that owns `cwd`. */
-export const toplevel = (cwd: string) =>
-  git(cwd, ["rev-parse", "--show-toplevel"]);
+export const toplevel = (cwd: string) => git(cwd, ["rev-parse", "--show-toplevel"]);
 
 /** Full HEAD SHA of the repository that owns `cwd`. */
 const gitHead = (cwd: string) => git(cwd, ["rev-parse", "HEAD"]);
@@ -349,24 +416,17 @@ export class PackError extends Data.TaggedError("PackError")<{
   readonly message: string;
 }> {}
 
-const PnpmPackOutput = Schema.fromJsonString(
-  Schema.Struct({ filename: Schema.String }),
-);
+const PnpmPackOutput = Schema.fromJsonString(Schema.Struct({ filename: Schema.String }));
 
 /**
  * Rewrite every dependency on a package in `links` to that package's
  * tarball URL. Returns the rewritten manifest text and the rewrites made.
  */
-export const rewriteDependencies = (
-  manifestText: string,
-  links: ReadonlyMap<string, string>,
-) =>
+export const rewriteDependencies = (manifestText: string, links: ReadonlyMap<string, string>) =>
   Effect.gen(function* () {
-    const manifest = yield* Schema.decodeUnknownEffect(
+    const manifest = yield* Schema.decodeEffect(
       Schema.fromJsonString(
-        Schema.StructWithRest(DependencySections, [
-          Schema.Record(Schema.String, Schema.Unknown),
-        ]),
+        Schema.StructWithRest(DependencySections, [Schema.Record(Schema.String, Schema.Unknown)]),
       ),
     )(manifestText);
     // Preserve source key order after validation: it contributes to the tarball hash.
@@ -446,7 +506,7 @@ export const packPackage = Effect.fn("packPackage")(function* (options: {
   }
   // pnpm may print progress lines before the JSON document.
   const json = stdout.slice(stdout.indexOf("{"));
-  const { filename } = yield* Schema.decodeUnknownEffect(PnpmPackOutput)(json);
+  const { filename } = yield* Schema.decodeEffect(PnpmPackOutput)(json);
 
   const packed = yield* fs.readFile(path.join(tmp, path.basename(filename)));
   const inflated = yield* Effect.sync(() => gunzipSync(packed));
@@ -454,16 +514,12 @@ export const packPackage = Effect.fn("packPackage")(function* (options: {
 
   let rewrites: PackedTarball["rewrites"] = [];
   const normalized: Array<{ header: TarHeader; data: Uint8Array }> = [];
-  for (const entry of entries.sort((a, b) =>
-    a.header.name.localeCompare(b.header.name),
-  )) {
+  for (const entry of entries.sort((a, b) => a.header.name.localeCompare(b.header.name))) {
     let data = entry.data ?? new Uint8Array();
     if (entry.header.name === "package/package.json") {
       const text = yield* Effect.sync(() => new TextDecoder().decode(data));
       const result = yield* rewriteDependencies(text, options.links).pipe(
-        Effect.mapError(
-          (e) => new PackError({ dir: options.absDir, message: String(e) }),
-        ),
+        Effect.mapError((e) => new PackError({ dir: options.absDir, message: String(e) })),
       );
       rewrites = result.rewrites;
       data = yield* Effect.sync(() => new TextEncoder().encode(result.text));
@@ -502,10 +558,7 @@ const PullRequestEvent = Schema.fromJsonString(
 const pullRequest = Effect.gen(function* () {
   const event = yield* Config.option(Config.String("GITHUB_EVENT_NAME"));
   const eventPath = yield* Config.option(Config.String("GITHUB_EVENT_PATH"));
-  if (
-    Option.getOrUndefined(event) !== "pull_request" ||
-    Option.isNone(eventPath)
-  ) {
+  if (Option.getOrUndefined(event) !== "pull_request" || Option.isNone(eventPath)) {
     return undefined;
   }
   const fs = yield* FileSystem.FileSystem;
@@ -530,8 +583,7 @@ export interface PackOptions {
  * replaced by `+`, a character package names cannot contain, so `@a/b-c`
  * and `@a-b/c` get distinct files.
  */
-export const tarballFile = (name: string) =>
-  `${name.replace(/^@/, "").replace("/", "+")}.tgz`;
+export const tarballFile = (name: string) => `${name.replace(/^@/, "").replace("/", "+")}.tgz`;
 
 /**
  * Pack every discovered package into `out` with a manifest describing each
@@ -553,6 +605,13 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
     });
   }
   let packages = yield* discover(options.cwd, options.groups);
+  const implied = yield* discoverWorkspaceDependencies(options.cwd, root, packages);
+  if (implied.length > 0) {
+    yield* Effect.logInfo(
+      `Including ${implied.length} workspace dependenc${implied.length === 1 ? "y" : "ies"} not listed by --group: ${implied.map((pkg) => pkg.name).join(", ")}`,
+    );
+    packages = [...packages, ...implied];
+  }
 
   // Dependencies between packed packages are rewritten to the dependency's
   // immutable tarball URL, so a package is packed only after everything it
@@ -562,17 +621,13 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
   for (const pkg of packages) {
     const manifest = yield* fs
       .readFileString(path.join(pkg.absDir, "package.json"))
-      .pipe(
-        Effect.flatMap(
-          Schema.decodeUnknownEffect(Schema.fromJsonString(DependencySections)),
-        ),
-      );
+      .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(DependencySections))));
     dependencies.set(
       pkg.name,
       new Set(
-        DEPENDENCY_SECTIONS.flatMap((section) =>
-          Object.keys(manifest[section] ?? {}),
-        ).filter((name) => name !== pkg.name && byName.has(name)),
+        DEPENDENCY_SECTIONS.flatMap((section) => Object.keys(manifest[section] ?? {})).filter(
+          (name) => name !== pkg.name && byName.has(name),
+        ),
       ),
     );
   }
@@ -604,7 +659,7 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
     for (const name of dependencies.keys()) {
       if (!names.has(name)) dependencies.delete(name);
     }
-    yield* Console.log(
+    yield* Effect.logInfo(
       `Selected ${packages.length} package(s) changed since ${since}, including dependents and dependencies.`,
     );
   }
@@ -614,11 +669,7 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
   // subdirectory of the workspace: `--out .` would otherwise delete it.
   const outDir = path.resolve(options.cwd, options.out);
   const relative = path.relative(options.cwd, outDir);
-  if (
-    relative === "" ||
-    relative.startsWith("..") ||
-    path.isAbsolute(relative)
-  ) {
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
     return yield* new WorkspaceError({
       message: `--out must be a subdirectory of ${options.cwd}, got ${outDir}`,
     });
@@ -643,7 +694,7 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
           `${pkg.name}@${pkg.version} ${packed.sha256.slice(0, 12)} ${packed.size} bytes`,
           ...packed.rewrites.map((r) => `  ${r.section}.${r.name} -> ${r.url}`),
         ];
-        yield* Console.log(lines.join("\n"));
+        yield* Effect.logInfo(lines.join("\n"));
         return {
           name: pkg.name,
           version: pkg.version,
@@ -657,23 +708,23 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
       { concurrency: 4 },
     );
     for (const entry of packedLevel) {
-      links.set(
-        entry.name,
-        tarballUrl(options.registry, entry.name, entry.sha256),
-      );
+      links.set(entry.name, tarballUrl(options.registry, entry.name, entry.sha256));
       packedByName.set(entry.name, entry);
     }
   }
   // Packing ran in dependency order; the manifest keeps the listed order.
   const entries = packages.map((pkg) => packedByName.get(pkg.name)!);
 
-  // One entry per distinct group name, in the order the groups were given.
+  // One entry per distinct group name, in the order the groups were given,
+  // then the transitive group when it has members.
   const groups = [
     ...new Map(
-      options.groups.map((group) => [
-        group.name,
-        { name: group.name, collapsed: group.collapsed },
-      ]),
+      [
+        ...options.groups,
+        ...(entries.some((entry) => entry.group === TRANSITIVE_GROUP.name)
+          ? [TRANSITIVE_GROUP]
+          : []),
+      ].map((group) => [group.name, { name: group.name, collapsed: group.collapsed }]),
     ).values(),
   ];
   const manifest: Manifest = {
@@ -685,7 +736,7 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
   };
   const manifestText = `${yield* Schema.encodeEffect(ManifestJson)(manifest)}\n`;
   yield* fs.writeFileString(path.join(outDir, MANIFEST_FILE), manifestText);
-  yield* Console.log(
+  yield* Effect.logInfo(
     `Packed ${entries.length} package(s) into ${path.relative(options.cwd, outDir) || "."}`,
   );
 
@@ -704,6 +755,6 @@ export const pack = Effect.fn("pack")(function* (options: PackOptions) {
       },
     );
   }
-  yield* Console.log(`Manifest artifact name: ${artifact}`);
+  yield* Effect.logInfo(`Manifest artifact name: ${artifact}`);
   return manifest;
 });
