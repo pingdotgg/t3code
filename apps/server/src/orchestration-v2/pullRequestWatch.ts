@@ -78,7 +78,13 @@ export function evaluatePullRequestWatch(
     // A run awaiting approval waits on a person, like a review, so only running checks count.
     checksPending = checks.some((check) => check.status === "pending");
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
-    if (!checksBaseline && newlyFailed.length > 0) {
+    // Baseline normally suppresses whatever was already terminal when the watch started. A watch
+    // that began while checks were still pending (seeded at watch_pull_request) must still wake
+    // when those checks settle to failure before the first reactor sweep — otherwise a fast CI
+    // fail is recorded as the baseline and never reported.
+    const settledAfterPendingStart =
+      checksBaseline && watch.checksPending === true && !checksPending && newlyFailed.length > 0;
+    if ((!checksBaseline || settledAfterPendingStart) && newlyFailed.length > 0) {
       changes.push({ kind: "checks-failed", failed: newlyFailed });
     }
     if (!approvalAnnounced && awaiting.length > 0) {

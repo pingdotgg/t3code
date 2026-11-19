@@ -190,6 +190,50 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  it("reports failures that settle after a watch started while checks were pending", () => {
+    // Race: watch_pull_request while CI is running, then the pipeline fails before the first
+    // reactor sweep. Without checksPending seeded at start, awaitingBaseline would swallow this.
+    const red = detail({
+      checks: [check("lint", "failure"), check("test", "failure")],
+    });
+    const reported = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      red,
+      noRemarks,
+    );
+    assert.deepEqual(reported.changes, [
+      {
+        kind: "checks-failed",
+        failed: [check("lint", "failure"), check("test", "failure")],
+      },
+    ]);
+    assert.isFalse(reported.next.checksPending);
+    assert.isUndefined(reported.next.awaitingBaseline);
+
+    // Already terminal when the watch started: still baselined (no wake).
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        watch({ awaitingBaseline: "all", checksPending: false }),
+        red,
+        noRemarks,
+      ).changes,
+      [],
+    );
+
+    // Still pending on the first read: keep baselining partial failures until they settle.
+    const partial = detail({
+      checks: [check("lint", "failure"), check("test", "pending")],
+    });
+    const waiting = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      partial,
+      noRemarks,
+    );
+    assert.deepEqual(waiting.changes, []);
+    assert.deepEqual(waiting.next.failedChecks, ["lint"]);
+    assert.isTrue(waiting.next.checksPending);
+  });
+
   it("baselines checks already awaiting approval", () => {
     const gated = detail({ checks: [{ ...check("CI", "action-required"), url: run(1) }] });
     const baseline = evaluatePullRequestWatch(watch({ awaitingBaseline: "all" }), gated, noRemarks);
