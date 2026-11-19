@@ -235,25 +235,33 @@ describe("providerHostLayer", () => {
     "gives drivers trackAgent when a host without PortDiscovery was built first",
     () =>
       Effect.gen(function* () {
-        const seen: Array<ProviderHost.ProviderHost["Service"]> = [];
-        const capture = () =>
+        const seen = new Map<string, ProviderHost.ProviderHost["Service"]>();
+        const capture = (label: string) =>
           Layer.effectDiscard(
             Effect.map(ProviderHost.ProviderHost, (host) => {
-              seen.push(host);
+              seen.set(label, host);
             }),
           );
         // Like server.ts: the ACP registry builds ProviderHostLive.layer before PortDiscovery exists.
-        const early = capture().pipe(Layer.provide(ProviderHostLive.layer));
-        const hydrated = capture().pipe(
+        const early = capture("early").pipe(
+          Layer.provide(ProviderHostLive.layer),
+          Layer.provide(layerHostDeps),
+        );
+        const hydrated = capture("hydrated").pipe(
           Layer.provide(providerHostLayer),
           Layer.provide(
             Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined }),
           ),
+          Layer.provide(layerHostDeps),
         );
-        yield* Layer.build(Layer.mergeAll(early, hydrated).pipe(Layer.provide(layerHostDeps)));
-        expect(seen).toHaveLength(2);
-        expect(seen[0]?.trackAgent).toBeUndefined();
-        expect(seen[1]?.trackAgent).toBeTypeOf("function");
+        // Build in order on one memo map, so a reused early host would fail the hydrated check.
+        const memoMap = yield* Layer.makeMemoMap;
+        const scope = yield* Effect.scope;
+        yield* Layer.buildWithMemoMap(early, memoMap, scope);
+        yield* Layer.buildWithMemoMap(hydrated, memoMap, scope);
+        expect(seen.size).toBe(2);
+        expect(seen.get("early")?.trackAgent).toBeUndefined();
+        expect(seen.get("hydrated")?.trackAgent).toBeTypeOf("function");
       }),
   );
 });
