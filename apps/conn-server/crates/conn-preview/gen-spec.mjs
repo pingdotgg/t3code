@@ -33,7 +33,28 @@ bundle._compile(
 );
 const chromium = bundle.exports.ConnChromium;
 const contexts = read("apps/server/src/preview/ServerBrowserContexts.ts");
-const args = Function(`return ${/args: (\[[\s\S]*?\]),/.exec(contexts)?.[1]}`)();
+// T3 names Chrome in the browser's own user agent (#38445); the spec keeps a placeholder and the
+// per-platform value, and the launch fills it in (or drops the flag where T3 passes none).
+const args = Function("userAgent", `return ${/args: (\[[\s\S]*?\]),/.exec(contexts)?.[1]}`)(
+  "__USER_AGENT__",
+);
+const chromeUserAgent = Function(
+  `${stripTypeScriptTypes(
+    contexts.slice(
+      contexts.indexOf("// Chrome froze its user agent"),
+      contexts.indexOf("/** Change user agent and Sec-CH-UA together"),
+    ),
+    { mode: "strip" },
+  )}\nreturn chromeUserAgent;`,
+)();
+const userAgents = Object.fromEntries(
+  ["darwin", "linux", "win32"].flatMap((platform) => {
+    const agent = chromeUserAgent({ version, platform });
+    return agent ? [[platform, agent]] : [];
+  }),
+);
+if (!args.includes("--user-agent=__USER_AGENT__") || !userAgents.darwin)
+  throw Error("Browser user agent shape changed");
 const tabArgs = (
   await chromium.prototype.defaultArgs.call(
     Object.create(chromium.prototype),
@@ -200,6 +221,7 @@ const spec = {
   screencastAckPaceMs: constant(serverSource, "SCREENCAST_ACK_PACE_MS"),
   tabArgs,
   persistentArgs,
+  userAgents,
   html: {
     maxConcurrentBrowsers: constant(renderSource, "MAX_CONCURRENT_BROWSERS"),
     args: htmlArgs(false),

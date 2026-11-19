@@ -985,7 +985,7 @@ impl Preview {
             &spec.persistent_args
         }
         .iter()
-        .map(|arg| arg.replace("__PROFILE__", &directory.to_string_lossy()))
+        .filter_map(|arg| launch_arg(arg, &directory, &spec.user_agents))
         .collect::<Vec<_>>();
         if std::env::var("T3CODE_SERVER_BROWSER_SANDBOX").as_deref() == Ok("0") {
             args.push("--no-sandbox".into());
@@ -2298,5 +2298,58 @@ mod tests {
         }
         assert_eq!(profile_directory(".."), "%2E%2E");
         assert_eq!(profile_directory("work/team"), "work%2Fteam");
+    }
+}
+
+/// Node's name for this platform, as T3 keys the user agent.
+fn node_platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "darwin",
+        "windows" => "win32",
+        other => other,
+    }
+}
+
+/// Fills a spec launch flag: the profile directory, and Chrome's user agent (the flag is dropped
+/// where T3 has none for this platform, as T3 does).
+fn launch_arg(
+    arg: &str,
+    directory: &std::path::Path,
+    user_agents: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let arg = arg.replace("__PROFILE__", &directory.to_string_lossy());
+    if arg.contains("__USER_AGENT__") {
+        return user_agents
+            .get(node_platform())
+            .map(|agent| arg.replace("__USER_AGENT__", agent));
+    }
+    Some(arg)
+}
+
+#[cfg(test)]
+mod launch_arg_tests {
+    use super::*;
+
+    #[test]
+    fn user_agent_flag_names_chrome_or_drops() {
+        let spec = crate::spec::spec().unwrap();
+        let dir = std::path::Path::new("/p");
+        let agents = &spec.user_agents;
+        let flag = spec
+            .tab_args
+            .iter()
+            .find(|a| a.contains("__USER_AGENT__"))
+            .unwrap();
+        let filled = launch_arg(flag, dir, agents).unwrap();
+        assert!(filled.starts_with("--user-agent=Mozilla/5.0 ("), "{filled}");
+        assert!(
+            filled.contains("Chrome/") && !filled.contains("HeadlessChrome"),
+            "{filled}"
+        );
+        assert_eq!(launch_arg(flag, dir, &Default::default()), None);
+        assert_eq!(
+            launch_arg("--user-data-dir=__PROFILE__", dir, agents).as_deref(),
+            Some("--user-data-dir=/p")
+        );
     }
 }

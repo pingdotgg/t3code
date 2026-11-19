@@ -23,6 +23,8 @@ pub(crate) struct Spec {
     pub archives: std::collections::HashMap<String, Archive>,
     pub tab_args: Vec<String>,
     pub persistent_args: Vec<String>,
+    /// Chrome's user agent per Node platform (`darwin`, `linux`, `win32`), for `__USER_AGENT__`.
+    pub user_agents: std::collections::HashMap<String, String>,
     pub html: HtmlSpec,
     pub root_error: String,
 }
