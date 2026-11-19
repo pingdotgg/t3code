@@ -2,13 +2,15 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, B3, B4, B5, B6, B7, B8, B9, B10, B11, and B12.
+The PRs, in stack order, are B0, B1, S1, K1, B2, B3, B4, B5, B6, B7, B8, B9, B10, B11, B12, and O1.
 
 ## How to read this
 
 One box is one unit of work. Every box names the evidence that checks it. A nested box is a sub-step of the box above it. Check a box only when its evidence exists, a file, a log line, a screenshot, a test run, or a SHA. The body is a how-to. The appendices explain and record.
 
 The program runs `skill://poteto-mode/playbooks/autopilot-stack.md`. The operator granted standing merge approval. Wherever this plan says the operator lands a PR, the root merges it bottom-up with a merge commit once its verdict is clean, retargets the next PR to `main`, and keeps every remote branch.
+
+Speed comes last, by the operator's call. Each PR still runs its perf probe and records the numbers, which checks its perf boxes. A missed perf rule never blocks a merge. O1, the last PR, fixes every recorded miss.
 
 Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -34,7 +36,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. B3 after B2. B4 after B3. B5 after B4. B6 after B5.
-  - [ ] B7 after B6. B8 after B7. B9 after B8. B10 after B9. B11 after B10. B12 after B11.
+  - [ ] B7 after B6. B8 after B7. B9 after B8. B10 after B9. B11 after B10. B12 after B11. O1 after B12.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts.
 - [ ] Hold the review gate. B1, B2, B4, B5, B6, B7, B8, B9, B10, and B11 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
@@ -984,6 +986,58 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Bugbot triage done.
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B12 to the base-branch stack and the operator lands it bottom-up.
+
+## Meet every recorded speed budget (O1)
+
+**Depends on.** B12.
+
+**Files.**
+
+- [ ] Create `apps/board/docs/perf-ledger.md` with one row per PR, holding the metric, the rule, every recorded number, and pass or miss.
+- [ ] Edit only the `apps/board` files that the ledger's misses point to. Name each one in the ledger row before you change it.
+
+**Build.**
+
+- [ ] Fill the ledger from every PR's saved perf evidence under `/tmp/swarm-<pr-id>/` and the PR bodies.
+- [ ] Profile each miss before changing code. Record the cause in its ledger row, for example the 2.5 MB main bundle or the `t3 --version` call on each start that B2 measured.
+- [ ] Fix each miss with the smallest change that meets its rule, then rerun that PR's perf probe and record the new numbers.
+
+**You see.**
+
+- [ ] Every row in `perf-ledger.md` reads pass, with its before and after numbers.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Every test that covers a changed file still passes, and each new cache or lazy path gets one test that asserts its observable result. Run `vp test run` on those files from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Run B1's first-paint probe at trunk and head. Save `o1-first-paint.txt`. Pass when the head median meets B1's rule.
+- [ ] Lane 2. Run B2's engine-connected probe. Save `o1-engine-connected.txt`. Pass when the median meets B2's rule.
+- [ ] Lane 3. Run B5's sidebar render probe with 20 projects and 20 boards each. Save `o1-sidebar.txt`. Pass when the median meets B5's rule.
+- [ ] Lane 4. Run B6's token paint probe. Save `o1-token-paint.txt`. Pass when the p95 meets B6's rule.
+- [ ] Lane 5. Run B7's board render and pan probes. Save `o1-board.txt`. Pass when both meet B7's rules.
+- [ ] Lane 6. Run B8's For-you click and file probes. Save `o1-foryou.txt`. Pass when both p95s meet B8's rules.
+- [ ] Lane 7. Run B9's artifact list probe on 300 files. Save `o1-artifacts.txt`. Pass when the median meets B9's rule and only visible thumbnails load.
+- [ ] Lane 8. Run B10's PR chip probe. Save `o1-pr-chip.txt`. Pass when the p95 meets B10's rule.
+- [ ] Lane 9. Run B11's browser panel probe. Save `o1-browser.txt`. Pass when the median meets B11's rule.
+- [ ] Lane 10. Run the board app end to end on Windows against the WSL service, using a board, an orchestrator, and two tickets. Save `o1-end-to-end.png`. Pass when every flow from B2 to B12 still works.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Every metric in the ledger.
+- [ ] Probe. Each PR's own probe, rerun at the O1 head.
+- [ ] Baseline. The numbers each PR recorded at its merge.
+- [ ] Rule. Every ledger row meets its PR's rule, and no row gets slower than its recorded baseline.
+
+**Review gate.** None. O1 is not review-gated.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends O1 to the base-branch stack and the operator lands it bottom-up.
 
 ## Close the program
 
