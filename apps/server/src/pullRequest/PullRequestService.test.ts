@@ -3441,6 +3441,49 @@ it.effect(
     }),
 );
 
+it.effect("a turn in a checkout whose identity is still being read counts for its repository", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const docs = project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" });
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        docs,
+        project({ id: "p3", title: "docs worktree", workspaceRoot: "/c" }),
+        project({ id: "p4", title: "api", workspaceRoot: "/d", repository: "acme/api" }),
+      ],
+      resolveRepositoryIdentity: (workspaceRoot) =>
+        Effect.succeed(workspaceRoot === "/c" ? (docs.repositoryIdentity ?? null) : null),
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequests: ({ repository }) => {
+            reads.push(repository);
+            return Effect.succeed({
+              items: [changeRequest(repository === "acme/docs" ? 7 : 8, "2026-06-01T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            });
+          },
+          listChangeRequestsAcross: () =>
+            Effect.succeed({
+              items: [batchedChangeRequest(1, "acme/web", "2026-07-03T00:00:00Z")],
+              truncated: true,
+              unresolved: ["acme/docs", "acme/api"],
+              quiet: ["acme/docs", "acme/api"],
+            }),
+        }),
+      ],
+    });
+    const selected = { ...everyListing, projectIds: ["p1", "p2", "p4"] as Array<ProjectId> };
+
+    yield* service.list(selected);
+    yield* service.refreshAfterTurn("p3" as ProjectId);
+    yield* afterListingCache;
+    yield* service.list(selected);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/docs", "acme/docs"]);
+  }),
+);
+
 it.effect("search rows from a quiet repository end the reuse of its earlier read", () =>
   Effect.gen(function* () {
     const reads: string[] = [];
