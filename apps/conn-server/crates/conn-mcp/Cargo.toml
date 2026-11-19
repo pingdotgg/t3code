@@ -32,6 +32,8 @@ getrandom.workspace = true
 sha2.workspace = true
 # Already in the binary through source control: the same URL parser as browser inputs.
 url = "2"
+# Already in the binary (conn-server): `write_pull_request_guides` starts four guides at a time.
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 [dev-dependencies]
 conn-support = { workspace = true, features = ["test-util"] }
 # The scheduled task tests pick UTC (workspace dependency).

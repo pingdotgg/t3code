@@ -14,7 +14,10 @@ use super::js::{self, char_code_at, is_high_surrogate, is_low_surrogate, len16, 
 
 #[path = "generated.rs"]
 mod generated;
-pub(crate) use generated::{COMMIT_POLICIES, COMMIT_SCHEMAS, TITLE_OUTPUT_SCHEMA};
+pub(crate) use generated::{
+    COMMIT_POLICIES, COMMIT_SCHEMAS, DEFAULT_TEXT_GENERATION_MODEL, INVESTIGATING_DEFAULT_MODELS,
+    REVIEW_GUIDE_OUTPUT_SCHEMA, TITLE_OUTPUT_SCHEMA,
+};
 use generated::{COMMIT_PROMPTS, Part};
 
 /// `EARLIER_CONTENT_TRUNCATION_MARKER` and `OMITTED`.
@@ -529,6 +532,112 @@ pub fn commit_message_prompt(
             Part::Policy => prompt.push_str(&limit_section(policy.trim(), 20_000)),
             _ => unreachable!("commit template contains only commit parts"),
         }
+    }
+    prompt
+}
+
+/// One layer of a stack, as the guide prompt lists it (`ReviewGuideStackLayer`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StackLayer {
+    pub number: u64,
+    pub title: Option<String>,
+    pub head_sha: Option<String>,
+    /// `open`, `closed` or `merged`.
+    pub state: String,
+}
+
+/// `ReviewGuidePromptInput`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReviewGuidePromptInput {
+    pub number: u64,
+    pub title: String,
+    pub description: String,
+    pub base_branch: String,
+    pub base_commit: String,
+    pub settled_review: String,
+    pub instructions: Option<String>,
+    pub stack: Vec<StackLayer>,
+}
+
+/// `buildReviewGuidePrompt`.
+pub fn review_guide_prompt(input: &ReviewGuidePromptInput) -> String {
+    let or = |text: &str, empty: &str| {
+        let trimmed = js_trim(text);
+        if trimmed.is_empty() {
+            empty.to_owned()
+        } else {
+            trimmed.to_owned()
+        }
+    };
+    let mut prompt = String::new();
+    for part in generated::REVIEW_GUIDE_PROMPT {
+        match part {
+            Part::Text(text) => prompt.push_str(text),
+            Part::Number => prompt.push_str(&input.number.to_string()),
+            Part::Title => prompt.push_str(&input.title),
+            Part::Description => {
+                prompt.push_str(&limit_section(&or(&input.description, "(none)"), 8_000));
+            }
+            Part::Branch => prompt.push_str(&input.base_branch),
+            Part::Base => prompt.push_str(&input.base_commit),
+            Part::Settled => {
+                prompt.push_str(&limit_section(
+                    &or(&input.settled_review, "(nothing)"),
+                    8_000,
+                ));
+            }
+            _ => {}
+        }
+    }
+    let mut lines: Vec<String> = Vec::new();
+    if input.stack.len() >= 2 {
+        let [intro, outro] = generated::REVIEW_GUIDE_STACK;
+        lines.extend([String::new(), intro.to_owned()]);
+        for (index, layer) in input.stack.iter().enumerate() {
+            let this = layer.number == input.number;
+            let role = if this { " (this change)" } else { "" };
+            let place = match (&layer.head_sha, this) {
+                (_, true) => String::new(),
+                (None, false) => ", head not available".to_owned(),
+                (Some(sha), false) => format!(", head {sha}"),
+            };
+            let state = if layer.state == "open" {
+                String::new()
+            } else {
+                format!(", {}", layer.state)
+            };
+            let title = layer.title.as_deref().map(js_trim).unwrap_or_default();
+            let title = if title.is_empty() {
+                "(untitled)"
+            } else {
+                title
+            };
+            lines.push(format!(
+                "{}. #{}{role}: {title}{state}{place}",
+                index + 1,
+                layer.number
+            ));
+        }
+        lines.extend([String::new(), outro.to_owned()]);
+    }
+    if let Some(instructions) = input
+        .instructions
+        .as_deref()
+        .map(js_trim)
+        .filter(|text| !text.is_empty())
+    {
+        let [heading, closing] = generated::REVIEW_GUIDE_PREFERENCES;
+        lines.extend([
+            String::new(),
+            heading.to_owned(),
+            limit_section(instructions, 4_000),
+            String::new(),
+            closing.to_owned(),
+        ]);
+    }
+    for line in lines {
+        prompt.push('\n');
+        prompt.push_str(&line);
     }
     prompt
 }

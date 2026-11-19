@@ -257,6 +257,7 @@ dependencies = [
  "conn-support",
  "conn-terminal",
  "conn-vcs",
+ "futures-util",
  "getrandom 0.3.4",
  "http",
  "jiff",

@@ -27,7 +27,7 @@ pinned pair.
 | (c) Full parity with the T3 server | **54**, including 1 unclassified method | **9** | **35** | Remaining work not re-estimated |
 
 The dated size basis is about 140 k lines of Rust [measured on 2026-11-14, `wc -l` over
-`crates/*/src`]. Current coverage is 185 of 237 methods, 78 of 87 tools and 22 of 57 HTTP
+`crates/*/src`]. Current coverage is 185 of 237 methods, 79 of 87 tools and 22 of 57 HTTP
 contract routes, plus eight endpoints outside that HTTP contract. The original size
 estimates are not estimates of the remaining work. Section 2 gives the current gaps;
 section 3 keeps the dated binary measurements.
@@ -296,16 +296,15 @@ in the `server` area.
   ACP registry's download and install (9; Nick ruled out installs), the Electron tab relay
   (`preview.desktop*`, 3) and `server.commitDesktopUpdate`.
 
-### `/mcp` tools (87; 78 served) [measured counts]
+### `/mcp` tools (87; 79 served) [measured counts]
 
 | | N | U | X | O |
 | --- | --- | --- | --- | --- |
 | Container | 21 (all served) | 44 (all served) | 14 (6 served) | 8 (3 served) |
-| Host | 67 (66 served) | 20 (12 served) | 0 | 0 |
+| Host | 67 (all served) | 20 (12 served) | 0 | 0 |
 
 - Every needed or useful container tool is served.
-- On a host, 1 needed tool is missing: `write_pull_request_guides` (no review guide generator
-  yet). Device tools, linked machines and PR watching are served since 2026-11-19.
+- On a host, every needed tool is served since `write_pull_request_guides` (2026-11-19). Device tools, linked machines and PR watching are served since 2026-11-19.
 
 ### HTTP routes (57 contract routes; 22 served) [measured counts]
 
@@ -351,7 +350,6 @@ implemented areas have no remaining-size estimate.
 
 | Area | Remaining items in (b) | Estimate |
 | --- | --- | --- |
-| Review guide writing | `write_pull_request_guides` (and `pullRequests.generateReviewGuide` for real) | Not estimated: T3's guide generator, a temporary checkout and the guide normalization |
 | MCP OAuth for outside agents | 5 useful routes (the browser approval page and the `.well-known` metadata); peer links and linked environments are served (`docs/status.md`) | Not re-estimated |
 | Provider sign-in | 6 methods | 1.5 to 2.5 k |
 | The rest | useful features in appendices A to C | Not re-estimated |
@@ -1063,7 +1061,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `pullRequests.diffFileContents` | yes | O | N |  | PR panel: list, review, comment, merge |
 | `pullRequests.filesViewed` | yes | O | N |  | PR panel: list, review, comment, merge |
 | `pullRequests.filterOptions` | yes | O | N |  | PR panel: list, review, comment, merge |
-| `pullRequests.generateReviewGuide` | yes | X | U |  | registered; returns a typed error when guides are off |
+| `pullRequests.generateReviewGuide` | yes | X | U |  | writes a guide in a temporary checkout (`guide_writer.rs`) |
 | `pullRequests.invalidate` | yes | U | N |  | read-only PR view; in a container the data would come from the Gateway |
 | `pullRequests.labelCandidates` | yes | O | N |  | PR panel: list, review, comment, merge |
 | `pullRequests.linkedThreads` | yes | U | N |  | read-only PR view; in a container the data would come from the Gateway |
@@ -1281,7 +1279,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `unlink_pull_requests` | yes | U | N |  | PR links on a thread; Swamp could link the PR it opens |
 | `unwatch_pull_request` | yes | O | N |  | PR watching; hidden from delegated children |
 | `watch_pull_request` | yes | O | N |  | PR watching: a 2-minute sweep wakes the thread; hidden from delegated children |
-| `write_pull_request_guides` | no | O | N | M | needs T3's review guide generator (a temporary checkout and a model run); unregistered until then |
+| `write_pull_request_guides` | yes | O | N | M | served since 2026-11-19 |
 
 
 ## Appendix C. Every HTTP route

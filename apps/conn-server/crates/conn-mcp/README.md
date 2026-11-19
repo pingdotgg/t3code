@@ -191,7 +191,7 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `list_thread_pull_requests` | served (part 4) | reads | | |
 | `watch_pull_request` | served (new) | writesThreads | hidden from delegated children | P |
 | `unwatch_pull_request` | served (new) | writesThreads | hidden from delegated children | P |
-| `write_pull_request_guides` | not served | writesWithCapability | server: a review guide generator (T3's `PullRequestReviewGuideService`) | |
+| `write_pull_request_guides` | served (new) | writesWithCapability | the panel's guide writer (`guide_writer.rs`) | |
 | `read_pull_request_guide` | served (new) | reads | the panel's stored guide | |
 | `schedule_task` | served | either(writesEnvironment, writes) | | O |
 | `list_scheduled_tasks` | served | reads | | |
@@ -372,8 +372,8 @@ refuses the watch, with its message; other host failures leave the watch to reco
 tools are hidden from delegated children (`src/subagent-hidden.txt`).
 `read_pull_request_guide` follows the toolkit's `locateAll`: the panel names the project that
 checks out the repository (`locateProject`), and the stored guide comes from the panel's
-`reviewGuide`. `write_pull_request_guides` is not served: the server has no review guide
-generator, so the tool would always fail. The watch loop that wakes the thread is the
+`reviewGuide`. `write_pull_request_guides` locates each target the same way and asks the
+panel's `generateReviewGuide`, four at a time; each target fails alone. The watch loop that wakes the thread is the
 server's (`conn-server/src/methods/pull_requests/watches.rs`).
 
 Nested array elements are type-checked field by field (`catalog::check_arguments`), as

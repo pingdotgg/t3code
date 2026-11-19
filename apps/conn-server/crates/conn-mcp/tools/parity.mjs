@@ -322,14 +322,14 @@ const searchOrder = (value) => value.matches.map((match) => [match.title, match.
 // With no `gh` on PATH, T3's credential lookup ends as "not signed in" (cli-unauthenticated);
 // conn-source-control reports the missing CLI (cli-missing). Both refuse the watch with their
 // GitHub requirement text. The PR panel answers the same way; it is not this slice's code.
+/** Without `gh`, T3 says cli-unauthenticated and Conn says cli-missing. */
+const NO_GH_TEXTS = [
+  "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source control & issues.",
+  "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
+];
 const NO_GH = {
   why: "no gh: T3 says cli-unauthenticated, Conn says cli-missing",
-  match: (result) =>
-    result.kind === "failure" &&
-    [
-      "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source control & issues.",
-      "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
-    ].includes(result.code),
+  match: (result) => result.kind === "failure" && NO_GH_TEXTS.includes(result.code),
 };
 
 // Per-server state the calls refer to: project and thread ids differ.
@@ -550,6 +550,16 @@ const steps = [
     { repository: "o/r" },
     { repository: "o/r", number: 9 },
   ].map((input) => ["read_pull_request_guide", () => input, undefined, { same: (v) => v }]),
+  // Guide runs: each target fails alone, with T3's per-target outcome and detail.
+  ["write_pull_request_guides", () => ({ pullRequests: [
+    { url: "https://github.com/o/r/pull/9" },
+    { url: "https://example.com/team/x" },
+    { repository: "o/r" },
+    { repository: "zz/yy", number: 3, host: "github.com" },
+  ] }), undefined, { same: (v) => v.guides.map((g) => ({ ...g, detail: NO_GH_TEXTS.includes(g.detail) ? "<no gh>" : g.detail })) }],
+  ["write_pull_request_guides", () => ({ pullRequests: [] })],
+  ["write_pull_request_guides", () => ({ pullRequests: Array.from({ length: 21 }, (_, i) => ({ url: `https://github.com/o/r/pull/${i + 1}` })) })],
+  ["write_pull_request_guides", () => ({})],
   ["send_to_user", () => ({ message: 5 })],
   ["t3_thread_wait", () => ({ threadId: true })],
   ["t3_thread_list", () => ({ allProjects: "yes" })],

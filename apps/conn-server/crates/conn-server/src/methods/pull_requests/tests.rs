@@ -144,6 +144,9 @@ fn panel(engine: Arc<Shell>, dir: &TestDir, endpoint: &str) -> Arc<Panel> {
         monitor: OnceCell::new(),
         reports: Mutex::new(VecDeque::new()),
         activity: Default::default(),
+        providers: conn_provider::ProviderSet::default(),
+        text_generators: None,
+        guide_runs: guide_writer::Runs::default(),
     })
 }
 async fn call(table: &MethodTable, tag: &str, input: Value) -> Result<Value, Failure> {
@@ -581,7 +584,8 @@ async fn unavailable_actions_and_guide_generation_return_typed_refusals() {
     Arc::get_mut(&mut panel).expect("new panel").environment = Some(environment.clone());
     let mut table = MethodTable::new();
     register_panel(&mut table, panel.clone());
-    for enabled in [false, true] {
+    // Turned on, a run starts (`guide_writer` tests); turned off, it is refused.
+    for enabled in [false] {
         environment
             .settings
             .update(json!({"reviewGuidesEnabled":enabled}), None)
@@ -721,7 +725,7 @@ async fn review_guide_reads_t3_storage_keeps_stale_head_and_survives_restart() {
         serde_json::from_str(include_str!("guide-fixture.json")).expect("T3 guide recording");
     assert_eq!(
         guides::load(
-            dir.0.join("statev2.sqlite"),
+            vec![dir.0.join("statev2.sqlite")],
             "github.com".into(),
             "a/b".into(),
             7
@@ -2097,6 +2101,8 @@ impl HeadRepo {
             root: self.work(),
             host: "github.com".into(),
             repository: "o/r".into(),
+            remote_url: String::new(),
+            remote_name: None,
         }
     }
 }
@@ -2184,4 +2190,468 @@ async fn a_branch_pushed_to_a_fork_without_upstream_is_looked_up_in_the_fork() {
     )
     .expect("found");
     assert_eq!(found["number"], 41);
+}
+
+/// A review guide model that waits for the test before it answers, and keeps each request.
+struct GuideModel {
+    id: conn_contract::ProviderInstanceId,
+    answer: Result<Value, String>,
+    gate: tokio::sync::Semaphore,
+    requests: Mutex<Vec<conn_provider::TextGenerationRequest>>,
+    /// Whether the checkout existed while the model ran.
+    saw_checkout: Mutex<Vec<bool>>,
+}
+impl conn_provider::Provider for GuideModel {
+    fn instance_id(&self) -> &conn_contract::ProviderInstanceId {
+        &self.id
+    }
+    fn driver(&self) -> &str {
+        "codex"
+    }
+    fn server_provider_entry(&self, _: &str) -> Option<Value> {
+        Some(
+            json!({"enabled": true, "installed": true, "status": "ready", "auth": {"status": "authenticated"}}),
+        )
+    }
+    fn capabilities(
+        &self,
+    ) -> conn_provider::BoxFuture<
+        '_,
+        conn_provider::ProviderResult<conn_contract::ProviderCapabilities>,
+    > {
+        Box::pin(async { Err(conn_provider::ProviderError::SessionStopped) })
+    }
+    fn open_session(
+        &self,
+        _: conn_provider::OpenSessionInput,
+    ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<conn_provider::OpenedSession>>
+    {
+        Box::pin(async { Err(conn_provider::ProviderError::SessionStopped) })
+    }
+    fn generate_text(
+        &self,
+        request: conn_provider::TextGenerationRequest,
+    ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<Value>> {
+        Box::pin(async move {
+            let _permit = self.gate.acquire().await.expect("gate");
+            self.saw_checkout
+                .lock()
+                .expect("seen")
+                .push(std::path::Path::new(&request.cwd).join("a.rs").exists());
+            self.requests.lock().expect("requests").push(request);
+            self.answer
+                .clone()
+                .map_err(|detail| conn_provider::ProviderError::Failed {
+                    operation: "generate_text",
+                    detail,
+                })
+        })
+    }
+}
+
+fn git_in(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// A project checkout of `git@github.com:a/b.git` whose ssh is a local script serving a bare
+/// repository, with `main` and a pushed `feature` (the pull request's head).
+fn guide_repo(dir: &TestDir) -> (PathBuf, String) {
+    let work = dir.0.join("work");
+    let bare = dir.0.join("b.git");
+    std::fs::create_dir_all(&work).expect("work");
+    git_in(&dir.0, &["init", "-q", "--bare", "b.git"]);
+    let ssh = dir.0.join("ssh");
+    std::fs::write(
+        &ssh,
+        format!("#!/bin/sh\nexec git-upload-pack '{}'\n", bare.display()),
+    )
+    .expect("ssh stub");
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).expect("executable");
+    git_in(&work, &["init", "-q", "-b", "main"]);
+    for (key, value) in [
+        ("user.name", "Test"),
+        ("user.email", "test@example.com"),
+        ("core.sshCommand", ssh.to_str().expect("path")),
+    ] {
+        git_in(&work, &["config", key, value]);
+    }
+    git_in(
+        &work,
+        &["remote", "add", "origin", "git@github.com:a/b.git"],
+    );
+    std::fs::write(work.join("a.rs"), "one\ntwo\nthree\n").expect("a.rs");
+    git_in(&work, &["add", "."]);
+    git_in(&work, &["commit", "-qm", "base"]);
+    let push = |refspec: &str| {
+        git_in(
+            &dir.0,
+            &[
+                "--git-dir",
+                bare.to_str().expect("bare"),
+                "fetch",
+                "-q",
+                work.to_str().expect("work"),
+                refspec,
+            ],
+        );
+    };
+    push("main:refs/heads/main");
+    git_in(&work, &["checkout", "-qb", "feature"]);
+    std::fs::write(work.join("a.rs"), "one\nTWO\nthree\nfour\n").expect("a.rs");
+    std::fs::write(work.join("b.rs"), "new\n").expect("b.rs");
+    git_in(&work, &["add", "."]);
+    git_in(&work, &["commit", "-qm", "feature"]);
+    let head = git_in(&work, &["rev-parse", "HEAD"]);
+    push("feature:refs/heads/feature");
+    git_in(&work, &["checkout", "-q", "main"]);
+    // The feature commit lives only in the remote: the run must fetch it.
+    git_in(&work, &["branch", "-qD", "feature"]);
+    git_in(&work, &["reflog", "expire", "--expire=now", "--all"]);
+    git_in(&work, &["gc", "-q", "--prune=now"]);
+    (work, head)
+}
+
+async fn guide_api(head: String) -> (String, tokio::task::JoinHandle<()>) {
+    use axum::{Json, Router, routing::get};
+    let router = Router::new()
+        .route(
+            "/graphql",
+            axum::routing::post(move |Json(body): Json<Value>| {
+                let head = head.clone();
+                async move {
+                    let query = text(&body, "query");
+                    let mut pr: Value = serde_json::from_str(include_str!(
+                        "../../../../conn-source-control/src/pull_requests/sample.json"
+                    ))
+                    .expect("sample");
+                    pr["headRefOid"] = json!(head);
+                    pr["body"] = json!("Adds four.");
+                    pr["comments"] = json!({"nodes":[],"pageInfo":{"hasNextPage":false}});
+                    pr["reviews"] = json!({"nodes":[],"pageInfo":{"hasNextPage":false}});
+                    pr["reviewThreads"] = json!({"nodes":[{"id":"T1","path":"a.rs","isResolved":true,"isOutdated":false,"line":2,"originalLine":2,"diffSide":"RIGHT","startLine":null,"originalStartLine":null,"startDiffSide":null,"subjectType":"LINE","viewerCanResolve":true,"viewerCanUnresolve":true,"viewerCanReply":true,"resolvedBy":null,"comments":{"nodes":[{"id":"C1","databaseId":1,"body":"Why  upper case?","createdAt":"2026-11-01T00:00:00Z","updatedAt":"2026-11-01T00:00:00Z","author":{"login":"ann","avatarUrl":null},"url":"https://github.com/a/b/pull/7#c1","path":"a.rs","line":2,"originalLine":2,"diffHunk":"","outdated":false,"replyTo":null,"reactionGroups":[],"viewerCanUpdate":false,"viewerCanReact":true}],"pageInfo":{"hasNextPage":false}}}],"pageInfo":{"hasNextPage":false}});
+                    pr["reviewDismissals"] = json!({"nodes":[],"pageInfo":{"hasNextPage":false}});
+                    pr["commits"] = json!({"nodes":[]});
+                    let data = if query.contains("RoutingIdentityViewer") {
+                        json!({"viewer":{"databaseId":12,"login":"nick"}})
+                    } else {
+                        json!({"viewer":{"login":"nick"},"repository":{"pullRequest":pr,"mergeCommitAllowed":true,"squashMergeAllowed":true,"rebaseMergeAllowed":true,"autoMergeAllowed":true,"viewerPermission":"WRITE"}})
+                    };
+                    Json(json!({"data": data}))
+                }
+            }),
+        )
+        .route("/repos/a/b/stacks", get(|| async { Json(json!([])) }))
+        .fallback(|| async { axum::http::StatusCode::NO_CONTENT });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("stub API");
+    });
+    (base, task)
+}
+
+async fn guide_panel(
+    dir: &TestDir,
+    work: &std::path::Path,
+    base: &str,
+    model: Arc<GuideModel>,
+) -> Arc<Panel> {
+    let engine = shell(work);
+    *engine.snapshot.lock().expect("snapshot") = json!({"projects":[{"id":"p1","title":"Repo","workspaceRoot":work,"repositoryIdentity":{"locator":{"remoteName":"origin","remoteUrl":"git@github.com:a/b.git"}}}],"threads":[]});
+    let mut panel = panel(engine, dir, base);
+    let environment = Arc::new(
+        ServerEnvironment::load(
+            &dir.0,
+            Some("Guides".into()),
+            dir.0.clone(),
+            Default::default(),
+        )
+        .expect("environment"),
+    );
+    environment
+        .settings
+        .update(json!({"reviewGuidesEnabled": true}), None)
+        .expect("settings");
+    let p = Arc::get_mut(&mut panel).expect("new panel");
+    p.environment = Some(environment);
+    p.providers = conn_provider::ProviderSet::from(vec![model as Arc<dyn conn_provider::Provider>]);
+    panel
+}
+
+fn guide_input() -> Value {
+    json!({"projectId":"p1","host":"github.com","repository":"a/b","number":7})
+}
+
+async fn settled_guide(table: &MethodTable) -> Value {
+    for _ in 0..300 {
+        let read = call(table, "pullRequests.reviewGuide", guide_input())
+            .await
+            .expect("guide read");
+        if read["run"].is_null() || read["run"]["_tag"] == "Failed" {
+            return read;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("the guide run never ended");
+}
+
+#[tokio::test]
+async fn a_guide_is_written_from_a_temporary_checkout_and_a_second_request_joins_it() {
+    let dir = TestDir::new();
+    let (work, head) = guide_repo(&dir);
+    let (base, task) = guide_api(head.clone()).await;
+    let answer = json!({"stops": [
+        {"title": "Two becomes upper case", "summary": "s", "attention": {"kind": "product", "note": "Case matters."},
+         "excerpts": [{"path": "a.rs", "side": "new", "start": 1, "end": 9, "caption": "the change"}],
+         "files": [{"path": "missing.rs", "note": "gone"}],
+         "notes": [{"path": "a.rs", "line": 2, "title": "Upper", "body": "Why."}],
+         "questions": ["Why upper?"]}
+    ]});
+    let model = Arc::new(GuideModel {
+        id: from_json(json!("codex")).expect("id"),
+        answer: Ok(answer),
+        gate: tokio::sync::Semaphore::new(0),
+        requests: Mutex::default(),
+        saw_checkout: Mutex::default(),
+    });
+    let panel = guide_panel(&dir, &work, &base, model.clone()).await;
+    let mut table = MethodTable::new();
+    register_panel(&mut table, panel.clone());
+
+    let first = panel
+        .mcp_call("generateReviewGuide", guide_input())
+        .await
+        .expect("started");
+    assert_eq!(first["started"], true);
+    assert_eq!(first["run"]["_tag"], "Running");
+    assert_eq!(first["run"]["headSha"], head.as_str());
+    assert_eq!(first["guide"], Value::Null);
+    let joined = call(&table, "pullRequests.generateReviewGuide", guide_input())
+        .await
+        .expect("joined");
+    assert_eq!(
+        joined["run"], first["run"],
+        "the same head joins the running run"
+    );
+    assert!(
+        joined.get("started").is_none(),
+        "the RPC answers the contract's result"
+    );
+    let again = panel
+        .mcp_call("generateReviewGuide", guide_input())
+        .await
+        .expect("joined");
+    assert_eq!(again["started"], false);
+    let read = call(&table, "pullRequests.reviewGuide", guide_input())
+        .await
+        .expect("read while running");
+    assert_eq!(read["run"]["_tag"], "Running", "the read reports the run");
+
+    model.gate.add_permits(1);
+    let done = settled_guide(&table).await;
+    assert_eq!(done["run"], Value::Null, "{done}");
+    let guide = &done["guide"];
+    assert_eq!(guide["headSha"], head.as_str());
+    assert_eq!(guide["modelSelection"]["instanceId"], "codex");
+    assert_eq!(
+        guide["stops"],
+        json!([
+            {"title": "Two becomes upper case", "summary": "s", "attention": {"kind": "product", "note": "Case matters."},
+             "excerpts": [{"path": "a.rs", "side": "new", "start": 2, "end": 4, "caption": "the change"}],
+             "files": [], "notes": [{"path": "a.rs", "line": 2, "title": "Upper", "body": "Why."}],
+             "questions": ["Why upper?"]},
+            {"title": "Other files", "summary": "Changed files the tour does not otherwise cover.", "attention": null,
+             "excerpts": [], "files": [{"path": "b.rs"}], "notes": [], "questions": []}
+        ]),
+        "clamped from the first to the last hunk it overlaps (lines 2 and 4), unchanged paths dropped, the rest placed"
+    );
+
+    {
+        let requests = model.requests.lock().expect("requests");
+        let request = requests.first().expect("one model run");
+        assert_eq!(requests.len(), 1, "a joined request starts nothing");
+        assert!(request.investigate, "read-only investigation");
+        assert_eq!(request.timeout, Some(Duration::from_secs(15 * 60)));
+        assert_eq!(request.operation, "generateReviewGuide");
+        assert_eq!(
+            request.output_schema,
+            crate::text_generation::prompts::REVIEW_GUIDE_OUTPUT_SCHEMA
+        );
+        assert!(
+            request.prompt.contains("change request #7 "),
+            "{}",
+            request.prompt
+        );
+        assert!(request.prompt.contains("<pr_title>A change</pr_title>"));
+        assert!(request.prompt.contains("Adds four."));
+        assert!(
+            request
+                .prompt
+                .contains("- a.rs (resolved, ann): Why upper case?"),
+            "{}",
+            request.prompt
+        );
+        assert_eq!(
+            *model.saw_checkout.lock().expect("seen"),
+            [true],
+            "the model read the head's files"
+        );
+        assert!(
+            !std::path::Path::new(&request.cwd).exists(),
+            "the checkout is removed"
+        );
+        assert_eq!(
+            git_in(&work, &["worktree", "list", "--porcelain"])
+                .matches("worktree ")
+                .count(),
+            1
+        );
+        assert_eq!(
+            git_in(&work, &["for-each-ref", "refs/t3"]),
+            "",
+            "the base ref is dropped"
+        );
+    }
+
+    // A restart keeps the guide: a new panel reads it from the state folder.
+    let fresh = guide_panel(&dir, &work, &base, model.clone()).await;
+    let mut table = MethodTable::new();
+    register_panel(&mut table, fresh);
+    let read = call(&table, "pullRequests.reviewGuide", guide_input())
+        .await
+        .expect("read after restart");
+    assert_eq!(read["guide"], done["guide"]);
+    assert_eq!(read["run"], Value::Null);
+    task.abort();
+}
+
+#[tokio::test]
+async fn guides_are_off_until_turned_on_and_a_text_generator_falls_back_to_codex() {
+    let dir = TestDir::new();
+    let (work, head) = guide_repo(&dir);
+    let (base, task) = guide_api(head).await;
+    let model = Arc::new(GuideModel {
+        id: from_json(json!("codex")).expect("id"),
+        answer: Ok(json!({"stops": []})),
+        gate: tokio::sync::Semaphore::new(10),
+        requests: Mutex::default(),
+        saw_checkout: Mutex::default(),
+    });
+    // A fresh server has no `reviewGuidesEnabled`: T3's default is off.
+    let fresh = Arc::new(
+        ServerEnvironment::load(
+            &dir.0,
+            Some("Guides".into()),
+            dir.0.clone(),
+            Default::default(),
+        )
+        .expect("environment"),
+    );
+    assert_eq!(fresh.settings.for_client().get("reviewGuidesEnabled"), None);
+    let mut panel = guide_panel(&dir, &work, &base, model.clone()).await;
+    // guide_panel turned guides on in the shared settings file; start from none.
+    fresh
+        .settings
+        .update(json!({"reviewGuidesEnabled": false}), None)
+        .expect("settings");
+    let settings = fresh.clone();
+    {
+        let p = Arc::get_mut(&mut panel).expect("new panel");
+        p.environment = Some(fresh.clone());
+        p.text_generators = Some(Arc::new(crate::text_generation::TextGenerators::new(
+            move || settings.settings.raw(),
+        )));
+    }
+    let error = panel
+        .mcp_call("generateReviewGuide", guide_input())
+        .await
+        .expect_err("off");
+    assert!(
+        matches!(error, Failure::Fail(ref v) if v["detail"] == "Review guides are off. Turn them on in Settings → Source control & issues."),
+        "{error:?}"
+    );
+    // The title model is a text generator: it cannot read the checkout, so the ready Codex
+    // instance writes the guide.
+    fresh
+        .settings
+        .update(json!({"reviewGuidesEnabled": true,
+            "textGenerators": {"router": {"kind": "openaiCompatible", "baseUrl": "http://127.0.0.1:1/v1"}},
+            "textGenerationModelSelection": {"instanceId": "router", "model": "m"}}), None)
+        .expect("settings");
+    panel
+        .mcp_call("generateReviewGuide", guide_input())
+        .await
+        .expect("started");
+    for _ in 0..300 {
+        if !model.requests.lock().expect("requests").is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    {
+        let requests = model.requests.lock().expect("requests");
+        let run = panel.guide_runs.get("github.com/a/b#7");
+        let request = requests
+            .first()
+            .unwrap_or_else(|| panic!("the guide ran: {run}"));
+        assert_eq!(to_json(&request.model_selection)["instanceId"], "codex");
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn a_failed_guide_run_reports_its_detail_and_keeps_the_stored_guide() {
+    let dir = TestDir::new();
+    let (work, head) = guide_repo(&dir);
+    let (base, task) = guide_api(head.clone()).await;
+    let model = Arc::new(GuideModel {
+        id: from_json(json!("codex")).expect("id"),
+        answer: Err("Codex CLI request timed out.".into()),
+        gate: tokio::sync::Semaphore::new(10),
+        requests: Mutex::default(),
+        saw_checkout: Mutex::default(),
+    });
+    let panel = guide_panel(&dir, &work, &base, model).await;
+    let mut table = MethodTable::new();
+    register_panel(&mut table, panel.clone());
+    call(&table, "pullRequests.generateReviewGuide", guide_input())
+        .await
+        .expect("started");
+    let done = settled_guide(&table).await;
+    assert_eq!(done["guide"], Value::Null);
+    assert_eq!(done["run"]["_tag"], "Failed");
+    assert_eq!(done["run"]["headSha"], head.as_str());
+    assert_eq!(done["run"]["detail"], "Codex CLI request timed out.");
+    assert_eq!(
+        git_in(&work, &["worktree", "list", "--porcelain"])
+            .matches("worktree ")
+            .count(),
+        1
+    );
+
+    // Another repository's pull request is refused before anything runs.
+    let mut other = guide_input();
+    other["repository"] = json!("c/d");
+    let error = call(&table, "pullRequests.generateReviewGuide", other)
+        .await
+        .expect_err("another repository");
+    assert!(
+        matches!(error, Failure::Fail(ref v) if v["detail"].as_str().is_some_and(|d| d.starts_with("Guides are written from this project's checkout"))),
+        "{error:?}"
+    );
+    task.abort();
 }

@@ -1,4 +1,6 @@
-//! Reads T3's persisted guide rows without caching them or writing its database.
+//! Review guide rows: the ones this server wrote (`review-guides.sqlite` in the state folder,
+//! T3's `pull_request_review_guides` table) and, when it has none for a pull request, the rows
+//! a T3 server left in its own database, read without caching them or writing that database.
 
 use super::{Failure, operation_error};
 use conn_contract::{PullRequestReviewGuide, from_json, to_json};
@@ -13,17 +15,27 @@ const MAX_GUIDE_BYTES: usize = 8 * 1024 * 1024;
 #[error("Could not read the stored review guide.")]
 struct ReadError;
 
+/// The file this server keeps its own guides in.
+pub(super) const OWN_FILE: &str = "review-guides.sqlite";
+
 pub(super) async fn load(
-    path: PathBuf,
+    paths: Vec<PathBuf>,
     host: String,
     repository: String,
     number: u32,
 ) -> Result<Value, Failure> {
-    tokio::task::spawn_blocking(move || read(path, &host, &repository, number))
-        .await
-        .map_err(|_| operation_error("reviewGuide", "Could not read the stored review guide."))?
-        .map(|guide| guide.map_or(Value::Null, |g| to_json(&g)))
-        .map_err(|_| operation_error("reviewGuide", "Could not read the stored review guide."))
+    tokio::task::spawn_blocking(move || {
+        for path in paths {
+            if let Some(guide) = read(path, &host, &repository, number)? {
+                return Ok(Some(guide));
+            }
+        }
+        Ok::<_, ReadError>(None)
+    })
+    .await
+    .map_err(|_| operation_error("reviewGuide", "Could not read the stored review guide."))?
+    .map(|guide| guide.map_or(Value::Null, |g| to_json(&g)))
+    .map_err(|_| operation_error("reviewGuide", "Could not read the stored review guide."))
 }
 
 fn read(
@@ -90,6 +102,43 @@ fn read(
         }
     }
     Ok(Some(guide))
+}
+
+/// `PullRequestReviewGuideRepository.put`: one row per pull request, replaced on a new guide.
+pub(super) async fn store(
+    path: PathBuf,
+    host: String,
+    repository: String,
+    number: u32,
+    guide: Value,
+) -> Result<(), String> {
+    let text = guide.to_string();
+    // A guide the reader would refuse must not replace the readable one.
+    if text.len() > MAX_GUIDE_BYTES {
+        return Err("The review guide is too large to store.".into());
+    }
+    tokio::task::spawn_blocking(move || {
+        let connection = Connection::open(path).map_err(|e| e.to_string())?;
+        connection
+            .execute_batch(
+                "PRAGMA cache_size=-256; PRAGMA mmap_size=0; PRAGMA busy_timeout=5000;
+                 CREATE TABLE IF NOT EXISTS pull_request_review_guides (
+                   host TEXT NOT NULL, repository TEXT NOT NULL, number INTEGER NOT NULL,
+                   guide_json TEXT NOT NULL, PRIMARY KEY (host, repository, number)) WITHOUT ROWID;",
+            )
+            .map_err(|e| e.to_string())?;
+        connection
+            .execute(
+                "INSERT INTO pull_request_review_guides (host, repository, number, guide_json)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (host, repository, number) DO UPDATE SET guide_json = excluded.guide_json",
+                rusqlite::params![host, repository, number, text],
+            )
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn nonblank(value: &mut String) -> Result<(), ReadError> {

@@ -533,6 +533,26 @@ const titleOutputSchema = JSON.stringify(
   ),
 );
 const presets = await importSource("apps/server/src/textGeneration/TextGenerationPresets.ts");
+const contractsModel = await importSource("packages/contracts/src/model.ts");
+// `buildReviewGuidePrompt`: the prompt with placeholders, cut into parts; the stack and the
+// preferences sections as their fixed lines (`textgen-diff.mjs` compares whole prompts).
+const reviewGuideBase = {number: 424242, title: "@@TITLE@@", description: "@@DESC@@", baseBranch: "@@BRANCH@@", baseCommit: "@@BASE@@", settledReview: "@@SETTLED@@"};
+function reviewGuideParts() {
+  const prompt = prompts.buildReviewGuidePrompt(reviewGuideBase).prompt;
+  if (prompt.includes("@@") && !/@@(TITLE|DESC|BRANCH|BASE|SETTLED)@@/.test(prompt)) throw new Error("review guide placeholders moved");
+  return partsOf(prompt.replaceAll("424242", "@@NUMBER@@"), {"@@NUMBER@@": "Number", "@@TITLE@@": "Title", "@@DESC@@": "Description", "@@BRANCH@@": "Branch", "@@BASE@@": "Base", "@@SETTLED@@": "Settled"});
+}
+function reviewGuideSection(extra, expected) {
+  const base = prompts.buildReviewGuidePrompt(reviewGuideBase).prompt;
+  const full = prompts.buildReviewGuidePrompt({...reviewGuideBase, ...extra}).prompt;
+  if (!full.startsWith(base)) throw new Error("review guide sections moved");
+  const lines = full.slice(base.length).split("\n");
+  if (lines.length !== expected.length || expected.some((want, i) => want !== null && lines[i] !== want)) throw new Error(`review guide section moved: ${JSON.stringify(lines)}`);
+  return [lines[2], lines[lines.length - 1]];
+}
+const reviewGuideStack = reviewGuideSection({stack: [{number: 424242, title: "a", headSha: "h", state: "open"}, {number: 2, title: "b", headSha: null, state: "merged"}]}, ["", "", null, "1. #424242 (this change): a", "2. #2: b, merged, head not available", "", null]);
+const reviewGuidePreferences = reviewGuideSection({instructions: "  @@I@@ "}, ["", "", null, "@@I@@", "", null]);
+
 const titlePromptsRs = rustfmt(
   [
     ...HEADER,
@@ -548,6 +568,9 @@ const titlePromptsRs = rustfmt(
     "    Previous,",
     "    /// The (limited) message or thread contents.",
     "    Message, Branch, Summary, Patch, Policy,",
+    "    /// The review guide's values: the number, title, limited description, base commit and",
+    "    /// limited settled review.",
+    "    Number, Title, Description, Base, Settled,",
     "}",
     "",
     `pub(super) const INITIAL_WITH_PROJECT: &[Part] = ${promptParts({ projectTitle: "@@P@@" })};`,
@@ -560,6 +583,19 @@ const titlePromptsRs = rustfmt(
     `pub(crate) const COMMIT_POLICIES: [&str; 2] = [${str(presets.conventionalCommitsTextGenerationPolicy.commitInstructions)},${str(presets.repositoryConventionsTextGenerationPolicy.commitInstructions)}];`,
     `pub(super) const COMMIT_PROMPTS: [[&[Part]; 2]; 2] = [${[false,true].map(includeBranch => `[${[false,true].map(policy => commitParts(includeBranch,policy)).join(",")}]`).join(",")}];`,
     `pub(crate) const COMMIT_SCHEMAS: [&str; 2] = [${[false,true].map(includeBranch => str(JSON.stringify(textGenerationUtils.toJsonSchemaObject(prompts.buildCommitMessagePrompt({branch:null,stagedSummary:"",stagedPatch:"",includeBranch}).outputSchema)))).join(",")}];`,
+    "",
+    "/// `buildReviewGuidePrompt` without a stack or the maintainer's preferences, as parts.",
+    `pub(super) const REVIEW_GUIDE_PROMPT: &[Part] = ${reviewGuideParts()};`,
+    `/// The stack section's first line and its closing paragraph (\`reviewGuideStack\`).`,
+    `pub(super) const REVIEW_GUIDE_STACK: [&str; 2] = [${reviewGuideStack.map(str).join(",")}];`,
+    `/// The preferences section's heading and closing line (\`reviewGuidePreferences\`).`,
+    `pub(super) const REVIEW_GUIDE_PREFERENCES: [&str; 2] = [${reviewGuidePreferences.map(str).join(",")}];`,
+    "/// `DEFAULT_TEXT_GENERATION_MODEL`: the default text generation selection's model (Codex).",
+    `pub(crate) const DEFAULT_TEXT_GENERATION_MODEL: &str = ${str(contractsModel.DEFAULT_TEXT_GENERATION_MODEL)};`,
+    "/// `defaultTextGenerationModel` of the drivers that can write review guides, in T3's fallback order.",
+    `pub(crate) const INVESTIGATING_DEFAULT_MODELS: [(&str, &str); 2] = [${["codex", "claudeAgent"].map((d) => `(${str(d)}, ${str(contractsModel.DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[d] ?? contractsModel.DEFAULT_MODEL_BY_PROVIDER[d] ?? contractsModel.DEFAULT_TEXT_GENERATION_MODEL)})`).join(", ")}];`,
+    "/// The guide's output schema, as T3 writes it for a CLI.",
+    `pub(crate) const REVIEW_GUIDE_OUTPUT_SCHEMA: &str = ${str(JSON.stringify(textGenerationUtils.toJsonSchemaObject(prompts.buildReviewGuidePrompt(reviewGuideBase).outputSchema)))};`,
     "",
   ].join("\n"),
 );

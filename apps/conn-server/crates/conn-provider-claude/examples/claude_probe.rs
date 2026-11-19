@@ -90,8 +90,14 @@ async fn title(scenario: &Value, settings: &StatusSettings) -> Value {
         Ok(selection) => selection,
         Err(e) => return json!({"ok": false, "title": null, "failure": format!("selection: {e}")}),
     };
+    let guide = scenario["title"]["guide"] == true;
     let request = conn_provider::TextGenerationRequest {
-        operation: "generateThreadTitle".into(),
+        operation: if guide {
+            "generateReviewGuide"
+        } else {
+            "generateThreadTitle"
+        }
+        .into(),
         cwd: scenario["cwd"].as_str().unwrap_or_default().to_owned(),
         prompt: t3["request"]["prompt"]
             .as_str()
@@ -103,9 +109,12 @@ async fn title(scenario: &Value, settings: &StatusSettings) -> Value {
             .to_owned(),
         model_selection: selection,
         image_paths: Vec::new(),
-        timeout: None,
+        // `INVESTIGATION_TIMEOUT_MS` for a review guide.
+        timeout: guide.then(|| std::time::Duration::from_secs(15 * 60)),
+        investigate: guide,
     };
     match provider.generate_text(request).await {
+        Ok(output) if guide => json!({"ok": true, "title": output, "failure": null}),
         Ok(output) => json!({"ok": true, "title": output["title"], "failure": null}),
         Err(conn_provider::ProviderError::Failed { detail, .. }) => {
             json!({"ok": false, "title": null, "failure": detail})

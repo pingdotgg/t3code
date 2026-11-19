@@ -7,6 +7,9 @@
 //! temporary folder for a thread title (else the request's folder), 180 s. A CLI before 2.0.63
 //! rejects `--no-session-persistence`; then the run is repeated without it. The answer is the
 //! `structured_output` of the JSON envelope (or of the last `result` message of a list).
+//! An investigating request (a review guide) gets read-only tools in place of `--tools ""`
+//! (`--tools`, `--allowedTools`, `--disallowedTools`, `--setting-sources user`) and its own
+//! deadline; `probe-conformance` compares its argv with T3's.
 //!
 //! The environment is the Claude process environment (`mergeClaudeProcessEnvironment`, then
 //! `makeClaudeEnvironment`). The model's input attachments are not sent, as in T3.
@@ -21,6 +24,15 @@ use crate::catalog;
 
 /// `CLAUDE_TIMEOUT_MS`.
 pub const TIMEOUT: Duration = Duration::from_secs(180);
+/// `CLAUDE_INVESTIGATION_TOOLS`: the tools a review guide run may load.
+pub const INVESTIGATION_TOOLS: &str = "Read,Grep,Glob,Bash";
+/// `CLAUDE_INVESTIGATION_ALLOWED`: in `dontAsk` mode every call outside this list, Bash
+/// included, is refused.
+pub const INVESTIGATION_ALLOWED: &str =
+    "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)";
+/// `CLAUDE_INVESTIGATION_DENIED`: denies win over allows; git's `--output`/`-o` could write
+/// anywhere.
+pub const INVESTIGATION_DENIED: &str = "Bash(git * --output*),Bash(git * -o *)";
 const NO_SESSION_PERSISTENCE: &str = "--no-session-persistence";
 /// What a Claude Code before 2.0.63 writes on stderr for that flag.
 const NO_SESSION_PERSISTENCE_REJECTED: &str = "error: unknown option '--no-session-persistence'";
@@ -59,6 +71,7 @@ pub fn cli_args(
     output_schema: &str,
     no_session_persistence: bool,
     managed_mcp_config: bool,
+    investigate: bool,
 ) -> Vec<String> {
     let model = selection["model"].as_str().unwrap_or_default();
     let compiled = catalog::compile(selection);
@@ -93,13 +106,25 @@ pub fn cli_args(
     if let Some(effort) = compiled.effort.filter(|e| !e.is_empty()) {
         args.extend(["--effort".to_owned(), effort]);
     }
-    args.extend([
-        "--settings".to_owned(),
-        Value::Object(settings).to_string(),
-        "--tools".to_owned(),
-        String::new(),
-        "--disable-slash-commands".to_owned(),
-    ]);
+    args.extend(["--settings".to_owned(), Value::Object(settings).to_string()]);
+    if investigate {
+        args.extend(
+            [
+                "--tools",
+                INVESTIGATION_TOOLS,
+                "--allowedTools",
+                INVESTIGATION_ALLOWED,
+                "--disallowedTools",
+                INVESTIGATION_DENIED,
+                "--setting-sources",
+                "user",
+            ]
+            .map(str::to_owned),
+        );
+    } else {
+        args.extend(["--tools".to_owned(), String::new()]);
+    }
+    args.push("--disable-slash-commands".to_owned());
     if no_session_persistence {
         args.push(NO_SESSION_PERSISTENCE.to_owned());
     }
@@ -200,6 +225,7 @@ pub async fn generate(
             &request.output_schema,
             persistence,
             managed_mcp_config,
+            request.investigate,
         );
         let cwd = cwd.clone();
         let prompt = request.prompt.clone();
@@ -287,6 +313,7 @@ mod tests {
             &json!({"instanceId": "claudeAgent", "model": "claude-haiku-4-5"}),
             "{}",
             true,
+            false,
             false,
         );
         assert_eq!(args.first().map(String::as_str), Some("-p"));

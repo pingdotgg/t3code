@@ -27,6 +27,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{OnceCell, mpsc, watch};
+mod guide_writer;
 mod guides;
 mod links;
 mod watches;
@@ -38,6 +39,9 @@ struct Project {
     root: PathBuf,
     host: String,
     repository: String,
+    /// The remote the repository was read from (`repositoryIdentity.locator`).
+    remote_url: String,
+    remote_name: Option<String>,
 }
 fn operation_error(operation: &str, detail: &str) -> Failure {
     Failure::Fail(json!({"_tag":"PullRequestOperationError","operation":operation,"detail":detail}))
@@ -102,6 +106,10 @@ struct Panel {
     /// The clients' activity leases (`BackgroundPolicy`), which gate the periodic branch
     /// lookup.
     activity: super::provider::ProviderStatus,
+    /// The agents and text generators a review guide can be written with.
+    providers: conn_provider::ProviderSet,
+    text_generators: Option<Arc<crate::text_generation::TextGenerators>>,
+    guide_runs: guide_writer::Runs,
 }
 struct MutationReads<'a> {
     panel: &'a Panel,
@@ -157,6 +165,10 @@ impl Panel {
             let stored = p
                 .pointer("/repositoryIdentity/locator/remoteUrl")
                 .and_then(Value::as_str);
+            let mut remote_name = p
+                .pointer("/repositoryIdentity/locator/remoteName")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
             let remote = if let Some(remote) = stored {
                 remote.to_owned()
             } else {
@@ -179,6 +191,7 @@ impl Panel {
                 if context.provider.kind != "github" {
                     continue;
                 }
+                remote_name = Some(context.remote_name);
                 context.remote_url
             };
             let Some(info) = registry::recognize_remote(&remote) else {
@@ -205,6 +218,8 @@ impl Panel {
                 root,
                 host,
                 repository,
+                remote_url: remote,
+                remote_name,
             });
         }
         Ok(result)
@@ -258,6 +273,8 @@ impl Panel {
                     root: PathBuf::from(text(p, "workspaceRoot")),
                     host,
                     repository: repository.into(),
+                    remote_url: String::new(),
+                    remote_name: None,
                 });
             }
         }
@@ -315,7 +332,7 @@ impl Panel {
             )
             .await
     }
-    async fn call(&self, method: &str, input: Value) -> Result<Value, Failure> {
+    async fn call(self: &Arc<Self>, method: &str, input: Value) -> Result<Value, Failure> {
         match method {
             "invalidate" => {
                 let viewed = input.get("filesViewedOnly") == Some(&Value::Bool(true));
@@ -342,7 +359,7 @@ impl Panel {
         }
     }
     /// What `/mcp` asks of the panel (`mcp_host`).
-    async fn mcp_call(&self, operation: &str, input: Value) -> Result<Value, Failure> {
+    async fn mcp_call(self: &Arc<Self>, operation: &str, input: Value) -> Result<Value, Failure> {
         match operation {
             // `summary` with `bypassCache`, as `PullRequestWatchService` reads it.
             "watchSummary" => {
@@ -372,27 +389,13 @@ impl Panel {
             ))),
         }
     }
-    fn guide_unavailable(&self) -> Failure {
-        let off = self.environment.as_ref().is_some_and(|environment| {
-            environment.settings.for_client().get("reviewGuidesEnabled")
-                == Some(&Value::Bool(false))
-        });
-        operation_error(
-            "generateReviewGuide",
-            if off {
-                "Review guides are off. Turn them on in Settings → Source control & issues."
-            } else {
-                "This server cannot generate review guides yet."
-            },
-        )
-    }
-    async fn generate_review_guide(&self, input: &Value) -> Result<Value, Failure> {
+    async fn generate_review_guide(self: &Arc<Self>, input: &Value) -> Result<Value, Failure> {
         if input.get("expectedAccountId").is_some() {
             self.reference_client("routeIdentity", input)
                 .await
                 .map_err(|_| routing_error())?;
         }
-        Err(self.guide_unavailable())
+        self.write_review_guide(input).await
     }
     async fn action(&self, method: &str, input: &Value) -> Result<Value, Failure> {
         let routed = input.get("expectedAccountId").is_some();
@@ -478,9 +481,13 @@ impl Panel {
                     }
                 })?;
         let key = thread_key(input, &project.host).ok_or_else(unidentified)?;
+        let run = self.guide_runs.get(&key.text());
         let guide = if let Some(environment) = &self.environment {
             guides::load(
-                environment.state_dir.join("statev2.sqlite"),
+                vec![
+                    environment.state_dir.join(guides::OWN_FILE),
+                    environment.state_dir.join("statev2.sqlite"),
+                ],
                 key.host,
                 key.repository,
                 lookup.number,
@@ -493,7 +500,7 @@ impl Panel {
             .detail(&lookup)
             .await
             .map_err(|error| host_error(&error, "detail"))?;
-        Ok(json!({"guide":guide,"run":null,"currentHeadSha":detail.get("headSha")}))
+        Ok(json!({"guide":guide,"run":run,"currentHeadSha":detail.get("headSha")}))
     }
     async fn report_state(&self, input: &Value) -> Result<Value, Failure> {
         let reference = input.get("reference").unwrap_or(&Value::Null);
@@ -1309,6 +1316,9 @@ impl Shared {
                         monitor: OnceCell::new(),
                         reports: Mutex::new(VecDeque::new()),
                         activity: deps.provider_status.clone(),
+                        providers: deps.providers.clone(),
+                        text_generators: deps.text_generators.clone(),
+                        guide_runs: guide_writer::Runs::default(),
                     })
                 })
                 .clone(),

@@ -858,6 +858,75 @@ fn guide_reference(project: &Value, target: &Target) -> Value {
         "repository": target.key.repository, "number": target.key.number})
 }
 
+/// `write_pull_request_guides` (`writesWithCapability`): one guide run per pull request, four
+/// at a time; a target that cannot be written fails alone.
+pub(crate) async fn write_guides(cx: &Cx<'_>, args: &Args) -> ToolResult {
+    cx.writing_caller().await?;
+    cx.assert_not_linked("start work here that is not its link's")
+        .await?;
+    let inputs: Vec<Args> = args
+        .get("pullRequests")
+        .and_then(Value::as_array)
+        .map(|list| list.iter().filter_map(|v| v.as_object().cloned()).collect())
+        .unwrap_or_default();
+    let mut guides: Vec<Value> = Vec::with_capacity(inputs.len());
+    for chunk in inputs.chunks(4) {
+        let mut runs: Vec<GuideFuture<'_>> = Vec::with_capacity(chunk.len());
+        for input in chunk {
+            runs.push(Box::pin(write_guide(cx, input)));
+        }
+        guides.extend(futures_util::future::join_all(runs).await);
+    }
+    Ok(json!({"guides": guides}))
+}
+
+type GuideFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Value> + Send + 'a>>;
+
+async fn write_guide(cx: &Cx<'_>, input: &Args) -> Value {
+    let located = locate(cx, input).await;
+    let target = match located.target {
+        Ok(target) => target,
+        Err(failure) => {
+            let field = |key: &str| input.get(key).cloned().unwrap_or(json!(""));
+            return json!({
+                "host": field("host"), "repository": field("repository"),
+                "number": input.get("number").cloned().unwrap_or(json!(0)),
+                "url": field("url"), "outcome": "failed", "detail": failure,
+            });
+        }
+    };
+    let mut out = target.json();
+    let Some(project) = located.project.as_ref() else {
+        out.insert("outcome".into(), json!("failed"));
+        out.insert(
+            "detail".into(),
+            json!(project_not_found(&target.key.repository)),
+        );
+        return Value::Object(out);
+    };
+    let answer = cx
+        .pull_request_host("generateReviewGuide", guide_reference(project, &target))
+        .await
+        .unwrap_or_else(|| {
+            Err(json!({"_tag": "PullRequestUnavailableError", "reason": "provider-unsupported"}))
+        });
+    match answer {
+        Ok(result) => {
+            let started = result["started"] == true;
+            out.insert(
+                "outcome".into(),
+                json!(if started { "started" } else { "running" }),
+            );
+            out.insert("detail".into(), Value::Null);
+        }
+        Err(error) => {
+            out.insert("outcome".into(), json!("failed"));
+            out.insert("detail".into(), json!(guide_failure_detail(&error)));
+        }
+    }
+    Value::Object(out)
+}
+
 /// `read_pull_request_guide`.
 pub(crate) async fn read_guide(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let located = locate(cx, args).await;

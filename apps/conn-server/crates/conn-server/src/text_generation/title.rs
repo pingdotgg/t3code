@@ -306,6 +306,7 @@ impl Titles {
                 model_selection,
                 image_paths: images.clone(),
                 timeout: None,
+                investigate: false,
             };
             let attempt = match super::generate(&self.generators, &self.providers, request).await {
                 Ok(Some((text, label))) => Self::accept(&text, &label),

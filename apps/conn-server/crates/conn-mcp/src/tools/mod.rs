@@ -135,6 +135,7 @@ pub(crate) const HANDLED: &[&str] = &[
     "watch_pull_request",
     "unwatch_pull_request",
     "read_pull_request_guide",
+    "write_pull_request_guides",
     "annotations_list",
     "annotations_claim",
     "annotations_complete",
@@ -321,6 +322,7 @@ async fn call_in(cx: &Cx<'_>, name: &str, args: Args) -> ToolResult {
         "watch_pull_request" => pull_requests::set_watching(cx, &args, true).await,
         "unwatch_pull_request" => pull_requests::set_watching(cx, &args, false).await,
         "read_pull_request_guide" => pull_requests::read_guide(cx, &args).await,
+        "write_pull_request_guides" => pull_requests::write_guides(cx, &args).await,
         other => Err(fail(
             "capability_denied",
             format!("conn-server does not serve `{other}` yet."),

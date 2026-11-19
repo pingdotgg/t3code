@@ -21,6 +21,45 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## Review guide writing (2026-11-19)
+
+`pullRequests.generateReviewGuide` and `write_pull_request_guides` write a PR's review guide
+as T3's `PullRequestReviewGuideService` does. Before, the RPC answered "This server cannot
+generate review guides yet." and the tool was unregistered.
+
+- **The run** (`conn-server/src/methods/pull_requests/guide_writer.rs`): only for a PR of the
+  project's own repository (T3's refusal text otherwise); the head is read, then claimed under
+  one lock with a second read, so a stale click cannot replace a newer head's run; a request
+  for the same head joins the run (`running` in the tool). In the background: the remote that
+  matches the project's remote URL, the base branch fetched into `refs/t3/review-guide/<run>/
+  base`, the head from local objects, the commit, the branch or `refs/pull/<n>/head` (T3's
+  order and texts), stack layers' heads, a detached worktree with hooks off in the worktrees
+  folder, the merge base, then the model and the `base...HEAD` diff together. The checkout
+  and the base ref are removed after. A run that fails keeps `Failed` with its detail; at most
+  256 finished runs are kept (T3 keeps them all).
+- **The model:** the review guide model, else the source control writer, else the text
+  generation model (`resolveReviewGuideModelSelection`); a text generator cannot write guides.
+  Codex and Claude run with `investigate` (15 minutes): Claude gets T3's read-only tools,
+  allow and deny lists and `--setting-sources user`. Another driver is refused with T3's text.
+- **The guide:** T3's prompt (generated parts, `REVIEW_GUIDE_*` in `generated.rs`), the
+  settled review from the PR's resolved and outdated threads, the answer decoded as the output
+  schema and normalized as `normalizeReviewGuide` (`text_generation/review_guide.rs`). Stored in
+  `review-guides.sqlite` (T3's table); `reviewGuide` reads it first, then a T3 server's
+  `statev2.sqlite`, and reports the run.
+- **Proof:** `textgen-diff` compares the prompt (9 inputs: limits, surrogates, stacks,
+  preferences), the change parser and normalizer (14 answers on one patch: quoted, deleted,
+  binary and space-named files, merges, clamps, decode failures) and the settled review with
+  T3's functions; a changed excerpt limit fails it. `claude probe conformance` runs T3's
+  `generateReviewGuide` and ours on a stub CLI: same argv, environment and stdin. `parity.mjs`:
+  4 tool calls on both servers (per-target failures, input limits). Server tests on a real git
+  remote (an ssh stand-in) and a stub GitHub: a run fetches a head that exists only in the
+  remote, a second request joins it, the model sees the checkout, the guide is clamped and
+  placed, the worktree and ref are gone after, the guide survives a restart; a failed run
+  reports its detail; another repository is refused.
+- **Known differences:** no fallback to another provider when the chosen one is unusable
+  (`fallbackTextGenerationModelSelection`, as for titles); GitHub only (the panel's host);
+  git failures report git's stderr where T3 has its own `GitCommandError` texts.
+
 ## PR link sync from GitHub (2026-11-19)
 
 Linked PR rows now get their title, state, checks and review state, and the sidebar chip shows
@@ -255,8 +294,7 @@ them, as with T3 (`PortScanner.ts`). Before, `subscribeDiscoveredLocalServers` a
 Served: `watch_pull_request`, `unwatch_pull_request` and `read_pull_request_guide` (70 of 87
 tools), and the engine commands `thread.pull-request.watch` and the server-only
 `thread.pull-request-watch.sync` and `thread.pull-request-watch.checks-reopen`.
-`write_pull_request_guides` stays unregistered: the server has no review guide generator
-(T3 runs a model in a temporary checkout), so the tool could only fail.
+`write_pull_request_guides` came later (see "Review guide writing").
 
 - **The watch works.** A loop in the server (`methods/pull_requests/watches.rs`) reads each
   watched PR from GitHub every 2 minutes, and at once when a new watch appears, through the

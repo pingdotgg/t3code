@@ -137,6 +137,15 @@ const SCENARIOS = [
     title: { message: "Add dark mode", modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" } },
     behaviour: { title: [{ code: 1, stdout: JSON.stringify({ is_error: true, result: "Credit balance is too low" }), stderr: "wrapper notice\n" }] },
   },
+  // A review guide (`generateReviewGuide`): the read-only investigation tools, the user's
+  // setting sources and the 15-minute limit, in the request's folder.
+  {
+    name: "review-guide",
+    instance: { driver: "claudeAgent" },
+    binary: "stub",
+    title: { guide: true, modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-4-6", options: [{ id: "effort", value: "high" }] } },
+    behaviour: { title: [{ code: 0, stdout: JSON.stringify({ type: "result", structured_output: { stops: [{ title: "One", summary: "s", attention: null, excerpts: [{ path: "a.rs", side: "new", start: 1, end: 2, caption: "" }], files: [], notes: [], questions: [] }] } }) }] },
+  },
   // An instance as Orbit writes one: a `~` binary path (made relative to the throwaway HOME
   // below), a sensitive variable, `CLAUDE_CONFIG_DIR` with `~`, a display name and accent.
   {
@@ -222,7 +231,7 @@ import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIden
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { checkClaudeProviderStatus, probeClaudeCapabilities } from "./ClaudeProvider.ts";
 import { makeClaudeTextGeneration } from "../textGeneration/ClaudeTextGeneration.ts";
-import { buildThreadTitlePrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
+import { buildReviewGuidePrompt, buildThreadTitlePrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
 import { toJsonSchemaObject } from "@t3tools/provider-core/server/textGenerationUtils";
 import * as Exit from "effect/Exit";
 import { makeClaudeContinuationGroupKey, mergeClaudeProcessEnvironment } from "./Drivers/ClaudeHome.ts";
@@ -247,22 +256,26 @@ it.live("conn claude probe: every scenario", () =>
         const processEnv = yield* mergeClaudeProcessEnvironment(settings, instance.environment, BASE_ENV);
         if (scenario.title !== null) {
           // What ours gets: T3's own prompt and output schema for this message.
-          const built = buildThreadTitlePrompt({ message: scenario.title.message });
+          const guide = scenario.title.guide === true;
+          const GUIDE = { number: 7, title: "Add guides", description: "Body", baseBranch: "main", baseCommit: "abc1234", settledReview: "" };
+          const built = guide ? buildReviewGuidePrompt(GUIDE) : buildThreadTitlePrompt({ message: scenario.title.message });
           const request = { prompt: built.prompt, outputSchema: JSON.stringify(toJsonSchemaObject(built.outputSchema)) };
           const generation = yield* makeClaudeTextGeneration(settings, processEnv);
           const exit = yield* Effect.scoped(
-            generation.generateThreadTitle({
-              cwd: scenario.cwd,
-              message: scenario.title.message,
-              modelSelection: scenario.title.modelSelection,
-            }),
+            guide
+              ? generation.generateReviewGuide({ ...GUIDE, cwd: scenario.cwd, modelSelection: scenario.title.modelSelection })
+              : generation.generateThreadTitle({
+                  cwd: scenario.cwd,
+                  message: scenario.title.message,
+                  modelSelection: scenario.title.modelSelection,
+                }),
           ).pipe(Effect.exit);
           fs.writeFileSync(
             scenario.tsOut,
             JSON.stringify({
               request,
               ok: Exit.isSuccess(exit),
-              title: Exit.isSuccess(exit) ? exit.value.title : null,
+              title: Exit.isSuccess(exit) ? (guide ? exit.value : exit.value.title) : null,
               failure: Exit.isSuccess(exit) ? null : String((exit.cause as any)?.reasons?.[0]?.error?.detail ?? exit.cause),
             }),
           );

@@ -19,9 +19,9 @@ The specification is `packages/source-control-core`, `packages/source-control-gi
 | GitHub's GraphQL operations | Generated from the monorepo; panel reads, viewed-file mutations and PR resolution send them. |
 | `git.*` (3) | GitHub PR resolution and checkout; commit-only stacked actions in `conn-server` |
 | `pr` in VCS status | Not served (always `null`) |
-| `pullRequests.*` (35) | GitHub panel reads and writes, including stacks and stored guides. `runAction` and `generateReviewGuide` register typed refusals; those operations are unavailable. |
+| `pullRequests.*` (35) | GitHub panel reads and writes, including stacks and stored guides. `runAction` registers a typed refusal. `generateReviewGuide` writes a guide in a temporary checkout (`conn-server/src/methods/pull_requests/guide_writer.rs`). |
 | Engine commands for linked pull requests (7) | `thread.pull-request.link` and `unlink` as T3's decider (part 4); the other 5 refused |
-| `/mcp` pull request tools (9) | 8 served: the 5 link tools, `watch`/`unwatch_pull_request`, `read_pull_request_guide`; `write_pull_request_guides` not served (no guide generator) |
+| `/mcp` pull request tools (9) | All 9 served: the 5 link tools, `watch`/`unwatch_pull_request`, `read_pull_request_guide`, `write_pull_request_guides` |
 
 ## Modules
 

@@ -166,6 +166,7 @@ pub(super) async fn generate(
         model_selection: conn_contract::from_json(selection).map_err(|e| error(e.to_string()))?,
         image_paths: vec![],
         timeout: None,
+        investigate: false,
     };
     let (text, label) = crate::text_generation::generate(generators, &deps.providers, request)
         .await

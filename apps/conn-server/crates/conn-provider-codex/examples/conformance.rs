@@ -610,6 +610,7 @@ async fn run_title(
         model_selection: json(&title["modelSelection"])?,
         image_paths: Vec::new(),
         timeout: None,
+        investigate: false,
     };
     let output = provider
         .generate_text(request)

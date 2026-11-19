@@ -15,6 +15,7 @@ use conn_engine::{TitleKind, TitleMessage, TitleRequest};
 use conn_server::text_generation::{
     TextGenerators, js,
     prompts::{self, Attachment, Message, TitlePromptInput},
+    review_guide,
     title::Titles,
 };
 use serde_json::{Map, Value, json};
@@ -157,6 +158,43 @@ async fn answer(case: &Value, state_dir: &std::path::Path) -> Result<Value, Stri
             )
         }
         "sanitize" => Ok(json!(prompts::sanitize_thread_title(&text(case, "raw")))),
+        "reviewGuidePrompt" => {
+            let input = &case["input"];
+            let stack = input["stack"]
+                .as_array()
+                .map(|layers| {
+                    layers
+                        .iter()
+                        .map(|l| prompts::StackLayer {
+                            number: l["number"].as_u64().unwrap_or(0),
+                            title: l["title"].as_str().map(str::to_owned),
+                            head_sha: l["headSha"].as_str().map(str::to_owned),
+                            state: text(l, "state"),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(json!(prompts::review_guide_prompt(
+                &prompts::ReviewGuidePromptInput {
+                    number: input["number"].as_u64().unwrap_or(0),
+                    title: text(input, "title"),
+                    description: text(input, "description"),
+                    base_branch: text(input, "baseBranch"),
+                    base_commit: text(input, "baseCommit"),
+                    settled_review: text(input, "settledReview"),
+                    instructions: input["instructions"].as_str().map(str::to_owned),
+                    stack,
+                }
+            )))
+        }
+        "reviewGuideNormalize" => {
+            let Some(guide) = review_guide::decode_generated(&case["guide"]) else {
+                return Err("invalid structured output".into());
+            };
+            let change = review_guide::parse_change(&text(case, "nameOnly"), &text(case, "patch"));
+            serde_json::to_value(review_guide::normalize(guide, &change)).map_err(|e| e.to_string())
+        }
+        "settledReview" => Ok(json!(review_guide::settled_review(&case["activity"]))),
         "sort" => {
             let mut ids: Vec<String> = case["ids"]
                 .as_array()

@@ -125,6 +125,9 @@ pub struct TextGenerationRequest {
     /// The request's deadline when the caller sets one (`investigate.timeoutMs`); else the
     /// provider's own.
     pub timeout: Option<std::time::Duration>,
+    /// `investigate`: the model reads the checkout in `cwd` with read-only tools across turns
+    /// (review guides). A provider that cannot keep that read-only refuses the request.
+    pub investigate: bool,
 }
 
 /// `ProviderSelectionTransitionInput`.

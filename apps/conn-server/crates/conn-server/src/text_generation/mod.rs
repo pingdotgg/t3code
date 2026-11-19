@@ -17,6 +17,7 @@ pub mod citations;
 pub mod drivers;
 pub mod js;
 pub mod prompts;
+pub mod review_guide;
 pub mod title;
 
 use std::{collections::VecDeque, sync::Mutex};
