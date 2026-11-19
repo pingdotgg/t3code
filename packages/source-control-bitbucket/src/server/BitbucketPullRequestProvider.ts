@@ -219,18 +219,21 @@ export const make = Effect.gen(function* () {
           batch.items,
           (pullRequest) => {
             if (pullRequest.state !== "open") return Effect.succeed(toChangeRequest(pullRequest));
-            return recoverRead(
-              Cache.get(
-                mergeabilities,
-                JSON.stringify([
-                  input.repository,
-                  pullRequest.number,
-                  pullRequest.headSha ?? "",
-                  pullRequest.baseBranch,
-                ]),
-              ),
-              "unknown" as const,
-            ).pipe(
+            // Without a head revision a pushed change cannot invalidate a cached answer, so
+            // such a row is read every time rather than risking a stale "mergeable".
+            const read =
+              pullRequest.headSha === null
+                ? api.getMergeability({ repository: input.repository, number: pullRequest.number })
+                : Cache.get(
+                    mergeabilities,
+                    JSON.stringify([
+                      input.repository,
+                      pullRequest.number,
+                      pullRequest.headSha,
+                      pullRequest.baseBranch,
+                    ]),
+                  );
+            return recoverRead(read, "unknown" as const).pipe(
               Effect.map((mergeability) => ({ ...toChangeRequest(pullRequest), mergeability })),
             );
           },
