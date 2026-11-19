@@ -66,6 +66,15 @@ function compareVersions(left: ReadonlyArray<number>, right: ReadonlyArray<numbe
 
 // `agy acp` 1.5.1 offers every model to every ACP client; older runtimes allowlist editors.
 const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
+// `agy acp` 1.5.0 steers a running turn with the next prompt; the 1.4 harness queues it.
+const PROMPT_STEERING_RELEASE = [1, 5, 0] as const;
+
+export const antigravitySteersWithPrompt = (
+  initializeResult: EffectAcpSchema.InitializeResponse,
+) => {
+  const parsed = parseAntigravityVersion(initializeResult.agentInfo?.version);
+  return parsed !== undefined && compareVersions(parsed, PROMPT_STEERING_RELEASE) >= 0;
+};
 
 export const antigravityAppendsSystemPrompt = (
   initializeResult: EffectAcpSchema.InitializeResponse,
