@@ -6,6 +6,7 @@ import {
   ContextTransferId,
   EnvironmentId,
   GitCommandError,
+  isLiveSubagentShell,
   MessageId,
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
@@ -30,6 +31,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -4634,6 +4636,30 @@ describe("OrchestratorMcpService thread lookup", () => {
     }),
   );
 
+  it.effect("points a pasted thread link at the thread it names", () =>
+    Effect.gen(function* () {
+      const delegated = liveThreadShell(ThreadId.make("thread:delegated-task:command%3Amcp%3Aabc"));
+      const ref = { environmentId: client.environmentId, threadId: delegated.id };
+      const sent = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        for (const link of [
+          `t3-thread://v2/${ref.environmentId}/${ref.threadId}`,
+          formatThreadLink(ref, "Delegated task"),
+          hostedThreadLink(ref),
+        ]) {
+          const read = yield* mcp
+            .readThread(client, { threadId: ThreadId.make(link) })
+            .pipe(Effect.flip);
+          assert.equal(read.code, "thread_not_found");
+          assert.include(read.message, `\`${delegated.id}\``);
+          assert.include(read.message, "is a thread link");
+          assert.notInclude(read.message, "no longer available");
+        }
+      }).pipe(Effect.provide(service([delegated], sent)));
+    }),
+  );
+
   it.effect("keeps the plain message for an id that matches nothing", () =>
     Effect.gen(function* () {
       const { read, send, wait } = yield* failuresFor([]);
@@ -4836,6 +4862,18 @@ describe("OrchestratorMcpService thread list", () => {
         { taskId: "sleep-600", kind: "command" as const, awaited: true as const },
       ],
     },
+    {
+      ...shell("thread:c-settled", "project:c", false),
+      settledOverride: "settled" as const,
+      settledAt: DateTime.makeUnsafe("2026-01-02T00:00:00Z"),
+    },
+    {
+      ...shell("thread:c-awaiting-command", "project:c", false),
+      activityRunStatus: null,
+      pendingBackgroundTasks: [
+        { taskId: "sleep-600", kind: "command" as const, awaited: true as const },
+      ],
+    },
   ];
   const shellRequests: Array<ReadonlyArray<ThreadId>> = [];
   const service = layerOrchestratorService.pipe(
@@ -4849,6 +4887,14 @@ describe("OrchestratorMcpService thread list", () => {
               shells.filter(
                 (thread) => input.projectId === undefined || thread.projectId === input.projectId,
               ),
+            ),
+          listActiveShellIndex: () =>
+            Effect.succeed(
+              shells.map((thread) => ({
+                ...thread,
+                mayBeLive: isLiveSubagentShell(thread),
+                hasRemoteTasks: false,
+              })),
             ),
           getShellSnapshot: (options) => {
             const threadIds = options?.threadIds ?? shells.map((thread) => thread.id);
@@ -4951,6 +4997,22 @@ describe("OrchestratorMcpService thread list", () => {
         listed.threads.map((thread) => thread.threadId),
         ["thread:a-awaiting-command"],
       );
+    }).pipe(Effect.provide(service)),
+  );
+
+  it.effect("skips building shells for settled threads when every status filter is live", () =>
+    Effect.gen(function* () {
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+      shellRequests.length = 0;
+      const listed = yield* mcp.listThreads(client, {
+        projectId: ProjectId.make("project:c"),
+        statuses: ["preparing", "queued", "starting", "running", "waiting"],
+      });
+      assert.deepStrictEqual(
+        listed.threads.map((thread) => thread.threadId),
+        ["thread:c-awaiting-command"],
+      );
+      assert.notInclude(shellRequests.flat(), ThreadId.make("thread:c-settled"));
     }).pipe(Effect.provide(service)),
   );
 
