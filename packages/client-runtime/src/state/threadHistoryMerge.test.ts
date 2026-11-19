@@ -252,6 +252,52 @@ describe("threadHistoryMerge", () => {
     expect(merged.visibleTurnItems).toEqual([]);
   });
 
+  it("shows the limit error and wake notification a snapshot retained for recovery", () => {
+    const recent = row(5);
+    const error = {
+      ...row(0).item,
+      type: "error" as const,
+      status: "failed" as const,
+      title: "Usage limit reached",
+      failure: { class: "usage_limit" as const, message: "Plan limit reached" },
+    };
+    const notification = {
+      ...row(1).item,
+      type: "notification" as const,
+      source: { kind: "delegated_task" as const, taskIds: [] },
+      outcome: "failed" as const,
+      summary: "Subagent failed",
+      detail: "full detail",
+    };
+    const { detail: _detail, ...stub } = notification;
+    const coldOpen = {
+      ...v2Projection,
+      turnItems: [error, stub, recent.item],
+      visibleTurnItems: [{ ...recent, position: 0 }],
+    } as unknown as typeof v2Projection;
+
+    const merged = mergeOlderHistoryIntoProjection(coldOpen, [
+      { ...row(0), item: error },
+      { ...row(1), item: notification },
+    ] as never);
+
+    expect(merged.visibleTurnItems.map((entry) => entry.item)).toEqual([
+      error,
+      notification,
+      recent.item,
+    ]);
+    expect(merged.turnItems).toEqual([error, notification, recent.item]);
+
+    // A live update that arrived after the page was fetched stays.
+    const live = { ...error, updatedAt: DateTime.makeUnsafe("2026-06-20T00:00:05.000Z") };
+    const kept = mergeOlderHistoryIntoProjection(
+      { ...coldOpen, turnItems: [live, recent.item] } as never,
+      [{ ...row(0), item: error }] as never,
+    );
+    expect(kept.turnItems).toContainEqual(live);
+    expect(kept.visibleTurnItems.map((entry) => entry.item)).toContainEqual(live);
+  });
+
   it("retains merged older rows when a live turn-item update arrives", () => {
     const recent = [row(2), row(3)];
     const projection = {

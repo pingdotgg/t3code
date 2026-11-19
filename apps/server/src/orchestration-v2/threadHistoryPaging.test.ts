@@ -9,6 +9,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -707,6 +708,126 @@ describe("threadHistoryPaging", () => {
       "interrupt-res",
     ]);
     expect(bounded.hasMoreHistory).toBe(true);
+  });
+
+  it("keeps a limited run resumable when later notification wakes outgrow the window", () => {
+    const limitedNode = NodeId.make("node-limited");
+    const limited = {
+      id: RunId.make("run-limited"),
+      ordinal: 1,
+      status: "failed",
+      startedAt: NOW,
+      completedAt: NOW,
+      rootNodeId: limitedNode,
+    };
+    const limitError = {
+      ...makeRow(0).item,
+      id: TurnItemId.make("limit-error"),
+      type: "error",
+      runId: limited.id,
+      nodeId: limitedNode,
+      status: "failed",
+      failure: {
+        class: "usage_limit",
+        message: "Plan limit reached.",
+        code: "usageLimitExceeded",
+        retryable: null,
+        resetAt: "2026-06-20T05:00:00.000Z",
+      },
+    } as unknown as OrchestrationV2TurnItem;
+    const wakes = Array.from({ length: 6 }, (_, index) => {
+      const nodeId = NodeId.make(`node-wake-${index}`);
+      const run = {
+        ...limited,
+        id: RunId.make(`run-wake-${index}`),
+        ordinal: index + 2,
+        status: "completed",
+        completedAt: DateTime.add(NOW, { seconds: index + 1 }),
+        rootNodeId: nodeId,
+      };
+      const row = makeRow(index + 1);
+      const item = {
+        ...row.item,
+        id: TurnItemId.make(`wake-notification-${index}`),
+        type: "notification",
+        runId: run.id,
+        nodeId,
+        source: { kind: "delegated_task", taskIds: [] },
+        outcome: "failed",
+        summary: "Subagent failed",
+        detail: "d".repeat(50_000),
+      } as unknown as OrchestrationV2TurnItem;
+      return { run, row: { ...row, sourceItemId: item.id, item } };
+    });
+    const rows = [{ ...makeRow(0), sourceItemId: limitError.id, item: limitError }].concat(
+      wakes.map(({ row }) => row),
+    );
+    const full = {
+      ...makeProjection(rows),
+      runs: [limited, ...wakes.map(({ run }) => run)],
+    } as unknown as ReturnType<typeof makeProjection>;
+    const bounded = buildBoundedThreadProjection({
+      projection: full,
+      snapshotSequence: 1,
+      policy: { maxItems: 2, maxEncodedBytes: 10_000_000 },
+    });
+
+    expect(bounded.projection.visibleTurnItems).toHaveLength(2);
+    expect(
+      usageLimitBlockedRun(bounded.projection.runs, bounded.projection.turnItems, null)?.id,
+    ).toBe(limited.id);
+    // Retained wake starts are stubs: a 50 KB notification detail must not reach the snapshot.
+    const visibleIds = new Set(bounded.projection.visibleTurnItems.map((row) => row.sourceItemId));
+    const retained = bounded.projection.turnItems.filter((item) => !visibleIds.has(item.id));
+    expect(retained.length).toBeGreaterThan(0);
+    expect(JSON.stringify(retained).length).toBeLessThan(10_000);
+
+    // Evidence past a quarter of the budget is dropped, so the snapshot stays within it. The
+    // visible rows carry no detail here, so they fit the budget on their own.
+    const slimRows = rows.map((row) => ({ ...row, item: { ...row.item, detail: "d" } }));
+    const tight = buildBoundedThreadProjection({
+      projection: {
+        ...makeProjection(slimRows as unknown as typeof rows),
+        runs: full.runs,
+      } as unknown as ReturnType<typeof makeProjection>,
+      snapshotSequence: 1,
+      policy: { maxItems: 2, maxEncodedBytes: 8_000 },
+    });
+    expect(
+      usageLimitBlockedRun(tight.projection.runs, tight.projection.turnItems, null),
+    ).toBeNull();
+    expect(boundedTimelineEncodedBytes(tight.projection)).toBeLessThanOrEqual(8_000);
+
+    // A user message started the run after the limit, so it did work even though only its
+    // later notification and the limit error are in the window.
+    const userStart = {
+      ...limitError,
+      id: TurnItemId.make("user-start"),
+      type: "user_message",
+      runId: wakes[5]!.run.id,
+      nodeId: wakes[5]!.run.rootNodeId,
+      ordinal: 0,
+      messageId: "message-user-start",
+      text: "a real request",
+      attachments: [],
+    } as unknown as OrchestrationV2TurnItem;
+    const userRows = [
+      { ...makeRow(0), position: -1, sourceItemId: userStart.id, item: userStart },
+      rows[0]!,
+      rows[6]!,
+    ];
+    const userRun = buildBoundedThreadProjection({
+      projection: {
+        ...makeProjection(userRows),
+        runs: [limited, wakes[5]!.run],
+        messages: [{ id: "message-user-start", runId: null, text: "p".repeat(50_000) }],
+      } as unknown as ReturnType<typeof makeProjection>,
+      snapshotSequence: 1,
+      policy: { maxItems: 2, maxEncodedBytes: 10_000_000 },
+    }).projection;
+    expect(usageLimitBlockedRun(userRun.runs, userRun.turnItems, null)).toBeNull();
+    // The stub classifies the run; it must not pull the full prompt past the budget.
+    expect(userRun.messages).toEqual([]);
   });
 
   it("charges local row.item duplication when measuring bounded timeline bytes", () => {

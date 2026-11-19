@@ -272,6 +272,50 @@ describe("thread execution presentation", () => {
       lastErrorClass: null,
     });
     expect(deriveResumableRunId(providerError, deriveThreadRuntime(providerError))).toBeNull();
+
+    // A notification wake that completes before the reset did no work and keeps the limit
+    // in place. One that completes after the reset is a real run and clears it.
+    const resetAt = "2026-07-28T11:00:00.000Z";
+    const limited = { ...item, failure: { ...item.failure, resetAt } };
+    const wake = {
+      ...run("wake", 2, "completed"),
+      rootNodeId: NodeId.make("wake-root"),
+      completedAt: DateTime.makeUnsafe("2026-07-28T10:30:00.000Z"),
+    };
+    const notification = {
+      ...item,
+      id: TurnItemId.make("wake-notification"),
+      runId: wake.id,
+      nodeId: wake.rootNodeId,
+      type: "notification" as const,
+      status: "completed" as const,
+      source: { kind: "delegated_task" as const, taskIds: [] },
+      outcome: "failed" as const,
+      summary: "Subagent failed",
+    };
+    const hidden = { ...v2Projection, runs: [failed, wake], turnItems: [limited, notification] };
+    expect(deriveThreadRuntime(hidden)).toMatchObject({
+      status: "failed",
+      lastErrorClass: "usage_limit",
+    });
+    expect(deriveResumableRunId(hidden, deriveThreadRuntime(hidden))).toBe(failed.id);
+    const afterReset = { ...wake, completedAt: DateTime.makeUnsafe("2026-07-28T11:30:00.000Z") };
+    expect(usageLimitBlockedRun([failed, afterReset], hidden.turnItems, null)).toBeNull();
+    // Manual Resume also starts from a notification; once it completes, it did the work.
+    const resumed = { ...wake, manualContinuationOfRunId: failed.id };
+    expect(usageLimitBlockedRun([failed, resumed], hidden.turnItems, null)).toBeNull();
+    // A wake on another provider ran there; the limited provider's failure stays behind it.
+    const otherProvider = { ...wake, providerInstanceId: ProviderInstanceId.make("other") };
+    expect(usageLimitBlockedRun([failed, otherProvider], hidden.turnItems, null)).toBeNull();
+    // A notification run that answered did work; it replaces the limited run as on main.
+    const answer = {
+      ...notification,
+      id: TurnItemId.make("wake-answer"),
+      type: "assistant_message",
+    };
+    expect(
+      usageLimitBlockedRun([failed, wake], [...hidden.turnItems, answer as never], null),
+    ).toBeNull();
   });
 
   it("keeps live activity attached to an executing run when a newer run is queued", () => {

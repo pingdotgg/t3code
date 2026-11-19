@@ -1,6 +1,6 @@
 import {
-  latestExecutedRun,
   latestRootProviderFailure,
+  latestRunIgnoringLimitedWakes,
   latestUnheldRun,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
@@ -320,7 +320,7 @@ export function deriveResumableRunId(
   projection: Pick<ThreadStructure, "runs" | "turnItems">,
   runtime: Pick<ThreadStructureRuntime, "lastErrorClass"> | null,
 ): RunId | null {
-  const run = latestExecutedRun(projection.runs);
+  const run = latestRunIgnoringLimitedWakes(projection.runs, projection.turnItems);
   if (run?.status === "interrupted") return run.id;
   return run?.status === "failed" &&
     runtime?.lastErrorClass === "usage_limit" &&

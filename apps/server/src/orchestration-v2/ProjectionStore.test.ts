@@ -1,6 +1,7 @@
 import * as NodeSqlite from "node:sqlite";
 
 import { assert, it, vi } from "@effect/vitest";
+import { usageLimitBlockedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import {
   EnvironmentId,
   EventId,
@@ -8695,7 +8696,222 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
       yield* assertSummary("Plan limit reached.", "usage_limit");
+      // A subagent that died on the same limit starts a notification wake that completes
+      // before the reset. It did no work, so the failed run stays the latest.
+      const wakeRunId = RunId.make("run:limit-shell:wake");
+      const wakeNodeId = NodeId.make("node:limit-shell:wake");
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:wake"),
+        type: "run.created",
+        threadId,
+        runId: wakeRunId,
+        nodeId: wakeNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: wakeRunId,
+          ordinal: original.ordinal + 4,
+          rootNodeId: wakeNodeId,
+          userMessageId: MessageId.make("message:limit-shell:wake"),
+          status: "completed",
+          startedAt: DateTime.add(now, { minutes: 1 }),
+          completedAt: DateTime.add(now, { minutes: 1 }),
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:wake-notification"),
+        type: "turn-item.updated",
+        threadId,
+        runId: wakeRunId,
+        nodeId: wakeNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("limit-shell:wake-notification"),
+          threadId,
+          runId: wakeRunId,
+          nodeId: wakeNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 4,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "notification",
+          source: { kind: "delegated_task", taskIds: [] },
+          outcome: "failed",
+          summary: "Subagent failed",
+        },
+      });
+      yield* assertSummary("Plan limit reached.", "usage_limit");
+      const wakeProjection = yield* store.getThreadProjection(threadId);
+      assert.equal(
+        ProjectionStore.threadShellFromProjection(wakeProjection).latestRunId,
+        original.id,
+      );
+      assert.equal(
+        (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)!.latestRunId,
+        original.id,
+      );
+      // A silent compaction that completes after the limit is not work either, in both shells.
+      const compactRunId = RunId.make("run:limit-shell:compaction");
+      const compactMessageId = MessageId.make("message:limit-shell:compaction");
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:compaction-message"),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "agent",
+          creationSource: "server",
+          id: compactMessageId,
+          threadId,
+          runId: compactRunId,
+          nodeId: null,
+          role: "user",
+          text: "/compact",
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:compaction"),
+        type: "run.created",
+        threadId,
+        runId: compactRunId,
+        nodeId: NodeId.make("node:limit-shell:compaction"),
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: compactRunId,
+          ordinal: original.ordinal + 5,
+          rootNodeId: NodeId.make("node:limit-shell:compaction"),
+          userMessageId: compactMessageId,
+          status: "completed",
+          startedAt: DateTime.add(now, { minutes: 2 }),
+          completedAt: DateTime.add(now, { minutes: 2 }),
+        },
+      });
+      const compactProjection = yield* store.getThreadProjection(threadId);
+      const compactShells = [
+        ProjectionStore.threadShellFromProjection(compactProjection),
+        (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)!,
+      ];
+      for (const shell of compactShells) assert.equal(shell.lastErrorClass, "usage_limit");
+      const compactSql = yield* SqlClient.SqlClient;
+      yield* compactSql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${compactRunId}`;
+      // Near misses: a wake completed after the reset, or a run a user message started, did work.
+      const assertLatest = Effect.fnUntraced(function* (runId: RunId) {
+        const projection = yield* store.getThreadProjection(threadId);
+        assert.equal(ProjectionStore.threadShellFromProjection(projection).latestRunId, runId);
+        assert.equal(
+          (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)!.latestRunId,
+          runId,
+        );
+      });
+      const updateWake = (tag: string, patch: Partial<(typeof wakeProjection.runs)[number]>) =>
+        store.apply({
+          id: EventId.make(`event:limit-shell:wake-${tag}`),
+          type: "run.updated",
+          threadId,
+          runId: wakeRunId,
+          nodeId: wakeNodeId,
+          driver,
+          occurredAt: now,
+          payload: { ...wakeProjection.runs.find((run) => run.id === wakeRunId)!, ...patch },
+        });
+      yield* updateWake("after-reset", {
+        completedAt: DateTime.makeUnsafe("2099-01-02T00:00:00.000Z"),
+      });
+      yield* assertLatest(wakeRunId);
+      // A wake on another provider ran there, so it is the latest run.
+      yield* updateWake("other-provider", {
+        providerInstanceId: ProviderInstanceId.make("other-provider"),
+      });
+      yield* assertLatest(wakeRunId);
+      yield* updateWake("before-reset", {});
+      yield* assertLatest(original.id);
+      // A wake that ran a command did work.
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:wake-command"),
+        type: "turn-item.updated",
+        threadId,
+        runId: wakeRunId,
+        nodeId: wakeNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("limit-shell:wake-command"),
+          threadId,
+          runId: wakeRunId,
+          nodeId: wakeNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 5,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "command_execution",
+          input: "true",
+          output: "",
+          exitCode: 0,
+        },
+      });
+      yield* assertLatest(wakeRunId);
+      yield* (yield* SqlClient.SqlClient)`
+        DELETE FROM orchestration_v2_projection_turn_items
+        WHERE turn_item_id = ${"limit-shell:wake-command"}
+      `;
+      yield* assertLatest(original.id);
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:wake-user-start"),
+        type: "turn-item.updated",
+        threadId,
+        runId: wakeRunId,
+        nodeId: wakeNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: TurnItemId.make("limit-shell:wake-user-start"),
+          threadId,
+          runId: wakeRunId,
+          nodeId: wakeNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 3,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "user_message",
+          messageId: MessageId.make("message:limit-shell:wake"),
+          inputIntent: "turn_start",
+          text: "a real request",
+          attachments: [],
+        },
+      });
+      yield* assertLatest(wakeRunId);
       const sql = yield* SqlClient.SqlClient;
+      yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${wakeRunId}`;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${aheadRunId}`;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${queuedRunId}`;
       yield* assertSummary("Plan limit reached.", "usage_limit");
@@ -9374,12 +9590,168 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           (detail) =>
             /^SEARCH (?:item|error) /.test(detail) && !detail.includes("(turn_item_id=?)"),
         );
-        assert.lengthOf(errorLookups, marker.includes("blocking") ? 2 : 1, marker);
+        assert.lengthOf(errorLookups, marker.includes("blocking") ? 3 : 2, marker);
         for (const errorLookup of errorLookups) {
           assert.include(errorLookup, "turn_items_failed_error_idx");
           assert.include(errorLookup, "(thread_id=? AND run_id=? AND node_id=?)");
         }
       }
+    }),
+  );
+
+  it.effect("snapshot windows keep the limited run that notification wakes hide", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("limit-window");
+      const original = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const base = { threadId, providerThreadId: null, providerTurnId: null, nativeItemRef: null };
+      yield* store.apply({
+        id: EventId.make("event:limit-window:error"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...base,
+          id: TurnItemId.make("limit-window:error"),
+          runId: original.id,
+          nodeId: original.rootNodeId,
+          parentItemId: null,
+          ordinal: 2,
+          status: "failed",
+          title: "Usage limit reached",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "error",
+          failure: {
+            class: "usage_limit",
+            message: "Plan limit reached.",
+            resetAt: "2099-01-01T00:00:00.000Z",
+            code: "usageLimitExceeded",
+            retryable: null,
+          },
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("event:limit-window:failed"),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...original, status: "failed", completedAt: now },
+      });
+      for (let index = 0; index < 6; index++) {
+        const runId = RunId.make(`run:limit-window:wake-${index}`);
+        const nodeId = NodeId.make(`node:limit-window:wake-${index}`);
+        const at = DateTime.add(now, { seconds: index + 1 });
+        yield* store.apply({
+          id: EventId.make(`event:limit-window:wake-${index}`),
+          type: "run.created",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          providerInstanceId,
+          occurredAt: at,
+          payload: {
+            ...original,
+            id: runId,
+            ordinal: original.ordinal + index + 1,
+            rootNodeId: nodeId,
+            userMessageId: MessageId.make(`message:limit-window:wake-${index}`),
+            status: "completed",
+            startedAt: at,
+            completedAt: at,
+          },
+        });
+        yield* store.apply({
+          id: EventId.make(`event:limit-window:wake-${index}:notification`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          occurredAt: at,
+          payload: {
+            ...base,
+            id: TurnItemId.make(`limit-window:wake-${index}`),
+            runId,
+            nodeId,
+            parentItemId: null,
+            ordinal: 10 + index,
+            status: "completed",
+            title: null,
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
+            type: "notification",
+            source: { kind: "delegated_task", taskIds: [] },
+            outcome: "failed",
+            summary: "Subagent failed",
+            detail: "d".repeat(5_000),
+          },
+        });
+      }
+
+      const { projection } = yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 3 });
+      assert.equal(
+        usageLimitBlockedRun(projection.runs, projection.turnItems, null)?.id,
+        original.id,
+      );
+      // A one-row window shows a later notice of the last wake but not its start. The start is
+      // read without its detail, and the wake still holds only inputs.
+      const lastWake = RunId.make("run:limit-window:wake-5");
+      const lastNode = NodeId.make("node:limit-window:wake-5");
+      const addToLastWake = (id: string, item: Record<string, unknown>) =>
+        store.apply({
+          id: EventId.make(`event:${id}`),
+          type: "turn-item.updated",
+          threadId,
+          runId: lastWake,
+          nodeId: lastNode,
+          driver,
+          occurredAt: now,
+          payload: {
+            ...base,
+            id: TurnItemId.make(id),
+            runId: lastWake,
+            nodeId: lastNode,
+            parentItemId: null,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            ...item,
+          } as never,
+        });
+      yield* addToLastWake("limit-window:wake-5:notice", {
+        ordinal: 100,
+        type: "notification",
+        source: { kind: "delegated_task", taskIds: [] },
+        outcome: "failed",
+        summary: "Another subagent failed",
+      });
+      const narrow = (yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 1 })).projection;
+      const start = narrow.turnItems.find((item) => item.id === "limit-window:wake-5");
+      assert.equal(start?.type, "notification");
+      assert.notProperty(start!, "detail");
+      assert.equal(usageLimitBlockedRun(narrow.runs, narrow.turnItems, null)?.id, original.id);
+      // Once the wake runs a command it did work, so it stays the latest run.
+      yield* addToLastWake("limit-window:wake-5:command", {
+        ordinal: 101,
+        type: "command_execution",
+        input: "true",
+        output: "",
+        exitCode: 0,
+      });
+      const worked = (yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 1 })).projection;
+      assert.isUndefined(worked.turnItems.find((item) => item.id === "limit-window:wake-5"));
+      assert.isNull(usageLimitBlockedRun(worked.runs, worked.turnItems, null));
+      assert.notInclude(
+        projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+        "limit-window:error",
+      );
     }),
   );
 

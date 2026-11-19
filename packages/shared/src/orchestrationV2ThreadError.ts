@@ -6,10 +6,15 @@ import type {
 import * as DateTime from "effect/DateTime";
 
 type ErrorTurnItem = Extract<OrchestrationV2TurnItem, { type: "error" }>;
-/** Only error items are read, so callers may pass items stripped of other fields. */
+/** Error items, run inputs and the run of other items are read, so callers may pass stripped items. */
 type FailureScanTurnItem =
   | ErrorTurnItem
-  | { readonly type: Exclude<OrchestrationV2TurnItem["type"], "error"> };
+  | {
+      readonly type: Exclude<OrchestrationV2TurnItem["type"], "error">;
+      readonly runId?: OrchestrationV2TurnItem["runId"];
+      readonly nodeId?: OrchestrationV2TurnItem["nodeId"];
+      readonly ordinal?: number;
+    };
 
 export function latestRootProviderFailure(
   run: OrchestrationV2Run | null,
@@ -95,12 +100,95 @@ export function runRanAfter(
   return end(run) === end(other) ? run.ordinal > other.ordinal : end(run) > end(other);
 }
 
+/**
+ * Subagents that die on a usage limit start notification runs that finish before the reset
+ * with no work to show. These candidates ran on the limited provider after its latest failure
+ * and before the reset; continuations and other providers' runs are never wakes.
+ */
+export function usageLimitWakeCandidates(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
+): ReadonlyArray<OrchestrationV2Run> {
+  const failed = latestExecutedRun(runs.filter((run) => run.status === "failed"));
+  const failure = latestRootProviderFailure(failed, turnItems);
+  if (failed === null || failure?.class !== "usage_limit" || failure.resetAt == null) return [];
+  const resetMs = Date.parse(failure.resetAt);
+  if (!Number.isFinite(resetMs)) return [];
+  return runs.filter(
+    (run) =>
+      run.status === "completed" &&
+      run.completedAt !== null &&
+      run.rootNodeId !== null &&
+      run.providerInstanceId === failed.providerInstanceId &&
+      DateTime.toEpochMillis(run.completedAt) <= resetMs &&
+      runRanAfter(run, failed) &&
+      run.manualContinuationOfRunId === undefined &&
+      run.usageLimitContinuationOfRunId === undefined &&
+      run.restartContinuationOfRunId === undefined,
+  );
+}
+
+/** Inputs, and the interrupt signal Stop leaves on the latest run, are not work. */
+export const NO_WORK_ITEM_TYPES: ReadonlySet<OrchestrationV2TurnItem["type"]> = new Set([
+  "user_message",
+  "notification",
+  "run_interrupt_request",
+]);
+
+/** The wake candidates a notification started; only those without any other item are wakes. */
+export function notificationStartedWakeCandidates(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
+): ReadonlyArray<OrchestrationV2Run> {
+  const candidates = usageLimitWakeCandidates(runs, turnItems);
+  if (candidates.length === 0) return candidates;
+  const firstInputs = new Map<string, { readonly type: string; readonly ordinal: number }>();
+  for (const item of turnItems) {
+    if (item.nodeId == null || item.ordinal == null) continue;
+    if (item.type !== "user_message" && item.type !== "notification") continue;
+    const first = firstInputs.get(item.nodeId);
+    if (first === undefined || item.ordinal < first.ordinal) {
+      firstInputs.set(item.nodeId, { type: item.type, ordinal: item.ordinal });
+    }
+  }
+  return candidates.filter(
+    (run) => run.rootNodeId !== null && firstInputs.get(run.rootNodeId)?.type === "notification",
+  );
+}
+
+/**
+ * Drops notification-started candidates that hold no work item, so they cannot replace the
+ * limited run. Callers must pass every item
+ * of notificationStartedWakeCandidates; other runs need only user_message, notification, error.
+ */
+function runsWithoutLimitedWakes(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
+): ReadonlyArray<OrchestrationV2Run> {
+  const started = notificationStartedWakeCandidates(runs, turnItems);
+  if (started.length === 0) return runs;
+  const worked = new Set<string>();
+  for (const item of turnItems) {
+    if (item.runId != null && !NO_WORK_ITEM_TYPES.has(item.type)) worked.add(item.runId);
+  }
+  const wakes = new Set(started.filter((run) => !worked.has(run.id)));
+  return wakes.size === 0 ? runs : runs.filter((run) => !wakes.has(run));
+}
+
+/** The latest executed run, not counting notification wakes that did no work before a reset. */
+export function latestRunIgnoringLimitedWakes(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<FailureScanTurnItem>,
+): OrchestrationV2Run | null {
+  return latestExecutedRun(runsWithoutLimitedWakes(runs, turnItems));
+}
+
 export function usageLimitBlockedRun(
   runs: ReadonlyArray<OrchestrationV2Run>,
   turnItems: ReadonlyArray<FailureScanTurnItem>,
   sessionError: string | null,
 ): OrchestrationV2Run | null {
-  const executed = latestExecutedRun(runs);
+  const executed = latestRunIgnoringLimitedWakes(runs, turnItems);
   if (executed?.status !== "failed") return null;
   const summary = threadErrorSummary(latestRootProviderFailure(executed, turnItems), sessionError);
   return summary.lastErrorClass === "usage_limit" ? executed : null;

@@ -3,6 +3,7 @@ import type {
   OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
 
 export type ThreadHistoryMeta = {
@@ -123,11 +124,17 @@ export function mergeOlderHistoryIntoProjection(
       (row.visibility === "local" || row.sourceThreadId === projection.thread.id)
     ) {
       const currentItem = turnItemById.get(String(row.sourceItemId));
-      // Hidden live items stay hidden. Snapshots also retain interrupt requests and
-      // pending request cards outside the visible window; their history page shows them.
+      // Hidden live items stay hidden. Snapshots also retain interrupt requests, pending
+      // request cards, and the error and run inputs that usage-limit recovery reads outside
+      // the visible window; their history page shows them.
       if (currentItem !== undefined) {
+        const recovery =
+          currentItem.type === "error" ||
+          currentItem.type === "notification" ||
+          currentItem.type === "user_message";
         if (
-          (currentItem.type !== "run_interrupt_request" &&
+          (!recovery &&
+            currentItem.type !== "run_interrupt_request" &&
             currentItem.type !== "approval_request" &&
             currentItem.type !== "user_input_request") ||
           !isOrchestrationV2TurnItemVisible({
@@ -138,7 +145,11 @@ export function mergeOlderHistoryIntoProjection(
           })
         )
           continue;
-        row = { ...row, item: currentItem };
+        // Retained inputs are stubs without their full text, so an equally recent page row
+        // restores it. A live update newer than the page stays.
+        if (recovery && DateTime.isGreaterThanOrEqualTo(row.item.updatedAt, currentItem.updatedAt))
+          turnItemById.set(String(row.sourceItemId), row.item);
+        else row = { ...row, item: currentItem };
       }
     }
     pageKeys.add(key);
