@@ -1591,6 +1591,30 @@ it.effect("does not choose a default Forgejo login across ambiguous SSH server p
     const alias = ForgejoCli.parseForgejoRemote("git@ssh.forgejo.local:maria/project.git");
     assert.isNotNull(alias);
     assert.isUndefined(ForgejoCli.matchForgejoLogin(logins, alias!, "forgejo.local:4000"));
+    // A login whose web host is the requested host wins over another login that only aliases it.
+    const sharedAlias = ForgejoCli.parseForgejoLogins(
+      yield* encodeJsonEffect([
+        {
+          name: "plain",
+          url: "https://forge.example.com",
+          ssh_host: "forge.example.com",
+          user: "maria",
+          default: "false",
+        },
+        {
+          name: "ported",
+          url: "https://forge.example.com:3000",
+          ssh_host: "forge.example.com",
+          user: "maria",
+          default: "false",
+        },
+      ]),
+    );
+    const sharedRemote = ForgejoCli.parseForgejoRemote("git@forge.example.com:owner/repo.git");
+    assert.strictEqual(
+      ForgejoCli.matchForgejoLogin(sharedAlias, sharedRemote!, "forge.example.com")?.name,
+      "plain",
+    );
     const refined = ForgejoSourceControlProvider.discovery.refineUnknownRemote({
       cwd: "/repo",
       context: {
@@ -1983,6 +2007,69 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
                 : "http://forgejo.local:3000",
               "whoami",
             ]);
+            return Effect.succeed(processOutput(""));
+          },
+        },
+      }),
+    ),
+  );
+});
+
+it.effect("reaches fj's server for a host named by an SSH config alias remote", () => {
+  const commands: string[] = [];
+  const requests: string[] = [];
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    for (const host of ["myforge", "forge.example.com"]) {
+      const result = yield* cli.api({
+        cwd: host === "myforge" ? "/alias" : "/direct",
+        repository: "owner/repo",
+        host,
+        path: "repos/owner/repo/issues",
+      });
+      assert.strictEqual(result.stdout, "[]");
+    }
+    assert.deepStrictEqual(requests, [
+      "https://forge.example.com/api/v1/repos/owner/repo/issues",
+      "https://forge.example.com/api/v1/repos/owner/repo/issues",
+    ]);
+    assert.notInclude(commands, "tea");
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({
+              hosts: { "forge.example.com": { type: "Application", token: "test-token" } },
+              aliases: { myforge: "forge.example.com" },
+            }),
+          ),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        requests.push(request.url);
+        assert.strictEqual(request.headers.authorization, "token test-token");
+        return Effect.succeed(HttpClientResponse.fromWeb(request, new Response("[]")));
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            commands.push(input.command);
+            if (input.command === "git")
+              return Effect.succeed(
+                processOutput(
+                  input.cwd === "/alias"
+                    ? "origin\tmyforge:owner/repo.git (fetch)\norigin\tmyforge:owner/repo.git (push)"
+                    : "origin\tgit@forge.example.com:owner/repo.git (fetch)",
+                ),
+              );
+            assert.strictEqual(input.command, "fj");
             return Effect.succeed(processOutput(""));
           },
         },

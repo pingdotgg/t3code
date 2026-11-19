@@ -187,13 +187,18 @@ export function matchForgejoLogin(
   requestedHost?: string,
   hostOnly = false,
 ) {
-  let matches = [
+  const candidates = (byAlias: boolean) => [
     ...new Map(
       logins
         .filter((login) => {
           const url = parseForgejoRemote(login.url);
           if (!url) return false;
-          if (requestedHost !== undefined && url.host !== requestedHost.toLowerCase()) return false;
+          if (requestedHost !== undefined) {
+            const requested = requestedHost.toLowerCase();
+            // An SSH alias that fj maps to a login names that login's server, after exact web hosts.
+            if (byAlias ? login.ssh_host?.toLowerCase() !== requested : url.host !== requested)
+              return false;
+          }
           return remote.ssh
             ? login.ssh_host?.toLowerCase() === remote.host ||
                 login.ssh_host?.toLowerCase() === remote.hostname ||
@@ -207,6 +212,8 @@ export function matchForgejoLogin(
         .map((login) => [login.name, login]),
     ).values(),
   ];
+  let matches = candidates(false);
+  if (matches.length === 0 && requestedHost !== undefined) matches = candidates(true);
   if (!remote.ssh && remote.path) {
     // A root login matches every path on its host; the instance mounted deepest owns the remote.
     const depth = (login: (typeof matches)[number]) =>
@@ -534,6 +541,7 @@ export const make = Effect.gen(function* () {
       referenceRemote ??
       (input.repository ? parseForgejoRemote(input.repository) : null) ??
       (input.context ? parseForgejoRemote(input.context.remoteUrl) : null);
+    let sshHost = false;
     if (!remote && (!input.repository || input.host)) {
       const result = yield* process
         .run({
@@ -555,19 +563,14 @@ export const make = Effect.gen(function* () {
           ),
         );
       if (input.host) {
-        const matchingUrls = [
-          ...new Set(
-            result.stdout.split("\n").flatMap((line) => {
-              // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-              const url = /^\S+\s+(https?:\/\/\S+)\s+\(fetch\)(?:\s+\[[^\]]+\])?$/.exec(
-                line.trim(),
-              )?.[1];
-              return url && parseForgejoRemote(url)?.host === input.host?.toLowerCase()
-                ? [url]
-                : [];
-            }),
-          ),
-        ];
+        const hostUrls = result.stdout.split("\n").flatMap((line) => {
+          // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
+          const url = /^\S+\s+(\S+)\s+\(fetch\)(?:\s+\[[^\]]+\])?$/.exec(line.trim())?.[1];
+          return url && parseForgejoRemote(url)?.host === input.host?.toLowerCase() ? [url] : [];
+        });
+        const matchingUrls = [...new Set(hostUrls.filter((url) => /^https?:\/\//i.test(url)))];
+        // An SSH config alias names its server only through the checkout's SSH remotes.
+        sshHost = !matchingUrls.length && hostUrls.some((url) => parseForgejoRemote(url)?.ssh);
         const origins = [...new Set(matchingUrls.map((url) => new URL(url).origin))];
         remoteUrl =
           matchingUrls.length === 1
@@ -589,7 +592,7 @@ export const make = Effect.gen(function* () {
       remote = {
         host: input.host.toLowerCase(),
         hostname: input.host.split(":")[0] ?? input.host,
-        ssh: false,
+        ssh: sshHost,
         path: remote?.path ?? "",
       };
     const schemeRemoteUrl = remote?.ssh ? input.context?.provider.baseUrl : remoteUrl;
