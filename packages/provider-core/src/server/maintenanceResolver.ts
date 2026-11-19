@@ -255,12 +255,32 @@ function isYarnGlobalCommandPath(commandPath: string): boolean {
  * Paths mise owns. npm globals under mise's own Node belong to npm, which proves their prefix.
  * A command wrapper is a symlink to the `mise` binary, which dispatches on argv[0].
  */
-function isMiseCommandPath(commandPath: string): boolean {
+function isMiseCommandPath(commandPath: string, env: NodeJS.ProcessEnv): boolean {
   const normalized = normalizeCommandPath(commandPath);
+  const dir = (root: string | undefined, ...segments: ReadonlyArray<string>) =>
+    root ? [normalizeCommandPath(root).replace(/\/+$/, ""), ...segments].join("/") : undefined;
+  // `MISE_DATA_DIR` and friends move mise's layout off its usual `/mise/` paths.
+  const installRoots = [
+    dir(env.MISE_DATA_DIR, "installs"),
+    dir(env.MISE_DATA_DIR, "i"),
+    dir(env.MISE_SYSTEM_DATA_DIR, "installs"),
+    dir(env.MISE_INSTALLS_DIR),
+    dir(env.MISE_INSTALL_STORE_DIR),
+    dir(env.MISE_SYSTEM_INSTALLS_DIR),
+  ];
+  const otherRoots = [
+    dir(env.MISE_DATA_DIR, "shims"),
+    dir(env.MISE_DATA_DIR, "command-wrappers"),
+    dir(env.MISE_SYSTEM_DATA_DIR, "shims"),
+  ];
+  const under = (root: string | undefined) =>
+    root !== undefined && normalized.startsWith(`${root}/`);
   return (
     (normalized.includes("/mise/installs/") && !normalized.includes("/mise/installs/node/")) ||
     normalized.includes("/mise/shims/") ||
-    normalized.includes("/mise/command-wrappers/")
+    normalized.includes("/mise/command-wrappers/") ||
+    installRoots.some((root) => under(root) && !under(dir(root, "node"))) ||
+    otherRoots.some(under)
   );
 }
 
@@ -626,7 +646,9 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
     const isShim = isMiseExecutablePath(context.realCommandPath);
     const looksMise =
-      isShim || commandPaths.some(isMiseCommandPath) || (yield* isMiseWrapperScript(context));
+      isShim ||
+      commandPaths.some((commandPath) => isMiseCommandPath(commandPath, context.env)) ||
+      (yield* isMiseWrapperScript(context));
     const manual = (installPath: string) =>
       makeManualOnlyProviderMaintenanceCapabilities({ ...owner, installPath });
     const notOwned = (installPath: string) => (looksMise ? manual(installPath) : null);
@@ -1090,7 +1112,7 @@ const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
  * or null when it does not. MacPorts prefixes are root-owned and its Claude port disables
  * `claude update`, so neither npm nor the native updater can upgrade these installs.
  */
-const resolveMacPortsOwner = Effect.fn("resolveMacPortsOwner")(function* (
+export const resolveMacPortsOwner = Effect.fn("resolveMacPortsOwner")(function* (
   context: ProviderMaintenanceResolutionContext,
 ) {
   if (context.platform === "win32") return null;
