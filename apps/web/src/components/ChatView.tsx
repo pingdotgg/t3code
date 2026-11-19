@@ -3766,9 +3766,7 @@ export default function ChatView(props: ChatViewProps) {
                                   activeProjectDefaultModelSelection
                                 }
                                 threadDefaultModelSelection={
-                                  !isServerThread && draftThread
-                                    ? draftDefaultModelSelection
-                                    : activeProjectSettings.settings.defaultModelSelection
+                                  activeProjectSettings.settings.defaultModelSelection
                                 }
                                 activeThreadModelSelection={activeThread?.modelSelection}
                                 activeProjectId={activeProject?.id ?? null}
