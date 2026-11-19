@@ -94,12 +94,21 @@ const evaluate = async (url: string): Promise<ReadonlyArray<unknown>> => {
   const loaded = (await import(url)) as { readonly default?: unknown };
   // A file may also export what it defines, which is how one passes on what another file made.
   const exported = loaded.default;
-  if (exported !== undefined && !Array.isArray(exported)) {
+  // One workflow exported by itself is as good as a list of one.
+  const listed =
+    exported === undefined
+      ? []
+      : Array.isArray(exported)
+        ? exported
+        : registered.includes(exported)
+          ? [exported]
+          : undefined;
+  if (listed === undefined) {
     throw new Error(
-      "The default export is not a list of workflows. Call T3.workflow(…), or export a list of what it returned.",
+      "The default export is not a workflow or a list of them. Call T3.workflow(…), or export what it returned.",
     );
   }
-  return [...new Set([...registered, ...(exported ?? [])])];
+  return [...new Set([...registered, ...listed])];
 };
 
 /**

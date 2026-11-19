@@ -130,8 +130,11 @@ it.effect(
           (yield* workflows.waitFor(still.runId, (run) => run.status === "completed")).result,
           "hello",
         );
-        // And fixes it, saying something else.
-        yield* fileSystem.writeFileString(at("greet.ts"), greet("hi"));
+        // And fixes it, saying something else, this time as the file's one default export.
+        yield* fileSystem.writeFileString(
+          at("greet.ts"),
+          greet("hi").replace("\nworkflow(", "\nexport default workflow("),
+        );
         yield* problem(false);
         const fixed = yield* workflows.start("greet", {}, { idempotencyKey: "g3" });
         assert.equal(
