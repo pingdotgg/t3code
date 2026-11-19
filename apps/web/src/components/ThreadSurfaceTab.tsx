@@ -288,7 +288,10 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
     // Outside a Git repository it opens on its empty state.
     diff: (context.isServerThread || context.threadless) && context.gitCwd !== null,
     "pull-request": pullRequestTarget !== null,
-    "pull-requests": context.isServerThread && serverConfigLoaded && linkedCount > 0,
+    "pull-requests":
+      context.isServerThread &&
+      serverConfigLoaded &&
+      (linkedCount > 0 || (shell?.issues?.length ?? 0) > 0),
     device: true,
     "side-chat": sideChat.available,
   };
