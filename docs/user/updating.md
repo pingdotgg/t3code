@@ -4,6 +4,15 @@ The app you use and the server running your agents can be on different machines.
 When a server is behind your web or desktop app, the update button at the bottom
 of the sidebar and **Settings → Environments** offer to update it.
 
+## Check for updates
+
+Checking for updates from the sidebar's update button, **Settings → About**, or
+the desktop app menu checks the desktop app you are using, every connected
+server, and every provider on those servers. On your phone, use **Settings →
+About → Check for Updates**. Ada then lists each result: up to date, the version
+available, or why it could not check. When updates are already waiting, the
+sidebar button opens them and checks again while the list is open.
+
 ## Update everything at once
 
 The update button at the bottom of the sidebar updates every connected machine

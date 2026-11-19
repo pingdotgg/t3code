@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
+import { msg, useMessages } from "gt-react";
 import { type ReactNode, useSyncExternalStore } from "react";
 
+import type { MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom } from "~/state/server";
@@ -18,6 +20,7 @@ import {
 } from "./updateEverything.logic";
 import {
   dismissSettledUpdateRunMachines,
+  hideHandedOffUpdateRun,
   postponeUpdateRestart,
   retryFailedUpdateRunServers,
 } from "./updateEverythingRun";
@@ -44,15 +47,99 @@ function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<Updat
   }));
 }
 
-function localStatusLabel(run: UpdateEverythingRun, local: UpdateRunLocalState, now: number) {
+function localStatusLabel(
+  run: UpdateEverythingRun,
+  local: UpdateRunLocalState,
+  now: number,
+  resolve: MessageResolver,
+) {
   if (run.phase === "countdown" && run.restartAt !== null) {
-    return `restarts in ${Math.max(0, Math.ceil((run.restartAt - now) / 1000))}s`;
+    return resolve(
+      msg("restarts in {seconds}s", {
+        seconds: Math.max(0, Math.ceil((run.restartAt - now) / 1000)),
+      }),
+    );
   }
-  if (run.phase === "installing") return "restarting";
+  if (run.phase === "installing") return resolve(msg("restarting"));
   if (local?.status === "downloading") {
-    return `downloading${local.percent === null ? "" : ` ${Math.floor(local.percent)}%`}`;
+    return local.percent === null
+      ? resolve(msg("downloading"))
+      : resolve(msg("downloading {percent}%", { percent: Math.floor(local.percent) }));
   }
-  return "restarts after the servers";
+  return resolve(msg("restarts after the servers"));
+}
+
+interface UpdateRunProps {
+  readonly run: UpdateEverythingRun;
+  readonly local: UpdateRunLocalState;
+  readonly onRestart?: (() => Promise<void>) | undefined;
+}
+
+function useUpdateRun(run: UpdateEverythingRun, local: UpdateRunLocalState) {
+  const machines = useUpdateRunMachineViews(run);
+  const hasActiveMachine = machines.some(
+    ({ status }) => status !== "done" && status !== "failed" && status !== "waiting",
+  );
+  const now = useNow(run.phase === "countdown" ? 1_000 : hasActiveMachine ? 30_000 : null);
+  const m = useMessages();
+  const view = describeUpdateCapsule(run, machines, local, now, m);
+  const updateServer = useServerUpdate();
+  const runAction = () => {
+    if (view.action === "later") postponeUpdateRestart();
+    else if (view.action === "retry") retryFailedUpdateRunServers(updateServer);
+    else dismissSettledUpdateRunMachines();
+  };
+  return {
+    machines,
+    now,
+    view,
+    runAction,
+    failed: machines.some(({ status }) => status === "failed"),
+    settled: !hasActiveMachine && run.localVersion === null,
+    // After a relaunch the run only waits on handed-off servers, which can take half an hour.
+    waitsOnHandoff:
+      run.localVersion === null &&
+      run.machines.some(({ result }) => result === null) &&
+      run.machines.every(
+        ({ result, handedOffVersion }) => result !== null || handedOffVersion !== null,
+      ),
+    label: view.slow ? `${view.label} ${view.slow.status} ${view.slow.elapsed}` : view.label,
+  };
+}
+
+/** The update control where the capsule does not fit: its icon opens the run's details. */
+export function UpdateRunButton({
+  run,
+  local,
+  onRestart,
+  icon,
+  className,
+  updateState,
+}: UpdateRunProps & {
+  readonly icon: ReactNode;
+  readonly className: string;
+  readonly updateState: string;
+}) {
+  const runView = useUpdateRun(run, local);
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            aria-label={runView.label}
+            data-update-state={updateState}
+            className={className}
+          />
+        }
+      >
+        {icon}
+      </PopoverTrigger>
+      <PopoverPopup side="bottom" align="end" padding="compact" width="sm">
+        <UpdateRunDetails run={run} local={local} onRestart={onRestart} runView={runView} />
+      </PopoverPopup>
+    </Popover>
+  );
 }
 
 export function SidebarUpdateCapsule({
@@ -60,29 +147,11 @@ export function SidebarUpdateCapsule({
   local,
   icon,
   onRestart,
-}: {
-  readonly run: UpdateEverythingRun;
-  readonly local: UpdateRunLocalState;
-  readonly icon: ReactNode;
-  readonly onRestart?: () => Promise<void>;
-}) {
-  const machines = useUpdateRunMachineViews(run);
-  const hasActiveMachine = machines.some(
-    ({ status }) => status !== "done" && status !== "failed" && status !== "waiting",
-  );
-  const now = useNow(run.phase === "countdown" ? 1_000 : hasActiveMachine ? 30_000 : null);
-  const view = describeUpdateCapsule(run, machines, local, now);
-  const updateServer = useServerUpdate();
-  const failed = machines.some(({ status }) => status === "failed");
-  const settled = !hasActiveMachine && run.localVersion === null;
-
+}: UpdateRunProps & { readonly icon: ReactNode }) {
+  const runView = useUpdateRun(run, local);
+  const { view, runAction } = runView;
   const actionLabel =
     view.action === "later" ? "Later" : view.action === "retry" ? "Retry" : "Dismiss";
-  const runAction = () => {
-    if (view.action === "later") postponeUpdateRestart();
-    else if (view.action === "retry") retryFailedUpdateRunServers(updateServer);
-    else dismissSettledUpdateRunMachines();
-  };
 
   return (
     <Popover>
@@ -97,9 +166,7 @@ export function SidebarUpdateCapsule({
           render={
             <button
               type="button"
-              aria-label={
-                view.slow ? `${view.label} ${view.slow.status} ${view.slow.elapsed}` : view.label
-              }
+              aria-label={runView.label}
               className="absolute inset-0 cursor-pointer rounded-full outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset"
             />
           }
@@ -127,57 +194,81 @@ export function SidebarUpdateCapsule({
         )}
       </div>
       <PopoverPopup side="top" align="end" padding="compact" width="sm">
-        <div className="flex flex-col gap-1 text-xs">
-          {run.localVersion !== null ? (
-            <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
-              <span className="text-muted-foreground tabular-nums">
-                {localStatusLabel(run, local, now)}
-              </span>
-            </div>
-          ) : onRestart ? (
-            <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
-              <Button size="xs" variant="outline" onClick={() => void onRestart()}>
-                Restart to update
-              </Button>
-            </div>
-          ) : null}
-          {machines.map(({ machine, status }) => (
-            <div key={machine.environmentId} className="flex min-w-0 flex-col">
-              <div className="flex items-center justify-between gap-3">
-                <span className="truncate">{machine.label}</span>
-                <span
-                  className={cn(
-                    "shrink-0 tabular-nums",
-                    status === "failed" ? "text-destructive" : "text-muted-foreground",
-                  )}
-                >
-                  {RUN_STATUS_LABELS[status]}
-                  {status !== "done" && status !== "failed" && status !== "waiting"
-                    ? ` ${formatUpdateElapsed(now - machine.startedAt)}`
-                    : ""}
-                </span>
-              </div>
-              {machine.failure !== null ? (
-                <span className="break-words text-muted-foreground">{machine.failure}</span>
-              ) : null}
-            </div>
-          ))}
-          {settled && failed ? (
-            <div className="mt-1 flex justify-end gap-1">
-              {view.action === "retry" ? (
-                <Button size="xs" variant="outline" onClick={runAction}>
-                  Retry
-                </Button>
-              ) : null}
-              <Button size="xs" variant="ghost" onClick={dismissSettledUpdateRunMachines}>
-                Dismiss
-              </Button>
-            </div>
-          ) : null}
-        </div>
+        <UpdateRunDetails run={run} local={local} onRestart={onRestart} runView={runView} />
       </PopoverPopup>
     </Popover>
+  );
+}
+
+function UpdateRunDetails({
+  run,
+  local,
+  onRestart,
+  runView: { machines, now, view, runAction, failed, settled, waitsOnHandoff },
+}: UpdateRunProps & { readonly runView: ReturnType<typeof useUpdateRun> }) {
+  const m = useMessages();
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      {run.localVersion !== null ? (
+        <div className="flex items-center justify-between gap-3">
+          <span>This app</span>
+          <span className="text-muted-foreground tabular-nums">
+            {localStatusLabel(run, local, now, m)}
+          </span>
+        </div>
+      ) : onRestart ? (
+        <div className="flex items-center justify-between gap-3">
+          <span>This app</span>
+          <Button size="xs" variant="outline" onClick={() => void onRestart()}>
+            Restart to update
+          </Button>
+        </div>
+      ) : null}
+      {machines.map(({ machine, status }) => (
+        <div key={machine.environmentId} className="flex min-w-0 flex-col">
+          <div className="flex items-center justify-between gap-3">
+            <span className="truncate">{machine.label}</span>
+            <span
+              className={cn(
+                "shrink-0 tabular-nums",
+                status === "failed" ? "text-destructive" : "text-muted-foreground",
+              )}
+            >
+              {RUN_STATUS_LABELS[status]}
+              {status !== "done" && status !== "failed" && status !== "waiting"
+                ? ` ${formatUpdateElapsed(now - machine.startedAt)}`
+                : ""}
+            </span>
+          </div>
+          {machine.failure !== null ? (
+            <span className="break-words text-muted-foreground">{machine.failure}</span>
+          ) : null}
+        </div>
+      ))}
+      {settled && failed ? (
+        <div className="mt-1 flex justify-end gap-1">
+          {view.action === "retry" ? (
+            <Button size="xs" variant="outline" onClick={runAction}>
+              Retry
+            </Button>
+          ) : null}
+          <Button size="xs" variant="ghost" onClick={dismissSettledUpdateRunMachines}>
+            Dismiss
+          </Button>
+        </div>
+      ) : view.action === "later" ? (
+        <div className="mt-1 flex justify-end">
+          <Button size="xs" variant="outline" onClick={runAction}>
+            Later
+          </Button>
+        </div>
+      ) : waitsOnHandoff ? (
+        <div className="mt-1 flex justify-end">
+          <Button size="xs" variant="ghost" onClick={hideHandedOffUpdateRun}>
+            Hide
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }

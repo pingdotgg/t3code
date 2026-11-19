@@ -1,19 +1,22 @@
+import { useGT } from "gt-react";
 import { MOBILE_APP_STORES } from "../../branding";
 import { AndroidIcon, AppleIcon } from "../Icons";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { QRCodeSvg } from "../ui/qr-code";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const STORE_ICONS = { ios: AppleIcon, android: AndroidIcon };
 
 export function MobileAppSettingsRow() {
+  const setting = useSearchableSetting();
+  const gt = useGT();
   if (MOBILE_APP_STORES.length === 0) return null;
   return (
     <SettingsRow
-      {...searchableSetting("mobile-app")}
-      description="Connect to your server from your phone or tablet."
+      {...setting("mobile-app")}
+      description={gt("Connect to your server from your phone or tablet.")}
       control={
         <div className="flex items-center gap-2">
           {MOBILE_APP_STORES.map(({ platform, label, store, url }) => {

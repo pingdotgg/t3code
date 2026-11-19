@@ -1,4 +1,4 @@
-import { msg, useMessages } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 
 import { Badge } from "../ui/badge";
 
@@ -24,12 +24,13 @@ function normalizeSettingsPathname(pathname: string): string {
 }
 
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
+  const gt = useGT();
   const m = useMessages();
   const normalizedPathname = normalizeSettingsPathname(pathname);
   const sectionLabel = SETTINGS_BREADCRUMB_LABELS[normalizedPathname] ?? null;
 
   return (
-    <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
+    <WorkspaceBreadcrumb ariaLabel={gt("Settings breadcrumb")}>
       {sectionLabel ? (
         <>
           <WorkspaceBreadcrumbItem>{m(SETTINGS_LABEL)}</WorkspaceBreadcrumbItem>

@@ -13,7 +13,10 @@ import {
 } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Option from "effect/Option";
+import { msg } from "gt-react-native";
 import * as Schema from "effect/Schema";
+
+import { m } from "../../i18n/messages";
 
 export function canMaintainEnvironment(session: AuthSessionState | null, connected: boolean) {
   return (
@@ -55,7 +58,11 @@ const decodeReleases = Schema.decodeUnknownOption(Schema.Array(Release));
 
 async function fetchReleases(url: string, accept: string, signal: AbortSignal) {
   const response = await fetch(url, { signal, headers: { Accept: accept } });
-  if (!response.ok) throw new Error(`Could not check releases (${response.status}). Try again.`);
+  if (!response.ok) {
+    throw new Error(
+      m(msg("Could not check releases ({status}). Try again.", { status: response.status })),
+    );
+  }
   return response;
 }
 
@@ -85,6 +92,7 @@ export async function findEnvironmentUpdate(currentVersion: string, signal: Abor
     if (releases.length < 100) break;
   }
 
-  if (version === undefined) throw new Error(`No ${channel} release was found.`);
+  if (version === undefined)
+    throw new Error(m(msg("No {channel} release was found.", { channel })));
   return compareSemverVersions(version, currentVersion) > 0 ? version : null;
 }

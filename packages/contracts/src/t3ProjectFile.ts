@@ -152,6 +152,15 @@ export const T3ProjectFile = Schema.Struct({
     'Git-ignored folders copied from the source checkout into each new worktree before setup runs (e.g. "node_modules" or "target"). Ada uses copy-on-write clones, which take almost no space, and skips this where the filesystem cannot clone.',
     "Repository-relative folder cloned into new worktrees.",
   ),
+  worktreeSparsePatternsPath: Schema.optionalKey(
+    trimmedNonEmpty(
+      {
+        description:
+          'Repository-relative path to a git sparse-checkout pattern file in non-cone syntax (e.g. ".t3/sparse-checkout"). New worktrees check out only the files it matches. Both files are read from the branch being checked out; a missing pattern file fails the worktree instead of checking out everything.',
+      },
+      T3_PROJECT_FILE_PATH_MAX_LENGTH,
+    ),
+  ),
   scripts: Schema.optionalKey(
     Schema.Array(T3ProjectFileScript)
       .annotate({

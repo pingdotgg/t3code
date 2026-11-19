@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -18,7 +19,6 @@ import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 
 const HOP_MARK = { ok: "✓", failed: "✕", unchecked: "–" } as const;
-const HOP_NOTE = { ok: "", failed: " · Failed", unchecked: " · Not checked" } as const;
 
 /** Same model as the web Settings row; null while connected, off, or not failed. */
 export function useConnectionDiagnosis(
@@ -46,6 +46,7 @@ export function ConnectionDiagnosisDetails(props: {
   readonly diagnosis: ConnectionDiagnosis;
   readonly onPairAgain?: (() => void) | undefined;
 }) {
+  const gt = useGT();
   const { diagnosis } = props;
   return (
     <View className="gap-3">
@@ -58,12 +59,18 @@ export function ConnectionDiagnosisDetails(props: {
               hop.result === "failed" ? "text-danger-foreground" : "text-foreground-muted",
             )}
           >
-            {`${HOP_MARK[hop.result]}  ${hop.label}${HOP_NOTE[hop.result]}`}
+            {hop.result === "failed"
+              ? gt("{mark}  {hop} · Failed", { mark: HOP_MARK[hop.result], hop: hop.label })
+              : hop.result === "unchecked"
+                ? gt("{mark}  {hop} · Not checked", { mark: HOP_MARK[hop.result], hop: hop.label })
+                : `${HOP_MARK[hop.result]}  ${hop.label}`}
           </Text>
         ))}
       </View>
       <View className="gap-0.5">
-        <Text className="text-sm font-t3-bold text-foreground">What to try</Text>
+        <Text className="text-sm font-t3-bold text-foreground">
+          <T>What to try</T>
+        </Text>
         {diagnosis.steps.map((step, index) => (
           <Text key={step} className="text-sm text-foreground-muted">
             {`${index + 1}. ${step}`}
@@ -77,7 +84,7 @@ export function ConnectionDiagnosisDetails(props: {
         <Button label="Pair again" icon="qrcode.viewfinder" onPress={props.onPairAgain} />
       ) : null}
       <Button
-        label="Copy diagnostics"
+        label={gt("Copy diagnostics")}
         icon="doc.on.doc"
         onPress={() => {
           copyTextWithHaptic(connectionDiagnosisText(props.hostLabel, diagnosis), {

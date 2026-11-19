@@ -46,7 +46,19 @@ export function hostedThreadLink(ref: ScopedThreadRef, origin: string): string {
 }
 
 /** The ids as written. Thread ids can hold percent escapes of their own, so they are not decoded. */
-export function parseThreadLinkHref(href: string): ThreadLink | null {
+export function parseThreadLinkHref(href: string, hostedAppUrl?: string): ThreadLink | null {
+  const hostedPrefix = hostedAppUrl === undefined ? null : `${hostedAppUrl}/threads/`;
+  if (hostedPrefix !== null && href.startsWith(hostedPrefix)) {
+    const match = /^([A-Za-z0-9_%-]+)\/([A-Za-z0-9_%-]+)$/.exec(href.slice(hostedPrefix.length));
+    if (!match) return null;
+    try {
+      const environmentId = Option.getOrNull(decodeEnvironmentId(decodeURIComponent(match[1]!)));
+      const threadId = Option.getOrNull(decodeThreadId(decodeURIComponent(match[2]!)));
+      return environmentId === null || threadId === null ? null : { environmentId, threadId };
+    } catch {
+      return null;
+    }
+  }
   if (href.startsWith(V1_PREFIX)) {
     const threadId = Option.getOrNull(decodeThreadId(href.slice(V1_PREFIX.length)));
     return threadId === null ? null : { environmentId: null, threadId };
@@ -153,15 +165,6 @@ export function threadLinkRefs(
   return [...refs.values()];
 }
 
-export function unknownThreadLinkLabel(
-  link: ThreadLink,
-  messageEnvironmentId: EnvironmentId,
-): string {
-  return link.environmentId === null || link.environmentId === messageEnvironmentId
-    ? "Thread no longer available"
-    : "Thread on another machine";
-}
-
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
 export function replaceThreadLinks(
   markdown: string,
@@ -175,36 +178,5 @@ export function replaceThreadLinks(
     const href = groups.angleHref ?? groups.href ?? groups.autolink;
     const link = href === undefined ? null : parseThreadLinkHref(href);
     return (link && replace(link, groups.label)) ?? source;
-  });
-}
-
-/**
- * Writes each link with its thread's current title. A link `title`
- * cannot resolve becomes plain text, its written label or a neutral one, except a labeled v1
- * link, which may open elsewhere.
- */
-export function relabelThreadLinks(
-  markdown: string,
-  messageEnvironmentId: EnvironmentId,
-  title: (ref: ScopedThreadRef) => string | undefined,
-): string {
-  return replaceThreadLinks(markdown, (written, label) => {
-    const environmentId = written.environmentId ?? messageEnvironmentId;
-    const decoded = percentDecodedThreadLinkId(written.threadId);
-    const threadId =
-      title({ environmentId, threadId: written.threadId }) === undefined &&
-      decoded !== null &&
-      title({ environmentId, threadId: decoded }) !== undefined
-        ? decoded
-        : written.threadId;
-    const current = title({ environmentId, threadId });
-    if (current === undefined) {
-      if (label !== undefined && written.environmentId === null) return undefined;
-      return label?.trim() || unknownThreadLinkLabel(written, messageEnvironmentId);
-    }
-    return formatThreadLink(
-      { environmentId: written.environmentId, threadId },
-      current.trim() || label || threadId,
-    );
   });
 }

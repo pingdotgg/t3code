@@ -179,7 +179,10 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     description: "Self-contained task for one delegated child agent/subagent.",
   }),
   profileId: Schema.optional(OrchestratorMcpProfileId),
-  target: Schema.optional(OrchestratorMcpTarget),
+  // Some providers send the whole target object as JSON text.
+  target: Schema.optional(
+    Schema.Union([OrchestratorMcpTarget, Schema.fromJsonString(OrchestratorMcpTarget)]),
+  ),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
   isolation: Schema.optional(
@@ -370,6 +373,8 @@ export const clampedPositiveInt = (maximum: number) =>
     ),
   );
 
+export const THREAD_LIST_CHILDREN_OF_MAX = 500;
+
 export const OrchestratorMcpThreadListInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   projectId: OrchestratorMcpProjectTarget,
@@ -381,6 +386,17 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
   settled: Schema.optional(Schema.Boolean),
   snoozed: Schema.optional(Schema.Boolean),
   includeSubagents: Schema.optional(Schema.Boolean),
+  childrenOf: Schema.optional(
+    Schema.Struct({
+      environmentId: EnvironmentId,
+      threadIds: Schema.Array(ThreadId).check(
+        Schema.isMinLength(1),
+        Schema.isMaxLength(THREAD_LIST_CHILDREN_OF_MAX),
+      ),
+    }).annotate({
+      description: "Only child chats of these threads on another environment.",
+    }),
+  ),
   cursor: Schema.optional(NonNegativeInt),
   limit: Schema.optional(clampedPositiveInt(100)),
 });

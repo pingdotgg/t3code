@@ -64,7 +64,7 @@ export class TailnetNameMissingError extends Schema.TaggedError<TailnetNameMissi
 export class DevServeFailedError extends Schema.TaggedError<DevServeFailedError>()(
   "DevServeFailedError",
   {
-    stage: Schema.Literals(["clear-existing", "serve"]),
+    stage: Schema.Literals(["read-existing", "clear-existing", "serve"]),
     webPort: Schema.Number,
     explanation: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
@@ -73,9 +73,11 @@ export class DevServeFailedError extends Schema.TaggedError<DevServeFailedError>
   override get message(): string {
     const port = String(this.webPort);
     const base =
-      this.stage === "clear-existing"
-        ? `could not clear the existing mapping for port ${port}. Run \`tailscale serve --https=${port} --set-path=/ off\` and retry`
-        : `could not serve port ${port} on the tailnet (it is no longer served; any previous mapping for it was cleared before this attempt)`;
+      this.stage === "read-existing"
+        ? `could not read the existing mapping for port ${port}, so it was left alone`
+        : this.stage === "clear-existing"
+          ? `could not clear the existing mapping for port ${port}. Run \`tailscale serve --https=${port} --set-path=/ off\` and retry`
+          : `could not serve port ${port} on the tailnet (it is no longer served; any previous mapping for it was cleared before this attempt)`;
     return this.explanation ? `${base}: ${this.explanation}` : base;
   }
 

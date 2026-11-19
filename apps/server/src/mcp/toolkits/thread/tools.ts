@@ -48,6 +48,11 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "mark_unread",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    follows: Schema.optional(
+      Schema.Struct({ settledBy: ThreadId, settledAt: IsoDateTime }).annotate({
+        description: "Set only by servers.",
+      }),
+    ),
   }),
   success: Schema.Union([
     OrchestrationV2DispatchCommandResult,

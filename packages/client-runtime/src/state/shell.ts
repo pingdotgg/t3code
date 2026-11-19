@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import {
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
@@ -85,7 +87,12 @@ function withoutDeferredPullRequests(value: DeferredShellSnapshot): Orchestratio
   return snapshot;
 }
 
-const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
+const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = msg("Could not synchronize environment data.");
+
+/** @public The shell's sync error in the active language; other messages stay as they are. */
+export function shellErrorText(error: string, resolve: MFunctionType = mFallback): string {
+  return error === SHELL_SYNCHRONIZATION_ERROR_MESSAGE ? resolve(error) : error;
+}
 
 /**
  * Replay does not refresh the older-settled cut, rows that left the newest window, or

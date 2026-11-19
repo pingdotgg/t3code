@@ -64,6 +64,8 @@ type Call = {
   readonly method: string;
   readonly args: ReadonlyArray<unknown>;
   readonly via: "app" | "link";
+  /** The settlement a linked machine was told the change follows. */
+  readonly follows?: unknown;
 };
 
 interface World {
@@ -76,6 +78,10 @@ interface World {
   card: Partial<OrchestrationV2AppThread>;
   /** Member handshakes this server ran again for the MacBook. */
   refreshes: number;
+  /** The filter of each thread list asked of the MacBook over the link. */
+  lists: Array<unknown>;
+  /** MacBook chats still working, which refuse a settle that follows their parent. */
+  busy: Set<string>;
 }
 
 const world = (): World => ({
@@ -83,6 +89,8 @@ const world = (): World => ({
   reachable: true,
   linkReachable: true,
   refreshes: 0,
+  lists: [],
+  busy: new Set(),
   card: { id: card, settledOverride: "settled", settledAt, deletedAt: null },
 });
 
@@ -105,6 +113,10 @@ const makeLayer = (
     readonly handshake?: AuthMcpClientAccess;
     /** The linked MacBook runs a version whose thread list has no parentEnvironmentId. */
     readonly legacyPeer?: boolean;
+    /** The linked MacBook lists remote parents but runs a version from before `childrenOf`. */
+    readonly beforeChildrenOf?: boolean;
+    /** The linked MacBook runs a version from before `follows`. */
+    readonly beforeFollows?: boolean;
   } = {},
 ) => {
   let link =
@@ -144,7 +156,31 @@ const makeLayer = (
           );
         }
         if (input.tool === "t3_thread_list") {
-          const threads = macBookThreads.map((thread) => ({
+          const filter = input.arguments.childrenOf as
+            | { readonly environmentId: string; readonly threadIds: ReadonlyArray<string> }
+            | undefined;
+          state.lists.push(filter ?? "all");
+          if (filter !== undefined && (options.legacyPeer === true || options.beforeChildrenOf)) {
+            return Effect.fail(
+              new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message: 'Unknown argument "childrenOf". Accepted arguments: allProjects, cursor.',
+              }),
+            );
+          }
+          // A chat launched from a linked machine carries `delegatedFrom`, which the real list
+          // leaves out unless subagents are asked for.
+          const listed =
+            filter !== undefined
+              ? macBookThreads.filter(
+                  (thread) =>
+                    thread.parentEnvironmentId === filter.environmentId &&
+                    filter.threadIds.includes(thread.parentThreadId),
+                )
+              : input.arguments.includeSubagents === false
+                ? []
+                : macBookThreads;
+          const threads = listed.map((thread) => ({
             threadId: thread.id,
             parentThreadId: options.legacyPeer === true ? null : thread.parentThreadId,
             ...(options.legacyPeer === true
@@ -162,10 +198,32 @@ const makeLayer = (
           } as never);
         }
         const action = input.arguments.action === "settle" ? "settleThread" : "unsettleThread";
+        const follows = input.arguments.follows;
+        if (follows !== undefined && options.beforeFollows === true) {
+          return Effect.fail(
+            new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: 'Unknown argument "follows". Accepted arguments: action, threadId.',
+            }),
+          );
+        }
+        if (
+          follows !== undefined &&
+          action === "settleThread" &&
+          state.busy.has(String(input.arguments.threadId))
+        ) {
+          return Effect.fail(
+            new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: "The thread is still working; it settles with its parent once it finishes.",
+            }),
+          );
+        }
         state.calls.push({
           method: action,
           args: [input.environmentId, input.arguments.threadId],
           via: "link",
+          ...(follows === undefined ? {} : { follows }),
         });
         return Effect.succeed({ sequence: 1 } as never);
       }),
@@ -404,6 +462,65 @@ it.effect("a card settles its children on a linked machine the app is not connec
     yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
     expect(targets(state.calls, "link")).toEqual(settledChildren);
   }).pipe(Effect.provide(layerWorker(state, { link: "full-access" })));
+});
+
+const childrenOfCard = { environmentId: devBox, threadIds: [card, "aged"] };
+
+it.effect.each([
+  { name: "a linked machine lists only the card's children", peer: {}, lists: [childrenOfCard] },
+  {
+    name: "a linked machine from before the parent filter lists all its chats instead",
+    peer: { beforeChildrenOf: true },
+    lists: [childrenOfCard, "all"],
+  },
+])("$name", ({ peer, lists }) => {
+  const state = world();
+  return Effect.gen(function* () {
+    yield* queue("settle");
+    yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    expect(targets(state.calls, "link")).toEqual(settledChildren);
+    expect(state.lists).toEqual(lists);
+  }).pipe(Effect.provide(layerWorker(state, { app: false, link: "full-access", ...peer })));
+});
+
+it.effect(
+  "a card's cascade over a link names the settlement it follows and waits for a busy child",
+  () => {
+    const state = world();
+    state.busy.add("under-card");
+    return Effect.gen(function* () {
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const effectId = `effect:settle-card:thread-settlement.remote:${macBook}`;
+      yield* queue("settle");
+      yield* worker.drain();
+      expect(targets(state.calls, "link")).toEqual(
+        settledChildren.filter((child) => !child.endsWith(":under-card")),
+      );
+      expect(yield* statusOf(effectId)).toBe("failed");
+      for (const call of state.calls) {
+        expect(call.follows).toEqual({ settledBy: card, settledAt: iso(0) });
+      }
+      // Once the child finishes, the next sweep settles it.
+      state.busy.clear();
+      state.calls.length = 0;
+      yield* TestClock.adjust("1 minute");
+      yield* worker.drain();
+      expect(targets(state.calls, "link")).toEqual(settledChildren);
+      expect(yield* statusOf(effectId)).toBe("succeeded");
+    }).pipe(Effect.provide(layerWorker(state, { app: false, link: "full-access" })));
+  },
+);
+
+it.effect("a linked machine from before follows takes the plain change", () => {
+  const state = world();
+  return Effect.gen(function* () {
+    yield* queue("settle");
+    yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+    expect(targets(state.calls, "link")).toEqual(settledChildren);
+    expect(state.calls.every((call) => call.follows === undefined)).toBe(true);
+  }).pipe(
+    Effect.provide(layerWorker(state, { app: false, link: "full-access", beforeFollows: true })),
+  );
 });
 
 it.effect("a parent on a machine with no app settles its children on a linked machine", () => {

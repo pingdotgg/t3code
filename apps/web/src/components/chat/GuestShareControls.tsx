@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   AuthOrchestrationOperateScope,
   type ChatAttachment,
@@ -70,6 +71,7 @@ export function GuestPendingMessages({
   readonly onImageExpand: (preview: ExpandedImagePreview) => void;
   readonly onFileOpen: (attachment: ChatFileAttachment) => void;
 }) {
+  const gt = useGT();
   const share = useThreadGuestShare(threadRef);
   const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
   const resolveGuestMessage = useOrchestrationCommand(threadEnvironment.resolveGuestMessage, {
@@ -90,7 +92,7 @@ export function GuestPendingMessages({
     }),
   );
   if (share === null || pending.length === 0) return null;
-  const guestName = share.guestName ?? "Guest";
+  const guestName = share.guestName ?? gt("Guest");
   const openImage = (attachment: ChatAttachment) => {
     const preview = buildExpandedImagePreview(
       images.map((image) => ({ ...image, previewUrl: imageUrlById.get(image.id) ?? "" })),
@@ -115,7 +117,10 @@ export function GuestPendingMessages({
   return (
     <ol
       className="chat-content-lane flex flex-col gap-4 pb-4"
-      aria-label={`${pending.length} guest message${pending.length === 1 ? "" : "s"} waiting`}
+      aria-label={gt(
+        "{count, plural, one {{count} guest message waiting} other {{count} guest messages waiting}}",
+        { count: pending.length },
+      )}
       aria-live="polite"
     >
       {pending.map((message) => {
@@ -147,18 +152,18 @@ export function GuestPendingMessages({
                   size="xs"
                   variant="ghost-muted"
                   disabled={busy}
-                  aria-label={`Dismiss message from ${guestName}`}
+                  aria-label={gt("Dismiss message from {guestName}", { guestName })}
                   onClick={() => void resolve(message.id, "dismiss")}
                 >
-                  Dismiss
+                  <T>Dismiss</T>
                 </Button>
                 <Button
                   size="xs"
                   disabled={busy}
-                  aria-label={`Send message from ${guestName}`}
+                  aria-label={gt("Send message from {guestName}", { guestName })}
                   onClick={() => void resolve(message.id, "send")}
                 >
-                  Send
+                  <T>Send</T>
                 </Button>
               </div>
             ) : null}

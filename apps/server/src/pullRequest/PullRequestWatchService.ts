@@ -3,6 +3,7 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
   type PullRequestUnavailableError,
+  type PullRequestWatchUntil,
 } from "@t3tools/contracts";
 import { threadPullRequestWatchesSuspended } from "@t3tools/shared/threadPullRequests";
 import * as Cause from "effect/Cause";
@@ -70,6 +71,7 @@ export class PullRequestWatchService extends Context.Service<
       readonly threadId: ThreadId;
       readonly target: PullRequestTarget;
       readonly watching: boolean;
+      readonly until?: PullRequestWatchUntil | undefined;
     }) => Effect.Effect<
       ResolvedTarget & {
         readonly watching: boolean;
@@ -109,6 +111,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly target: PullRequestTarget;
     readonly watching: boolean;
+    readonly until?: PullRequestWatchUntil | undefined;
   }) {
     const { watching } = input;
     const thread = yield* requireThread(input.threadId);
@@ -163,6 +166,7 @@ const make = Effect.gen(function* () {
         number: target.number,
         watching,
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
+        ...(watching && input.until !== undefined && { until: input.until }),
       })
       .pipe(
         Effect.catchCause((cause) =>

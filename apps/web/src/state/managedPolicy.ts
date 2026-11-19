@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "../i18n/messages";
 import type {
   EnvironmentId,
   ManagedPolicySummary,
@@ -72,6 +74,7 @@ export interface ManagedInstanceLocks {
 export function managedInstanceLocks(
   policy: ManagedPolicySummary | undefined,
   driver: ProviderDriverKind,
+  resolve: MessageResolver = m,
 ): ManagedInstanceLocks | undefined {
   const paths = policy?.limits?.providers?.lockedInstanceFields?.[driver];
   if (policy === undefined || paths === undefined || paths.length === 0) return undefined;
@@ -81,6 +84,6 @@ export function managedInstanceLocks(
     configKeys: fieldsUnder("config."),
     environmentNames: fieldsUnder("environment."),
     wholeEnvironment: paths.includes("environment"),
-    reason: `Managed by ${policy.organization}.`,
+    reason: resolve(msg("Managed by {organization}.", { organization: policy.organization })),
   };
 }

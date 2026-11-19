@@ -63,7 +63,7 @@ import {
   type AgentRunContextMenu,
   type AgentRunPendingWork,
 } from "./agents.logic";
-import { DesktopUpdateButton } from "../sidebar/SidebarUpdatePill";
+import { UpdateButton } from "../sidebar/SidebarUpdatePill";
 import { useToggleWorkspaceView } from "../sidebar/mainAppLocation";
 import { BrandMark } from "../BrandMark";
 import { openCommandPalette } from "../../commandPaletteBus";
@@ -350,7 +350,7 @@ export function AgentsBoard() {
             </button>
           </div>
           <div className="agents-topbar-group agents-topbar-icons">
-            <DesktopUpdateButton className="agent-icon-button agent-update-button" />
+            <UpdateButton className="agent-icon-button agent-update-button" />
             {pullRequestsSupported && (
               <TopbarIconLink
                 label="Pull Requests"
