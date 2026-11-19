@@ -18,7 +18,8 @@ const ERROR_STEP_TYPE = 17;
 // The harness error text leads the payload; a Go stack trace follows it.
 const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
-const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
+// A proxy error carries an HTTP status line or nothing where the gRPC status would be.
+const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]*)/s;
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
 // Claude rejects a saved thinking block without a valid signature. It sits in the native
 // history, so every later prompt to that session fails the same way.
@@ -163,7 +164,7 @@ function turnFailure(
     makeProviderFailure({
       class: rateLimited ? "usage_limit" : "provider_error",
       message: message!.trim(),
-      code: status ?? null,
+      code: status || null,
       retryable: rateLimited || Number(httpStatus) >= 500,
       resetAt: resetAtFrom(text, now) ?? null,
     }),
