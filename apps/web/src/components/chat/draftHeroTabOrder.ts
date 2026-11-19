@@ -8,7 +8,7 @@ function isShown(element: HTMLElement) {
 
 function projectRows(overlay: HTMLElement) {
   return Array.from(overlay.querySelectorAll<HTMLButtonElement>(PROJECT_ROW_SELECTOR)).filter(
-    (row) => !row.disabled && isShown(row),
+    (row) => row.tabIndex < 0 && !row.disabled && isShown(row),
   );
 }
 
@@ -23,11 +23,16 @@ function tabStopAfterEditor(overlay: HTMLElement, editor: HTMLElement) {
 }
 
 export function routeDraftHeroTab(
-  event: Pick<KeyboardEvent, "key" | "shiftKey" | "altKey" | "ctrlKey" | "metaKey" | "target">,
+  event: Pick<
+    KeyboardEvent,
+    "key" | "shiftKey" | "altKey" | "ctrlKey" | "metaKey" | "isComposing" | "target"
+  >,
   overlay: HTMLElement,
   focusEditor: () => void,
 ): boolean {
-  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return false;
+  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) {
+    return false;
+  }
   const target = event.target;
   if (!(target instanceof HTMLElement)) return false;
   const rows = projectRows(overlay);

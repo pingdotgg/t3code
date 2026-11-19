@@ -7,36 +7,46 @@ import { moveDraftHeroRowFocus, routeDraftHeroTab } from "./draftHeroTabOrder";
 function DraftHero() {
   const focusEditor = () => document.querySelector<HTMLElement>("[contenteditable]")?.focus();
   return (
-    <div
-      onKeyDown={(event) => {
-        if (routeDraftHeroTab(event.nativeEvent, event.currentTarget, focusEditor)) {
-          event.preventDefault();
-        }
-      }}
-    >
+    <>
+      <button type="button">Header</button>
       <div
-        role="list"
-        data-draft-hero-projects=""
         onKeyDown={(event) => {
-          if (moveDraftHeroRowFocus(event.nativeEvent, event.currentTarget)) event.preventDefault();
+          if (routeDraftHeroTab(event.nativeEvent, event.currentTarget, focusEditor)) {
+            event.preventDefault();
+          }
         }}
       >
-        {["alpha", "beta", "gamma"].map((name) => (
-          <div role="listitem" key={name}>
-            <button type="button" aria-current={name === "beta" ? "true" : undefined}>
-              {name}
-            </button>
-            <div>
-              <button type="button">Pin {name}</button>
+        <div
+          role="list"
+          data-draft-hero-projects=""
+          onKeyDown={(event) => {
+            if (moveDraftHeroRowFocus(event.nativeEvent, event.currentTarget))
+              event.preventDefault();
+          }}
+        >
+          {["alpha", "beta", "gamma"].map((name) => (
+            <div role="listitem" key={name}>
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-current={name === "beta" ? "true" : undefined}
+              >
+                {name}
+              </button>
+              <div>
+                <button type="button" tabIndex={-1}>
+                  Pin {name}
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
+        <div data-chat-composer-stack="">
+          <div contentEditable="true" suppressContentEditableWarning aria-label="Message" />
+          <button type="button">Send</button>
+        </div>
       </div>
-      <div data-chat-composer-stack="">
-        <div contentEditable="true" suppressContentEditableWarning aria-label="Message" />
-        <button type="button">Send</button>
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -59,6 +69,11 @@ describe("draft hero Tab order", () => {
     await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
     await expect.element(beta).toHaveFocus();
     await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+    await expect.element(editor).toHaveFocus();
+
+    await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+    await expect.element(screen.getByRole("button", { name: "Header" })).toHaveFocus();
+    await userEvent.keyboard("{Tab}");
     await expect.element(editor).toHaveFocus();
   });
 });
