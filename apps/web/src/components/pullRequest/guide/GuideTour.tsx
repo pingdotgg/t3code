@@ -1,4 +1,5 @@
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuide } from "@t3tools/contracts";
+import { T, Var } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
@@ -68,7 +69,12 @@ export function GuideTour({
   });
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLElement>(null);
   const goTo = (next: number) => {
+    const focused = document.activeElement;
+    if (scrollRef.current?.contains(focused) && !railRef.current?.contains(focused)) {
+      scrollRef.current.focus({ preventScroll: true });
+    }
     update((current) => ({
       position: next,
       seen: next > position ? new Set(current.seen).add(position) : current.seen,
@@ -81,11 +87,13 @@ export function GuideTour({
   const stepFromKey = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || isCommandPaletteOpen()) return;
     if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-    if (event.key !== "j" && event.key !== "k") return;
+    const key = event.key.toLowerCase();
+    if (key !== "j" && key !== "k") return;
     if (isEditableFocused(event.target)) return;
     event.preventDefault();
-    step(event.key === "j" ? 1 : -1);
+    step(key === "j" ? 1 : -1);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document keydown listener for j/k tour stepping while the guide is active
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => stepFromKey(event);
@@ -94,20 +102,29 @@ export function GuideTour({
   }, [active]);
 
   return (
-    <div ref={scrollRef} className="@container/guide h-full overflow-y-auto scrollbar-gutter-both">
+    <div
+      ref={scrollRef}
+      tabIndex={-1}
+      aria-keyshortcuts="J K"
+      className="@container/guide h-full overflow-y-auto scrollbar-gutter-both outline-none"
+    >
       <div className="mx-auto grid max-w-[100rem] gap-6 px-4 py-4 @min-[56rem]/guide:grid-cols-[16rem_minmax(0,1fr)] @min-[90rem]/guide:gap-8 @min-[90rem]/guide:px-6">
-        <aside className="sticky top-4 self-start @max-[56rem]/guide:hidden">
+        <aside ref={railRef} className="sticky top-4 self-start @max-[56rem]/guide:hidden">
           <GuideRail stops={guide.stops} position={position} seen={tour.seen} onSelect={goTo} />
         </aside>
         <main className="flex min-w-0 flex-col gap-4">
           {banner}
           {diff.error !== null ? (
             <p className="text-xs text-muted-foreground">
-              The diff could not be loaded, so excerpts are missing: {diff.error}
+              <T>
+                The diff could not be loaded, so excerpts are missing: <Var>{diff.error}</Var>
+              </T>
             </p>
           ) : null}
           {stop === null ? (
-            <p className="text-sm text-muted-foreground">This change has no files to tour.</p>
+            <p className="text-sm text-muted-foreground">
+              <T>This change has no files to tour.</T>
+            </p>
           ) : (
             <GuideStop
               key={position}

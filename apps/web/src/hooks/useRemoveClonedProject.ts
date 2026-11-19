@@ -1,6 +1,8 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useRouter } from "@tanstack/react-router";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { ScopedProjectRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
@@ -9,6 +11,7 @@ import { waitForProjectRemoval } from "../state/entities";
 import { projectEnvironment } from "../state/projects";
 import { useAtomCommand } from "../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { m } from "../i18n/messages";
 
 export function useRemoveClonedProject() {
   const router = useRouter();
@@ -18,9 +21,7 @@ export function useRemoveClonedProject() {
     const draftStore = useComposerDraftStore.getState();
     const result = await deleteProject({
       environmentId: projectRef.environmentId,
-      // Not forced: a project whose clone never landed has no threads, and
-      // if one appeared in the meantime the server refuses rather than
-      // silently deleting it.
+      // Leave deletion unforced so a thread created since the failed clone cannot be silently deleted.
       input: { projectId: projectRef.projectId },
     });
     if (result._tag === "Failure") {
@@ -28,15 +29,14 @@ export function useRemoveClonedProject() {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to remove project",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: m(msg("Failed to remove project")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
       return false;
     }
     await waitForProjectRemoval(projectRef);
-    // Read the route after the await: the user may have moved on while the
-    // delete was in flight, and only a draft of this project needs to go.
+    // Re-read the route after deletion; the user may have left this project.
     const routeParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
     const routeTarget = resolveThreadRouteTarget(routeParams);
     const viewingDraft =

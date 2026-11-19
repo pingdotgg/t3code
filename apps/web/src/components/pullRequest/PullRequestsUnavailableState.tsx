@@ -1,4 +1,5 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { T, useGT } from "gt-react";
 import { ExternalLinkIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -6,30 +7,29 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestsUnavailableState({
-  title = "Could not load pull requests",
+  title,
   error,
   onRetry,
   refreshing = false,
-  gitHubUrl,
+  host,
 }: {
   title?: string;
   error: string;
   onRetry?: () => void;
   refreshing?: boolean;
-  gitHubUrl?: string;
+  host?: { readonly url: string; readonly openLabel: string };
 }) {
+  const gt = useGT();
   return (
     <Empty className="scrollbar-gutter-both min-h-0 justify-center-safe overflow-y-auto [&>*]:shrink-0">
       <EmptyMedia variant="icon">
         <PullRequestGlyph.pullRequest />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>{title}</EmptyTitle>
-        {/* The caller names the fix — update the environment, install gh, sign in — so this
-            shows its message rather than trying to infer one from the failure text. */}
+        <EmptyTitle>{title ?? gt("Could not load pull requests")}</EmptyTitle>
         <EmptyDescription>{error}</EmptyDescription>
       </EmptyHeader>
-      {onRetry || gitHubUrl ? (
+      {onRetry || host ? (
         <div className="flex flex-wrap justify-center gap-2">
           {onRetry ? (
             <Button
@@ -40,17 +40,17 @@ export function PullRequestsUnavailableState({
               aria-busy={refreshing}
             >
               <RefreshIcon size="sm" refreshing={refreshing} />
-              Retry
+              <T>Retry</T>
             </Button>
           ) : null}
-          {gitHubUrl ? (
+          {host ? (
             <Button
               size="sm"
               variant="outline"
-              render={<a href={gitHubUrl} target="_blank" rel="noopener noreferrer" />}
+              render={<a href={host.url} target="_blank" rel="noopener noreferrer" />}
             >
               <ExternalLinkIcon aria-hidden className="size-3.5" />
-              Open on GitHub
+              {host.openLabel}
             </Button>
           ) : null}
         </div>

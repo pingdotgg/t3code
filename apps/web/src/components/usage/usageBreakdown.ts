@@ -6,6 +6,8 @@ import {
   type SpeedCost,
 } from "@t3tools/shared/usageMerge";
 
+import { msg } from "gt-react";
+
 import type { ShareSegment } from "./UsageShareBar";
 
 export function sortModelsByTokens(models: readonly ModelTotals[]) {
@@ -14,19 +16,13 @@ export function sortModelsByTokens(models: readonly ModelTotals[]) {
   );
 }
 
-/**
- * A model's share of the selected metric, or `null` for a cost share of an
- * unknown cost. An unpriced model still has a real token share.
- */
+/** Unknown cost yields null cost share; unpriced models still have token shares. */
 export function modelShare(model: ModelTotals, metric: "cost" | "tokens"): number | null {
   if (metric === "tokens") return model.tokenShare;
   return isModelCostUnknown(model) ? null : model.costShare;
 }
 
-/**
- * Share of a model's input read from cache, or `null` without input. Cache
- * writes count as misses: that input was processed in full.
- */
+/** Returns null without input; cache writes count as misses because input was fully processed. */
 export function cacheHitRate({ tokens }: ModelTotals): number | null {
   const input = tokens.uncachedInputTokens + tokens.cachedInputTokens + tokens.cacheCreationTokens;
   return input === 0 ? null : tokens.cachedInputTokens / input;
@@ -53,11 +49,15 @@ const TYPE_COLORS = {
 
 export function costTypeSegments(cost: CategoryCost): readonly ShareSegment[] {
   return [
-    { label: "Input", value: cost.input, color: TYPE_COLORS.input },
-    { label: "Cache read", value: cost.cacheRead, color: TYPE_COLORS.cacheRead },
-    { label: "Cache write", value: cost.cacheWrite, color: TYPE_COLORS.cacheWrite },
-    { label: "Output", value: cost.output, color: TYPE_COLORS.output },
-    { label: "Other", value: cost.unsplit >= 0.005 ? cost.unsplit : 0, color: TYPE_COLORS.other },
+    { label: msg("Input"), value: cost.input, color: TYPE_COLORS.input },
+    { label: msg("Cache read"), value: cost.cacheRead, color: TYPE_COLORS.cacheRead },
+    { label: msg("Cache write"), value: cost.cacheWrite, color: TYPE_COLORS.cacheWrite },
+    { label: msg("Output"), value: cost.output, color: TYPE_COLORS.output },
+    {
+      label: msg("Other"),
+      value: cost.unsplit >= 0.005 ? cost.unsplit : 0,
+      color: TYPE_COLORS.other,
+    },
   ];
 }
 
@@ -65,17 +65,17 @@ export function tokenTypeSegments(
   tokens: Omit<UsageTokenTotals, "reasoningTokens">,
 ): readonly ShareSegment[] {
   return [
-    { label: "Input", value: tokens.uncachedInputTokens, color: TYPE_COLORS.input },
-    { label: "Cache read", value: tokens.cachedInputTokens, color: TYPE_COLORS.cacheRead },
-    { label: "Cache write", value: tokens.cacheCreationTokens, color: TYPE_COLORS.cacheWrite },
-    { label: "Output", value: tokens.outputTokens, color: TYPE_COLORS.output },
+    { label: msg("Input"), value: tokens.uncachedInputTokens, color: TYPE_COLORS.input },
+    { label: msg("Cache read"), value: tokens.cachedInputTokens, color: TYPE_COLORS.cacheRead },
+    { label: msg("Cache write"), value: tokens.cacheCreationTokens, color: TYPE_COLORS.cacheWrite },
+    { label: msg("Output"), value: tokens.outputTokens, color: TYPE_COLORS.output },
   ];
 }
 
 export function speedCostSegments(cost: SpeedCost): readonly ShareSegment[] {
   return [
-    { label: "Standard", value: cost.standard, color: ink(34) },
-    { label: "Fast", value: cost.fast, color: ink(66) },
-    { label: "Ultrafast", value: cost.ultrafast, color: ink(100) },
+    { label: msg("Standard"), value: cost.standard, color: ink(34) },
+    { label: msg("Fast"), value: cost.fast, color: ink(66) },
+    { label: msg("Ultrafast"), value: cost.ultrafast, color: ink(100) },
   ];
 }

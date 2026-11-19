@@ -1,5 +1,6 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { providerColors } from "./providerColors";
 
 export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
   "codex",
@@ -9,9 +10,9 @@ export const PROVIDER_ORDER: readonly UsageProviderKind[] = [
   "opencode",
   "antigravity",
   "pi",
+  "muse",
 ];
 
-/** The usage series a provider driver reports under, or null for drivers without one. */
 export function usageProviderKind(driver: string): UsageProviderKind | null {
   if (driver === "claudeAgent") return "claude";
   return PROVIDER_ORDER.find((kind) => kind === driver) ?? null;
@@ -25,19 +26,11 @@ export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
   opencode: "OpenCode",
   antigravity: "Antigravity",
   pi: "Pi",
+  muse: "Muse Code",
 };
 
 export function useProviderColors(): Record<UsageProviderKind, string> {
-  const { themeAppearance: scheme } = useAppearancePreferences();
-  return {
-    claude: "#d97757",
-    codex: scheme === "dark" ? "#e6e6e6" : "#3c3c43",
-    grok: scheme === "dark" ? "#a1a1aa" : "#52525b",
-    cursor: "#8b8b8b",
-    opencode: "#5b9bbd",
-    antigravity: "#8c7bd1",
-    pi: "#4d9f8a",
-  };
+  return providerColors(useAppearancePreferences().themeAppearance);
 }
 
 export function useUsageMixColors() {

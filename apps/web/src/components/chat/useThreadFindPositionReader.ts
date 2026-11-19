@@ -1,5 +1,6 @@
 import { useLayoutEffect } from "react";
 import type { RunId } from "@t3tools/contracts";
+import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import type { TimelineEntry } from "../../session-logic";
 import {
   timelineTurnFoldRunIdsByEntryId,
@@ -7,11 +8,13 @@ import {
   type TimelineLatestRun,
 } from "./MessagesTimeline.logic";
 import type { ThreadFindPositionReader } from "./threadFind";
+import { attachThreadFindTimeline } from "./threadFindStore";
 import { readThreadFindPosition } from "./threadFindPosition";
 
-/** Publishes how to read the find position of the timeline's current viewport. */
+/** Hands thread find how to read the find position of this timeline's viewport. */
 export function useThreadFindPositionReader({
-  findPositionReaderRef,
+  threadKey,
+  navigate,
   timelineViewportElement,
   findFoldRunIds,
   timelineEntries,
@@ -19,10 +22,12 @@ export function useThreadFindPositionReader({
   runningRunId,
   isWorking,
   runlessWorkActive,
+  toolCallVisibility,
   rows,
   contentInsetEndAdjustment,
 }: {
-  readonly findPositionReaderRef: React.RefObject<ThreadFindPositionReader | null> | undefined;
+  readonly threadKey: string;
+  readonly navigate: () => void;
   readonly timelineViewportElement: HTMLDivElement | null;
   readonly findFoldRunIds: ReadonlyMap<string, RunId> | null;
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -30,11 +35,14 @@ export function useThreadFindPositionReader({
   readonly runningRunId: RunId | null;
   readonly isWorking: boolean;
   readonly runlessWorkActive: boolean;
+  readonly toolCallVisibility: ToolCallVisibility;
   readonly rows: MessagesTimelineRow[];
   readonly contentInsetEndAdjustment: number;
 }) {
+  // Layout effect so a find opened right after a thread switch reads this viewport.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the timeline viewport's position reader to the thread find registry
   useLayoutEffect(() => {
-    if (!findPositionReaderRef || !timelineViewportElement) return;
+    if (!timelineViewportElement) return;
     const read: ThreadFindPositionReader = (query) => {
       const foldRunIds =
         findFoldRunIds ??
@@ -44,6 +52,7 @@ export function useThreadFindPositionReader({
           runningRunId,
           isWorking,
           runlessWorkActive,
+          toolCallVisibility,
         });
       const entryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
       return readThreadFindPosition(
@@ -81,20 +90,19 @@ export function useThreadFindPositionReader({
         contentInsetEndAdjustment,
       );
     };
-    findPositionReaderRef.current = read;
-    return () => {
-      if (findPositionReaderRef.current === read) findPositionReaderRef.current = null;
-    };
+    return attachThreadFindTimeline({ threadKey, readPosition: read, navigate });
   }, [
     contentInsetEndAdjustment,
     findFoldRunIds,
-    findPositionReaderRef,
     isWorking,
+    navigate,
+    threadKey,
     latestRun,
     rows,
     runlessWorkActive,
     runningRunId,
     timelineEntries,
     timelineViewportElement,
+    toolCallVisibility,
   ]);
 }

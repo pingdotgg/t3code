@@ -1,5 +1,5 @@
 /**
- * Expo's GraphQL API for EAS Simulator sessions. The operations in
+ * Expo's GraphQL API for Expo Simulators sessions. The operations in
  * `ExpoApi.graphql` are the ones eas-cli's `simulator:*` commands send; their
  * client is generated from `schema/expo.graphql` (`vp run generate`).
  */
@@ -152,9 +152,6 @@ export interface CreateEasSessionInput {
   readonly maxIdleTimeMinutes: number;
 }
 
-const DEVICE_RUN_SESSIONS_GATE = "device-run-sessions";
-const isFeatureGates = Schema.is(Schema.Record(Schema.String, Schema.Unknown));
-
 /** Sends every operation with the resolved credential. */
 class ExpoAuth extends GraphQLMiddleware.Service<ExpoAuth>()("t3/server/device/ExpoApi/ExpoAuth") {}
 
@@ -173,13 +170,9 @@ const toExpoApiError = (
   const reason = error.reason;
   const status =
     reason._tag === "TransportError" || reason._tag === "ResponseError" ? reason.status : undefined;
-  // Expo refused: a request it never got, a 4xx, or GraphQL errors at a 2xx
-  // or 4xx that are the user's fault. Expo marks those `errorType: "USER"`
-  // and not `isTransient` (eas-cli's rule; Apollo's `code` says nothing, as
-  // Expo puts INTERNAL_SERVER_ERROR on user errors too) and answers them with
-  // `data: null`, since its mutations are non-null. GraphQL errors at a 5xx,
-  // beside data (the request ran), or that are Expo's own fault came from a
-  // request that may have run.
+  // Expo user errors have `errorType: "USER"`, no `isTransient`, and null data (eas-cli's rule).
+  // Apollo's `code` is unreliable: Expo also uses INTERNAL_SERVER_ERROR for user errors.
+  // GraphQL errors at 5xx, beside data, or caused by Expo may follow a request that ran.
   const errors = reason._tag === "ResponseError" ? reason.errors : [];
   const fault = errors.some(
     ({ extensions }) =>
@@ -316,18 +309,6 @@ export const makeExpoApi = (http: HttpClient.HttpClient, credential: ExpoCredent
             }),
       ),
     ),
-    availability: (appId: string) =>
-      call("check EAS Simulator access", (expo) =>
-        expo.T3EasSimulatorAvailability({ appId, filter: [DEVICE_RUN_SESSIONS_GATE] }),
-      ).pipe(
-        Effect.map(({ app }) => {
-          const gates = app.byId.ownerAccount.accountFeatureGates;
-          return {
-            account: app.byId.ownerAccount.name,
-            available: isFeatureGates(gates) && gates[DEVICE_RUN_SESSIONS_GATE] === true,
-          };
-        }),
-      ),
     create: (input: CreateEasSessionInput) =>
       call("start a simulator session", (expo) =>
         expo.T3CreateEasSimulatorSession({

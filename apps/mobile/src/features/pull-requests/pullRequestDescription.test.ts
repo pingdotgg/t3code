@@ -3,6 +3,26 @@ import { parseMarkdownDocument } from "../../lib/markdownDocument";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
 
 describe("pull request description content", () => {
+  it("ignores malformed image URLs while keeping the description and valid attachments", () => {
+    const result = pullRequestDescriptionContent(
+      parseMarkdownDocument(
+        [
+          "The pull request remains readable.",
+          "![Missing host](https://)",
+          "![Invalid host](<https://a b>)",
+          '<img src="https://:80" alt="Invalid port">',
+          "![Unsupported](file:///screenshots/local.png)",
+          "![Screenshot](http://example.com/screenshot.png)",
+        ].join("\n\n"),
+      ),
+    );
+
+    expect(result.attachments).toEqual([
+      { uri: "http://example.com/screenshot.png", caption: "Screenshot", kind: "image" },
+    ]);
+    expect(result.preview).toContain("The pull request remains readable.");
+  });
+
   it("keeps screenshot attachments and does not turn code examples or local paths into media", () => {
     const result = pullRequestDescriptionContent(
       parseMarkdownDocument(

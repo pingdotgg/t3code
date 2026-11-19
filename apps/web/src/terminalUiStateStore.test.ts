@@ -7,16 +7,23 @@ import {
   selectThreadTerminalUiState,
   useTerminalUiStateStore,
 } from "./terminalUiStateStore";
+import { DEFAULT_THREAD_TERMINAL_ID } from "./types";
 
 const THREAD_ID = ThreadId.make("thread-1");
 const THREAD_REF = scopeThreadRef("environment-a" as never, THREAD_ID);
 const OTHER_THREAD_REF = scopeThreadRef("environment-b" as never, THREAD_ID);
+const layout = () =>
+  selectThreadTerminalUiState(
+    useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+    THREAD_REF,
+  );
 
 describe("terminalUiStateStore actions", () => {
   beforeEach(() => {
     useTerminalUiStateStore.persist.clearStorage();
     useTerminalUiStateStore.setState({
       terminalUiStateByThreadKey: {},
+      serverObservationsByThreadKey: {},
       suppressedTerminalIdsByThreadKey: {},
     });
   });
@@ -138,6 +145,27 @@ describe("terminalUiStateStore actions", () => {
     ]);
   });
 
+  it.each([
+    ["terminal-3", "terminal-3", DEFAULT_THREAD_TERMINAL_ID],
+    [DEFAULT_THREAD_TERMINAL_ID, DEFAULT_THREAD_TERMINAL_ID, "terminal-3"],
+    ["terminal-3", DEFAULT_THREAD_TERMINAL_ID, "terminal-3"],
+  ])("keeps the split's tab when %s is active and %s closes", (activeId, closedId, nextId) => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.newTerminal(THREAD_REF, "terminal-2");
+    store.setActiveTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
+    store.splitTerminal(THREAD_REF, "terminal-3");
+    store.setActiveTerminal(THREAD_REF, activeId);
+    store.closeTerminal(THREAD_REF, closedId);
+
+    const terminalUiState = selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      THREAD_REF,
+    );
+    expect(terminalUiState.activeTerminalId).toBe(nextId);
+    expect(terminalUiState.activeTerminalGroupId).toBe(`group-${DEFAULT_THREAD_TERMINAL_ID}`);
+  });
+
   it("does not import a closed panel terminal from stale metadata", () => {
     const store = useTerminalUiStateStore.getState();
     store.newTerminal(THREAD_REF, "term-2");
@@ -159,5 +187,88 @@ describe("terminalUiStateStore actions", () => {
         THREAD_REF,
       ).terminalIds,
     ).toEqual(["term-2", "term-1"]);
+  });
+
+  it("drops terminals the server stops reporting but keeps ones it has not reported yet", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.newTerminal(THREAD_REF, "term-2");
+    store.newTerminal(THREAD_REF, "term-3");
+    const terminalIds = () =>
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds;
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "term-2"]);
+    expect(terminalIds()).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-2", "term-3"]);
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID]);
+    expect(terminalIds()).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-3"]);
+  });
+
+  it("preserves a vertical split while the terminals reattach to a restarted server", () => {
+    const store = useTerminalUiStateStore.getState();
+    const firstSnapshot = "manager-1";
+    const restartSnapshot = "manager-2";
+    store.setTerminalOpen(THREAD_REF, true);
+    store.splitTerminalVertical(THREAD_REF, "split");
+    const beforeRestart = layout();
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "split"], firstSnapshot);
+    store.reconcileTerminalIds(THREAD_REF, [], restartSnapshot);
+    expect(layout()).toEqual(beforeRestart);
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID], restartSnapshot);
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "split"], restartSnapshot);
+    expect(layout()).toEqual(beforeRestart);
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID], restartSnapshot);
+    expect(layout().terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+  });
+
+  it("drops a background terminal that closed before the drawer reloaded", async () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "old"], "manager-1");
+    const { name, storage } = useTerminalUiStateStore.persist.getOptions();
+    if (!name || !storage) throw new Error("Terminal layout storage is unavailable");
+    const saved = await storage.getItem(name);
+    if (!saved) throw new Error("Terminal layout was not saved");
+    store.removeTerminalUiState(THREAD_REF);
+    await storage.setItem(name, saved);
+    await useTerminalUiStateStore.persist.rehydrate();
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "new"], "manager-1");
+
+    expect(layout().terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "new"]);
+  });
+
+  it("keeps the surviving pane active when another client closes its split sibling", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.newTerminal(THREAD_REF, "first");
+    store.newTerminal(THREAD_REF, "second");
+    store.splitTerminalVertical(THREAD_REF, "split");
+    store.reconcileTerminalIds(THREAD_REF, ["first", "second", "split"]);
+
+    store.reconcileTerminalIds(THREAD_REF, ["first", "second"]);
+
+    expect(layout().activeTerminalId).toBe("second");
+    expect(layout().activeTerminalGroupId).toBe("group-second");
+  });
+
+  it("preserves a pending local split when another client opens a tab", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.reconcileTerminalIds(THREAD_REF, ["first"]);
+    store.splitTerminalVertical(THREAD_REF, "pending");
+
+    store.reconcileTerminalIds(THREAD_REF, ["first", "elsewhere"]);
+    store.reconcileTerminalIds(THREAD_REF, ["first", "elsewhere", "pending"]);
+
+    expect(layout().terminalGroups).toEqual([
+      { id: "group-first", terminalIds: ["first", "pending"], splitDirection: "vertical" },
+      { id: "group-elsewhere", terminalIds: ["elsewhere"] },
+    ]);
+    expect(layout().activeTerminalId).toBe("pending");
   });
 });

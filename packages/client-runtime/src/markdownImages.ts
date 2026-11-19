@@ -1,23 +1,21 @@
 import {
   isNetworkPath,
   isWindowsAbsolutePath,
-  stripSlashPrefixedWindowsDrive,
   workspaceRelativeFilePath,
 } from "@t3tools/shared/path";
 
 import {
+  markdownDestinationHostPath,
   normalizeMarkdownLinkDestination,
-  safeDecodeURIComponent,
   splitMarkdownLinkSearchAndHash,
 } from "@t3tools/shared/markdownLinks";
-import { parseFileUrlHref } from "@t3tools/shared/fileLinks";
 
 const DIRECT_IMAGE_SOURCE_PATTERN = /^(?:https?:|data:|blob:|\/\/)/i;
 const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 export type MarkdownImageSource =
   | { readonly _tag: "Direct"; readonly uri: string }
-  | { readonly _tag: "WorkspaceFile"; readonly path: string }
+  | { readonly _tag: "WorkspaceFile"; readonly path: string; readonly relative?: true }
   | { readonly _tag: "Blocked" };
 
 export function markdownImageSourceFragment(source: string): string {
@@ -59,19 +57,9 @@ export function classifyMarkdownImageSource(
     return { _tag: "Direct", uri: source };
   }
 
-  if (/^file:/i.test(source)) {
-    const target = parseFileUrlHref(source);
-    return target === null
-      ? { _tag: "Blocked" }
-      : hostFileSource(
-          stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(target.path)),
-          workspaceRoot,
-        );
-  }
-
-  const path = stripSlashPrefixedWindowsDrive(
-    safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(source).path),
-  );
+  const path = markdownDestinationHostPath(source);
+  if (path === null) return { _tag: "Blocked" };
+  if (/^file:/i.test(source)) return hostFileSource(path, workspaceRoot);
   if (path.length === 0) return { _tag: "Blocked" };
   if (path.startsWith("/") || isWindowsAbsolutePath(path)) {
     return hostFileSource(path, workspaceRoot);
@@ -81,5 +69,5 @@ export function classifyMarkdownImageSource(
   }
   if (!workspaceRoot) return { _tag: "Blocked" };
 
-  return { _tag: "WorkspaceFile", path: joinWorkspacePath(workspaceRoot, path) };
+  return { _tag: "WorkspaceFile", path: joinWorkspacePath(workspaceRoot, path), relative: true };
 }

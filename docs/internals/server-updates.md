@@ -1,17 +1,56 @@
 # Server updates
 
 A [stable launcher](../../apps/server/src/serviceLauncher.ts) owns the runtime
-selected by systemd or launchd. It is the only runtime writer of durable service
+selected by systemd, launchd, or Task Scheduler. It is the only runtime writer of durable service
 state. Server children request updates over inherited IPC; they never rewrite
 their service definition or select their own replacement. Local service commands
-may replace the launcher and state while the service is stopped. Foreground CLI
-processes do not self-update.
+may replace the launcher and state, optionally deferring the restart. Foreground
+CLI processes do not self-update.
+
+Both writers serialize state and unit writes through
+[file leases](../../apps/server/src/cloud/serviceSelectionLock.ts). The installer
+takes the state lease before the unit lease; the launcher never holds both, so a
+unit failure cannot block a durable commit. Manager stop/start commands run outside
+both leases, since stopping a launcher that waits on a lease would deadlock. A
+running launcher refuses further updates once a local command changes its selection.
+A protocol-3 launcher takes no lease, so a local command can still race its updates.
 
 Exact-version installs keep restarts independent of npm cache eviction or a moving
 release tag. Installation and preflight happen in staging before publishing an
 immutable runtime. Preflight checks the launcher protocol because a target that
-needs new rollback guarantees cannot safely run under an older launcher. Upgrading
-that launcher requires a local service update.
+needs new rollback guarantees cannot safely run under an older launcher. A remote
+update replaces only the child, so upgrading the launcher requires a local service
+update with a restart. Every installed launcher is therefore one protocol behind
+after a bump, and a target that refuses the previous protocol stops remote updates
+for every existing service. Refuse it only when the child cannot work under it.
+Protocol 4 changed the launcher alone, so its runtime still runs under protocol 3.
+The server names its launcher's protocol to preflight, not its own, since the two differ
+after the first such update.
+
+A client can stage the target early with `stageOnly`, which installs and preflights the
+runtime and restarts nothing. "Update everything" does this while provider installs run,
+because a restart would kill them. A server without the `serverUpdateStaging` capability
+ignores the flag and runs the whole update, so send it only to a server that advertises it.
+
+After a commit or rollback the launcher points the unit at the selected runtime and
+reloads the manager, so the next service start runs that version's launcher; the
+protocol check is what makes that safe. Each start after a finished update retries this, because
+a previous reload may have failed, and leaves a unit naming a newer runtime or another
+T3 home alone. A protocol-3 launcher does none of this: its unit keeps naming the
+runtime that installed it. Until a deferred local upgrade restarts, systemd (before
+daemon-reload) and launchd (before bootstrap) can respawn the old launcher, which
+rejects the state the new installer wrote.
+
+Task Scheduler tracks only the console host it started, not the launcher. `schtasks /End`
+kills that host and nothing else; the launcher takes its closed console as SIGTERM. The task
+reads as stopped at once, and `/Run` then starts a second launcher beside the first, so a
+Windows launcher holds a lock file for as long as it runs. A replacement waits for that lock,
+and the CLI treats its release as the stop having finished.
+
+Task Scheduler also runs its own copy of the task, and registering one enables it. So every
+write of the task file registers it, including an install that defers its restart. The CLI
+disables the task under the unit lease, and a registration under that lease keeps a disabled
+task disabled, so the repeating trigger cannot restart a service the CLI is holding stopped.
 
 ## Commit boundary
 
@@ -72,10 +111,19 @@ opt-out. The
 requires matching durable run, provider thread, session, and native resume identity.
 Queued runs never started, so recovery holds them and continues the run they wait
 behind. A settled run qualifies only when the restart cancels work the agent waits on
-(a monitor, subagent, or background task) and its session was live, so stale records
-from an older crash never wake it. Its continuation prompt is the note of what will not
-report back. A shell alone does not wake a settled run: most are dev servers nobody
-waits on, so that note waits for the next user message.
+(a subagent, a background task, or a shell or monitor the agent marked with
+`t3_background_wait`) and its session was live, so stale records from an older crash
+never wake it. Its continuation prompt is the note of what will not report back. An
+unmarked shell or monitor does not wake a settled run: most are dev servers and their
+watchdogs that nobody waits on, so that note waits for the next user message.
+
+A run is marked running before its provider accepts the prompt, so recovery treats a run
+without a provider turn as never started. A user's prompt the provider never received
+joins the held queue. With restart continuation on, a delegated, agent-sent, or scheduled
+prompt has nobody to review it, so recovery starts it again under the same run. The resend
+skips every thread and Stop that a continuation skips, and gives up after three tries so a
+start that crashes the server cannot loop. A crash after the provider received the prompt
+but before its turn was recorded can repeat that prompt.
 
 Recovery retires effects tied to the lost process and records continuation intent
 in the durable outbox. That intent survives another restart before provider startup.
@@ -90,8 +138,11 @@ and maintenance turns such as `/compact` before dispatching. Intent and delivery
 refuse a thread that is archived, settled, or still snoozed, a cut turn whose provider
 turn already ended, and a run waiting on the user: an approval, question, or secret that was pending,
 or that recovery closed on the cut turn. Message-capable questions stay answerable, so
-they do not block. Delivery also stops after three consecutive continuations in one
-`restartContinuationOfRunId` chain, so a turn that crashes the server cannot loop. Stable
+they do not block. New continuation intents persist a cumulative process-loss count;
+delivery stops before the fourth crash recovery of an unfinished turn, regardless
+of elapsed time. Planned shutdowns and completed turns reset it. A live continuation
+retains its preceding intent past outbox retention so cleanup cannot erase the count.
+Legacy intents without a count keep the five-minute chain guard. Stable
 command and message IDs prevent duplicate submissions after an outbox retry. Codex
 resumes without adding provider prompt text unless the turn lost background work;
 other adapters receive the continuation message through their normal turn path.

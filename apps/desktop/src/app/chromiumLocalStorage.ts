@@ -4,12 +4,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
-/**
- * It reads the database files directly and never takes LevelDB's lock, so it
- * works while another app version has the profile open. Live files come from
- * the MANIFEST that CURRENT names, and the newest sequence number wins, which
- * is how LevelDB itself resolves overwrites and deletions.
- */
+/** Read without LevelDB's lock so another app can keep the profile open. */
 
 const LOG_BLOCK_SIZE = 32 * 1024;
 const LOG_HEADER_SIZE = 7;
@@ -145,11 +140,7 @@ function decompressSnappy(input: Uint8Array): Uint8Array {
   return output;
 }
 
-/**
- * Like LevelDB's own reader, a corrupt record or zero padding skips the rest of
- * its block, since a reused log keeps appending after a torn write, and a
- * record cut off by the end of the file ends the log.
- */
+/** Corruption skips the remaining block; a truncated final record ends the log, matching LevelDB recovery. */
 function readLogRecords(bytes: Uint8Array): Uint8Array[] {
   const records: Uint8Array[] = [];
   let pending: Uint8Array[] | null = null;
@@ -422,9 +413,7 @@ export const readChromiumLocalStorage = Effect.fn("desktop.chromiumLocalStorage.
     }).pipe(wrap);
   }
 
-  // A flush while another process has the database open can move entries
-  // from a log we read into a table our MANIFEST copy predates. Fail so the
-  // caller retries rather than import a snapshot missing those entries.
+  // Concurrent flushes can move entries beyond this MANIFEST snapshot; detect changes so the caller retries.
   const currentAfter = textDecoderUtf8.decode(yield* readFile("CURRENT").pipe(wrap)).trim();
   const manifestAfter = yield* fs.stat(path.join(directory, current)).pipe(wrap);
   if (currentAfter !== current || Number(manifestAfter.size) !== manifest.length) {

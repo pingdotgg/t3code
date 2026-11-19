@@ -1,4 +1,5 @@
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
+import { parseUrl } from "./url.ts";
 
 export const PROMPT_LINK_MAX_PROMPT_LENGTH = 8_000;
 
@@ -34,14 +35,11 @@ export type PromptLinkResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: string };
 
-// Zero-width and bidi controls, tag and variation-selector blocks, and other characters that
-// render as nothing. A model reads them; the person checking the draft cannot see them, which
-// makes them the usual way to hide instructions in a prompt.
+// Hidden characters let models read instructions invisible to the person reviewing the prompt.
 const HIDDEN_CHARACTERS =
-  // oxlint-disable-next-line no-control-regex, no-misleading-character-class -- these are the characters it removes.
+  // oxlint-disable-next-line no-misleading-character-class -- these are the characters it removes.
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0D\uFEFF\uFFA0\uFFF0-\uFFFB\u{1BCA0}-\u{1BCA3}\u{1D173}-\u{1D17A}\u{E0000}-\u{E0FFF}]/gu;
-// Emoji and the pieces emoji sequences are built from: pictographs, symbols, skin tones, and the
-// emoji presentation selector. Numeric ranges, because Hermes lacks Unicode property escapes.
+// Numeric emoji ranges because Hermes lacks Unicode property escapes.
 const isEmojiPart = (codePoint: number | undefined) =>
   codePoint !== undefined &&
   ((codePoint >= 0x1f000 && codePoint <= 0x1faff) ||
@@ -104,45 +102,66 @@ export function promptLinkPullRequestUrl(pullRequest: PromptLinkPullRequest): st
   return `https://github.com/${pullRequest.owner}/${pullRequest.name}/pull/${pullRequest.number}`;
 }
 
-function readPrompt(params: URLSearchParams): PromptLinkResult<LinkedPrompt | null> {
+export type PromptLinkError =
+  | "prompt-too-long"
+  | "prompt-only-hidden"
+  | "unreadable-pull-request"
+  | "missing-prompt"
+  | "unreadable-repository";
+
+function englishPromptLinkError(error: PromptLinkError): string {
+  switch (error) {
+    case "prompt-too-long":
+      return `This prompt is longer than ${PROMPT_LINK_MAX_PROMPT_LENGTH.toLocaleString("en-US")} characters, so T3 Code did not open it.`;
+    case "prompt-only-hidden":
+      return "This prompt had only hidden characters, so it may be malicious. T3 Code did not open it.";
+    case "unreadable-pull-request":
+      return "This link names a pull request T3 Code cannot read.";
+    case "missing-prompt":
+      return "This link has no prompt.";
+    case "unreadable-repository":
+      return "This link names a repository T3 Code cannot read.";
+  }
+}
+
+function readPrompt(
+  params: URLSearchParams,
+  describe: (error: PromptLinkError) => string,
+): PromptLinkResult<LinkedPrompt | null> {
   const raw = params.get("prompt");
   if (raw === null) return { ok: true, value: null };
   if (raw.length > PROMPT_LINK_MAX_PROMPT_LENGTH) {
-    return {
-      ok: false,
-      error: `This prompt is longer than ${PROMPT_LINK_MAX_PROMPT_LENGTH.toLocaleString("en-US")} characters, so T3 Code did not open it.`,
-    };
+    return { ok: false, error: describe("prompt-too-long") };
   }
   const prompt = sanitizeLinkedPrompt(raw);
   if (prompt.text.length === 0 && prompt.hiddenCharacters > 0) {
-    return {
-      ok: false,
-      error:
-        "This prompt had only hidden characters, so it may be malicious. T3 Code did not open it.",
-    };
+    return { ok: false, error: describe("prompt-only-hidden") };
   }
   return { ok: true, value: prompt.text.length > 0 ? prompt : null };
 }
 
 const optionalParam = (params: URLSearchParams, key: string) => params.get(key)?.trim() || null;
 
-export function parseNewThreadLink(search: string): PromptLinkResult<NewThreadLink> {
+export function parseNewThreadLink(
+  search: string,
+  describe: (error: PromptLinkError) => string = englishPromptLinkError,
+): PromptLinkResult<NewThreadLink> {
   const params = new URLSearchParams(search);
-  const prompt = readPrompt(params);
+  const prompt = readPrompt(params, describe);
   if (!prompt.ok) return prompt;
   const pr = params.get("pr");
   if (pr !== null) {
     const pullRequest = parsePromptLinkPullRequest(pr);
     if (pullRequest === null) {
-      return { ok: false, error: "This link names a pull request T3 Code cannot read." };
+      return { ok: false, error: describe("unreadable-pull-request") };
     }
     return { ok: true, value: { kind: "pull-request", pullRequest, prompt: prompt.value } };
   }
-  if (prompt.value === null) return { ok: false, error: "This link has no prompt." };
+  if (prompt.value === null) return { ok: false, error: describe("missing-prompt") };
   const repo = params.get("repo");
   const repository = repo === null ? null : parsePromptLinkRepository(repo);
   if (repo !== null && repository === null) {
-    return { ok: false, error: "This link names a repository T3 Code cannot read." };
+    return { ok: false, error: describe("unreadable-repository") };
   }
   return {
     ok: true,
@@ -156,8 +175,11 @@ export function parseNewThreadLink(search: string): PromptLinkResult<NewThreadLi
   };
 }
 
-export function parseThreadLinkPrompt(search: string): PromptLinkResult<LinkedPrompt | null> {
-  return readPrompt(new URLSearchParams(search));
+export function parseThreadLinkPrompt(
+  search: string,
+  describe: (error: PromptLinkError) => string = englishPromptLinkError,
+): PromptLinkResult<LinkedPrompt | null> {
+  return readPrompt(new URLSearchParams(search), describe);
 }
 
 export function withoutPromptLinkParams(search: string): string {
@@ -191,8 +213,8 @@ export function promptLinkAppPath(
   value: string,
   hostedAppUrl: string = DEFAULT_HOSTED_APP_URL,
 ): string | null {
-  if (!URL.canParse(value)) return null;
-  const url = new URL(value);
+  const url = parseUrl(value);
+  if (!url) return null;
   if (APP_SCHEME.test(url.protocol)) {
     if (url.host === "new" && (url.pathname === "" || url.pathname === "/")) {
       return `/new${url.search}`;
@@ -200,9 +222,14 @@ export function promptLinkAppPath(
     const thread = url.host === "threads" ? THREAD_PATH.exec(url.pathname) : null;
     return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
   }
-  if (!URL.canParse(hostedAppUrl) || url.origin !== new URL(hostedAppUrl).origin) return null;
+  if (url.origin !== parseUrl(hostedAppUrl)?.origin) return null;
   if (url.pathname === "/new") return `/new${url.search}`;
-  const thread = url.searchParams.has("prompt") ? THREAD_PATH.exec(url.pathname) : null;
+  // The web app's own thread route is a link only with a prompt, so reloading a tab never asks.
+  const thread = url.pathname.startsWith("/threads/")
+    ? THREAD_PATH.exec(url.pathname.slice("/threads".length))
+    : url.searchParams.has("prompt")
+      ? THREAD_PATH.exec(url.pathname)
+      : null;
   return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
 }
 

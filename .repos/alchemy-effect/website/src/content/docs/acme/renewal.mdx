@@ -15,7 +15,7 @@ In the certificate from [Getting started](/acme/getting-started):
  const certificate = yield* ACME.Certificate("Site", {
    account,
    identifiers: ["example.com"],
-   solver: Cloudflare.DNS.AcmeSolver({
+   solver: Cloudflare.ACME.ZoneSolver({
      zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
    }),
 +  renewBefore: "30 days",
@@ -70,7 +70,7 @@ process needs explicit revocation after cutover.
  const certificate = yield* ACME.Certificate("Site", {
    account,
    identifiers: ["example.com"],
-   solver: Cloudflare.DNS.AcmeSolver({
+   solver: Cloudflare.ACME.ZoneSolver({
      zoneId: Config.String("CLOUDFLARE_ZONE_ID"),
    }),
 +  revokeOnDelete: true,

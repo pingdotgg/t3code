@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { ThreadPullRequestLink, type EnvironmentId, type PullRequestRef } from "@t3tools/contracts";
+import { useMessages } from "gt-react";
 import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import {
@@ -10,10 +11,11 @@ import { pullRequestStackAtom } from "./pullRequests";
 import { useEnvironmentQuery } from "./query";
 import { environmentThreadShells } from "./threads";
 
+const NOT_ANSWERED = Atom.make(false);
+
 const sameLinks = Schema.toEquivalence(Schema.Array(ThreadPullRequestLink));
 
-// A shell update re-sends a thread's links as a new array, so equal links keep
-// the previous list and a streaming thread does not re-render the stack.
+// Shell pushes recreate link arrays; reuse equal lists so streaming does not re-render the stack.
 const environmentPullRequestLinksAtom = Atom.family((environmentId: EnvironmentId) => {
   let previous: ReadonlyArray<ThreadPullRequestLink> = [];
   return Atom.make((get) => {
@@ -30,10 +32,19 @@ export function usePullRequestStack(
   environmentId: EnvironmentId,
   reference: PullRequestRef | null,
 ) {
+  const resolve = useMessages();
   const links = useAtomValue(environmentPullRequestLinksAtom(environmentId));
   const saved = reference === null ? null : savedPullRequestStack(links, reference);
   const query = useEnvironmentQuery(
     reference === null ? null : pullRequestStackAtom({ environmentId, input: reference }),
+    resolve,
   );
-  return { ...query, ...pullRequestStackView(query, saved) };
+  const answered = useAtomValue(
+    reference === null
+      ? NOT_ANSWERED
+      : pullRequestStackAtom.answered({ environmentId, input: reference }),
+  );
+  const view = pullRequestStackView(query, saved, resolve);
+  // A saved answer paints; merging waits for this session's own host answer.
+  return { ...query, ...view, isFresh: view.isFresh && answered };
 }

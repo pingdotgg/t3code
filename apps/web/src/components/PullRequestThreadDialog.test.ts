@@ -37,6 +37,16 @@ vi.mock("react", async (importOriginal) => ({
   useRef: (current: unknown) => ({ current }),
   useEffect: () => {},
 }));
+vi.mock("gt-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("gt-react")>()),
+  useGT:
+    () =>
+    (text: string, values: Record<string, unknown> = {}) =>
+      text.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key])),
+  useMessages: () => (text: string) => text,
+  T: ({ children }: { children: ReactNode }) => children,
+  Var: ({ children }: { children: ReactNode }) => children,
+}));
 vi.mock("@tanstack/react-pacer", () => ({
   useDebouncedValue: (value: unknown) => [value, { state: { isPending: false } }],
 }));
@@ -50,13 +60,13 @@ vi.mock("~/state/session", () => ({
       ? state.canOperate
       : scope === AuthSourceControlWriteScope && state.canWriteSourceControl,
 }));
-vi.mock("~/lib/sourceControlActions", async () => {
+vi.mock("~/state/sourceControlActions", async () => {
   const { usePreparePullRequestThreadAction } = await vi.importActual<
     typeof import("~/state/sourceControlActions")
   >("~/state/sourceControlActions");
   return {
     readCachedPullRequestResolution: () => null,
-    usePullRequestResolution: () => ({
+    usePullRequestResolutionState: () => ({
       data: { pullRequest: { number: 123, title: "Pull request", state: "open" } },
     }),
     usePreparePullRequestThreadAction,

@@ -24,8 +24,7 @@ const ComposerDropTarget = memo(function ComposerDropTarget({
   return <div data-drop-target ref={targetRef} />;
 });
 
-// Same target key, so the listener effect never re-runs: only the effect event
-// itself can hand the drop the latest props (React 19.2 kept the first render's).
+// Keep the key stable to isolate effect-event updates; React 19.2 retained initial props.
 const StableKeyDropTarget = memo(function StableKeyDropTarget({
   received,
 }: {

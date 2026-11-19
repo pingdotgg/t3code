@@ -6,12 +6,14 @@ import {
 } from "@t3tools/contracts";
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import { FileDiff } from "@pierre/diffs/react";
+import { T, useGT, Var } from "gt-react";
 import { parseDiffFromFile } from "@pierre/diffs";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { useState } from "react";
 import { getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
+import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
@@ -34,6 +36,7 @@ export function CaptureShortcutConfig({
   onSaved?: () => Promise<unknown>;
   onComplete?: () => Promise<void>;
 }) {
+  const gt = useGT();
   const bridge = getDesktopSnapShotBridge();
   const resolvedTheme = useRenderedAppearance();
   const { copyToClipboard, isCopied } = useCopyToClipboard();
@@ -44,7 +47,6 @@ export function CaptureShortcutConfig({
   const [keys, setKeys] = useState<string | null>(null);
   const [customFile, setCustomFile] = useState(false);
   const busy = disabled || working !== null;
-  const supported = Boolean(bridge?.previewSnapShotConfig && bridge.applySnapShotConfig);
   const changed = preview !== null && preview.before !== preview.after;
   const niri = state.linuxBackend === "niri";
   const desktop = niri ? "Niri" : "Hyprland";
@@ -88,13 +90,13 @@ export function CaptureShortcutConfig({
     onBusyChange?.(false);
   };
   const read = async (chooseFile = customFile, operation: "install" | "remove" = "install") => {
-    if (actionBusy || !bridge?.previewSnapShotConfig) return;
+    if (actionBusy || !bridge) return;
     begin("reading");
     setPreview(null);
     setResult(null);
     setCustomFile(chooseFile);
     const previewed = await settlePromise(() =>
-      bridge.previewSnapShotConfig!({
+      bridge.previewSnapShotConfig({
         operation,
         chooseFile,
         ...(keys?.trim() ? { shortcut: keys.trim() } : {}),
@@ -105,24 +107,24 @@ export function CaptureShortcutConfig({
     } else {
       const cause = Cause.squash(previewed.cause);
       setError({
-        message: "Couldn't prepare the changes. Check Advanced for help.",
+        message: gt("Couldn't prepare the changes. Check Advanced for help."),
         ...(cause instanceof Error ? { detail: cause.message } : {}),
       });
     }
     end();
   };
   const apply = async () => {
-    if (actionBusy || !preview || !bridge?.applySnapShotConfig) return;
+    if (actionBusy || !preview || !bridge) return;
     begin("writing");
     const saved = await settlePromise(async () => {
-      const applied = await bridge.applySnapShotConfig!(preview.id);
+      const applied = await bridge.applySnapShotConfig(preview.id);
       setResult(applied);
       await onSaved?.();
       if (!applied.warning && preview.operation === "install" && onComplete) {
         toastManager.add({
           type: "success",
-          title: "Shortcut saved",
-          description: `Use ${preview.shortcut} from another app.`,
+          title: gt("Shortcut saved"),
+          description: gt("Use {shortcut} from another app.", { shortcut: preview.shortcut }),
         });
         await onComplete();
       }
@@ -130,7 +132,7 @@ export function CaptureShortcutConfig({
     if (saved._tag === "Failure") {
       const cause = Cause.squash(saved.cause);
       setError({
-        message: "Couldn't save your shortcut. Review the changes and try again.",
+        message: gt("Couldn't save your shortcut. Review the changes and try again."),
         ...(cause instanceof Error ? { detail: cause.message } : {}),
       });
       setPreview(null);
@@ -142,38 +144,42 @@ export function CaptureShortcutConfig({
     <div className="space-y-4 text-sm">
       {!result ? (
         <div className="flex items-center justify-between gap-3">
-          <span>Shortcut</span>
+          <span>
+            <T>Shortcut</T>
+          </span>
           {recorder.input}
         </div>
       ) : null}
       {recorder.recording ? (
         <p role="status" className="text-xs text-muted-foreground">
-          Press your shortcut. Esc cancels.
+          <T>Press your shortcut. Esc cancels.</T>
         </p>
       ) : null}
       {result ? (
         <p role="status">
           {result.warning
-            ? "Saved, but the shortcut needs attention. Check Advanced for help."
+            ? gt("Saved, but the shortcut needs attention. Check Advanced for help.")
             : preview?.operation === "remove"
-              ? "Shortcut removed."
-              : `Use ${preview?.shortcut} from another app to capture a window.`}
+              ? gt("Shortcut removed.")
+              : gt("Use {shortcut} from another app to capture a window.", {
+                  shortcut: preview?.shortcut,
+                })}
         </p>
       ) : preview ? (
         <>
           <p className="text-muted-foreground">
             {changed
               ? preview.operation === "remove"
-                ? "Review the change below to remove your shortcut."
-                : "Review the change below, then save your shortcut."
+                ? gt("Review the change below to remove your shortcut.")
+                : gt("Review the change below, then save your shortcut.")
               : preview.operation === "remove"
-                ? "There's no capture shortcut to remove."
-                : "This shortcut is already set up."}
+                ? gt("There's no capture shortcut to remove.")
+                : gt("This shortcut is already set up.")}
           </p>
           {diff ? (
             <div
               className="max-h-80 overflow-auto rounded-lg border text-xs"
-              aria-label="Shortcut changes"
+              aria-label={gt("Shortcut changes")}
             >
               <FileDiff
                 fileDiff={diff}
@@ -181,13 +187,14 @@ export function CaptureShortcutConfig({
                   diffStyle: "unified",
                   theme: resolveDiffThemeName(resolvedTheme),
                   overflow: "wrap",
+                  preferredHighlighter: PREFERRED_HIGHLIGHTER,
                 }}
               />
             </div>
           ) : null}
           {changed ? (
             <p className="text-xs text-muted-foreground">
-              Only these changes will be saved. We'll keep a backup.
+              <T>Only these changes will be saved. We'll keep a backup.</T>
             </p>
           ) : null}
           <div className="flex gap-2">
@@ -201,37 +208,34 @@ export function CaptureShortcutConfig({
                 onClick={() => void apply()}
               >
                 {working === "writing"
-                  ? "Saving…"
+                  ? gt("Saving…")
                   : changed
                     ? preview.operation === "install"
-                      ? "Save shortcut"
-                      : "Remove shortcut"
-                    : "Done"}
+                      ? gt("Save shortcut")
+                      : gt("Remove shortcut")
+                    : gt("Done")}
               </Button>
             ) : null}
             <Button variant="ghost" disabled={actionBusy} onClick={() => setPreview(null)}>
-              Cancel
+              <T>Cancel</T>
             </Button>
           </div>
         </>
       ) : (
         <>
           <p className="text-muted-foreground">
-            Allow T3 Code to read your desktop settings. You'll review any changes here before
-            saving.
+            <T>
+              Allow T3 Code to read your desktop settings. You'll review any changes here before
+              saving.
+            </T>
           </p>
           <Button
-            disabled={actionBusy || !supported}
+            disabled={actionBusy || !bridge}
             aria-busy={working === "reading"}
             onClick={() => void read()}
           >
-            {working === "reading" ? "Preparing changes…" : "Review changes"}
+            {working === "reading" ? gt("Preparing changes…") : gt("Review changes")}
           </Button>
-          {!supported ? (
-            <p className="text-xs text-muted-foreground">
-              Update T3 Code to finish setting up your shortcut.
-            </p>
-          ) : null}
         </>
       )}
       {error ? (
@@ -242,72 +246,97 @@ export function CaptureShortcutConfig({
       {state.shortcutActionRegistered === false && state.shortcutMessage ? (
         <p role="status" className="text-muted-foreground">
           {state.shortcutPending
-            ? "Connecting to your desktop…"
-            : "Restart T3 Code to finish connecting your shortcut."}
+            ? gt("Connecting to your desktop…")
+            : gt("Restart T3 Code to finish connecting your shortcut.")}
         </p>
       ) : null}
       <details className="text-xs text-muted-foreground">
-        <summary className="cursor-pointer">Advanced</summary>
+        <summary className="cursor-pointer">
+          <T>Advanced</T>
+        </summary>
         <div className="mt-3 space-y-3">
           {error?.detail || result?.warning ? (
             <div className="space-y-1">
-              <p className="font-medium text-foreground">Troubleshooting</p>
+              <p className="font-medium text-foreground">
+                <T>Troubleshooting</T>
+              </p>
               <p className="break-words">{error?.detail ?? result?.warning}</p>
             </div>
           ) : null}
           <div className="space-y-1">
-            <p className="font-medium text-foreground">Settings file</p>
+            <p className="font-medium text-foreground">
+              <T>Settings file</T>
+            </p>
             <p className="break-all font-mono">
               {preview?.path ??
                 state.shortcutConfigPath ??
                 (niri ? "~/.config/niri/config.kdl" : "~/.config/hypr/hyprland.conf")}
             </p>
-            {niri ? <p>T3 Code also reads any files included by this file.</p> : null}
+            {niri ? (
+              <p>
+                <T>T3 Code also reads any files included by this file.</T>
+              </p>
+            ) : null}
             {preview && preview.resolvedPath !== preview.path ? (
-              <p className="break-all">Linked to {preview.resolvedPath}. The link will be kept.</p>
+              <p className="break-all">
+                <T>
+                  Linked to <Var>{preview.resolvedPath}</Var>. The link will be kept.
+                </T>
+              </p>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
               variant="outline"
-              disabled={actionBusy || !supported}
+              disabled={actionBusy || !bridge}
               onClick={() => void read(true)}
             >
-              Choose a different file…
+              <T>Choose a different file…</T>
             </Button>
             <Button
               size="sm"
               variant="ghost"
-              disabled={actionBusy || !supported}
+              disabled={actionBusy || !bridge}
               onClick={() => void read(customFile, "remove")}
             >
-              Remove shortcut…
+              <T>Remove shortcut…</T>
             </Button>
             {result ? (
               <Button
                 size="sm"
                 variant="outline"
-                disabled={actionBusy || !supported}
+                disabled={actionBusy || !bridge}
                 onClick={() => void read()}
               >
-                Review changes
+                <T>Review changes</T>
               </Button>
             ) : null}
           </div>
           <p>
-            Use your desktop's shortcut settings file.{" "}
             {niri
-              ? "A custom --config or NIRI_CONFIG can change its location."
-              : "On Omarchy, use your own bindings file, not its defaults."}
+              ? gt(
+                  "Use your desktop's shortcut settings file. A custom --config or NIRI_CONFIG can change its location.",
+                )
+              : gt(
+                  "Use your desktop's shortcut settings file. On Omarchy, use your own bindings file, not its defaults.",
+                )}
           </p>
-          {result?.backupPath ? <p className="break-all">Backup: {result.backupPath}</p> : null}
-          <p className="font-medium text-foreground">Manual setup</p>
+          {result?.backupPath ? (
+            <p className="break-all">{gt("Backup: {path}", { path: result.backupPath })}</p>
+          ) : null}
+          <p className="font-medium text-foreground">
+            <T>Manual setup</T>
+          </p>
           <p>
             {niri
-              ? "Paste this inside binds { … } in your Niri config, then save."
-              : "Add this binding to your Hyprland config, then save."}{" "}
-            Change the keys if needed.
+              ? gt(
+                  "Paste this inside {block} in your Niri config, then save. Change the keys if needed.",
+                  { block: "binds { … }" },
+                )
+              : gt(
+                  "Add this binding to your Hyprland config, then save. Change the keys if needed.",
+                )}
           </p>
           <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-xl bg-muted/50 p-3">
             {state.shortcutBinding}
@@ -320,11 +349,13 @@ export function CaptureShortcutConfig({
               if (state.shortcutBinding) copyToClipboard(state.shortcutBinding);
             }}
           >
-            {isCopied ? "Copied" : "Copy shortcut"}
+            {isCopied ? gt("Copied") : gt("Copy shortcut")}
           </Button>
           <p>
-            Turn capture off in T3 Code to stop it. Remove the shortcut from {desktop} to free up
-            the keys.
+            <T>
+              Turn capture off in T3 Code to stop it. Remove the shortcut from <Var>{desktop}</Var>{" "}
+              to free up the keys.
+            </T>
           </p>
           {state.shortcutActionRegistered === false ? (
             <p role="status">{state.shortcutMessage}</p>
@@ -336,7 +367,7 @@ export function CaptureShortcutConfig({
               disabled={actionBusy || state.shortcutActionRegistered === false}
               onClick={() => void onComplete()}
             >
-              I've added the shortcut
+              <T>I've added the shortcut</T>
             </Button>
           ) : null}
         </div>

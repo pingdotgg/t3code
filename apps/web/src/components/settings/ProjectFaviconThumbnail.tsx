@@ -1,7 +1,8 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
+import { observeIntersection } from "~/lib/observeIntersection";
 
 export function ProjectFaviconThumbnail(props: {
   readonly cwd: string;
@@ -9,21 +10,9 @@ export function ProjectFaviconThumbnail(props: {
   readonly fallback: ReactNode;
   readonly path: string;
 }) {
-  const ref = useRef<HTMLSpanElement>(null);
   const [inView, setInView] = useState(() => typeof IntersectionObserver === "undefined");
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
-
-  // Asset URLs require a server request, so defer acquisition until the row is visible.
-  useEffect(() => {
-    const element = ref.current;
-    if (inView || !element) return;
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) setInView(true);
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [inView]);
 
   const state = useAssetUrlState(
     props.environmentId,
@@ -35,7 +24,20 @@ export function ProjectFaviconThumbnail(props: {
   const imageLoaded = showImage && loadedUrl === url;
 
   return (
-    <span ref={ref} className="relative flex size-8 shrink-0 items-center justify-center">
+    <span
+      // Asset URLs require a server request, so defer acquisition until the row is visible.
+      ref={
+        inView
+          ? undefined
+          : (node) => {
+              if (!node) return;
+              return observeIntersection(node, (entry) => {
+                if (entry.isIntersecting) setInView(true);
+              });
+            }
+      }
+      className="relative flex size-8 shrink-0 items-center justify-center"
+    >
       {!imageLoaded ? props.fallback : null}
       {showImage ? (
         <img

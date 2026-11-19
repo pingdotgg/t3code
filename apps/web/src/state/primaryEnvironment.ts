@@ -1,6 +1,8 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 
 export const primaryEnvironmentIdAtom = Atom.make((get) => {
   for (const [environmentId, entry] of get(environmentCatalog.catalogValueAtom).entries) {
@@ -10,3 +12,38 @@ export const primaryEnvironmentIdAtom = Atom.make((get) => {
   }
   return null;
 }).pipe(Atom.withLabel("web-primary-environment-id"));
+
+export const hostEnvironmentIdAtom = Atom.make<string | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("web-host-environment-id"),
+);
+
+// This computer's environment: the primary, else a connection to the service sharing the app's T3 home.
+export function createLocalEnvironmentIdAtom(input: {
+  readonly primaryEnvironmentIdAtom: Atom.Atom<EnvironmentId | null>;
+  readonly hostEnvironmentIdAtom: Atom.Atom<string | null>;
+  readonly catalogValueAtom: Atom.Atom<{ readonly entries: ReadonlyMap<EnvironmentId, unknown> }>;
+}) {
+  return Atom.make((get) => {
+    const primaryEnvironmentId = get(input.primaryEnvironmentIdAtom);
+    if (primaryEnvironmentId !== null) return primaryEnvironmentId;
+    const hostEnvironmentId = get(input.hostEnvironmentIdAtom);
+    for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
+      if (environmentId === hostEnvironmentId) return environmentId;
+    }
+    return null;
+  }).pipe(Atom.withLabel("web-local-environment-id"));
+}
+
+export const localEnvironmentIdAtom = createLocalEnvironmentIdAtom({
+  primaryEnvironmentIdAtom,
+  hostEnvironmentIdAtom,
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+});
+
+export function startHostEnvironmentLookup(): void {
+  void window.desktopBridge
+    ?.getHostEnvironmentId?.()
+    .then((environmentId) => appAtomRegistry.set(hostEnvironmentIdAtom, environmentId))
+    .catch(() => {});
+}

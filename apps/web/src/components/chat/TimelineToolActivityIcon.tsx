@@ -11,6 +11,7 @@ import {
   CircleAlertIcon,
   EyeIcon,
   GlobeIcon,
+  ListTodoIcon,
   MessageCircleIcon,
   SearchIcon,
   SmartphoneIcon,
@@ -37,6 +38,7 @@ export type WorkEntryIconName =
   | "brain"
   | "browser"
   | "check"
+  | "list-todo"
   | "circle-alert"
   | "computer"
   | "code"
@@ -194,7 +196,7 @@ function ToolActivityImageIcon(props: {
           className={cn(
             props.className,
             "inline-block overflow-hidden rounded-xs bg-background",
-            props.muted && "opacity-70",
+            props.muted && "dark:opacity-70",
           )}
         >
           <img
@@ -203,7 +205,7 @@ function ToolActivityImageIcon(props: {
             aria-hidden
             decoding="async"
             referrerPolicy="no-referrer"
-            className={cn("block size-full object-contain", props.muted && "light:brightness-60")}
+            className={cn("block size-full object-contain", props.muted && "light:brightness-70")}
             onError={() => handleLoadError(displayedSrc)}
           />
         </span>
@@ -246,6 +248,8 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <T3Wordmark className={className} aria-hidden />;
     case "check":
       return <CheckIcon className={className} aria-hidden />;
+    case "list-todo":
+      return <ListTodoIcon className={className} aria-hidden />;
     case "circle-alert":
       return <CircleAlertIcon className={className} aria-hidden />;
     case "eye":

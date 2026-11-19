@@ -1,7 +1,6 @@
 pragma Singleton
 import QtQml
 
-// No KWin process, desktop bus, or real screen is used by these tests.
 QtObject {
     property list<QtObject> screens: [QtObject { property rect geometry: Qt.rect(-100, 0, 400, 300) }]
     property list<QtObject> windows: [QtObject {

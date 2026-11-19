@@ -1,15 +1,25 @@
 import type { DpopFailureReason } from "@t3tools/contracts";
-import type { RelayEnvironmentStatusResponse, RelayProtectedError } from "@t3tools/contracts/relay";
+import {
+  T3CHAT_PLAN_TUNNEL_LIMITS,
+  type RelayEnvironmentStatusResponse,
+  type RelayProtectedError,
+} from "@t3tools/contracts/relay";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
-export const DPOP_CLOCK_HINT =
-  "Hint: Check that automatic date and time is enabled on both devices, then try again.";
+import { type MarkedText, resolveMarkedText } from "../errors/translatable.ts";
+
+export const DPOP_CLOCK_HINT = msg(
+  "Hint: Check that automatic date and time is enabled on both devices, then try again.",
+);
 
 /** Older servers omit the DPoP category, but newer servers can also omit it for
  * a credential failure that happens after proof verification. */
-export const DPOP_UNKNOWN_HINT =
-  "Hint: Try again. If it still fails, clock skew may be the cause; check that automatic date and time is enabled on both devices.";
+export const DPOP_UNKNOWN_HINT = msg(
+  "Hint: Try again. If it still fails, clock skew may be the cause; check that automatic date and time is enabled on both devices.",
+);
 
-export const DPOP_RETRY_HINT = "Hint: Try again. If the problem continues, copy the trace ID.";
+export const DPOP_RETRY_HINT = msg("Hint: Try again. If the problem continues, copy the trace ID.");
 
 function dpopFailureHint(reason: DpopFailureReason | undefined): string {
   if (reason === "time_window") return DPOP_CLOCK_HINT;
@@ -17,86 +27,157 @@ function dpopFailureHint(reason: DpopFailureReason | undefined): string {
   return DPOP_RETRY_HINT;
 }
 
-export function dpopFailureMessage(message: string, reason: DpopFailureReason | undefined): string {
-  return `${message} ${dpopFailureHint(reason)}`;
+export function dpopFailureText(
+  message: string,
+  reason: DpopFailureReason | undefined,
+): MarkedText {
+  return [message, dpopFailureHint(reason)];
 }
 
-export function relayProtectedErrorMessage(error: RelayProtectedError): string {
+/** The relay's refusal as marked sentences, for errors that carry `i18nMessage`. */
+export function relayProtectedErrorText(error: RelayProtectedError): MarkedText {
   switch (error._tag) {
     case "RelayAuthInvalidError":
       switch (error.reason) {
         case "missing_bearer":
         case "invalid_bearer":
-          return "Relay rejected the cloud session token.";
+          return [msg("Relay rejected the cloud session token.")];
         case "invalid_dpop":
-          return dpopFailureMessage("Relay rejected the DPoP proof.", error.dpopFailureReason);
+          return dpopFailureText(msg("Relay rejected the DPoP proof."), error.dpopFailureReason);
         case "not_authorized":
-          return "Relay rejected the authenticated request.";
+          return [msg("Relay rejected the authenticated request.")];
       }
     case "RelayEnvironmentLinkProofExpiredError":
-      return "Relay rejected an expired environment link proof.";
+      return [msg("Relay rejected an expired environment link proof.")];
     case "RelayEnvironmentLinkProofInvalidError":
-      return `Relay rejected the environment link proof (${error.reason}).`;
+      return [
+        msg("Relay rejected the environment link proof ({reason}).", { reason: error.reason }),
+      ];
     case "RelayEnvironmentConnectNotAuthorizedError":
       // "Not authorized" covers non-auth causes too; surface the reason so a
       // missing link does not read as a credential problem.
       if (error.reason === "environment_link_not_found") {
-        return "Relay has no active link for this environment. If it was deregistered from T3 Connect, link it again on that machine.";
+        return [
+          msg(
+            "Relay has no active link for this environment. If it was deregistered from T3 Connect, link it again on that machine.",
+          ),
+        ];
       }
       if (error.reason === "managed_endpoint_allocation_not_ready") {
-        return "The environment's T3 Connect tunnel is still being set up.";
+        return [msg("The environment's T3 Connect tunnel is still being set up.")];
       }
       if (error.reason === "endpoint_provider_not_managed") {
-        return "This environment is linked only to publish agent activity, so it cannot accept connections. On that computer, open Settings > Connections and turn T3 Connect on.";
+        return [
+          msg(
+            "This environment is linked only to publish agent activity, so it cannot accept connections. On that computer, open Settings > Sharing & access and turn T3 Connect on.",
+          ),
+        ];
       }
       return error.reason
-        ? `Relay rejected the environment connection request (${error.reason}).`
-        : "Relay rejected the environment connection request.";
+        ? [
+            msg("Relay rejected the environment connection request ({reason}).", {
+              reason: error.reason,
+            }),
+          ]
+        : [msg("Relay rejected the environment connection request.")];
     case "RelayEnvironmentEndpointUnavailableError":
-      return `Relay could not reach the environment endpoint (${error.reason}).`;
+      return [
+        msg("Relay could not reach the environment endpoint ({reason}).", { reason: error.reason }),
+      ];
     case "RelayEnvironmentEndpointTimedOutError":
-      return "Relay timed out while contacting the environment endpoint.";
+      return [msg("Relay timed out while contacting the environment endpoint.")];
     case "RelayEnvironmentLinkFailedError":
-      return `Relay could not link the environment (${error.reason}).`;
+      return [msg("Relay could not link the environment ({reason}).", { reason: error.reason })];
     case "RelayEnvironmentLinkUnavailableError":
-      return `Relay cannot provision the managed endpoint (${error.reason}).${
-        error.provisioningStage ? ` Failed stage: ${error.provisioningStage}.` : ""
-      }`;
+      return error.provisioningStage
+        ? [
+            msg("Relay cannot provision the managed endpoint ({reason}). Failed stage: {stage}.", {
+              reason: error.reason,
+              stage: error.provisioningStage,
+            }),
+          ]
+        : [
+            msg("Relay cannot provision the managed endpoint ({reason}).", {
+              reason: error.reason,
+            }),
+          ];
     case "RelayEnvironmentLinkLimitExceededError":
-      return `Relay refused the link: this account already has its maximum of ${error.maxTunnels} managed tunnels. Unlink an environment to free one up.`;
+      return error.maxTunnels < T3CHAT_PLAN_TUNNEL_LIMITS.premier
+        ? [
+            msg(
+              "Relay refused the link: this account already has its maximum of {maxTunnels} managed tunnels. Unlink an environment, or link a paid T3 Chat account in your T3 Connect account settings on web or desktop. Pro raises the default limit to {pro} and Premier to {premier}.",
+              {
+                maxTunnels: error.maxTunnels,
+                pro: T3CHAT_PLAN_TUNNEL_LIMITS.pro,
+                premier: T3CHAT_PLAN_TUNNEL_LIMITS.premier,
+              },
+            ),
+          ]
+        : [
+            msg(
+              "Relay refused the link: this account already has its maximum of {maxTunnels} managed tunnels. Unlink an environment to free one up.",
+              { maxTunnels: error.maxTunnels },
+            ),
+          ];
     case "RelayAgentActivityPublishProofExpiredError":
-      return "Relay rejected an expired agent activity publish proof.";
+      return [msg("Relay rejected an expired agent activity publish proof.")];
     case "RelayAgentActivityPublishProofInvalidError":
-      return `Relay rejected the agent activity publish proof (${error.reason}).`;
+      return [
+        msg("Relay rejected the agent activity publish proof ({reason}).", {
+          reason: error.reason,
+        }),
+      ];
     case "RelayInternalError":
-      return `Relay encountered an internal error (${error.reason}).`;
+      return [msg("Relay encountered an internal error ({reason}).", { reason: error.reason })];
   }
+}
+
+export function relayProtectedErrorMessage(
+  error: RelayProtectedError,
+  resolve: MFunctionType = mFallback,
+): string {
+  return resolveMarkedText(relayProtectedErrorText(error), resolve);
 }
 
 // The relay cuts off a request it cannot finish in time with a 504 that no
 // endpoint declares, so the client sees only the status.
-export const RELAY_GATEWAY_TIMEOUT_MESSAGE =
-  "Relay timed out before it finished the request (HTTP 504). Try again in a few minutes. If it keeps failing, copy the trace ID when you report it.";
+export const RELAY_GATEWAY_TIMEOUT_MESSAGE = msg(
+  "Relay timed out before it finished the request (HTTP 504). Try again in a few minutes. If it keeps failing, copy the trace ID when you report it.",
+);
 
-export function relayRequestFailureDetail(error: {
+export function relayRequestFailureText(error: {
   readonly relayError?: RelayProtectedError | undefined;
   readonly status?: number | undefined;
-}): string | null {
-  if (error.relayError) return relayProtectedErrorMessage(error.relayError);
-  if (error.status === 504) return RELAY_GATEWAY_TIMEOUT_MESSAGE;
-  if (error.status !== undefined) return `Relay returned an unexpected HTTP ${error.status}.`;
+}): MarkedText | null {
+  if (error.relayError) return relayProtectedErrorText(error.relayError);
+  if (error.status === 504) return [RELAY_GATEWAY_TIMEOUT_MESSAGE];
+  if (error.status !== undefined)
+    return [msg("Relay returned an unexpected HTTP {status}.", { status: error.status })];
   return null;
 }
 
-const RELAY_TUNNEL_RELEASED_MESSAGE =
-  "Offline for a while, so its T3 Connect tunnel was removed. Start T3 Code on that computer and update it to the latest version to reconnect.";
+export function relayRequestFailureDetail(
+  error: {
+    readonly relayError?: RelayProtectedError | undefined;
+    readonly status?: number | undefined;
+  },
+  resolve: MFunctionType = mFallback,
+): string | null {
+  const text = relayRequestFailureText(error);
+  return text === null ? null : resolveMarkedText(text, resolve);
+}
 
 export function relayOfflineReasonMessage(
   status: Pick<RelayEnvironmentStatusResponse, "offlineReason">,
+  resolve: MFunctionType = mFallback,
 ): string | null {
   switch (status.offlineReason) {
     case "tunnel_released":
-      return RELAY_TUNNEL_RELEASED_MESSAGE;
+      return resolve(
+        msg(
+          "Offline for a while, so its T3 Connect tunnel was removed. Start T3 Code on that computer and update it to the latest version to reconnect.",
+        ),
+      );
     case undefined:
       return null;
   }
