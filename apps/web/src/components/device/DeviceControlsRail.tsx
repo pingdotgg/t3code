@@ -14,6 +14,9 @@ import {
   Smartphone,
   Square,
   Type,
+  Volume1,
+  Volume2,
+  VolumeX,
   X,
   MoonIcon,
   SunIcon,
@@ -131,6 +134,37 @@ export function DeviceControlsRail(props: {
             <RotateCcw />
           </RailButton>
         )}
+        {props.platform === "ios" ? (
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={gt("Device audio")}
+                  title={gt("Device audio")}
+                  disabled={inputDisabled}
+                />
+              }
+            >
+              <Volume2 />
+            </MenuTrigger>
+            <MenuPopup side={popupSide} width="content">
+              <MenuItem closeOnClick={false} onClick={() => handle?.pressButton("volumeUp")}>
+                <Volume2 />
+                {gt("Volume up")}
+              </MenuItem>
+              <MenuItem closeOnClick={false} onClick={() => handle?.pressButton("volumeDown")}>
+                <Volume1 />
+                {gt("Volume down")}
+              </MenuItem>
+              <MenuItem closeOnClick={false} onClick={() => handle?.pressButton("muteAudio")}>
+                <VolumeX />
+                {gt("Mute audio")}
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        ) : null}
         {runsHostCommands ? (
           <>
             <RailDivider />

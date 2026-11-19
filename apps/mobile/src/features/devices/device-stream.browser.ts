@@ -1,5 +1,6 @@
 import {
   createDeviceStreamClient,
+  type DeviceHardwareButton,
   type DeviceScreenSize,
 } from "@t3tools/client-runtime/device/stream";
 
@@ -23,7 +24,7 @@ export function stop() {
   activeClient = null;
 }
 
-export function command(button: "home" | "back" | "appSwitcher" | "rotate") {
+export function command(button: DeviceHardwareButton | "rotate") {
   if (button === "rotate") activeClient?.rotate();
   else activeClient?.pressButton(button);
 }

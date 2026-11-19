@@ -154,6 +154,55 @@ describe("native device stream transport", () => {
       expect(vi.getTimerCount()).toBe(0);
     },
   );
+
+  it.each(["ios", "android"] as const)(
+    "routes the simulator audio buttons on %s",
+    async (platform) => {
+      const { client, opened } = setup(platform);
+      client.start();
+      const socket = await opened;
+      socket.onopen?.();
+      if (platform === "ios") socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+      socket.send.mockClear();
+
+      client.pressButton("volumeUp");
+      client.pressButton("volumeDown");
+      if (platform === "android") client.pressButton("muteAudio");
+      client.stop();
+
+      const expected = [
+        { page: 0x0c, usage: 0xe9 },
+        { page: 0x0c, usage: 0xea },
+      ].map((packet) => Uint8Array.of(0x04, ...new TextEncoder().encode(JSON.stringify(packet))));
+      expect(socket.send.mock.calls).toEqual(
+        platform === "ios" ? expected.map((packet) => [packet]) : [],
+      );
+    },
+  );
+
+  it("mutes iOS volume in steps and lets a manual volume change interrupt it", async () => {
+    const { client, opened } = setup("ios");
+    client.start();
+    const socket = await opened;
+    socket.onopen?.();
+    socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+    socket.send.mockClear();
+
+    const volumePacket = (usage: number) =>
+      Uint8Array.of(0x04, ...new TextEncoder().encode(JSON.stringify({ page: 0x0c, usage })));
+    const volumeDown = volumePacket(0xea);
+    client.pressButton("muteAudio");
+    expect(socket.send.mock.calls).toEqual([[volumeDown]]);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(socket.send.mock.calls).toEqual(Array.from({ length: 24 }, () => [volumeDown]));
+    socket.send.mockClear();
+
+    client.pressButton("muteAudio");
+    client.pressButton("volumeUp");
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(socket.send.mock.calls).toEqual([[volumeDown], [volumePacket(0xe9)]]);
+    client.stop();
+  });
 });
 
 describe("iOS keypad protocol", () => {

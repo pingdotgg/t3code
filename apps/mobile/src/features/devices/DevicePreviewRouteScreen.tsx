@@ -219,7 +219,7 @@ export function DevicePreviewScreen({
             title: gt("Back", { $context: "Android back button" }),
             icon: "arrow.left",
             disabled: !inputConnected,
-            onPress: () => streamRef.current?.back(),
+            onPress: () => streamRef.current?.pressButton("back"),
           },
         ]
       : []),
@@ -228,7 +228,7 @@ export function DevicePreviewScreen({
       title: gt("App switcher"),
       icon: "square.on.square",
       disabled: !inputConnected,
-      onPress: () => streamRef.current?.appSwitcher(),
+      onPress: () => streamRef.current?.pressButton("appSwitcher"),
     },
     ...(preview?.session.platform === "ios"
       ? [
@@ -238,6 +238,34 @@ export function DevicePreviewScreen({
             icon: "arrow.clockwise" as const,
             disabled: !inputConnected,
             onPress: () => streamRef.current?.rotate(),
+          },
+          {
+            id: "device-audio",
+            title: gt("Device audio"),
+            icon: "speaker.wave.2",
+            items: [
+              {
+                id: "volume-up",
+                title: gt("Volume up"),
+                icon: "speaker.plus",
+                disabled: !inputConnected,
+                onPress: () => streamRef.current?.pressButton("volumeUp"),
+              },
+              {
+                id: "volume-down",
+                title: gt("Volume down"),
+                icon: "speaker.minus",
+                disabled: !inputConnected,
+                onPress: () => streamRef.current?.pressButton("volumeDown"),
+              },
+              {
+                id: "mute-audio",
+                title: gt("Mute audio"),
+                icon: "speaker.slash",
+                disabled: !inputConnected,
+                onPress: () => streamRef.current?.pressButton("muteAudio"),
+              },
+            ],
           },
         ]
       : []),
@@ -249,7 +277,7 @@ export function DevicePreviewScreen({
       onPress: () => void shutDownDevice(),
     },
   ];
-  const pressHome = () => streamRef.current?.home();
+  const pressHome = () => streamRef.current?.pressButton("home");
   const menuItems: AppBarMenuItem[] = [
     ...(previews.length > 1
       ? [

@@ -11,7 +11,10 @@ import {
 import { decodeOptions, msg, useGT } from "gt-react-native";
 import { Platform, View } from "react-native";
 import { WebView } from "react-native-webview";
-import type { DeviceStreamStatus } from "@t3tools/client-runtime/device/stream";
+import type {
+  DeviceHardwareButton,
+  DeviceStreamStatus,
+} from "@t3tools/client-runtime/device/stream";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText } from "../../components/ui/AppText";
@@ -43,9 +46,7 @@ function streamDetailText(detail: string, resolve: MessageResolver): string {
 }
 
 export interface DeviceStreamRef {
-  home: () => void;
-  back: () => void;
-  appSwitcher: () => void;
+  pressButton: (button: DeviceHardwareButton) => void;
   rotate: () => void;
 }
 
@@ -167,15 +168,13 @@ function DeviceStreamDocumentView({
     ),
     baseUrl,
   };
-  const command = (button: keyof DeviceStreamRef) => {
+  const command = (button: DeviceHardwareButton | "rotate") => {
     webView.current?.injectJavaScript(
       `window.T3DeviceStream?.command(${JSON.stringify(button)}); true;`,
     );
   };
   useImperativeHandle(ref, () => ({
-    home: () => command("home"),
-    back: () => command("back"),
-    appSwitcher: () => command("appSwitcher"),
+    pressButton: command,
     rotate: () => command("rotate"),
   }));
   const processTerminated = () => {

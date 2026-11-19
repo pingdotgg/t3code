@@ -130,7 +130,22 @@ export interface DeviceStreamTarget {
   readonly serveSimOnly?: boolean;
 }
 
-export type DeviceHardwareButton = "home" | "back" | "recents" | "power" | "appSwitcher";
+const IOS_AUDIO_BUTTONS = {
+  volumeUp: { page: 0x0c, usage: 0xe9 },
+  volumeDown: { page: 0x0c, usage: 0xea },
+} as const;
+// iOS has 16 volume steps. Allow for missed presses when the simulator is busy.
+const IOS_MUTE_PRESS_COUNT = 24;
+const IOS_VOLUME_STEP_INTERVAL_MS = 125;
+
+export type DeviceHardwareButton =
+  | "home"
+  | "back"
+  | "recents"
+  | "power"
+  | "appSwitcher"
+  | "muteAudio"
+  | keyof typeof IOS_AUDIO_BUTTONS;
 
 const RETRY_DELAY_MS = 1_000;
 const FIRST_FRAME_TIMEOUT_MS = 15_000;
@@ -445,6 +460,7 @@ export function createDeviceStreamClient(
   let generation = 0;
   let decoderEpoch = 0;
   let frameTimer: ReturnType<typeof setTimeout> | null = null;
+  let muteTimer: ReturnType<typeof setTimeout> | null = null;
   let videoReadTimer: ReturnType<typeof setTimeout> | null = null;
   let mjpegImage: HTMLImageElement | null = null;
   let releaseImage: (() => void) | null = null;
@@ -1337,12 +1353,18 @@ export function createDeviceStreamClient(
     } else void startAndroid();
   };
 
+  const cancelMute = () => {
+    if (muteTimer !== null) clearTimeout(muteTimer);
+    muteTimer = null;
+  };
+
   const stop = () => {
     if (stopped) return;
     stopped = true;
     generation++;
     videoGeneration++;
     duoControl.clear();
+    cancelMute();
     rotationCursor = null;
     for (const panel of panelClients) panel.stop();
     panelClients = [];
@@ -1372,8 +1394,23 @@ export function createDeviceStreamClient(
       !stopped &&
       (!avcc || (iosInputAdmitted && !iosInputUnavailable)) &&
       socket?.readyState === WebSocket.OPEN
-    )
+    ) {
       socket.send(payload);
+      return true;
+    }
+    return false;
+  };
+
+  const muteAudio = () => {
+    if (muteTimer !== null) return;
+    const inputSocket = socket;
+    const packet = taggedJson(IOS_MSG_BUTTON, IOS_AUDIO_BUTTONS.volumeDown);
+    const lowerVolume = (stepsLeft: number) => {
+      muteTimer = null;
+      if (socket !== inputSocket || !send(packet) || stepsLeft === 1) return;
+      muteTimer = setTimeout(() => lowerVolume(stepsLeft - 1), IOS_VOLUME_STEP_INTERVAL_MS);
+    };
+    lowerVolume(IOS_MUTE_PRESS_COUNT);
   };
 
   const rawPoint = (x: number, y: number) => {
@@ -1461,6 +1498,15 @@ export function createDeviceStreamClient(
       if (chunk.length > 0) send(JSON.stringify({ type: "text", text: chunk }));
     },
     pressButton: (button) => {
+      if (button === "muteAudio") {
+        if (platform === "ios") muteAudio();
+        return;
+      }
+      if (button === "volumeUp" || button === "volumeDown") {
+        cancelMute();
+        if (platform === "ios") send(taggedJson(IOS_MSG_BUTTON, IOS_AUDIO_BUTTONS[button]));
+        return;
+      }
       if (avcc) {
         const name =
           button === "home"
