@@ -49,6 +49,7 @@ const HubActionResult = Schema.Struct({
     Schema.Array(Schema.Struct({ message: Schema.String, error: Schema.optional(Schema.String) })),
   ),
 });
+const HubRejection = Schema.Struct({ error: Schema.String });
 
 // Hub diagnostics can carry a whole stderr dump.
 const boundDiagnostics = (text: string) =>
@@ -98,13 +99,38 @@ export const makeDeviceHubOperations = (options: {
     schema: Schema.Codec<A, I>,
     operation: string,
     timeout: Duration.Input = Duration.seconds(15),
-  ) =>
-    fetchJson(request, schema).pipe(
-      Effect.timeout(timeout),
-      Effect.mapError(
-        (cause) => new DeviceOperationError({ operation, reason: "request_failed", cause }),
+  ) => {
+    const requestFailed = (cause: unknown) =>
+      Effect.fail(new DeviceOperationError({ operation, reason: "request_failed", cause }));
+    return httpClient.execute(request).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
+      Effect.catchReason("HttpClientError", "StatusCodeError", ({ response }, cause) =>
+        // Only the hub's `error` string is surfaced; other bodies can be private hub output.
+        HttpClientResponse.schemaBodyJson(HubRejection)(response).pipe(
+          Effect.map(({ error }) => errorHead(error)),
+          Effect.orElseSucceed(() => ""),
+          Effect.flatMap((detail) =>
+            Effect.fail(
+              new DeviceOperationError({
+                operation,
+                reason: "hub_rejected",
+                ...(detail ? { diagnostics: boundDiagnostics(detail) } : {}),
+                cause,
+              }),
+            ),
+          ),
+        ),
       ),
+      Effect.scoped,
+      Effect.timeout(timeout),
+      Effect.catchTags({
+        HttpClientError: requestFailed,
+        SchemaError: requestFailed,
+        TimeoutError: requestFailed,
+      }),
     );
+  };
 
   const postJson = (path: string, body: Record<string, string>, operation: string) =>
     HttpClientRequest.post(`${origin}${path}`).pipe(

@@ -103,6 +103,42 @@ it.effect.each([400, 500])(
     }),
 );
 
+it.effect("reports the hub's error when it rejects attaching a simulator stream", () =>
+  Effect.gen(function* () {
+    const hubError =
+      "Could not release launch state for phone: /tmp/serve-sim/launch-phone.lock is still locked. Retry cleanup after the active command finishes.";
+    const operations = makeDeviceHubOperations({
+      hostId: LOCAL_DEVICE_HOST_ID,
+      origin: "http://device.test",
+      http: HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ ok: false, error: hubError }, { status: 500 }),
+          ),
+        ),
+      ),
+      run: () => Effect.die("Attaching does not run a command"),
+      platformAvailable: () => Effect.succeed(false),
+    });
+    const error = yield* operations
+      .attach({
+        id: "phone",
+        name: "Phone",
+        version: "iOS 26.3",
+        platform: "ios",
+        booted: true,
+        physical: false,
+      })
+      .pipe(Effect.flip);
+    expect({ _tag: error._tag, reason: error.reason, message: error.message }).toEqual({
+      _tag: "DeviceOperationError",
+      reason: "hub_rejected",
+      message: expect.stringContaining("is still locked"),
+    });
+  }),
+);
+
 const fixture = Effect.fn("fixture")(function* (
   onBoot: Effect.Effect<void> = Effect.void,
   bootError?: string | { error?: string; errors?: Array<{ message: string; error?: string }> },
