@@ -146,7 +146,7 @@ export function SidebarUpdateCapsule({
               "rounded-full text-xs font-medium tabular-nums ring-1 ring-current/22 ring-inset",
           )}
         >
-          {restartSeconds !== null ? `${restartSeconds}s` : icon}
+          {restartSeconds !== null ? m(msg("{seconds}s", { seconds: restartSeconds })) : icon}
         </span>
       </div>
       <PopoverPopup side="top" align="end" padding="compact" width="sm">
