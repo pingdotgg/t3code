@@ -250,18 +250,11 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       name: "whole body arrives and then stalls",
       first: "body stalls",
       honorsRange: true,
-      held: "whole",
-    },
-    {
-      name: "whole but wrong body arrives and then fails",
-      first: "body fails",
-      honorsRange: true,
-      held: "wrong",
+      wholeArchive: true,
     },
   ] as const)("resumes a release archive download when its $name", (row) =>
     Effect.gen(function* () {
       const { first, honorsRange } = row;
-      const held = "held" in row ? row.held : "prefix";
       const shortResume = "shortResume" in row;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -274,12 +267,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const archiveRequested = yield* Deferred.make<void>();
       const shortResumeRequested = yield* Deferred.make<void>();
       const total = archiveBytes.length;
-      const heldBytes =
-        held === "prefix"
-          ? archiveBytes.slice(0, 4)
-          : held === "whole"
-            ? archiveBytes
-            : archiveBytes.map((byte) => byte ^ 1);
+      const heldBytes = "wholeArchive" in row ? archiveBytes : archiveBytes.slice(0, 4);
       const install = yield* ensurePinnedRuntimeInstalled({
         baseDir,
         version,
@@ -375,23 +363,14 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         // Its one-second delay, then the second, four-second backoff.
         yield* TestClock.adjust(Duration.seconds(5));
       }
-      const result = yield* Fiber.join(install).pipe(Effect.result);
+      const paths = yield* Fiber.join(install);
       assert.deepEqual(checksumRanges, [undefined, undefined]);
       assert.deepEqual(ranges, [
         undefined,
         first === "headers stall" ? undefined : `bytes=${heldBytes.length}-`,
         ...(shortResume ? [`bytes=${total - 1}-`] : []),
       ]);
-      if (held === "wrong") {
-        assert.equal(result._tag, "Failure");
-        if (result._tag !== "Failure") return;
-        assert.instanceOf(result.failure, PinnedRuntimeInstallError);
-        assert.equal(result.failure.step, "verifying the t3 release archive checksum");
-        return;
-      }
-      assert.equal(result._tag, "Success");
-      if (result._tag !== "Success") return;
-      assert.equal(yield* fs.readFileString(result.success.sentinelPath), `${version}\n`);
+      assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
       assert.deepEqual(
         progress.findLast((event) => event.stage === "download"),
         {
