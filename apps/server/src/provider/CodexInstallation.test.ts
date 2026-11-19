@@ -467,9 +467,10 @@ it.effect.each([
   { operation: "cached update", exits: false },
   { operation: "reverify", exits: false },
   { operation: "cached update", exits: true },
+  { operation: "cached update", exits: true, pipesOpen: true },
 ])(
   "reports verification diagnostics during $operation (exited: $exits) and preserves the managed runtime",
-  ({ operation, exits }) =>
+  ({ operation, exits, pipesOpen }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-verify-test-" });
@@ -496,12 +497,16 @@ it.effect.each([
       const pointer = JSON.stringify({ version: installedVersion });
       yield* fs.writeFileString(`${managed}/active.json`, pointer);
       const entered = yield* Deferred.make<void>();
+      const exited = yield* Deferred.make<void>();
       const spawner = ChildProcessSpawner.make(() =>
         Effect.succeed(
           ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1),
             exitCode: exits
-              ? Deferred.await(entered).pipe(Effect.as(ChildProcessSpawner.ExitCode(3)))
+              ? Deferred.await(entered).pipe(
+                  Effect.andThen(Deferred.succeed(exited, undefined)),
+                  Effect.as(ChildProcessSpawner.ExitCode(3)),
+                )
               : Effect.never,
             isRunning: Effect.succeed(true),
             kill: () => Effect.void,
@@ -512,7 +517,10 @@ it.effect.each([
               new TextEncoder().encode(
                 "Startup library missing\nAuthorization: Bearer private-fixture-token\n",
               ),
-            ).pipe(Stream.tap(() => Deferred.succeed(entered, undefined))),
+            ).pipe(
+              Stream.tap(() => Deferred.succeed(entered, undefined)),
+              (stream) => (pipesOpen ? Stream.concat(stream, Stream.never) : stream),
+            ),
             all: Stream.empty,
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
@@ -540,13 +548,15 @@ it.effect.each([
       });
       yield* h.installation.start;
       yield* Deferred.await(entered);
-      if (!exits) yield* TestClock.adjust("90 seconds");
+      if (pipesOpen) yield* Deferred.await(exited);
+      if (!exits || pipesOpen) yield* TestClock.adjust("90 seconds");
       expect(yield* terminalState(h.installation)).toMatchObject({
         phase: "failed",
         installedVersion,
-        message: exits
-          ? "Could not unpack or start the downloaded Codex package."
-          : expect.stringContaining("Codex runtime verification timed out after 90 seconds."),
+        message:
+          exits && !pipesOpen
+            ? "Could not unpack or start the downloaded Codex package."
+            : expect.stringContaining("Codex runtime verification timed out after 90 seconds."),
         diagnostics: {
           step: "Codex version check",
           stderr: "Startup library missing\nAuthorization: [redacted]",

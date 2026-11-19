@@ -596,12 +596,9 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capture.spawner),
       Effect.scoped,
       withValidationTimeout,
-      Effect.tapError((error) =>
+      Effect.tapError(() =>
         Effect.gen(function* () {
-          const diagnostics = {
-            ...capture.snapshot(),
-            ...(error === validationTimeoutError ? { exitCode: null, signal: null } : {}),
-          };
+          const diagnostics = capture.snapshot();
           yield* Ref.set(verificationDiagnostics, diagnostics);
           const { operationId } = yield* SubscriptionRef.get(state);
           yield* Effect.logWarning("Managed runtime verification failed", {
