@@ -4,6 +4,7 @@ import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -31,6 +32,7 @@ import * as WorkflowEngine from "./WorkflowEngine.ts";
 import { Issue, unavailable, WorkflowForge, WorkflowForgeError } from "./WorkflowForge.ts";
 import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
+import * as WorkflowStore from "./WorkflowStore.ts";
 import type { WorkflowRun, WorkflowRunStatus } from "./WorkflowStore.ts";
 
 const once = { retry: { times: 0 } } as const;
@@ -508,7 +510,7 @@ const fakeForge = () => {
   };
 };
 
-const harness = Effect.gen(function* () {
+const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflows-" });
@@ -536,16 +538,19 @@ const harness = Effect.gen(function* () {
   // One database file, so a second engine built from it is the server after a restart.
   const agents = fakeAgents();
   const forge = fakeForge();
-  const engine = WorkflowEngine.layer([
-    triage,
-    land,
-    ...definitions(counts, failures),
-    fix,
-    ...triggered,
-    ...stored,
-    ...family,
-    ...control,
-  ]).pipe(
+  const engine = WorkflowEngine.layer(
+    [
+      triage,
+      land,
+      ...definitions(counts, failures),
+      fix,
+      ...triggered,
+      ...stored,
+      ...family,
+      ...control,
+    ],
+    store,
+  ).pipe(
     Layer.provide(Layer.succeed(WorkflowAgents, agents.service)),
     Layer.provide(Layer.succeed(WorkflowForge, forge.service)),
     Layer.provide(database),
@@ -572,7 +577,7 @@ it.effect(
   "a failing step pauses its run, and resuming runs that step again and nothing before it",
   () =>
     Effect.gen(function* () {
-      const { counts, failures, boot } = yield* harness;
+      const { counts, failures, boot } = yield* harness();
       yield* Ref.set(failures, 2);
       const runId = yield* boot(
         Effect.gen(function* () {
@@ -619,7 +624,7 @@ it.effect(
 
 it.effect("a wait survives a restart, checks what it is signalled with, and steps run once", () =>
   Effect.gen(function* () {
-    const { counts, boot } = yield* harness;
+    const { counts, boot } = yield* harness();
     const runId = yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -658,7 +663,7 @@ it.effect("a wait survives a restart, checks what it is signalled with, and step
 
 it.effect("a signal sent before its wait opens is delivered when it does", () =>
   Effect.gen(function* () {
-    const { boot } = yield* harness;
+    const { boot } = yield* harness();
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -682,9 +687,53 @@ it.effect("a signal sent before its wait opens is delivered when it does", () =>
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a signal buffered as its wait opens is still delivered to that wait", () =>
+  Effect.gen(function* () {
+    const looked = yield* Deferred.make<void>();
+    const opened = yield* Deferred.make<void>();
+    // Holds the signal between finding no wait and buffering, while the wait opens and finds no mail.
+    const store = Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.gen(function* () {
+        const real = yield* WorkflowStore.make;
+        let first = true;
+        return WorkflowStore.WorkflowStore.of({
+          ...real,
+          waitAt: (address) =>
+            Effect.tap(real.waitAt(address), () => {
+              if (!("key" in address) || address.key !== "c9" || !first) return Effect.void;
+              first = false;
+              return Effect.andThen(Deferred.succeed(looked, undefined), Deferred.await(opened));
+            }),
+        });
+      }),
+    );
+    const { boot } = yield* harness(store);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const sent = yield* Effect.forkChild(
+          workflows.signal({ workflow: "review", key: "c9" }, { merge: true }, { id: "s9" }),
+        );
+        yield* Deferred.await(looked);
+        const { runId } = yield* workflows.start(
+          "review",
+          { change: "c9" },
+          { idempotencyKey: "c9" },
+        );
+        yield* workflows.waitFor(runId, atVerdict);
+        yield* Deferred.succeed(opened, undefined);
+        assert.equal(yield* Fiber.join(sent), "delivered");
+        const done = yield* workflows.waitFor(runId, status("completed"));
+        assert.equal(done.result, "2 checks, merge: true");
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a wait past its timeout wakes with nothing, and a workflow may stop on its own", () =>
   Effect.gen(function* () {
-    const { boot } = yield* harness;
+    const { boot } = yield* harness();
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -704,7 +753,7 @@ it.effect("a wait past its timeout wakes with nothing, and a workflow may stop o
 
 it.effect("a cancelled run ends, and two steps with one name pause their run", () =>
   Effect.gen(function* () {
-    const { boot } = yield* harness;
+    const { boot } = yield* harness();
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -745,7 +794,7 @@ it.effect(
   "an agent returns checked data, a person answers, and a later step continues the thread",
   () =>
     Effect.gen(function* () {
-      const { boot, agents } = yield* harness;
+      const { boot, agents } = yield* harness();
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
@@ -815,7 +864,7 @@ it.effect(
   "an agent whose turn dies is tried on a new thread, then its run pauses until resumed",
   () =>
     Effect.gen(function* () {
-      const { boot, agents } = yield* harness;
+      const { boot, agents } = yield* harness();
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
@@ -847,7 +896,7 @@ it.effect(
   "a step that dies, or whose result cannot be stored, pauses its run like any failure",
   () =>
     Effect.gen(function* () {
-      const { boot } = yield* harness;
+      const { boot } = yield* harness();
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
@@ -871,7 +920,7 @@ it.effect(
   "signals: one per wait, a retried id is not a second one, and bad early mail is dropped",
   () =>
     Effect.gen(function* () {
-      const { boot } = yield* harness;
+      const { boot } = yield* harness();
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
@@ -922,7 +971,7 @@ it.effect(
   "onEnd runs once however the run ends, and a cancelled run's is tried until it works",
   () =>
     Effect.gen(function* () {
-      const { boot, counts, failures } = yield* harness;
+      const { boot, counts, failures } = yield* harness();
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
@@ -989,7 +1038,7 @@ it.effect(
   "the store is shared by runs, survives a restart, and a failed transaction writes nothing",
   () =>
     Effect.gen(function* () {
-      const { boot } = yield* harness;
+      const { boot } = yield* harness();
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
@@ -1043,7 +1092,7 @@ it.effect(
 
 it.effect("an invoked run reports how it ended, and cancelling the parent cancels it", () =>
   Effect.gen(function* () {
-    const { boot } = yield* harness;
+    const { boot } = yield* harness();
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -1100,7 +1149,7 @@ it.effect("an invoked run reports how it ended, and cancelling the parent cancel
 
 it.effect("two agents run side by side, and one past its time limit is stopped", () =>
   Effect.gen(function* () {
-    const { boot, agents } = yield* harness;
+    const { boot, agents } = yield* harness();
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -1125,7 +1174,7 @@ it.effect("two agents run side by side, and one past its time limit is stopped",
 
 it.effect("an agent step in a linked environment keeps its thread there", () =>
   Effect.gen(function* () {
-    const { boot, agents } = yield* harness;
+    const { boot, agents } = yield* harness();
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -1165,7 +1214,7 @@ it.effect("an agent step in a linked environment keeps its thread there", () =>
 
 it.effect("cancelling a run stops its agent, and a turn a person stopped is not tried again", () =>
   Effect.gen(function* () {
-    const { boot, agents } = yield* harness;
+    const { boot, agents } = yield* harness();
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -1198,7 +1247,7 @@ it.effect("cancelling a run stops its agent, and a turn a person stopped is not 
 
 it.effect("a watcher is sent the runs again when one changes", () =>
   Effect.gen(function* () {
-    const { boot } = yield* harness;
+    const { boot } = yield* harness();
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -1232,7 +1281,7 @@ it.effect(
   "a schedule starts one run when it is due, and one for all the times a restart missed",
   () =>
     Effect.gen(function* () {
-      const { boot } = yield* harness;
+      const { boot } = yield* harness();
       const nightly = (workflows: Workflows.Workflows["Service"]) =>
         Effect.map(workflows.list(), (runs) => runs.filter((run) => run.workflow === "nightly"));
       yield* boot(
@@ -1264,7 +1313,7 @@ it.effect(
 
 it.effect("an issue opened after the workflow loaded starts one run, which can comment on it", () =>
   Effect.gen(function* () {
-    const { boot, forge } = yield* harness;
+    const { boot, forge } = yield* harness();
     const triaged = (workflows: Workflows.Workflows["Service"]) =>
       Effect.map(workflows.list(), (runs) => runs.filter((run) => run.workflow === "triage"));
     forge.open.push(issueAt("1", "1969-12-31T23:00:00.000Z"));
@@ -1298,7 +1347,7 @@ it.effect("an issue opened after the workflow loaded starts one run, which can c
 
 it.effect("a wait on a pull request ends when its checks have, and says how", () =>
   Effect.gen(function* () {
-    const { boot, forge } = yield* harness;
+    const { boot, forge } = yield* harness();
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -1324,7 +1373,7 @@ it.effect("a wait on a pull request ends when its checks have, and says how", ()
 
 it.effect("a request to a hook starts a run, its retry is the same run, and a bad token none", () =>
   Effect.gen(function* () {
-    const { boot } = yield* harness;
+    const { boot } = yield* harness();
     const request = (body: string, delivery: string) => ({
       method: "POST",
       headers: { "x-delivery": delivery },
@@ -1368,7 +1417,7 @@ it.effect("a request to a hook starts a run, its retry is the same run, and a ba
 
 it.effect("a step finds runs by their key, wakes everyone at a key, and cancels another run", () =>
   Effect.gen(function* () {
-    const { boot } = yield* harness;
+    const { boot } = yield* harness();
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -1416,7 +1465,7 @@ it.effect("a step finds runs by their key, wakes everyone at a key, and cancels 
 
 it.effect("a workflow can take an agent's failure as an answer and go on", () =>
   Effect.gen(function* () {
-    const { boot, agents } = yield* harness;
+    const { boot, agents } = yield* harness();
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;

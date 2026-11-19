@@ -751,7 +751,10 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
  * The workflow service with these definitions registered, on the SQLite database provided to it.
  * Only one process may run this layer against a database.
  */
-export const layer = (definitions: ReadonlyArray<WorkflowDefinition>) => {
+export const layer = (
+  definitions: ReadonlyArray<WorkflowDefinition>,
+  store: typeof WorkflowStore.layer = WorkflowStore.layer,
+) => {
   const registered = definitions.map(
     (definition) => [definition, engineWorkflow(definition)] as const,
   );
@@ -761,7 +764,7 @@ export const layer = (definitions: ReadonlyArray<WorkflowDefinition>) => {
   );
   return Layer.effect(Workflows, make(registered)).pipe(
     Layer.provide(layerDefinitions),
-    Layer.provide(WorkflowStore.layer),
+    Layer.provide(store),
     Layer.provide(Layer.merge(layerKeyValues, layerEngineLink)),
     Layer.provide(ClusterWorkflowEngine.layer),
     Layer.provide(SingleRunner.layer({ runnerStorage: "sql" })),
