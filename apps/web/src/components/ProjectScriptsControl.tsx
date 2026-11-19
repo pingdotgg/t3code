@@ -160,7 +160,7 @@ export default function ProjectScriptsControl({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: gt("Failed to import action."),
+          title: gt("Failed to import {name}.", { name: fileScript.name }),
           ...(message ? { description: message } : {}),
         }),
       );
