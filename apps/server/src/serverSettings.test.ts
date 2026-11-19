@@ -3147,8 +3147,19 @@ it.live("reloads a symlinked settings file after its target directory is replace
     yield* service.start;
     const changes = yield* service.subscribeChanges;
 
+    yield* fs.writeFileString(
+      path.join(restored, "settings.json"),
+      `{ "responseStreamingMode": "turn", "defaultAutoPull": true }`,
+    );
     yield* fs.rename(active, path.join(dotfiles, "previous"));
     yield* fs.rename(restored, active);
+
+    const restoredSettings = yield* changes.pipe(
+      Stream.filter((settings) => settings.defaultAutoPull),
+      Stream.runHead,
+    );
+    assert.isTrue(Option.isSome(restoredSettings));
+
     yield* fs.writeFileString(
       path.join(active, "settings.json"),
       `{ "responseStreamingMode": "paragraph" }`,

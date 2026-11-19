@@ -58,8 +58,20 @@ test(
       await runPromise(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
+          yield* fs.writeFileString(`${restored}/settings.json`, contents(8));
           yield* fs.rename(active, previous);
           yield* fs.rename(restored, active);
+        }),
+      );
+      try {
+        await expect(days).toHaveValue("8");
+      } catch (error) {
+        await app.screenshot("retention-after-settings-directory-restore");
+        throw error;
+      }
+      await runPromise(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
           yield* fs.writeFileString(`${active}/settings.json`, contents(9));
         }),
       );
