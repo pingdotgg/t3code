@@ -5254,14 +5254,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       ...(existing.endedWatch?.approvalAnnounced !== undefined && {
                         approvalAnnounced: existing.endedWatch.approvalAnnounced,
                       }),
-                      // The rollup read at the start wins; a finished-checks answer kept from
-                      // the last watch may be an older head's.
-                      ...(command.type === "thread.pull-request.watch" &&
+                      // CI running at the start may fail before the first read, which must still
+                      // report it. A caller's fresh read beats the link's last sync; a
+                      // finished-checks answer kept from the last watch may be an older head's.
+                      ...((command.type === "thread.pull-request.watch" &&
                       command.checksPending !== undefined
-                        ? { checksPending: command.checksPending }
-                        : existing.endedWatch?.checksPending === true
-                          ? { checksPending: true }
-                          : {}),
+                        ? command.checksPending
+                        : existing.snapshot?.checksState === "pending" ||
+                          existing.endedWatch?.checksPending === true) && { checksPending: true }),
                       ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                         checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
                       }),
