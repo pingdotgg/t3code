@@ -1775,6 +1775,129 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect("accepts every Codex approval request in full access without asking", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "full-access-approval-thread";
+      const nativeTurnId = "full-access-approval-turn";
+      const prompt = "Clean up the scratch files.";
+      const permissions = {
+        fileSystem: { entries: [{ access: "write", path: { type: "path", path: "/w" } }] },
+      } as const;
+      const requests: ReadonlyArray<readonly [string, Record<string, unknown>, unknown]> = [
+        [
+          "item/commandExecution/requestApproval",
+          {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            itemId: "exec-rm",
+            startedAtMs: 2,
+            command: "/bin/zsh -lc 'rm -f scratch.txt'",
+            cwd: "/w",
+            availableDecisions: ["accept", "cancel"],
+          },
+          { decision: "accept" },
+        ],
+        [
+          "item/fileChange/requestApproval",
+          {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            itemId: "patch-outside",
+            startedAtMs: 2,
+            reason: null,
+            grantRoot: null,
+          },
+          { decision: "accept" },
+        ],
+        [
+          "item/permissions/requestApproval",
+          {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            itemId: "permissions",
+            cwd: "/w",
+            startedAtMs: 2,
+            permissions,
+          },
+          { permissions, scope: "turn" },
+        ],
+        [
+          "execCommandApproval",
+          {
+            conversationId: nativeThreadId,
+            callId: "legacy-exec",
+            command: ["rm", "-f", "scratch.txt"],
+            cwd: "/w",
+            parsedCmd: [],
+          },
+          { decision: "approved" },
+        ],
+        [
+          "applyPatchApproval",
+          { conversationId: nativeThreadId, callId: "legacy-patch", fileChanges: {} },
+          { decision: "approved" },
+        ],
+      ];
+      const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "full-access-approvals",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+            ...requests.flatMap(
+              ([method, params, result], id): Array<CodexReplay.CodexAppServerReplayEntry> => [
+                { type: "emit_inbound", label: method, frame: { id, method, params } },
+                { type: "expect_outbound", label: method, frame: { id, result } },
+              ],
+            ),
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        }),
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+            ? Queue.offer(pending, event.runtimeRequest)
+            : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("full-access-approvals-attempt"),
+          text: prompt,
+        }),
+      );
+      const request = yield* Effect.raceFirst(
+        harness.firstTerminal.pipe(Effect.as(undefined)),
+        Queue.take(pending),
+      );
+      assert.isUndefined(request, "Full access must not wait for an approval");
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["completed"],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["native", "ordinary"] as const)(
     "resumes Codex without a prompt only for an existing conversation (%s)",
     (mode) =>
@@ -11848,22 +11971,35 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario,
-            entries: [...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }), ...entries],
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId,
+                prompt,
+                turnPolicy: {
+                  approvalPolicy: "on-request",
+                  sandboxPolicy: { type: "workspaceWrite" },
+                },
+              }),
+              ...entries,
+            ],
           }),
           (event) =>
             event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
               ? Queue.offer(pending, event.runtimeRequest)
               : Effect.void,
         );
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make(`${scenario}-attempt`),
-            text: prompt,
-          }),
-        );
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`${scenario}-attempt`),
+          text: prompt,
+        });
+        yield* harness.runtime.startTurn({
+          ...turnInput,
+          runtimePolicy: { ...turnInput.runtimePolicy, runtimeMode: "auto-accept-edits" },
+        });
         return {
           harness,
           answerNext: Queue.take(pending).pipe(
