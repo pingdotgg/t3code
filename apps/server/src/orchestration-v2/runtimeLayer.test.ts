@@ -48,6 +48,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
@@ -4744,7 +4745,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ]);
         const detailReads = yield* Queue.unbounded<number>();
         const agentRead = yield* Deferred.make<void>();
-        const agentEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        // Each of the reactor's subscribers reads every event, as each event sink stream does.
+        const agentEvents = yield* PubSub.unbounded<OrchestrationV2DomainEvent>({ replay: 16 });
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
@@ -4778,7 +4780,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           }),
           Layer.succeed(Orchestrator.OrchestratorV2, {
             ...orchestrator,
-            streamDomainEvents: Stream.fromQueue(agentEvents),
+            streamDomainEvents: Stream.fromPubSub(agentEvents),
           }),
           // Only the read at a command's end asks for one thread's watches.
           Layer.effect(
@@ -4832,11 +4834,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         yield* Queue.take(detailReads);
 
         // While the agent merges #19, someone else closes #20.
-        yield* Queue.offer(agentEvents, yield* command("running"));
+        yield* PubSub.publish(agentEvents, yield* command("running"));
         states.set(19, "merged");
         states.set(20, "closed");
         // The command's end reads the thread's watches in full, after that sweep.
-        yield* Queue.offer(agentEvents, yield* command(ended));
+        yield* PubSub.publish(agentEvents, yield* command(ended));
         yield* Deferred.await(agentRead);
         yield* TestClock.adjust("1 second");
         yield* Queue.take(detailReads);
@@ -4963,6 +4965,100 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         "#16: merged, stopped watching",
       ]);
       assert.isFalse(yield* watching);
+    }),
+  );
+
+  it.effect("wakes from a merged snapshot when the host cannot be read", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-merged-unreadable");
+      const projectId = ProjectId.make("pr-watch-merged-unreadable-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch merged unreadable",
+        workspaceRoot: "/workspace/watch-merged-unreadable",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-merged-unreadable-create"),
+        threadId,
+        projectId,
+        title: "Watch merged unreadable",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 8 };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-merged-unreadable-start"),
+        threadId,
+        ...key,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("pr-watch-merged-unreadable-synced"),
+        threadId,
+        ...key,
+        snapshot: {
+          state: "merged",
+          title: "Watched pull request",
+          headBranch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-02T12:30:00.000Z",
+          mergedAt: "2026-10-02T12:30:00.000Z",
+        },
+        stack: null,
+      });
+      // A transport failure, which an open pull request's watch outlasts.
+      const unreachable = new PullRequestOperationError({
+        operation: "detail",
+        detail: "host unreachable",
+        cause: new PullRequestProviderError({
+          provider: SourceControlProviderKind.make("github"),
+          operation: "detail",
+          reason: "failed",
+          detail: "host unreachable",
+        }),
+      });
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(PullRequestService.PullRequestService)({
+              watchFingerprint: () => Effect.succeed(null),
+              invalidate: () => Effect.void,
+              detail: () => Effect.fail(unreachable),
+              activity: () => Effect.fail(unreachable),
+            }),
+          ),
+        ),
+      );
+      yield* reactor.sweep;
+      yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+
+      const thread = yield* orchestrator.getThreadShell(threadId);
+      assert.isUndefined(thread?.pullRequests?.[0]?.watch);
+      const wakes = (yield* orchestrator.getThreadRecords(threadId, ["messages"])).messages.filter(
+        (message) => message.notification != null,
+      );
+      assert.deepEqual(
+        wakes.map((message) => message.notification?.summary),
+        ["#8: merged, stopped watching"],
+      );
+      assert.include(wakes[0]!.text, "merged into main, so");
     }),
   );
 
@@ -5943,7 +6039,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ];
         const detailReads = yield* Queue.unbounded<void>();
         const watchListings = yield* Queue.unbounded<void>();
-        const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+        const domainEvents = yield* PubSub.unbounded<OrchestrationV2DomainEvent>({ replay: 16 });
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
@@ -5975,10 +6071,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             invalidate: () => Effect.void,
             changes: () => Stream.never,
           }),
-          // Events come from a queue that exists before the reactor subscribes, so none is missed.
+          // Each subscriber reads every event, as each event sink stream does, and replay means one
+          // that subscribes late misses none.
           Layer.mock(Orchestrator.OrchestratorV2)({
             dispatch: orchestrator.dispatch,
-            streamDomainEvents: Stream.fromQueue(domainEvents),
+            streamDomainEvents: Stream.fromPubSub(domainEvents),
           }),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThreadsWithPullRequests: (id) =>
@@ -6009,7 +6106,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           watching: true,
           link: { url: "https://github.com/pingdotgg/t3code/pull/16", source: "agent" },
         });
-        yield* Queue.offerAll(
+        yield* PubSub.publishAll(
           domainEvents,
           started.storedEvents.map((stored) => stored.event),
         );

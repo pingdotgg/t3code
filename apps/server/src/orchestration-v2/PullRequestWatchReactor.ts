@@ -545,18 +545,26 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const finished = (groupKey: string, target: WatchTarget, detail: PullRequestDetail) =>
-    hold({
-      groupKey,
-      target,
-      next: null,
-      wake: pullRequestWatchEndMessage({
-        number: target.link.number,
-        url: target.link.url,
-        detail,
-      }),
-      reason: detail.state === "merged" ? "merged" : "closed",
-    });
+  const finished = (
+    groupKey: string,
+    target: WatchTarget,
+    detail: Pick<PullRequestDetail, "state" | "baseBranch" | "mergeCommitSha" | "mergedBy">,
+  ) => {
+    const reason = detail.state === "merged" ? "merged" : "closed";
+    return endedByAgent(target)
+      ? record(target, null).pipe(Effect.tap(() => ended(target, reason)))
+      : hold({
+          groupKey,
+          target,
+          next: null,
+          wake: pullRequestWatchEndMessage({
+            number: target.link.number,
+            url: target.link.url,
+            detail,
+          }),
+          reason,
+        });
+  };
 
   // A merged snapshot still gets one read, so the wake can name the merge commit.
   const endsWithoutRead = ({ thread }: WatchTarget): WatchEndReason | undefined =>
@@ -637,6 +645,13 @@ export const make = Effect.gen(function* () {
       if (Cause.hasInterruptsOnly(detailRead.cause))
         return yield* Effect.failCause(detailRead.cause);
       lastReads.delete(group.key);
+      // A merged PR's watch holds its thread from settling, so it must not wait out the host.
+      if (group.targets.every((target) => target.link.snapshot?.state === "merged")) {
+        readFailures.delete(group.key);
+        return yield* eachTarget(group, (target) =>
+          target.link.snapshot ? finished(group.key, target, target.link.snapshot) : Effect.void,
+        );
+      }
       const reason = providerFailureReason(detailRead.cause);
       if (reason === "rate-limited") return;
       // Transport and host failures can outlast the failure limit; keep the watch for recovery.
@@ -668,12 +683,7 @@ export const make = Effect.gen(function* () {
     }
     if (detail.state !== "open") {
       lastReads.delete(group.key);
-      const reason = detail.state === "merged" ? "merged" : "closed";
-      return yield* eachTarget(group, (target) =>
-        endedByAgent(target)
-          ? record(target, null).pipe(Effect.tap(() => ended(target, reason)))
-          : finished(group.key, target, detail),
-      );
+      return yield* eachTarget(group, (target) => finished(group.key, target, detail));
     }
 
     // A failed comments read leaves remarks incomplete, so the next pass reads them again;
