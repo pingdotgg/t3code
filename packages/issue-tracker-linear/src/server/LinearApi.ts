@@ -97,6 +97,8 @@ export class LinearApi extends Context.Service<
     readonly viewer: (token?: string) => Effect.Effect<
       {
         readonly viewer: LinearUser;
+        /** The workspace's URL key, the first path segment of its issue links. */
+        readonly workspace: string;
         readonly teams: ReadonlyArray<{
           readonly id: string;
           readonly key: string;
@@ -295,7 +297,11 @@ export const make = Effect.gen(function* () {
 
   const viewer: LinearApi["Service"]["viewer"] = (token) =>
     call("viewer", (linear) => linear.T3Viewer(), token).pipe(
-      Effect.map((data) => ({ viewer: data.viewer, teams: data.teams.nodes })),
+      Effect.map((data) => ({
+        viewer: data.viewer,
+        workspace: data.organization.urlKey,
+        teams: data.teams.nodes,
+      })),
     );
 
   const listIssues: LinearApi["Service"]["listIssues"] = (input) =>

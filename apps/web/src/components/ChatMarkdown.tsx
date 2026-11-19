@@ -684,11 +684,12 @@ function useChatMarkdownState({
   const projects = useProjects();
   const issueProjects = projects.filter((project) => project.environmentId === environmentId);
   // Only text naming a standalone tracker asks for its bindings, whose read probes the tracker.
-  const issueTrackerBindings = useEnvironmentQuery(
-    issuesEnabled && environmentId !== null && mayContainStandaloneIssueLink(text)
-      ? issueTrackerEnvironment.connections({ environmentId, input: {} })
-      : null,
-  ).data?.bindings;
+  const issueTrackers =
+    useEnvironmentQuery(
+      issuesEnabled && environmentId !== null && mayContainStandaloneIssueLink(text)
+        ? issueTrackerEnvironment.connections({ environmentId, input: {} })
+        : null,
+    ).data ?? undefined;
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor, messages);
   const openInPreferredEditor = useOpenInPreferredEditor(environmentId, availableEditors, cwd);
@@ -1038,7 +1039,7 @@ function useChatMarkdownState({
     openMarkdownMedia,
     projects,
     issueProjects,
-    issueTrackerBindings,
+    issueTrackers,
     linkedThreadPullRequestFor,
     resolveThreadPullRequest,
     resolvedTheme,
@@ -1210,7 +1211,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       openExternalLinkInPreview,
       projects,
       issueProjects,
-      issueTrackerBindings,
+      issueTrackers,
       linkedThreadPullRequestFor,
       resolveThreadPullRequest,
       pullRequestsEnabled,
@@ -1284,7 +1285,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           ? resolveIssueLinkTarget({
               url: href,
               projects: issueProjects,
-              trackerBindings: issueTrackerBindings,
+              trackers: issueTrackers,
             })
           : null;
       const issuePreviewTarget =
@@ -1336,7 +1337,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             if (
               !href ||
               openChangeRequestLink(event, href, undefined, environmentId ?? undefined) ||
-              openIssueLink(event, href, environmentId ?? undefined, issueTrackerBindings)
+              openIssueLink(event, href, environmentId ?? undefined, issueTrackers)
             ) {
               return;
             }
@@ -1477,7 +1478,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 },
                 url,
                 environmentId ?? undefined,
-                issueTrackerBindings,
+                issueTrackers,
               );
               if (!opened) await openDeferredMarkdownLink(url);
             }}

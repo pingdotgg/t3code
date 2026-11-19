@@ -27,12 +27,12 @@ export function useOpenIssueLink(
   >,
   targetUrl: string,
   targetEnvironmentId?: EnvironmentId,
-  trackerBindings?: IssueTrackerConnectionList["bindings"],
+  trackers?: IssueTrackerConnectionList,
 ) => boolean {
   const allProjects = useProjects();
   const serverConfigs = useServerConfigs();
   const navigate = useNavigate();
-  return (event, targetUrl, targetEnvironmentId, trackerBindings) => {
+  return (event, targetUrl, targetEnvironmentId, trackers) => {
     if (event.metaKey || event.ctrlKey) return false;
     const resolvedPanelRef = panelRef ?? threadRef;
     // A list page's panel ref is a placeholder, not an environment; the link names its own.
@@ -42,7 +42,7 @@ export function useOpenIssueLink(
     const target = resolveIssueLinkTarget({
       url: targetUrl,
       projects: allProjects.filter((project) => project.environmentId === environmentId),
-      trackerBindings,
+      trackers,
     });
     if (target === null) return false;
     event.preventDefault();

@@ -422,6 +422,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
         linear.viewer(token).pipe(
           Effect.map((data) => ({
             account: userName(data.viewer),
+            workspace: data.workspace,
             scopes: data.teams.map((team) => ({ key: team.key, name: team.name })),
           })),
         ),

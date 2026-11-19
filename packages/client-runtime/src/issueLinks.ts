@@ -53,9 +53,6 @@ function parseIssueLink(
   return null;
 }
 
-/** Which tracker scope each project is bound to beside its git host's, as Settings saved it. */
-type TrackerBindings = IssueTrackerConnectionList["bindings"];
-
 function parseStandaloneIssueLink(url: string) {
   try {
     const link = parseLinearIssueUrl(new URL(url));
@@ -75,16 +72,25 @@ export function mayContainStandaloneIssueLink(text: string): boolean {
   return text.includes(`${LINEAR_HOST}/`);
 }
 
-/** A standalone tracker link resolves through the project bound to its scope, else any bound to the tracker. */
+/**
+ * A standalone tracker link resolves through the project bound to its scope, else any bound to
+ * the tracker, and only when it names the workspace the credential reaches: team keys repeat
+ * across workspaces, so a link elsewhere stays an ordinary link.
+ */
 function resolveStandaloneIssueLink<Project extends LinkProject>(
   url: string,
   projects: ReadonlyArray<Project>,
-  bindings: TrackerBindings | undefined,
+  trackers: IssueTrackerConnectionList | undefined,
   preferredProjectId: string | undefined,
 ): { readonly project: Project; readonly ref: IssueRef } | null {
-  const parsed = bindings === undefined ? null : parseStandaloneIssueLink(url);
-  if (parsed === null || bindings === undefined) return null;
+  const parsed = trackers === undefined ? null : parseStandaloneIssueLink(url);
+  if (parsed === null || trackers === undefined) return null;
   const { tracker, link } = parsed;
+  const workspace = trackers.trackers.find(
+    (connection) => connection.tracker === tracker && connection.account !== null,
+  )?.workspace;
+  if (workspace?.toLowerCase() !== link.workspace.toLowerCase()) return null;
+  const { bindings } = trackers;
   const onTracker = projects.flatMap((project) => {
     const binding = bindings[project.id];
     return binding?.tracker === tracker ? [{ project, binding }] : [];
@@ -120,8 +126,8 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
   /** The projects of the environment the link is read in. */
   readonly projects: ReadonlyArray<Project>;
   readonly preferredProjectId?: string | undefined;
-  /** The environment's standalone tracker bindings; without them only git-host links resolve. */
-  readonly trackerBindings?: TrackerBindings | undefined;
+  /** The environment's standalone trackers and bindings; without them only git-host links resolve. */
+  readonly trackers?: IssueTrackerConnectionList | undefined;
 }): { readonly project: Project; readonly ref: IssueRef } | null {
   // A link names its server's port; a binding does only when its remote or web URL did.
   const authority = linkAuthority(input.url);
@@ -130,7 +136,7 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
     return resolveStandaloneIssueLink(
       input.url,
       input.projects,
-      input.trackerBindings,
+      input.trackers,
       input.preferredProjectId,
     );
   const { definition, link } = parsed;

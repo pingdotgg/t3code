@@ -56,8 +56,7 @@ export function useNavigateToPullRequest(options?: { readonly replace?: boolean 
               url,
               projects: projects.filter((project) => project.environmentId === environmentId),
               preferredProjectId: context.projectId,
-              trackerBindings:
-                connections?._tag === "Success" ? connections.value.bindings : undefined,
+              trackers: connections?._tag === "Success" ? connections.value : undefined,
             })
           : null;
       if (!issue || !environmentId) return tryOpenExternalUrl(url, "pull-request");
