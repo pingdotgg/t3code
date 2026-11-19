@@ -393,6 +393,8 @@ describe("pull request detail decoding", () => {
             createdAt: "2026-07-01T00:00:00Z",
             updatedAt: "2026-07-05T00:00:00Z",
             mergedAt: null,
+            mergeCommit: null,
+            mergedBy: null,
             closedAt: null,
             headRefName: "feat/detail",
             baseRefName: "main",
@@ -549,6 +551,26 @@ describe("pull request detail decoding", () => {
 
     expect(detail.checks.map((check) => check.status)).toEqual(["success", "action-required"]);
     expect(detail.checksState).toBe("pending");
+  });
+
+  it("reads a merged pull request's merge commit and who merged it", () => {
+    expect(
+      detailOf([], {
+        state: "MERGED",
+        mergedAt: "2026-07-05T00:00:00Z",
+        mergeCommit: { oid: "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9" },
+        mergedBy: {
+          __typename: "User",
+          login: "octocat",
+          avatarUrl: "https://avatars.githubusercontent.com/u/1",
+          name: "Octo Cat",
+        },
+      }),
+    ).toMatchObject({
+      state: "merged",
+      mergeCommitSha: "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9",
+      mergedBy: { login: "octocat", name: "Octo Cat" },
+    });
   });
 
   it("reads an auto-merge request and strategy, and its null as off", () => {

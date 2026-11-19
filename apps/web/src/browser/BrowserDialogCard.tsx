@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { T, useGT } from "gt-react";
 
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -19,6 +20,7 @@ export function BrowserDialogCard({
   readonly onAnswer: (accept: boolean, promptText?: string) => void;
   readonly className?: string;
 }) {
+  const gt = useGT();
   const [promptText, setPromptText] = useState(dialog.defaultValue);
   return (
     <div
@@ -27,32 +29,34 @@ export function BrowserDialogCard({
         className,
       )}
       role="dialog"
-      aria-label="Browser dialog"
+      aria-label={gt("Browser dialog")}
     >
       <p className="break-words text-sm">{dialog.message}</p>
       {canAnswer ? (
         <>
           {dialog.type === "prompt" ? (
             <Input
-              aria-label="Dialog response"
+              aria-label={gt("Dialog response")}
               value={promptText}
               onChange={(event) => setPromptText(event.target.value)}
             />
           ) : null}
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => onAnswer(false)}>
-              Dismiss
+              <T>Dismiss</T>
             </Button>
             <Button
               size="sm"
               onClick={() => onAnswer(true, dialog.type === "prompt" ? promptText : undefined)}
             >
-              Accept
+              <T>Accept</T>
             </Button>
           </div>
         </>
       ) : (
-        <p className="text-xs text-muted-foreground">Take control to respond.</p>
+        <p className="text-xs text-muted-foreground">
+          <T>Take control to respond.</T>
+        </p>
       )}
     </div>
   );

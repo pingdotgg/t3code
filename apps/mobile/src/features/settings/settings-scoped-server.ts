@@ -13,6 +13,9 @@ import {
   resolveProjectSettings,
 } from "@t3tools/shared/projectSettings";
 
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 import type { SettingsTarget } from "./settings-environment-filter";
 
 export interface ScopedMobileSettingsTarget {
@@ -28,12 +31,15 @@ export interface ScopedMobileSettingsTarget {
  */
 export function managedSettingReason(
   targets: readonly ScopedMobileSettingsTarget[],
-  ...paths: readonly string[]
+  paths: readonly string[],
+  resolve: MessageResolver = m,
 ): string | undefined {
   const policy = targets
     .map((target) => target.environment.serverConfig.managedPolicy)
     .find((candidate) => paths.some((path) => isManagedSettingPath(candidate, path)));
-  return policy === undefined ? undefined : `Managed by ${policy.organization}.`;
+  return policy === undefined
+    ? undefined
+    : resolve(msg("Managed by {organization}.", { organization: policy.organization }));
 }
 
 export function resolveMobileSettingsTargets(

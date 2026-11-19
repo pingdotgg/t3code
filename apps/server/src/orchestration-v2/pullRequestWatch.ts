@@ -256,6 +256,7 @@ export function evaluatePullRequestWatch(
         }),
       checksAwaitedSince,
       checksPending,
+      ...(watch.until !== undefined && { until: watch.until }),
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
@@ -443,6 +444,33 @@ export function combinePullRequestWatchWakes(
           ? "completed"
           : "updated",
       summary: wakes.map((wake) => wake.notification.summary).join("; "),
+    },
+  };
+}
+
+export function pullRequestWatchEndMessage(input: {
+  readonly number: number;
+  readonly url: string;
+  readonly detail: Pick<PullRequestDetail, "state" | "baseBranch" | "mergeCommitSha" | "mergedBy">;
+}): { readonly text: string; readonly notification: OrchestrationV2Notification } {
+  const { detail } = input;
+  const merged = detail.state === "merged";
+  const how = merged
+    ? [
+        `was merged into ${detail.baseBranch}`,
+        detail.mergedBy ? ` by ${detail.mergedBy.login}` : "",
+        detail.mergeCommitSha ? ` as ${detail.mergeCommitSha.slice(0, 7)}` : "",
+      ].join("")
+    : "was closed without merging";
+  return {
+    text: [
+      `Pull request #${input.number} (${input.url}) ${how}, so T3 Code stopped watching it.`,
+      ...(merged ? [] : ["If it is reopened, call watch_pull_request to watch it again."]),
+    ].join(" "),
+    notification: {
+      source: { kind: "monitor" },
+      outcome: merged ? "completed" : "updated",
+      summary: `#${input.number}: ${merged ? "merged" : "closed"}, stopped watching`,
     },
   };
 }

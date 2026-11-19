@@ -330,6 +330,7 @@ const resumed = (
     readonly lastRunOrdinal?: number;
     readonly pendingBackgroundTasks?: OrchestrationV2ProviderThread["pendingBackgroundTasks"];
     readonly goal?: OrchestrationV2ProviderThread["goal"];
+    readonly contextUsage?: OrchestrationV2ProviderThread["contextUsage"];
     readonly external?: boolean;
     readonly supervised?: boolean;
     readonly processExit?: Effect.Effect<void>;
@@ -398,6 +399,7 @@ const resumed = (
           ? {}
           : { lastRunOrdinal: options.lastRunOrdinal }),
         ...(options?.goal === undefined ? {} : { goal: options.goal }),
+        ...(options?.contextUsage === undefined ? {} : { contextUsage: options.contextUsage }),
         ...(options?.pendingBackgroundTasks === undefined
           ? {}
           : { pendingBackgroundTasks: options.pendingBackgroundTasks }),
@@ -506,6 +508,52 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
+  it.effect("drops context usage carried over from before a completed compaction", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.step.ended", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+            finish: "stop",
+            cost: 0,
+            tokens: { input: 150_000, output: 40, reasoning: 0, cache: { read: 0, write: 0 } },
+          }),
+          event("session.compaction.started", { sessionID: SESSION, reason: "manual", recent: "" }),
+          event("session.compaction.ended", {
+            sessionID: SESSION,
+            reason: "manual",
+            text: "Summary",
+            recent: "",
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { contextUsage: { usedTokens: 150_000, maxTokens: 160_000 } },
+      );
+      assert.equal(thread.contextUsage?.usedTokens, 150_000);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const seen = yield* Fiber.join(collected);
+      const usage = seen.flatMap((event) =>
+        event.type === "provider_thread.updated" ? [event.providerThread.contextUsage] : [],
+      );
+      assert.isNull(usage.at(-1));
+      const settled = seen.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+      );
+      assert.isUndefined(
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.tokenUsage : "missing",
+      );
     }),
   );
 
@@ -5113,6 +5161,59 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  // regression: #37816
+  it.effect("keeps the answer and shows a shell report delivered into the turn after it", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_answer",
+          ordinal: 0,
+          text: "The screenshot is at shots/home.png",
+        }),
+        event("session.inbox.enqueued", {
+          inboxID: "msg_shell_report",
+          sessionID: SESSION,
+          item: {
+            type: "synthetic",
+            payload: {
+              text: '<shell id="sh_dev" state="completed">dev server stopped</shell>',
+              description: "Dev server",
+              metadata: { source: "shell", shellID: "sh_dev", state: "completed" },
+            },
+            delivery: "steer",
+          },
+        }),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_shell_report" }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_note_reply",
+          ordinal: 0,
+          text: "The dev server I started has stopped.",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const items = (yield* Fiber.join(events)).flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      assert.isTrue(items.some((item) => item.type === "notification"));
+      const answer = items.findLast(
+        (item) =>
+          item.type === "assistant_message" && item.text === "The screenshot is at shots/home.png",
+      );
+      assert.equal(answer?.type === "assistant_message" ? answer.phase : null, "final_answer");
+    }),
+  );
+
   it.effect("re-registers T3 MCP each turn and drops its instructions when adding fails", () =>
     Effect.gen(function* () {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -8021,12 +8122,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   it.effect.each([
-    { status: "complete", reconnect: false },
-    { status: "paused", reconnect: false },
-    { status: "complete", reconnect: true },
+    { status: "complete", reconnect: false, silent: false },
+    { status: "paused", reconnect: false, silent: false },
+    { status: "complete", reconnect: true, silent: false },
+    { status: "paused", reconnect: false, silent: true },
   ] as const)(
-    "keeps an OpenCode goal turn open until $status, with reconnect $reconnect",
-    ({ status, reconnect }) =>
+    "keeps an OpenCode goal turn open until $status, with reconnect $reconnect and silent $silent",
+    ({ status, reconnect, silent }) =>
       Effect.gen(function* () {
         const recovered = reconnected({ [SESSION]: { type: "running" } });
         const { runtime, thread } = yield* resumed(
@@ -8039,6 +8141,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             reply("session.command", null),
             event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal("active") }),
             event("session.execution.succeeded", { sessionID: SESSION }),
+            out("rpc.call", "<any>"),
+            reply("rpc.call", { output: nativeGoal(silent ? status : "active") }),
             ...(status === "complete"
               ? reconnect
                 ? [
@@ -8051,7 +8155,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                   ]
                 : [event("session.execution.started", { sessionID: SESSION })]
               : []),
-            event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal(status) }),
+            ...(silent
+              ? []
+              : [
+                  event("rpc.opencode.goal.changed", {
+                    sessionID: SESSION,
+                    goal: nativeGoal(status),
+                  }),
+                ]),
             ...(status === "complete"
               ? [
                   event("session.text.ended", {
@@ -8198,6 +8309,64 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
+  it.effect("a goal refresh that reconnect supersedes leaves the turn to reconnect's read", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["before-reconnect", "reconnect-reading"]);
+      const recovered = reconnected({ [SESSION]: { type: "running" } });
+      const elsewhere = { sessionID: "ses_elsewhere", goal: null };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal("active") }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("rpc.call", "<any>"),
+          reply("rpc.call", "<hang>"),
+          event("rpc.opencode.goal.changed", elsewhere, "before-reconnect"),
+          ...recovered.slice(0, 2),
+          out("rpc.call", "<any>"),
+          event("rpc.opencode.goal.changed", elsewhere, "reconnect-reading"),
+          reply("rpc.call", { output: nativeGoal("active") }),
+          ...emptyShellInventory,
+          ...recovered.slice(2),
+          ...noOpenRequests,
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.text.ended", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_goal_final",
+            ordinal: 0,
+            text: "Final goal output",
+          }),
+          event("rpc.opencode.goal.changed", { sessionID: SESSION, goal: nativeGoal("complete") }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { version: "2.2.5", replayGate: gate },
+      );
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((e) => e.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      yield* Effect.promise(() => gate.waitForReached("before-reconnect"));
+      yield* TestClock.adjust("3 seconds");
+      gate.release("before-reconnect");
+      yield* Effect.promise(() => gate.waitForReached("reconnect-reading"));
+      yield* TestClock.adjust("2 seconds");
+      gate.release("reconnect-reading");
+      const collected = yield* Fiber.join(events);
+      assert.isTrue(
+        collected.some(
+          (e) =>
+            e.type === "turn_item.updated" &&
+            e.turnItem.type === "assistant_message" &&
+            e.turnItem.text === "Final goal output",
+        ),
+      );
+      assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+    }),
+  );
+
   it.effect.each([
     { initial: "active", recovered: "paused" },
     { initial: "paused", recovered: "active" },
@@ -8220,6 +8389,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             reply("rpc.call", { output: recovered === "unreadable" ? {} : nativeGoal(recovered) }),
             ...(recovered === "active"
               ? [
+                  out("rpc.call", "<any>"),
+                  reply("rpc.call", { output: nativeGoal("active") }),
                   event("session.execution.started", { sessionID: SESSION }),
                   event("session.text.ended", {
                     sessionID: SESSION,
