@@ -168,14 +168,9 @@ function roomWindows(provider: ServerProvider, model: string, now: number) {
     }
     return true;
   });
-  // Claude's monthly spend caps only extra usage past the plan windows, so it does not count while those windows have room.
+  // Claude's monthly spend caps only extra usage past the plan windows, so the plan windows decide.
   const planWindows = windows.filter((w) => w.id !== "monthly_spend");
-  const planHasRoom =
-    planWindows.length > 0 &&
-    planWindows.every(
-      (w) => typeof w.usedPercent === "number" && w.usedPercent < STICKY_MAX_USED_PERCENT,
-    );
-  return planHasRoom ? planWindows : windows;
+  return planWindows.length > 0 ? planWindows : windows;
 }
 
 function sessionUsedPercent(
@@ -209,9 +204,7 @@ function weeklyWindows(provider: ServerProvider, model: string, now: number) {
       w.resetsAt === undefined
         ? now + (w.windowDurationMins ?? Number.NaN) * MINUTE
         : Date.parse(w.resetsAt);
-    return Number.isFinite(resetsAt) && resetsAt > now
-      ? [{ usedPercent: w.usedPercent, resetsAt }]
-      : [];
+    return Number.isFinite(resetsAt) ? [{ usedPercent: w.usedPercent, resetsAt }] : [];
   });
 }
 
@@ -284,13 +277,13 @@ function hasRoom(provider: ServerProvider, model: string, now: number): boolean 
 
 function peakUsedPercent(provider: ServerProvider, model: string, now: number): number | undefined {
   const windows = roomWindows(provider, model, now);
-  if (
-    windows.length === 0 ||
-    windows.some((w) => typeof w.usedPercent !== "number" || !Number.isFinite(w.usedPercent))
-  ) {
-    return undefined;
-  }
-  return Math.max(...windows.map((w) => w.usedPercent!));
+  const known = windows.flatMap((w) =>
+    typeof w.usedPercent === "number" && Number.isFinite(w.usedPercent) ? [w.usedPercent] : [],
+  );
+  if (known.length === 0) return undefined;
+  const peak = Math.max(...known);
+  // Unknown only while no known window is already past 90%.
+  return known.length === windows.length || peak >= STICKY_MAX_USED_PERCENT ? peak : undefined;
 }
 
 /**
