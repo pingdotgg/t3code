@@ -538,7 +538,6 @@ describe("Grok usage limits", () => {
       {},
       { config: {} },
       { config: { creditUsagePercent: NaN } },
-      // Unified billing omits the percentage even when Grok refuses turns at its limit.
       { config: { currentPeriod: weeklyPeriod, isUnifiedBillingUser: true } },
     ]) {
       const limits = grokUsageResponseToLimits(response, checkedAt);

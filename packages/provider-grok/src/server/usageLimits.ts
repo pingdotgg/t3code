@@ -75,7 +75,7 @@ export function grokUsageResponseToLimits(
   const windowDurationMins = Math.round((end - start) / 60_000);
   let usedPercent = response.config?.creditUsagePercent;
   // Grok omits a zero percentage while retaining the complete subscription period. Unified
-  // billing omits it at any usage, so there a missing percentage is unknown, not zero.
+  // billing omits it even at the limit, so there a missing percentage is unknown, not zero.
   if (
     usedPercent === undefined &&
     !response.config?.isUnifiedBillingUser &&
