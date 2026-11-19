@@ -8,8 +8,8 @@ const SCHEME = "agentboard";
 // oxlint-disable-next-line t3code/no-global-process-runtime -- The board has no Effect runtime.
 const platform = NodeOS.platform();
 const rendererDir = NodePath.join(__dirname, "..", "..", "dist");
-const devServerUrl = process.env.VITE_DEV_SERVER_URL;
-const cdpPort = process.env.AGENT_BOARD_CDP_PORT;
+const devServerUrl = process.env["VITE_DEV_SERVER_URL"];
+const cdpPort = process.env["AGENT_BOARD_CDP_PORT"];
 
 // Matches the frame in apps/desktop/src/window/DesktopWindow.ts, dark variant only.
 const BACKGROUND_COLOR = "#151618";
@@ -72,11 +72,13 @@ function openWindow(): void {
   void window.loadURL(devServerUrl ?? `${SCHEME}://app/index.html`);
 }
 
+const isEpochMs = (value: unknown): value is number => Number.isFinite(value);
+
 // The renderer reports wall-clock time because its performance clock starts at navigation.
 // process.getCreationTime() is skewed under WSL (it once came out negative), so the clock
 // starts at Node's init in the main process instead.
-ipcMain.on("board:first-paint", (_event, epochMs: unknown) => {
-  if (typeof epochMs !== "number") return;
+ipcMain.on("board:first-paint", (_event, epochMs) => {
+  if (!isEpochMs(epochMs)) return;
   console.log(`board:first-paint ${Math.round(epochMs - performance.timeOrigin)} ms`);
 });
 

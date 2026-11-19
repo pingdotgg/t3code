@@ -8,6 +8,10 @@
     "outDir": "dist-electron",
     "rootDir": ".",
     "types": ["node"],
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "plugins": [
       {

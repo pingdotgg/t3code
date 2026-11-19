@@ -57,6 +57,28 @@ NodeTest.test(
 );
 
 NodeTest.test(
+  "Given a branch that adds only the repo standards files, When the check runs, Then it exits 0",
+  () => {
+    write("standards/oxlint.config.ts", "export default {};\n");
+    write(".vite-hooks/pre-push", "node standards/check-added-diagnostics.mjs\n");
+    write(".claude/settings.json", "{}\n");
+    commit();
+    NodeAssert.equal(check().status, 0);
+  },
+);
+
+NodeTest.test(
+  "Given a branch that adds another file under .claude, When the check runs, Then it exits 1",
+  () => {
+    write(".claude/commands.json", "{}\n");
+    commit();
+    const result = check();
+    NodeAssert.equal(result.status, 1);
+    NodeAssert.match(result.stdout, /^ {2}\.claude\/commands\.json$/m);
+  },
+);
+
+NodeTest.test(
   "Given a branch that edits an engine file, When the check runs, Then it exits 1 and names the file",
   () => {
     write("apps/server/src/x.ts", "export const x = 1;\n");

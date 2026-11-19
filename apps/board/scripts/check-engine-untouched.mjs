@@ -1,8 +1,15 @@
 #!/usr/bin/env node
-// Fails when this branch changes anything outside the board app, so upstream T3 merges stay conflict-free.
+// Fails when this branch changes anything outside the board app and its repo standards, so upstream T3 merges stay conflict-free.
 import * as NodeChildProcess from "node:child_process";
 
-const ALLOWED = ["apps/board/", ".github/workflows/agent-board.yml", "pnpm-lock.yaml"];
+const ALLOWED = [
+  "apps/board/",
+  "standards/",
+  ".vite-hooks/pre-push",
+  ".claude/settings.json",
+  ".github/workflows/agent-board.yml",
+  "pnpm-lock.yaml",
+];
 const UPSTREAM_URL = "https://github.com/pingdotgg/t3code.git";
 
 const git = (args, cwd) =>

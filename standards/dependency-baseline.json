@@ -1,0 +1,2599 @@
+[
+  {
+    "type": "cycle",
+    "from": "apps/desktop/src/app/DesktopEnvironment.ts",
+    "to": "apps/desktop/src/settings/DesktopAppSettings.ts",
+    "unresolvedTo": "../settings/DesktopAppSettings.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/desktop/src/settings/DesktopAppSettings.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/desktop/src/app/DesktopEnvironment.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/desktop/src/snapShot/HyprlandSnapShot.ts",
+    "to": "apps/desktop/src/snapShot/LinuxSnapShot.ts",
+    "unresolvedTo": "./LinuxSnapShot.ts",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/desktop/src/snapShot/LinuxSnapShot.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/desktop/src/snapShot/HyprlandSnapShot.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/desktop/src/snapShot/HyprlandSnapShot.ts",
+    "to": "apps/desktop/src/snapShot/NativeCaptureFeedback.ts",
+    "unresolvedTo": "./NativeCaptureFeedback.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/desktop/src/snapShot/NativeCaptureFeedback.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/desktop/src/snapShot/LinuxSnapShot.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/desktop/src/snapShot/HyprlandSnapShot.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/desktop/src/snapShot/KdeSnapShot.ts",
+    "to": "apps/desktop/src/snapShot/LinuxSnapShot.ts",
+    "unresolvedTo": "./LinuxSnapShot.ts",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/desktop/src/snapShot/LinuxSnapShot.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/desktop/src/snapShot/KdeSnapShot.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/desktop/src/snapShot/KdeSnapShot.ts",
+    "to": "apps/desktop/src/snapShot/NativeCaptureFeedback.ts",
+    "unresolvedTo": "./NativeCaptureFeedback.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/desktop/src/snapShot/NativeCaptureFeedback.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/desktop/src/snapShot/LinuxSnapShot.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/desktop/src/snapShot/KdeSnapShot.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/desktop/src/snapShot/LinuxSnapShot.ts",
+    "to": "apps/desktop/src/snapShot/NiriSnapShot.ts",
+    "unresolvedTo": "./NiriSnapShot.ts",
+    "dependencyTypes": ["local", "dynamic-import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/desktop/src/snapShot/NiriSnapShot.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/desktop/src/snapShot/LinuxSnapShot.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/connection/catalog.ts",
+    "to": "apps/mobile/src/connection/runtime.ts",
+    "unresolvedTo": "./runtime",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/mobile/src/state/assets.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/catalog.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+    "to": "apps/mobile/src/state/use-composer-drafts.ts",
+    "unresolvedTo": "../state/use-composer-drafts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/mobile/src/state/assets.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/catalog.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/connection/runtime.ts",
+    "to": "apps/mobile/src/connection/platform.ts",
+    "unresolvedTo": "./platform",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/mobile/src/state/assets.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/lib/attachmentUpload.ts",
+    "to": "apps/mobile/src/state/attachments.ts",
+    "unresolvedTo": "../state/attachments",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/state/attachments.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/lib/attachmentUpload.ts",
+    "to": "apps/mobile/src/state/session.ts",
+    "unresolvedTo": "../state/session",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/state/session.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/state/assets.ts",
+    "to": "apps/mobile/src/state/presentation.ts",
+    "unresolvedTo": "./presentation",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/state/presentation.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/catalog.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/mobile/src/state/assets.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/state/assets.ts",
+    "to": "apps/mobile/src/state/projectClones.ts",
+    "unresolvedTo": "./projectClones",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/state/projectClones.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/server.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/catalog.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/mobile/src/state/assets.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/state/assets.ts",
+    "to": "apps/mobile/src/state/session.ts",
+    "unresolvedTo": "./session",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/state/session.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/mobile/src/state/assets.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/state/attachments.ts",
+    "to": "apps/mobile/src/state/session.ts",
+    "unresolvedTo": "./session",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/state/session.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/mobile/src/state/attachments.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/state/presentation.ts",
+    "to": "apps/mobile/src/state/server.ts",
+    "unresolvedTo": "./server",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/state/server.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/catalog.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/mobile/src/state/assets.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/presentation.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/state/projectClones.ts",
+    "to": "apps/mobile/src/state/sourceControl.ts",
+    "unresolvedTo": "./sourceControl",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/state/sourceControl.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/mobile/src/state/assets.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/projectClones.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/state/server.ts",
+    "to": "apps/mobile/src/connection/runtime.ts",
+    "unresolvedTo": "../connection/runtime",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/mobile/src/state/assets.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/presentation.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/server.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/mobile/src/state/server.ts",
+    "to": "apps/mobile/src/state/session.ts",
+    "unresolvedTo": "./session",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/mobile/src/state/session.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/runtime.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/platform.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/connection/environment-owned-data-cleanup.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/thread-outbox-removal.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/use-composer-drafts.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/lib/attachmentUpload.ts",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/mobile/src/state/assets.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/presentation.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/mobile/src/state/server.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/server/src/auth/dpop.ts",
+    "to": "apps/server/src/auth/EnvironmentAuth.ts",
+    "unresolvedTo": "./EnvironmentAuth.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/server/src/auth/EnvironmentAuth.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/auth/dpop.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/server/src/auth/EnvironmentAuth.ts",
+    "to": "apps/server/src/auth/SessionStore.ts",
+    "unresolvedTo": "./SessionStore.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/server/src/auth/SessionStore.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/auth/EnvironmentAuth.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/server/src/auth/serverInternalPaths.ts",
+    "to": "apps/server/src/workspace/KnownWorkspaces.ts",
+    "unresolvedTo": "../workspace/KnownWorkspaces.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/server/src/workspace/KnownWorkspaces.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/vcs/GitVcsDriver.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/vcs/GitVcsDriverCore.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/auth/serverInternalPaths.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/server/src/git/GitManager.ts",
+    "to": "apps/server/src/git/linkCreatedPullRequest.ts",
+    "unresolvedTo": "./linkCreatedPullRequest.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/server/src/git/linkCreatedPullRequest.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/orchestration-v2/Orchestrator.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/orchestration-v2/RunExecutionService.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/orchestration-v2/RunFinalizationService.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/vcs/VcsStatusBroadcaster.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/git/GitWorkflowService.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/git/GitManager.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/server/src/mcp/linkOrigin.ts",
+    "to": "apps/server/src/mcp/threadAccess.ts",
+    "unresolvedTo": "./threadAccess.ts",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/server/src/mcp/threadAccess.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/server/src/mcp/linkOrigin.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/server/src/orchestration-v2/ProjectionStore.ts",
+    "to": "apps/server/src/orchestration-v2/ThreadFind.ts",
+    "unresolvedTo": "./ThreadFind.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/server/src/orchestration-v2/ThreadFind.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/orchestration-v2/ProjectionStore.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/server/src/pullRequest/PullRequestService.ts",
+    "to": "apps/server/src/pullRequest/pullRequestViewedFiles.ts",
+    "unresolvedTo": "./pullRequestViewedFiles.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/server/src/pullRequest/pullRequestViewedFiles.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/pullRequest/PullRequestService.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/server/src/vcs/GitVcsDriver.ts",
+    "to": "apps/server/src/vcs/GitVcsDriverCore.ts",
+    "unresolvedTo": "./GitVcsDriverCore.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/server/src/vcs/GitVcsDriverCore.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/vcs/GitVcsDriver.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/server/src/vcs/GitVcsDriverCore.ts",
+    "to": "apps/server/src/vcs/worktreeCheckoutCache.ts",
+    "unresolvedTo": "./worktreeCheckoutCache.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/server/src/vcs/worktreeCheckoutCache.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/vcs/GitVcsDriver.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/server/src/vcs/GitVcsDriverCore.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/server/src/vcs/GitVcsDriverCore.ts",
+    "to": "apps/server/src/vcs/worktreeRemoval.ts",
+    "unresolvedTo": "./worktreeRemoval.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/server/src/vcs/worktreeRemoval.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/server/src/vcs/GitVcsDriver.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/server/src/vcs/GitVcsDriverCore.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/closedViewStore.ts",
+    "to": "apps/web/src/rightPanelStore.ts",
+    "unresolvedTo": "./rightPanelStore",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/rightPanelStore.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/closedViewStore.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/commandPaletteBus.ts",
+    "to": "apps/web/src/commandPaletteStore.ts",
+    "unresolvedTo": "./commandPaletteStore",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/commandPaletteStore.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/CommandPalette.logic.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/commandPaletteBus.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+    "to": "apps/web/src/components/chat/composerEventScope.ts",
+    "unresolvedTo": "./composerEventScope",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/composerContextPresentation.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/ChatMarkdown.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/chat/CollapsedComposerPromptPreview.tsx",
+    "unresolvedTo": "./CollapsedComposerPromptPreview",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/CollapsedComposerPromptPreview.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/composerContextPresentation.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/ChatMarkdown.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/chat/ComposerAttachmentStrip.tsx",
+    "unresolvedTo": "./ComposerAttachmentStrip",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/ComposerAttachmentStrip.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/files/AttachmentFilePreview.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/files/MermaidFilePreview.tsx",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/web/src/components/files/MermaidViewer.tsx",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ExpandedImageDialog.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/chat/composerCommandKey.ts",
+    "unresolvedTo": "./composerCommandKey",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/composerCommandKey.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/chat/ComposerControlsBar.tsx",
+    "unresolvedTo": "./ComposerControlsBar",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/ComposerControlsBar.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/chat/composerEventScope.ts",
+    "unresolvedTo": "./composerEventScope",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/chat/ComposerFooterControls.tsx",
+    "unresolvedTo": "./ComposerFooterControls",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/ComposerFooterControls.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/chat/ComposerPendingUserInputPanel.tsx",
+    "unresolvedTo": "./ComposerPendingUserInputPanel",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/ComposerPendingUserInputPanel.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/ChatMarkdown.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/chat/useComposerAttachmentIntake.ts",
+    "unresolvedTo": "./useComposerAttachmentIntake",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/useComposerAttachmentIntake.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/chat/useComposerContextImport.ts",
+    "unresolvedTo": "./useComposerContextImport",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/useComposerContextImport.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/chat/useComposerStash.ts",
+    "unresolvedTo": "./useComposerStash",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/useComposerStash.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/chat/usePendingThreadRequests.ts",
+    "unresolvedTo": "./usePendingThreadRequests",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/usePendingThreadRequests.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ChatComposer.tsx",
+    "to": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+    "unresolvedTo": "../ComposerPromptEditorTiptap",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/CompactComposerControlsMenu.tsx",
+    "to": "apps/web/src/components/chat/composerEventScope.ts",
+    "unresolvedTo": "./composerEventScope",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerControlsBar.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/CompactComposerControlsMenu.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/CompactComposerControlsMenu.tsx",
+    "to": "apps/web/src/components/chat/ComposerFooterControls.tsx",
+    "unresolvedTo": "./ComposerFooterControls",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/ComposerFooterControls.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerControlsBar.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/CompactComposerControlsMenu.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/composerAttachmentFiles.ts",
+    "to": "apps/web/src/composerDraftStore.ts",
+    "unresolvedTo": "../../composerDraftStore",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/composerDraftStore.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerAttachmentFiles.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ComposerAttachmentStrip.tsx",
+    "to": "apps/web/src/components/chat/composerEventScope.ts",
+    "unresolvedTo": "./composerEventScope",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerAttachmentStrip.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/composerCommandKey.ts",
+    "to": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+    "unresolvedTo": "../ComposerPromptEditorTiptap",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerCommandKey.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ComposerControlsBar.tsx",
+    "to": "apps/web/src/components/chat/ComposerFooterControls.tsx",
+    "unresolvedTo": "./ComposerFooterControls",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/ComposerFooterControls.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerControlsBar.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ComposerControlsBar.tsx",
+    "to": "apps/web/src/components/chat/ComposerModelEffort.tsx",
+    "unresolvedTo": "./ComposerModelEffort",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/ComposerModelEffort.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerControlsBar.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ComposerFooterControls.tsx",
+    "to": "apps/web/src/components/chat/ProviderModelPicker.tsx",
+    "unresolvedTo": "./ProviderModelPicker",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/ProviderModelPicker.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerFooterControls.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ComposerModelEffort.tsx",
+    "to": "apps/web/src/components/chat/ComposerFooterControls.tsx",
+    "unresolvedTo": "./ComposerFooterControls",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/ComposerFooterControls.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerControlsBar.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerModelEffort.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ComposerModelEffort.tsx",
+    "to": "apps/web/src/components/chat/ProviderModelPicker.tsx",
+    "unresolvedTo": "./ProviderModelPicker",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/ProviderModelPicker.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerControlsBar.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerModelEffort.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/composerProviderState.tsx",
+    "to": "apps/web/src/components/chat/TraitsPicker.tsx",
+    "unresolvedTo": "./TraitsPicker",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/TraitsPicker.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerDraftStore.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/modelSelection.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerProviderState.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/composerProviderState.tsx",
+    "to": "apps/web/src/composerDraftStore.ts",
+    "unresolvedTo": "../../composerDraftStore",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/composerDraftStore.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/modelSelection.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerProviderState.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/composerShortcuts.ts",
+    "to": "apps/web/src/components/chat/useChatShortcuts.ts",
+    "unresolvedTo": "./useChatShortcuts",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/useChatShortcuts.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerShortcuts.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ExpandedImageDialog.tsx",
+    "to": "apps/web/src/components/chat/composerEventScope.ts",
+    "unresolvedTo": "./composerEventScope",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/composerContextPresentation.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/ChatMarkdown.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ExpandedImageDialog.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/ProviderModelPicker.tsx",
+    "to": "apps/web/src/components/chat/composerEventScope.ts",
+    "unresolvedTo": "./composerEventScope",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerControlsBar.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/CompactComposerControlsMenu.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ComposerFooterControls.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ProviderModelPicker.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/RightPanelSurfaceContent.tsx",
+    "to": "apps/web/src/components/chat/SideChatPane.tsx",
+    "unresolvedTo": "./SideChatPane",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/chat/SideChatPane.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/ChatView.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/RightPanelSurfaceContent.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/useComposerAttachmentIntake.ts",
+    "to": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+    "unresolvedTo": "../ComposerPromptEditorTiptap",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/useComposerAttachmentIntake.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/useComposerContextImport.ts",
+    "to": "apps/web/src/components/composerContextPresentation.tsx",
+    "unresolvedTo": "../composerContextPresentation",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/composerContextPresentation.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/ChatMarkdown.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/useComposerContextImport.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/chat/useComposerStash.ts",
+    "to": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+    "unresolvedTo": "../ComposerPromptEditorTiptap",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/useComposerStash.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/composerContextPresentation.tsx",
+    "to": "apps/web/src/components/files/AttachmentFilePreview.tsx",
+    "unresolvedTo": "./files/AttachmentFilePreview",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/files/AttachmentFilePreview.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/files/MermaidFilePreview.tsx",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/web/src/components/files/MermaidViewer.tsx",
+        "dependencyTypes": ["local", "dynamic-import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ExpandedImageDialog.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/composerContextPresentation.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+    "to": "apps/web/src/components/composerContextPresentation.tsx",
+    "unresolvedTo": "./composerContextPresentation",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/composerContextPresentation.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/ChatMarkdown.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/AssistantCitationChip.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/composerEventScope.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerHandleContext.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/chat/ChatComposer.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/ComposerPromptEditorTiptap.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/files/previewFailure.ts",
+    "to": "apps/web/src/components/files/previewFailureMessages.ts",
+    "unresolvedTo": "./previewFailureMessages",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/files/previewFailureMessages.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/files/previewFailure.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/issue/IssuesPage.tsx",
+    "to": "apps/web/src/components/issue/issuesSearch.logic.ts",
+    "unresolvedTo": "./issuesSearch.logic",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/issue/issuesSearch.logic.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/issue/IssuesPage.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/pullRequest/PullRequestListFilters.tsx",
+    "to": "apps/web/src/components/pullRequest/pullRequestListOptions.ts",
+    "unresolvedTo": "./pullRequestListOptions",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/pullRequest/pullRequestListOptions.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/pullRequest/PullRequestListFilters.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/settings/ProjectDefaultsSettings.tsx",
+    "to": "apps/web/src/components/settings/ProjectSettingsPanel.tsx",
+    "unresolvedTo": "./ProjectSettingsPanel",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/settings/ProjectSettingsPanel.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/settings/ProjectDefaultsSettings.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/settings/scopedSettings.ts",
+    "to": "apps/web/src/components/settings/settingsScope.ts",
+    "unresolvedTo": "./settingsScope",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/settings/settingsScope.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/state/environments.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/state/presentation.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/state/server.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/settings/scopedSettings.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/ui/toast.tsx",
+    "to": "apps/web/src/components/ui/toastHelpers.ts",
+    "unresolvedTo": "./toastHelpers",
+    "dependencyTypes": ["local", "export"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/ui/toastHelpers.ts",
+        "dependencyTypes": ["local", "export"]
+      },
+      {
+        "name": "apps/web/src/components/ui/toast.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/usage/UsageLimits.tsx",
+    "to": "apps/web/src/components/usage/UsageLimitsPooled.tsx",
+    "unresolvedTo": "./UsageLimitsPooled",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/usage/UsageLimitsPooled.tsx",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/usage/UsageLimits.tsx",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/components/usage/UsageProviderChart.tsx",
+    "to": "apps/web/src/components/usage/usageProviders.ts",
+    "unresolvedTo": "./usageProviders",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/components/usage/usageProviders.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/components/usage/usageShortcuts.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "apps/web/src/components/usage/UsageProviderChart.tsx",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/composerDraftStore.ts",
+    "to": "apps/web/src/lib/chatThreadActions.ts",
+    "unresolvedTo": "./lib/chatThreadActions",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/lib/chatThreadActions.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/composerDraftStore.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/speech/browserMicrophones.ts",
+    "to": "apps/web/src/speech/microphoneOrder.ts",
+    "unresolvedTo": "./microphoneOrder",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/speech/microphoneOrder.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/speech/browserMicrophones.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "apps/web/src/themeBackground.ts",
+    "to": "apps/web/src/themePalette.ts",
+    "unresolvedTo": "./themePalette",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "apps/web/src/themePalette.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "apps/web/src/themeBackground.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "packages/client-runtime/src/device/duoControl.ts",
+    "to": "packages/client-runtime/src/device/stream.ts",
+    "unresolvedTo": "./stream.ts",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/client-runtime/src/device/stream.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "packages/client-runtime/src/device/duoControl.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "packages/client-runtime/src/state/projectEntities.ts",
+    "to": "packages/client-runtime/src/state/projects.ts",
+    "unresolvedTo": "./projects.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/client-runtime/src/state/projects.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "packages/client-runtime/src/state/projectEntities.ts",
+        "dependencyTypes": ["local", "export"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "packages/client-runtime/src/state/shell.ts",
+    "to": "packages/client-runtime/src/state/snapshots.ts",
+    "unresolvedTo": "./snapshots.ts",
+    "dependencyTypes": ["local", "export"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/client-runtime/src/state/snapshots.ts",
+        "dependencyTypes": ["local", "export"]
+      },
+      {
+        "name": "packages/client-runtime/src/state/shell.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "packages/client-runtime/src/state/shell.ts",
+    "to": "packages/client-runtime/src/state/steadyShells.ts",
+    "unresolvedTo": "./steadyShells.ts",
+    "dependencyTypes": ["local", "export"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/client-runtime/src/state/steadyShells.ts",
+        "dependencyTypes": ["local", "export"]
+      },
+      {
+        "name": "packages/client-runtime/src/state/shell.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "packages/provider-acp-registry/src/server/AcpRegistryRuntimeCoordinator.ts",
+    "to": "packages/provider-acp-registry/src/server/probe.ts",
+    "unresolvedTo": "./probe.ts",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/provider-acp-registry/src/server/probe.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "packages/provider-acp-registry/src/server/AcpRegistryRuntimeCoordinator.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "packages/provider-acp-registry/src/server/AcpRegistrySupport.ts",
+    "to": "packages/provider-acp-registry/src/server/AcpRegistryRuntimeCoordinator.ts",
+    "unresolvedTo": "./AcpRegistryRuntimeCoordinator.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/provider-acp-registry/src/server/AcpRegistryRuntimeCoordinator.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "packages/provider-acp-registry/src/server/probe.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "packages/provider-acp-registry/src/server/AcpRegistrySupport.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "packages/provider-core/src/server/textGeneration.ts",
+    "to": "packages/provider-core/src/server/textGenerationPrompts.ts",
+    "unresolvedTo": "./textGenerationPrompts.ts",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/provider-core/src/server/textGenerationPrompts.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "packages/provider-core/src/server/textGeneration.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "packages/provider-cursor/src/server/accountCache.ts",
+    "to": "packages/provider-cursor/src/server/accountUsage.ts",
+    "unresolvedTo": "./accountUsage.ts",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/provider-cursor/src/server/accountUsage.ts",
+        "dependencyTypes": ["local", "import"]
+      },
+      {
+        "name": "packages/provider-cursor/src/server/accountCache.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "packages/source-control-github/src/server/gitHubConditionalChecks.ts",
+    "to": "packages/source-control-github/src/server/GitHubPullRequestApi.ts",
+    "unresolvedTo": "./GitHubPullRequestApi.ts",
+    "dependencyTypes": ["local", "type-only", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/source-control-github/src/server/GitHubPullRequestApi.ts",
+        "dependencyTypes": ["local", "type-only", "import"]
+      },
+      {
+        "name": "packages/source-control-github/src/server/gitHubConditionalChecks.ts",
+        "dependencyTypes": ["local", "import"]
+      }
+    ]
+  },
+  {
+    "type": "dependency",
+    "from": "apps/desktop/src/backend/DesktopBackendConfiguration.ts",
+    "to": "apps/server/package.json",
+    "unresolvedTo": "../../../server/package.json",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-app-imports"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "apps/desktop/src/ssh/DesktopSshEnvironment.ts",
+    "to": "apps/server/package.json",
+    "unresolvedTo": "../../../server/package.json",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-app-imports"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "apps/mobile/app.config.test.ts",
+    "to": "apps/web/public/.well-known/apple-app-site-association.json",
+    "unresolvedTo": "../web/public/.well-known/apple-app-site-association.json",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-app-imports"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "apps/mobile/app.config.test.ts",
+    "to": "apps/web/public/.well-known/assetlinks.json",
+    "unresolvedTo": "../web/public/.well-known/assetlinks.json",
+    "dependencyTypes": ["local", "import"],
+    "rule": {
+      "severity": "error",
+      "name": "no-cross-app-imports"
+    }
+  }
+]
