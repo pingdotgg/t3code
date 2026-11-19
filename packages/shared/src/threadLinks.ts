@@ -124,7 +124,7 @@ export function guessThreadLinkRef(
   return null;
 }
 
-function threadLinkHref(link: ThreadLink): string {
+export function threadLinkHref(link: ThreadLink): string {
   return link.environmentId === null
     ? `${V1_PREFIX}${link.threadId}`
     : `${V2_PREFIX}${link.environmentId}/${link.threadId}`;
@@ -179,12 +179,6 @@ export function threadLinkRefs(
   return [...refs.values()];
 }
 
-function unknownThreadLinkLabel(link: ThreadLink, messageEnvironmentId: EnvironmentId): string {
-  return link.environmentId === null || link.environmentId === messageEnvironmentId
-    ? "Thread no longer available"
-    : "Thread on another machine";
-}
-
 /** Rewrites each link outside code `replace` answers for. `label` is a Markdown link's own text. */
 export function replaceThreadLinks(
   markdown: string,
@@ -198,41 +192,5 @@ export function replaceThreadLinks(
     const href = groups.angleHref ?? groups.href ?? groups.autolink ?? groups.bare;
     const link = href === undefined ? null : parseThreadLinkHref(href);
     return (link && replace(link, groups.label)) ?? source;
-  });
-}
-
-/**
- * Writes each link with its thread's current title, a hosted link as a v2 link. A v2 link `title`
- * cannot resolve keeps its written label or a neutral one and goes to `onUnresolved`. An unresolved
- * v1 link becomes plain text, except a labeled one, which may open elsewhere.
- */
-export function relabelThreadLinks(
-  markdown: string,
-  messageEnvironmentId: EnvironmentId,
-  title: (ref: ScopedThreadRef) => string | undefined,
-  onUnresolved?: (href: string) => void,
-): string {
-  return replaceThreadLinks(markdown, (written, label) => {
-    const environmentId = written.environmentId ?? messageEnvironmentId;
-    const decoded = percentDecodedThreadLinkId(written.threadId);
-    const threadId =
-      title({ environmentId, threadId: written.threadId }) === undefined &&
-      decoded !== null &&
-      title({ environmentId, threadId: decoded }) !== undefined
-        ? decoded
-        : written.threadId;
-    const current = title({ environmentId, threadId });
-    if (current === undefined) {
-      if (label !== undefined && written.environmentId === null) return undefined;
-      const unresolvedLabel =
-        label?.trim() || unknownThreadLinkLabel(written, messageEnvironmentId);
-      if (written.environmentId === null) return unresolvedLabel;
-      onUnresolved?.(threadLinkHref(written));
-      return formatThreadLink(written, unresolvedLabel);
-    }
-    return formatThreadLink(
-      { environmentId: written.environmentId, threadId },
-      current.trim() || label || threadId,
-    );
   });
 }
