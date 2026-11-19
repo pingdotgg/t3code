@@ -5,15 +5,9 @@ import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
-import * as Layer from "effect/Layer";
-import { HttpClient } from "effect/http";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
-import * as MobileStorage from "../../persistence/mobile-storage";
-import {
-  CloudEnvironmentLinkError,
-  linkEnvironmentToCloudWithPreference,
-} from "../cloud/linkEnvironment";
+import { CloudEnvironmentLinkError } from "../cloud/linkEnvironment";
 import { setLiveActivityUpdatesEnabled } from "./liveActivityPreferences";
 import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
 
@@ -33,11 +27,6 @@ vi.mock("expo-constants", () => ({
 
 vi.mock("expo-device", () => ({}));
 
-vi.mock("../cloud/linkEnvironment", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../cloud/linkEnvironment")>()),
-  linkEnvironmentToCloudWithPreference: vi.fn(() => Effect.void),
-}));
-
 vi.mock("./remoteRegistration", () => ({
   updateAgentAwarenessRegistrationPreferences: vi.fn(() => Effect.void),
 }));
@@ -52,6 +41,13 @@ const updateEnvironment = vi.fn<
   >
 >(() => Effect.succeed("updated"));
 
+const linkEnvironment = vi.fn<
+  (
+    id: EnvironmentId,
+    input: { readonly clerkToken: string; readonly liveActivitiesEnabled: boolean },
+  ) => Effect.Effect<void, CloudEnvironmentLinkError>
+>(() => Effect.void);
+
 const connection: SavedRemoteConnection = {
   environmentId: "env-1" as EnvironmentId,
   environmentLabel: "Desktop",
@@ -62,25 +58,7 @@ const connection: SavedRemoteConnection = {
   bearerToken: "local-bearer",
 };
 
-const layerTest = Layer.mergeAll(
-  Layer.succeed(ManagedRelay.ManagedRelayClient, null as never),
-  Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make(() => Effect.die("unexpected HTTP request")),
-  ),
-  Layer.succeed(
-    MobileStorage.MobileStorage,
-    MobileStorage.MobileStorage.of({
-      loadOrCreateAgentAwarenessDeviceId: Effect.succeed("device-1"),
-      loadAgentAwarenessDeviceId: Effect.succeed("device-1"),
-      loadAgentAwarenessRegistrationRecord: Effect.succeed(null),
-      saveAgentAwarenessRegistrationRecord: () => Effect.void,
-      clearAgentAwarenessRegistrationRecord: Effect.void,
-      loadRecentThreadShortcuts: Effect.succeed([]),
-      saveRecentThreadShortcuts: () => Effect.void,
-    }),
-  ),
-);
+const withRelayClient = Effect.provideService(ManagedRelay.ManagedRelayClient, null as never);
 
 describe("liveActivityPreferences", () => {
   beforeEach(() => {
@@ -97,6 +75,7 @@ describe("liveActivityPreferences", () => {
       const exit = yield* Effect.exit(
         setLiveActivityUpdatesEnabled({
           updateEnvironment,
+          linkEnvironment,
           enabled: false,
           previousEnabled: true,
           clerkToken: "clerk-token",
@@ -120,8 +99,8 @@ describe("liveActivityPreferences", () => {
       expect(updateEnvironment).toHaveBeenCalledTimes(2);
       expect(updateEnvironment).toHaveBeenCalledWith(connection.environmentId, false);
       expect(updateEnvironment).toHaveBeenCalledWith(otherConnection.environmentId, false);
-      expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(layerTest));
+      expect(linkEnvironment).not.toHaveBeenCalled();
+    }).pipe(withRelayClient);
   });
 
   it.effect("reports a relay preference committed before environment configuration fails", () => {
@@ -130,12 +109,13 @@ describe("liveActivityPreferences", () => {
       relayLinkCommitted: true,
     });
     updateEnvironment.mockReturnValueOnce(Effect.succeed("unlinked"));
-    vi.mocked(linkEnvironmentToCloudWithPreference).mockReturnValueOnce(Effect.fail(failure));
+    linkEnvironment.mockReturnValueOnce(Effect.fail(failure));
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         setLiveActivityUpdatesEnabled({
           updateEnvironment,
+          linkEnvironment,
           enabled: true,
           previousEnabled: false,
           clerkToken: "clerk-token",
@@ -156,7 +136,7 @@ describe("liveActivityPreferences", () => {
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenLastCalledWith({
         liveActivitiesEnabled: false,
       });
-    }).pipe(Effect.provide(layerTest));
+    }).pipe(withRelayClient);
   });
 
   it.effect("only creates missing links when the session can configure Connect", () => {
@@ -165,14 +145,21 @@ describe("liveActivityPreferences", () => {
       ...connection,
       environmentId: "read-only" as EnvironmentId,
     };
+    // Current mobile pairings authenticate with DPoP and carry no bearer token.
+    const dpopConnection: SavedRemoteConnection = {
+      ...connection,
+      bearerToken: null,
+      authenticationMethod: "dpop",
+    };
 
     return Effect.gen(function* () {
       yield* setLiveActivityUpdatesEnabled({
         updateEnvironment,
+        linkEnvironment,
         enabled: true,
         previousEnabled: false,
         clerkToken: "clerk-token",
-        connections: [readOnlyConnection, connection],
+        connections: [readOnlyConnection, dpopConnection],
         canUpdateEnvironment: (environmentId) => environmentId === connection.environmentId,
         canConfigureEnvironment: (environmentId) => environmentId === connection.environmentId,
       });
@@ -180,12 +167,11 @@ describe("liveActivityPreferences", () => {
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenCalledWith({
         liveActivitiesEnabled: true,
       });
-      expect(linkEnvironmentToCloudWithPreference).toHaveBeenCalledExactlyOnceWith({
+      expect(linkEnvironment).toHaveBeenCalledExactlyOnceWith(connection.environmentId, {
         clerkToken: "clerk-token",
-        connection,
         liveActivitiesEnabled: true,
       });
-    }).pipe(Effect.provide(layerTest));
+    }).pipe(withRelayClient);
   });
 
   it.effect("reports older environments whose preferences could not be updated", () =>
@@ -198,6 +184,7 @@ describe("liveActivityPreferences", () => {
       updateEnvironment.mockReturnValueOnce(Effect.succeed("unsupported"));
       const partial = yield* setLiveActivityUpdatesEnabled({
         updateEnvironment,
+        linkEnvironment,
         enabled: false,
         previousEnabled: true,
         clerkToken: "clerk-token",
@@ -206,8 +193,8 @@ describe("liveActivityPreferences", () => {
         canUpdateEnvironment: () => true,
       });
       expect(partial).toBe(true);
-      expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(layerTest)),
+      expect(linkEnvironment).not.toHaveBeenCalled();
+    }).pipe(withRelayClient),
   );
 
   it.effect("checks current relay access after updating the device registration", () => {
@@ -221,6 +208,7 @@ describe("liveActivityPreferences", () => {
     return Effect.gen(function* () {
       yield* setLiveActivityUpdatesEnabled({
         updateEnvironment,
+        linkEnvironment,
         enabled: false,
         previousEnabled: true,
         clerkToken: "clerk-token",
@@ -229,9 +217,9 @@ describe("liveActivityPreferences", () => {
         canUpdateEnvironment: () => canConfigureEnvironment,
       });
 
-      expect(linkEnvironmentToCloudWithPreference).not.toHaveBeenCalled();
+      expect(linkEnvironment).not.toHaveBeenCalled();
       expect(updateEnvironment).not.toHaveBeenCalled();
       expect(updateAgentAwarenessRegistrationPreferences).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(layerTest));
+    }).pipe(withRelayClient);
   });
 });
