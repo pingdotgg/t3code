@@ -19,6 +19,7 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { ServerConfig } from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { standaloneConfig } from "../standalone.ts";
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
@@ -28,8 +29,12 @@ const DEFAULT_MODEL_MANIFEST_URL =
   "https://raw.githubusercontent.com/pingdotgg/t3code/main/apps/server/src/provider/model-manifest.json";
 
 // `off` keeps the bundled manifest. An empty value reads as unset, so it cannot mean off.
-const modelManifestUrlConfig = Config.String("T3CODE_MODEL_MANIFEST_URL").pipe(
-  Config.withDefault(DEFAULT_MODEL_MANIFEST_URL),
+const modelManifestUrlConfig = standaloneConfig.pipe(
+  Config.flatMap((standalone) =>
+    Config.String("T3CODE_MODEL_MANIFEST_URL").pipe(
+      Config.withDefault(standalone ? "off" : DEFAULT_MODEL_MANIFEST_URL),
+    ),
+  ),
   Config.mapEffect((raw) => {
     const value = raw.trim();
     if (value === "off") return Effect.succeed(null);

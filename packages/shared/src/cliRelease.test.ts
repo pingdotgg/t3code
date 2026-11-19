@@ -1,8 +1,40 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { cliArchiveTarCommand, newestCliReleaseVersion, parseChecksums } from "./cliRelease.ts";
+import {
+  cliArchiveTarCommand,
+  cliInstallCommand,
+  newestCliReleaseVersion,
+  parseChecksums,
+} from "./cliRelease.ts";
 
 describe("cliRelease", () => {
+  it.each([
+    [false, undefined, "pingdotgg/t3code", "curl -fsSL https://t3.codes/install.sh | sh"],
+    [
+      true,
+      "1.2.3",
+      "pingdotgg/t3code",
+      '$env:T3CODE_VERSION="1.2.3"; irm https://t3.codes/install.ps1 | iex',
+    ],
+    [
+      false,
+      "1.2.3",
+      "fork/t3code",
+      "curl -fsSL https://raw.githubusercontent.com/fork/t3code/main/scripts/install.sh | T3CODE_RELEASE_REPOSITORY=fork/t3code T3CODE_VERSION=1.2.3 sh",
+    ],
+    [
+      true,
+      undefined,
+      "fork/t3code",
+      '$env:T3CODE_RELEASE_REPOSITORY="fork/t3code"; irm https://raw.githubusercontent.com/fork/t3code/main/scripts/install.ps1 | iex',
+    ],
+  ])(
+    "install command (windows %s, version %s) installs from %s",
+    (windows, version, repo, command) => {
+      expect(cliInstallCommand(windows, version, repo)).toBe(command);
+    },
+  );
+
   it("parses sha256sum output including binary-mode markers", () => {
     const checksums = parseChecksums(
       [
