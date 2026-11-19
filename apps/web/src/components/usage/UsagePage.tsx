@@ -1,3 +1,4 @@
+import { T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -9,8 +10,14 @@ import {
   type UsageProviderKind,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { CircleAlertIcon, ChevronDownIcon, InfoIcon, SlidersHorizontalIcon } from "lucide-react";
-import { T, useGT, useLocale, useMessages, Var } from "gt-react";
+import {
+  CircleAlertIcon,
+  ChevronDownIcon,
+  EyeIcon,
+  EyeOffIcon,
+  InfoIcon,
+  SlidersHorizontalIcon,
+} from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -208,6 +215,8 @@ export function UsagePage() {
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const hiddenProviders = new Set(preferences.hiddenProviders);
+  const limitDisplay = preferences.limitDisplay ?? "left";
+  const hideEmails = preferences.hideEmails ?? false;
   const { days: windowDays, window } = windowSelection;
   const isPast24Hours = windowDays === 1;
   const {
@@ -369,8 +378,44 @@ export function UsagePage() {
         });
   const windowOptionLabel = WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label;
   const metricOptionLabel = METRIC_OPTIONS.find((option) => option.value === metric)?.label;
+  const limitControls = (
+    <>
+      <Button
+        onClick={() => updatePreferences({ hideEmails: !hideEmails })}
+        aria-label={hideEmails ? gt("Show account emails") : gt("Hide account emails")}
+        aria-pressed={hideEmails}
+        size="icon-sm"
+        variant="ghost"
+      >
+        {hideEmails ? <EyeOffIcon aria-hidden /> : <EyeIcon aria-hidden />}
+      </Button>
+      <ToggleGroup
+        aria-label={gt("Show limits as")}
+        variant="segmented"
+        value={[limitDisplay]}
+        onValueChange={(next) => {
+          const value = next[0];
+          if (value === "left" || value === "used") updatePreferences({ limitDisplay: value });
+        }}
+      >
+        <Toggle value="used">
+          <T>Used</T>
+        </Toggle>
+        <Toggle value="left">
+          <T>Left</T>
+        </Toggle>
+      </ToggleGroup>
+    </>
+  );
   const topbarContent = (
-    <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 @4xl/usage-header:flex">
+    <div
+      className={cn(
+        "grid w-full min-w-0 items-center gap-x-3 py-2 @4xl/usage-header:flex",
+        showingLimits
+          ? "grid-cols-1 gap-y-2 @2xl/usage-header:grid-cols-[minmax(0,1fr)_auto]"
+          : "grid-cols-[minmax(0,1fr)_auto]",
+      )}
+    >
       <WorkspaceBreadcrumb ariaLabel={gt("Usage breadcrumb")} className="min-w-0">
         <WorkspaceBreadcrumbItem>
           <h1>
@@ -425,6 +470,7 @@ export function UsagePage() {
             ))}
           </ToggleGroup>
         )}
+        {showingLimits ? limitControls : null}
         <ToggleGroup
           aria-label={gt("Usage metric")}
           variant="segmented"
@@ -475,6 +521,7 @@ export function UsagePage() {
             </SelectPopup>
           </Select>
         )}
+        {showingLimits ? limitControls : null}
         <Select
           value={metric}
           onValueChange={(value) => {
@@ -536,6 +583,8 @@ export function UsagePage() {
                 selectedEnvironmentIds={selectedEnvironmentIds}
                 hiddenProviders={hiddenProviders}
                 now={limitsNow}
+                display={limitDisplay}
+                hideEmails={hideEmails}
               />
             ) : shown === null ? (
               <UsageSkeleton />

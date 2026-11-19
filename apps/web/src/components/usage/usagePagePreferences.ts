@@ -8,6 +8,8 @@ const UsagePagePreferencesSchema = Schema.Struct({
   metric: Schema.Literals(["cost", "tokens", "limits"]),
   windowDays: Schema.Literals([1, 7, 30, 90]),
   hiddenProviders: Schema.optional(Schema.Array(UsageProviderKind)),
+  limitDisplay: Schema.optional(Schema.Literals(["left", "used"])),
+  hideEmails: Schema.optional(Schema.Boolean),
 });
 export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
 
