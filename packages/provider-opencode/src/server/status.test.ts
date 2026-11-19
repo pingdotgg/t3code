@@ -907,6 +907,9 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         ["opencode", "flash-free", "flash", "2026-09-10", "active"],
         ["opencode", "big-pickle", undefined, "2025-10-17", "active"],
         ["openrouter", "opus-4-5", "claude-opus", "2025-11-24", "active"],
+        // An alias's release date is when it was created; it routes to the newest release.
+        ["openrouter", "~openai/gpt-astra-latest", "gpt-astra", "2026-09-10", "active"],
+        ["openrouter", "openai/gpt-6.2-astra", "gpt-astra", "2026-11-17", "active"],
       ] as const;
       const legacySlugs = (
         models: ReadonlyArray<{ readonly slug: string; readonly isLegacy?: boolean | undefined }>,
