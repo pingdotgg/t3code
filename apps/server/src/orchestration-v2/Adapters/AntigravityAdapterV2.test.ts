@@ -599,6 +599,35 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(viaInsideLink.content, "inside");
+
+      // A linked worktree keeps its own HEAD in the parent repository's .git/worktrees/<name>.
+      const commonGitDir = path.join(outside, "repo", ".git");
+      const worktreeGitDir = path.join(commonGitDir, "worktrees", "linked");
+      yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+      yield* fileSystem.writeFileString(path.join(commonGitDir, "config"), "[core]\n");
+      yield* fileSystem.writeFileString(
+        path.join(worktreeGitDir, "HEAD"),
+        "ref: refs/heads/linked\n",
+      );
+      yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
+      yield* fileSystem.writeFileString(
+        path.join(worktreeGitDir, "gitdir"),
+        `${path.join(workspace, ".git")}\n`,
+      );
+      yield* fileSystem.writeFileString(
+        path.join(workspace, ".git"),
+        `gitdir: ${worktreeGitDir}\n`,
+      );
+      const worktreeHead = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.join(worktreeGitDir, "HEAD") },
+        context("fs/read_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isSuccess(worktreeHead), "a linked worktree can read its own HEAD");
+      const sharedConfig = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.join(commonGitDir, "config") },
+        context("fs/read_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(sharedConfig), "the parent repository's config stays denied");
     }).pipe(Effect.provide(layerSession)),
   );
 });
