@@ -487,7 +487,9 @@ function* rtf(source: string): Generator<string, void> {
           state.skip = true;
         if (control === "deleted") state.deleted = value !== 0;
         else if (control === "plain") state.deleted = false;
-        if (control === "ansicpg") {
+        if (control === "mac" || (control === "ansicpg" && value === 10000))
+          state.decoder = new TextDecoder("macintosh");
+        else if (control === "ansicpg") {
           // Per-byte decoding only supports single-byte Windows code pages.
           if (value !== 874 && (value < 1250 || value > 1258))
             throw new Error("Unsupported RTF code page");

@@ -1388,6 +1388,41 @@ it.layer(
       );
     });
 
+    it("does not bring back models on a sub-provider that is now unavailable", () => {
+      const subProviderModel = (slug: string, subProvider: string) => ({
+        slug,
+        name: slug,
+        subProvider,
+        isCustom: false,
+        capabilities: null,
+      });
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("fx"),
+        driver: ProviderDriverKind.make("fx"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-04-14T00:00:00.000Z",
+        version: "0.0.17",
+        models: [subProviderModel("gateway:a", "Gateway"), subProviderModel("codex:b", "Codex")],
+        subProviders: [{ name: "Gateway" }, { name: "Codex" }],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const refreshedProvider = {
+        ...previousProvider,
+        status: "warning",
+        models: [],
+        subProviders: [{ name: "Gateway" }, { name: "Codex", unavailableReason: "Signed out." }],
+      } satisfies ServerProvider;
+
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [previousProvider.models[0]],
+      );
+    });
+
     it("retains ACP Registry models while discovery has not completed", () => {
       const previousProvider = {
         instanceId: ProviderInstanceId.make("acpRegistry_codex"),
