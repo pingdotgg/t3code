@@ -7950,14 +7950,20 @@
     " with dictation access to continue."
   ],
   "1d33877ef8ea3559": "Retry loading API key",
-  "be805c1729dc0726": [
+  "2b5b356019c6857b": [
     "Update ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " to use OpenRouter dictation."
+    " to use ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " dictation."
   ],
   "d7acad5dde4c1d1b": "Checking for an API key…",
   "8257030da7a4ad4e": "Model",
@@ -11864,7 +11870,7 @@
   "fea2dc36585c4a20": "Simlock device hosts (alpha)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
   "bcb520297a9ae143": "beta fast worktree checkout clone apfs copy-on-write cache macos speed",
-  "4c83ac419da342bd": "send microphone audio dictation destination speech voice stt transcription environment machine consent privacy cloud OpenAI Grok OpenRouter",
+  "aa91364ad6fc950e": "send microphone audio dictation destination speech voice stt transcription environment machine consent privacy cloud OpenAI Grok OpenRouter Meta",
   "f9c000e92379d027": "mic input audio device order priority preferred",
   "22811f405e0b4b28": "speech voice keyboard hotkey hold toggle auto",
   "e27bccf50397d9fe": "speech voice translate english auto detect",

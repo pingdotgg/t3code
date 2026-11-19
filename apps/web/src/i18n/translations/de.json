@@ -7943,14 +7943,20 @@
     ", um fortzufahren."
   ],
   "1d33877ef8ea3559": "Laden des API-Schlüssels wiederholen",
-  "be805c1729dc0726": [
+  "2b5b356019c6857b": [
     "Aktualisiere ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    ", um OpenRouter-Diktat zu nutzen."
+    ", um ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "-Diktat zu nutzen."
   ],
   "d7acad5dde4c1d1b": "Es wird nach einem API-Schlüssel gesucht…",
   "8257030da7a4ad4e": "Modell",
@@ -11856,7 +11862,7 @@
   "fea2dc36585c4a20": "Simlock-Geräte-Hosts (Alpha)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
   "bcb520297a9ae143": "beta schneller worktree checkout klonen apfs copy-on-write cache macos geschwindigkeit",
-  "4c83ac419da342bd": "mikrofon audio senden diktat ziel sprache spracheingabe stt transkription umgebung rechner einwilligung datenschutz cloud OpenAI Grok OpenRouter",
+  "aa91364ad6fc950e": "mikrofon audio senden diktat ziel sprache spracheingabe stt transkription umgebung rechner einwilligung datenschutz cloud OpenAI Grok OpenRouter Meta",
   "f9c000e92379d027": "mikrofon eingabe audio gerät reihenfolge priorität bevorzugt",
   "22811f405e0b4b28": "sprache spracheingabe tastatur hotkey halten umschalten auto",
   "e27bccf50397d9fe": "sprache spracheingabe übersetzen englisch automatisch erkennen",

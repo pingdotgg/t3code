@@ -7942,14 +7942,20 @@
     " com acesso ao ditado para continuar."
   ],
   "1d33877ef8ea3559": "Tentar carregar a chave de API novamente",
-  "be805c1729dc0726": [
+  "2b5b356019c6857b": [
     "Atualize ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " para usar o ditado do OpenRouter."
+    " para usar o ditado com ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "."
   ],
   "d7acad5dde4c1d1b": "Verificando se há uma chave de API…",
   "8257030da7a4ad4e": "Modelo",
@@ -11854,7 +11860,7 @@
   "fea2dc36585c4a20": "Hosts de dispositivos Simlock (alfa)",
   "9d834d178130180e": "beta alpha simlock callstack simulador emulador ios android pool lease gateway",
   "bcb520297a9ae143": "beta rápido worktree checkout clonar apfs copy-on-write cache macos velocidade",
-  "4c83ac419da342bd": "enviar áudio do microfone ditado destino fala voz stt transcrição ambiente máquina consentimento privacidade nuvem OpenAI Grok OpenRouter",
+  "aa91364ad6fc950e": "enviar áudio do microfone ditado destino fala voz stt transcrição ambiente máquina consentimento privacidade nuvem OpenAI Grok OpenRouter Meta",
   "f9c000e92379d027": "microfone entrada áudio dispositivo ordem prioridade preferido",
   "22811f405e0b4b28": "fala voz teclado atalho manter pressionado alternar automático",
   "e27bccf50397d9fe": "fala voz traduzir inglês detectar automaticamente",

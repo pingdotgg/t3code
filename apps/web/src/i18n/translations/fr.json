@@ -7943,14 +7943,20 @@
     " avec l’accès à la dictée pour continuer."
   ],
   "1d33877ef8ea3559": "Réessayer de charger la clé API",
-  "be805c1729dc0726": [
+  "2b5b356019c6857b": [
     "Mettez à jour ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " pour utiliser la dictée OpenRouter."
+    " pour utiliser la dictée ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "."
   ],
   "d7acad5dde4c1d1b": "Recherche d’une clé API…",
   "8257030da7a4ad4e": "Modèle",
@@ -11854,7 +11860,7 @@
   "fea2dc36585c4a20": "Hôtes d’appareils Simlock (alpha)",
   "9d834d178130180e": "bêta alpha simlock callstack simulateur émulateur ios android pool bail passerelle",
   "bcb520297a9ae143": "bêta rapide worktree extraction clone apfs copie sur écriture cache macos vitesse",
-  "4c83ac419da342bd": "envoyer microphone audio dictée destination parole voix stt transcription environnement machine consentement confidentialité cloud OpenAI Grok OpenRouter",
+  "aa91364ad6fc950e": "envoyer microphone audio dictée destination parole voix stt transcription environnement machine consentement confidentialité cloud OpenAI Grok OpenRouter Meta",
   "f9c000e92379d027": "micro entrée audio appareil ordre priorité préféré",
   "22811f405e0b4b28": "parole voix clavier raccourci maintenir basculer auto",
   "e27bccf50397d9fe": "parole voix traduire anglais détection auto",

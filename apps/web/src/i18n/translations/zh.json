@@ -7960,14 +7960,20 @@
     " 以继续。"
   ],
   "1d33877ef8ea3559": "重新加载 API 密钥",
-  "be805c1729dc0726": [
+  "2b5b356019c6857b": [
     "请更新 ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
     },
-    " 以使用 OpenRouter 听写。"
+    " 以使用 ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " 听写。"
   ],
   "d7acad5dde4c1d1b": "正在检查 API 密钥…",
   "8257030da7a4ad4e": "模型",
@@ -11879,7 +11885,7 @@
   "fea2dc36585c4a20": "Simlock 设备主机（早期测试）",
   "9d834d178130180e": "测试版 alpha simlock callstack 模拟器 ios android 池 租用 网关",
   "bcb520297a9ae143": "测试版 快速工作树检出 克隆 apfs 写时复制 缓存 macos 速度",
-  "4c83ac419da342bd": "发送 麦克风 音频 听写 目标 语音 stt 转写 环境 机器 授权 隐私 云 OpenAI Grok OpenRouter",
+  "aa91364ad6fc950e": "发送 麦克风 音频 听写 目标 语音 stt 转写 环境 机器 授权 隐私 云 OpenAI Grok OpenRouter Meta",
   "f9c000e92379d027": "麦克风 输入 音频 设备 顺序 优先级 首选",
   "22811f405e0b4b28": "语音 键盘 热键 长按 切换 自动",
   "e27bccf50397d9fe": "语音 翻译 英语 自动检测",
