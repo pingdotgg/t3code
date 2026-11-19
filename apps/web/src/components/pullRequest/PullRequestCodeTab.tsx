@@ -536,8 +536,14 @@ function PullRequestCodeTab({
       appliedPage.scopeKey !== scopeKey)
   ) {
     setAppliedPage({ data, cursor, scopeKey });
-    if (cursor === null && loadedSlices.length > 0 && data.revision !== revision) {
-      setDraft(null);
+    const firstSlice = loadedSlices[0];
+    // Every refetch of a paged diff gets a new revision, so only a changed page drops a draft.
+    const draftUnchanged =
+      draft !== null &&
+      firstSlice?.patch === data.patch &&
+      data.patch.includes(`diff --git a/${draft.oldPath ?? draft.path} b/${draft.path}\n`);
+    if (cursor === null && firstSlice !== undefined && data.revision !== revision) {
+      if (!draftUnchanged) setDraft(null);
       setSelectedLines(null);
     }
     setSliceState((previous) => {

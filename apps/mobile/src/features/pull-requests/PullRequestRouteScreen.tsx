@@ -1468,10 +1468,10 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
               </Text>
             </View>
           ) : null}
-          {result.error && result.nextCursor ? (
+          {result.error && (result.nextCursor || !data.rows.length) ? (
             <View className="self-center">
               <Button
-                label={gt("Retry loading remaining files")}
+                label={result.nextCursor ? gt("Retry loading remaining files") : gt("Retry")}
                 tone="text"
                 onPress={result.retry}
               />
