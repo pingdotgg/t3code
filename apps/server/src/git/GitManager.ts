@@ -77,6 +77,9 @@ import {
 } from "../textGeneration/TextGenerationPresets.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import { createdPullRequestKey } from "./linkCreatedPullRequest.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
@@ -120,6 +123,16 @@ export interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
   readonly projectId: ProjectId | null;
   readonly style: SourceControlWritingStyleSettings;
+}
+
+export interface GitCreatePullRequestResult {
+  readonly status: "created" | "opened_existing";
+  /** Absent when the host accepted the PR but did not list it back yet. */
+  readonly url?: string;
+  readonly number?: number;
+  readonly baseBranch: string;
+  readonly headBranch: string;
+  readonly title: string;
 }
 
 export class GitManager extends Context.Service<
@@ -172,6 +185,15 @@ export class GitManager extends Context.Service<
       input: GitRunStackedActionInput,
       options?: GitRunStackedActionOptions,
     ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
+    /** Opens a PR for the checkout's pushed branch, or returns the one already open. */
+    readonly createPullRequest: (input: {
+      readonly cwd: string;
+      readonly projectId: ProjectId;
+      readonly title: string;
+      readonly body: string;
+      readonly baseBranch?: string | undefined;
+      readonly draft?: boolean | undefined;
+    }) => Effect.Effect<GitCreatePullRequestResult, GitManagerServiceError>;
     readonly subscribePullRequestStateChanges: Effect.Effect<
       Stream.Stream<ThreadPullRequestKey>,
       never,
@@ -1072,6 +1094,7 @@ const findOpenPr = Effect.fn("findOpenPr")(function* (
 });
 
 export interface ChangeRequestVcsReads {
+  readonly aheadCount?: number;
   /** Current ref/bookmark name; null means "no named line of work". */
   readonly refName: string | null;
   readonly hasUpstream: boolean;
@@ -1249,19 +1272,26 @@ export const resolveCommitAndBranchSuggestion = Effect.fn("resolveCommitAndBranc
  * Mirrors the former private `runPrStep(settings, cwd, fallbackBranch, emit)` with the VCS reads
  * lifted into `reads`, so the Jujutsu lane runs the same step against the colocated Git store.
  */
-export const runChangeRequestStep = Effect.fn("runChangeRequestStep")(function* (input: {
-  readonly settings: SourceControlTextGenerationSettings;
-  readonly cwd: string;
-  /** Used when `reads.refName` is null, exactly as `details.branch ?? fallbackBranch` does. */
-  readonly fallbackRefName: string | null;
-  readonly emit: GitActionProgressEmitter;
-  readonly reads: ChangeRequestVcsReads;
-  readonly threadId?: ThreadId | undefined;
-  readonly pushRemoteRef?:
-    | { readonly remoteName: string; readonly upstreamRef: string }
-    | undefined;
-}): Effect.fn.Return<
-  GitRunStackedActionResult["pr"],
+export const runChangeRequestStep = Effect.fn("runChangeRequestStep")(function* (
+  input: (
+    | { readonly settings: SourceControlTextGenerationSettings }
+    | {
+        readonly content: { readonly title: string; readonly body: string };
+        readonly baseBranch?: string | undefined;
+      }
+  ) & {
+    readonly cwd: string;
+    /** Used when `reads.refName` is null, exactly as `details.branch ?? fallbackBranch` does. */
+    readonly fallbackRefName: string | null;
+    readonly emit: GitActionProgressEmitter;
+    readonly reads: ChangeRequestVcsReads;
+    readonly threadId?: ThreadId | undefined;
+    readonly pushRemoteRef?:
+      | { readonly remoteName: string; readonly upstreamRef: string }
+      | undefined;
+  },
+): Effect.fn.Return<
+  GitCreatePullRequestResult,
   GitManagerServiceError,
   | SourceControlProviderRegistry.SourceControlProviderRegistry
   | TextGeneration.TextGeneration
@@ -1270,7 +1300,7 @@ export const runChangeRequestStep = Effect.fn("runChangeRequestStep")(function* 
   | Path.Path
   | SecureRandom.SecureRandom
 > {
-  const { cwd, emit, reads, settings } = input;
+  const { cwd, emit, reads } = input;
   const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1314,46 +1344,53 @@ export const runChangeRequestStep = Effect.fn("runChangeRequestStep")(function* 
     };
   }
 
-  const { baseBranch, baseRef } = yield* resolvePrBase(
-    reads,
-    cwd,
-    branch,
-    reads.upstreamRef,
-    headContext,
-  );
-  yield* emit({
-    kind: "phase_started",
-    phase: "pr",
-    label: `Generating ${terms.shortLabel} content...`,
-  });
-  const baseRangeRef = yield* resolveBaseRangeRef(reads, cwd, baseRef);
-  const rangeContext = yield* reads.readRangeContext(cwd, baseRangeRef);
-  const policy = yield* resolveStylePolicy(reads.recentSubjects, cwd, settings);
-  const changeRequestTemplate =
-    settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
-      ? Option.getOrUndefined(
-          yield* provider.readChangeRequestTemplate({
-            cwd: reads.providerCwd,
-            treeish: baseRangeRef,
-          }),
-        )
-      : undefined;
+  if ((reads.aheadCount ?? 0) > 0) {
+    return yield* new GitManagerError({
+      operation: "runPrStep",
+      cwd,
+      detail: `The branch has ${reads.aheadCount} unpushed commit${reads.aheadCount === 1 ? "" : "s"}. Push before opening the PR.`,
+    });
+  }
+  const resolved = yield* resolvePrBase(reads, cwd, branch, reads.upstreamRef, headContext);
+  const baseBranch = ("baseBranch" in input ? input.baseBranch : undefined) ?? resolved.baseBranch;
+  const generated =
+    "content" in input
+      ? input.content
+      : yield* Effect.gen(function* () {
+          const { settings } = input;
+          yield* emit({
+            kind: "phase_started",
+            phase: "pr",
+            label: `Generating ${terms.shortLabel} content...`,
+          });
+          const baseRangeRef = yield* resolveBaseRangeRef(reads, cwd, resolved.baseRef);
+          const rangeContext = yield* reads.readRangeContext(cwd, baseRangeRef);
+          const policy = yield* resolveStylePolicy(reads.recentSubjects, cwd, settings);
+          const changeRequestTemplate =
+            settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
+              ? Option.getOrUndefined(
+                  yield* provider.readChangeRequestTemplate({
+                    cwd: reads.providerCwd,
+                    treeish: baseRangeRef,
+                  }),
+                )
+              : undefined;
 
-  const threadContext = yield* readThreadContext(input.threadId);
-  const generated = yield* textGeneration.generatePrContent({
-    cwd,
-    baseBranch,
-    headBranch: headContext.headBranch,
-    commitSummary: limitContext(rangeContext.commitSummary, 20_000),
-    diffSummary: limitContext(rangeContext.diffSummary, 20_000),
-    diffPatch: limitContext(rangeContext.diffPatch, 60_000),
-    ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
-    ...(threadContext ? { threadContext } : {}),
-    ...(policy ? { policy } : {}),
-    modelSelection: settings.modelSelection,
-    projectId: settings.projectId,
-  });
-
+          const threadContext = yield* readThreadContext(input.threadId);
+          return yield* textGeneration.generatePrContent({
+            cwd,
+            baseBranch,
+            headBranch: headContext.headBranch,
+            commitSummary: limitContext(rangeContext.commitSummary, 20_000),
+            diffSummary: limitContext(rangeContext.diffSummary, 20_000),
+            diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+            ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
+            ...(threadContext ? { threadContext } : {}),
+            ...(policy ? { policy } : {}),
+            modelSelection: settings.modelSelection,
+            projectId: settings.projectId,
+          });
+        });
   const uuid = yield* random.uuidV4().pipe(
     Effect.mapError(
       (cause) =>
@@ -1538,6 +1575,8 @@ export const make = Effect.gen(function* () {
     );
   });
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
+  const pullRequests = yield* PullRequestService.PullRequestService;
+  const projects = yield* ProjectStore.ProjectStoreV2;
   const projectSettingsFor = Effect.fnUntraced(function* (input: {
     readonly cwd: string;
     readonly threadId?: ThreadId | undefined;
@@ -2623,6 +2662,7 @@ export const make = Effect.gen(function* () {
   ) {
     const details = yield* gitCore.statusDetails(cwd);
     return {
+      aheadCount: details.aheadCount,
       refName: details.branch,
       hasUpstream: details.hasUpstream,
       upstreamRef: details.upstreamRef,
@@ -2831,6 +2871,66 @@ export const make = Effect.gen(function* () {
       detail: `${baseBranch} is the base branch. Check out a feature branch to create ${changeRequestLabel}.`,
     });
   });
+
+  const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
+    "GitManager.createPullRequest",
+  )(function* (input) {
+    const reads = yield* gitChangeRequestReads(input.cwd);
+    const result = yield* withChangeRequestServices(
+      runChangeRequestStep({
+        cwd: input.cwd,
+        fallbackRefName: null,
+        emit: () => Effect.void,
+        reads,
+        baseBranch: input.baseBranch,
+        content: { title: input.title, body: input.body },
+      }),
+    );
+    // The thread's branch PR comes from status, which may hold the lookup from before.
+    if (result.status === "created") yield* invalidateStatus(input.cwd);
+    if (input.draft === true && !(yield* draftOpened(input, result))) {
+      // A retry finds the open PR and drafts it then.
+      return yield* new GitManagerError({
+        operation: "createPullRequest",
+        cwd: input.cwd,
+        detail: "Opened the pull request, but the host does not list it yet to make it a draft.",
+      });
+    }
+    return result;
+  });
+
+  /** A retry after a failed draft finds the PR it opened, so an open one is checked too. */
+  const draftOpened = Effect.fn("GitManager.draftOpened")(
+    function* (
+      input: { readonly cwd: string; readonly projectId: ProjectId },
+      result: GitCreatePullRequestResult,
+    ) {
+      const project = yield* projects.getShell(input.projectId).pipe(
+        Effect.map(Option.getOrUndefined),
+        Effect.orElseSucceed(() => undefined),
+      );
+      const key = createdPullRequestKey({ pr: result }, project);
+      if (key === null) return false;
+      const ref = { projectId: input.projectId, ...key };
+      const isDraft =
+        result.status === "opened_existing" &&
+        (yield* pullRequests.summary({ ...ref, allowStale: false })).isDraft;
+      if (!isDraft) yield* pullRequests.runAction({ ...ref, action: "draft" });
+      return true;
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "createPullRequest",
+              cwd: input.cwd,
+              detail: `Opened the pull request, but could not make it a draft: ${cause.message}`,
+              cause,
+            }),
+        ),
+      ),
+  );
 
   const localStatus: GitManager["Service"]["localStatus"] = Effect.fn("localStatus")(
     function* (input, options) {
@@ -3961,6 +4061,7 @@ export const make = Effect.gen(function* () {
     resolvePullRequest,
     preparePullRequestThread,
     runStackedAction,
+    createPullRequest,
     subscribePullRequestStateChanges: PubSub.subscribe(pullRequestStateChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
     ),

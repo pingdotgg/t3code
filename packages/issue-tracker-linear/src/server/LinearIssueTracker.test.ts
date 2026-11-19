@@ -78,6 +78,7 @@ function fakeLinear(
   const requests: Array<{
     readonly authorization: string | undefined;
     readonly operation: string;
+    readonly query: string;
   }> = [];
   const http = Layer.succeed(
     HttpClient.HttpClient,
@@ -88,7 +89,11 @@ function fakeLinear(
           body._tag === "Uint8Array" ? new TextDecoder().decode(body.body) : String(body._tag);
         const parsed = JSON.parse(text) as { query: string; variables: Record<string, unknown> };
         const operation = /^(?:query|mutation) (\w+)/.exec(parsed.query)?.[1] ?? "?";
-        requests.push({ authorization: request.headers.authorization, operation });
+        requests.push({
+          authorization: request.headers.authorization,
+          operation,
+          query: parsed.query,
+        });
         const answer = answers[operation];
         const answered = answer?.(parsed.variables);
         const response =
@@ -164,7 +169,11 @@ describe("LinearIssueTracker", () => {
   it.effect("lists a team's issues as summaries keyed by identifier", () =>
     Effect.gen(function* () {
       const { tracker, requests } = fakeLinear({
-        T3Viewer: () => ({ viewer: JULIUS, teams: { nodes: [] } }),
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [] },
+        }),
         T3Issues: (variables) => {
           expect(variables.filter).toMatchObject({
             team: { key: { eq: "ENG" } },
@@ -220,6 +229,8 @@ describe("LinearIssueTracker", () => {
       });
       // The stored key goes in as-is, not as a bearer token.
       expect(requests.map((request) => request.authorization)).toEqual(["lin_api_stored"]);
+      // Rows never show a body, so the listing leaves descriptions to the detail query.
+      expect(requests[0]?.query).not.toMatch(/\bdescription\b/);
 
       // Linear's reset header is an absolute time in epoch milliseconds.
       const resetAt = 4_102_444_800_000;
@@ -251,7 +262,11 @@ describe("LinearIssueTracker", () => {
       const created: Array<unknown> = [];
       const deleted: Array<unknown> = [];
       const { tracker } = fakeLinear({
-        T3Viewer: () => ({ viewer: JULIUS, teams: { nodes: [] } }),
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [] },
+        }),
         T3Issue: (variables) => {
           // Linear refuses a page of zero comments, which fails the write that looked the issue up.
           expect(variables.comments).toBeGreaterThan(0);
@@ -292,7 +307,11 @@ describe("LinearIssueTracker", () => {
   it.effect("reads an issue with its comments, reactions, history and linked pull requests", () =>
     Effect.gen(function* () {
       const { tracker } = fakeLinear({
-        T3Viewer: () => ({ viewer: JULIUS, teams: { nodes: [] } }),
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [] },
+        }),
         T3Issue: () => ({
           issue: issue("ENG-7", {
             comments: {
@@ -350,6 +369,8 @@ describe("LinearIssueTracker", () => {
       const api = yield* tracker;
       const detail = yield* api.getIssue({ ...target, key: "eng-7" });
       expect(detail.viewer).toBe("julius");
+      expect(detail.body).toBe("body");
+      expect((yield* api.probeCredential("token")).workspace).toBe("acme");
       // The team's own workflow, in Linear's order, with the category each state falls in.
       expect(detail.states.map((entry) => [entry.name, entry.category])).toEqual([
         ["Todo", "open"],
