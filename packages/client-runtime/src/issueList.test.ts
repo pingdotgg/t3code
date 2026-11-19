@@ -185,6 +185,25 @@ describe("issueFilterScopes", () => {
     ).toEqual([]);
   });
 
+  it("offers the same Linear team key once per environment, since each names its own workspace", () => {
+    const secondEnvironmentId = "env-2" as EnvironmentId;
+    const scope = {
+      projectId: api,
+      tracker: "linear" as IssueTrackerKind,
+      host: "linear.app",
+      scope: "ENG",
+    };
+    const otherScope = { ...scope, projectId: "api-2" as ProjectId };
+    const held = new Map([
+      [environmentId, hold(answer({ trackers: [tracker({})], scopes: [scope] }))],
+      [secondEnvironmentId, hold(answer({ trackers: [tracker({})], scopes: [otherScope] }))],
+    ]);
+    expect(issueFilterScopes(held, [])).toEqual([
+      { environmentId, input: scope },
+      { environmentId: secondEnvironmentId, input: otherScope },
+    ]);
+  });
+
   it("skips a tracker that cannot be read", () => {
     const held = new Map([
       [

@@ -164,7 +164,10 @@ export function groupIssues(
   );
 }
 
-/** The scopes whose labels and people a list filter offers, each reached through one project. */
+/**
+ * The scopes whose labels and people a list filter offers, each reached through one project.
+ * Each environment asks its own: a Linear team key names a team only within one workspace.
+ */
 export function issueFilterScopes(
   held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
   projects: ReadonlyArray<EnvironmentProject>,
@@ -172,6 +175,13 @@ export function issueFilterScopes(
 ) {
   const scopes: Array<{ readonly environmentId: EnvironmentId; readonly input: IssueScopeRef }> =
     [];
+  const asked = (environmentId: EnvironmentId, host: string | undefined, scope: string) =>
+    scopes.some(
+      (s) =>
+        s.environmentId === environmentId &&
+        s.input.scope.toLowerCase() === scope.toLowerCase() &&
+        s.input.host?.toLowerCase() === host?.toLowerCase(),
+    );
   for (const [environmentId, page] of held) {
     if (selectedProject && selectedProject.environmentId !== environmentId) continue;
     for (const project of projects) {
@@ -186,12 +196,7 @@ export function issueFilterScopes(
         (t) => String(t.tracker) === kind && t.host.toLowerCase() === host.toLowerCase(),
       );
       if (!tracker?.configured || tracker.capabilities === null) continue;
-      if (
-        scopes.some(
-          (s) => s.input.scope.toLowerCase() === scope.toLowerCase() && s.input.host === host,
-        )
-      )
-        continue;
+      if (asked(environmentId, host, scope)) continue;
       scopes.push({
         environmentId,
         input: { projectId: project.id, tracker: tracker.tracker, host, scope },
@@ -215,14 +220,7 @@ export function issueFilterScopes(
       );
       if (!tracker?.configured) continue;
       if (!tracker.capabilities?.labels && !tracker.capabilities?.assignees) continue;
-      if (
-        scopes.some(
-          (s) =>
-            s.input.scope.toLowerCase() === input.scope.toLowerCase() &&
-            s.input.host?.toLowerCase() === host,
-        )
-      )
-        continue;
+      if (asked(environmentId, host, input.scope)) continue;
       scopes.push({ environmentId, input });
     }
   }
