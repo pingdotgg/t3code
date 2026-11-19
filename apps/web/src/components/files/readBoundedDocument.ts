@@ -1,14 +1,6 @@
 import { PreviewError } from "./previewFailure";
 
-export async function readBoundedDocument(
-  src: string,
-  signal: AbortSignal,
-  limit: number,
-  cache: RequestCache = "default",
-) {
-  const response = await fetch(src, { signal, cache });
-  if (!response.ok || Number(response.headers.get("content-length")) > limit)
-    throw new PreviewError({ code: "document-unavailable-or-too-large" });
+export async function readBoundedBody(response: Response, limit: number) {
   const reader = response.body?.getReader();
   if (!reader) throw new PreviewError({ code: "document-unavailable" });
   const chunks: Uint8Array<ArrayBuffer>[] = [];
@@ -25,4 +17,16 @@ export async function readBoundedDocument(
     await reader.cancel();
   }
   return new Blob(chunks).arrayBuffer();
+}
+
+export async function readBoundedDocument(
+  src: string,
+  signal: AbortSignal,
+  limit: number,
+  cache: RequestCache = "default",
+) {
+  const response = await fetch(src, { signal, cache });
+  if (!response.ok || Number(response.headers.get("content-length")) > limit)
+    throw new PreviewError({ code: "document-unavailable-or-too-large" });
+  return readBoundedBody(response, limit);
 }
