@@ -619,6 +619,26 @@ function codexPlanStepStatus(
   }
 }
 
+function fullAccessAllowsCommand(
+  context: ActiveCodexTurnContext,
+  request: Pick<
+    CodexSchema.CommandExecutionRequestApprovalParams,
+    "kind" | "networkApprovalContext" | "reason"
+  >,
+): boolean {
+  const policy = context.input.runtimePolicy;
+  // Granular policy can ask about commands within existing permissions. Native children can have their own sandbox.
+  return (
+    context.subagent === null &&
+    policy.runtimeMode === "full-access" &&
+    policy.approvalPolicy === undefined &&
+    policy.sandboxPolicy === undefined &&
+    (request.kind === undefined || request.kind === "command") &&
+    request.networkApprovalContext == null &&
+    request.reason == null
+  );
+}
+
 function approvalDecisionToLegacyReviewDecision(
   decision: ProviderApprovalDecision,
 ): CodexSchema.ExecCommandApprovalResponse__ReviewDecision {
@@ -5871,6 +5891,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
+            if (fullAccessAllowsCommand(context, payload)) {
+              return {
+                decision: "accept",
+              } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
+            }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("command")) {
               return {
@@ -6158,6 +6183,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 `No active Codex turn context for exec approval thread ${payload.conversationId}.`,
                 payload,
               );
+            }
+            if (fullAccessAllowsCommand(context, payload)) {
+              return { decision: "approved" } satisfies CodexSchema.ExecCommandApprovalResponse;
             }
             const allowance = sessionAllowance(payload.conversationId, context);
             if (allowance.has("command")) {

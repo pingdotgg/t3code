@@ -3376,7 +3376,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect("stops asking for commands the user allowed for the session", () =>
+  it.effect("scopes command approvals to the active permission mode and session grants", () =>
     Effect.gen(function* () {
       const nativeThreadId = "session-approval-thread";
       const turnIds = [
@@ -3432,6 +3432,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         readonly kind: "commandExecution" | "fileChange";
         readonly itemId: string;
         readonly decision: string;
+        readonly commandParams?: Pick<
+          CodexSchema.CommandExecutionRequestApprovalParams,
+          "command" | "kind" | "networkApprovalContext"
+        >;
       }): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
         {
           type: "emit_inbound",
@@ -3445,6 +3449,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               itemId: input.itemId,
               startedAtMs: 1782622441000,
               ...(input.kind === "commandExecution" ? { command: `cat ${input.itemId}` } : {}),
+              ...input.commandParams,
             },
           },
         },
@@ -3505,6 +3510,37 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           turnEvent("turn/completed", turnIds[0]!),
           ...startTurn(1),
           patchDecision!,
+          ...approval({
+            id: 105,
+            turnId: turnIds[1]!,
+            kind: "commandExecution",
+            itemId: "full-access-command",
+            commandParams: { kind: "command", command: "git status; rm -f ./scratch.tmp" },
+            decision: "accept",
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              id: 106,
+              method: "execCommandApproval",
+              params: {
+                conversationId: nativeThreadId,
+                callId: "legacy-full-access-command",
+                command: ["git", "status"],
+                cwd: "/workspace",
+                parsedCmd: [],
+              },
+            },
+          },
+          { type: "expect_outbound", frame: { id: 106, result: { decision: "approved" } } },
+          ...approval({
+            id: 107,
+            turnId: turnIds[1]!,
+            kind: "commandExecution",
+            itemId: "managed-network",
+            commandParams: { networkApprovalContext: { host: "example.com", protocol: "https" } },
+            decision: "decline",
+          }),
           turnEvent("turn/completed", turnIds[1]!),
           ...startTurn(2),
           ...approval({
@@ -3568,12 +3604,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       yield* harness.awaitTerminal(1);
       yield* runTurn(1);
       yield* answer(2, "file-change", "acceptForSession");
+      yield* harness.until(() => requests().length === 3 || harness.terminalEvents().length === 2);
+      assert.equal(requests()[2]?.nativeRequestRef?.nativeId, "managed-network");
+      yield* answer(3, "command", "decline");
       yield* harness.awaitTerminal(2);
       yield* runTurn(2);
-      yield* answer(3, "command", "accept");
-      yield* answer(4, "file-change", "accept");
+      yield* answer(4, "command", "accept");
+      yield* answer(5, "file-change", "accept");
       yield* harness.awaitTerminal(3);
-      assert.lengthOf(requests(), 4);
+      assert.lengthOf(requests(), 5);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
