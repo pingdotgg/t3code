@@ -183,6 +183,7 @@ jobs:
 
           ### Server
           - Allow named T3 delegate_task targets according to each lead agent's allowlist.
+          - Publish a Linux x64 server archive (`t3-<version>-linux-x64.tar.gz` plus `SHA256SUMS`) built from the patched source.
 
           ---
           Patched nightly · source $source_tag (${source_sha:0:7}) · patch set $patch_set
@@ -349,6 +350,144 @@ jobs:
             --app-dir "$(cygpath -w "$PWD/verify/win-unpacked")" \
             --arch x64 --build-version "$BUILD_VERSION" --verbose
 
+  linux:
+    name: Build Linux x64 server archive
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+      BUILD_VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - name: Check out fork workflow
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Check out prepared patched nightly source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$RELEASE_TAG"
+          git checkout --detach 'FETCH_HEAD^{commit}'
+
+      - name: Set up Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      # The CLI archive embeds the server bundle and web client only, so the
+      # desktop and mobile workspaces are not installed.
+      - name: Install server dependencies
+        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/scripts...
+
+      - name: Restore Linux resource monitor cache
+        id: resource_monitor_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor
+          key: resource-monitor-x86_64-unknown-linux-gnu-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Set up Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build Linux resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-unknown-linux-gnu
+
+      - name: Save Linux resource monitor cache
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor
+          key: ${{ steps.resource_monitor_cache.outputs.cache-primary-key }}
+
+      - name: Load official upstream T3 Connect settings
+        shell: bash
+        run: cp .env.example .env
+
+      # Every key must resolve through loadRepoEnv, the loader the build scripts use, so a build
+      # without T3 Connect settings fails here instead of shipping an unconfigured app.
+      - name: Verify official upstream T3 Connect settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'EOF'
+          import { loadRepoEnv } from "./scripts/lib/public-config.ts";
+          const env = loadRepoEnv({ baseEnv: {} });
+          const required = [
+            "T3CODE_CLERK_PUBLISHABLE_KEY",
+            "T3CODE_CLERK_JWT_TEMPLATE",
+            "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID",
+            "T3CODE_RELAY_URL",
+          ];
+          const missing = required.filter((name) => !env[name]?.trim());
+          if (missing.length > 0) {
+            console.error(`Missing official T3 Connect settings: ${missing.join(", ")}`);
+            process.exit(1);
+          }
+          console.log("Official T3 Connect settings resolved.");
+          EOF
+
+      # The launcher on a server refuses a child whose package version differs
+      # from the version directory it was started from.
+      - name: Align package versions to the patched release version
+        run: node scripts/update-release-package-versions.ts "$BUILD_VERSION"
+
+      - name: Build server bundle and web client
+        run: vp run --filter t3 build
+
+      - name: Apply nightly web client branding
+        run: node scripts/apply-web-brand-assets.ts nightly apps/server/dist/client
+
+      - name: Build CLI single-executable
+        env:
+          T3CODE_TELEMETRY_CHANNEL: dev
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Stage resource monitor for the CLI archive
+        run: |
+          set -euo pipefail
+          target_dir="$RUNNER_TEMP/cli-resource-monitor/linux-x64"
+          mkdir -p "$target_dir"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor "$target_dir/"
+
+      # The archive ships libatomic.so.1 and points t3's RUNPATH at it.
+      - name: Install patchelf
+        run: command -v patchelf || { sudo apt-get update && sudo apt-get install -y patchelf; }
+
+      - name: Build Linux x64 CLI archive
+        run: |
+          set -euo pipefail
+          node scripts/build-cli-archive.ts \
+            --platform linux --arch x64 \
+            --version "$BUILD_VERSION" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "$BUILD_VERSION"
+
+      # The server's own runtime installer reads this file next to the archive,
+      # so a server pointed at this repository's releases can install it.
+      - name: Upload Linux server archive to the release
+        run: |
+          set -euo pipefail
+          (cd release-cli && sha256sum t3-*.tar.gz > SHA256SUMS)
+          gh release upload "$RELEASE_TAG" release-cli/* \
+            --clobber --repo "$GITHUB_REPOSITORY"
+
   macos:
     name: Build macOS installers
     needs: resolve
@@ -437,8 +576,8 @@ jobs:
 
   publish:
     name: Publish completed nightly
-    needs: [resolve, windows, windows_verify, macos]
-    if: ${{ always() && needs.resolve.outputs.should_build == 'true' && needs.windows.result == 'success' && needs.windows_verify.result == 'success' && needs.macos.result == 'success' }}
+    needs: [resolve, windows, windows_verify, linux, macos]
+    if: ${{ always() && needs.resolve.outputs.should_build == 'true' && needs.windows.result == 'success' && needs.windows_verify.result == 'success' && needs.linux.result == 'success' && needs.macos.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -480,6 +619,34 @@ jobs:
         with:
           fetch-depth: 1
           ref: refs/tags/${{ needs.resolve.outputs.release_tag }}
+
+      # app.config.ts reads only .env and .env.local, never .env.example. The file holds public
+      # identifiers only; telemetry tokens and other credentials stay out of the build.
+      - name: Load official upstream T3 Connect settings
+        run: cp .env.example .env
+
+      # Every key must resolve through loadRepoEnv, the loader the build scripts use, so a build
+      # without T3 Connect settings fails here instead of shipping an unconfigured app.
+      - name: Verify official upstream T3 Connect settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'EOF'
+          import { loadRepoEnv } from "./scripts/lib/public-config.ts";
+          const env = loadRepoEnv({ baseEnv: {} });
+          const required = [
+            "T3CODE_CLERK_PUBLISHABLE_KEY",
+            "T3CODE_CLERK_JWT_TEMPLATE",
+            "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID",
+            "T3CODE_RELAY_URL",
+          ];
+          const missing = required.filter((name) => !env[name]?.trim());
+          if (missing.length > 0) {
+            console.error(`Missing official T3 Connect settings: ${missing.join(", ")}`);
+            process.exit(1);
+          }
+          console.log("Official T3 Connect settings resolved.");
+          EOF
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
