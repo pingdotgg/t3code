@@ -1,5 +1,4 @@
 import {
-  AuthStandardClientScopes,
   EnvironmentAuthenticatedPrincipal,
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
@@ -29,6 +28,7 @@ import {
 } from "@t3tools/contracts/relay";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import {
+  decodeRelayJwt,
   normalizeRelayIssuer,
   RELAY_HEALTH_REQUEST_TYP,
   RELAY_HEALTH_RESPONSE_TYP,
@@ -38,7 +38,7 @@ import {
   RELAY_MINT_RESPONSE_TYP,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
-import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { isSecureRelayUrl, normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
@@ -46,6 +46,7 @@ import * as Jwk from "effect/jose/Jwk";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -99,6 +100,7 @@ import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
 import {
   filterRelayResponse,
@@ -250,6 +252,7 @@ const INTERNAL_OPERATION_MESSAGES = {
   "persist-recovered-tunnel": "Could not persist the recovered managed tunnel configuration.",
   "read-relay-config": "Could not read environment relay configuration.",
   "remove-relay-config": "Could not remove environment relay configuration.",
+  "update-live-activity-preference": "Could not update T3 Connect Live Activity preferences.",
   "update-webhook-settings": "Could not update T3 Connect webhook settings.",
   "read-preferences": "Could not read environment cloud preferences.",
   "persist-preferences": "Could not persist environment cloud preferences.",
@@ -454,6 +457,12 @@ export class CloudLink extends Context.Service<
       EnvironmentCloudLinkStateResult,
       CloudLinkNotLinkedError | CloudLinkInternalError | ManagedLimits.ManagedPolicyRefusedError
     >;
+    readonly updateLiveActivityPreference: (
+      enabled: boolean,
+    ) => Effect.Effect<
+      RelayOkResponse,
+      CloudLinkInternalError | ManagedLimits.ManagedPolicyRefusedError
+    >;
     readonly answerHealthRequest: (
       request: RelayCloudEnvironmentHealthRequest,
     ) => Effect.Effect<
@@ -518,6 +527,7 @@ const make = Effect.gen(function* () {
   const endpointRuntime = yield* ManagedEndpointRuntime.CloudManagedEndpointRuntime;
   const reachability = yield* ConnectReachability.ConnectReachability;
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const cliTokenManager = yield* CliTokenManager.CloudCliTokenManager;
   const httpClient = yield* HttpClient.HttpClient;
   const httpServer = yield* HttpServer.HttpServer;
@@ -592,16 +602,22 @@ const make = Effect.gen(function* () {
       return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
     }
     const now = yield* DateTime.now;
-    const expiresAt = DateTime.add(now, { minutes: 5 });
     const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
+    // Borrow only the relay clock; the relay still verifies and consumes the challenge.
+    const issuedAt = yield* decodeRelayJwt(request.challenge).pipe(
+      Effect.map(({ iat }) =>
+        typeof iat === "number" && Number.isSafeInteger(iat) && iat > 0 ? iat : nowSeconds,
+      ),
+      Effect.orElseSucceed(() => nowSeconds),
+    );
     const descriptor = yield* environment.getDescriptor;
     const payload = {
       iss: `t3-env:${descriptor.environmentId}`,
       aud: normalizeRelayIssuer(request.relayIssuer),
       sub: descriptor.environmentId,
       jti: yield* random.uuidV4(),
-      iat: nowSeconds,
-      exp: Math.floor(expiresAt.epochMilliseconds / 1_000),
+      iat: issuedAt,
+      exp: issuedAt + 5 * 60,
       challenge: request.challenge,
       descriptor,
       environmentId: descriptor.environmentId,
@@ -1224,22 +1240,27 @@ const make = Effect.gen(function* () {
       yield* Effect.logInfo("Keeping the managed tunnel across the update restart");
       return false;
     }
-    const token = yield* cliTokenManager.getExisting;
-    if (Option.isNone(token)) {
+    const relayUrl = yield* requireRelayUrl.pipe(Effect.option);
+    const installedRelayUrl = yield* secrets.get(RELAY_URL_SECRET);
+    if (
+      Option.isNone(relayUrl) ||
+      Option.isNone(installedRelayUrl) ||
+      normalizeSecureRelayUrl(bytesToString(installedRelayUrl.value)) !== relayUrl.value
+    ) {
       return false;
     }
-    // Use the persisted relay URL; T3CODE_RELAY_URL may have changed since linking.
-    const relayUrl = yield* secrets.get(RELAY_URL_SECRET);
-    if (Option.isNone(relayUrl)) {
+    const token = yield* cliTokenManager.getExisting;
+    if (Option.isNone(token)) {
       return false;
     }
     const environmentId = yield* environment.getEnvironmentId;
     yield* endpointRuntime.applyConfig(null);
     const response = yield* HttpClientRequest.delete(
-      `${bytesToString(relayUrl.value)}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
+      `${relayUrl.value}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
     ).pipe(
       HttpClientRequest.bearerToken(token.value.accessToken),
       httpClient.execute,
+      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
       Effect.flatMap(filterRelayResponse),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
       withRelayClientTracing,
@@ -1417,6 +1438,37 @@ const make = Effect.gen(function* () {
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("read-preferences")),
   );
 
+  const updateLiveActivityPreference = Effect.fn("environment.cloud.updateLiveActivityPreference")(
+    function* (liveActivitiesEnabled: boolean) {
+      return yield* endpointRuntime.withLinkStateLock(
+        Effect.gen(function* () {
+          const connection = yield* readRelayConnection.pipe(withSecrets);
+          const cloudUserId = yield* secrets.get(CLOUD_LINKED_USER_ID);
+          const revoked = yield* secrets.get(CLOUD_LINK_REVOKED);
+          if (connection === null || Option.isNone(cloudUserId) || Option.isSome(revoked)) {
+            return { ok: false };
+          }
+          const environmentId = yield* environment.getEnvironmentId;
+          const client = yield* makeRelayEnvironmentClient(connection);
+          return yield* client.server
+            .updateLiveActivityPreference({
+              params: { environmentId },
+              payload: { cloudUserId: bytesToString(cloudUserId.value), liveActivitiesEnabled },
+            })
+            .pipe(
+              Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+              Effect.timeout("10 seconds"),
+              Effect.catch(internalError("update-live-activity-preference")),
+            );
+        }),
+      );
+    },
+    Effect.catchIf(
+      ServerSecretStore.isSecretStoreError,
+      internalError("update-live-activity-preference"),
+    ),
+  );
+
   const answerHealthRequest = Effect.fn("environment.cloud.health")(
     function* (request: RelayCloudEnvironmentHealthRequest) {
       const cloudMintPublicKey = yield* secrets
@@ -1583,12 +1635,12 @@ const make = Effect.gen(function* () {
         return yield* new CloudLinkProofReplayedError({ request: "mint" });
       }
 
-      const issued = yield* environmentAuth.createPairingLink({
-        scopes: AuthStandardClientScopes,
-        subject: "cloud-connect",
-        ttl: Duration.minutes(2),
-        label: "T3 Connect connect",
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.catch(internalError("issue-credential")),
+      );
+      const issued = yield* environmentAuth.issueConnectCredential({
         proofKeyThumbprint: proof.clientProofKeyThumbprint,
+        requireApproval: settings.requireConnectDeviceApproval,
       });
       const responsePayload = {
         iss: `t3-env:${environmentId}`,
@@ -1646,6 +1698,7 @@ const make = Effect.gen(function* () {
       linkState,
       unlink,
       updatePreferences: refused,
+      updateLiveActivityPreference: refused,
       answerHealthRequest: refused,
       mintCredential: refused,
       reconcileDesiredLinkIfStillDesired: notDesired,
@@ -1662,6 +1715,7 @@ const make = Effect.gen(function* () {
     linkState,
     unlink,
     updatePreferences,
+    updateLiveActivityPreference,
     answerHealthRequest,
     mintCredential,
     reconcileDesiredLinkIfStillDesired,
