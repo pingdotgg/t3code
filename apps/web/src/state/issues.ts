@@ -48,9 +48,8 @@ export function useSidebarLinkedIssueState(
   links: ReadonlyArray<ThreadIssueLink> | undefined,
 ) {
   const configs = useServerConfigs();
-  const supportsIssues = configs.get(environmentId)?.environment.capabilities.issues === true;
   const aggregate =
-    supportsIssues && links?.length
+    links?.length && configs.get(environmentId)?.environment.capabilities.issues === true
       ? Atom.make((get): IssueState | null => {
           const states = links.map(
             (link) =>
