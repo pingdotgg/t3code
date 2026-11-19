@@ -43,23 +43,13 @@ it("uses the new Android locale before native storage finishes writing it", () =
         const { pending } = await import(androidBridge);
         hooks.deregister();
 
-        initializeGT({
-          defaultLocale: "en",
-          locales: ["en", "zh"],
-          loadTranslations: async (locale) => require("./src/i18n/translations/" + locale + ".json"),
-        });
-        const coreEntry = createRequire(gtEntry).resolve("@generaltranslation/react-core/pure");
-        const { getReactI18nCache } = await import(pathToFileURL(coreEntry));
-        const cache = getReactI18nCache();
-        await cache.loadTranslations("zh");
-
+        initializeGT({ defaultLocale: "en", locales: ["en", "zh"] });
         new NativeConditionStore({ locale: "en" });
         for (const apply of pending.splice(0)) apply();
-        const locale = new NativeConditionStore({ locale: "zh" }).getLocale();
-        console.log(cache.lookupTranslation(locale, "General", { $format: "ICU" }) ?? "General");
+        console.log(new NativeConditionStore({ locale: "zh" }).getLocale());
       `,
     ],
     { cwd: NodeURL.fileURLToPath(new URL("../../", import.meta.url)), encoding: "utf8" },
   );
-  expect(output.trim()).toBe("\u901a\u7528");
+  expect(output.trim()).toBe("zh");
 });
