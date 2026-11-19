@@ -1014,14 +1014,26 @@ describe("listChangeRequestsAcross", () => {
     }),
   );
 
-  it.effect("vouches for no silent repository in a truncated first slice", () =>
-    Effect.gen(function* () {
-      const read = yield* providerAnswering({
-        pages: [{ items: [searched("acme/web")], truncated: true }],
-        covered: () => true,
-      });
-      expect((yield* read(across)).unresolved).toEqual(["acme/docs"]);
-    }),
+  it.effect(
+    "in a truncated first slice vouches for no silent repository, and names the covered ones quiet",
+    () =>
+      Effect.gen(function* () {
+        const read = yield* providerAnswering({
+          pages: [{ items: [searched("acme/web")], truncated: true }],
+          covered: (repository) => repository !== "acme/renamed",
+        });
+        const page = yield* read({
+          ...across,
+          repositories: ["acme/web", "acme/docs", "acme/renamed"],
+        });
+        expect(page.unresolved).toEqual(["acme/docs", "acme/renamed"]);
+        expect(page.quiet).toEqual(["acme/docs"]);
+
+        const failing = yield* providerAnswering({
+          pages: [{ items: [searched("acme/web")], truncated: true }],
+        });
+        expect((yield* failing(across)).quiet).toEqual([]);
+      }),
   );
 
   it.effect("past the first slice, believes a covered repository and not an uncovered one", () =>
