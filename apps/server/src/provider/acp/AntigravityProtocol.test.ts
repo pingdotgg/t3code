@@ -491,6 +491,57 @@ describe("Antigravity tool results", () => {
     expect(JSON.stringify(event.rawPayload)).not.toContain("formatted_output");
   });
 
+  it("locates a 1.5 edit_file edit while running and after its whole-file completion", () => {
+    // Frame shapes captured from agy 1.5.12 in default mode: no permission request, an
+    // announcement without content, and a completion that resends the whole file.
+    const path = "/workspace/big.ts";
+    const rawInput = {
+      Path: path,
+      Replacement: "const target = 100;",
+      Target: "const target = 10;",
+    };
+    const preEdit = `${Array.from({ length: 200 }, (_, i) => `export const v${i + 1} = ${i + 1}; // ${"pad ".repeat(20)}`).join("\n")}\nconst target = 10;\nexport const tail = 1;\n`;
+    const postEdit = preEdit.replace(rawInput.Target, rawInput.Replacement);
+    const hunk = `--- ${path}\n+++ ${path}\n@@ -201,1 +201,1 @@\n-const target = 10;\n+const target = 100;\n`;
+    const running = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call_15914574291821524103",
+          status: "in_progress",
+          kind: "edit",
+          title: "File big.ts",
+          locations: [{ path }],
+          rawInput,
+        },
+      }).toolCall,
+      () => preEdit,
+    );
+    expect.soft(acpToolCallDiffPatch(running.data.content)).toBe(hunk);
+    const completed = normalizeAntigravityToolCall(
+      mergeToolCallState(
+        running,
+        parseToolUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "call_15914574291821524103",
+            status: "completed",
+            kind: "edit",
+            locations: [{ path }],
+            rawInput,
+            rawOutput: {},
+            content: [{ type: "diff", path, oldText: preEdit, newText: postEdit }],
+          },
+        }).toolCall,
+      ),
+      () => postEdit,
+    );
+    expect(preEdit.length).toBeGreaterThan(16_000);
+    expect(acpToolCallDiffPatch(completed.data.content)).toBe(hunk);
+  });
+
   it("keeps 1.5 command output and its content text valid Unicode when cut", () => {
     const tail = `${"x".repeat(7_982)}build completed\r\n`;
     const output = `Command output:\nprefix\r\n🚀${tail}`;
