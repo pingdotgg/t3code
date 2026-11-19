@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import { checkOptions } from "./options.ts";
 import {
   claim,
   type InRun,
@@ -17,7 +18,13 @@ import {
   waitAs,
 } from "./workflow.ts";
 import type { IssueAddress } from "./WorkflowForge.ts";
-import { type AgentModel, AgentResult, AgentTurn, WorkflowAgents } from "./WorkflowAgents.ts";
+import {
+  type AgentLaunch,
+  type AgentModel,
+  AgentResult,
+  AgentTurn,
+  WorkflowAgents,
+} from "./WorkflowAgents.ts";
 
 /** A thread an agent step ran in, to hand to a later step that should continue it. */
 export interface AgentThread {
@@ -28,9 +35,11 @@ export interface AgentThread {
 
 const CORRECTIONS = 2;
 
-export interface AgentOptions<A, I> {
+export interface AgentOptions<A, I> extends AgentLaunch {
   readonly brief: string;
-  readonly output?: Schema.Codec<A, I>;
+  /** The new thread's title. `<workflow>: <step>` by default. */
+  readonly title?: string;
+  readonly returns?: Schema.Codec<A, I>;
   readonly model?: AgentModel;
   readonly project?: string;
   readonly environment?: string;
@@ -43,7 +52,7 @@ export interface AgentOptions<A, I> {
   /** How long the agent has. Past it the thread is stopped and the step has failed. */
   readonly timeout?: Duration.Input;
   /**
-   * Let the agent end a turn without its `output` and answer from a later one, as an agent does
+   * Let the agent end a turn without its `returns` and answer from a later one, as an agent does
    * that waits to be woken: by a pull request it watches, by work it left running. Only when
    * its thread has done nothing for this long is it asked for the result. Without it, a turn
    * that ends without the result is asked at once.
@@ -55,28 +64,58 @@ type Attempt<A> =
   | { readonly outcome: "done"; readonly value: A; readonly thread: AgentThread }
   | { readonly outcome: "failed"; readonly reason: string; readonly thread?: AgentThread };
 
+const AGENT_OPTIONS = [
+  "brief",
+  "returns",
+  "model",
+  "project",
+  "environment",
+  "thread",
+  "issue",
+  "timeout",
+  "quiet",
+  "title",
+  "workspace",
+  "runtimeMode",
+  "interactionMode",
+];
+
 const attempt = Effect.fn("workflow.agent")(function* <A, I>(
   name: string,
   options: AgentOptions<A, I>,
   /** What a failure does: pause the run at this step, or come back as the step's answer. */
   onFailure: "pause" | "return",
 ): Effect.fn.Return<Attempt<A>, StepFailed, InRun> {
+  checkOptions(`agent("${name}")`, options, AGENT_OPTIONS);
   const run = yield* claim(name);
   const quiet = options.quiet === undefined ? undefined : Duration.fromInputUnsafe(options.quiet);
   const agents = yield* WorkflowAgents;
-  const outputSchema = options.output === undefined ? undefined : jsonSchemaOf(options.output);
-  const outputCodec = options.output === undefined ? undefined : Schema.toCodecJson(options.output);
+  const outputSchema = options.returns === undefined ? undefined : jsonSchemaOf(options.returns);
+  const outputCodec =
+    options.returns === undefined ? undefined : Schema.toCodecJson(options.returns);
   const decodeOutput = outputCodec === undefined ? undefined : Schema.decodeEffect(outputCodec);
   const threadOf = (turn: AgentTurn): AgentThread => ({
     threadId: turn.threadId,
     ...(turn.environment === undefined ? {} : { environment: turn.environment }),
   });
+  const launch: AgentLaunch | undefined =
+    options.workspace === undefined &&
+    options.runtimeMode === undefined &&
+    options.interactionMode === undefined
+      ? undefined
+      : {
+          workspace: options.workspace,
+          runtimeMode: options.runtimeMode,
+          interactionMode: options.interactionMode,
+        };
   const start = (key: string, prompt: string, thread: AgentThread | undefined) =>
     agents
       .start({
         key: `${run.runId}/${name}/${key}`,
         origin: { runId: run.runId, workflow: run.workflow, step: name },
-        title: `${run.workflow}: ${name}`,
+        title: options.title ?? `${run.workflow}: ${name}`,
+        // Only the step's own `thread` is refused them; a correction on the thread it made is not.
+        launch: thread === undefined || thread === options.thread ? launch : undefined,
         prompt,
         outputSchema,
         model: options.model,
@@ -272,6 +311,8 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
       Effect.flatMap(run.store.mark(run.runId, `${name}/pause/${round}`), (arrivals) =>
         arrivals > 1 ? Effect.void : Effect.fail(problem),
       ),
+      // Resuming starts the agent's job again from the top, which is a person's call.
+      true,
     );
   }
 });
@@ -279,8 +320,8 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
 const orPause = <A = string, I = string>(
   name: string,
   options: AgentOptions<A, I>,
-): Effect.Effect<{ readonly value: A; readonly thread: AgentThread }, StepFailed, InRun> =>
-  Effect.flatMap(attempt(name, options, "pause"), (result) =>
+): Effect.Effect<{ readonly value: A; readonly thread: AgentThread }, never, InRun> =>
+  Effect.flatMap(Effect.orDie(attempt(name, options, "pause")), (result) =>
     result.outcome === "done"
       ? Effect.succeed({ value: result.value, thread: result.thread })
       : // `pause` never returns a failure: the step fails first, which pauses the run.
@@ -288,7 +329,7 @@ const orPause = <A = string, I = string>(
   );
 
 /**
- * An agent doing one job in a thread a person can open. It returns data checked against `output`,
+ * An agent doing one job in a thread a person can open. It returns data checked against `returns`,
  * or its last message without one. It starts a thread in `project`, in the linked `environment`
  * when one is named, or continues `thread` where that is. Past `timeout` it is stopped. A turn
  * that dies is tried once more, then the run pauses at this step.
@@ -302,7 +343,7 @@ export const agent = Object.assign(orPause, {
   try: <A = string, I = string>(
     name: string,
     options: AgentOptions<A, I>,
-  ): Effect.Effect<Attempt<A>, StepFailed, InRun> => attempt(name, options, "return"),
+  ): Effect.Effect<Attempt<A>, never, InRun> => Effect.orDie(attempt(name, options, "return")),
 });
 
 /**
@@ -320,18 +361,23 @@ export const ask = <const Choices extends ReadonlyArray<string>>(
   },
 ): Effect.Effect<
   Option.Option<{ readonly choice: Choices[number]; readonly reason?: string | undefined }>,
-  StepFailed,
+  never,
   InRun
 > =>
-  waitAs("ask", name, {
-    returns: Schema.Struct({
-      choice: Schema.Literals(options.choices),
-      reason: Schema.optional(Schema.String),
-    }),
-    timeout: options.timeout,
-    request: {
-      title: options.title,
-      choices: [...options.choices],
-      ...(options.data === undefined ? {} : { data: options.data }),
-    },
+  Effect.suspend(() => {
+    checkOptions(`ask("${name}")`, options, ["title", "choices", "data", "timeout"]);
+    return Effect.orDie(
+      waitAs("ask", name, {
+        returns: Schema.Struct({
+          choice: Schema.Literals(options.choices),
+          reason: Schema.optional(Schema.String),
+        }),
+        timeout: options.timeout,
+        request: {
+          title: options.title,
+          choices: [...options.choices],
+          ...(options.data === undefined ? {} : { data: options.data }),
+        },
+      }),
+    );
   });

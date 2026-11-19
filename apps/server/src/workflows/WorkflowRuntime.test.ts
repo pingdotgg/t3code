@@ -20,6 +20,7 @@ import Migration0105 from "../persistence/Migrations/111_WorkflowRunParent.ts";
 import Migration0106 from "../persistence/Migrations/112_WorkflowStepResult.ts";
 import Migration0107 from "../persistence/Migrations/113_WorkflowWaitWatch.ts";
 import Migration0108 from "../persistence/Migrations/114_WorkflowStepTurn.ts";
+import Migration0109 from "../persistence/Migrations/115_WorkflowRunKey.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowRuntime from "./WorkflowRuntime.ts";
@@ -60,6 +61,7 @@ const setup = Effect.fn("setup")(function* (
         Migration0106,
         Migration0107,
         Migration0108,
+        Migration0109,
       ],
       { discard: true },
     ),
@@ -117,6 +119,17 @@ it.effect(
           'export default [{ name: "shaped", version: 1, body: () => Effect.void }];\n',
         );
         assert.include(shaped.problems[0]?.message ?? "", "is not a workflow");
+        // Nor one with an option nothing reads, or a time a schedule cannot fire at.
+        const misspelt = yield* definitions.save(
+          "misspelt.ts",
+          'T3.workflow("misspelt", { version: 1, payload: Schema.Struct({}), retries: 2 }, () => Effect.void);\n',
+        );
+        assert.include(misspelt.problems[0]?.message ?? "", "does not take `retries`");
+        const late = yield* definitions.save(
+          "late.ts",
+          'T3.workflow("late", { version: 1, payload: T3.Tick, triggers: [T3.daily("9am")] }, () => Effect.void);\n',
+        );
+        assert.include(late.problems[0]?.message ?? "", "24-hour time");
         assert.include((yield* definitions.remove("hold.ts")).problems[0]?.message ?? "", "hold@1");
         assert.deepStrictEqual(
           (yield* definitions.read).files.map((file) => file.name),

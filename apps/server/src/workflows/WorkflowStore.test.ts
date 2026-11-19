@@ -16,6 +16,7 @@ import Migration0105 from "../persistence/Migrations/111_WorkflowRunParent.ts";
 import Migration0106 from "../persistence/Migrations/112_WorkflowStepResult.ts";
 import Migration0107 from "../persistence/Migrations/113_WorkflowWaitWatch.ts";
 import Migration0108 from "../persistence/Migrations/114_WorkflowStepTurn.ts";
+import Migration0109 from "../persistence/Migrations/115_WorkflowRunKey.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) =>
@@ -36,6 +37,7 @@ const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) 
           Migration0106,
           Migration0107,
           Migration0108,
+          Migration0109,
         ],
         {
           discard: true,
@@ -172,15 +174,15 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
       // The parts of an address are kept apart: this one is for another workflow's other key.
       yield* store.mailPut({
         signalId: "other",
-        address: { workflow: "gate:ready", key: "x" },
+        address: { workflow: "gate:ready", channel: "x" },
         valueJson: "1",
         expiresAt: "2999-01-01T00:00:00.000Z",
       });
-      assert.isUndefined(yield* store.mailNext([{ workflow: "gate", key: "ready:x" }]));
+      assert.isUndefined(yield* store.mailNext([{ workflow: "gate", channel: "ready:x" }]));
 
       yield* store.mailPut({
         signalId: "s1",
-        address: { workflow: "gate", key: "ready" },
+        address: { workflow: "gate", channel: "ready" },
         valueJson: '"yes"',
         expiresAt: "2999-01-01T00:00:00.000Z",
       });
@@ -197,14 +199,14 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
       // retry that overlapped, one buffered and one delivered.
       yield* store.mailPut({
         signalId: "s1",
-        address: { workflow: "gate", key: "ready" },
+        address: { workflow: "gate", channel: "ready" },
         valueJson: '"yes"',
         expiresAt: "2999-01-01T00:00:00.000Z",
       });
       assert.equal(yield* store.mailDeliver("s1", "r2", "go", woke), "gone");
       assert.isDefined(yield* store.waitAt({ runId: "r2", wait: "go" }));
       // It is dropped, so a wait looking through its mail is not handed it again.
-      assert.isUndefined(yield* store.mailNext([{ workflow: "gate", key: "ready" }]));
+      assert.isUndefined(yield* store.mailNext([{ workflow: "gate", channel: "ready" }]));
       // A wait that is already claimed takes no second wake.
       assert.equal(yield* store.mailDeliver("other", "r1", "go", woke), "claimed");
 

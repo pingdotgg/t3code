@@ -24,8 +24,12 @@ server and CLI start.
 
 **A step failure pauses the run.** The alternative, ending the run, loses everything done so far to
 a dependency that is back in a minute. Resuming runs the failed step again and nothing before it.
-A step that wants its workflow to decide about a failure returns the failure as data. `stop` is the
-workflow's own decision to end, and is not a failure.
+Effect's engine suspends the body when a step fails, so no handler in the body ever sees the
+error: the primitives type their error as `never`, and `step.try` and `agent.try` return a failure
+as data instead. A step runs once unless it asks for retries, since a lost reply to a post or a
+merge would otherwise do it again. A run paused by an agent that gave up waits for a person rather
+than `resumeAfter`: resuming starts the agent's whole job again. `stop` is the workflow's own
+decision to end, and is not a failure.
 
 **An agent step is a thread.** It completes when the agent submits a result the server checked
 against the step's schema, not when a turn ends, and a person can open the thread and talk to it.
@@ -115,14 +119,21 @@ puts back a run that still says `running` while the engine holds it as failed.
 **A step in flight cannot be interrupted.** The engine runs a step's body to its end. `cancel`
 therefore ends the run's row first, so nothing the step still does is recorded as the outcome, and
 stops the step's own turn, which is what makes a long agent step return. Only that turn: someone
-else's turn on the same thread is left alone.
+else's turn on the same thread is left alone. The cancelled run's `onEnd` waits for the steps still
+running in this process, or a cleanup would take away what a step is still making. A version stays
+required while a cancelled run's cleanup has not worked, since only that version can run it.
+
+**A key is one run whatever the version.** The engine's own run id hashes `name@version` with the
+key, so after a version bump the same key would be a new run: a trigger that sees its newest issue
+again, or a webhook retry, would start the work twice. `start` looks the key up first and returns
+the run it finds.
 
 **One signal wakes one wait.** A wait is taken by the first signal for it; a second signal on the
-same key is for the next run that waits on that key, and is kept until one does or its `ttl` runs
+same channel is for the next run that waits on that channel, and is kept until one does or its `ttl` runs
 out (seven days by default), after which it is gone. A signal's id is remembered for seven days
 once delivered, so a sender's retry within that time is not a second signal.
 
-**`signalAll` keeps nothing.** It wakes the waits open on a key now and is not kept for one that
+**`signalAll` keeps nothing.** It wakes the waits open on a channel now and is not kept for one that
 opens later: a kept broadcast would wake whichever single run waited next, days on. A run that
 holds for a condition therefore reads the condition in a step and waits with a timeout, so one
 that began to wait just after the broadcast looks again.

@@ -147,11 +147,11 @@ const signalCommand = Command.make("signal", {
     Flag.optional,
   ),
   workflow: Flag.String("workflow").pipe(
-    Flag.withDescription("Workflow name. Pass with --key when the run is not known."),
+    Flag.withDescription("Workflow name. Pass with --channel when the run is not known."),
     Flag.optional,
   ),
-  key: Flag.String("key").pipe(
-    Flag.withDescription("The key the wait opened with."),
+  channel: Flag.String("channel").pipe(
+    Flag.withDescription("The channel the wait opened with."),
     Flag.optional,
   ),
   id: Flag.String("id").pipe(
@@ -176,7 +176,7 @@ const signalCommand = Command.make("signal", {
               ...(Option.isSome(flags.run) ? { runId: flags.run.value } : {}),
               ...(Option.isSome(flags.wait) ? { wait: flags.wait.value } : {}),
               ...(Option.isSome(flags.workflow) ? { workflow: flags.workflow.value } : {}),
-              ...(Option.isSome(flags.key) ? { key: flags.key.value } : {}),
+              ...(Option.isSome(flags.channel) ? { channel: flags.channel.value } : {}),
               ...(Option.isSome(flags.id) ? { signalId: flags.id.value } : {}),
             },
             SignalResult,

@@ -40,12 +40,12 @@ workflow(
   "dependency-report",
   { version: 1, payload: Tick, triggers: [every("1 day")] },
   Effect.fn(function* (tick) {
-    yield* title("name", `Dependencies ${tick.scheduledAt.slice(0, 10)}`);
+    yield* title(`Dependencies ${tick.scheduledAt.slice(0, 10)}`);
 
     const audit = yield* agent("audit", {
       project: "project-id",
       brief: "List this repository's outdated dependencies. Do not change any file.",
-      output: Schema.Struct({
+      returns: Schema.Struct({
         outdated: Schema.Array(Schema.Struct({ name: Schema.String, latest: Schema.String })),
       }),
     });
@@ -96,7 +96,9 @@ every call below.
 `Schema` is Effect's, version 4. These are all a workflow file usually needs:
 
 ```ts
-(Schema.String, Schema.Number, Schema.Boolean);
+Schema.String;
+Schema.Number;
+Schema.Boolean;
 Schema.Struct({ name: Schema.String, count: Schema.optional(Schema.Number) });
 Schema.Array(Schema.String);
 Schema.Literals(["open", "closed"]);
@@ -110,28 +112,47 @@ Every call takes a name first. Names are how results are stored, so each must be
 workflow, across all kinds: an `ask("fix", …)` and an `agent("fix", …)` in one workflow collide and
 pause the run. Name the question `approve-fix` and the agent `fix`.
 
-| Call                                                                                                   | Does                                                                                                                                                                                                      | Gives back                                                                                             |
-| ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `step(name, { returns, retry? }, effect)`                                                              | Runs code once per run. `returns` is the Schema of the result.                                                                                                                                            | The result                                                                                             |
-| `agent(name, { brief, project? \| thread?, environment?, issue?, output?, model?, timeout?, quiet? })` | One agent job in a thread a person can open. Give `project` (a T3 Code project id, or the project's folder as an absolute path) to start a thread, or `thread` from an earlier agent step to continue it. | `{ value, thread }`. `value` is data checked against `output`, or the agent's last message without it. |
-| `ask(name, { title, choices, data?, timeout? })`                                                       | Puts a question to a person.                                                                                                                                                                              | `Option` of `{ choice, reason? }`; none after the timeout                                              |
-| `wait(name, { returns, timeout?, key? })`                                                              | Sleeps until a signal arrives.                                                                                                                                                                            | `Option` of the signal's value; none after the timeout                                                 |
-| `sleep(name, duration)`                                                                                | Sleeps, across restarts.                                                                                                                                                                                  | Nothing                                                                                                |
-| `title(name, text)`                                                                                    | Names the run in lists.                                                                                                                                                                                   | Nothing                                                                                                |
-| `stop(reason)`                                                                                         | Ends the run on purpose. It ends as `stopped`, which is not a failure.                                                                                                                                    | Never returns                                                                                          |
-| `skip(reason)`                                                                                         | Ends the run as not this workflow's to do: a delivery it ignores, a pull request it opened itself. It ends as `skipped`, which lists leave out unless asked.                                              | Never returns                                                                                          |
+| Call                                                       | Does                                                                                                                                                                                                      | Gives back                                                                                              |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `step(name, { returns, retry? }, effect)`                  | Runs code once per run. `returns` is the Schema of the result.                                                                                                                                            | The result                                                                                              |
+| `step.try(name, { returns, retry? }, effect)`              | As `step`, but a failure comes back instead of pausing the run.                                                                                                                                           | `{ outcome: "done", value }` or `{ outcome: "failed", reason }`                                         |
+| `agent(name, { brief, project? \| thread?, returns?, … })` | One agent job in a thread a person can open. Give `project` (a T3 Code project id, or the project's folder as an absolute path) to start a thread, or `thread` from an earlier agent step to continue it. | `{ value, thread }`. `value` is data checked against `returns`, or the agent's last message without it. |
+| `ask(name, { title, choices, data?, timeout? })`           | Puts a question to a person.                                                                                                                                                                              | `Option` of `{ choice, reason? }`; none after the timeout                                               |
+| `wait(name, { returns, timeout?, channel? })`              | Sleeps until a signal arrives.                                                                                                                                                                            | `Option` of the signal's value; none after the timeout                                                  |
+| `sleep(name, duration)`                                    | Sleeps, across restarts.                                                                                                                                                                                  | Nothing                                                                                                 |
+| `title(text)`                                              | Names the run in lists.                                                                                                                                                                                   | Nothing                                                                                                 |
+| `stop(reason)`                                             | Ends the run on purpose. It ends as `stopped`, which is not a failure.                                                                                                                                    | Never returns                                                                                           |
+| `skip(reason)`                                             | Ends the run as not this workflow's to do: a delivery it ignores, a pull request it opened itself. It ends as `skipped`, which lists leave out unless asked.                                              | Never returns                                                                                           |
 
-`step` retries three times with a growing delay, then pauses the run. Pass
-`retry: { times: 0 }` for something that must not be repeated blindly. A step whose failure the
-workflow should handle returns the failure as data instead of failing.
+A step runs once. If it fails, the run pauses at it. Give a step that is safe to repeat
+`retry: { times: 3, schedule: Schedule.exponential("2 seconds") }` to try again first. Nothing in the
+body can catch a failed step, because the run has paused. When the workflow has its own answer to
+a failure, use `step.try` and read `outcome`.
 
-`agent` with `output` finishes when the agent submits data that fits the schema, not when its turn
+A call given an option it does not take fails with the options it does take: the file is not
+type-checked, so a misspelt option would otherwise be ignored.
+
+`agent` with `returns` finishes when the agent submits data that fits the schema, not when its turn
 ends. Write the brief as the whole job: the agent sees only the brief and its project.
 Find a project's id with the `t3_project_list` tool.
 `model` is `{ instanceId, model, options? }`; leave it out for the project's default. `options`
 are the model's own, as `{ id, value }` pairs: `[{ id: "reasoningEffort", value: "high" }]`.
 `timeout: "2 hours"` is how long the agent has: past it the thread is stopped and the run pauses
-at this step, where `resume` gives a fresh agent the job.
+at this step, where `resume` gives a fresh agent the job. A run paused by its agent is not resumed
+by itself after `resumeAfter`: starting the job again is a person's call.
+
+A new thread takes what `t3_thread_launch` takes:
+
+- `workspace`: where its files are. `{ type: "root" }`, the project's checkout, is the default.
+  `{ type: "worktree", baseRef: "origin/main", startFromOrigin: true }` gives it a checkout of its
+  own. Use a worktree whenever agents may change files at the same time: two runs at once, or
+  agents side by side in one run.
+- `runtimeMode`: `full-access`, `auto`, `auto-accept-edits` or `approval-required`. The project's
+  default otherwise. A step in `approval-required` waits on approvals in its thread.
+- `interactionMode`: `default` or `plan`.
+- `title`: the thread's title, `<workflow>: <step>` otherwise.
+
+A continued `thread` keeps how it started, so these are refused with `thread`.
 
 An agent that must wait for something, such as the checks of a pull request it watches or work it
 left running, ends its turn and is woken later. Give that step `quiet: "45 minutes"`, and say in
@@ -145,11 +166,13 @@ that could not be started, died twice, ran out of time or never gave its result.
 workflow has a next move: another model, another machine, or `stop`.
 
 ```ts
-let fix = yield * agent.try("fix", { project, brief, output: Fix, timeout: "2 hours" });
-if (fix.outcome === "failed") {
-  fix = yield * agent.try("fix-again", { project, brief, output: Fix, model: stronger });
-}
-if (fix.outcome === "failed") return yield * stop(`no fix: ${fix.reason}`);
+Effect.fn(function* () {
+  let fix = yield* agent.try("fix", { project, brief, returns: Fix, timeout: "2 hours" });
+  if (fix.outcome === "failed") {
+    fix = yield* agent.try("fix-again", { project, brief, returns: Fix, model: stronger });
+  }
+  if (fix.outcome === "failed") return yield* stop(`no fix: ${fix.reason}`);
+});
 ```
 
 Agents run side by side with Effect's own `Effect.all([agent("a", …), agent("b", …)], {
@@ -163,13 +186,13 @@ The run stays on this server. A continued `thread` stays in the environment it s
 only the first step names it.
 
 ```ts
-const fix =
-  yield *
-  agent("fix", {
+Effect.fn(function* () {
+  const fix = yield* agent("fix", {
     environment: "environment-id",
     project: "/home/user/app",
     brief: "…",
   });
+});
 ```
 
 `t3 environment list` prints the linked environments and their ids. Linked environments must be on
@@ -206,8 +229,10 @@ workflow(
 ```
 
 `exec` here is your own function that runs a command and returns an Effect; it is not part of the
-API. If `onEnd` fails, a finished run pauses at the `onEnd` step, and a cancelled run's is tried
-again up to five times; `show` has the error.
+API. `onEnd` is tried three more times before a finished run pauses at the `onEnd` step, and a
+cancelled run's is tried again up to five times; `show` has the error. A cancelled run's `onEnd`
+waits for a step that was still running when the run was cancelled, so it never cleans up before
+that step is done. The workflow's version stays required until that cleanup has worked.
 
 ## Other workflows
 
@@ -232,12 +257,12 @@ workflow(
 );
 ```
 
-| Call                                        | Does                                                                                                                                                                         |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invoke(name, workflow, payload, { key? })` | In the body. Runs it as part of this run and waits. Gives `{ outcome: "completed", value }`, or `{ outcome: "stopped" \| "cancelled", reason }`. A paused run is waited for. |
-| `start(workflow, payload, { key })`         | Inside `step`. Starts it and goes on without it. Gives `{ runId }`. The same `key` is the same run.                                                                          |
-| `runs({ workflow?, status?, keyPrefix? })`  | Inside `step`. Finds runs, newest first: `{ id, workflow, key, title, status, detail, startedAt, endedAt }`. `key` is what the run was started with.                         |
-| `cancel(runId, reason)`                     | Inside `step`. Cancels another run as a person would: its agents stop, its questions go, its `onEnd` runs. A run that has ended is left alone.                               |
+| Call                                        | Does                                                                                                                                                                                         |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invoke(name, workflow, payload, { key? })` | In the body. Runs it as part of this run and waits. Gives `{ outcome: "completed", value }`, or `{ outcome: "stopped" \| "skipped" \| "cancelled", reason }`. A paused run is waited for.    |
+| `start(workflow, payload, { key })`         | Inside `step`. Starts it and goes on without it. Gives `{ runId }`. The same `key` is the same run.                                                                                          |
+| `runs({ workflow?, status?, keyPrefix? })`  | Inside `step`. `workflow` is a definition or its name. Finds runs, newest first: `{ id, workflow, key, title, status, detail, startedAt, endedAt }`. `key` is what the run was started with. |
+| `cancel(runId, reason)`                     | Inside `step`. Cancels another run as a person would: its agents stop, its questions go, its `onEnd` runs. A run that has ended is left alone.                                               |
 
 The invoked run is a run of its own in `t3 workflow list`, and is resumed by itself when it
 pauses. Cancelling the run that invoked it cancels it too; a run started with `start` is on its
@@ -257,9 +282,8 @@ a switch, a counter, a queue. Its values change over time, so read and write it 
 ```ts
 const seen = store.entry("issues/seen", Schema.String); // one key and the Schema of its value
 
-const fresh =
-  yield *
-  step(
+Effect.fn(function* () {
+  const fresh = yield* step(
     "fetch",
     { returns: Schema.Array(Issue) },
     Effect.gen(function* () {
@@ -269,24 +293,25 @@ const fresh =
       return issues;
     }),
   );
+});
 ```
 
-| Call                                   | Does                                                                                                           |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `store.entry(key, Schema)`             | One key. `.get` gives an `Option`; `.set(value)`; `.delete`.                                                   |
-| `entry.update((current) => next)`      | Reads and writes as one action; `current` is an `Option`. Returning `undefined` deletes.                       |
-| `store.entries(prefix, Schema)`        | Every `{ key, value }` whose key starts with `prefix`, in key order.                                           |
-| `store.transaction(effect)`            | Everything the effect reads and writes happens together, or not at all if it fails.                            |
-| `signal(address, value)`               | Wakes a `wait`: `{ runId, wait }` or `{ workflow, key }`. Inside `step` or `onEnd` only.                       |
-| `signalAll({ key, workflow? }, value)` | Wakes every run that waits on `key`, in one workflow or in all. Gives how many. Inside `step` or `onEnd` only. |
+| Call                                       | Does                                                                                                               |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `store.entry(key, Schema)`                 | One key. `.get` gives an `Option`; `.set(value)`; `.delete`.                                                       |
+| `entry.update((current) => next)`          | Reads and writes as one action; `current` is an `Option`. Returning `undefined` deletes.                           |
+| `store.entries(prefix, Schema)`            | Every `{ key, value }` whose key starts with `prefix`, in key order.                                               |
+| `store.transaction(effect)`                | Everything the effect reads and writes happens together, or not at all if it fails.                                |
+| `signal(address, value, { id?, ttl? })`    | Wakes a `wait`: `{ runId, wait }` or `{ workflow, channel }`. Inside `step` or `onEnd` only.                       |
+| `signalAll({ channel, workflow? }, value)` | Wakes every run that waits on `channel`, in one workflow or in all. Gives how many. Inside `step` or `onEnd` only. |
 
 `signal` wakes one wait and is kept for a wait that opens later. `signalAll` wakes all who wait
 now and keeps nothing. To hold runs while something is true, each run reads the switch in a
-`step` and, while it is on, calls `wait(...)` with `{ key: "main-green", timeout: "10 minutes",
+`step` and, while it is on, calls `wait(...)` with `{ channel: "main-green", timeout: "10 minutes",
 returns: Schema.Null }` and reads the switch again. Number the names in that loop, `switch/1` and
 `released/1`, then `switch/2` and `released/2`: a name is used once in a run, and a step named
 twice would give back what it read the first time. Whoever turns the switch off calls
-`signalAll({ key: "main-green" }, null)`, and the timeout covers a run that began to wait just
+`signalAll({ channel: "main-green" }, null)`, and the timeout covers a run that began to wait just
 after.
 
 Use `update` or `transaction` whenever a write depends on a read: several runs share the store.
@@ -306,12 +331,12 @@ workflow(
   "triage",
   { version: 1, payload: Issue, triggers: [issues.opened({ project: "/home/me/app" })] },
   Effect.fn(function* (issue) {
-    yield* title("name", `${issue.displayKey} ${issue.title}`);
+    yield* title(`${issue.displayKey} ${issue.title}`);
     const found = yield* agent("reproduce", {
       project: "/home/me/app",
       issue,
       brief: `Reproduce this on main. Change nothing.\n\n${issue.url}`,
-      output: Schema.Struct({ reproduced: Schema.Boolean, summary: Schema.String }),
+      returns: Schema.Struct({ reproduced: Schema.Boolean, summary: Schema.String }),
     });
     yield* step("report", { returns: Schema.Void }, issues.comment(issue, found.value.summary));
   }),
@@ -346,12 +371,17 @@ It gives `{ state, checks, mergeability, url }`, with `checks` one of `passing`,
 when someone closes the pull request.
 
 ```ts
-const at =
-  yield * pullRequests.wait("checks", { project, url }, { until: "checks", timeout: "2 hours" });
-if (Option.isNone(at) || at.value.state !== "open" || at.value.checks !== "passing") {
-  return yield * stop("not ready to merge");
-}
-yield * step("merge", { returns: Schema.Void }, pullRequests.act({ project, url }, "merge"));
+Effect.fn(function* () {
+  const at = yield* pullRequests.wait(
+    "checks",
+    { project, url },
+    { until: "checks", timeout: "2 hours" },
+  );
+  if (Option.isNone(at) || at.value.state !== "open" || at.value.checks !== "passing") {
+    return yield* stop("not ready to merge");
+  }
+  yield* step("merge", { returns: Schema.Void }, pullRequests.act({ project, url }, "merge"));
+});
 ```
 
 ## Triggers
@@ -378,7 +408,8 @@ A triggered workflow filters in its body. Parse `request.body`, and `skip("not a
 for what it does not care about, so those runs stay out of the lists. To check a signature, do it in a `step`.
 
 A workflow without triggers is started by hand or by another program:
-`t3 workflow start <name> --input '<json>' --key <key>`. The same key is the same run.
+`t3 workflow start <name> --input '<json>' --key <key>`. The same key is the same run, whichever
+version starts it.
 
 ## Rules that are easy to break
 
@@ -403,7 +434,7 @@ t3 workflow resume <run>                  # run a paused run's failed step again
 t3 workflow cancel <run>
 t3 workflow questions                     # what runs are asking a person
 t3 workflow signal '{"choice":"upgrade"}' --run <run> --wait approve-upgrade   # answer a question
-t3 workflow signal '<json>' --workflow <name> --key <key>              # wake a keyed wait
+t3 workflow signal '<json>' --workflow <name> --channel <channel>      # wake a wait by channel
 t3 workflow hooks                         # webhook URL paths
 t3 workflow store list [prefix]           # what workflows keep between runs
 ```
@@ -413,7 +444,8 @@ Run states: `running`, `waiting` (on an agent, a signal, a question or a sleep),
 
 A paused run shows the failing step and its error in `show`. Fix the cause, then `resume`; only
 that step runs again. A paused run is also resumed by itself after 5, 20 and 80 minutes;
-`resumeAfter` in the workflow's options changes that. A run whose version is no longer in the file
+`resumeAfter` in the workflow's options changes that. A run paused by an agent that gave up waits
+for a person. A run whose version is no longer in the file
 is marked `retired` in `show --json` and cannot continue until the version is back.
 
 An agent step's thread is an ordinary thread. Open it to see what the agent did, and talk to it if

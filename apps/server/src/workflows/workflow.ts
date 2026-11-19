@@ -13,7 +13,15 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { Activity, DurableClock, DurableDeferred, Workflow, WorkflowEngine } from "effect/workflow";
 
 import { checkOutput } from "../orchestration-v2/runOutput.ts";
-import { EngineLink, forStep, type InStep, KeyValues, Runs } from "./stepServices.ts";
+import { checkOptions } from "./options.ts";
+import {
+  EngineLink,
+  forStep,
+  type InFlight,
+  type InStep,
+  KeyValues,
+  Runs,
+} from "./stepServices.ts";
 import type { OpenedTrigger, ScheduleTrigger, Trigger, WebhookTrigger } from "./triggers.ts";
 import type { WorkflowAgents } from "./WorkflowAgents.ts";
 import { unavailable, WorkflowForge } from "./WorkflowForge.ts";
@@ -51,6 +59,8 @@ export class RunContext extends Context.Service<
     readonly names: Set<string>;
     /** What the code of the step `name` may use. */
     readonly forStep: (name: string) => Context.Context<InStep>;
+    /** The steps running now, which a cancelled run's cleanup waits for. */
+    readonly inFlight: InFlight;
   }
 >()("t3/workflows/workflow/RunContext") {}
 
@@ -115,6 +125,8 @@ export const journaled = <A, I, E>(
   action: string,
   returns: Schema.Codec<A, I>,
   execute: Effect.Effect<A, E>,
+  // The run waits for a person after this fails, not for `resumeAfter`.
+  held = false,
 ) => {
   const codec = Schema.toCodecJson(returns);
   const encodable = Schema.encodeEffect(codec);
@@ -122,7 +134,7 @@ export const journaled = <A, I, E>(
     name: action,
     success: returns,
     error: StepFailed,
-    execute: execute.pipe(
+    execute: run.inFlight.track(run.runId, execute).pipe(
       // A result the journal cannot store is this step's failure, found before it is journaled.
       Effect.tap(encodable),
       // The engine reads its own 64-bit ids as BigInt. What a step calls must not inherit that.
@@ -136,7 +148,7 @@ export const journaled = <A, I, E>(
       Effect.tapError((error) =>
         Effect.andThen(
           run.store.stepEnded(run.runId, name, "failed", error.reason),
-          run.store.runPaused(run.runId, error.message),
+          run.store.runPaused(run.runId, error.message, held),
         ),
       ),
     ),
@@ -155,25 +167,78 @@ export interface StepRetry {
   readonly times: number;
   readonly schedule?: Schedule.Schedule<unknown, unknown>;
 }
-const DEFAULT_RETRY: StepRetry = { times: 3, schedule: Schedule.exponential("2 seconds") };
+// Once, unless asked: a step that posts or merges must not do it again after a lost reply.
+const DEFAULT_RETRY: StepRetry = { times: 0 };
+
+const STEP_OPTIONS = ["returns", "retry"];
+
+/** How `step.try` ended: its value, or why it failed once its retries were used up. */
+export type StepAttempt<A> =
+  | { readonly outcome: "done"; readonly value: A }
+  | { readonly outcome: "failed"; readonly reason: string };
+
+const attemptOf = <A, I>(returns: Schema.Codec<A, I>) =>
+  Schema.Union([
+    Schema.Struct({ outcome: Schema.Literal("done"), value: returns }),
+    Schema.Struct({ outcome: Schema.Literal("failed"), reason: Schema.String }),
+  ]);
 
 /**
  * Do something once per run. The result is stored, and a replay returns the stored result.
  *
  * A failure is retried by `retry`, then pauses the run at this step: resuming the run runs the step
- * again. A step that wants its workflow to decide about a failure returns it as data.
+ * again. Nothing in the body can catch that. For a failure the workflow decides about, use
+ * `step.try`.
  */
-export const step = <A, I, E>(
-  name: string,
-  options: { readonly returns: Schema.Codec<A, I>; readonly retry?: StepRetry },
-  code: Effect.Effect<A, E, InStep>,
-): Effect.Effect<A, StepFailed, InRun> => stepAs(claim(name), name, options, code);
+export const step = Object.assign(
+  <A, I, E>(
+    name: string,
+    options: { readonly returns: Schema.Codec<A, I>; readonly retry?: StepRetry },
+    code: Effect.Effect<A, E, InStep>,
+  ): Effect.Effect<A, never, InRun> => {
+    checkOptions(`step("${name}")`, options, STEP_OPTIONS);
+    return Effect.orDie(stepAs(claim(name), name, options, code));
+  },
+  {
+    /** As `step`, but a failure left after the retries comes back as `failed` with the reason. */
+    try: <A, I, E>(
+      name: string,
+      options: { readonly returns: Schema.Codec<A, I>; readonly retry?: StepRetry },
+      code: Effect.Effect<A, E, InStep>,
+    ): Effect.Effect<StepAttempt<A>, never, InRun> => {
+      checkOptions(`step.try("${name}")`, options, STEP_OPTIONS);
+      return Effect.orDie(
+        stepAs(
+          claim(name),
+          name,
+          { returns: attemptOf(options.returns), retry: options.retry },
+          code,
+          (tried) =>
+            tried.pipe(
+              Effect.map((value): StepAttempt<A> => ({ outcome: "done", value })),
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.failCause(cause as Cause.Cause<never>)
+                  : Effect.succeed<StepAttempt<A>>({
+                      outcome: "failed",
+                      reason: text(Cause.squash(cause)),
+                    }),
+              ),
+            ),
+        ),
+      );
+    },
+  },
+);
 
-const stepAs = <A, I, E>(
+const stepAs = <A, I, X, E>(
   claimed: Effect.Effect<RunContext["Service"], never, InRun>,
   name: string,
-  options: { readonly returns: Schema.Codec<A, I>; readonly retry?: StepRetry },
-  code: Effect.Effect<A, E, InStep>,
+  options: { readonly returns: Schema.Codec<A, I>; readonly retry?: StepRetry | undefined },
+  code: Effect.Effect<X, E, InStep>,
+  // What the step makes of its tries: by default their value, or their failure.
+  settle: (tried: Effect.Effect<X, E>) => Effect.Effect<A, E> = (tried) =>
+    tried as unknown as Effect.Effect<A, E>,
 ): Effect.Effect<A, StepFailed, InRun> =>
   Effect.flatMap(claimed, (run) => {
     const retry = options.retry ?? DEFAULT_RETRY;
@@ -188,12 +253,14 @@ const stepAs = <A, I, E>(
       options.returns,
       run.store.stepStarted(run.runId, name, "step").pipe(
         Effect.andThen(
-          retry.times === 0
-            ? execute
-            : Effect.retry(execute, {
-                times: retry.times,
-                ...(retry.schedule === undefined ? {} : { schedule: retry.schedule }),
-              }),
+          settle(
+            retry.times === 0
+              ? execute
+              : Effect.retry(execute, {
+                  times: retry.times,
+                  ...(retry.schedule === undefined ? {} : { schedule: retry.schedule }),
+                }),
+          ),
         ),
         // A value that does not encode fails the step, so it is never marked done first.
         Effect.tap((value) =>
@@ -249,7 +316,7 @@ export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
   options: {
     readonly returns: Schema.Codec<A, I>;
     readonly timeout?: Duration.Input | undefined;
-    readonly key?: string | undefined;
+    readonly channel?: string | undefined;
     readonly request?: Schema.Json | undefined;
     /** What the engine looks at to end the wait by itself. */
     readonly watch?: Schema.Json | undefined;
@@ -274,7 +341,7 @@ export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
         runId: run.runId,
         name,
         workflow: run.workflow,
-        key: options.key,
+        key: options.channel,
         token,
         schemaJson: WorkflowStore.jsonText(schema),
         requestJson: options.request === undefined ? null : WorkflowStore.jsonText(options.request),
@@ -285,7 +352,9 @@ export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
       // Whatever arrived early is delivered now, checked as a signal to an open wait is. The mail
       // goes only after the wake: waking twice is harmless, and losing the signal is not.
       const addresses: ReadonlyArray<WorkflowStore.SignalAddress> =
-        options.key === undefined ? [here] : [here, { workflow: run.workflow, key: options.key }];
+        options.channel === undefined
+          ? [here]
+          : [here, { workflow: run.workflow, channel: options.channel }];
       while (true) {
         const early = yield* run.store.mailNext(addresses);
         if (early === undefined) break;
@@ -327,7 +396,7 @@ export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
 
 /**
  * Sleep until something outside signals this wait; `None` when the timeout passes first.
- * Addressed by run and wait name, or by `key` (scoped to the workflow's name) when the sender
+ * Addressed by run and wait name, or by `channel` (scoped to the workflow's name) when the sender
  * cannot know the run. A signal sent before the wait opened is delivered when it opens.
  */
 export const wait = <A, I>(
@@ -335,9 +404,12 @@ export const wait = <A, I>(
   options: {
     readonly returns: Schema.Codec<A, I>;
     readonly timeout?: Duration.Input;
-    readonly key?: string;
+    readonly channel?: string;
   },
-) => waitAs("wait", name, options);
+): Effect.Effect<Option.Option<A>, never, InRun> => {
+  checkOptions(`wait("${name}")`, options, ["returns", "timeout", "channel"]);
+  return Effect.orDie(waitAs("wait", name, options));
+};
 
 /** End the run by the workflow's own decision. It ends as `stopped`, which is not a failure. */
 export const stop = (reason: string): Effect.Effect<never, WorkflowStop> =>
@@ -352,13 +424,16 @@ export const skip = (reason: string): Effect.Effect<never, WorkflowStop> =>
   Effect.fail(new WorkflowStop({ reason, skipped: true }));
 
 /** Name the run in lists. Defaults to the workflow's name and the run's key. */
-export const title = (name: string, value: string): Effect.Effect<void, StepFailed, InRun> =>
-  Effect.flatMap(claim(name), (run) =>
-    Activity.make({
-      name: `title/${name}`,
-      execute: run.store.runTitle(run.runId, value),
-    }),
-  );
+export const title = (value: string): Effect.Effect<void, never, InRun> =>
+  Effect.flatMap(RunContext, (current) => {
+    // Numbered by how many came before in the body, which a replay walks the same way.
+    let n = 0;
+    while (current.names.has(`title/${n}`)) n++;
+    const name = `title/${n}`;
+    return Effect.flatMap(claim(name), (run) =>
+      Activity.make({ name, execute: run.store.runTitle(run.runId, value) }),
+    );
+  }).pipe(Effect.orDie);
 
 // The defaults are every workflow: a registry holds workflows of every payload and result type.
 export interface WorkflowDefinition<P = never, A = unknown> {
@@ -394,7 +469,22 @@ export interface RunEnd {
  * its own, listed and resumable by itself; cancelling this run cancels it. A run that paused has
  * not ended, so this waits on while someone resumes it.
  */
-export const invoke = Effect.fn("workflow.invoke")(function* <P, A>(
+export const invoke = <P, A>(
+  name: string,
+  workflow: WorkflowDefinition<P, A>,
+  payload: P,
+  options?: { readonly key?: string },
+): Effect.Effect<
+  | { readonly outcome: "completed"; readonly value: A }
+  | { readonly outcome: "stopped" | "skipped" | "cancelled"; readonly reason: string },
+  never,
+  InRun
+> => {
+  checkOptions(`invoke("${name}")`, options, ["key"]);
+  return Effect.orDie(invokeAs(name, workflow, payload, options));
+};
+
+const invokeAs = Effect.fn("workflow.invoke")(function* <P, A>(
   name: string,
   workflow: WorkflowDefinition<P, A>,
   payload: P,
@@ -434,6 +524,7 @@ export const invoke = Effect.fn("workflow.invoke")(function* <P, A>(
 
 /** The step `onEnd` runs as. */
 export const END_STEP = "onEnd";
+const END_RETRY: StepRetry = { times: 3, schedule: Schedule.exponential("2 seconds") };
 
 const DEFAULT_RESUME_AFTER: ReadonlyArray<Duration.Input> = [
   "5 minutes",
@@ -468,6 +559,24 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
     payload: P,
     run: { readonly id: string },
   ) => Effect.Effect<A, StepFailed | WorkflowStop, InRun>,
+): WorkflowDefinition<P, A> => {
+  checkOptions(`workflow("${name}")`, options, [
+    "version",
+    "payload",
+    "returns",
+    "resumeAfter",
+    "triggers",
+    "onEnd",
+  ]);
+  // Read once now, so a duration that does not parse fails the file and not a paused run later.
+  for (const rest of options.resumeAfter ?? []) Duration.fromInputUnsafe(rest);
+  return definitionOf(name, options, body);
+};
+
+const definitionOf = <P, PI, A, AI, EndError>(
+  name: string,
+  options: Parameters<typeof workflow<P, PI, A, AI, EndError>>[1],
+  body: Parameters<typeof workflow<P, PI, A, AI, EndError>>[2],
 ): WorkflowDefinition<P, A> => ({
   name,
   version: options.version,
@@ -548,7 +657,8 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
             : stepAs(
                 claim(END_STEP, true),
                 END_STEP,
-                { returns: Schema.Void },
+                // A cleanup is safe to run again, and has nobody else to try it.
+                { returns: Schema.Void, retry: END_RETRY },
                 definition.onEnd(input, {
                   id: runId,
                   outcome: ended.outcome,
@@ -564,6 +674,7 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
             store,
             names: new Set(),
             forStep: (name) => forStep(keyValues, link, forge, runId, name),
+            inFlight: link.inFlight,
           }),
         ),
       );

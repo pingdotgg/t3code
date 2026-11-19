@@ -51,12 +51,12 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
           const address =
             input.runId !== undefined && input.wait !== undefined
               ? { runId: input.runId, wait: input.wait }
-              : input.workflow !== undefined && input.key !== undefined
-                ? { workflow: input.workflow, key: input.key }
+              : input.workflow !== undefined && input.channel !== undefined
+                ? { workflow: input.workflow, channel: input.channel }
                 : undefined;
           if (address === undefined) {
             return yield* invalid(
-              "Address a signal with `runId` and `wait`, or `workflow` and `key`.",
+              "Address a signal with `runId` and `wait`, or `workflow` and `channel`.",
             );
           }
           const random = yield* SecureRandom.SecureRandom;

@@ -68,17 +68,40 @@ it.effect("starts a thread there by the project's folder, with the step's key as
       ],
       t3_thread_launch: [{ threadId: "thread-1", runId: "turn-1" }],
     });
-    const turn = yield* Effect.provide(
+    const options = {
+      workspace: { type: "worktree", baseRef: "origin/main", startFromOrigin: true },
+      runtimeMode: "auto-accept-edits",
+    } as const;
+    const [turn, continued] = yield* Effect.provide(
       Effect.flatMap(WorkflowAgentLinks.make, (links) =>
-        links.start(input, "env-b", "workflow:k", EnvironmentId.make("env-a")),
+        Effect.all([
+          links.start(
+            { ...input, launch: options },
+            "env-b",
+            "workflow:k",
+            EnvironmentId.make("env-a"),
+          ),
+          // A thread keeps how it started.
+          links
+            .start(
+              { ...input, thread: "thread-1", launch: options },
+              "env-b",
+              "workflow:c",
+              EnvironmentId.make("env-a"),
+            )
+            .pipe(Effect.flip),
+        ]),
       ),
       there.layer,
     );
     assert.deepStrictEqual(turn, { threadId: "thread-1", turnId: "turn-1", environment: "env-b" });
+    assert.include(continued.reason, "A continued `thread` keeps how it started");
     const launch = there.calls.at(-1);
     assert.deepStrictEqual(launch?.arguments, {
       projectId: "p-app",
       title: "fix: write",
+      runtimeMode: "auto-accept-edits",
+      workspaceStrategy: { type: "worktree", baseRef: "origin/main", startFromOrigin: true },
       message: "Write the fix.",
       outputSchema: { type: "object" },
       clientRequestId: "workflow:k",

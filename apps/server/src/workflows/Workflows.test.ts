@@ -29,6 +29,7 @@ import Migration0105 from "../persistence/Migrations/111_WorkflowRunParent.ts";
 import Migration0106 from "../persistence/Migrations/112_WorkflowStepResult.ts";
 import Migration0107 from "../persistence/Migrations/113_WorkflowWaitWatch.ts";
 import Migration0108 from "../persistence/Migrations/114_WorkflowStepTurn.ts";
+import Migration0109 from "../persistence/Migrations/115_WorkflowRunKey.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import { Issue, unavailable, WorkflowForge, WorkflowForgeError } from "./WorkflowForge.ts";
 import { agent, ask } from "./workflowAgent.ts";
@@ -38,8 +39,19 @@ import type { WorkflowRun, WorkflowRunStatus } from "./WorkflowStore.ts";
 
 const once = { retry: { times: 0 } } as const;
 
+/** Holds the `work` step of an `owned` run in `busy` mode until the test lets it go. */
+interface Latch {
+  readonly entered: Deferred.Deferred<void>;
+  readonly release: Deferred.Deferred<void>;
+  readonly cleaned: Deferred.Deferred<void>;
+}
+
 /** A workflow whose `flaky` step fails until `failures` reaches zero, counting every execution. */
-const definitions = (counts: Ref.Ref<Record<string, number>>, failures: Ref.Ref<number>) => {
+const definitions = (
+  counts: Ref.Ref<Record<string, number>>,
+  failures: Ref.Ref<number>,
+  latch: Latch,
+) => {
   const count = (name: string) =>
     Ref.updateAndGet(counts, (all) => ({ ...all, [name]: (all[name] ?? 0) + 1 })).pipe(
       Effect.map((all) => all[name]!),
@@ -49,19 +61,40 @@ const definitions = (counts: Ref.Ref<Record<string, number>>, failures: Ref.Ref<
       "owned",
       {
         version: 1,
-        payload: Schema.Struct({ mode: Schema.Literals(["finish", "stop", "hold"]) }),
+        payload: Schema.Struct({ mode: Schema.Literals(["finish", "stop", "hold", "busy"]) }),
         // Counted by how the run ended, and failing for as long as `failures` says.
         onEnd: (payload, end) =>
-          Effect.flatMap(
-            Ref.getAndUpdate(failures, (left) => Math.max(0, left - 1)),
-            (left) =>
-              left > 0
-                ? Effect.fail("the machine would not go")
-                : count(`end:${payload.mode}:${end.outcome}:${end.reason ?? ""}`),
-          ),
+          payload.mode === "busy"
+            ? // Says whether the step it cleans up after had finished.
+              Effect.flatMap(Ref.get(counts), (all) =>
+                Effect.andThen(
+                  count(`end:busy:${all["work"] === 1 ? "after" : "before"} work`),
+                  Deferred.succeed(latch.cleaned, undefined),
+                ),
+              )
+            : Effect.flatMap(
+                Ref.getAndUpdate(failures, (left) => Math.max(0, left - 1)),
+                (left) =>
+                  left > 0
+                    ? Effect.fail("the machine would not go")
+                    : count(`end:${payload.mode}:${end.outcome}:${end.reason ?? ""}`),
+              ),
       },
       (payload) =>
         Effect.gen(function* () {
+          if (payload.mode === "busy") {
+            yield* step(
+              "work",
+              { returns: Schema.Number },
+              Effect.andThen(
+                Effect.andThen(
+                  Deferred.succeed(latch.entered, undefined),
+                  Deferred.await(latch.release),
+                ),
+                count("work"),
+              ),
+            );
+          }
           yield* step("take", { returns: Schema.Number, ...once }, count("take"));
           if (payload.mode === "stop") return yield* stop("no need");
           if (payload.mode === "hold") yield* wait("go", { returns: Schema.String });
@@ -69,9 +102,24 @@ const definitions = (counts: Ref.Ref<Record<string, number>>, failures: Ref.Ref<
     ),
     workflow(
       "flaky",
-      { version: 1, payload: Schema.Struct({ id: Schema.String }), returns: Schema.String },
-      () =>
+      {
+        version: 1,
+        payload: Schema.Struct({ id: Schema.String, settle: Schema.optional(Schema.Boolean) }),
+        returns: Schema.String,
+      },
+      (payload) =>
         Effect.gen(function* () {
+          if (payload.settle === true) {
+            const tried = yield* step.try(
+              "settled",
+              { returns: Schema.Number },
+              Effect.flatMap(
+                Ref.getAndUpdate(failures, (left) => Math.max(0, left - 1)),
+                (left) => (left > 0 ? Effect.fail("the dependency is down") : count("settled")),
+              ),
+            );
+            return tried.outcome === "done" ? `settled ${tried.value}` : `gave up: ${tried.reason}`;
+          }
           yield* step("before", { returns: Schema.Number, ...once }, count("before"));
           const attempt = yield* step(
             "flaky",
@@ -93,7 +141,7 @@ const definitions = (counts: Ref.Ref<Record<string, number>>, failures: Ref.Ref<
       },
       (payload) =>
         Effect.gen(function* () {
-          yield* title("named", `review of ${payload.change}`);
+          yield* title(`review of ${payload.change}`);
           yield* sleep("settle", "1 millis");
           const [a, b] = yield* Effect.all(
             [
@@ -104,7 +152,7 @@ const definitions = (counts: Ref.Ref<Record<string, number>>, failures: Ref.Ref<
           );
           const verdict = yield* wait("verdict", {
             returns: Schema.Struct({ merge: Schema.Boolean }),
-            key: payload.change,
+            channel: payload.change,
             ...(payload.timeout === undefined ? {} : { timeout: "0 millis" }),
           });
           if (Option.isNone(verdict)) return yield* stop("nobody answered");
@@ -175,7 +223,7 @@ const stored = [
     { version: 1, payload: Schema.Struct({ door: Schema.String }), returns: Schema.String },
     (payload) =>
       Effect.map(
-        wait("open", { returns: Schema.String, key: payload.door }),
+        wait("open", { returns: Schema.String, channel: payload.door }),
         Option.getOrElse(() => "never"),
       ),
   ),
@@ -197,7 +245,7 @@ const stored = [
               if (payload.fail && Option.contains(tries, 1)) return yield* Effect.fail("slipped");
             }),
           );
-          yield* signal({ workflow: "door", key: payload.door }, "came in");
+          yield* signal({ workflow: "door", channel: payload.door }, "came in");
         }),
       ),
   ),
@@ -273,7 +321,7 @@ const fix = workflow(
         brief: "Write the fix.",
         project: payload.project,
         ...(payload.environment === undefined ? {} : { environment: payload.environment }),
-        output: Schema.Struct({ branch: Schema.String }),
+        returns: Schema.Struct({ branch: Schema.String }),
       });
       const answer = yield* ask("merge", {
         title: `Merge ${written.value.branch}?`,
@@ -292,7 +340,7 @@ const gate = workflow(
   { version: 1, payload: Schema.Struct({ gate: Schema.String }), returns: Schema.String },
   (payload) =>
     Effect.map(
-      wait("through", { returns: Schema.String, key: payload.gate }),
+      wait("through", { returns: Schema.String, channel: payload.gate }),
       Option.getOrElse(() => "never"),
     ),
 );
@@ -312,7 +360,7 @@ const control = [
         { returns: Schema.Json, ...once },
         Effect.gen(function* () {
           const waiting = yield* runs({ workflow: gate, keyPrefix: "visit/" });
-          if (payload.act === "open") return yield* signalAll({ key: "north" }, "go on");
+          if (payload.act === "open") return yield* signalAll({ channel: "north" }, "go on");
           if (payload.act === "leave") return yield* Effect.as(cancel(run.id, "done here"), null);
           if (payload.act === "dismiss") {
             const last = waiting.find((visit) => visit.key === "visit/3");
@@ -339,11 +387,15 @@ const control = [
         const first = yield* agent.try("first", {
           brief: "Fix it.",
           project: payload.project,
-          output,
+          returns: output,
           ...(payload.timeout === undefined ? {} : { timeout: payload.timeout }),
         });
         if (first.outcome === "done") return first.value.head;
-        const second = yield* agent.try("second", { brief: "Fix it.", project: "p1", output });
+        const second = yield* agent.try("second", {
+          brief: "Fix it.",
+          project: "p1",
+          returns: output,
+        });
         if (second.outcome === "failed") return yield* stop(second.reason);
         return `${second.value.head} after: ${first.reason}`;
       }),
@@ -564,6 +616,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
         Migration0106,
         Migration0107,
         Migration0108,
+        Migration0109,
       ],
       {
         discard: true,
@@ -573,6 +626,11 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
   );
   const counts = yield* Ref.make<Record<string, number>>({});
   const failures = yield* Ref.make(0);
+  const latch: Latch = {
+    entered: yield* Deferred.make<void>(),
+    release: yield* Deferred.make<void>(),
+    cleaned: yield* Deferred.make<void>(),
+  };
   // One database file, so a second engine built from it is the server after a restart.
   const agents = fakeAgents();
   const forge = fakeForge();
@@ -580,7 +638,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
     [
       triage,
       land,
-      ...definitions(counts, failures),
+      ...definitions(counts, failures, latch),
       fix,
       ...triggered,
       ...stored,
@@ -601,7 +659,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
       Effect.scoped(Effect.provide(use, engine)),
       Effect.forever(TestClock.adjust("1 second")),
     );
-  return { counts, failures, boot, agents, forge };
+  return { counts, failures, latch, boot, agents, forge };
 });
 
 /** The review workflow sleeps first, which is waiting too; this is its wait for a verdict. */
@@ -657,6 +715,22 @@ it.effect(
         }),
       );
       assert.deepStrictEqual(yield* Ref.get(counts), { before: 1, flaky: 1 });
+
+      // `step.try` hands the failure to the workflow instead of pausing, and runs once by default.
+      yield* Ref.set(failures, 1);
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const { runId } = yield* workflows.start(
+            "flaky",
+            { id: "b", settle: true },
+            { idempotencyKey: "b" },
+          );
+          const done = yield* workflows.waitFor(runId, status("completed"));
+          assert.equal(done.result, "gave up: the dependency is down");
+          assert.equal(done.pauses, 0);
+        }),
+      );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
@@ -688,7 +762,11 @@ it.effect("a wait survives a restart, checks what it is signalled with, and step
         const workflows = yield* Workflows.Workflows;
         // Addressed by key: the sender knows the change, not the run.
         assert.equal(
-          yield* workflows.signal({ workflow: "review", key: "c1" }, { merge: true }, { id: "s1" }),
+          yield* workflows.signal(
+            { workflow: "review", channel: "c1" },
+            { merge: true },
+            { id: "s1" },
+          ),
           "delivered",
         );
         const done = yield* workflows.waitFor(runId, status("completed"));
@@ -707,7 +785,7 @@ it.effect("a signal sent before its wait opens is delivered when it does", () =>
         const workflows = yield* Workflows.Workflows;
         assert.equal(
           yield* workflows.signal(
-            { workflow: "review", key: "c2" },
+            { workflow: "review", channel: "c2" },
             { merge: false },
             { id: "s2" },
           ),
@@ -740,7 +818,7 @@ it.effect("a signal buffered as its wait opens is still delivered to that wait",
           ...real,
           waitAt: (address) =>
             Effect.tap(real.waitAt(address), () => {
-              if (!("key" in address) || address.key !== "c9" || !first) return Effect.void;
+              if (!("channel" in address) || address.channel !== "c9" || !first) return Effect.void;
               first = false;
               return Effect.andThen(Deferred.succeed(looked, undefined), Deferred.await(opened));
             }),
@@ -756,7 +834,7 @@ it.effect("a signal buffered as its wait opens is still delivered to that wait",
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
         const sent = yield* Effect.forkChild(
-          workflows.signal({ workflow: "review", key: "c9" }, { merge: true }, { id: "s9" }),
+          workflows.signal({ workflow: "review", channel: "c9" }, { merge: true }, { id: "s9" }),
         );
         yield* Deferred.await(looked);
         const { runId } = yield* workflows.start(
@@ -798,7 +876,7 @@ it.effect("a wait another signal claimed first wakes with that signal's value", 
         const workflows = yield* Workflows.Workflows;
         assert.equal(
           yield* workflows.signal(
-            { workflow: "review", key: "c8" },
+            { workflow: "review", channel: "c8" },
             { merge: false },
             { id: "s8" },
           ),
@@ -883,6 +961,11 @@ it.effect("a cancelled run ends, and two steps with one name pause their run", (
         const latest = yield* workflows.start("versioned", {}, { idempotencyKey: "v2" });
         assert.equal((yield* workflows.waitFor(older.runId, status("completed"))).result, 1);
         assert.equal((yield* workflows.waitFor(latest.runId, status("completed"))).result, 2);
+        // A key is one run of the workflow, whichever version starts it again.
+        assert.deepStrictEqual(
+          yield* workflows.start("versioned", {}, { idempotencyKey: "v1" }),
+          older,
+        );
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -977,6 +1060,8 @@ it.effect(
           yield* agents.end(runId, "write/0", { ending: "failed", detail: "failed" });
           const refused = yield* workflows.waitFor(runId, status("paused"));
           assert.include(refused.detail ?? "", "the link is down");
+          // A stop that did not get through is tried again by itself.
+          assert.isNotNull(refused.resumesAt);
           assert.equal(agents.interrupted.length, 0);
           yield* agents.started(runId, "write/1");
           assert.equal(agents.interrupted.length, 1);
@@ -984,6 +1069,8 @@ it.effect(
 
           const paused = yield* workflows.waitFor(runId, status("paused"));
           assert.include(paused.detail ?? "", "provider error");
+          // An agent that gave up starts its whole job again on resume: a person decides that.
+          assert.isNull(paused.resumesAt);
           yield* workflows.resume(runId);
           yield* agents.started(runId, "write/2");
           yield* agents.end(runId, "write/2", { output: { branch: "fix/2" } });
@@ -1030,7 +1117,7 @@ it.effect(
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
-          const key = { workflow: "review", key: "k1" };
+          const key = { workflow: "review", channel: "k1" };
           // Two signals before any run waits: the first is not what the wait expects.
           yield* workflows.signal(key, { merge: "x" }, { id: "bad" });
           yield* workflows.signal(key, { merge: true }, { id: "good" });
@@ -1077,7 +1164,7 @@ it.effect(
   "onEnd runs once however the run ends, and a cancelled run's is tried until it works",
   () =>
     Effect.gen(function* () {
-      const { boot, counts, failures } = yield* harness();
+      const { boot, counts, failures, latch } = yield* harness();
       yield* boot(
         Effect.gen(function* () {
           const workflows = yield* Workflows.Workflows;
@@ -1135,6 +1222,15 @@ it.effect(
               ["end:hold:cancelled:changed my mind", 1],
             ],
           );
+
+          // Cancelled with a step still going: the cleanup waits for that step to finish.
+          const busy = yield* workflows.start("owned", { mode: "busy" }, { idempotencyKey: "b" });
+          yield* Deferred.await(latch.entered);
+          // The cancel itself comes back after a while, the step still going.
+          yield* workflows.cancel(busy.runId, "not needed");
+          yield* Deferred.succeed(latch.release, undefined);
+          yield* Deferred.await(latch.cleaned);
+          assert.equal((yield* Ref.get(counts))["end:busy:after work"], 1);
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

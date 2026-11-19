@@ -3,6 +3,7 @@
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
+import { parseTimeOfDay } from "../scheduledTasks/Schedule.ts";
 import type { Issue, PullRequest } from "./WorkflowForge.ts";
 
 /** The time a scheduled run was due, which is not the time it started. */
@@ -64,6 +65,13 @@ export const daily = (
   options?: { readonly weekdays?: ReadonlyArray<number> },
 ): Trigger<Tick> => {
   const weekdays = options?.weekdays;
+  // Read once here: a time the schedule cannot read would otherwise never fire, without a word.
+  if (parseTimeOfDay(timeOfDay) === null) {
+    throw new Error(`daily("${timeOfDay}") needs a 24-hour time such as "09:00".`);
+  }
+  if (weekdays?.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
+    throw new Error(`daily's weekdays are 0 (Sunday) to 6 (Saturday), not ${weekdays.join(", ")}.`);
+  }
   return {
     kind: "schedule",
     id: `daily:${timeOfDay}:${weekdays?.toSorted().join(",") ?? "all"}`,

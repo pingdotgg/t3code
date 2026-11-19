@@ -21,6 +21,7 @@ import {
   type AgentResult,
   type AgentTurn,
   isProjectPath,
+  launchOnContinue,
   WorkflowAgentError,
   type WorkflowAgents,
 } from "./WorkflowAgents.ts";
@@ -168,6 +169,7 @@ export const make = Effect.gen(function* () {
     const outputSchema =
       input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema };
     if (input.thread !== undefined) {
+      if (input.launch !== undefined) return yield* launchOnContinue;
       const sent = yield* call(environment, "t3_thread_send", OrchestratorMcpThreadSendResult, {
         threadId: input.thread,
         message: input.prompt,
@@ -193,6 +195,15 @@ export const make = Effect.gen(function* () {
         projectId,
         title: input.title,
         ...(input.model === undefined ? {} : { modelSelection: input.model }),
+        ...(input.launch?.runtimeMode === undefined
+          ? {}
+          : { runtimeMode: input.launch.runtimeMode }),
+        ...(input.launch?.interactionMode === undefined
+          ? {}
+          : { interactionMode: input.launch.interactionMode }),
+        ...(input.launch?.workspace === undefined
+          ? {}
+          : { workspaceStrategy: input.launch.workspace }),
         message: input.prompt,
         ...outputSchema,
         clientRequestId: requestId,
