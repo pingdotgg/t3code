@@ -199,11 +199,12 @@ describe("thread execution presentation", () => {
   });
 
   it.each([
+    // Fork: the server continues such a run with a prompt (ProviderTurnStartService).
     {
       name: "a provider without native resume",
       nativeResume: false,
       delivered: true,
-      resumes: false,
+      resumes: true,
     },
     { name: "an undelivered message", nativeResume: false, delivered: false, resumes: true },
     { name: "a provider with native resume", nativeResume: true, delivered: true, resumes: true },
