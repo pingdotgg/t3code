@@ -361,8 +361,6 @@ async function archive(path: string): Promise<Map<string, string>> {
 }
 
 const NOTEBOOK_CELL_TYPES = ["code", "markdown", "raw"];
-// ECMA-48 CSI byte classes are disjoint, including when the final byte is missing.
-const NOTEBOOK_CSI = /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/gu;
 
 function* notebook(source: string): Generator<string, void> {
   const book: unknown = JSON.parse(source);
@@ -377,8 +375,7 @@ function* notebook(source: string): Generator<string, void> {
   }
   function outputText(value: unknown): string {
     // Notebook fragments can split a terminal escape sequence.
-    const text = typeof value === "string" ? value : [...lines(value)].join("");
-    return text.replaceAll(NOTEBOOK_CSI, "");
+    return NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
   }
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
