@@ -4213,12 +4213,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         (thread) => thread?.pullRequests?.[0]?.watch,
       );
 
+      yield* TestClock.adjust("250 millis");
+      const now = yield* DateTime.now;
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
         commandId: CommandId.make("pr-watch-start"),
         threadId,
         ...key,
         watching: true,
+        includeOwnRemarks: true,
         link: { url, source: "agent" },
       });
       assert.equal(
@@ -4228,6 +4231,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const started = yield* watchOf;
       assert.isDefined(started);
       if (started === undefined) return;
+      assert.isTrue(started.includeOwnRemarks);
+      assert.equal(started.startedAt, DateTime.formatIso(now));
+      assert.equal(started.remarksThrough, DateTime.formatIso(DateTime.startOf(now, "second")));
 
       yield* orchestrator.dispatch({
         type: "thread.metadata.update",
@@ -4249,6 +4255,81 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.deepEqual(yield* watchOf, recorded);
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(yield* watchOf, recorded);
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-exclude-own"),
+        threadId,
+        ...key,
+        watching: true,
+        includeOwnRemarks: false,
+      });
+      const changed = yield* watchOf;
+      assert.isFalse(changed?.includeOwnRemarks);
+      assert.equal(changed?.startedAt, started.startedAt);
+      assert.equal(changed?.remarksThrough, DateTime.formatIso(DateTime.startOf(now, "second")));
+      assert.deepEqual(changed?.failedChecks, recorded.failedChecks);
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-preserve-option"),
+        threadId,
+        ...key,
+        watching: true,
+      });
+      assert.deepEqual(yield* watchOf, changed);
+      const staleOption = yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make("pr-watch-old-option-sync"),
+          threadId,
+          ...key,
+          startedAt: recorded.startedAt,
+          watch: recorded,
+        })
+        .pipe(Effect.flip);
+      assert.equal(staleOption._tag, "OrchestratorDispatchError");
+      assert.deepEqual(yield* watchOf, changed);
+      const staleTerminal = yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make("pr-watch-old-option-terminal"),
+          threadId,
+          ...key,
+          startedAt: recorded.startedAt,
+          watch: null,
+          endedWatch: recorded,
+        })
+        .pipe(Effect.result);
+      const afterTerminal = yield* watchOf;
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-reinclude-own"),
+        threadId,
+        ...key,
+        watching: true,
+        includeOwnRemarks: true,
+      });
+      const reset = yield* watchOf;
+      const staleRoundTrip = yield* orchestrator
+        .dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make("pr-watch-old-option-round-trip"),
+          threadId,
+          ...key,
+          startedAt: recorded.startedAt,
+          watch: recorded,
+        })
+        .pipe(Effect.result);
+      assert.deepEqual(
+        [staleTerminal._tag === "Failure", staleRoundTrip._tag === "Failure"],
+        [true, true],
+      );
+      assert.deepEqual(afterTerminal, changed);
+      assert.equal(reset?.startedAt, started.startedAt);
+      assert.equal(reset?.wakes, 0);
+      assert.deepEqual(yield* watchOf, reset);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(yield* watchOf, reset);
 
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",
@@ -5820,15 +5901,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           link: { url: "https://github.com/pingdotgg/t3code/pull/14", source: "agent" },
         });
 
+        let remarks: ReadonlyArray<PullRequestComment> = [];
         let reads = 0;
+        let invalidations = 0;
         const host = Layer.mergeAll(
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(PullRequestService.PullRequestService)({
-            // The host reports the same fingerprint throughout, so only the deadline can prompt a read.
+            // The host reports the same fingerprint throughout.
             watchFingerprint: () =>
               Effect.succeed(fingerprinted ? { status: "quiet", remarks: "none" } : null),
-            invalidate: () => Effect.void,
+            invalidate: () =>
+              Effect.sync(() => {
+                invalidations++;
+              }),
             detail: () =>
               Effect.sync(() => {
                 reads++;
@@ -5843,13 +5929,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 };
               }),
             activity: () =>
-              Effect.succeed({
-                comments: [],
-                commentCount: 0,
+              Effect.sync(() => ({
+                comments: remarks,
+                commentCount: remarks.length,
                 commentsTruncated: false,
                 reviewThreads: [],
                 commits: [],
-              }),
+              })),
           }),
         );
         const wakes = Effect.map(
@@ -5874,10 +5960,46 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
         // The notice clears the deadline, so the watch returns to its quiet cadence.
         const readsAfterNotice = reads;
+        const invalidationsAfterNotice = invalidations;
         yield* TestClock.adjust("2 minutes");
         yield* sweep;
         assert.equal(reads, readsAfterNotice);
         assert.lengthOf(yield* wakes, 1);
+
+        yield* TestClock.adjust("250 millis");
+        const policyChange = yield* DateTime.now;
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-due-change-policy-${fingerprinted}`),
+          threadId,
+          ...key,
+          watching: true,
+          includeOwnRemarks: true,
+        });
+        const boundaryRemark: PullRequestComment = {
+          id: "same-second",
+          kind: "review-comment",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: "Remark posted in the policy change second.",
+          createdAt: DateTime.formatIso(DateTime.startOf(policyChange, "second")),
+          url: null,
+          path: null,
+          reviewState: null,
+        };
+        const earlier = DateTime.makeUnsafe(DateTime.toEpochMillis(policyChange) - 1_000);
+        remarks = [
+          {
+            ...boundaryRemark,
+            id: "earlier",
+            createdAt: DateTime.formatIso(DateTime.startOf(earlier, "second")),
+          },
+          boundaryRemark,
+        ];
+        yield* sweep;
+        const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+        assert.deepEqual(watch?.remarkIds, [boundaryRemark.id]);
+        assert.equal(reads, readsAfterNotice + 1);
+        assert.equal(invalidations, invalidationsAfterNotice + 1);
 
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",

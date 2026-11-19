@@ -69,8 +69,13 @@ export class PullRequestWatchService extends Context.Service<
       readonly threadId: ThreadId;
       readonly target: PullRequestTarget;
       readonly watching: boolean;
+      readonly includeOwnRemarks?: boolean;
     }) => Effect.Effect<
-      ResolvedTarget & { readonly watching: boolean; readonly wasWatching: boolean },
+      ResolvedTarget & {
+        readonly watching: boolean;
+        readonly wasWatching: boolean;
+        readonly includeOwnRemarks: boolean;
+      },
       | PullRequestWatchFailedError
       | PullRequestNotOpenError
       | PullRequestWatchFromSubagentError
@@ -104,6 +109,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly target: PullRequestTarget;
     readonly watching: boolean;
+    readonly includeOwnRemarks?: boolean;
   }) {
     const { watching } = input;
     const thread = yield* requireThread(input.threadId);
@@ -157,6 +163,9 @@ const make = Effect.gen(function* () {
         repository: target.repository,
         number: target.number,
         watching,
+        ...(watching && input.includeOwnRemarks !== undefined
+          ? { includeOwnRemarks: input.includeOwnRemarks }
+          : {}),
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
       })
       .pipe(
@@ -167,9 +176,11 @@ const make = Effect.gen(function* () {
         ),
       );
     const after = yield* requireThread(thread.id);
+    const watch = watchedLink(after)?.watch;
     return {
       ...target,
-      watching: watchedLink(after)?.watch !== undefined,
+      watching: watch !== undefined,
+      includeOwnRemarks: watch?.includeOwnRemarks === true,
       wasWatching: before?.watch !== undefined,
     };
   });
