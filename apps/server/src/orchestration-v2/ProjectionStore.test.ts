@@ -3842,7 +3842,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           branch: null,
           worktreePath: null,
           activeProviderThreadId: null,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
           forkedFrom: null,
           createdAt: now,
           updatedAt: now,
@@ -3945,7 +3949,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           branch: null,
           worktreePath: null,
           activeProviderThreadId: null,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
           forkedFrom: null,
           createdAt: now,
           updatedAt: now,
@@ -5687,7 +5695,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           branch: null,
           worktreePath: null,
           activeProviderThreadId: null,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
           forkedFrom: null,
           createdAt: now,
           updatedAt: now,
@@ -6674,7 +6686,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           branch: null,
           worktreePath: null,
           activeProviderThreadId: null,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
           forkedFrom: null,
           createdAt: now,
           updatedAt: now,
@@ -6754,7 +6770,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           branch: null,
           worktreePath: null,
           activeProviderThreadId: null,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
           forkedFrom: null,
           createdAt: now,
           updatedAt: now,
@@ -6833,7 +6853,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             branch: null,
             worktreePath: null,
             activeProviderThreadId: null,
-            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
             forkedFrom: null,
             createdAt: now,
             updatedAt: now,
@@ -7278,7 +7302,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               branch: null,
               worktreePath: null,
               activeProviderThreadId: null,
-              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              lineage: {
+                parentThreadId: null,
+                relationshipToParent: null,
+                rootThreadId: threadId,
+              },
               forkedFrom: null,
               createdAt: now,
               updatedAt: now,
@@ -7765,7 +7793,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             branch: null,
             worktreePath: null,
             activeProviderThreadId: null,
-            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
             forkedFrom: null,
             createdAt: now,
             updatedAt: now,
@@ -9136,7 +9168,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             branch: null,
             worktreePath: null,
             activeProviderThreadId: null,
-            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
             forkedFrom: null,
             createdAt: now,
             updatedAt: now,
@@ -11556,7 +11592,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           branch: null,
           worktreePath: null,
           activeProviderThreadId: null,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
           forkedFrom: null,
           createdAt: completedAt,
           updatedAt: completedAt,
@@ -11670,5 +11710,69 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         }
       }
     }),
+  );
+
+  it.effect("applies artifact.updated and reads the artifact back", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:artifact-test");
+      const now = yield* DateTime.now;
+      yield* store.apply({
+        id: EventId.make("event:artifact-test:thread-created"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:artifact-test"),
+          title: "Artifact test",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const artifact = {
+        id: "artifact:test:1",
+        kind: "file",
+        title: "Generated file",
+        description: null,
+        payload: { path: "/tmp/out.txt" },
+        runId: null,
+        messageId: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      yield* store.apply({
+        id: EventId.make("event:artifact-test:artifact-updated"),
+        type: "artifact.updated",
+        threadId,
+        occurredAt: now,
+        payload: artifact,
+      });
+      const projection = yield* store.getThreadProjection(threadId);
+      assert.equal(projection.artifacts.length, 1);
+      assert.equal(projection.artifacts[0]?.id, "artifact:test:1");
+      assert.equal(projection.artifacts[0]?.kind, "file");
+      assert.deepEqual(projection.artifacts[0]?.payload, { path: "/tmp/out.txt" });
+    }).pipe(Effect.provide(layerTest)),
   );
 });
