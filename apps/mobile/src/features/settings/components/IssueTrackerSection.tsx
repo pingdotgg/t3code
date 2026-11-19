@@ -1,4 +1,7 @@
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  issueTrackerFieldsToken,
+  issueTrackerSummary,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
@@ -23,6 +26,7 @@ import { useProjects } from "../../../state/entities";
 import { issueTrackerEnvironment } from "../../../state/issueTrackers";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useAtomCommand } from "../../../state/use-atom-command";
+import { ConnectionFormField } from "../../connection/ConnectionFormField";
 import type { SettingsTarget } from "../settings-environment-filter";
 import { SettingsProviderRow } from "./SettingsProviderRow";
 import { SettingsRow } from "./SettingsRow";
@@ -33,9 +37,25 @@ const ThemedSvg = withUniwind(Svg);
 const ICON_SIZE = Platform.OS === "android" ? 20 : 18;
 
 /** Art per tracker kind; the server supplies everything else about a tracker. */
-const TRACKER_MARKS: Partial<Record<string, string>> = {
-  linear:
-    "M1.225 61.523c-.222-.949.908-1.546 1.597-.857l36.512 36.512c.69.69.092 1.82-.857 1.597C20.15 94.612 5.388 79.85 1.225 61.523ZM.002 46.889a.99.99 0 0 0 .29.76l52.062 52.061a.99.99 0 0 0 .76.29c2.765-.169 5.47-.559 8.1-1.152.75-.169 1.014-1.084.47-1.63L2.784 38.32c-.545-.545-1.46-.28-1.63.47A50.229 50.229 0 0 0 .002 46.89ZM4.472 29.34a.99.99 0 0 0 .208 1.104l64.878 64.877a.99.99 0 0 0 1.104.208 50.293 50.293 0 0 0 5.807-3.132.99.99 0 0 0 .154-1.53L9.135 23.38a.99.99 0 0 0-1.53.154 50.29 50.29 0 0 0-3.132 5.807ZM12.293 18.229c-.309-.309-.334-.803-.045-1.13C21.376 6.626 34.637 0 49.45 0 76.869 0 99.1 22.231 99.1 49.65c0 14.813-6.626 28.074-17.099 37.202-.327.29-.821.264-1.13-.045L12.293 18.23Z",
+const TRACKER_MARKS: Partial<
+  Record<string, { readonly viewBox: string; readonly stroke?: true; readonly paths: string[] }>
+> = {
+  // Tabler's `brand-jira` mark (MIT).
+  jira: {
+    viewBox: "0 0 24 24",
+    stroke: true,
+    paths: [
+      "M20 4h-9v1.5a2.5 2.5 0 0 0 2.5 2.5h1.5a1 1 0 0 1 1 1v1.5a2.5 2.5 0 0 0 2.5 2.5h1.5v-9",
+      "M15 8h-8v1.5a2.5 2.5 0 0 0 2.5 2.5h1.5a1 1 0 0 1 1 1v1.5a2.5 2.5 0 0 0 2.5 2.5h1.5v-8a1 1 0 0 0 -1 -1",
+      "M11 12h-8v1.5a2.5 2.5 0 0 0 2.5 2.5h1.5a1 1 0 0 1 1 1v1.5a2.5 2.5 0 0 0 2.5 2.5h1.5v-8a1 1 0 0 0 -1 -1",
+    ],
+  },
+  linear: {
+    viewBox: "0 0 100 100",
+    paths: [
+      "M1.225 61.523c-.222-.949.908-1.546 1.597-.857l36.512 36.512c.69.69.092 1.82-.857 1.597C20.15 94.612 5.388 79.85 1.225 61.523ZM.002 46.889a.99.99 0 0 0 .29.76l52.062 52.061a.99.99 0 0 0 .76.29c2.765-.169 5.47-.559 8.1-1.152.75-.169 1.014-1.084.47-1.63L2.784 38.32c-.545-.545-1.46-.28-1.63.47A50.229 50.229 0 0 0 .002 46.89ZM4.472 29.34a.99.99 0 0 0 .208 1.104l64.878 64.877a.99.99 0 0 0 1.104.208 50.293 50.293 0 0 0 5.807-3.132.99.99 0 0 0 .154-1.53L9.135 23.38a.99.99 0 0 0-1.53.154 50.29 50.29 0 0 0-3.132 5.807ZM12.293 18.229c-.309-.309-.334-.803-.045-1.13C21.376 6.626 34.637 0 49.45 0 76.869 0 99.1 22.231 99.1 49.65c0 14.813-6.626 28.074-17.099 37.202-.327.29-.821.264-1.13-.045L12.293 18.23Z",
+    ],
+  },
 };
 
 /**
@@ -112,10 +132,24 @@ export function IssueTrackerMark(props: { readonly tracker: string }) {
     <ThemedSvg
       width={ICON_SIZE}
       height={ICON_SIZE}
-      viewBox="0 0 100 100"
+      viewBox={mark.viewBox}
       colorClassName="accent-icon"
     >
-      <Path fill="currentColor" d={mark} />
+      {mark.paths.map((d) =>
+        mark.stroke ? (
+          <Path
+            key={d}
+            d={d}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        ) : (
+          <Path key={d} fill="currentColor" d={d} />
+        ),
+      )}
     </ThemedSvg>
   ) : (
     <SymbolView name="circle.dashed" size={ICON_SIZE} tintColorClassName="accent-icon" />
@@ -131,7 +165,7 @@ export function IssueTrackerCredentialForm(props: {
   const gt = useGT();
   const { environmentId, tracker } = props;
   const connect = useAtomCommand(issueTrackerEnvironment.connect, { reportFailure: false });
-  const [draft, setDraft] = useState("");
+  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const submit = async (token: string | null) => {
@@ -140,7 +174,7 @@ export function IssueTrackerCredentialForm(props: {
     const result = await connect({ environmentId, input: { tracker: tracker.tracker, token } });
     setBusy(false);
     if (!AsyncResult.isFailure(result)) {
-      setDraft("");
+      setDrafts({});
       return;
     }
     const error = squashAtomCommandFailure(result);
@@ -148,22 +182,44 @@ export function IssueTrackerCredentialForm(props: {
   };
   const helpUrl = tracker.credential.helpUrl;
   const locked = props.disabled || busy;
+  // A single-part credential is the one secret field, keyed by nothing.
+  const fields = tracker.credential.fields ?? [
+    { key: "", label: tracker.credential.label, secret: true },
+  ];
+  const token = tracker.credential.fields
+    ? issueTrackerFieldsToken(tracker.credential.fields, drafts)
+    : drafts[""]?.trim() || null;
+  const send = () => {
+    if (token !== null) void submit(token);
+  };
   return (
     <View className="gap-3 p-4">
-      <SecretTextInput
-        accessibilityLabel={tracker.credential.label}
-        placeholder={
-          tracker.connected
-            ? gt("Saved. Enter a new value to replace it")
-            : tracker.credential.label
-        }
-        value={draft}
-        onChangeText={setDraft}
-        onSubmitEditing={(value) => {
-          if (value.trim()) void submit(value.trim());
-        }}
-        editable={!locked}
-      />
+      {fields.map((field) =>
+        field.secret ? (
+          <SecretTextInput
+            key={field.key}
+            accessibilityLabel={field.label}
+            placeholder={
+              tracker.connected ? gt("Saved. Enter a new value to replace it") : field.label
+            }
+            value={drafts[field.key] ?? ""}
+            onChangeText={(value) => setDrafts({ ...drafts, [field.key]: value })}
+            onSubmitEditing={send}
+            editable={!locked}
+          />
+        ) : (
+          <ConnectionFormField
+            key={field.key}
+            label={field.label}
+            autoCapitalize="none"
+            autoCorrect={false}
+            value={drafts[field.key] ?? ""}
+            onChangeText={(value) => setDrafts({ ...drafts, [field.key]: value })}
+            onSubmitEditing={send}
+            editable={!locked}
+          />
+        ),
+      )}
       {failure ? (
         <Text selectable className="text-xs text-danger-foreground">
           {failure}
@@ -196,8 +252,8 @@ export function IssueTrackerCredentialForm(props: {
           tone="primary"
           size="compact"
           loading={busy}
-          disabled={locked || !draft.trim()}
-          onPress={() => void submit(draft.trim())}
+          disabled={locked || token === null}
+          onPress={send}
         />
       </View>
     </View>

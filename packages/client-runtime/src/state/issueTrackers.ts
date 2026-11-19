@@ -59,6 +59,20 @@ export function createIssueTrackerEnvironmentAtoms<R, E>(
   };
 }
 
+/**
+ * A credential of several parts as the one token a connect sends: a JSON object of every part,
+ * or null until each is filled, so a half-entered credential is never sent.
+ */
+export function issueTrackerFieldsToken(
+  fields: NonNullable<IssueTrackerConnection["credential"]["fields"]>,
+  drafts: Readonly<Record<string, string>>,
+): string | null {
+  const values = fields.map((field) => [field.key, drafts[field.key]?.trim() ?? ""] as const);
+  return values.every(([, value]) => value !== "")
+    ? JSON.stringify(Object.fromEntries(values))
+    : null;
+}
+
 // Tracker packages name their credential and scope in English, so a sentence is translated only
 // when it matches a known tracker's whole sentence; any other tracker keeps the English one.
 function knownTrackerSentence(

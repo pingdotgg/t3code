@@ -562,6 +562,19 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
     label: TrimmedNonEmptyString,
     /** Where to mint one, or null when the tracker has no stable page for it. */
     helpUrl: Schema.NullOr(TrimmedNonEmptyString),
+    /**
+     * A credential of several parts, such as a site, an email and a token. Clients ask for each
+     * and send them as one JSON object keyed by `key` in place of a single token.
+     */
+    fields: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          key: TrimmedNonEmptyString,
+          label: TrimmedNonEmptyString,
+          secret: Schema.Boolean,
+        }),
+      ),
+    ),
   }),
 });
 export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;

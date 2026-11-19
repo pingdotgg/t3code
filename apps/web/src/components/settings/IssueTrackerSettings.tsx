@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  issueTrackerFieldsToken,
+  issueTrackerSummary,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
@@ -15,12 +18,13 @@ import { useEnvironmentQuery } from "../../state/query";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
 import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { LinearIcon } from "../Icons";
+import { JiraIcon, LinearIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
+import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
 import { SecretInput } from "./SecretInput";
@@ -31,6 +35,7 @@ type TrackerIcon = ElementType<{ className?: string }>;
 
 /** Web art per tracker kind; the server supplies everything else about a tracker. */
 const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
+  jira: JiraIcon,
   linear: LinearIcon,
 };
 
@@ -197,16 +202,25 @@ function TrackerRow({
                 }
                 control={
                   <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
-                    <SecretInput
-                      id={inputId}
-                      size="sm"
-                      className="min-w-0 flex-1"
-                      configured={tracker.connected}
-                      value=""
-                      onCommit={(next) => {
-                        if (next.trim()) void submit(next.trim());
-                      }}
-                    />
+                    {tracker.credential.fields ? (
+                      <CredentialFields
+                        id={inputId}
+                        fields={tracker.credential.fields}
+                        connected={tracker.connected}
+                        onSubmit={(token) => void submit(token)}
+                      />
+                    ) : (
+                      <SecretInput
+                        id={inputId}
+                        size="sm"
+                        className="min-w-0 flex-1"
+                        configured={tracker.connected}
+                        value=""
+                        onCommit={(next) => {
+                          if (next.trim()) void submit(next.trim());
+                        }}
+                      />
+                    )}
                     {tracker.connected ? (
                       <Button
                         type="button"
@@ -233,6 +247,56 @@ function TrackerRow({
         </CollapsibleContent>
       </Collapsible>
     </div>
+  );
+}
+
+/** One input per part of the credential; the parts are sent together once all are filled. */
+function CredentialFields({
+  id,
+  fields,
+  connected,
+  onSubmit,
+}: {
+  readonly id: string;
+  readonly fields: NonNullable<IssueTrackerConnection["credential"]["fields"]>;
+  readonly connected: boolean;
+  readonly onSubmit: (token: string) => void;
+}) {
+  const gt = useGT();
+  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
+  const token = issueTrackerFieldsToken(fields, drafts);
+  return (
+    <form
+      className="grid min-w-0 flex-1 gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (token === null) return;
+        onSubmit(token);
+        setDrafts({});
+      }}
+    >
+      {fields.map((field) => (
+        <Input
+          key={field.key}
+          id={field.secret ? id : undefined}
+          size="sm"
+          type={field.secret ? "password" : "text"}
+          autoComplete="off"
+          spellCheck={false}
+          aria-label={field.label}
+          placeholder={
+            connected && field.secret
+              ? gt("Stored secret, enter a new value to replace")
+              : field.label
+          }
+          value={drafts[field.key] ?? ""}
+          onChange={(event) => setDrafts({ ...drafts, [field.key]: event.target.value })}
+        />
+      ))}
+      <Button type="submit" size="xs" variant="outline" disabled={token === null}>
+        {connected ? <T>Replace</T> : <T>Connect</T>}
+      </Button>
+    </form>
   );
 }
 
