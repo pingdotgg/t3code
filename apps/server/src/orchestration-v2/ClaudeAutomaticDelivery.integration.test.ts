@@ -22,11 +22,17 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as GitManager from "../git/GitManager.ts";
+import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
@@ -41,9 +47,13 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadSettlementService from "./ThreadSettlementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -795,10 +805,33 @@ const wakeAssistant = (uuid: string) =>
     },
   });
 
-it.effect("offers a continuation for a later wake after a queued continuation is cancelled", () =>
+// The real orchestrator, effect worker and continuation service around a Claude adapter whose
+// SDK frames the test scripts, on one thread.
+const withClaudeOrchestrator = <E>(
+  name: string,
+  test: (harness: {
+    readonly threadId: ThreadId;
+    readonly orchestrator: Orchestrator.OrchestratorV2["Service"];
+    readonly worker: EffectWorker.OrchestrationEffectWorkerV2["Service"];
+    readonly projections: ProjectionStore.ProjectionStoreV2Shape;
+    readonly continuations: ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>;
+    readonly prompts: ReadonlyArray<SDKUserMessage>;
+    readonly offerAndWait: (message: SDKMessage) => Effect.Effect<void>;
+    readonly watch: (
+      predicate: (event: OrchestrationV2DomainEvent) => boolean,
+    ) => Effect.Effect<Fiber.Fiber<void>, never, Scope.Scope>;
+    readonly userTurnWithBackgroundTask: (
+      id: string,
+      taskId: string,
+      options?: { readonly awaited?: boolean },
+    ) => Effect.Effect<void, never, Scope.Scope>;
+  }) => Effect.Effect<void, E, Scope.Scope>,
+) =>
   Effect.gen(function* () {
-    const cwd = yield* checkpointWorkspace("claude-cancelled-continuation");
-    const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+    const cwd = yield* checkpointWorkspace(name);
+    // Each query reads its own frames; a closed one must not take the next query's.
+    let sdkMessages = yield* Queue.unbounded<SDKMessage>();
+    let queryClosed = false;
     const processed = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
     const offerAndWait = Effect.fnUntraced(function* (message: SDKMessage) {
       const done = yield* Deferred.make<void>();
@@ -811,6 +844,8 @@ it.effect("offers a continuation for a later wake after a queued continuation is
     const random = yield* SecureRandom.SecureRandom;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const continuations: ProviderContinuationRequests.ProviderContinuationRequest[] = [];
+    const prompts: SDKUserMessage[] = [];
+    let projections: ProjectionStore.ProjectionStoreV2Shape | undefined;
     const services =
       yield* Effect.context<
         Effect.Services<ReturnType<typeof ClaudeAdapterV2.makeClaudeAdapterV2>>
@@ -836,37 +871,46 @@ it.effect("offers a continuation for a later wake after a queued continuation is
           queryRunner: {
             allocateSessionId: Effect.succeed(sessionId),
             open: () =>
-              Effect.succeed({
-                // Resolve each frame's Deferred once the adapter pulls the next one.
-                messages: Stream.fromQueue(sdkMessages).pipe(
-                  Stream.flatMap((message) =>
-                    Stream.make(message).pipe(
-                      Stream.concat(
-                        Stream.fromEffect(
-                          Effect.suspend(() => {
-                            const done = processed.get(message);
-                            return done === undefined
-                              ? Effect.void
-                              : Deferred.succeed(done, undefined);
-                          }),
-                        ).pipe(Stream.drain),
+              Effect.gen(function* () {
+                if (queryClosed) {
+                  sdkMessages = yield* Queue.unbounded<SDKMessage>();
+                  queryClosed = false;
+                }
+                const frames = sdkMessages;
+                return {
+                  // Resolve each frame's Deferred once the adapter pulls the next one.
+                  messages: Stream.fromQueue(frames).pipe(
+                    Stream.flatMap((message) =>
+                      Stream.make(message).pipe(
+                        Stream.concat(
+                          Stream.fromEffect(
+                            Effect.suspend(() => {
+                              const done = processed.get(message);
+                              return done === undefined
+                                ? Effect.void
+                                : Deferred.succeed(done, undefined);
+                            }),
+                          ).pipe(Stream.drain),
+                        ),
                       ),
                     ),
                   ),
-                ),
-                offer: () => Effect.void,
-                setModel: () => Effect.void,
-                applyFlagSettings: () => Effect.void,
-                setPermissionMode: () => Effect.void,
-                renameSession: () => Effect.void,
-                backgroundTasks: () => Effect.succeed(false),
-                mcpServerStatus: Effect.succeed([]),
-                readMcpResource: () => Effect.die("unexpected MCP resource read"),
-                callMcpTool: () => Effect.die("unexpected MCP tool call"),
-                listPermissionRules: Effect.die("unexpected permission rules read"),
-                stopTask: () => Effect.void,
-                interrupt: Effect.void,
-                close: Effect.void,
+                  offer: (message) => Effect.sync(() => prompts.push(message)),
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  renameSession: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.sync(() => {
+                    queryClosed = true;
+                  }).pipe(Effect.andThen(Queue.shutdown(frames))),
+                };
               }),
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
@@ -880,12 +924,14 @@ it.effect("offers a continuation for a later wake after a queued continuation is
     yield* Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      const threadId = ThreadId.make("thread:cancelled-continuation");
+      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const threadId = ThreadId.make(`thread:${name}`);
       const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
         orchestrator.streamDomainEvents.pipe(
           Stream.filter(predicate),
           Stream.take(1),
           Stream.runDrain,
+          Effect.orDie,
           Effect.forkScoped,
         );
       const runUpdated = (messageId: string, status: string) =>
@@ -895,8 +941,27 @@ it.effect("offers a continuation for a later wake after a queued continuation is
             event.payload.userMessageId === messageId &&
             event.payload.status === status,
         );
+      // What the agent's t3_background_wait call does.
+      const awaitBackgroundTask = Effect.fnUntraced(function* (taskId: string) {
+        const records = yield* orchestrator.getThreadRecords(threadId, ["providerThreads"]);
+        const providerThread = records.providerThreads.find(
+          (candidate) => candidate.id === records.thread.activeProviderThreadId,
+        );
+        assert.ok(providerThread?.providerSessionId != null);
+        const runtime = yield* sessions.get(providerThread.providerSessionId);
+        assert.ok(Option.isSome(runtime) && runtime.value.awaitBackgroundTasks !== undefined);
+        yield* runtime.value.awaitBackgroundTasks({
+          providerThread,
+          taskIds: [taskId],
+          awaited: true,
+        });
+      });
       // A user turn that leaves a background task running when it ends.
-      const userTurnWithBackgroundTask = Effect.fnUntraced(function* (id: string, taskId: string) {
+      const userTurnWithBackgroundTask = Effect.fnUntraced(function* (
+        id: string,
+        taskId: string,
+        options?: { readonly awaited?: boolean },
+      ) {
         const running = yield* runUpdated(id, "running");
         yield* orchestrator.dispatch({
           type: "message.dispatch",
@@ -912,7 +977,12 @@ it.effect("offers a continuation for a later wake after a queued continuation is
         yield* worker.drain();
         yield* Fiber.join(running);
         const waiting = yield* runUpdated(id, "waiting");
-        yield* Queue.offer(sdkMessages, backgroundTaskStarted(taskId));
+        if (options?.awaited === true) {
+          yield* offerAndWait(backgroundTaskStarted(taskId));
+          yield* awaitBackgroundTask(taskId);
+        } else {
+          yield* Queue.offer(sdkMessages, backgroundTaskStarted(taskId));
+        }
         yield* Queue.offer(sdkMessages, result(`result-${id}`, false));
         yield* Fiber.join(waiting);
       });
@@ -920,8 +990,8 @@ it.effect("offers a continuation for a later wake after a queued continuation is
         type: "thread.create",
         commandId: CommandId.make("create"),
         threadId,
-        projectId: ProjectId.make("project:cancelled-continuation"),
-        title: "Cancelled continuation",
+        projectId: ProjectId.make(`project:${name}`),
+        title: name,
         modelSelection,
         runtimeMode: "full-access",
         interactionMode: "default",
@@ -930,94 +1000,29 @@ it.effect("offers a continuation for a later wake after a queued continuation is
         createdBy: "user",
         creationSource: "web",
       });
-
-      // The first run is still finalizing when its background task wakes Claude.
-      yield* userTurnWithBackgroundTask("first", "build-1");
-      const queued = yield* watch(
-        (event) => event.type === "run.created" && event.payload.status === "queued",
-      );
-      yield* offerAndWait(backgroundTaskNotification("build-1"));
-      yield* offerAndWait(wakeAssistant("wake-1"));
-      yield* Fiber.join(queued);
-      assert.lengthOf(continuations, 1);
-      const continuationRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-        (run) => run.status === "queued",
-      );
-      assert.ok(continuationRun !== undefined);
-      yield* orchestrator.dispatch({
-        type: "queued-run.cancel",
-        commandId: CommandId.make("cancel"),
+      assert.ok(projections !== undefined);
+      yield* test({
         threadId,
-        runId: continuationRun.id,
-      });
-      yield* offerAndWait(result("wake-1-result", false));
-      yield* worker.drain();
-      yield* orchestrator.resumeQueuedRuns;
-      yield* worker.drain();
-      const idle = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(idle.runs.find((run) => run.id === continuationRun.id)?.status, "cancelled");
-      assert.isFalse(idle.runs.some((run) => run.status === "queued"));
-
-      yield* userTurnWithBackgroundTask("second", "build-2");
-      yield* worker.drain();
-      // The second user run has completed, so this continuation starts without queueing.
-      const isContinuationRun = (event: OrchestrationV2DomainEvent, type: string, status: string) =>
-        (event.type === "run.created" || event.type === "run.updated") &&
-        event.type === type &&
-        event.payload.status === status &&
-        event.payload.userMessageId !== MessageId.make("first") &&
-        event.payload.userMessageId !== MessageId.make("second");
-      const secondCreated = yield* watch((event) =>
-        isContinuationRun(event, "run.created", "starting"),
-      );
-      const secondRunning = yield* watch((event) =>
-        isContinuationRun(event, "run.updated", "running"),
-      );
-      yield* offerAndWait(backgroundTaskNotification("build-2"));
-      yield* offerAndWait(wakeAssistant("wake-2"));
-      assert.lengthOf(
+        orchestrator,
+        worker,
+        projections,
         continuations,
-        2,
-        "the wake after a cancelled queued continuation must offer a new continuation",
-      );
-      yield* Fiber.join(secondCreated);
-      yield* worker.drain();
-      yield* Fiber.join(secondRunning);
-      const secondContinuation = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-        (run) => run.status === "running",
-      );
-      assert.ok(secondContinuation !== undefined);
-      const secondWaiting = yield* watch(
-        (event) =>
-          event.type === "run.updated" &&
-          event.payload.id === secondContinuation.id &&
-          event.payload.status === "waiting",
-      );
-      yield* offerAndWait(result("wake-2-result", false));
-      yield* Fiber.join(secondWaiting);
-      yield* worker.drain();
-      const settled = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(
-        settled.runs.find((run) => run.id === secondContinuation.id)?.status,
-        "completed",
-      );
-      assert.deepEqual(
-        settled.turnItems.flatMap((item) =>
-          item.runId === secondContinuation.id && item.type === "assistant_message"
-            ? [item.text]
-            : [],
-        ),
-        ["Background build finished (wake-2)."],
-        "the continuation must carry only its own wake's output",
-      );
-      assert.lengthOf(continuations, 2, "two wakes must offer exactly two continuations");
+        prompts,
+        offerAndWait,
+        watch,
+        userTurnWithBackgroundTask: (id, taskId, options) =>
+          userTurnWithBackgroundTask(id, taskId, options).pipe(Effect.orDie),
+      });
     }).pipe(
       Effect.provide(
-        ProviderReplayHarness.layerWithRegistry(
-          { name: "claude-cancelled-continuation" },
-          registry,
-          { runEffectWorker: false, runContinuationWorker: true },
-        ),
+        ProviderReplayHarness.layerWithRegistry({ name }, registry, {
+          runEffectWorker: false,
+          runContinuationWorker: true,
+          wrapProjectionStore: (store) => {
+            projections = store;
+            return store;
+          },
+        }),
       ),
     );
   }).pipe(
@@ -1029,6 +1034,297 @@ it.effect("offers a continuation for a later wake after a queued continuation is
         NodeCrypto.layer,
       ),
     ),
+  );
+
+it.effect("offers a continuation for a later wake after a queued continuation is cancelled", () =>
+  withClaudeOrchestrator(
+    "claude-cancelled-continuation",
+    ({
+      threadId,
+      orchestrator,
+      worker,
+      continuations,
+      offerAndWait,
+      watch,
+      userTurnWithBackgroundTask,
+    }) =>
+      Effect.gen(function* () {
+        // The first run is still finalizing when its background task wakes Claude.
+        yield* userTurnWithBackgroundTask("first", "build-1");
+        const queued = yield* watch(
+          (event) => event.type === "run.created" && event.payload.status === "queued",
+        );
+        yield* offerAndWait(backgroundTaskNotification("build-1"));
+        yield* offerAndWait(wakeAssistant("wake-1"));
+        yield* Fiber.join(queued);
+        assert.lengthOf(continuations, 1);
+        const continuationRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "queued",
+        );
+        assert.ok(continuationRun !== undefined);
+        yield* orchestrator.dispatch({
+          type: "queued-run.cancel",
+          commandId: CommandId.make("cancel"),
+          threadId,
+          runId: continuationRun.id,
+        });
+        yield* offerAndWait(result("wake-1-result", false));
+        yield* worker.drain();
+        yield* orchestrator.resumeQueuedRuns;
+        yield* worker.drain();
+        const idle = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(idle.runs.find((run) => run.id === continuationRun.id)?.status, "cancelled");
+        assert.isFalse(idle.runs.some((run) => run.status === "queued"));
+
+        yield* userTurnWithBackgroundTask("second", "build-2");
+        yield* worker.drain();
+        // The second user run has completed, so this continuation starts without queueing.
+        const isContinuationRun = (
+          event: OrchestrationV2DomainEvent,
+          type: string,
+          status: string,
+        ) =>
+          (event.type === "run.created" || event.type === "run.updated") &&
+          event.type === type &&
+          event.payload.status === status &&
+          event.payload.userMessageId !== MessageId.make("first") &&
+          event.payload.userMessageId !== MessageId.make("second");
+        const secondCreated = yield* watch((event) =>
+          isContinuationRun(event, "run.created", "starting"),
+        );
+        const secondRunning = yield* watch((event) =>
+          isContinuationRun(event, "run.updated", "running"),
+        );
+        yield* offerAndWait(backgroundTaskNotification("build-2"));
+        yield* offerAndWait(wakeAssistant("wake-2"));
+        assert.lengthOf(
+          continuations,
+          2,
+          "the wake after a cancelled queued continuation must offer a new continuation",
+        );
+        yield* Fiber.join(secondCreated);
+        yield* worker.drain();
+        yield* Fiber.join(secondRunning);
+        const secondContinuation = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "running",
+        );
+        assert.ok(secondContinuation !== undefined);
+        const secondWaiting = yield* watch(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === secondContinuation.id &&
+            event.payload.status === "waiting",
+        );
+        yield* offerAndWait(result("wake-2-result", false));
+        yield* Fiber.join(secondWaiting);
+        yield* worker.drain();
+        const settled = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          settled.runs.find((run) => run.id === secondContinuation.id)?.status,
+          "completed",
+        );
+        assert.deepEqual(
+          settled.turnItems.flatMap((item) =>
+            item.runId === secondContinuation.id && item.type === "assistant_message"
+              ? [item.text]
+              : [],
+          ),
+          ["Background build finished (wake-2)."],
+          "the continuation must carry only its own wake's output",
+        );
+        assert.lengthOf(continuations, 2, "two wakes must offer exactly two continuations");
+      }),
+  ),
+);
+
+const emptyBackgroundTasks = frame({
+  type: "system",
+  subtype: "background_tasks_changed",
+  tasks: [],
+  uuid: "background-tasks-empty",
+  session_id: sessionId,
+});
+const mergedPullRequest = { host: "github.com", repository: "acme/app", number: 7 } as const;
+
+// Settles on merge like the server does; the git and pull request reads stay unused because the
+// thread's link already carries the merged snapshot.
+const makeSettlement = (
+  orchestrator: Orchestrator.OrchestratorV2["Service"],
+  projections: ProjectionStore.ProjectionStoreV2Shape,
+  candidateReads: Queue.Queue<void>,
+) =>
+  ThreadSettlementService.make.pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(Orchestrator.OrchestratorV2, orchestrator),
+        Layer.succeed(ProjectionStore.ProjectionStoreV2, {
+          ...projections,
+          getSettlementCandidates: (threadId) =>
+            projections
+              .getSettlementCandidates(threadId)
+              .pipe(Effect.tap(() => Queue.offer(candidateReads, undefined))),
+        }),
+        Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([]) }),
+        ServerSettings.layerTest({ sidebarAutoSettleOnMerge: true }),
+        Layer.mock(GitManager.GitManager)({}),
+        Layer.mock(PullRequestService.PullRequestService)({
+          subscribeMerges: Effect.succeed(Stream.never),
+          subscribeRefreshes: Stream.never,
+        }),
+        Layer.mock(TerminalManager.TerminalManager)({ closeOnSettle: () => Effect.void }),
+        Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
+          runForThread: () => Effect.succeed({ status: "no-script" } as const),
+        }),
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+// The agent merged its pull request, started a deploy poll, waited on it and ended its turn.
+// The poll finishes and the merge settles the thread, closing Claude's session, before Claude
+// opens its own wake turn.
+it.effect("runs an awaited task's result when a merge settles the thread before Claude wakes", () =>
+  withClaudeOrchestrator(
+    "claude-owed-wake-settle",
+    ({
+      threadId,
+      orchestrator,
+      worker,
+      projections,
+      continuations,
+      prompts,
+      offerAndWait,
+      watch,
+      userTurnWithBackgroundTask,
+    }) =>
+      Effect.gen(function* () {
+        // Starting a settlement service sweeps every thread once; wait for that sweep to finish.
+        const sweep = Effect.scoped(
+          Effect.gen(function* () {
+            const candidateReads = yield* Queue.unbounded<void>();
+            const settlement = yield* makeSettlement(orchestrator, projections, candidateReads);
+            yield* settlement.start();
+            yield* Queue.take(candidateReads);
+            yield* settlement.drain;
+          }),
+        );
+        const runOf = (messageId: MessageId | undefined) =>
+          orchestrator
+            .getThreadProjection(threadId)
+            .pipe(Effect.map(({ runs }) => runs.find((run) => run.userMessageId === messageId)));
+        const isOwedWakeMessage = (messageId: string) =>
+          messageId.startsWith("message:claude-owed-wake:");
+        const deliveredRunCreated = yield* watch(
+          (event) => event.type === "run.created" && isOwedWakeMessage(event.payload.userMessageId),
+        );
+        const settledTwice = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter((event) => event.type === "thread.settled"),
+          Stream.take(2),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+
+        yield* userTurnWithBackgroundTask("deploy", "deploy-poll", { awaited: true });
+        const now = DateTime.formatIso(yield* DateTime.now);
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make("link"),
+          threadId,
+          ...mergedPullRequest,
+          url: "https://github.com/acme/app/pull/7",
+          source: "agent",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make("merged"),
+          threadId,
+          ...mergedPullRequest,
+          snapshot: {
+            state: "merged",
+            title: "Ship it",
+            headBranch: "feature",
+            baseBranch: "main",
+            isDraft: false,
+            updatedAt: now,
+            syncedAt: now,
+            mergedAt: now,
+          },
+          stack: null,
+        });
+        // The real CLI reports the empty roster before the notification.
+        yield* offerAndWait(emptyBackgroundTasks);
+        yield* offerAndWait(backgroundTaskNotification("deploy-poll"));
+
+        yield* worker.drain();
+        // The command a settlement sweep sends when its candidate read lands before the wake.
+        const { thread } = yield* orchestrator.getThreadProjection(threadId);
+        yield* orchestrator.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("auto-settle"),
+          threadId,
+          snapshotAt: thread.updatedAt,
+        });
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.settledOverride,
+          "settled",
+        );
+        // Settling detaches the session, which closes Claude's query.
+        yield* worker.drain();
+        const delivered = continuations.filter((request) => request.delivery === "message_text");
+        assert.lengthOf(delivered, 1, "the closed session must deliver the task result once");
+        const deliveredMessageId = delivered[0]!.messageId;
+        assert.ok(deliveredMessageId !== undefined);
+        yield* Fiber.join(deliveredRunCreated);
+
+        // A sweep after the delivered run is dispatched and before it starts leaves it alone.
+        const beforeSweep = (yield* runOf(deliveredMessageId))?.status;
+        yield* sweep;
+        assert.equal((yield* runOf(deliveredMessageId))?.status, beforeSweep);
+        assert.notEqual(beforeSweep, "cancelled");
+
+        const running = yield* watch(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.userMessageId === deliveredMessageId &&
+            event.payload.status === "running",
+        );
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        assert.isNull(
+          (yield* orchestrator.getThreadProjection(threadId)).thread.settledOverride,
+          "the delivered run unsettles the thread",
+        );
+        const prompt = JSON.stringify(prompts.at(-1)?.message.content);
+        assert.include(prompt, "deploy-poll");
+        assert.include(prompt, "/tmp/claude-replay/tasks/deploy-poll.output");
+
+        const ended = yield* watch(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.userMessageId === deliveredMessageId &&
+            (event.payload.status === "waiting" || event.payload.status === "completed"),
+        );
+        yield* offerAndWait(wakeAssistant("deploy-wake"));
+        yield* offerAndWait(result("deploy-wake-result", false));
+        yield* Fiber.join(ended);
+        yield* worker.drain();
+        assert.equal((yield* runOf(deliveredMessageId))?.status, "completed");
+        // Once the delivered turn ends, the merge settles the thread again.
+        yield* sweep;
+        yield* Fiber.join(settledTwice);
+        const final = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(final.thread.settledOverride, "settled");
+        assert.lengthOf(
+          final.runs.filter((run) => isOwedWakeMessage(run.userMessageId)),
+          1,
+          "exactly one run delivers the task result",
+        );
+        assert.lengthOf(
+          continuations.filter((request) => request.delivery === "message_text"),
+          1,
+        );
+      }),
   ),
 );
 
