@@ -5,13 +5,17 @@ import {
   ProjectId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
+  type ServerSettings,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { NewProjectScriptInput } from "../projectScriptEditor";
 
 const commands = vi.hoisted(() => ({
+  readSettings: vi.fn(),
   updateSettings: vi.fn(),
   upsertKeybinding: vi.fn(),
   removeKeybinding: vi.fn(),
@@ -31,6 +35,7 @@ vi.mock(import("../../state/server"), async (original) => {
     ...actual,
     serverEnvironment: {
       ...actual.serverEnvironment,
+      readSettings: "readSettings",
       updateSettings: "updateSettings",
       upsertKeybinding: "upsertKeybinding",
       removeKeybinding: "removeKeybinding",
@@ -134,6 +139,38 @@ function setup() {
 }
 
 describe("useProjectScriptSettings", () => {
+  it("keeps consecutive imports when the streamed settings have not caught up", async () => {
+    setup();
+    const projectId = ProjectId.make("project");
+    let stored: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+    };
+    commands.readSettings.mockImplementation(async () => AsyncResult.success(stored));
+    commands.updateSettings.mockImplementation(
+      async ({ input }: { input: { patch: ServerSettingsPatch } }) => {
+        stored = applyServerSettingsPatch(stored, input.patch);
+        return AsyncResult.success(stored);
+      },
+    );
+    await using screen = await renderSettings([]);
+    const build = { ...input, name: "Build", command: "vp build" };
+    const check = { ...input, name: "Check", command: "vp check" };
+    for (const action of [build, check, build]) {
+      await act(async () => {
+        const result = await screen.settings.importScript(action);
+        expect(result._tag).toBe("Success");
+      });
+    }
+
+    expect(stored.projectSettingsOverrides[projectId]).toMatchObject({
+      defaultAutoPull: true,
+      defaultProjectScripts: [lint, build, check].map(({ name, command }) =>
+        expect.objectContaining({ name, command }),
+      ),
+    });
+  });
+
   it.each(["project", "environment"] as const)(
     "preserves the shortcut for %s action name and command edits",
     async (scope) => {
@@ -151,7 +188,7 @@ describe("useProjectScriptSettings", () => {
         input: {
           patch:
             scope === "project"
-              ? { projectSettingsOverrides: { project: { defaultProjectScripts: scripts } } }
+              ? { projectScriptOverrides: { project: scripts } }
               : { defaultProjectScripts: scripts },
         },
       });
