@@ -1508,9 +1508,11 @@ function OpenCommandPaletteDialog(props: {
     actionItems.push({
       kind: "action",
       value: "action:open-thread-pull-requests",
-      searchTerms: ["pull requests", "linked", "stack", "prs"],
-      title: gt("Show linked pull requests"),
-      disabled: visibleThreadPullRequests(activeThread.pullRequests).length === 0,
+      searchTerms: ["pull requests", "issues", "linked", "stack", "prs"],
+      title: gt("Show linked items"),
+      disabled:
+        visibleThreadPullRequests(activeThread.pullRequests).length === 0 &&
+        !activeThread.issues?.length,
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         useRightPanelStore.getState().open(threadRef, "pull-requests");

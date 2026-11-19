@@ -18,7 +18,10 @@ import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 import { applyOrchestrationV2ProjectionEvent } from "@t3tools/client-runtime/state/orchestration-v2-projection";
-import { mergeOlderHistoryIntoProjection } from "@t3tools/client-runtime/state/thread-history-merge";
+import {
+  mergeOlderHistoryIntoProjection,
+  mergeOlderSubagentsIntoProjection,
+} from "@t3tools/client-runtime/state/thread-history-merge";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -107,7 +110,10 @@ export function applyGuestStreamEvent(
       if (state.projection === null || state.historyCursor !== event.cursor) return state;
       return {
         ...state,
-        projection: mergeOlderHistoryIntoProjection(state.projection, event.page.items),
+        projection: mergeOlderSubagentsIntoProjection(
+          mergeOlderHistoryIntoProjection(state.projection, event.page.items),
+          event.page.subagents,
+        ),
         awaitingRowIds: withoutPlaced(
           state.awaitingRowIds,
           event.page.items.map((row) => row.item),

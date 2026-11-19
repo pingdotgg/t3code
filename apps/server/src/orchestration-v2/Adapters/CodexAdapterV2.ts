@@ -117,6 +117,7 @@ import {
   toMcpElicitationResponse,
 } from "../../provider/CodexMcpElicitation.ts";
 import {
+  codexHomeLaunchArgs,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "../../provider/Drivers/CodexHomeLayout.ts";
@@ -272,6 +273,7 @@ export const CodexProviderCapabilitiesV2 = {
     canRollbackThread: true,
     canForkThread: true,
     canForkFromTurn: true,
+    canForkWhileSourceRunning: true,
     canForkFromSubagentThread: true,
     exposesNativeThreadId: true,
   },
@@ -1863,6 +1865,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
     enabled,
     binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
     homePath: homeLayout.effectiveHomePath ?? "",
+    launchArgs: codexHomeLaunchArgs(yield* Path.Path, homeLayout, config.launchArgs),
   } satisfies CodexSettings;
 
   return yield* makeCodexAdapterV2({
@@ -8150,11 +8153,38 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
               yield* applyServiceTier(threadId, turnInput.modelSelection);
               const codexInput = yield* toCodexInput(turnInput);
+              // turn/steer takes no additionalContext, so notes the thread has not been sent go
+              // as quoted user input, the way restoreAdditionalContext resends them.
+              const sentContext = (yield* Ref.get(additionalContextByThread)).get(threadId);
+              const unsentNotes = (turnInput.appContext ?? []).filter(
+                (entry) => sentContext?.[entry.key]?.value !== entry.text,
+              );
               yield* client.request("turn/steer", {
                 expectedTurnId: activeTurn.nativeTurnId,
-                input: codexInput,
+                input: [
+                  ...unsentNotes.map((entry) => ({
+                    type: "text" as const,
+                    text: `<external_${entry.key}>${entry.text}</external_${entry.key}>`,
+                  })),
+                  ...codexInput,
+                ],
                 threadId,
               });
+              if (unsentNotes.length > 0) {
+                yield* Ref.update(additionalContextByThread, (current) => {
+                  const next = new Map(current);
+                  next.set(threadId, {
+                    ...current.get(threadId),
+                    ...Object.fromEntries(
+                      unsentNotes.map((entry) => [
+                        entry.key,
+                        { kind: "untrusted" as const, value: entry.text },
+                      ]),
+                    ),
+                  });
+                  return next;
+                });
+              }
             },
             (effect, turnInput) =>
               effect.pipe(

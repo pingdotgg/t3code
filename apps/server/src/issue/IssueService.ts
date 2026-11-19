@@ -408,6 +408,7 @@ const make = Effect.gen(function* () {
                 assignee: input.assignee,
                 sort: input.sort ?? "updated",
                 cursor,
+                refresh: input.refresh,
               }),
             ),
             Effect.result,
@@ -704,9 +705,12 @@ const make = Effect.gen(function* () {
       const onTracker = onAuthority.length > 0 ? onAuthority : onHost;
       const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
         projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];
-      const own = preferFirst(
-        onTracker.filter((project) => project.scope.toLowerCase() === link.scope.toLowerCase()),
-      );
+      const scope = link.scope.toLowerCase();
+      const own =
+        preferFirst(onTracker.filter((project) => project.scope.toLowerCase() === scope)) ??
+        preferFirst(
+          onTracker.filter((project) => project.scope.toLowerCase() === gitHost?.link.scopeAlias),
+        );
       const lender = own ?? preferFirst(onTracker);
       if (lender === undefined) {
         return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });

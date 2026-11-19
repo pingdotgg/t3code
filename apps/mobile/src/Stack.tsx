@@ -62,6 +62,7 @@ import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
+import { LocalPreviewRouteScreen } from "./features/browser/LocalPreviewRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitRemoteSheet } from "./features/threads/git/GitRemoteSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
@@ -69,6 +70,7 @@ import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSheet";
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
+import { ThreadGuestShareSheet } from "./features/threads/ThreadGuestShareSheet";
 import { ThreadBackgroundWorkSheet } from "./features/threads/ThreadBackgroundWorkSheet";
 import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
 import {
@@ -730,7 +732,12 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadBrowserPreview: createNativeStackScreen({
       screen: BrowserPreviewRouteScreen,
       linking: `${THREAD_LINKING_PREFIX}/browser`,
-      options: { ...modalRoute({ header: "solid" }), gestureEnabled: false },
+      options: immersiveRoute({ fullWidth: true }),
+    }),
+    ThreadLocalPreview: createNativeStackScreen({
+      screen: LocalPreviewRouteScreen,
+      linking: "environments/:environmentId/local-preview",
+      options: immersiveRoute({ fullWidth: true }),
     }),
     ThreadReview: createNativeStackScreen({
       screen: ReviewSheet,
@@ -777,6 +784,10 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadAgents: createNativeStackScreen({
       screen: ThreadAgentsSheet,
       options: sheetRoute({ detent: 0.5, androidMaxDetent: 0.9 }),
+    }),
+    ThreadGuestShare: createNativeStackScreen({
+      screen: ThreadGuestShareSheet,
+      options: sheetRoute({ detent: 0.5 }),
     }),
     GitOverview: createNativeStackScreen({
       screen: GitOverviewSheet,
