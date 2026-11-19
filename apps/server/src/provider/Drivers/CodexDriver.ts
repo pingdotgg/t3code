@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -28,6 +29,8 @@ import { ProviderDriverError } from "../Errors.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkCodexProviderStatus,
+  type CodexAppServerProviderSnapshot,
+  probeCodexAppServerProvider,
   makePendingCodexProvider,
   makeCodexSkillsProbe,
   withCodexAppServerClient,
@@ -266,12 +269,24 @@ export const CodexDriver: ProviderDriver<
       ),
     );
 
+    // Codex's own catalog fetch often outlasts the probe's wait; a recheck lists its write.
+    const catalogStale = yield* Ref.make(false);
     // Kick the TTL-gated manifest refresh in the background and classify with the in-memory
     // manifest, so a slow or hung fetch never delays the provider check.
     const checkProvider = modelCatalog.refreshInBackground.pipe(
+      Effect.andThen(Ref.set(catalogStale, false)),
       Effect.andThen(
         Effect.zipWith(
-          checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
+          checkCodexProviderStatus(
+            effectiveConfig,
+            (input) =>
+              probeCodexAppServerProvider(input).pipe(
+                Effect.tap((probed: CodexAppServerProviderSnapshot) =>
+                  Ref.set(catalogStale, probed.catalogStale === true),
+                ),
+              ),
+            processEnv,
+          ),
           currentCatalog,
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
           { concurrent: true },
@@ -294,6 +309,7 @@ export const CodexDriver: ProviderDriver<
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
         ),
       checkProvider,
+      recheckSoon: Ref.get(catalogStale),
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>

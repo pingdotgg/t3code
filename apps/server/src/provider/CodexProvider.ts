@@ -161,6 +161,8 @@ export interface CodexAppServerProviderSnapshot {
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
+  /** Codex's catalog refresh did not land in time, so `models` came from an older cache. */
+  readonly catalogStale?: boolean;
   readonly serviceTier?: string | undefined;
   /** Undefined when `config/read` failed, so T3 cannot know Codex's default program. */
   readonly daybreakEnabled?: boolean | undefined;
@@ -580,7 +582,7 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
     requestAllCodexModels(input.client),
     input.deadlineMs,
   );
-  if (models === undefined) return undefined;
+  if (models === undefined) return { models, catalogStale: false };
   const refreshed = yield* withCodexDiscoveryDeadline(
     readCodexModelsCacheFetchedAt(input.codexHome).pipe(
       Effect.repeat({
@@ -595,12 +597,13 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
     yield* Effect.logWarning(
       "Codex did not refresh its model catalog in time; using the cached catalog.",
     );
-    return models;
+    return { models, catalogStale: true };
   }
-  return (
-    (yield* withCodexDiscoveryDeadline(requestAllCodexModels(input.client), input.deadlineMs)) ??
-    models
+  const fresh = yield* withCodexDiscoveryDeadline(
+    requestAllCodexModels(input.client),
+    input.deadlineMs,
   );
+  return { models: fresh ?? models, catalogStale: fresh === undefined };
 });
 
 /** Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models. */
@@ -768,7 +771,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   // Optional discovery must finish before the outer timeout can discard the account result.
   const deadlineMs = spawnedAtMs + input.probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
-  const [skillsResponse, models, { config, nativeUsage, rateLimits }] = yield* Effect.all(
+  const [skillsResponse, catalog, { config, nativeUsage, rateLimits }] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
       accountResponse.account?.type === "chatgpt"
@@ -778,7 +781,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
             spawnedAtMs,
             deadlineMs,
           })
-        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs),
+        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs).pipe(
+            Effect.map((models) => ({ models, catalogStale: false })),
+          ),
       // The shared catalog must exclude config from the server's launch project.
       withCodexDiscoveryDeadline(
         client.request("config/read", { includeLayers: false }),
@@ -807,6 +812,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     ],
     { concurrency: "unbounded" },
   );
+  const { models, catalogStale } = catalog;
 
   const cyberAccess = Option.getOrUndefined(decodeCodexCyberAccessConfig(config));
   return {
@@ -816,6 +822,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models,
+    ...(catalogStale ? { catalogStale } : {}),
     serviceTier: config?.service_tier ?? undefined,
     daybreakEnabled: config === undefined ? undefined : cyberAccess?.daybreak === true,
     // An unread config cannot rule out an API key with the programs turned off.
@@ -1189,4 +1196,4 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   });
 });
 
-export { makePendingCodexProvider };
+export { makePendingCodexProvider, probeCodexAppServerProvider };

@@ -42,7 +42,7 @@ function withUsageLimits(
   return usageLimits ? { ...rest, usageLimits } : rest;
 }
 
-const FAILED_CHECK_RECHECK_DELAY = "30 seconds";
+const RECHECK_DELAY = "30 seconds";
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
@@ -64,6 +64,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean | ((snapshot: ServerProvider) => boolean);
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
+  /** Read after a published check; true runs one more check after the recheck delay. */
+  readonly recheckSoon?: Effect.Effect<boolean>;
 }): Effect.fn.Return<
   ManagedServerProvider,
   ServerSettingsError,
@@ -86,6 +88,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const recheckPendingRef = yield* Ref.make(false);
+  const refreshIntervalChanges = yield* Queue.sliding<void>(1);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
   const scope = yield* Effect.scope;
 
@@ -242,6 +245,16 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     yield* Ref.set(settingsRef, nextSettings);
     yield* PubSub.publish(changesPubSub, nextSnapshot);
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
+    // A recheck runs with deferFailure false, so this asks for at most one in a row.
+    if (
+      options?.deferFailure !== false &&
+      nextSnapshot.enabled &&
+      input.recheckSoon &&
+      (yield* input.recheckSoon)
+    ) {
+      yield* Ref.set(recheckPendingRef, true);
+      yield* Queue.offer(refreshIntervalChanges, undefined);
+    }
     return nextSnapshot;
   });
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
@@ -386,7 +399,6 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           Effect.orElseSucceed(() => DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL),
         );
 
-  const refreshIntervalChanges = yield* Queue.sliding<void>(1);
   if (input.refreshInterval === undefined) {
     const serverSettingsChanges = yield* host.settings.subscribe;
     yield* serverSettingsChanges.pipe(
@@ -408,9 +420,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   ).pipe(Effect.forkScoped);
 
   yield* Effect.forever(
-    Effect.all([getRefreshInterval, Ref.getAndSet(recheckPendingRef, false)]).pipe(
+    Effect.all([getRefreshInterval, Ref.get(recheckPendingRef)]).pipe(
       Effect.flatMap(([configuredInterval, recheckPending]) => {
-        const refreshInterval = recheckPending ? FAILED_CHECK_RECHECK_DELAY : configuredInterval;
+        const refreshInterval =
+          recheckPending && Duration.toMillis(Duration.fromInputUnsafe(configuredInterval)) > 0
+            ? RECHECK_DELAY
+            : configuredInterval;
         // @effect-diagnostics-next-line raceFirstWithSleepToTimeout:off - races the interval against a settings-change signal, not a timeout
         return Effect.raceFirst(
           Effect.sleep(
@@ -422,7 +437,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         ).pipe(
           Effect.flatMap((intervalElapsed) =>
             intervalElapsed && Duration.toMillis(Duration.fromInputUnsafe(refreshInterval)) > 0
-              ? shouldRefreshOnInterval.pipe(
+              ? Ref.set(recheckPendingRef, false).pipe(
+                  Effect.andThen(shouldRefreshOnInterval),
                   Effect.flatMap((shouldRefresh) =>
                     shouldRefresh
                       ? refreshSemaphore.withPermits(1)(refreshOnInterval(!recheckPending))
