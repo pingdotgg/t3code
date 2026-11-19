@@ -516,6 +516,8 @@ const ANTIGRAVITY_SUBAGENT_TITLES = new Set([
   "Run start_subagent?",
   "Running invoke_subagent",
   "Run invoke_subagent?",
+  // agy 1.5 auto-approved calls.
+  "Run invoke_subagent",
 ]);
 
 /** The ACP agent reports subagent calls as ordinary tools without child IDs or models. */
