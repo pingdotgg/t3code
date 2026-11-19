@@ -420,7 +420,7 @@ describe("LinearIssueTracker", () => {
         nodes: [comment(body)],
         pageInfo: { hasNextPage: false, endCursor: null },
       });
-      const unrelated = "![External](https://example.test/image.png?signature=keep)";
+      const unrelated = `![External](https://example.test/image.png?signature=keep) ${asset}?signature=a.b.c&width=100`;
       const { tracker } = fakeLinear({
         T3Issue: (_, fileUrlLifetime) => {
           const body = Number(fileUrlLifetime) > 0 ? signed : stable;
