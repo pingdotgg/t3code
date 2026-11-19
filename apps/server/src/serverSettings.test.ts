@@ -32,6 +32,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as TestClock from "effect/testing/TestClock";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { sourceControlHostSecretName } from "./sourceControl/sourceControlHostSecrets.ts";
 import * as ServerConfig from "./config.ts";
@@ -3273,4 +3274,140 @@ it.live.each(["restoring the directory", "failing with ENOSPC"] as const)(
         assert.isTrue(Option.isSome(reloaded));
       }).pipe(Effect.provide(settingsLayer));
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.live("starts when regular settings replace a symlink during watch registration", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+    const active = path.join(dotfiles, "active");
+    const target = path.join(active, "settings.json");
+    yield* fs.makeDirectory(active);
+    yield* fs.writeFileString(target, `{ "responseStreamingMode": "turn" }`);
+
+    const parentRegistering = yield* Deferred.make<void>();
+    const settingsWatched = yield* Deferred.make<void>();
+    let settingsWatches = 0;
+    const settingsLayer = layerServerSettings().pipe(
+      Layer.provide(
+        Layer.succeed(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fs,
+            watch: (directory, options) => {
+              if (directory === dotfiles) {
+                return Stream.unwrap(
+                  Deferred.succeed(parentRegistering, undefined).pipe(Effect.as(Stream.never)),
+                );
+              }
+              return fs.watch(directory, {
+                ...options,
+                onReady: () => {
+                  options?.onReady?.();
+                  // Both the settings reload and the link resolver need to see the rename.
+                  if (++settingsWatches === 2) Deferred.doneUnsafe(settingsWatched, Effect.void);
+                },
+              });
+            },
+          }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const replacement = `${config.settingsPath}.replacement`;
+      yield* fs.writeFileString(replacement, `{ "responseStreamingMode": "paragraph" }`);
+      yield* fs.symlink(target, config.settingsPath);
+
+      const starting = yield* service.start.pipe(Effect.forkScoped);
+      yield* Deferred.await(parentRegistering);
+      yield* Deferred.await(settingsWatched);
+      yield* fs.rename(replacement, config.settingsPath);
+      yield* Fiber.join(starting);
+
+      const settings = yield* service.getSettings;
+      assert.equal(settings.responseStreamingMode, "paragraph");
+    }).pipe(Effect.provide(settingsLayer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("publishes edits made before the restored settings watch is registered", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+    const active = path.join(dotfiles, "active");
+    const restored = path.join(dotfiles, "restored");
+    const target = path.join(active, "settings.json");
+    yield* fs.makeDirectory(active);
+    yield* fs.makeDirectory(restored);
+    yield* fs.writeFileString(target, `{ "responseStreamingMode": "turn" }`);
+    yield* fs.writeFileString(
+      path.join(restored, "settings.json"),
+      `{ "responseStreamingMode": "turn" }`,
+    );
+
+    const replaced = yield* Deferred.make<FileSystem.WatchEvent>();
+    const registering = yield* Deferred.make<void>();
+    const allowRegistration = yield* Deferred.make<void>();
+    const settingsLayer = layerServerSettings().pipe(
+      Layer.provide(
+        Layer.succeed(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fs,
+            watch: (directory, options) =>
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  if (directory === dotfiles) {
+                    options?.onReady?.();
+                    return Stream.fromEffect(Deferred.await(replaced)).pipe(
+                      Stream.concat(Stream.never),
+                    );
+                  }
+                  if (directory !== active) return fs.watch(directory, options);
+                  if (yield* Deferred.isDone(replaced)) {
+                    yield* Deferred.succeed(registering, undefined);
+                    yield* Deferred.await(allowRegistration);
+                  }
+                  options?.onReady?.();
+                  return Stream.never;
+                }),
+              ),
+          }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fs.symlink(target, config.settingsPath);
+      yield* service.start;
+      const changes = yield* service.subscribeChanges;
+
+      yield* fs.rename(active, path.join(dotfiles, "previous"));
+      yield* fs.rename(restored, active);
+      // Deliver the event on the test clock so it drains the watcher and any eager debounce.
+      yield* Deferred.succeed(replaced, { _tag: "Create", path: "active" }).pipe(
+        Effect.delay(1),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(registering);
+      yield* service.withSettingsSnapshot(() => Effect.void);
+      yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
+      yield* Deferred.succeed(allowRegistration, undefined).pipe(
+        Effect.delay(1),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 second");
+
+      const published = yield* changes.pipe(Stream.runHead);
+      assert.equal(Option.getOrThrow(published).responseStreamingMode, "paragraph");
+    }).pipe(Effect.provide(settingsLayer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

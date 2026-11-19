@@ -1379,7 +1379,8 @@ const make = Effect.gen(function* () {
       Stream.changes,
       Stream.switchMap(
         Option.match({
-          onNone: () => Stream.empty,
+          onNone: () =>
+            Stream.fromEffect(Deferred.succeed(linkTargetReady, undefined)).pipe(Stream.drain),
           onSome: (linkTargetPath) => watchLinkTargetChanges(linkTargetPath, linkTargetReady),
         }),
       ),
