@@ -60,10 +60,19 @@ Running `vp run dev` through an agent's own shell tool does not attach it to thi
 ### State and ports
 
 Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
-The main checkout defaults to `~/.t3/dev`. An explicit `--home-dir` wins in both cases.
+Any other checkout, including the main checkout and every plain `git clone`, uses
+`T3CODE_HOME` when it is set and otherwise `~/.t3/dev`, with default ports. Checkouts on
+`~/.t3/dev` share one database, settings, and secrets, and only one of their servers can run
+at a time. An explicit `--home-dir` wins in both cases. It and `T3CODE_HOME` store state in
+`<home>/userdata`.
+A home of `~/.t3`, from either source, still selects `~/.t3/dev`, because `~/.t3/userdata` is
+the live install.
 The first start in a worktree seeds its empty database from a read-only copy of
 `~/.t3/userdata/statev2.sqlite` if the source is at most 500 MiB. Larger sources warn
 and dev starts with an empty database. `--no-seed` or `T3CODE_DEV_SEED=0` skips seeding.
+Seeding targets only a worktree's own `.t3`, so a plain clone or a `--home-dir` outside the
+worktree starts empty. To give a clone its own seeded state, run
+`vp run migrate-dev-db --base-dir <clone>/.t3` and then `vp run dev --home-dir <clone>/.t3`.
 To copy a larger source, run `vp run migrate-dev-db` with dev stopped. It may use
 substantial disk space before pruning.
 The first start in any checkout also builds the native resource monitor with Cargo when
