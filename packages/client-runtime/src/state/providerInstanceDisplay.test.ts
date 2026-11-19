@@ -23,7 +23,6 @@ describe("providerInstanceInitials", () => {
     expect(providerInstanceInitials("ClaudeAPI")).toBe("CA");
     expect(providerInstanceInitials("API")).toBe("AP");
     expect(providerInstanceInitials("ClaudeProx Work")).toBe("CW");
-    expect(providerInstanceInitials("ClaudeProx Personal")).toBe("CP");
     expect(providerInstanceInitials("(ClaudeProx)")).toBe("CP");
   });
 
