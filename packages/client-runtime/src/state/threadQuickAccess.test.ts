@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentThreadShell } from "./models.ts";
 import { selectThreadQuickAccess } from "./threadQuickAccess.ts";
@@ -66,5 +66,20 @@ describe("selectThreadQuickAccess", () => {
     );
 
     expect(selected.map(({ thread }) => thread.id)).toEqual(["b"]);
+  });
+
+  it("does not require Array.prototype.toSorted on Hermes", () => {
+    using _toSorted = vi
+      .spyOn(Array.prototype, "toSorted")
+      .mockImplementation(() => {
+        throw new Error("Hermes does not implement toSorted");
+      });
+
+    expect(
+      selectThreadQuickAccess([
+        shell("older", "2026-11-19T11:00:00Z"),
+        shell("newer", "2026-11-19T12:00:00Z"),
+      ]).map(({ thread }) => thread.id),
+    ).toEqual(["newer", "older"]);
   });
 });

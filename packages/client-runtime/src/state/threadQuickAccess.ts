@@ -22,9 +22,11 @@ export function selectThreadQuickAccess(
   );
   const working = sortWorkingThreadsBySend(eligible.filter(isThreadWorking));
   const workingKeys = new Set(working.map((thread) => `${thread.environmentId}:${thread.id}`));
+  // Hermes lacks toSorted, so copy before sorting to keep the input immutable on native clients.
   const recent = eligible
     .filter((thread) => !workingKeys.has(`${thread.environmentId}:${thread.id}`))
-    .toSorted(
+    .slice()
+    .sort(
       (left, right) =>
         recentTimestamp(right) - recentTimestamp(left) ||
         left.id.localeCompare(right.id) ||
