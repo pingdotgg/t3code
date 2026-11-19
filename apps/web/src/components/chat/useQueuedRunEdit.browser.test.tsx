@@ -604,6 +604,34 @@ describe("useQueuedRunEdit", () => {
     ]);
   });
 
+  it("edits the message the save will expect, not an older queue row", async () => {
+    const { hook } = setup();
+    mocks.editQueuedRun.mockResolvedValue(saveSucceeded());
+    const messages = [
+      {
+        id: MessageId.make("message-1"),
+        text: "first\n\nsecond",
+        attachments: [{ id: "merged-file" }],
+      },
+    ];
+    await using _screen = await render(view(THREAD_A, "queued", hook, messages));
+    await act(() =>
+      requireHook(hook).beginEdit({
+        runId: RUN,
+        messageId: MessageId.make("message-1"),
+        text: "first",
+        attachments: [],
+      }),
+    );
+
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt,
+    ).toBe("first\n\nsecond");
+    expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment.id)).toEqual([
+      "merged-file",
+    ]);
+  });
+
   it("leaves a newer edit alone when a save from before navigation finishes", async () => {
     const { hook } = setup();
     let finishSave: (result: EditQueuedRunResult) => void = () => {};

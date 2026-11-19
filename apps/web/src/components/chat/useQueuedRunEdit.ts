@@ -299,10 +299,13 @@ export function useQueuedRunEdit(input: {
     if (activeThreadId === null) return;
     if (editing !== null && editing.runId !== request.runId) clearEditDraft(editing.runId);
     const target = queuedRunEditDraftId(routeThreadRef, request.runId);
-    const sentText = stripAttachmentOnlyBootstrapPrompt(request.text);
     const message = serverProjection?.messages.find(
       (candidate) => candidate.id === request.messageId,
     );
+    const sentText = stripAttachmentOnlyBootstrapPrompt(
+      message === undefined ? request.text : (message.context?.guest?.text ?? message.text),
+    );
+    const existingAttachments = message?.attachments ?? request.attachments;
     const context = message?.context;
     const referenced = new Set(collectInlineContextIds(sentText));
     const records = (context?.records ?? []).filter((record) => referenced.has(record.contextId));
@@ -332,7 +335,7 @@ export function useQueuedRunEdit(input: {
         originalText: text,
         expectedText: message?.text,
         expectedAttachmentIds: message?.attachments.map((attachment) => attachment.id),
-        existingAttachments: request.attachments,
+        existingAttachments,
         context,
       },
       {
