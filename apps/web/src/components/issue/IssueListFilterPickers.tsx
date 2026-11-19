@@ -127,6 +127,7 @@ export function IssueFiltersMenu(props: {
         {props.projects.length > 1 || props.project ? (
           <PullRequestFilterRadioSubmenu
             label={gt("Project")}
+            icon={FolderGit2Icon}
             value={projectValue}
             options={projectOptions}
             onChange={(next) => {

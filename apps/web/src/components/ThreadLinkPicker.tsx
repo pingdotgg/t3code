@@ -49,7 +49,7 @@ export function ThreadLinkPicker({
       <CommandInput placeholder={gt("Search threads or projects...")} disabled={pending} />
       <CommandList className="max-h-80 overflow-y-auto">
         {candidates.length === 0 ? (
-          <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+          <div className="px-3 py-6 text-center text-meta text-muted-foreground">
             <T>No active threads found.</T>
           </div>
         ) : (
@@ -65,14 +65,14 @@ export function ThreadLinkPicker({
                 <MessageSquareIcon aria-hidden className="size-4 shrink-0" />
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate">{thread.title || gt("Untitled thread")}</span>
-                  <span className="truncate text-xs text-muted-foreground">
+                  <span className="truncate text-caption text-muted-foreground">
                     {projectNames.get(thread.projectId)}
                   </span>
                 </span>
                 {linked ? (
                   <>
                     <CheckIcon aria-hidden className="size-3.5" />
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-caption text-muted-foreground">
                       <T context="thread is linked">Linked</T>
                     </span>
                   </>

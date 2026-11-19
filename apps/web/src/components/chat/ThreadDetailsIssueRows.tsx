@@ -18,6 +18,7 @@ import {
   PULL_REQUEST_ROW_NUMBER_CLASS,
   PullRequestRowLines,
 } from "../pullRequest/PullRequestListRow";
+import { PAGE_ROW_HOVER_CLASS, PAGE_ROW_PRESS_CLASS } from "../pullRequest/PullRequestRow";
 import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -108,7 +109,7 @@ function LinkedIssueRow({
     <div className="pb-1.5">
       <Tooltip>
         <TooltipTrigger
-          render={<ThreadDetailsControl part="title" render={<a {...anchorProps} />} />}
+          render={<ThreadDetailsControl multiline render={<a {...anchorProps} />} />}
         >
           {glyph}
           <span className="min-w-0 flex-1 line-clamp-2 whitespace-normal leading-4.5">{title}</span>
@@ -116,13 +117,13 @@ function LinkedIssueRow({
         <TooltipPopup
           side="top"
           align="start"
-          variant="glass"
+          variant="popover"
           className="w-80 max-w-[calc(100vw-2rem)]"
         >
           <div className="flex min-w-0 items-center gap-2">{lines}</div>
         </TooltipPopup>
       </Tooltip>
-      <div className="flex h-5 min-w-0 items-center gap-1.5 ps-9 pe-2.5 text-xs text-muted-foreground">
+      <div className="flex h-5 min-w-0 items-center gap-1.5 ps-9 pe-2.5 text-caption text-muted-foreground">
         <span className="shrink-0 tabular-nums">{link.displayKey}</span>
         {trackerIcon}
         {comments}
@@ -131,10 +132,7 @@ function LinkedIssueRow({
   ) : (
     <a
       {...anchorProps}
-      className={cn(
-        PULL_REQUEST_ROW_CLASS,
-        "px-2 hover:bg-accent/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-      )}
+      className={cn(PULL_REQUEST_ROW_CLASS, PAGE_ROW_HOVER_CLASS, PAGE_ROW_PRESS_CLASS, "px-2")}
     >
       {lines}
     </a>
