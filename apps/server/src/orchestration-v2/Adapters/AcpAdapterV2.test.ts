@@ -4645,11 +4645,27 @@ describe("AcpAdapterV2", () => {
             item.changes[0]?.oldPath === "/workspace/old.ts",
         ),
       );
-      const read = items.find((item) => item.type === "dynamic_tool" && item.toolName === "Read");
-      assert.deepEqual(
-        read?.type === "dynamic_tool" ? { title: read.title, input: read.input } : null,
-        { title: "Read src/env.ts", input: { path: "src/env.ts" } },
-      );
+      const readItem = (nativeId: string) => {
+        const item = items.findLast(
+          (candidate) =>
+            candidate.type === "dynamic_tool" &&
+            candidate.toolName === "Read" &&
+            candidate.nativeItemRef?.nativeId?.endsWith(nativeId) === true,
+        );
+        return item?.type === "dynamic_tool"
+          ? { title: item.title, input: item.input, viewedImagePath: item.viewedImagePath }
+          : null;
+      };
+      assert.deepEqual(readItem("structured-read"), {
+        title: "Read src/env.ts",
+        input: { path: "src/env.ts" },
+        viewedImagePath: undefined,
+      });
+      assert.deepEqual(readItem("structured-image-read"), {
+        title: "Read /workspace/mockup.png",
+        input: { file_path: "/workspace/mockup.png", start_line: 0, end_line: 799 },
+        viewedImagePath: "/workspace/mockup.png",
+      });
       const search = items.find((item) => item.type === "file_search");
       assert.deepEqual(
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
