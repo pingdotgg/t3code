@@ -481,7 +481,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var fontFamily = "DMSans-Regular"
   private var fontSize: CGFloat = 14
   private var lineHeight: CGFloat = 20
-  private var writingDirection: NSWritingDirection = .natural
+  private var writingDirections: [NSWritingDirection] = []
   private var needsWritingDirectionUpdate = false
   private var contentInsetVertical: CGFloat = 0
   private var shouldAutoFocus = false
@@ -766,15 +766,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     setNeedsLayout()
   }
 
-  // JS picks the direction by word majority. TextKit's natural direction follows the first
-  // letter, so an Arabic line that opens with an English word would lay out left to right.
-  func setWritingDirection(_ direction: String) {
-    let next: NSWritingDirection = direction == "rtl" ? .rightToLeft : direction == "ltr" ? .leftToRight : .natural
-    guard next != writingDirection else {
-      return
-    }
-    writingDirection = next
-    restoreBaseTypingAttributes()
+  // JS picks each paragraph's direction by word majority. TextKit's natural direction follows
+  // the first letter, so an Arabic line that opens with an English word would lay out left to right.
+  func setWritingDirections(_ directions: [String]) {
+    writingDirections = directions.map { $0 == "rtl" ? .rightToLeft : $0 == "ltr" ? .leftToRight : .natural }
     needsWritingDirectionUpdate = true
     applyPendingWritingDirection()
   }
@@ -787,28 +782,35 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     }
     needsWritingDirectionUpdate = false
     let storage = textView.textStorage
-    guard storage.length > 0 else {
-      return
-    }
     storage.beginEditing()
-    storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
-      guard let current = value as? NSParagraphStyle else {
-        return
-      }
-      let paragraph = NSMutableParagraphStyle()
-      paragraph.setParagraphStyle(current)
-      applyWritingDirection(to: paragraph)
-      storage.addAttribute(.paragraphStyle, value: paragraph, range: range)
-    }
+    applyWritingDirections(to: storage)
     storage.endEditing()
   }
 
-  private func applyWritingDirection(to paragraph: NSMutableParagraphStyle) {
-    paragraph.baseWritingDirection = writingDirection
-    switch writingDirection {
-    case .rightToLeft: paragraph.alignment = .right
-    case .leftToRight: paragraph.alignment = .left
-    default: paragraph.alignment = .natural
+  // Only paragraphs whose direction differs are touched, so a keystroke does not relayout the draft.
+  private func applyWritingDirections(to text: NSMutableAttributedString) {
+    let source = text.string as NSString
+    var location = 0
+    var index = 0
+    while location < source.length {
+      let range = source.paragraphRange(for: NSRange(location: location, length: 0))
+      let direction = index < writingDirections.count ? writingDirections[index] : .natural
+      text.enumerateAttribute(.paragraphStyle, in: range) { value, run, _ in
+        guard let current = value as? NSParagraphStyle, current.baseWritingDirection != direction else {
+          return
+        }
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.setParagraphStyle(current)
+        paragraph.baseWritingDirection = direction
+        switch direction {
+        case .rightToLeft: paragraph.alignment = .right
+        case .leftToRight: paragraph.alignment = .left
+        default: paragraph.alignment = .natural
+        }
+        text.addAttribute(.paragraphStyle, value: paragraph, range: run)
+      }
+      location = NSMaxRange(range)
+      index += 1
     }
   }
 
@@ -1075,6 +1077,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
         to: result
       )
     }
+    applyWritingDirections(to: result)
     return result
   }
 
@@ -1216,7 +1219,6 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     let paragraph = NSMutableParagraphStyle()
     paragraph.minimumLineHeight = lineHeight
     paragraph.maximumLineHeight = lineHeight
-    applyWritingDirection(to: paragraph)
     return [
       .font: font,
       .foregroundColor: UIColor(composerHex: theme.text) ?? .label,

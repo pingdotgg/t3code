@@ -1,0 +1,38 @@
+import { describe, expect, it } from "vitest";
+
+import { composerLineDirections, composerUniformDirection } from "./composerTextDirection";
+
+describe("composerLineDirections", () => {
+  it.each([
+    ["English only", "Run the build first", []],
+    ["Arabic that opens with an English word", "Plantur، سيروم للشعر 100 مل", ["rtl"]],
+    [
+      "an English line under Arabic ones",
+      "اكتب الدالة الجديدة\nثم اختبرها\nRun tests.",
+      ["rtl", "rtl", "ltr"],
+    ],
+    [
+      "an English error under an Arabic line",
+      "اشرح لي هذا الخطأ من فضلك\nTypeError: cannot read property x of undefined",
+      ["rtl", "ltr"],
+    ],
+    [
+      "fenced code under Arabic",
+      "شغّل هذا الأمر ثم أخبرني بالنتيجة\n```\nnpm install مكتبة\n```\nشكرا",
+      ["rtl", "ltr", "ltr", "ltr", "rtl"],
+    ],
+    ["lines without letters continue the one above", "مرحبا\n\n123", ["rtl", "rtl", "rtl"]],
+  ])("%s", (_name, text, expected) => {
+    expect(composerLineDirections(text)).toEqual(expected);
+  });
+});
+
+describe("composerUniformDirection", () => {
+  it.each([
+    [["rtl", "", "rtl"], "rtl"],
+    [["rtl", "ltr"], ""],
+    [[], ""],
+  ] as const)("%j -> %j", (lines, expected) => {
+    expect(composerUniformDirection(lines)).toBe(expected);
+  });
+});
