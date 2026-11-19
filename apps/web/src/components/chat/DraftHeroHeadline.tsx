@@ -3,6 +3,7 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { useGT } from "gt-react";
 import {
   FolderPlusIcon,
   FoldersIcon,
@@ -55,6 +56,7 @@ export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
+  const gt = useGT();
   const projects = useProjects();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -221,7 +223,11 @@ export function DraftHeroHeadline({
                   <Button
                     variant="ghost-muted"
                     size="icon-micro"
-                    aria-label={pinned ? `Unpin ${group.displayName}` : `Pin ${group.displayName}`}
+                    aria-label={
+                      pinned
+                        ? gt("Unpin {name}", { name: group.displayName })
+                        : gt("Pin {name}", { name: group.displayName })
+                    }
                     aria-pressed={pinned}
                     onClick={() => toggleProjectGroupPin(group)}
                   />
@@ -229,7 +235,7 @@ export function DraftHeroHeadline({
               >
                 {pinned ? <PinOffIcon /> : <PinIcon />}
               </TooltipTrigger>
-              <TooltipPopup side="top">{pinned ? "Unpin" : "Pin"}</TooltipPopup>
+              <TooltipPopup side="top">{pinned ? gt("Unpin") : gt("Pin")}</TooltipPopup>
             </Tooltip>
           ) : null
         }
@@ -239,12 +245,12 @@ export function DraftHeroHeadline({
 
   // The hero used to be a sentence; screen readers still get one.
   const headingLabel = isScratchDraft
-    ? "What should we work on?"
+    ? gt("What should we work on?")
     : hasResolvedProject
-      ? `What should we build in ${activeProjectTitle}?`
+      ? gt("What should we build in {project}?", { project: activeProjectTitle })
       : canChooseProject
-        ? "Choose a project to start"
-        : "Add a project to start";
+        ? gt("Choose a project to start")
+        : gt("Add a project to start");
 
   if (isScratchDraft && isTriageDraftPrompt) {
     const environment = environments.find(
@@ -263,25 +269,27 @@ export function DraftHeroHeadline({
       <h1 className="sr-only">{headingLabel}</h1>
       <div
         role="list"
-        aria-label="Projects"
+        aria-label={gt("Projects")}
         className="flex min-h-0 flex-col gap-0.5 overflow-y-auto"
       >
         {pinnedEntries.length > 0 ? (
           <>
-            <DraftProjectGroupLabel>Pinned</DraftProjectGroupLabel>
+            <DraftProjectGroupLabel>{gt("Pinned")}</DraftProjectGroupLabel>
             {pinnedEntries.map(renderProjectRow)}
           </>
         ) : null}
         {recentEntries.length > 0 ? (
           <>
-            <DraftProjectGroupLabel>Recent</DraftProjectGroupLabel>
+            <DraftProjectGroupLabel>
+              {gt("Recent", { $context: "recently used projects" })}
+            </DraftProjectGroupLabel>
             {recentEntries.map(renderProjectRow)}
           </>
         ) : null}
         {menuEntries.length > 0 ? (
           <DraftProjectRow
             icon={<FoldersIcon className="size-4 shrink-0 text-muted-foreground" />}
-            label="All projects…"
+            label={gt("All projects…")}
             detail={String(menuEntries.length)}
             onSelect={openAllProjects}
           />
@@ -291,16 +299,16 @@ export function DraftHeroHeadline({
           <DraftProjectRow
             selected={isScratchDraft}
             icon={<MessageSquareDashedIcon className="size-4 shrink-0 text-muted-foreground" />}
-            label="No project"
-            detail="Its own folder, no git"
+            label={gt("No project")}
+            detail={gt("Its own folder, no git")}
             shortcut={noProjectShortcut}
             onSelect={() => void startScratch()}
           />
         )}
         <DraftProjectRow
           icon={<FolderPlusIcon className="size-4 shrink-0 text-muted-foreground" />}
-          label="Add project…"
-          detail="Open a folder or clone a repository"
+          label={gt("Add project…")}
+          detail={gt("Open a folder or clone a repository")}
           onSelect={openAddProject}
         />
       </div>

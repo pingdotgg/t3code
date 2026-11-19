@@ -4,10 +4,12 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { memo, useRef, useState, useSyncExternalStore } from "react";
 import { InfoIcon, XIcon } from "lucide-react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button, InlineButton } from "../ui/button";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { serverEnvironment } from "../../state/server";
@@ -98,7 +100,11 @@ export function hasProviderSetup(status: ServerProvider): boolean {
   );
 }
 
-export function getProviderStatusMessage(status: ServerProvider): string {
+/** Components pass `useMessages()` so the message follows a language switch. */
+export function getProviderStatusMessage(
+  status: ServerProvider,
+  resolve: MessageResolver = m,
+): string {
   if (
     status.auth.status !== "unauthenticated" &&
     status.compatibilityAdvisory?.status === "broken" &&
@@ -109,21 +115,25 @@ export function getProviderStatusMessage(status: ServerProvider): string {
   if (status.message) return status.message;
   const providerName = status.displayName?.trim() || formatProviderDriverKindLabel(status.driver);
   if (!status.installed && hasProviderSetup(status)) {
-    return `Open provider setup to install ${formatProviderDriverKindLabel(status.driver)} on this environment.`;
+    return resolve(
+      msg("Open provider setup to install {provider} on this environment.", {
+        provider: formatProviderDriverKindLabel(status.driver),
+      }),
+    );
   }
   if (status.auth.status === "unauthenticated") {
     if (hasProviderSetup(status)) {
       return status.driver === "antigravity"
-        ? "Open provider setup to sign in with Google."
-        : "Open provider setup to sign in.";
+        ? resolve(msg("Open provider setup to sign in with Google."))
+        : resolve(msg("Open provider setup to sign in."));
     }
-    return "Sign in via the CLI to authenticate again.";
+    return resolve(msg("Sign in via the CLI to authenticate again."));
   }
   return status.status === "ready"
-    ? "No models are available for this provider."
+    ? resolve(msg("No models are available for this provider."))
     : status.status === "error"
-      ? `${providerName} provider is unavailable.`
-      : `${providerName} provider has limited availability.`;
+      ? resolve(msg("{provider} provider is unavailable.", { provider: providerName }))
+      : resolve(msg("{provider} provider has limited availability.", { provider: providerName }));
 }
 
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
@@ -137,6 +147,8 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   status: ServerProvider | null;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const canRefresh = useAtomValue(serverEnvironment.refreshProviders.permissionAtom(environmentId));
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     label: "Refresh provider status",
@@ -164,11 +176,19 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   const isUnauthenticated = status.status === "error" && status.auth.status === "unauthenticated";
   const incompatible = getIncompatibleVersion(status);
   const title = isUnauthenticated
-    ? `${providerName} is unauthenticated`
+    ? gt("{provider} is unauthenticated", { provider: providerName })
     : incompatible
-      ? `${providerName} ${status.version ?? ""} is ${incompatible.status === "broken" ? "known to be broken" : "unsupported"}`
-      : `${providerName} provider status`;
-  const message = incompatible?.message ?? getProviderStatusMessage(status);
+      ? incompatible.status === "broken"
+        ? gt("{provider} {version} is known to be broken", {
+            provider: providerName,
+            version: status.version ?? "",
+          })
+        : gt("{provider} {version} is unsupported", {
+            provider: providerName,
+            version: status.version ?? "",
+          })
+      : gt("{provider} provider status", { provider: providerName });
+  const message = incompatible?.message ?? getProviderStatusMessage(status, messages);
   const isWarning =
     incompatible?.status !== "broken" && (status.status === "warning" || incompatible !== null);
 
@@ -193,25 +213,33 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
             <div className="flex flex-wrap items-center justify-end gap-3">
               {onOpenProviderSetup && hasProviderSetup(status) ? (
                 <InlineButton onClick={() => onOpenProviderSetup(status.instanceId)}>
-                  Open provider setup
+                  <T>Open provider setup</T>
                 </InlineButton>
               ) : null}
               <Button
-                aria-label={`Refresh ${providerName} provider status`}
+                aria-label={gt("Refresh {provider} provider status", { provider: providerName })}
                 disabled={!canRefresh || isRefreshing}
                 onClick={() => void refresh()}
                 size="xs"
                 variant="secondary"
               >
                 <RefreshIcon />
-                {isRefreshing ? "Refreshing..." : "Refresh"}
+                {isRefreshing ? gt("Refreshing...") : gt("Refresh")}
               </Button>
             </div>
           </div>
         </AlertDescription>
         <AlertAction>
           <Button
-            aria-label={`Dismiss ${providerName} provider ${status.status}`}
+            aria-label={
+              status.status === "error"
+                ? gt("Dismiss {provider} provider error", { provider: providerName })
+                : status.status === "warning"
+                  ? gt("Dismiss {provider} provider warning", { provider: providerName })
+                  : status.status === "ready"
+                    ? gt("Dismiss {provider} provider ready", { provider: providerName })
+                    : gt("Dismiss {provider} provider disabled", { provider: providerName })
+            }
             onClick={onDismiss}
             size="icon-xs"
             variant="ghost-muted"

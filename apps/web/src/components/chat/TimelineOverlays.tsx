@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { ChevronDownIcon, PaperclipIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
@@ -14,7 +15,7 @@ export function WorkspaceFileDropOverlay() {
         className="flex items-center gap-2 rounded-full surface-popover px-4 py-2.5 text-sm font-medium text-strong-foreground"
       >
         <PaperclipIcon className="size-4 text-primary" aria-hidden="true" />
-        Drop files to attach
+        <T>Drop files to attach</T>
       </div>
     </div>
   );
@@ -48,16 +49,18 @@ export function ScrollToEndButton(props: {
           }
         >
           <ChevronDownIcon className="size-3.5" />
-          Scroll to end
+          <T>Scroll to end</T>
         </TooltipTrigger>
         <TooltipPopup>
-          {props.summary.length
-            ? props.summary.map((part) => (
-                <span className="block" key={part}>
-                  {part}
-                </span>
-              ))
-            : "Scroll to end"}
+          {props.summary.length ? (
+            props.summary.map((part) => (
+              <span className="block" key={part}>
+                {part}
+              </span>
+            ))
+          ) : (
+            <T>Scroll to end</T>
+          )}
         </TooltipPopup>
       </Tooltip>
     </div>

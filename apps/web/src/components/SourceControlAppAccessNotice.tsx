@@ -4,6 +4,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import { ExternalLinkIcon } from "lucide-react";
+import { T, Var } from "gt-react";
 
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { cn } from "../lib/utils";
@@ -53,14 +54,21 @@ export function SourceControlAppAccessNotice(props: {
     >
       <T3AppIcon className="size-4 shrink-0" />
       <p className="min-w-0 flex-1">
-        {appSignIn.appName} isn't installed on <span className="text-foreground">{owner}</span>, so
-        requests here use your own GitHub login and its lower rate limit.
+        <T>
+          <Var>{appSignIn.appName}</Var> isn't installed on{" "}
+          <span className="text-foreground">
+            <Var>{owner}</Var>
+          </span>
+          , so requests here use your own GitHub login and its lower rate limit.
+        </T>
       </p>
       <InlineButton
         className="shrink-0"
         render={<a href={appSignIn.installUrl} target="_blank" rel="noreferrer noopener" />}
       >
-        Install on {owner}
+        <T>
+          Install on <Var>{owner}</Var>
+        </T>
         <ExternalLinkIcon aria-hidden className="size-3" />
       </InlineButton>
     </div>
