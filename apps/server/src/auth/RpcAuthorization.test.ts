@@ -645,6 +645,13 @@ it.effect("requires provider management to send /logout through chat", () =>
       Effect.provide(Layer.merge(handler, RpcAuthorization.layer([AuthOrchestrationOperateScope]))),
     );
     yield* operator[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](message("hello", "hello"));
+    // With an attachment, `/logout` reaches the provider as a prompt, not a sign-out.
+    yield* operator[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+      ...message("screenshot", "/logout"),
+      attachments: [
+        { type: "image", id: "shot", name: "shot.png", mimeType: "image/png", sizeBytes: 1 },
+      ],
+    });
     for (const command of [
       message("logout", " /LOGOUT "),
       {
@@ -668,6 +675,6 @@ it.effect("requires provider management to send /logout through chat", () =>
       ),
     );
     yield* manager[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](message("manager", "/logout"));
-    expect(handled).toEqual(["hello", "manager"]);
+    expect(handled).toEqual(["hello", "screenshot", "manager"]);
   }).pipe(Effect.scoped),
 );

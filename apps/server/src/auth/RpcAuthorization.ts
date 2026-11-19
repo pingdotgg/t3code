@@ -269,11 +269,13 @@ const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 const decodeAssetCreateUrlInput = Schema.decodeUnknownSync(AssetCreateUrlInput);
 
 // A chat `/logout` signs the provider account out and stops its sessions, like providerAuthLogout.
+// With attachments it goes to the provider as an ordinary prompt instead.
 const isProviderSignOutPrompt = (text: string) => text.trim().toLowerCase() === "/logout";
 
 const promptTextForRpcCall = (method: string, payload: unknown): string | undefined => {
   if (method === ORCHESTRATION_V2_WS_METHODS.launchThread) {
-    return (payload as OrchestrationV2ThreadLaunchInput).initialMessage?.text;
+    const message = (payload as OrchestrationV2ThreadLaunchInput).initialMessage;
+    return message?.attachments.length === 0 ? message.text : undefined;
   }
   if (method === WS_METHODS.scheduledTasksUpsert) {
     return (payload as ScheduledTaskUpsertInput).prompt;
@@ -282,6 +284,7 @@ const promptTextForRpcCall = (method: string, payload: unknown): string | undefi
   const command = payload as OrchestrationV2Command;
   switch (command.type) {
     case "message.dispatch":
+      return command.attachments.length === 0 ? command.text : undefined;
     case "queued-run.edit":
       return command.text;
     case "delegated_task.request":
