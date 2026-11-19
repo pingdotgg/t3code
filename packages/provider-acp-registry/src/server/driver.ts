@@ -22,11 +22,13 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
+import { makeUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import * as Semaphore from "effect/Semaphore";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
-import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
+import { createAcpRegistryAdapterV2, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -652,14 +654,23 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       environment,
       hostEnvironment,
     );
-    const orchestrationAdapter = yield* AcpRegistryAdapterV2Driver.create({
-      instanceId,
-      displayName,
-      accentColor,
-      environment,
-      enabled,
-      config,
-    }).pipe(
+    // Mistral Vibe pushes its budget from a live session, so a probe must not drop it.
+    const latestUsage = yield* Ref.make<ProviderUsageLimitsReport | undefined>(undefined);
+    const usagePermit = yield* Semaphore.make(1);
+    const orchestrationAdapter = yield* createAcpRegistryAdapterV2(
+      { instanceId, displayName, accentColor, environment, enabled, config },
+      {
+        onUsageLimits: (report) =>
+          usagePermit.withPermits(1)(
+            Effect.gen(function* () {
+              const previous = yield* Ref.get(latestUsage);
+              if (previous && Date.parse(report.checkedAt) < Date.parse(previous.checkedAt)) return;
+              yield* Ref.set(latestUsage, report);
+              yield* snapshot.applyUsageLimits({ ...report, complete: true });
+            }),
+          ),
+      },
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new ProviderDriverError({
@@ -734,6 +745,20 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     });
     // A local executable's version comes only from probing it, so readiness checks reuse the last report.
     const reportedLocalVersion = yield* Ref.make<string | null>(null);
+    const withLatestUsage = (provider: ServerProvider) =>
+      Ref.get(latestUsage).pipe(
+        Effect.map((report): ServerProvider =>
+          report
+            ? {
+                ...provider,
+                usageLimits: makeUsageLimits({
+                  checkedAt: report.checkedAt,
+                  windows: report.windows,
+                }),
+              }
+            : provider,
+        ),
+      );
     const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.flatMap((provider) =>
@@ -746,6 +771,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ),
       ),
       Effect.flatMap(withLiveRuntimeState),
+      Effect.flatMap(withLatestUsage),
     );
     const enrichProvider = checkAcpRegistryProviderStatus(
       {
