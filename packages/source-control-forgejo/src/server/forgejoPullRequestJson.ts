@@ -32,6 +32,7 @@ export const ForgejoRepository = Schema.Struct({
   allow_merge_commits: Schema.optional(Schema.Boolean),
   allow_squash_merge: Schema.optional(Schema.Boolean),
   allow_rebase: Schema.optional(Schema.Boolean),
+  allow_fast_forward_only_merge: Schema.optional(Schema.Boolean),
   allow_rebase_update: Schema.optional(Schema.Boolean),
   default_delete_branch_after_merge: Schema.optional(Schema.Boolean),
 });
@@ -60,6 +61,8 @@ export const ForgejoPullRequest = Schema.Struct({
   updated_at: Schema.String,
   closed_at: Schema.NullOr(Schema.String),
   merged_at: Schema.NullOr(Schema.String),
+  merge_commit_sha: Schema.optional(Schema.NullOr(Schema.String)),
+  merged_by: Schema.optional(Schema.NullOr(ForgejoUser)),
   additions: Schema.optional(Schema.NullOr(Schema.Int)),
   deletions: Schema.optional(Schema.NullOr(Schema.Int)),
   changed_files: Schema.optional(Schema.NullOr(Schema.Int)),

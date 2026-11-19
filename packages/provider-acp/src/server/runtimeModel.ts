@@ -648,12 +648,22 @@ function locationsFromToolCallInput(input: {
 const TOOL_CALL_CONTENT_MAX_CHARS = 8_000;
 const TOOL_CALL_CONTENT_TRUNCATION_MARKER = "[Earlier output truncated]\n\n";
 
-function boundToolCallOutputText(text: string): string {
-  if (text.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
-    return text;
+/** The tail to keep, or undefined when the text fits or an adapter already bounded it. */
+function retainedToolCallOutputTail(text: string): string | undefined {
+  if (
+    text.length <= TOOL_CALL_CONTENT_MAX_CHARS ||
+    (text.startsWith(TOOL_CALL_CONTENT_TRUNCATION_MARKER) &&
+      text.length <= TOOL_CALL_CONTENT_MAX_CHARS + TOOL_CALL_CONTENT_TRUNCATION_MARKER.length)
+  ) {
+    return undefined;
   }
-  const tail = text.slice(text.length - TOOL_CALL_CONTENT_MAX_CHARS);
-  return `${TOOL_CALL_CONTENT_TRUNCATION_MARKER}${tail}`;
+  // A tail starting inside a surrogate pair is invalid Unicode.
+  return text.slice(-TOOL_CALL_CONTENT_MAX_CHARS).replace(/^[\uDC00-\uDFFF]/u, "");
+}
+
+function boundToolCallOutputText(text: string): string {
+  const tail = retainedToolCallOutputTail(text);
+  return tail === undefined ? text : `${TOOL_CALL_CONTENT_TRUNCATION_MARKER}${tail}`;
 }
 
 const RAW_OUTPUT_TEXT_FIELDS = ["content", "stdout", "stderr", "output"] as const;
@@ -726,13 +736,12 @@ function extractTextContentFromToolCallContent(
     return { text: undefined, content: boundToolCallContentEntries(content) };
   }
   const joined = chunks.join("\n");
-  if (joined.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
+  const tail = retainedToolCallOutputTail(joined);
+  if (tail === undefined) {
     return { text: joined, content: boundToolCallContentEntries(content) };
   }
-  const bounded = boundToolCallOutputText(joined);
-  const tail = joined.slice(joined.length - TOOL_CALL_CONTENT_MAX_CHARS);
   return {
-    text: bounded,
+    text: `${TOOL_CALL_CONTENT_TRUNCATION_MARKER}${tail}`,
     content: distributeRetainedTailAcrossContent(content, tail),
   };
 }
@@ -842,6 +851,19 @@ function makeToolCallState(
       ? title
       : undefined;
   const data: Record<string, unknown> = { toolCallId };
+  // ACP v2 clears a field set to null; mergeToolCallState consumes these markers.
+  const clearable = {
+    name: input.name,
+    title: input.title,
+    kind: input.kind,
+    status: input.status,
+    content: input.content,
+    rawInput: input.rawInput,
+    meta: input._meta,
+  };
+  for (const [key, value] of Object.entries(clearable)) {
+    if (value === null) data[key] = null;
+  }
   if (input.name != null) data.name = input.name;
   if (kind) {
     data.kind = kind;
@@ -929,9 +951,9 @@ export function mergeToolCallState(
   next: AcpToolCallState,
 ): AcpToolCallState {
   const nextKind = next.kind ?? (typeof next.data.kind === "string" ? next.data.kind : undefined);
-  const kind = nextKind ?? previous?.kind;
-  const title = next.title ?? previous?.title;
-  const status = next.status ?? previous?.status;
+  const kind = next.data.kind === null ? nextKind : (nextKind ?? previous?.kind);
+  const title = next.data.title === null ? next.title : (next.title ?? previous?.title);
+  const status = next.data.status === null ? next.status : (next.status ?? previous?.status);
   const command = next.command ?? previous?.command;
   const detail = next.detail ?? previous?.detail;
   const data = mergeToolActivityData(previous?.data, next.data) ?? next.data;
@@ -1075,11 +1097,14 @@ const T3_MCP_TITLE_SUFFIX_CALL =
   /^(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*?)(?: \(t3[-_ ]?code MCP Server\)(?::|$)|[-_.]t3[-_ ]?code$)/i;
 
 /**
- * glm and Kimi use bare names; Antigravity uses "Running <tool>". Kimi appends
- * streamed JSON arguments. Require a name or JSON opening brace so built-ins
- * titled "<tool>: <description>" cannot impersonate an inventory entry.
+ * glm and Kimi use bare names. Kimi appends streamed JSON arguments. Require a
+ * name or JSON opening brace so built-ins titled "<tool>: <description>" cannot
+ * impersonate an inventory entry.
  */
-const T3_MCP_BARE_TITLE_CALL = /^(?:Running )?(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
+const T3_MCP_BARE_TITLE_CALL = /^(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
+
+// Antigravity titles calls "Running <tool>" or, from agy 1.5.8, "Run mcp_<server>_<tool>"; prompts end in "?".
+const ANTIGRAVITY_TOOL_TITLE = /^Run(?:ning)? (?<name>[^\s?]+)\??$/;
 
 /** ACP lacks typed MCP calls; recognize provider metadata and terminal fallback commands. */
 export function extractMcpToolCallIdentity(
@@ -1172,10 +1197,11 @@ export function extractMcpToolCallIdentity(
     }
     if (qualified?.[1] && qualified[2] && !/^t3[-_ ]?code$/i.test(qualified[1]))
       return { server: qualified[1], tool: qualified[2] };
+    const name = ANTIGRAVITY_TOOL_TITLE.exec(trimmed)?.groups?.name ?? trimmed;
     const match =
-      T3_MCP_TITLE_CALL.exec(trimmed) ??
-      T3_MCP_TITLE_SUFFIX_CALL.exec(trimmed) ??
-      T3_MCP_BARE_TITLE_CALL.exec(trimmed);
+      T3_MCP_TITLE_CALL.exec(name) ??
+      T3_MCP_TITLE_SUFFIX_CALL.exec(name) ??
+      T3_MCP_BARE_TITLE_CALL.exec(name);
     const candidateTool = match?.groups?.tool;
     if (candidateTool !== undefined && T3_MCP_TOOL_NAMES.has(candidateTool)) {
       return { server: "t3-code", tool: candidateTool };

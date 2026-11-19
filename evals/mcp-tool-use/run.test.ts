@@ -39,6 +39,7 @@ import {
   t3Default,
   t3SystemAppend,
   t3SubagentContext,
+  withBackgroundWait,
   withDevices,
 } from "./run.ts";
 import { briefRoute, gradeDevice, shellInvocations } from "./device-grading.ts";
@@ -256,6 +257,55 @@ it("accepts any tool listed as an alternative", () => {
   assert.deepEqual(failed(expect, run("list_thread_pull_requests")), [
     "calls link_pull_request|watch_pull_request",
   ]);
+  const issueCase = decodeDeviceCase(
+    NodeFS.readFileSync(new URL("./cases/issues.ndjson", import.meta.url), "utf8").split("\n")[0]!,
+  );
+  for (const [input, passes] of [
+    [{ url: "https://github.com/acme/app/issues/42" }, true],
+    [{ url: "https://github.com/acme/app/issues/42/" }, true],
+    [{ url: "https://github.com/acme/app/issues/42/", threadId: "issue-work-thread" }, true],
+    [{ url: "https://github.com/acme/app/issues/42/", threadId: "another-thread" }, false],
+    [{ key: "42", projectId: "app" }, true],
+    [{ key: "42" }, true],
+    [{ key: "42", threadId: "issue-work-thread" }, true],
+    [{ key: "42", threadId: "another-thread" }, false],
+    [{ key: "42", url: "https://github.com/acme/app/issues/43" }, false],
+    [{ url: "https://github.com/acme/app/issues/42", threadId: "issue-work-thread" }, true],
+    [{ key: "42", projectId: "app", threadId: "issue-work-thread" }, true],
+    [{ url: "https://github.com/acme/app/issues/42", threadId: "another-thread" }, false],
+    [{ key: "43", projectId: "app" }, false],
+    [{ key: "42", projectId: "other-project" }, false],
+  ] as const) {
+    assert.equal(
+      failed(issueCase.expect, {
+        ...run("link_issue"),
+        finalText: "Change Setings to Settings.",
+        calls: [{ step: 0, tool: "link_issue", input, failed: false }],
+      }).length === 0,
+      passes,
+    );
+  }
+  assert.isNotEmpty(
+    failed(issueCase.expect, {
+      ...run("link_issue"),
+      finalText: "Change Setings to Settings.",
+      calls: [{ step: 0, tool: "link_issue", input: { key: "42" }, failed: true }],
+    }),
+  );
+  assert.isNotEmpty(
+    failed(issueCase.expect, {
+      ...run("link_issue"),
+      finalText: "Linked the issue.",
+      calls: [{ step: 0, tool: "link_issue", input: { key: "42" }, failed: false }],
+    }),
+  );
+  assert.isNotEmpty(
+    failed(issueCase.expect, {
+      ...run("link_issue"),
+      finalText: "Change Setings to Settings.",
+      calls: [{ step: 0, tool: "link_issue", input: { key: "42" } }],
+    }),
+  );
   // A bound on alternatives counts their calls together.
   const both: SampleRun = {
     calls: ["preview_status", "preview_open"].map((tool) => ({ step: 0, tool, input: {} })),
@@ -1143,6 +1193,42 @@ it.effect("builds device cases from product-backed worlds and synthetic prior tu
     assert.equal(native.kind, "bad");
     assert.equal(native.setup.harness, "claude");
     assert.isNotEmpty(cases.find((c) => c.id === "SEED-01")!.setup.priorTurns!);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+// Models recover from either result, so this keeps the guard case failing on the old success.
+it.effect("seeds T3's error for a prior background wait whose IDs match nothing", () =>
+  Effect.gen(function* () {
+    const cases = NodeFS.readFileSync(
+      new URL("./cases/orchestration.ndjson", import.meta.url),
+      "utf8",
+    )
+      .trim()
+      .split("\n")
+      .map((line) => decodeDeviceCase(line));
+    const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+    for (const [id, isError] of [
+      ["background-wait-unmatched-id", true],
+      ["background-wait-matched-id", false],
+    ] as const) {
+      const testCase = cases.find((c) => c.id === id)!;
+      const [wait] = (testCase.setup.priorTurns ?? [])
+        .flatMap((turn) => turn.toolCalls ?? [])
+        .filter((call) => call.tool === "t3_background_wait");
+      assert.isDefined(wait, id);
+      const sample = makeSample(testCase, base);
+      yield* withBackgroundWait(sample);
+      assert.equal(sample.priorErrors.has(wait), isError, id);
+      const blocks = buildMessages(sample).flatMap((message) => message.content);
+      const waitUse = blocks.find(
+        (block) => block.type === "tool_use" && String(block.name).endsWith("t3_background_wait"),
+      );
+      const replayed = blocks.find(
+        (block) => block.type === "tool_result" && block.tool_use_id === waitUse?.id,
+      );
+      assert.isDefined(replayed, id);
+      assert.equal(replayed?.is_error === true, isError, id);
+    }
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

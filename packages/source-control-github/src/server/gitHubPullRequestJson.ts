@@ -18,6 +18,7 @@ import type {
   PullRequestLabel,
   PullRequestMergeCapabilities,
   PullRequestMergeMethod,
+  PullRequestMergeQueueRemoval,
   PullRequestOmittedFileStat,
   PullRequestMergeability,
   PullRequestReaction,
@@ -37,7 +38,10 @@ import type {
 } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
+import {
+  dedupeChecks,
+  rollupCheckStatuses,
+} from "@t3tools/source-control-core/server/pullRequestChecks";
 import type { ProviderChangeRequestSummary } from "@t3tools/source-control-core/server/PullRequestProvider";
 
 import type * as GitHubSchema from "../../schema/github.graphql.ts";
@@ -187,7 +191,7 @@ export function gitHubReactionContent(
 }
 
 /** Keep the viewer in counts, not actors, to avoid duplicating 'You'. */
-function toReactions(
+export function toReactions(
   groups: ReadonlyArray<ReactionGroup> | null | undefined,
   viewer: string | null,
 ): ReadonlyArray<PullRequestReaction> {
@@ -385,6 +389,7 @@ export interface GitHubPullRequestActivity {
   readonly author: PullRequestActor | null;
   readonly comments: ReadonlyArray<PullRequestComment>;
   readonly commits: ReadonlyArray<PullRequestCommit>;
+  readonly truncated: boolean;
 }
 
 /** GitHub returns endCursor even on the last page; hasNextPage is authoritative. */
@@ -644,14 +649,10 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
 function rollupChecksState(
   raw: ReadonlyArray<CheckFields> | null | undefined,
 ): PullRequestChecksState | null {
-  const statuses = [
+  return rollupCheckStatuses([
     ...toChecks(raw).map((check) => check.status),
     ...(raw ?? []).filter(isNamelessCheck).map((check) => toCheckStatus(check)),
-  ];
-  if (statuses.length === 0) return null;
-  if (statuses.includes("failure") || statuses.includes("cancelled")) return "failing";
-  if (statuses.includes("pending") || statuses.includes("action-required")) return "pending";
-  return statuses.includes("success") ? "passing" : null;
+  ]);
 }
 
 function toChecks(
@@ -1014,6 +1015,7 @@ export function toPullRequestWatchFingerprint(
       pr.headRefOid,
       stateCounts(contexts?.checkRunCountsByState ?? null),
       stateCounts(contexts?.statusContextCountsByState ?? null),
+      pr.mergeQueueRemovals?.filteredCount ?? 0,
     ].join(" "),
     remarks: [
       pr.comments.totalCount,
@@ -1026,8 +1028,11 @@ export function toPullRequestWatchFingerprint(
 }
 
 export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
+  readonly mergeQueueRemoval?: PullRequestMergeQueueRemoval;
   readonly maintainerCanModify: boolean;
   readonly canEditMaintainerEdits: boolean;
+  readonly mergeCommitSha?: string | null;
+  readonly mergedBy?: PullRequestActor | null;
   readonly reviewRequestTeams: ReadonlyArray<PullRequestActor>;
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
@@ -1045,7 +1050,17 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
   const pr = repository?.pullRequest;
   if (repository == null || pr == null) return null;
   const contexts = nodesOf(pr.commits)[0]?.commit.statusCheckRollup?.contexts;
+  const removal = nodesOf(pr.mergeQueueRemovals).at(-1);
   return {
+    ...(removal === undefined || !("id" in removal)
+      ? {}
+      : {
+          mergeQueueRemoval: {
+            id: removal.id,
+            removedAt: removal.createdAt,
+            reason: trimmed(removal.reason),
+          },
+        }),
     reviewRequestTeams: nodesOf(pr.reviewRequests).flatMap(
       ({ requestedReviewer }) => toRequestedTeam(requestedReviewer) ?? [],
     ),
@@ -1081,6 +1096,8 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
       pr.headRepositoryOwner?.__typename === "User" &&
       pr.headRepository !== null &&
       pr.headRef !== null,
+    mergeCommitSha: trimmed(pr.mergeCommit?.oid),
+    mergedBy: toActor(pr.mergedBy),
     viewerAccess: {
       canWrite: toCanWrite(repository.viewerPermission),
       canDeleteBranch: toCanWrite(pr.headRepository?.viewerPermission) && pr.headRef !== null,
