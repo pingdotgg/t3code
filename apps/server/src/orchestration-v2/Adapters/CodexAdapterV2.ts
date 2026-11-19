@@ -2156,6 +2156,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           string,
           { readonly runtimeMode: RuntimeMode; readonly kinds: Set<ProviderRequestKind> }
         >();
+        // `codex resume` and the Codex app list the native name. A failed rename, including on a
+        // Codex without thread/name/set, is forgotten so the next turn sends it again.
+        const appliedThreadNames = new Map<string, string>();
+        const applyThreadName = Effect.fn("CodexAdapterV2.applyThreadName")(function* (
+          threadId: string,
+          name: string,
+        ) {
+          if (appliedThreadNames.get(threadId) === name) return;
+          const renamed = yield* client
+            .request("thread/name/set", { threadId, name })
+            .pipe(Effect.timeout("10 seconds"), Effect.isSuccess);
+          if (renamed) appliedThreadNames.set(threadId, name);
+          else appliedThreadNames.delete(threadId);
+        });
         /** Bind answers to the request's approval set so mode changes invalidate late answers. */
         const endSessionApprovalsOnModeChange = (context: ActiveCodexTurnContext) => {
           const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
@@ -7638,6 +7652,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const activation = { stopped: false };
           goalActivations.set(threadId, activation);
           yield* Effect.gen(function* () {
+            yield* applyThreadName(threadId, turnInput.appThread.title);
             yield* startNativeTurn(turnInput, yield* codexInput);
             if (activation.stopped) return;
             const { goal } = yield* client.request("thread/goal/set", {
@@ -8127,6 +8142,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ) {
                 return yield* activateGoal(turnInput, nativeThreadId, toCodexInput(turnInput));
               }
+              // Not in startNativeTurn: a capacity retry would replay its captured, possibly stale title.
+              if (nativeThreadId != null) {
+                yield* applyThreadName(nativeThreadId, turnInput.appThread.title);
+              }
               yield* startNativeTurn(
                 turnInput,
                 !continuation ? yield* toCodexInput(turnInput) : [],
@@ -8217,6 +8236,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               ),
           ),
+          applyThreadTitle: Effect.fn("CodexAdapterV2.applyThreadTitle")(function* ({
+            providerThread,
+            title,
+          }) {
+            const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+            if (nativeThreadId != null) yield* applyThreadName(nativeThreadId, title);
+          }),
           applyModelSelection: Effect.fn("CodexAdapterV2.applyModelSelection")(function* ({
             providerThread,
             modelSelection,
