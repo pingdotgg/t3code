@@ -311,6 +311,8 @@ function iso(value: DateTime.DateTime): string {
 }
 
 const RUN_OUTCOME_WAIT_MS = 24 * 60 * 60 * 1_000;
+const HELD_OCCURRENCE_ERROR =
+  "A previous occurrence is held in the thread queue. Resume or remove it to run this task again.";
 const UNSUCCESSFUL_RUN_ERRORS = {
   failed: "The run failed.",
   interrupted: "The run was stopped.",
@@ -948,7 +950,9 @@ export const layer = Layer.effect(
       const updated = yield* sql`
         UPDATE scheduled_tasks
         SET last_run_status = 'failed', last_run_error = ${error}
-        WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso} AND last_run_status = 'succeeded'
+        WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
+          AND (last_run_status = 'succeeded'
+            OR (last_run_status = 'failed' AND last_run_error = ${HELD_OCCURRENCE_ERROR}))
         RETURNING task_id
       `;
       if (updated.length > 0) yield* notifyChanged;
@@ -1017,9 +1021,7 @@ export const layer = Layer.effect(
               active,
               startedAt,
               "previous occurrence still queued",
-              occurrence === "held"
-                ? "A previous occurrence is held in the thread queue. Resume or remove it to run this task again."
-                : undefined,
+              occurrence === "held" ? HELD_OCCURRENCE_ERROR : undefined,
             );
             return { task: active, threadId: null, dispatchFailed: false };
           }
