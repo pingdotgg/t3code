@@ -190,7 +190,7 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
-  it("reports failures on the first read only when checks were running at the start", () => {
+  it("reports failures on the first read only when CI was pending at the start", () => {
     const red = detail({ checks: [check("lint", "failure"), check("test", "pending")] });
     const pending = evaluatePullRequestWatch(
       watch({ awaitingBaseline: "all", checksPending: true }),

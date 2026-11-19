@@ -168,10 +168,10 @@ const makeHarness = Effect.fn("makePullRequestWatchHarness")(function* (
 describe("PullRequestWatchService", () => {
   it.effect("links an unlinked watch even while the host has a transient read failure", () =>
     Effect.gen(function* () {
-      const cases: ReadonlyArray<readonly [HarnessOptions, boolean]> = [
-        [{}, true],
-        [{ readChecksState: "failing" }, true],
-        [{ readChecksState: "passing" }, false],
+      const cases: ReadonlyArray<readonly [HarnessOptions, boolean | undefined]> = [
+        [{ readChecksState: "pending" }, true],
+        [{ readChecksState: "failing" }, false],
+        [{}, false],
         [
           {
             readFailure: new PullRequestOperationError({
@@ -179,7 +179,7 @@ describe("PullRequestWatchService", () => {
               detail: "The host is temporarily unavailable.",
             }),
           },
-          true,
+          undefined,
         ],
       ];
       for (const [options, checksPending] of cases) {
@@ -188,15 +188,19 @@ describe("PullRequestWatchService", () => {
           url: "https://github.com/t3tools/t3code/pull/9",
         });
         expect(result).toMatchObject({ number: 9, wasWatching: false });
-        expect(yield* Ref.get(harness.commands)).toMatchObject([
+        const commands = yield* Ref.get(harness.commands);
+        expect(commands).toMatchObject([
           {
             type: "thread.pull-request.watch",
             number: 9,
             watching: true,
-            checksPending,
             link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
           },
         ]);
+        const [command] = commands;
+        expect(command?.type === "thread.pull-request.watch" ? command.checksPending : null).toBe(
+          checksPending,
+        );
       }
     }),
   );

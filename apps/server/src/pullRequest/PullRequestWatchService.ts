@@ -126,7 +126,7 @@ const make = Effect.gen(function* () {
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
     }
-    // Only a passing rollup means CI finished; a failing one can still have checks running.
+    // A pending rollup has no failure yet, so any failure the first read finds is news.
     let checksPendingAtStart: boolean | undefined;
     if (watching && before?.watch === undefined) {
       checksPendingAtStart = yield* pullRequests
@@ -144,11 +144,12 @@ const make = Effect.gen(function* () {
           Effect.flatMap((summary) =>
             summary.state === "merged"
               ? Effect.fail(new PullRequestNotOpenError({ state: "merged" }))
-              : Effect.succeed(summary.checksState !== "passing"),
+              : Effect.succeed(summary.checksState === "pending"),
           ),
           Effect.catchTags({
             // Host and transport errors can recover while the watch is active.
-            PullRequestOperationError: () => Effect.succeed(true),
+            // A failed read leaves the seed to the link's last sync.
+            PullRequestOperationError: () => Effect.undefined,
           }),
         );
     }
