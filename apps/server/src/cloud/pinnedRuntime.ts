@@ -150,6 +150,8 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   httpClient: HttpClient.HttpClient,
   url: string,
   step: string,
+  // Only a digest-checked asset resumes; anything else restarts at byte 0 on each retry.
+  resume: boolean,
   onProgress?: (progress: PinnedRuntimeProgress) => void,
 ) {
   // Bytes from earlier attempts outlive the retry so a stalled download resumes with Range.
@@ -157,17 +159,21 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   let received = 0;
   // Bound stalls while holding the install lock, but allow transfers that keep
   // receiving bytes to finish regardless of their total duration.
-  return yield* Effect.suspend(() =>
-    httpClient.execute(
+  return yield* Effect.suspend(() => {
+    if (!resume) {
+      chunks = [];
+      received = 0;
+    }
+    return httpClient.execute(
       received > 0
         ? HttpClientRequest.get(url).pipe(
             HttpClientRequest.setHeader("range", `bytes=${received}-`),
           )
         : HttpClientRequest.get(url),
-    ),
-  ).pipe(
-    // A resume answered 416 asked past the end, so the held bytes are the whole file;
-    // the archive checksum still rejects a wrong one.
+    );
+  }).pipe(
+    // A resume answered 416 has nothing after the held bytes to send; the archive
+    // checksum decides whether they are the whole file.
     Effect.filterOrElse(
       (response) => received > 0 && response.status === 416,
       HttpClientResponse.filterStatusOk,
@@ -255,6 +261,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
     httpClient,
     cliReleaseAssetUrl(input.version, fileName, input.releaseBaseUrl),
     "downloading the t3 release archive",
+    true,
     input.onProgress,
   );
   input.onProgress?.({ stage: "verify" });
@@ -314,6 +321,7 @@ const publishedArchive = Effect.fn("cloud.pinned_runtime.published_archive")(fun
         input.httpClient,
         cliReleaseAssetUrl(input.version, CLI_RELEASE_CHECKSUMS_FILE, input.releaseBaseUrl),
         "downloading the t3 release checksums",
+        false,
       ),
     ),
   );

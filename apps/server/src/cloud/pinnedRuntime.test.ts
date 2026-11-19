@@ -262,7 +262,9 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-retry-body-" });
       const checksums = yield* validChecksums;
       const ranges: Array<string | undefined> = [];
+      const checksumRanges: Array<string | undefined> = [];
       const progress: PinnedRuntimeProgress[] = [];
+      const checksumsRequested = yield* Deferred.make<void>();
       const archiveRequested = yield* Deferred.make<void>();
       const total = archiveBytes.length;
       const heldBytes =
@@ -280,7 +282,24 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         arch: "x64",
         httpClient: HttpClient.make((request) => {
           if (request.url.endsWith("/SHA256SUMS")) {
-            return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(checksums)));
+            checksumRanges.push(request.headers["range"]);
+            const response = HttpClientResponse.fromWeb(request, new Response(checksums));
+            if (checksumRanges.length > 1) return Effect.succeed(response);
+            Deferred.doneUnsafe(checksumsRequested, Effect.void);
+            // The checksums fail once after a prefix, which their retry must not resume from.
+            const failingBody = Stream.concat(
+              Stream.make(new TextEncoder().encode(checksums).slice(0, 8)),
+              Stream.fail(
+                new HttpClientError.HttpClientError({
+                  reason: new HttpClientError.DecodeError({ request, response }),
+                }),
+              ),
+            );
+            return Effect.sleep("1 second").pipe(
+              Effect.as<HttpClientResponse.HttpClientResponse>(
+                Object.create(response, { stream: { value: failingBody } }),
+              ),
+            );
           }
           const range = request.headers["range"];
           ranges.push(range);
@@ -330,10 +349,13 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         validate: () => Effect.void,
         onProgress: (event) => progress.push(event),
       }).pipe(Effect.forkScoped);
+      yield* Deferred.await(checksumsRequested);
+      yield* TestClock.adjust(Duration.seconds(3));
       yield* Deferred.await(archiveRequested);
       // The one-minute stall bound, then the first two-second retry backoff.
       yield* TestClock.adjust(Duration.seconds(first === "body fails" ? 3 : 63));
       const result = yield* Fiber.join(install).pipe(Effect.result);
+      assert.deepEqual(checksumRanges, [undefined, undefined]);
       assert.deepEqual(ranges, [
         undefined,
         first === "headers stall" ? undefined : `bytes=${heldBytes.length}-`,

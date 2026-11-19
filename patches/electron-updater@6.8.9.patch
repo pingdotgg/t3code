@@ -1,5 +1,5 @@
 diff --git a/out/electronHttpExecutor.js b/out/electronHttpExecutor.js
-index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..559c2dbd7e2744905a99905e4cc450295651e055 100644
+index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..e6fb0b8aafda6ae0797d3127b5aa661b0d202ca5 100644
 --- a/out/electronHttpExecutor.js
 +++ b/out/electronHttpExecutor.js
 @@ -3,7 +3,34 @@ Object.defineProperty(exports, "__esModule", { value: true });
@@ -9,7 +9,7 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..559c2dbd7e2744905a99905e4cc45029
 +const fs_1 = require("fs");
 +const stream_1 = require("stream");
  exports.NET_SESSION_NAME = "electron-updater";
-+// A stall on a slow link is retried, resuming from the bytes already in the file.
++// A stall on a slow link is retried, resuming after the bytes earlier attempts wrote.
 +const DOWNLOAD_STALL_RETRIES = 3;
 +function isDownloadStall(error) {
 +    return error != null && (error.message === "Request timed out" || error.message === "net::ERR_TIMED_OUT");
@@ -37,18 +37,21 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..559c2dbd7e2744905a99905e4cc45029
  function getNetSession() {
      return require("electron").session.fromPartition(exports.NET_SESSION_NAME, {
          cache: false,
-@@ -16,26 +43,108 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+@@ -16,27 +43,133 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
          this.cachedSession = null;
      }
      async download(url, destination, options) {
 -        return await options.cancellationToken.createPromise((resolve, reject, onCancel) => {
++        // Only bytes this call wrote are resumed: the differential downloader leaves its own output
++        // at the same destination, and an attempt that fails before headers keeps the last count.
++        const held = { bytes: 0 };
 +        for (let attempt = 0;; attempt++) {
-+            const offset = attempt === 0 ? 0 : await fs_1.promises.stat(destination).then(it => it.size, () => 0);
++            const offset = held.bytes;
 +            try {
-+                return await this.downloadFrom(url, destination, options, offset);
++                return await this.downloadFrom(url, destination, options, held);
 +            }
 +            catch (e) {
-+                // A 416 means the file already reaches the end of the release, so its digest decides.
++                // A 416 refuses the range; the digest decides whether the file already holds the release.
 +                const digest = offset > 0 && isRangeNotSatisfiable(e) ? createDigest(options) : null;
 +                if (digest != null) {
 +                    await verifyFile(destination, digest, options.cancellationToken);
@@ -66,8 +69,10 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..559c2dbd7e2744905a99905e4cc45029
 +    }
 +    // Appends from `offset` when the server answers the Range with 206, then checks the digest over
 +    // the whole file so the bytes from earlier attempts are verified too. A 200 starts over.
-+    downloadFrom(url, destination, options, offset) {
-+        return options.cancellationToken.createPromise((resolve, reject, onCancel) => {
++    downloadFrom(url, destination, options, held) {
++        const offset = held.bytes;
++        const cancellationToken = options.cancellationToken;
++        return new Promise((resolve, reject) => {
              const requestOptions = {
 -                headers: options.headers || undefined,
 +                headers: offset > 0 ? { ...options.headers, Range: `bytes=${offset}-` } : options.headers || undefined,
@@ -75,6 +80,20 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..559c2dbd7e2744905a99905e4cc45029
              };
              (0, builder_util_runtime_1.configureRequestUrl)(url, requestOptions);
              (0, builder_util_runtime_1.configureRequestOptions)(requestOptions);
+-            this.doDownload(requestOptions, {
+-                destination,
+-                options,
+-                onCancel,
+-                callback: error => {
+-                    if (error == null) {
+-                        resolve(destination);
+-                    }
+-                    else {
+-                        reject(error);
+-                    }
+-                },
+-                responseHandler: null,
+-            }, 0);
 +            let fileOut = null;
 +            let upstream = null;
 +            let settled = false;
@@ -83,6 +102,7 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..559c2dbd7e2744905a99905e4cc45029
 +                    return;
 +                }
 +                settled = true;
++                cancellationToken.removeListener("cancel", cancel);
 +                const settle = () => (error == null ? resolve(destination) : reject(error));
 +                if (fileOut == null || fileOut.closed) {
 +                    settle();
@@ -95,66 +115,79 @@ index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..559c2dbd7e2744905a99905e4cc45029
 +                    fileOut.end();
 +                }
 +            };
-             this.doDownload(requestOptions, {
-                 destination,
-                 options,
-                 onCancel,
--                callback: error => {
--                    if (error == null) {
--                        resolve(destination);
-+                callback,
-+                responseHandler: response => {
-+                    const resumed = offset > 0 && response.statusCode === 206;
-+                    const contentRange = (0, builder_util_runtime_1.safeGetHeader)(response, "content-range");
-+                    if (resumed && (contentRange == null || !contentRange.startsWith(`bytes ${offset}-`))) {
-+                        callback(new Error(`Cannot resume download at byte ${offset}, got Content-Range ${contentRange}`));
-+                        return;
-+                    }
-+                    const sha2Header = (0, builder_util_runtime_1.safeGetHeader)(response, "X-Checksum-Sha2");
-+                    if (sha2Header != null && options.sha2 != null && sha2Header !== options.sha2) {
-+                        callback(new Error(`checksum mismatch: expected ${options.sha2} but got ${sha2Header} (X-Checksum-Sha2 header)`));
-+                        return;
-+                    }
-+                    const streams = [];
-+                    const contentLength = (0, builder_util_runtime_1.safeGetHeader)(response, "content-length");
-+                    if (options.onProgress != null && contentLength != null) {
-+                        const progress = new builder_util_runtime_1.ProgressCallbackTransform((resumed ? offset : 0) + parseInt(contentLength, 10), options.cancellationToken, options.onProgress);
-+                        progress.transferred = resumed ? offset : 0;
-+                        streams.push(progress);
-                     }
--                    else {
--                        reject(error);
-+                    const digest = resumed ? null : createDigest(options);
-+                    if (digest != null) {
-+                        streams.push(digest);
-                     }
-+                    fileOut = (0, fs_1.createWriteStream)(destination, { flags: resumed ? "a" : "w" });
-+                    upstream = response;
-+                    for (const stream of streams) {
-+                        stream.on("error", callback);
-+                        upstream = upstream.pipe(stream);
-+                    }
-+                    fileOut.on("error", callback);
-+                    upstream.pipe(fileOut);
-+                    fileOut.on("finish", () => {
++            // doDownload never calls onCancel, so a cancel settles here once the file is closed, and a
++            // response that arrives after it is not written. The request runs on until its idle timeout.
++            const cancel = () => callback(new builder_util_runtime_1.CancellationError());
++            cancellationToken.onCancel(cancel);
++            if (settled) {
++                return;
++            }
++            try {
++                this.doDownload(requestOptions, {
++                    destination,
++                    options,
++                    callback,
++                    responseHandler: response => {
 +                        if (settled) {
 +                            return;
 +                        }
++                        const resumed = offset > 0 && response.statusCode === 206;
++                        const contentRange = (0, builder_util_runtime_1.safeGetHeader)(response, "content-range");
++                        if (resumed && (contentRange == null || !contentRange.startsWith(`bytes ${offset}-`))) {
++                            callback(new Error(`Cannot resume download at byte ${offset}, got Content-Range ${contentRange}`));
++                            return;
++                        }
++                        const sha2Header = (0, builder_util_runtime_1.safeGetHeader)(response, "X-Checksum-Sha2");
++                        if (sha2Header != null && options.sha2 != null && sha2Header !== options.sha2) {
++                            callback(new Error(`checksum mismatch: expected ${options.sha2} but got ${sha2Header} (X-Checksum-Sha2 header)`));
++                            return;
++                        }
++                        const start = resumed ? offset : 0;
++                        const streams = [];
++                        const contentLength = (0, builder_util_runtime_1.safeGetHeader)(response, "content-length");
++                        if (options.onProgress != null && contentLength != null) {
++                            const progress = new builder_util_runtime_1.ProgressCallbackTransform(start + parseInt(contentLength, 10), options.cancellationToken, options.onProgress);
++                            progress.transferred = start;
++                            streams.push(progress);
++                        }
++                        const digest = resumed ? null : createDigest(options);
++                        if (digest != null) {
++                            streams.push(digest);
++                        }
++                        fileOut = (0, fs_1.createWriteStream)(destination, { flags: resumed ? "a" : "w" });
 +                        fileOut.once("close", () => {
-+                            const fileDigest = resumed ? createDigest(options) : null;
-+                            if (fileDigest == null) {
-+                                callback(null);
++                            held.bytes = start + fileOut.bytesWritten;
++                        });
++                        upstream = response;
++                        for (const stream of streams) {
++                            stream.on("error", callback);
++                            upstream = upstream.pipe(stream);
++                        }
++                        fileOut.on("error", callback);
++                        upstream.pipe(fileOut);
++                        fileOut.on("finish", () => {
++                            if (settled) {
 +                                return;
 +                            }
-+                            verifyFile(destination, fileDigest, options.cancellationToken).then(() => callback(null), callback);
++                            fileOut.once("close", () => {
++                                const fileDigest = resumed ? createDigest(options) : null;
++                                if (fileDigest == null) {
++                                    callback(null);
++                                    return;
++                                }
++                                verifyFile(destination, fileDigest, options.cancellationToken).then(() => callback(null), callback);
++                            });
 +                        });
-+                    });
-                 },
--                responseHandler: null,
-             }, 0);
++                    },
++                }, 0);
++            }
++            catch (error) {
++                callback(error);
++            }
          });
      }
-@@ -61,6 +170,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
+     createRequest(options, callback) {
+@@ -61,6 +194,35 @@ class ElectronHttpExecutor extends builder_util_runtime_1.HttpExecutor {
          }
          return request;
      }

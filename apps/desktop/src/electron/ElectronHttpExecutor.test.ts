@@ -26,6 +26,7 @@ const RELEASE = "hello world";
 // Larger than a file stream's buffer, so its "drain" marks a write of it as committed to disk.
 const PREFIX = "a".repeat(1 << 20);
 const LARGE_RELEASE = `${PREFIX}world`;
+const RESUMED_RANGE = `bytes ${PREFIX.length}-${LARGE_RELEASE.length - 1}/${LARGE_RELEASE.length}`;
 
 function startRequest() {
   const request = Object.assign(new NodeEvents.EventEmitter(), { abort: vi.fn() });
@@ -38,7 +39,7 @@ function startRequest() {
   return { request, response, reject };
 }
 
-// The temp update file already holds `onDisk`, as if an earlier attempt had written it.
+// The temp update file already holds `onDisk`, as the differential downloader's output can.
 function startDownload(onDisk: string, release = RELEASE) {
   const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "electron-http-executor-"));
   const destination = NodePath.join(dir, "update.AppImage");
@@ -178,24 +179,38 @@ describe("ElectronHttpExecutor idle timeout", () => {
     expect(reject).not.toHaveBeenCalled();
   });
 
-  it("resumes a stalled download from the bytes already written", async () => {
+  it.each([
+    {
+      name: "resumes a stalled download from the bytes already written",
+      written: PREFIX,
+      retry: { status: 206, headers: { "content-range": RESUMED_RANGE }, body: "world" },
+    },
+    {
+      name: "accepts a file that already holds every byte when the retry is past the end",
+      written: LARGE_RELEASE,
+      retry: {
+        status: 416,
+        headers: { "content-range": `bytes */${LARGE_RELEASE.length}` },
+        body: "",
+      },
+    },
+    {
+      name: "starts over when the server ignores the range",
+      written: PREFIX,
+      retry: { status: 200, headers: {}, body: LARGE_RELEASE },
+    },
+  ])("$name", async ({ written, retry: { status, headers, body } }) => {
     using download = startDownload("", LARGE_RELEASE);
 
-    const { request, headers } = await download.stallAfterWriting(PREFIX);
-    expect(headers.Range).toBe(`bytes=${PREFIX.length}-`);
-    const range = `bytes ${PREFIX.length}-${LARGE_RELEASE.length - 1}/${LARGE_RELEASE.length}`;
-    respond(request, 206, { "content-range": range }, "world");
-
-    await expect(download.result).resolves.toBe(download.destination);
-    expect(download.read()).toBe(LARGE_RELEASE);
-  });
-
-  it("accepts a file that already holds every byte when the retry is past the end", async () => {
-    using download = startDownload("", LARGE_RELEASE);
-
-    const { request, headers } = await download.stallAfterWriting(LARGE_RELEASE);
-    expect(headers.Range).toBe(`bytes=${LARGE_RELEASE.length}-`);
-    respond(request, 416, { "content-range": `bytes */${LARGE_RELEASE.length}` }, "");
+    const { request: unanswered, headers: first } = await download.stallAfterWriting(written);
+    expect(first.Range).toBe(`bytes=${written.length}-`);
+    // A retry that fails before any response still resumes after the bytes the first one wrote.
+    const retry = download.nextRequest();
+    unanswered.emit("error", new Error("net::ERR_TIMED_OUT"));
+    await vi.advanceTimersByTimeAsync(4_000);
+    const { request, headers: second } = await retry;
+    expect(second.Range).toBe(`bytes=${written.length}-`);
+    respond(request, status, headers, body);
 
     await expect(download.result).resolves.toBe(download.destination);
     expect(download.read()).toBe(LARGE_RELEASE);
@@ -223,38 +238,21 @@ describe("ElectronHttpExecutor idle timeout", () => {
     expect(download.requestCount()).toBe(2);
   });
 
-  it("starts over when the server ignores the range", async () => {
-    using download = startDownload("HELLO ");
-    const [{ request: first }] = await download.first;
-    const retry = download.nextRequest();
-
-    first.emit("error", new Error("net::ERR_TIMED_OUT"));
-    await vi.advanceTimersByTimeAsync(2_000);
-    const { request, headers } = await retry;
-    expect(headers.Range).toBe("bytes=6-");
-    respond(request, 200, {}, RELEASE);
-
-    await expect(download.result).resolves.toBe(download.destination);
-    expect(download.read()).toBe(RELEASE);
-  });
-
   it("fails a resumed download whose earlier bytes do not match the release", async () => {
-    using download = startDownload("HELLO ");
-    const retry = download.nextRequest();
+    using download = startDownload("", LARGE_RELEASE);
 
-    await vi.advanceTimersByTimeAsync(60_000 + 2_000);
-    const { request } = await retry;
-    respond(request, 206, { "content-range": "bytes 6-10/11" }, "world");
+    const { request } = await download.stallAfterWriting(`b${PREFIX.slice(1)}`);
+    respond(request, 206, { "content-range": RESUMED_RANGE }, "world");
 
     await expect(download.result).rejects.toMatchObject({ code: "ERR_CHECKSUM_MISMATCH" });
   });
 
-  it("gives up after three retries", async () => {
-    using download = startDownload("");
+  it("gives up after three retries without resuming from a file it did not write", async () => {
+    using download = startDownload("differential output");
     for (const backoff of [2_000, 4_000, 8_000]) {
       const retry = download.nextRequest();
       await vi.advanceTimersByTimeAsync(60_000 + backoff);
-      await retry;
+      expect((await retry).headers.Range).toBeUndefined();
     }
     const outcome = expect(download.result).rejects.toThrow("Request timed out");
 
@@ -264,13 +262,12 @@ describe("ElectronHttpExecutor idle timeout", () => {
   });
 
   it("does not retry a request that fails for another reason", async () => {
-    using download = startDownload("hello ");
+    using download = startDownload("");
     const [{ request }] = await download.first;
     const outcome = expect(download.result).rejects.toThrow("net::ERR_CONNECTION_REFUSED");
 
     request.emit("error", new Error("net::ERR_CONNECTION_REFUSED"));
     await outcome;
-    await vi.advanceTimersByTimeAsync(120_000);
     expect(download.requestCount()).toBe(1);
   });
 });
