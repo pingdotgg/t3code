@@ -14,27 +14,25 @@ export class DesktopPrimaryPaste extends Context.Service<
 
 // Chrome applies gtk-enable-primary-paste from chrome/, which Electron does not include.
 // GNOME applies the key's schema default (false since gsettings-desktop-schemas 50); elsewhere
-// only a value the user set is a choice, and `dconf read` prints nothing for an unset key.
-const primaryPasteQuery = (desktop: string | undefined) =>
-  desktop?.split(":").includes("GNOME")
-    ? ChildProcess.make(
-        "gsettings",
-        ["get", "org.gnome.desktop.interface", "gtk-enable-primary-paste"],
-        { stdin: "ignore", stderr: "ignore" },
-      )
-    : ChildProcess.make(
-        "dconf",
-        ["read", "/org/gnome/desktop/interface/gtk-enable-primary-paste"],
-        {
-          stdin: "ignore",
-          stderr: "ignore",
-        },
-      );
+// only a value the user set is a choice. `dconf read` prints nothing for an unset key, but it is
+// an optional package (dconf-cli), so without it fall back to the effective value.
+const gsettingsQuery = ChildProcess.make(
+  "gsettings",
+  ["get", "org.gnome.desktop.interface", "gtk-enable-primary-paste"],
+  { stdin: "ignore", stderr: "ignore" },
+);
+const dconfQuery = ChildProcess.make(
+  "dconf",
+  ["read", "/org/gnome/desktop/interface/gtk-enable-primary-paste"],
+  { stdin: "ignore", stderr: "ignore" },
+);
 
 export const readGtkPrimaryPasteEnabled = Effect.gen(function* () {
   const env = yield* HostProcess.Environment;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const output = yield* spawner.string(primaryPasteQuery(env.XDG_CURRENT_DESKTOP));
+  const output = yield* env.XDG_CURRENT_DESKTOP?.split(":").includes("GNOME")
+    ? spawner.string(gsettingsQuery)
+    : spawner.string(dconfQuery).pipe(Effect.catch(() => spawner.string(gsettingsQuery)));
   return output.trim() !== "false";
 }).pipe(
   Effect.timeout("2 seconds"),

@@ -36,6 +36,13 @@ const spawnerWithStdout = (
     ),
   );
 
+const notFound = PlatformError.systemError({
+  _tag: "NotFound",
+  module: "ChildProcess",
+  method: "spawn",
+  description: "not found",
+});
+
 const read = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   desktop = "ubuntu:GNOME",
@@ -68,21 +75,19 @@ describe("readGtkPrimaryPasteEnabled", () => {
         command === "dconf" ? Stream.make(encoder.encode("false\n")) : Stream.empty,
       );
       assert.isFalse(yield* read(userSet, "Hyprland"));
+      // Without dconf-cli, the effective value is the best evidence of an opt-out.
+      const noDconf = ChildProcessSpawner.make((command) =>
+        command._tag === "StandardCommand" && command.command === "dconf"
+          ? Effect.fail(notFound)
+          : spawnerWithStdout(Stream.make(encoder.encode("false\n"))).spawn(command),
+      );
+      assert.isFalse(yield* read(noDconf, "XFCE"));
     }),
   );
 
   it.effect("stays enabled when gsettings cannot run", () =>
     Effect.gen(function* () {
-      const missing = ChildProcessSpawner.make(() =>
-        Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: "gsettings not found",
-          }),
-        ),
-      );
+      const missing = ChildProcessSpawner.make(() => Effect.fail(notFound));
       assert.isTrue(yield* read(missing));
     }),
   );
