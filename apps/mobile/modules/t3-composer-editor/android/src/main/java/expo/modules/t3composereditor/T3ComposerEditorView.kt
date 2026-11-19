@@ -284,11 +284,11 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun setFontFamily(fontFamily: String) {
-    editor.typeface = if (fontFamily.contains("Mono", ignoreCase = true)) {
-      Typeface.MONOSPACE
-    } else {
-      ReactFontManager.getInstance().getTypeface(fontFamily, Typeface.NORMAL, context.assets)
-    }
+    editor.typeface = ReactFontManager.getInstance().getTypeface(
+      fontFamily,
+      Typeface.NORMAL,
+      context.assets,
+    )
     applyLineHeight()
     editor.applyPlaceholder()
   }

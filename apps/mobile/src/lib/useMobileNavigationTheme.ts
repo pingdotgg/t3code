@@ -5,12 +5,20 @@ import { useAppearancePreferences } from "../features/settings/appearance/Appear
 import { useUniwindTheme } from "./useUniwindTheme";
 
 export function useMobileNavigationTheme(surface: "screen" | "sidebar" = "screen"): Theme {
-  const { themeAppearance: appearance } = useAppearancePreferences();
+  const { themeAppearance: appearance, fonts, fontSelections } = useAppearancePreferences();
   const variables = useUniwindTheme();
   return useMemo(() => {
     const base = appearance === "dark" ? DarkTheme : DefaultTheme;
     return {
       ...base,
+      fonts: fontSelections.interface
+        ? {
+            regular: { fontFamily: fonts.interface.regular, fontWeight: "400" },
+            medium: { fontFamily: fonts.interface.medium, fontWeight: "500" },
+            bold: { fontFamily: fonts.interface.bold, fontWeight: "700" },
+            heavy: { fontFamily: fonts.interface.bold, fontWeight: "800" },
+          }
+        : base.fonts,
       colors: {
         ...base.colors,
         primary: variables["--color-primary-text"],
@@ -24,5 +32,5 @@ export function useMobileNavigationTheme(surface: "screen" | "sidebar" = "screen
         notification: variables["--color-danger-foreground"],
       },
     };
-  }, [appearance, surface, variables]);
+  }, [appearance, fonts.interface, fontSelections.interface, surface, variables]);
 }

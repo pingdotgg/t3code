@@ -16,7 +16,8 @@ export function useScaledTextRole(role: keyof typeof MOBILE_TYPOGRAPHY): ScaledT
 }
 
 export function useComposerTextRole(): ScaledTextRole {
-  const body = useScaledTextRole("body");
+  const { composerFontSize } = useAppearancePreferences();
+  const body = resolveScaledTextRole("body", composerFontSize);
   const { fontScale } = useWindowDimensions();
   return resolveComposerTextRole(body, fontScale, Platform.OS);
 }

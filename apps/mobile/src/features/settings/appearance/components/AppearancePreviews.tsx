@@ -21,12 +21,17 @@ export function AppearancePreviewSeparator() {
 
 export function TextAppearancePreview(props: { readonly fontSize: number }) {
   const sizes = resolveMarkdownFontSizes(props.fontSize);
+  const { fonts } = useAppearancePreferences();
 
   return (
     <View className="gap-1 p-4">
       <Text
         className="text-foreground"
-        style={{ fontSize: sizes.m, lineHeight: sizes.bodyLineHeight }}
+        style={{
+          fontFamily: fonts.interface.regular,
+          fontSize: sizes.m,
+          lineHeight: sizes.bodyLineHeight,
+        }}
       >
         <T>The quick brown fox jumps over the lazy dog.</T>
       </Text>

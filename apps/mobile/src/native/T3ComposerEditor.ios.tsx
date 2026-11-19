@@ -1,3 +1,4 @@
+import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
@@ -26,9 +27,8 @@ import {
 } from "../lib/composerChipPresentation";
 import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/contextChipIconSource";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
-import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
-import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { useComposerTextRole } from "../features/settings/appearance/useScaledTextRole";
+import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
 import {
   acknowledgeComposerNativeEvent,
   assumeComposerControlledState,
@@ -178,9 +178,10 @@ export function ComposerEditor({
     });
     setConfirmedTokens({ value: props.value, tokens });
   }
-  const bodyText = useComposerTextRole();
   const theme = useUniwindTheme();
-  const fontFamily = FONT_FAMILIES.regular;
+  const { fonts } = useAppearancePreferences();
+  const bodyText = useComposerTextRole();
+  const fontFamily = fonts.composer.regular;
 
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
   const { modelsBySource, modelTokens } = useComposerModelTokens(props.value, models);
