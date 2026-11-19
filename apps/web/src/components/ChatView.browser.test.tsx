@@ -222,7 +222,7 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     name: `Issue ${issue.displayKey}: ${issue.title}, Open`,
   });
   await expect.element(badge).toBeVisible();
-  expect(badge.element().querySelector("svg")).toHaveClass(/text-emerald-600/);
+  expect(badge.element().querySelector("svg")).toHaveClass(/text-success-foreground/);
   await userEvent.hover(badge);
   const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
   const previewLink = page.getByRole("link", { name: issueName });

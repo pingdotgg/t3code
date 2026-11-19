@@ -3,7 +3,7 @@ import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/co
 import { AsyncResult } from "effect/reactivity";
 import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
@@ -505,11 +505,14 @@ describe("open file in preview browser", () => {
       truncated: false,
     };
     await using screen = await render(filePreview("page.html"));
-    const button = screen.getByRole("button", { name: "Open file in preview browser" });
+    const openInBrowser = async () => {
+      await userEvent.click(screen.getByRole("button", { name: "More file actions" }));
+      await userEvent.click(page.getByRole("menuitem", { name: "Open file in preview browser" }));
+    };
 
-    await userEvent.click(button);
+    await openInBrowser();
     await vi.waitFor(() => expect(state.openedBrowserUrls).toHaveLength(1));
-    await userEvent.click(button);
+    await openInBrowser();
     await vi.waitFor(() => expect(state.openedBrowserUrls).toHaveLength(2));
 
     expect(state.openedBrowserUrls[1], "the second click reused the first signed URL").not.toBe(
