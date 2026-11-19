@@ -12,7 +12,6 @@ import {
   cursorUsageWindowDetails as cursorUsageWindowDetailsBase,
   type LimitPool,
   type LimitPresentations,
-  projectRunOut,
   providersWithLimits,
   type ResetCreditChoice,
   resetCountdown,
@@ -213,18 +212,4 @@ export function formatResetsIn(
   }
   if (style === "refill") return resolve(msg("↻ {duration}", { duration }));
   return resolve(msg("resets in {duration}", { duration }));
-}
-
-/** `runs out in about 40m`, or null when the window resets before it runs dry. */
-export function formatRunsOutIn(
-  window: ServerProviderUsageWindow,
-  now: number,
-  resolve: MFunctionType = mFallback,
-): string | null {
-  const runOut = projectRunOut(window, now);
-  if (runOut === null) return null;
-  if (runOut < MINUTE) return resolve(msg("runs out now"));
-  return resolve(
-    msg("runs out in about {duration}", { duration: formatDuration(runOut, resolve) }),
-  );
 }

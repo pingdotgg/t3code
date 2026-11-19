@@ -120,7 +120,7 @@ it("unassigns a default shortcut and restores its condition when one is assigned
     async () => {
       await using screen = await render(<KeybindingsSettingsPanel />);
 
-      await screen.getByRole("button", { name: "Actions for Toggle sidebar" }).click();
+      await screen.getByRole("button", { name: "Actions for Sidebar: Toggle" }).click();
       await screen.getByRole("menuitem", { name: "Unassign" }).click();
       expect(mutate).toHaveBeenLastCalledWith({
         environmentId: "env",
@@ -133,7 +133,7 @@ it("unassigns a default shortcut and restores its condition when one is assigned
       });
 
       const unassigned = screen.getByRole("button", {
-        name: "Edit shortcut for Start in background: Unassigned",
+        name: "Edit shortcut for Composer: Start in Background: Unassigned",
       });
       const save = screen.getByRole("button", { name: "Save" });
       await unassigned.click();
