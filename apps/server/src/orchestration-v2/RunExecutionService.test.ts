@@ -31,6 +31,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
@@ -41,6 +42,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { CodexAppServerRequestError } from "effect-codex-app-server/errors";
@@ -4602,6 +4604,8 @@ function runBackgroundItemScenario(
     ) => Effect.Effect<void>;
     // Consumes through the real commit coordinator, as the event sink does.
     readonly batched?: boolean;
+    // A commit coordinator shared with other runs, instead of the run's own.
+    readonly coordinator?: Effect.Success<ReturnType<typeof ProviderCommitBatch.make>>;
     readonly keepEventStreamOpen?: boolean;
     readonly hasPendingBackgroundWorkForThread?: (
       providerThread: OrchestrationV2ProviderThread,
@@ -4631,7 +4635,8 @@ function runBackgroundItemScenario(
     );
     let inSharedCommit = false;
     const coordinator =
-      options?.batched === true
+      options?.coordinator ??
+      (options?.batched === true
         ? yield* ProviderCommitBatch.make(
             (work) =>
               Effect.suspend(() => {
@@ -4646,7 +4651,7 @@ function runBackgroundItemScenario(
               ),
             true,
           )
-        : undefined;
+        : undefined);
     const layerTest = RunExecutionService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -5233,5 +5238,93 @@ it.effect("drops a child's held text once the child is handed to another run", (
     yield* Fiber.join(scenario);
 
     assert.deepEqual(yield* Ref.get(staleWrites), []);
+  }),
+);
+
+const InSharedCommit = Context.Reference<boolean>("test/RunExecutionService/InSharedCommit", {
+  defaultValue: () => false,
+});
+
+it.effect("keeps every run on a shared provider session up with its own turn", () =>
+  Effect.gen(function* () {
+    // Nine runs share one provider session, so each receives every thread's events. Ten other
+    // writers keep the writer busy (a pass ~1 s). Every 10 s each thread reports usage, writes
+    // two items and reports usage again.
+    const runs = 9;
+    const writer = yield* Semaphore.make(1);
+    const coordinator = yield* ProviderCommitBatch.make(
+      (work) => writer.withPermits(1)(Effect.provideService(work, InSharedCommit, true)),
+      true,
+    );
+    for (let other = 0; other < 10; other++)
+      yield* coordinator
+        .barrier(writer.withPermits(1)(Effect.sleep("100 millis")), [`thread:writer-${other}`])
+        .pipe(Effect.forever, Effect.forkChild);
+    const ids = Array.from({ length: runs }, (_, run) =>
+      backgroundScenarioIds(`shared-session-${run}`),
+    );
+    const rootTurn = (own: BackgroundScenarioIds): ProviderAdapter.ProviderAdapterV2Event =>
+      ({
+        type: "provider_turn.updated",
+        driver,
+        providerTurn: {
+          id: own.rootProviderTurnId,
+          providerThreadId: own.providerThreadId,
+          nodeId: own.rootNodeId,
+          runAttemptId: own.attemptId,
+          status: "running",
+        },
+      }) as ProviderAdapter.ProviderAdapterV2Event;
+    const subscriptions = yield* Effect.forEach(ids, () =>
+      Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>(),
+    );
+    // The last round of its own items each run has ingested.
+    const ingestedRound = Array.from({ length: runs }, () => 0);
+    for (let run = 0; run < runs; run++) {
+      const own = ids[run]!;
+      yield* Queue.offer(subscriptions[run]!, rootTurn(own));
+      yield* runBackgroundItemScenario(
+        `shared-session-${run}`,
+        () => Stream.fromQueue(subscriptions[run]!),
+        {
+          coordinator: {
+            ...coordinator,
+            // As the event sink's writes: after this thread's queued snapshots, on the writer.
+            barrier: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+              Effect.flatMap(InSharedCommit, (inCommit) =>
+                inCommit
+                  ? effect
+                  : coordinator.barrier(writer.withPermits(1)(effect), [own.threadId]),
+              ),
+          },
+          onIngest: (event) =>
+            Effect.sync(() => {
+              if (event.type === "turn_item.updated")
+                ingestedRound[run] = Math.max(
+                  ingestedRound[run]!,
+                  Math.floor(event.turnItem.ordinal / 10),
+                );
+            }),
+        },
+      ).pipe(Effect.forkChild);
+    }
+    let round = 0;
+    yield* Effect.gen(function* () {
+      for (;;) {
+        yield* Effect.sleep("10 seconds");
+        round++;
+        for (const own of ids)
+          for (const event of [
+            rootTurn(own),
+            backgroundTurnItemEvent(own, "dynamic_tool", "running", round * 10 + 1),
+            backgroundTurnItemEvent(own, "dynamic_tool", "completed", round * 10 + 2),
+            rootTurn(own),
+          ])
+            for (const subscription of subscriptions) yield* Queue.offer(subscription, event);
+      }
+    }).pipe(Effect.forkChild);
+    yield* TestClock.adjust("5 minutes");
+
+    assert.isAtMost(Math.max(...ingestedRound.map((ingested) => round - ingested)), 2);
   }),
 );
