@@ -38,22 +38,23 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
     truncated: false,
     nextCursor: null,
   };
-  const pages: Record<string, PullRequestDiffResult> = {
-    first: {
-      patch: Array.from({ length: 40 }, (_, index) =>
-        filePatch(index === 1 ? "early-1.test.ts" : `early-${index}.ts`),
-      ).join(""),
-      truncated: true,
-      nextCursor: "page-2",
-    },
-    get "page-2"() {
-      return {
-        patch: (mocks.withLateSourceFile ? filePatch("late.ts") : "") + filePatch("late.test.ts"),
+  const pagedDiffAtom = Atom.family((shortPages: boolean) => {
+    const pages: Record<string, PullRequestDiffResult> = {
+      first: {
+        patch: Array.from({ length: shortPages ? 2 : 40 }, (_, index) =>
+          filePatch(index === 1 ? "early-1.test.ts" : `early-${index}.ts`),
+        ).join(""),
+        truncated: true,
+        nextCursor: "page-2",
+      },
+      "page-2": {
+        patch: (shortPages ? filePatch("late.ts") : "") + filePatch("late.test.ts"),
         truncated: false,
         nextCursor: null,
-      };
-    },
-  };
+      },
+    };
+    return Atom.family((cursor: string) => Atom.make(AsyncResult.success(pages[cursor]!)));
+  });
   return {
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
@@ -68,15 +69,13 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
         nextCursor: null,
       }),
     ),
-    pagedDiffAtom: Atom.family((cursor: string) =>
-      Atom.make(() => AsyncResult.success(pages[cursor]!)),
-    ),
+    pagedDiffAtom,
   };
 });
 
 const mocks = vi.hoisted(() => ({
   paged: false,
-  withLateSourceFile: false,
+  shortPages: false,
   withTestFile: false,
   renameSourceOnRefresh: false,
   changeTestOnRefresh: false,
@@ -128,14 +127,14 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       ...actual.pullRequestEnvironment,
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
-        if (mocks.paged) return pagedDiffAtom(input.cursor ?? "first");
+        if (mocks.paged) return pagedDiffAtom(mocks.shortPages)(input.cursor ?? "first");
         return mocks.withTestFile ? testFileDiffAtom : diffAtom;
       }) as never,
     },
   };
 });
 
-import { render } from "../../../test/render";
+import { render, stubGlobal } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
 
 const detail: PullRequestDetailView = {
@@ -194,7 +193,7 @@ function setup({ paged }: { paged: boolean }) {
   window.localStorage.removeItem("t3code.diffHideTestFiles");
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
-  mocks.withLateSourceFile = false;
+  mocks.shortPages = false;
   mocks.withTestFile = false;
   mocks.renameSourceOnRefresh = false;
   mocks.changeTestOnRefresh = false;
@@ -480,14 +479,24 @@ it("opens a hidden test file when a refresh changes its patch and makes its View
 
 it("expands later source files while keeping a later hidden test file folded", async () => {
   setup({ paged: true });
-  mocks.withLateSourceFile = true;
+  mocks.shortPages = true;
   using _hidden = {
     [Symbol.dispose]() {
       window.localStorage.removeItem("t3code.diffHideTestFiles");
       window.localStorage.removeItem("t3code.pullRequestFileTreeOpen");
     },
   };
-  const container = pagedContainer();
+  // Use the file tree's load button to control when the short first page gives way to the next.
+  using _observer = stubGlobal(
+    "IntersectionObserver",
+    class extends IntersectionObserver {
+      constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
+        super(options?.rootMargin === "240px" ? () => {} : callback, options);
+      }
+    },
+  );
+  const container = document.createElement("div");
+  container.className = "flex h-[1000px] w-[900px]";
   await using screen = await render(tab(0), { container });
   const filter = screen.getByRole("button", { name: "Hide test files" });
   await filter.click();
@@ -500,21 +509,20 @@ it("expands later source files while keeping a later hidden test file folded", a
   await screen.getByRole("button", { name: "Hide file tree", exact: true }).click();
   await filter.click();
 
-  const scroller = await vi.waitFor(() => {
-    const surface = container.querySelector(".diff-render-surface");
-    expect(surface).not.toBeNull();
-    return surface!;
-  });
-  scroller.scrollTop = scroller.scrollHeight;
-
-  const diffToggle = async (path: string) => {
-    const header = screen.getByText(path, { exact: true });
-    await expect.element(header).toBeVisible();
-    const { host } = header.element().getRootNode() as ShadowRoot;
+  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
+  const diffToggle = (path: string) => {
+    const header = screen.getByText(path, { exact: true }).element();
+    const { host } = header.getRootNode() as ShadowRoot;
     return page.elementLocator(host).getByRole("button", { name: /^(Expand|Collapse) diff$/ });
   };
-  await expect.element(await diffToggle("late.ts")).toHaveAttribute("aria-expanded", "true");
-  await expect.element(await diffToggle("late.test.ts")).toHaveAttribute("aria-expanded", "false");
+  await vi.waitFor(() =>
+    expect(diffToggle("late.ts").element()).toHaveAttribute("aria-expanded", "true"),
+  );
+  const scroller = container.querySelector(".diff-render-surface")!;
+  scroller.scrollTop = scroller.scrollHeight;
+  await vi.waitFor(() =>
+    expect(diffToggle("late.test.ts").element()).toHaveAttribute("aria-expanded", "false"),
+  );
 });
 
 it("never requests the diff of a selected commit the pull request no longer has", async () => {
