@@ -14,8 +14,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -63,6 +65,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     readonly enabled?: boolean;
     /** Extra instance variables, such as ones a parent T3 turn already exported. */
     readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+    readonly beforeAcquire?: Effect.Effect<void>;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -134,7 +137,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     selected: AntigravityInstallation.AntigravityExecutable;
     failResolution: boolean;
     beforeAcquire: Effect.Effect<void>;
-  } = { selected: first, failResolution: false, beforeAcquire: Effect.void };
+  } = {
+    selected: first,
+    failResolution: false,
+    beforeAcquire: options.beforeAcquire ?? Effect.void,
+  };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
   const launches: Array<{
@@ -550,6 +557,24 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
         yield* h.assertClosed;
       }),
+  );
+
+  it.effect.skipIf(windowsHost)("health checks re-read the model list once it is stale", () =>
+    Effect.gen(function* () {
+      const acquired = yield* Queue.unbounded<void>();
+      const h = yield* makeHarness({
+        config: { authMethod: "gemini-api-key", apiKey: "fixture-gemini-key" },
+        beforeAcquire: Queue.offer(acquired, undefined).pipe(Effect.asVoid),
+      });
+      yield* h.instance.snapshot.refresh;
+      yield* Queue.take(acquired);
+      yield* TestClock.adjust("5 hours");
+      yield* h.instance.snapshot.refresh;
+      yield* TestClock.adjust("1 hour");
+      yield* h.instance.snapshot.refresh;
+      yield* Queue.take(acquired);
+      expect(h.acquisitions).toHaveLength(2);
+    }),
   );
 
   it.effect.skipIf(windowsHost)("keeps the previous catalog when executable resolution fails", () =>

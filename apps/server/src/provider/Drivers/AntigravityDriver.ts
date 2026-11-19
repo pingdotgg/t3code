@@ -13,9 +13,11 @@ import {
 } from "@t3tools/shared/nodeRuntime";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FiberHandle from "effect/FiberHandle";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -84,6 +86,8 @@ const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isAcpErrorDetails = Schema.is(Schema.Struct({ details: Schema.String }));
 const REFRESH_FAILED =
   "Could not refresh Antigravity models. The previous model list is unchanged.";
+// Models come only from a session, so a health check re-reads them at most this often.
+const MODEL_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 const PYTHON_SOCKS_REQUIRED = "python-socks is required to use a SOCKS proxy";
 
 // Keep upstream diagnostics in cause; only recognized, fixed text reaches clients.
@@ -354,6 +358,15 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
+    let modelsReadAtMs = Number.NEGATIVE_INFINITY;
+    const onSessionStarted = Effect.fn("AntigravityDriver.onSessionStarted")(function* (
+      started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+      cwd?: string,
+    ) {
+      modelsReadAtMs = yield* Clock.currentTimeMillis;
+      yield* provider.onSessionStarted(started, cwd);
+    });
+
     const publishCatalog = Effect.fn("AntigravityDriver.publishCatalog")(function* (
       started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
       runtime: Pick<
@@ -361,7 +374,7 @@ export const AntigravityDriver: ProviderDriver<
         "getEvents" | "drainEvents" | "setModel"
       >,
     ) {
-      yield* provider.onSessionStarted(started);
+      yield* onSessionStarted(started);
       yield* Stream.runForEach(runtime.getEvents(), (event) => {
         if (event._tag === "EventStreamBarrier") {
           return Deferred.succeed(event.acknowledge, undefined).pipe(Effect.asVoid);
@@ -398,9 +411,11 @@ export const AntigravityDriver: ProviderDriver<
 
     // The probe must not spawn. The agent is a PyInstaller one-file bundle
     // that unpacks about 1 GB per launch, and the health check runs every
-    // minute.
+    // minute. It only starts a background model refresh once the list is stale.
+    const refreshStaleModels = yield* Deferred.make<Effect.Effect<void>>();
     const probe = Effect.gen(function* () {
       yield* modelCatalog.refreshInBackground;
+      yield* Deferred.await(refreshStaleModels).pipe(Effect.flatten);
       if (authConfigIssue !== null) {
         return yield* new ProviderSetupError({
           instanceId,
@@ -480,7 +495,7 @@ export const AntigravityDriver: ProviderDriver<
         ),
       ),
       profileDirectory,
-      onSessionStarted: provider.onSessionStarted,
+      onSessionStarted,
       onSessionEvent: (event, cwd) => {
         if (event._tag === "ConfigOptionsUpdated") {
           return provider.onConfigOptionsUpdated(event.configOptions);
@@ -553,6 +568,32 @@ export const AntigravityDriver: ProviderDriver<
               cause,
             }),
       ),
+    );
+
+    // Credentials that need no sign-in click; otherwise the launch would only ask for one.
+    const canReadModels =
+      authConfigIssue !== null
+        ? Effect.succeed(false)
+        : !antigravityAuthUsesBrowser(auth.authMethod)
+          ? Effect.succeed(true)
+          : fileSystem
+              .exists(path.join(profileDirectory, "antigravity-acp", "acp_token.json"))
+              .pipe(Effect.orElseSucceed(() => false));
+    const modelRefresh = yield* FiberHandle.make();
+    yield* Deferred.succeed(
+      refreshStaleModels,
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        if (now - modelsReadAtMs < MODEL_REFRESH_INTERVAL_MS || !(yield* canReadModels)) return;
+        modelsReadAtMs = now;
+        yield* FiberHandle.run(
+          modelRefresh,
+          // A fixed message: the cause can carry the agent's raw reply to the key.
+          refreshModels().pipe(
+            Effect.catch(() => Effect.logWarning("Antigravity could not refresh its model list.")),
+          ),
+        );
+      }),
     );
 
     return {
