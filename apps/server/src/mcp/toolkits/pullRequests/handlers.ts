@@ -400,6 +400,29 @@ const make = Effect.gen(function* () {
   const forgeFailure = (error: { readonly message: string }) =>
     new PullRequestForgeError({ detail: error.message, cause: error });
 
+  // Layers below the target are pinned to the heads read here; the host refuses if any moved.
+  const stackMergeScope = Effect.fnUntraced(function* (
+    ref: PullRequestRef,
+    input: { readonly expectedHeadSha: string; readonly auto?: boolean | undefined },
+  ) {
+    if (input.auto === true)
+      return yield* new PullRequestForgeError({ detail: "A stack merge cannot wait with auto." });
+    const stack = yield* pullRequests.stack(ref).pipe(Effect.mapError(forgeFailure));
+    const end = stack?.layers.findIndex((layer) => layer.number === ref.number) ?? -1;
+    if (stack === null || end === -1)
+      return yield* new PullRequestForgeError({
+        detail: `PR #${ref.number} is not in a stack this host can merge. Merge it without stack.`,
+      });
+    const expectedStackHeads = stack.layers
+      .slice(0, end + 1)
+      .filter((layer) => layer.state !== "merged")
+      .flatMap((layer) => {
+        const headSha = layer.number === ref.number ? input.expectedHeadSha : layer.headSha;
+        return headSha === undefined ? [] : [{ number: layer.number, headSha }];
+      });
+    return { stackNumber: stack.number, expectedStackHeads };
+  });
+
   /** A login or org/team, matched to the host's own reviewer id. */
   const reviewerNamed = (ref: PullRequestRef, name: string) =>
     pullRequests.reviewerCandidates({ ...ref, query: name }).pipe(
@@ -1131,12 +1154,14 @@ const make = Effect.gen(function* () {
     pull_request_merge: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
         const { target, ref } = yield* locate(input);
+        const stack = input.stack === true ? yield* stackMergeScope(ref, input) : {};
         yield* pullRequests
           .runAction({
             ...ref,
             action: input.auto === true ? "enable-auto-merge" : "merge",
             expectedHeadSha: input.expectedHeadSha,
             ...(input.method === undefined ? {} : { mergeMethod: input.method }),
+            ...stack,
           })
           .pipe(Effect.mapError(forgeFailure));
         const after = yield* pullRequests

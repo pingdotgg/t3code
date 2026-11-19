@@ -294,6 +294,8 @@ const McpToolUseWorld = Schema.StructWithRest(
      * session. With them, T3's own t3_background_wait handler answers from this world.
      */
     backgroundTasks: Schema.optional(Schema.Array(Schema.String)),
+    /** The world's `prs`, bottom first, form one native stack with this number. */
+    stack: Schema.optional(Schema.Number),
     /** PRs already linked to the thread, with the state T3 last saw. */
     linkedPullRequests: Schema.optional(
       Schema.Array(
@@ -919,6 +921,8 @@ type Sample = {
   readonly openedByBranch: Map<string, number>;
   /** PR changes the agent made through T3's tools, which gh and the host show from then on. */
   readonly forgeChanges: Array<string>;
+  /** PRs pull_request_merge merged, which reads show as merged from then on. */
+  readonly merged: Set<number>;
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
   /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
@@ -976,6 +980,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     linked: new Set([...urls, ...shell.flatMap(createdPullRequests)]),
     openedByBranch: new Map(),
     forgeChanges: [],
+    merged: new Set(),
     openedPullRequest:
       shell
         .map((entry) => branchPullRequestCreatedBy(entry, testCase.setup.world?.branch))
@@ -1237,7 +1242,8 @@ const linkedEntry = (sample: Sample, url: string) => {
   const seeded = sample.testCase.setup.world?.linkedPullRequests?.find(
     ({ number }) => number === pr.number && pr.repository === sample.repo,
   );
-  return { ...pr, state: seeded?.state ?? "open", title: seeded?.title ?? null };
+  const state = sample.merged.has(pr.number) ? "merged" : (seeded?.state ?? "open");
+  return { ...pr, state, title: seeded?.title ?? null };
 };
 
 /** The world's PRs. `prs` is free-form world data: number, title, headRefName, checks. */
@@ -1430,11 +1436,11 @@ export const t3Default = (
                   world?.title ?? sample.testCase.setup.world?.commits?.[0]?.subject,
                 ),
                 body: valueText(world?.body ?? ""),
-                state: worldState(world),
+                state: sample.merged.has(number) ? "merged" : worldState(world),
                 isDraft: false,
                 author: "user",
                 headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
-                baseBranch: "main",
+                baseBranch: valueText(world?.baseRefName ?? "main"),
                 // Only the branch's own PR is at the checkout's latest commit.
                 headSha:
                   typeof world?.headRefOid === "string"
@@ -1525,11 +1531,21 @@ export const t3Default = (
         replied: input.body !== undefined,
         resolved: typeof input.resolved === "boolean" ? input.resolved : null,
       };
-    case "pull_request_merge":
+    case "pull_request_merge": {
+      const number = input.number ?? branchPullRequest(sample).number;
+      if (input.auto !== true) {
+        const layers = worldPullRequests(sample).map((pr) => Number(pr.number));
+        const below =
+          input.stack === true && sample.testCase.setup.world?.stack !== undefined
+            ? layers.slice(0, layers.indexOf(Number(number)) + 1)
+            : [];
+        for (const merged of [Number(number), ...below]) sample.merged.add(merged);
+      }
       return {
-        ...pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number }),
+        ...pullRequest(sample.repo, { number }),
         state: input.auto === true ? "open" : "merged",
       };
+    }
     case "ci_logs":
     case "ci_rerun": {
       const { number, checks, named } = selectedWorldChecks(sample, input);
@@ -1595,14 +1611,30 @@ export const t3Default = (
       return { ...pr(), watching: false, wasWatching: true };
     case "list_thread_pull_requests": {
       const states = Array.isArray(input.states) ? input.states : undefined;
+      const layers =
+        sample.testCase.setup.world?.stack === undefined
+          ? []
+          : worldPullRequests(sample).map((pr) => Number(pr.number));
       const matching = [...sample.linked]
-        .map((url) => ({ ...linkedEntry(sample, url), source: "agent", watching: false }))
+        .map((url) => linkedEntry(sample, url))
+        .map((entry) => {
+          const position = layers.indexOf(entry.number) + 1;
+          return {
+            ...entry,
+            source: "agent",
+            watching: false,
+            stack: position === 0 ? null : { kind: "native", position, size: layers.length },
+          };
+        })
         .filter((entry) => states === undefined || states.includes(entry.state));
       const start = Number(valueText(input.cursor)) || 0;
       const end = start + 50;
+      const linkedLayers = layers.filter((number) =>
+        matching.some((entry) => entry.number === number),
+      );
       return {
         pullRequests: matching.slice(start, end),
-        chains: [],
+        chains: linkedLayers.length < 2 ? [] : [{ kind: "native", numbers: linkedLayers }],
         nextCursor: end < matching.length ? String(end) : null,
       };
     }

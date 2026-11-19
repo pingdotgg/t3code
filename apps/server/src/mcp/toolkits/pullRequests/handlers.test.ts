@@ -1020,6 +1020,50 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect("a stack merge pins every open layer up to the PR", () =>
+    Effect.gen(function* () {
+      const actions: Array<PullRequestActionInput> = [];
+      const layer = (number: number, state: "open" | "merged", headSha: string) => ({
+        number,
+        state,
+        headSha,
+        headBranch: `layer-${number}`,
+      });
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          stack: () =>
+            Effect.succeed({
+              id: "stack-1",
+              number: 7,
+              url: "https://github.com/acme/app/stacks/7",
+              base: "main",
+              layers: [
+                layer(40, "merged", "aaa"),
+                layer(41, "open", "bbb"),
+                layer(42, "open", "stale"),
+                layer(43, "open", "ddd"),
+              ],
+            }),
+          runAction: (input) => Effect.sync(() => void actions.push(input)),
+          summary: () => Effect.succeed({ state: "merged" } as never),
+        },
+      });
+      yield* harness.call("pull_request_merge", { expectedHeadSha: "ccc", stack: true });
+      expect(actions).toMatchObject([
+        {
+          number: 42,
+          action: "merge",
+          stackNumber: 7,
+          expectedStackHeads: [
+            { number: 41, headSha: "bbb" },
+            { number: 42, headSha: "ccc" },
+          ],
+        },
+      ]);
+    }),
+  );
+
   it.effect("re-running checks reopens a watch that saw its checks finish", () =>
     Effect.gen(function* () {
       const watch = {
