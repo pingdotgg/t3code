@@ -70,6 +70,7 @@ test(
     await screen.getByRole("menuitem", /Shared build/).tap();
     await browser.evaluate(async () => {
       await window.projectActionImportFailure;
+      return null;
     });
 
     await actions.tap();
@@ -84,11 +85,12 @@ test(
       await new Promise<void>((resolve) => {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
       });
+      return null;
     });
 
     await app.screenshot("action-draft-after-import-fails");
     const name = await browser.evaluate(
-      () => document.querySelector<HTMLInputElement>("#script-name")?.value,
+      () => document.querySelector<HTMLInputElement>("#script-name")?.value ?? null,
     );
     expect(name, "The failed import preserves the manual action name").toBe(draftName);
   },
