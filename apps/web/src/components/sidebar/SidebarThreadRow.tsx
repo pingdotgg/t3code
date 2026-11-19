@@ -252,6 +252,8 @@ function SidebarProviderStack(props: {
   );
 }
 
+const HOVER_PULL_REQUEST_LIMIT = 5;
+
 function SidebarThreadTooltip({
   thread,
   project,
@@ -298,7 +300,10 @@ function SidebarThreadTooltip({
         footer={
           supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
             <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
-              <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} />
+              <ThreadPullRequestsMiniList
+                pullRequests={thread.pullRequests}
+                limit={HOVER_PULL_REQUEST_LIMIT}
+              />
             </div>
           ) : null
         }

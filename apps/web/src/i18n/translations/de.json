@@ -2528,6 +2528,7 @@
   "55f4078f7fe8e597": "{term, select, mr {MR #{number}, Status ausstehend} cr {Änderungsanfrage #{number}, Status ausstehend} other {PR #{number}, Status ausstehend}}",
   "3260b22f72f7effb": "{tooltipLead}: {title}",
   "feac8e54b30c5a03": "Terminal-Prozess läuft",
+  "c935ef54eea085b8": "{count, plural, one {+{count} weiterer verknüpfter PR} other {+{count} weitere verknüpfte PRs}}",
   "fc2c9a91f498ad6b": "{count, plural, one {{count} Terminal-Prozess läuft. Terminal öffnen} other {{count} Terminal-Prozesse laufen. Terminal öffnen}}",
   "643c4b50feadc874": "Worktree: {path} ({branch})",
   "fb7c44da0f0825ea": "Worktree: {path}",

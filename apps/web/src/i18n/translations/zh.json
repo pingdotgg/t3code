@@ -2531,6 +2531,7 @@
   "55f4078f7fe8e597": "{term, select, mr {MR} cr {change request} other {PR}} #{number}，状态待定",
   "3260b22f72f7effb": "{tooltipLead}：{title}",
   "feac8e54b30c5a03": "终端进程正在运行",
+  "c935ef54eea085b8": "{count, plural, other {+另有 {count} 个已关联的 PR}}",
   "fc2c9a91f498ad6b": "{count, plural, other {{count} 个终端进程正在运行。打开终端}}",
   "643c4b50feadc874": "工作树：{path}（{branch}）",
   "fb7c44da0f0825ea": "工作树：{path}",

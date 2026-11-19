@@ -2526,6 +2526,7 @@
   "55f4078f7fe8e597": "{term, select, mr {MR} cr {변경 요청} other {PR}} #{number}, 상태 대기 중",
   "3260b22f72f7effb": "{tooltipLead}: {title}",
   "feac8e54b30c5a03": "터미널 프로세스 실행 중",
+  "c935ef54eea085b8": "{count, plural, other {+연결된 PR {count}개 더 있음}}",
   "fc2c9a91f498ad6b": "{count, plural, other {터미널 프로세스 {count}개 실행 중. 터미널 열기}}",
   "643c4b50feadc874": "워크트리: {path}({branch})",
   "fb7c44da0f0825ea": "워크트리: {path}",
