@@ -36,10 +36,14 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const homeDirectory = yield* HostProcess.HomeDirectory;
-  const grokHome = expandHomePath(
-    environment.GROK_HOME?.trim() || path.join(homeDirectory, ".grok"),
-    homeDirectory,
+  const configuredGrokHome = environment.GROK_HOME?.trim();
+  const grokHome = path.resolve(
+    expandHomePath(configuredGrokHome || path.join(homeDirectory, ".grok"), homeDirectory),
   );
+  // Grok runs in a temporary cwd, so a relative GROK_HOME must reach it already resolved.
+  const grokEnvironment = configuredGrokHome
+    ? { ...environment, GROK_HOME: grokHome }
+    : environment;
 
   const runGrokJson: TextGenerationOperations.Runner = Effect.fn("GrokTextGeneration.runGrokJson")(
     function* (request) {
@@ -56,7 +60,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeGrokAcpRuntime({
         grokSettings,
-        environment,
+        environment: grokEnvironment,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
         // Grok config may always-approve; ask mode sends tool approvals here, and none are granted.

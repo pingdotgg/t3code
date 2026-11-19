@@ -167,6 +167,29 @@ export const threadTitleEvaluationCases = [
     rubric:
       'Use the user\'s "Owner: what it does (model effort)" shape with all three parts, even past the default 8-word, 40-character limit. A bare short title fails.',
   },
+  {
+    id: "attachment-only-subject",
+    source: "https://github.com/pingdotgg/t3code/issues/38614",
+    request: "Review an attached requirements document for missing parts.",
+    previousTitle: "Review requirements doc",
+    messages: [
+      {
+        role: "user",
+        text: "Please review this requirements doc and tell me what is missing.",
+        attachments: [
+          {
+            type: "file",
+            id: "requirements-pdf",
+            name: "requirements.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 15_156,
+          },
+        ],
+      },
+    ],
+    rubric:
+      "Name a gap review of the requirements document. Only its metadata reaches the model, so a run that errors instead of titling fails.",
+  },
 ] satisfies ReadonlyArray<{
   id: string;
   source: string;

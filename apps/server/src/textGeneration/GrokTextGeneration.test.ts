@@ -59,7 +59,8 @@ function withFakeAcpGrok<A, E, R>(
     const grokHome = NodePath.join(tempDir, "grok-home");
     const textGeneration = yield* makeGrokTextGeneration(config, {
       ...process.env,
-      GROK_HOME: grokHome,
+      // Relative, so Grok running in a temporary cwd must still get this folder.
+      GROK_HOME: NodePath.relative(process.cwd(), grokHome),
     });
     return yield* effectFn(textGeneration, grokHome);
   }).pipe(Effect.scoped);
@@ -86,10 +87,12 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
       NodePath.join(NodeOS.tmpdir(), "t3code-grok-text-log-"),
     );
     const requestLogPath = NodePath.join(requestLogDir, "requests.ndjson");
+    const sessionDirLogPath = NodePath.join(requestLogDir, "session-dirs.log");
 
     return withFakeAcpGrok(
       {
         T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        T3_GROK_SESSION_DIR_LOG_PATH: sessionDirLogPath,
         T3_ACP_REQUEST_PERMISSION: "1",
         T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
           subject: "Add Grok provider",
@@ -127,13 +130,15 @@ it.layer(layerGrokTextGenerationTest)("GrokTextGeneration", (it) => {
             result: { outcome: { outcome: "cancelled" } },
           });
 
-          const sessionCwd = requests.find((request) => request.method === "session/new")?.params
-            ?.cwd as string;
+          const sessionCwd = String(
+            requests.find((request) => request.method === "session/new")?.params?.cwd ?? "",
+          );
+          expect(NodePath.isAbsolute(sessionCwd)).toBe(true);
           expect(sessionCwd).not.toBe(process.cwd());
           expect(NodeFS.existsSync(sessionCwd)).toBe(false);
-          expect(
-            NodeFS.existsSync(NodePath.join(grokHome, "sessions", encodeURIComponent(sessionCwd))),
-          ).toBe(false);
+          const sessionDir = NodePath.join(grokHome, "sessions", encodeURIComponent(sessionCwd));
+          expect(NodeFS.readFileSync(sessionDirLogPath, "utf8")).toBe(`${sessionDir}\n`);
+          expect(NodeFS.existsSync(sessionDir)).toBe(false);
           const promptText = (
             requests.find((request) => request.method === "session/prompt")?.params?.prompt as
               | ReadonlyArray<{ text?: string }>
