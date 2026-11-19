@@ -23,6 +23,7 @@ import {
   codexMcpListLaunchArgs,
   resolveCodexLaunchArgs,
 } from "../provider/codexLaunchArgs.ts";
+import { codexAppServerEnvironment } from "../provider/CodexProvider.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import {
   normalizeCliError,
@@ -55,6 +56,11 @@ const codexMcpServersOff = (names: ReadonlyArray<string>): string | null =>
   names.length === 0
     ? null
     : `mcp_servers={${names.map((name) => `${JSON.stringify(name)}={enabled=false}`).join(",")}}`;
+// Codex splits -c keys at the first "=" and on every dot, so only those names take a dotted flag.
+const codexMcpServerOffFlags = (names: ReadonlyArray<string>) =>
+  names
+    .filter((name) => !name.includes(".") && !name.includes("="))
+    .flatMap((name) => ["--config", `mcp_servers.${name}.enabled=false`]);
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(function* (
   codexConfig: CodexSettings,
@@ -281,7 +287,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         resolved || fellBack ? undefined : getCodexServiceTierOptionValue(modelSelection);
       const binary = effectiveConfig.binaryPath || "codex";
       const env = {
-        ...effectiveEnvironment,
+        ...codexAppServerEnvironment(effectiveEnvironment),
         ...(effectiveConfig.homePath
           ? {
               CODEX_HOME: expandHomePath(
@@ -291,20 +297,28 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             }
           : {}),
       };
-      const mcpServersOff = yield* listEnabledMcpServers({
+      const enabledMcpServers = yield* listEnabledMcpServers({
         binary,
         cwd,
         env,
         launchArgs: codexMcpListLaunchArgs(launchArgs),
-      }).pipe(Effect.map(codexMcpServersOff));
+      });
+      const mcpServersOff = codexMcpServersOff(enabledMcpServers);
+      const execLaunchArgs = codexExecLaunchArgs(launchArgs);
+      // A launch-arg mcp_servers={...} table replaces ours and can re-enable dotted names.
+      const launchArgsSetMcpTable = execLaunchArgs.some((arg) => /\bmcp_servers\s*=/.test(arg));
       const spawnCommand = yield* resolveSpawnCommand(
         binary,
         [
           "exec",
-          ...codexExecLaunchArgs(launchArgs),
+          // Before launch args: a later table would replace servers their -c flags define.
+          ...(mcpServersOff ? ["--config", mcpServersOff] : []),
+          ...execLaunchArgs,
           // A user's MCP server could act on the text-generation prompt.
           ...CODEX_NO_PLUGIN_ARGS,
-          ...(mcpServersOff ? ["--config", mcpServersOff] : []),
+          ...(mcpServersOff && launchArgsSetMcpTable ? ["--config", mcpServersOff] : []),
+          // After launch args, so a launch arg's enabled=true cannot turn a server back on.
+          ...codexMcpServerOffFlags(enabledMcpServers),
           "--ephemeral",
           "--skip-git-repo-check",
           "-s",
@@ -313,6 +327,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           model,
           "--config",
           `model_reasoning_effort="${reasoningEffort}"`,
+          // Current Codex gives hooks precedence over the historical codex_hooks alias.
+          "--config",
+          "features.codex_hooks=false",
+          "--config",
+          "features.hooks=false",
           ...(serviceTier ? ["--config", `service_tier="${serviceTier}"`] : []),
           "--output-schema",
           schemaPath,

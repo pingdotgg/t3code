@@ -17,6 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -655,7 +656,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(yield* fs.readFileString(selected.executablePath)).toBe(serverContents);
       expect(yield* fs.readFileString(selected.harnessPath!)).toBe(harnessContents);
       expect(yield* fs.readDirectory(path.join(installation.managedDirectory, "versions"))).toEqual(
-        expect.arrayContaining([previousReleaseId, (yield* releaseAsset()).sha256]),
+        [(yield* releaseAsset()).sha256],
       );
       expect(requests).toEqual([(yield* releaseAsset()).url]);
     }),
@@ -775,6 +776,63 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         expect(state.phase).toBe("failed");
         expect(state.message).toMatch(/4 KiB/);
         expect(requests).toEqual([]);
+      }),
+  );
+
+  it.effect.each(["downloaded", "existing", "concurrent"] as const)(
+    "reports a verification timeout for a %s runtime without changing the active release",
+    (source) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const asset = yield* releaseAsset();
+        const entered = yield* Deferred.make<void>();
+        let verificationCount = 0;
+        const { installation, stagingReleased, requests, validations } = yield* makeHarness({
+          previous: true,
+          asset,
+          fileSystem: FileSystem.FileSystem.of({
+            ...fs,
+            rename: (from, to) =>
+              source === "concurrent" && path.basename(path.dirname(to)) === "versions"
+                ? writeRelease(path.dirname(path.dirname(to)), asset, false).pipe(
+                    Effect.provideService(FileSystem.FileSystem, fs),
+                    Effect.provideService(Path.Path, path),
+                    Effect.andThen(
+                      Effect.fail(
+                        PlatformError.systemError({
+                          _tag: "AlreadyExists",
+                          module: "FileSystem",
+                          method: "rename",
+                          pathOrDescriptor: to,
+                        }),
+                      ),
+                    ),
+                  )
+                : fs.rename(from, to),
+          }),
+          validate: () =>
+            Effect.suspend(() =>
+              source === "concurrent" && verificationCount++ === 0
+                ? Effect.void
+                : Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+            ),
+        });
+        if (source === "existing") {
+          yield* writeRelease(installation.managedDirectory, asset, false);
+        }
+        yield* installation.start;
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust("90 seconds");
+        expect(yield* terminalState(installation)).toMatchObject({
+          phase: "failed",
+          message:
+            "Antigravity runtime verification timed out after 90 seconds. Check this environment's server logs for startup errors, then retry installation.",
+        });
+        if (source !== "existing") yield* Deferred.await(stagingReleased);
+        yield* expectPreviousRelease(installation);
+        expect(requests).toHaveLength(source === "existing" ? 0 : 1);
+        expect(validations).toHaveLength(source === "concurrent" ? 2 : 1);
       }),
   );
 
@@ -1069,8 +1127,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         const baseDir = yield* fs
           .makeTempDirectoryScoped({ prefix: "t3-agy-cli-test-" })
           .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-        const cliDirectory = path.join(baseDir, "cli");
+        const cliDirectory = path.join(baseDir, 'cli" ');
         yield* fs.makeDirectory(cliDirectory);
+        const siblingDirectory = path.join(baseDir, 'cli"');
+        yield* fs.makeDirectory(siblingDirectory);
+        yield* fs.writeFileString(path.join(siblingDirectory, "agy"), "other cli", { mode: 0o755 });
         const cli = path.join(cliDirectory, "antigravity");
         const alias = path.join(cliDirectory, "agy");
         const other = path.join(cliDirectory, "custom-acp");
@@ -1093,6 +1154,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           executablePath: alias,
           harnessPath: null,
         });
+        expect(yield* installation.resolve(undefined, { PATH: cliDirectory })).toMatchObject({
+          executablePath: alias,
+          harnessPath: null,
+          source: "path",
+        });
         expect(yield* installation.resolve(other).pipe(Effect.flip)).toMatchObject({
           operation: "resolve",
         });
@@ -1113,7 +1179,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           const windowsDirectory = path.join(baseDir, `windows-${name}`);
           yield* fs.makeDirectory(windowsDirectory);
           yield* fs.writeFileString(path.join(windowsDirectory, name), "cli");
-          const selected = yield* windows.resolve("agy", { PATH: windowsDirectory });
+          const selected = yield* windows.resolve("agy", { PATH: `"${windowsDirectory}"` });
           expect(selected.harnessPath).toBeNull();
           expect((yield* fs.realPath(selected.executablePath)).toLowerCase()).toBe(
             (yield* fs.realPath(path.join(windowsDirectory, name))).toLowerCase(),
@@ -1212,7 +1278,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
     Effect.gen(function* () {
       const manifestEntered = yield* Deferred.make<void>();
       const releaseManifest = yield* Deferred.make<void>();
-      const { installation, fs, stagingReleased } = yield* makeHarness({
+      const { installation, fs, baseDir, stagingReleased } = yield* makeHarness({
         native: true,
         platform: "win32",
         archive: Buffer.from(serverContents),
@@ -1237,6 +1303,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(yield* fs.readFileString(oldExecutable.executablePath)).toBe(serverContents);
       expect(yield* installation.remove().pipe(Effect.flip)).toMatchObject({ operation: "remove" });
       yield* Scope.close(processScope, Exit.void);
+      yield* makeHarness({ native: true, platform: "win32", baseDir });
+      expect(yield* fs.exists(oldExecutable.managedVersionDirectory!)).toBe(false);
+      expect(yield* fs.readFileString(current.executablePath)).toBe(serverContents);
       yield* installation.remove();
       expect(yield* fs.exists(installation.managedDirectory)).toBe(false);
     }),
