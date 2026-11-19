@@ -60,6 +60,38 @@ describe("HistorySwipeNavigation", () => {
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
 
+  it.each([
+    [
+      "reversing over a scroller after swiping forward at its right edge keeps the thread",
+      800,
+      [20, -50, 140],
+    ],
+    [
+      "reversing over a scroller after swiping back at its left edge keeps the thread",
+      0,
+      [-20, 50, -140],
+    ],
+  ] as const)("%s", async (_name, scrollLeft, deltas) => {
+    navigateHistory.mockReset();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    await using screen = await render(<HistorySwipeNavigation />);
+    const viewport = screen.container.appendChild(document.createElement("div"));
+    viewport.style.cssText = "width: 200px; overflow-x: auto";
+    const content = viewport.appendChild(document.createElement("div"));
+    content.style.cssText = "height: 20px; width: 1000px";
+    viewport.scrollLeft = scrollLeft;
+    // Synthetic wheel events do not scroll natively.
+    viewport.addEventListener("wheel", (event) => {
+      viewport.scrollLeft += event.deltaX;
+    });
+
+    for (const deltaX of [...deltas, 0]) {
+      content.dispatchEvent(new WheelEvent("wheel", { deltaX, bubbles: true, composed: true }));
+    }
+
+    expect(navigateHistory).not.toHaveBeenCalled();
+  });
+
   it("a horizontal mouse wheel tick off macOS keeps the thread", async () => {
     navigateHistory.mockReset();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
