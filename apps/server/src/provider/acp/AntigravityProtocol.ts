@@ -170,6 +170,17 @@ function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
     : copyBoundedText(`${TOOL_TEXT_TRUNCATED}${text.slice(-limit)}`);
 }
 
+function boundCommandOutput(text: string, limit = TOOL_TEXT_LIMIT): string {
+  if (
+    text.length <= limit ||
+    (text.length <= limit + TOOL_TEXT_TRUNCATED.length && text.startsWith(TOOL_TEXT_TRUNCATED))
+  ) {
+    return text;
+  }
+  const tail = text.slice(-limit).replace(/^[\uDC00-\uDFFF]/u, "");
+  return copyBoundedText(`${TOOL_TEXT_TRUNCATED}${tail}`);
+}
+
 /** Keeps the tail of long tool text, as every bounded tool payload does. */
 export { boundText as boundAntigravityToolText };
 
@@ -181,7 +192,12 @@ interface ToolPayloadBudget {
   text: number;
 }
 
-function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: number): unknown {
+function sanitizeToolValue(
+  value: unknown,
+  budget: ToolPayloadBudget,
+  depth: number,
+  field?: string,
+): unknown {
   if (depth > 12 || budget.nodes-- <= 0) {
     return undefined;
   }
@@ -189,7 +205,9 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
     if (/^data:image\//i.test(value) || budget.text <= 0) {
       return undefined;
     }
-    const text = boundText(value, Math.min(TOOL_TEXT_LIMIT, budget.text));
+    const bound =
+      field === "combinedOutput" || field === "combined_output" ? boundCommandOutput : boundText;
+    const text = bound(value, Math.min(TOOL_TEXT_LIMIT, budget.text));
     budget.text -= text.length;
     return text;
   }
@@ -218,7 +236,7 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
     ) {
       continue;
     }
-    const sanitized = sanitizeToolValue(entry, budget, depth + 1);
+    const sanitized = sanitizeToolValue(entry, budget, depth + 1, key);
     if (sanitized !== undefined) entries.push([key, sanitized]);
   }
   return Object.fromEntries(entries);
@@ -436,7 +454,8 @@ export function normalizeAntigravityToolCall(
     output?.working_dir;
   const cwd = nativeCwd?.trim() ? boundText(nativeCwd.trim()) : undefined;
   const nativeOutput = output?.combinedOutput ?? output?.combined_output;
-  const aggregatedOutput = nativeOutput === undefined ? undefined : boundText(nativeOutput);
+  const aggregatedOutput =
+    nativeOutput === undefined ? undefined : boundCommandOutput(nativeOutput);
   const exitCode = output?.exitCode ?? output?.exit_code;
   const imagePath = localImagePath(output?.imagePath);
   const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);

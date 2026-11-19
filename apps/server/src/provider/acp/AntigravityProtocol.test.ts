@@ -460,24 +460,32 @@ describe("Antigravity tool results", () => {
     });
   });
 
-  it("bounds both canonical output and retained raw output", () => {
-    const output = `${"output line\n".repeat(20_000)}last line\n`;
+  it.each([
+    { name: "ASCII", boundary: "x", kept: "x", field: "combinedOutput" },
+    { name: "split emoji", boundary: "🚀", kept: "", field: "combinedOutput" },
+    { name: "split emoji (snake case)", boundary: "🚀", kept: "", field: "combined_output" },
+  ])("bounds both canonical and retained raw output at $name", ({ boundary, kept, field }) => {
+    const tail = `${"x".repeat(7_989)}last line\n`;
+    const output = `${"output line\n".repeat(20_000)}${boundary}${tail}`;
+    const expected = `[Earlier output truncated]\n\n${kept}${tail}`;
+    const { combinedOutput: _combinedOutput, ...rawOutput } = commandCompleted.update.rawOutput;
     const event = parseToolUpdate({
       ...commandCompleted,
       update: {
         ...commandCompleted.update,
         rawOutput: {
-          ...commandCompleted.update.rawOutput,
-          combinedOutput: output,
+          ...rawOutput,
+          [field]: output,
           formatted_output: output,
         },
       },
     });
     const toolCall = normalizeAntigravityToolCall(event.toolCall);
     expect(toolCall.data).toMatchObject({
-      item: { aggregatedOutput: expect.stringContaining("last line\n") },
-      rawOutput: { combinedOutput: expect.stringContaining("last line\n") },
+      item: { aggregatedOutput: expected },
+      rawOutput: { [field]: expected },
     });
+    expect(event.toolCall.data.rawOutput).toMatchObject({ [field]: expected });
     expect(JSON.stringify(toolCall).length).toBeLessThan(20_000);
     expect(JSON.stringify(event.rawPayload).length).toBeLessThan(10_000);
     expect(JSON.stringify(event.rawPayload)).not.toContain("formatted_output");
