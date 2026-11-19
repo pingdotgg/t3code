@@ -727,6 +727,68 @@ it.effect("a run that was not asked for a result rejects a submission", () => {
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect(
+  "a late submission specifying an inactive run is rejected and does not land on the active run",
+  () => {
+    const harness = makeHarness({ runSetup: () => Effect.never });
+    const outputSchema = {
+      type: "object",
+      properties: { verdict: { enum: ["merge", "fix-first"] } },
+      required: ["verdict"],
+    };
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:output:launch",
+        thread: "thread:output:stale",
+        message: "Review it",
+        workspace: { type: "worktree", baseRef: "main" },
+      });
+      const launched = yield* launches.launch({
+        ...input,
+        initialMessage: { ...input.initialMessage!, outputSchema },
+      });
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      const activeRun = projection.runs[0]!;
+      assert.isDefined(activeRun);
+
+      const staleRunId = RunId.make("run:stale");
+      const rejected = yield* threads
+        .submitRunOutput({
+          threadId: launched.threadId,
+          commandId: CommandId.make("command:output:stale"),
+          runId: staleRunId,
+          json: '{"verdict":"merge"}',
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(rejected._tag, "ThreadManagementRunOutputRejectedError");
+      assert.include(rejected.message, "no longer active");
+
+      // Verify the active run still has no output recorded
+      const storedBefore = (yield* threads.getThreadProjection(launched.threadId)).runs.find(
+        (run) => run.id === activeRun.id,
+      );
+      assert.isUndefined(storedBefore?.output);
+
+      // Verify that submitting with the matching runId succeeds
+      const accepted = yield* threads.submitRunOutput({
+        threadId: launched.threadId,
+        commandId: CommandId.make("command:output:active"),
+        runId: activeRun.id,
+        json: '{"verdict":"merge"}',
+      });
+      assert.equal(accepted.runId, activeRun.id);
+
+      const storedAfter = (yield* threads.getThreadProjection(launched.threadId)).runs.find(
+        (run) => run.id === activeRun.id,
+      );
+      assert.deepStrictEqual(storedAfter?.output?.value, { verdict: "merge" });
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
 it.effect("provisions independent launches concurrently instead of behind a global semaphore", () =>
   Effect.gen(function* () {
     const setupCount = yield* Ref.make(0);

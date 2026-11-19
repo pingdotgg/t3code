@@ -484,6 +484,7 @@ export interface ThreadManagementServiceShape {
   /** Stores what the thread's running turn returns, once it fits the schema that turn declared. */
   readonly submitRunOutput: (input: {
     readonly threadId: ThreadId;
+    readonly runId?: RunId | undefined;
     readonly commandId: CommandId;
     readonly json: string;
   }) => Effect.Effect<{ readonly runId: RunId }, ThreadManagementFailure>;
@@ -1034,6 +1035,12 @@ const make = Effect.gen(function* () {
       return yield* new ThreadManagementRunOutputRejectedError({
         threadId: input.threadId,
         problem: "This turn was not asked for a result. Reply in your message instead.",
+      });
+    }
+    if (input.runId !== undefined && run.id !== input.runId) {
+      return yield* new ThreadManagementRunOutputRejectedError({
+        threadId: input.threadId,
+        problem: "This output was submitted for a turn that is no longer active.",
       });
     }
     const checked = yield* checkOutput(run.outputSchema, input.json);

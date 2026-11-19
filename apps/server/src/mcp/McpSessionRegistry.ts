@@ -1,4 +1,4 @@
-import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -15,6 +15,7 @@ import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
+  readonly runId?: RunId | undefined;
   readonly providerInstanceId: ProviderInstanceId;
   /** False omits the preview capability wherever the token is honored. Defaults to full access. */
   readonly browserToolsAvailable?: boolean;
@@ -130,6 +131,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         requestNamespace: providerSessionId,
         thread: {
           threadId: ThreadId.make(request.threadId),
+          ...(request.runId !== undefined ? { runId: request.runId } : {}),
           providerSessionId,
           providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
           subagent: request.subagent === true,
@@ -153,6 +155,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         config: {
           environmentId,
           threadId: scope.thread.threadId,
+          ...(scope.thread.runId !== undefined ? { runId: scope.thread.runId } : {}),
           providerSessionId,
           providerInstanceId: scope.thread.providerInstanceId,
           endpoint,

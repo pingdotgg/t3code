@@ -1,4 +1,4 @@
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
 /**
@@ -10,6 +10,7 @@ export const MCP_TOOL_EXPOSURE_HEADER = "t3-tool-exposure";
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly runId?: RunId | undefined;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly endpoint: string;

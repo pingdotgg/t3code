@@ -14,6 +14,7 @@ import {
   type OrchestrationV2Subagent,
   ProviderInstanceId,
   ProviderSessionId,
+  RunId,
   ThreadId,
   type OrchestrationV2TurnItem,
   type ProviderThreadId,
@@ -554,6 +555,7 @@ export const layerWithOptions = (
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
+        runId?: RunId,
       ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
           ? mcpSessions
@@ -596,7 +598,8 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
                     // A credential issued while the lineage read failed is replaced once it works.
-                    (resolved.thread.subagent === true) === subagent
+                    (resolved.thread.subagent === true) === subagent &&
+                    (runId === undefined || resolved.thread.runId === runId)
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
@@ -605,6 +608,7 @@ export const layerWithOptions = (
                 yield* mcpSessionRegistry.revokeThread(threadId);
                 const credential = yield* mcpSessionRegistry.issue({
                   threadId,
+                  ...(runId !== undefined ? { runId } : {}),
                   providerInstanceId,
                   browserToolsAvailable,
                   capabilities,
@@ -1744,6 +1748,7 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
         readonly providerInstanceId: ProviderInstanceId;
+        readonly runId?: RunId;
       }) =>
         Effect.suspend(() => {
           let attachedTo: ProviderAdapter.ProviderAdapterV2SessionRuntime | undefined;
@@ -1762,8 +1767,12 @@ export const layerWithOptions = (
               Effect.tap((runtime) => Effect.sync(() => (attachedTo = runtime))),
               Effect.uninterruptible,
             );
-            if (attached !== undefined) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+            if (attached !== undefined || input.runId !== undefined) {
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+                input.runId,
+              );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
@@ -2467,6 +2476,7 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId: input.threadId,
                 providerInstanceId: runtime.instanceId,
+                runId: input.runId,
               }),
             ).pipe(
               // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
