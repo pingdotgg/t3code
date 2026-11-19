@@ -99,13 +99,19 @@ export function changeQuestionAttachmentPreparation(key: DraftId, delta: number)
   );
 }
 
-export function clearQuestionAttachmentDraft(key: DraftId): void {
+/** Releases the draft's attachments except `keepIds`, which have moved to another draft. */
+export function clearQuestionAttachmentDraft(
+  key: DraftId,
+  keepIds: ReadonlySet<string> = new Set(),
+): void {
   const store = useComposerDraftStore.getState();
   const draft = store.getComposerDraft(key);
   if (draft) {
-    releaseDraftAttachments([...draft.images, ...draft.files]);
+    releaseDraftAttachments([...draft.images, ...draft.files].filter(({ id }) => !keepIds.has(id)));
     for (const image of draft.images) {
-      if (image.previewUrl.startsWith("blob:")) URL.revokeObjectURL(image.previewUrl);
+      if (!keepIds.has(image.id) && image.previewUrl.startsWith("blob:")) {
+        URL.revokeObjectURL(image.previewUrl);
+      }
     }
   }
   store.clearComposerContent(key);
@@ -135,7 +141,8 @@ function pruneResolvedQuestionAttachmentDrafts(
 /**
  * Stop cancels an open question and a provider timeout expires it; neither sent
  * the typed answers, so they move to the thread's own draft (not a queued-message
- * edit the composer may be showing) with the thread chips they reference.
+ * edit the composer may be showing) with the thread chips they reference and
+ * every file or image attached to them.
  */
 function returnUnsentAnswersToThreadDraft(
   environmentId: EnvironmentId,
@@ -165,9 +172,36 @@ function returnUnsentAnswersToThreadDraft(
       );
     }
   }
-  if (prompt === currentPrompt) return;
-  store.setPrompt(target, prompt);
-  store.addThreadContexts(target, threadContexts, { appendReference: false });
+  if (prompt !== currentPrompt) {
+    store.setPrompt(target, prompt);
+    store.addThreadContexts(target, threadContexts, { appendReference: false });
+  }
+
+  const threadPrefix = questionAttachmentDraftPrefix(environmentId, threadId);
+  const requestPrefixes = unansweredRequestIds.map(
+    (requestId) =>
+      `${threadPrefix}${encodeURIComponent(`${JSON.stringify([requestId]).slice(0, -1)},`)}`,
+  );
+  const questionDrafts = Object.entries(store.draftsByThreadKey).filter(([key]) =>
+    requestPrefixes.some((requestPrefix) => key.startsWith(requestPrefix)),
+  );
+  const images = questionDrafts.flatMap(([, draft]) => draft.images);
+  const files = questionDrafts.flatMap(([, draft]) => draft.files);
+  if (images.length === 0 && files.length === 0) return;
+  store.addImages(target, images);
+  store.addFiles(target, files);
+  const moved = useComposerDraftStore.getState().getComposerDraft(target);
+  const movedIds = new Set([...(moved?.images ?? []), ...(moved?.files ?? [])].map(({ id }) => id));
+  // Only a mounted composer re-serializes images, so carry their saved copies for a reload.
+  const persisted = moved?.persistedAttachments ?? [];
+  const persistedIds = new Set(persisted.map(({ id }) => id));
+  const movedPersisted = questionDrafts
+    .flatMap(([, draft]) => draft.persistedAttachments)
+    .filter(({ id }) => movedIds.has(id) && !persistedIds.has(id));
+  if (movedPersisted.length > 0) {
+    void store.syncPersistedAttachments(target, [...persisted, ...movedPersisted]);
+  }
+  for (const [key] of questionDrafts) clearQuestionAttachmentDraft(DraftId.make(key), movedIds);
 }
 
 // Resolution can come from anywhere: another device, an interrupt, the turn

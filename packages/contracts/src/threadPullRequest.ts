@@ -51,6 +51,7 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
   reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
   mergeability: Schema.optional(PullRequestMergeability),
+  rebaseRequired: Schema.optional(Schema.Boolean),
 });
 export type ThreadPullRequestSnapshot = typeof ThreadPullRequestSnapshot.Type;
 
@@ -97,6 +98,7 @@ export const ThreadPullRequestWatch = Schema.Struct({
   /** Reported remarks at remarksThrough, so late arrivals at that timestamp still count. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
   conflicting: Schema.Boolean,
+  rebaseRequired: Schema.optional(Schema.Boolean),
   /** Last removal seen; null after an empty read, absent before the first read. */
   mergeQueueRemovalId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Consecutive comment-only wakes; limited to prevent bot loops. */
@@ -116,8 +118,14 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * watch keep its thread waiting; absent on watches not read since it existed.
    */
   checksPending: Schema.optional(Schema.Boolean),
+  /** How long the watch holds its thread. Absent means until every check finished. */
+  until: Schema.optional(Schema.Literal("merged")),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
+
+/** `merged` also ends when the PR closes or the agent unwatches it. */
+export const PullRequestWatchUntil = Schema.Literals(["checks", "merged"]);
+export type PullRequestWatchUntil = typeof PullRequestWatchUntil.Type;
 
 export const ThreadPullRequestLink = Schema.Struct({
   ...ThreadPullRequestKey.fields,

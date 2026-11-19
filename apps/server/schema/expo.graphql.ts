@@ -5,9 +5,6 @@ export const Int = Schema.Number.check(Schema.isInt32())
 
 export const ID = Schema.String
 
-/** The `JSONObject` scalar type represents JSON objects as specified by [ECMA-404](http://www.ecma-international.org/publications/files/ECMA-ST/ECMA-404.pdf). */
-export const JSONObject = Schema.Json
-
 /**
  * - `ANDROID`
  * - `IOS`
