@@ -78,6 +78,7 @@ function fakeLinear(
   const requests: Array<{
     readonly authorization: string | undefined;
     readonly operation: string;
+    readonly query: string;
   }> = [];
   const http = Layer.succeed(
     HttpClient.HttpClient,
@@ -88,7 +89,11 @@ function fakeLinear(
           body._tag === "Uint8Array" ? new TextDecoder().decode(body.body) : String(body._tag);
         const parsed = JSON.parse(text) as { query: string; variables: Record<string, unknown> };
         const operation = /^(?:query|mutation) (\w+)/.exec(parsed.query)?.[1] ?? "?";
-        requests.push({ authorization: request.headers.authorization, operation });
+        requests.push({
+          authorization: request.headers.authorization,
+          operation,
+          query: parsed.query,
+        });
         const answer = answers[operation];
         const answered = answer?.(parsed.variables);
         const response =
@@ -247,6 +252,43 @@ describe("LinearIssueTracker", () => {
         }),
       );
       expect([refused.reason, refused.retryAt]).toEqual(["rate-limited", resetAt]);
+    }),
+  );
+
+  it.effect("searches issue descriptions without downloading them in list rows", () =>
+    Effect.gen(function* () {
+      const summary = issue("ENG-1");
+      delete summary.description;
+      const { tracker, requests } = fakeLinear({
+        T3Issues: ({ filter }) => {
+          expect(filter).toMatchObject({
+            or: [
+              { title: { containsIgnoreCase: "repro steps" } },
+              { description: { containsIgnoreCase: "repro steps" } },
+            ],
+          });
+          return {
+            issues: {
+              nodes: [summary],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          };
+        },
+        T3Issue: () => ({ issue: bareDetail("ENG-1") }),
+      });
+      const api = yield* tracker;
+      const list = yield* api.listIssues({
+        ...target,
+        state: "open",
+        involvement: "all",
+        query: "repro steps",
+        sort: "updated",
+        limit: 50,
+      });
+      expect(list.items.map((entry) => entry.key)).toEqual(["ENG-1"]);
+      expect(requests[0]?.query).not.toMatch(/\bdescription\b/);
+      expect((yield* api.getIssue({ ...target, key: "ENG-1" })).body).toBe("body");
+      expect(requests[1]?.query).toMatch(/\bdescription\b/);
     }),
   );
 
