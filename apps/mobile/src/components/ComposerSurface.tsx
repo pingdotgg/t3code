@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { I18nManager, Platform, useWindowDimensions, type ViewStyle } from "react-native";
+import { I18nManager, Platform, type ViewStyle } from "react-native";
 import Animated, {
   FadeIn,
   type LayoutAnimationFunction,
@@ -43,20 +43,14 @@ function collapsedEditorInset(text: ScaledTextRole): number {
 
 const EXPANDED_EDITOR_INSET = 14;
 
+// `text` is the composer's role (`useComposerTextRole`), which already follows the system text
+// size on iOS, so the box and the 4-line scroll threshold are in the units the editor measures.
 export function useCompactComposerEditor(
-  appText: ScaledTextRole,
+  text: ScaledTextRole,
   value: string,
   animate: boolean,
   controlsHeight: number,
 ) {
-  // The iOS editor draws at the system text size, so its measured content height is in those
-  // units. Size the box and the 4-line scroll threshold in the same units, or a smaller system
-  // text size caps the box at 4 lines with scrolling never switched on.
-  const { fontScale } = useWindowDimensions();
-  const text =
-    Platform.OS === "ios"
-      ? { fontSize: appText.fontSize * fontScale, lineHeight: appText.lineHeight * fontScale }
-      : appText;
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [compactWidth, setCompactWidth] = useState(0);
   const contentHeight = contentSize.height;
