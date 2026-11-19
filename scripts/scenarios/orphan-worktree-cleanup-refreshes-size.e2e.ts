@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off - the scenario seeds an 8 MB file and rewrites settings.json as the repro wrote it.
 import * as NodeCrypto from "node:crypto";
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
