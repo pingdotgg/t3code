@@ -2491,6 +2491,7 @@
   "55f4078f7fe8e597": "{term, select, mr {MR #{number}、ステータス保留中} cr {変更リクエスト #{number}、ステータス保留中} other {PR #{number}、ステータス保留中}}",
   "3260b22f72f7effb": "{tooltipLead}: {title}",
   "feac8e54b30c5a03": "ターミナルのプロセスが実行中",
+  "a50c626faf82b4d1": "{count, plural, other {他 {count} 件}}",
   "fc2c9a91f498ad6b": "{count, plural, other {{count} 個のターミナルプロセスが実行中。ターミナルを開く}}",
   "643c4b50feadc874": "ワークツリー: {path} ({branch})",
   "fb7c44da0f0825ea": "ワークツリー: {path}",

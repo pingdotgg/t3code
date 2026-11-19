@@ -252,6 +252,9 @@ function SidebarProviderStack(props: {
   );
 }
 
+// The PR badge lists them all; the hover card stays a short preview.
+const HOVER_CARD_PULL_REQUEST_LIMIT = 5;
+
 function SidebarThreadTooltip({
   thread,
   project,
@@ -297,8 +300,11 @@ function SidebarThreadTooltip({
         title={thread.title}
         footer={
           supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
-            <div className="min-h-0 overflow-hidden border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
-              <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} />
+            <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
+              <ThreadPullRequestsMiniList
+                pullRequests={thread.pullRequests}
+                limit={HOVER_CARD_PULL_REQUEST_LIMIT}
+              />
             </div>
           ) : null
         }

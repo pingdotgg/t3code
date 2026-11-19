@@ -515,19 +515,24 @@ function PullRequestBadge({
 export function ThreadPullRequestsMiniList({
   pullRequests,
   onOpenPullRequest,
+  limit,
 }: {
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenPullRequest?: (event: MouseEvent<HTMLAnchorElement>, url: string) => void;
+  limit?: number;
 }) {
+  const gt = useGT();
   const lines = pipe(
     visibleThreadPullRequests(pullRequests),
     resolveThreadPullRequestChains,
     pullRequestListLines,
   );
   if (lines.length === 0) return null;
+  const shownLines = limit === undefined ? lines : lines.slice(0, limit);
+  const hiddenCount = lines.length - shownLines.length;
   return (
     <ul className="flex flex-col gap-1">
-      {lines.map((line) => {
+      {shownLines.map((line) => {
         const snapshot = line.link.snapshot;
         const presentation =
           snapshot === null
@@ -556,6 +561,14 @@ export function ThreadPullRequestsMiniList({
           </ThreadPullRequestMiniListItem>
         );
       })}
+      {hiddenCount > 0 ? (
+        <li>
+          {gt("{count, plural, one {+{count} more} other {+{count} more}}", {
+            count: hiddenCount,
+            $context: "pull requests not shown in a short preview list",
+          })}
+        </li>
+      ) : null}
     </ul>
   );
 }

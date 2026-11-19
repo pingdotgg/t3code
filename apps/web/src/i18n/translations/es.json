@@ -2493,6 +2493,7 @@
   "55f4078f7fe8e597": "{term, select, mr {MR} cr {solicitud de cambios} other {PR}} #{number}, estado pendiente",
   "3260b22f72f7effb": "{tooltipLead}: {title}",
   "feac8e54b30c5a03": "Proceso de terminal en ejecución",
+  "a50c626faf82b4d1": "{count, plural, one {+{count} más} other {+{count} más}}",
   "fc2c9a91f498ad6b": "{count, plural, one {{count} proceso de terminal en ejecución. Abrir terminal} other {{count} procesos de terminal en ejecución. Abrir terminal}}",
   "643c4b50feadc874": "Worktree: {path} ({branch})",
   "fb7c44da0f0825ea": "Worktree: {path}",
