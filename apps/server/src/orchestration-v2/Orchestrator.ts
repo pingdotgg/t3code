@@ -14637,23 +14637,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // A finished delegate otherwise keeps its provider process until the idle timeout. Callers hold
   // the parent lock; the child lock orders this after any follow-up that started a run meanwhile.
   const releaseFinishedDelegateSessions = Effect.fn("Orchestrator.releaseFinishedDelegateSessions")(
-    function* (childThreadId: ThreadId, resultRunId: RunId) {
+    function* (childThreadId: ThreadId, resultRunId: RunId, taskId: NodeId) {
       yield* threadDispatch.withLock(
         childThreadId,
         Effect.gen(function* () {
-          const child = yield* projectionStore.getThreadRecords(
-            childThreadId,
-            ["runs", "messages", "subagents", "providerThreads", "providerSessions"],
-            { messageRoles: ["user"] },
-          );
+          const { controls: child, progress } = yield* readDelegatedChildControls(childThreadId, [
+            taskId,
+          ]);
           // Unawaited background tasks still allow a result but die with the process; the idle
           // timer keeps their process pinned.
           if (
-            delegatedTaskProgress(child).state !== "result_available" ||
+            progress.state !== "result_available" ||
             child.providerThreads.some((thread) => (thread.pendingBackgroundTasks ?? []).length > 0)
           )
             return;
-          for (const session of child.providerSessions) {
+          const { providerSessions } = yield* projectionStore.getThreadRecords(childThreadId, [
+            "providerSessions",
+          ]);
+          for (const session of providerSessions) {
             // Shared processes unload their threads themselves; only a per-thread process lingers.
             if (
               session.status === "stopped" ||
@@ -14685,6 +14686,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ["runs", "messages", "subagents", "providerThreads"],
       { messageRoles: ["user"], delegatedTaskMessagesOnly: true },
     );
+
+  const readDelegatedChildControls = Effect.fn("Orchestrator.readDelegatedChildControls")(
+    function* (childThreadId: ThreadId, taskIds: ReadonlyArray<NodeId>) {
+      const controls: DelegatedChildControls = yield* projectionStore.getDelegatedChildControls(
+        childThreadId,
+        { taskIds, windowSize: DELEGATED_CHILD_RUN_WINDOW },
+      );
+      const progress = delegatedTaskProgress(controls);
+      // The latest result may have ended before the runs read above; then read them all.
+      if (
+        controls.runsFloor !== undefined &&
+        (progress.resultRun === undefined || !ranSince(progress.resultRun, controls.runsFloor))
+      ) {
+        const all = yield* readAllDelegatedChildControls(childThreadId);
+        return { controls: all, progress: delegatedTaskProgress(all) };
+      }
+      return { controls, progress };
+    },
+  );
 
   /**
    * Callers must hold the parent thread's dispatch lock: wake-policy updates the same
@@ -15000,7 +15020,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       ];
       yield* writeSystemEvents(completionEvents, [], { updateDelegatedCompletionOnly: true });
-      yield* releaseFinishedDelegateSessions(childThreadId, childRun.id);
+      yield* releaseFinishedDelegateSessions(childThreadId, childRun.id, task.id);
 
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
         yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
@@ -15046,19 +15066,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.childThreadId === childThreadId &&
         !(task.result !== null && resultSent),
     );
-    let childControls: DelegatedChildControls = yield* projectionStore.getDelegatedChildControls(
+    const { controls: childControls, progress } = yield* readDelegatedChildControls(
       childThreadId,
-      { taskIds: openTasks.map((task) => task.id), windowSize: DELEGATED_CHILD_RUN_WINDOW },
+      openTasks.map((task) => task.id),
     );
-    let progress = delegatedTaskProgress(childControls);
-    // The latest result may have ended before the runs read above; then read them all.
-    if (
-      childControls.runsFloor !== undefined &&
-      (progress.resultRun === undefined || !ranSince(progress.resultRun, childControls.runsFloor))
-    ) {
-      childControls = yield* readAllDelegatedChildControls(childThreadId);
-      progress = delegatedTaskProgress(childControls);
-    }
     for (const task of openTasks) {
       // A cancelled task does not wait for the work its cancel is stopping.
       const cancelled = task.cancelledRunId !== undefined;
