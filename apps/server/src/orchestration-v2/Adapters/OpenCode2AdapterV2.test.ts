@@ -330,6 +330,7 @@ const resumed = (
     readonly lastRunOrdinal?: number;
     readonly pendingBackgroundTasks?: OrchestrationV2ProviderThread["pendingBackgroundTasks"];
     readonly goal?: OrchestrationV2ProviderThread["goal"];
+    readonly contextUsage?: OrchestrationV2ProviderThread["contextUsage"];
     readonly external?: boolean;
     readonly supervised?: boolean;
     readonly processExit?: Effect.Effect<void>;
@@ -398,6 +399,7 @@ const resumed = (
           ? {}
           : { lastRunOrdinal: options.lastRunOrdinal }),
         ...(options?.goal === undefined ? {} : { goal: options.goal }),
+        ...(options?.contextUsage === undefined ? {} : { contextUsage: options.contextUsage }),
         ...(options?.pendingBackgroundTasks === undefined
           ? {}
           : { pendingBackgroundTasks: options.pendingBackgroundTasks }),
@@ -506,6 +508,37 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
+  it.effect("drops context usage carried over from before a completed compaction", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.compaction.started", { sessionID: SESSION, reason: "manual", recent: "" }),
+          event("session.compaction.ended", {
+            sessionID: SESSION,
+            reason: "manual",
+            text: "Summary",
+            recent: "",
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { contextUsage: { usedTokens: 150_000, maxTokens: 160_000 } },
+      );
+      assert.equal(thread.contextUsage?.usedTokens, 150_000);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const usage = (yield* Fiber.join(collected)).flatMap((event) =>
+        event.type === "provider_thread.updated" ? [event.providerThread.contextUsage] : [],
+      );
+      assert.isNull(usage.at(-1));
     }),
   );
 
