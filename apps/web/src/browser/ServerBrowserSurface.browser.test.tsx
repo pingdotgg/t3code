@@ -220,3 +220,40 @@ describe("ServerBrowserSurface history", () => {
     expect(mouseInputs()).not.toEqual([]);
   });
 });
+
+describe("ServerBrowserSurface control handoff", () => {
+  it("takes control on open and focuses input once the page is yours", async () => {
+    setup();
+    const onControlRequestHandled = vi.fn();
+    const container = document.createElement("div");
+    container.style.cssText = "width: 400px; height: 300px; display: flex;";
+    await using _screen = await render(
+      <ServerBrowserSurface
+        environmentId={EnvironmentId.make("environment-control")}
+        threadId="thread-control"
+        tabId="tab-control"
+        visible
+        takeControlOnOpen
+        onControlRequestHandled={onControlRequestHandled}
+        className="flex-1"
+      />,
+      { container },
+    );
+    await vi.waitFor(() => expect(mocks.createClient).toHaveBeenCalled());
+    const handlers = mocks.createClient.mock.calls.at(-1)![1];
+    const input = container.querySelector("textarea")!;
+
+    await act(() =>
+      handlers.onControl?.({ canOperate: true, controller: "agent", generation: 1, dialog: null }),
+    );
+    expect(mocks.sent).toContainEqual({ type: "takeControl" });
+    expect(document.activeElement).not.toBe(input);
+    expect(onControlRequestHandled).not.toHaveBeenCalled();
+
+    await act(() =>
+      handlers.onControl?.({ canOperate: true, controller: "you", generation: 2, dialog: null }),
+    );
+    expect(document.activeElement).toBe(input);
+    expect(onControlRequestHandled).toHaveBeenCalledTimes(1);
+  });
+});
