@@ -1,65 +1,54 @@
 // Formatters pin the default zone when built, and Hermes keeps Date's local offset until a cold
 // start (react/react-native#59131), so formatting and day checks follow the zone Intl reports.
-function buildFormatters(timeZone: string) {
+function buildFormatters(timeZone: string, dateLocales: Intl.LocalesArgument, is24Hour?: boolean) {
   return {
     timeZone,
-    time: new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", timeZone }),
-    date: new Intl.DateTimeFormat(undefined, { month: "numeric", day: "numeric", timeZone }),
-    dateWithYear: new Intl.DateTimeFormat(undefined, {
+    time: new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone,
+      ...(is24Hour === undefined ? {} : { hourCycle: is24Hour ? "h23" : "h12" }),
+    }),
+    date: new Intl.DateTimeFormat(dateLocales, { month: "numeric", day: "numeric", timeZone }),
+    dateWithYear: new Intl.DateTimeFormat(dateLocales, {
       month: "numeric",
       day: "numeric",
       year: "numeric",
       timeZone,
     }),
-    year: new Intl.DateTimeFormat(undefined, { year: "numeric", timeZone }),
+    year: new Intl.DateTimeFormat(dateLocales, { year: "numeric", timeZone }),
   };
 }
 
 // Reading the zone builds a formatter (tens of µs), so feed rows share one read per second.
 const ZONE_RECHECK_MS = 1_000;
-let formatters: ReturnType<typeof buildFormatters> | null = null;
+let timeZone: string | undefined;
 let zoneCheckedAt = 0;
-function currentFormatters() {
+function currentTimeZone(): string {
   const now = Date.now();
-  if (formatters && Math.abs(now - zoneCheckedAt) < ZONE_RECHECK_MS) return formatters;
+  if (timeZone !== undefined && Math.abs(now - zoneCheckedAt) < ZONE_RECHECK_MS) return timeZone;
   zoneCheckedAt = now;
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (!formatters || formatters.timeZone !== timeZone) formatters = buildFormatters(timeZone);
-  return formatters;
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return timeZone;
 }
 
-/** Time only for today's messages; older ones lead with the day and month. */
-export function formatMessageTimestamp(
-  input: string,
-  nowMs: number = Date.now(),
-  timeFormatter?: Intl.DateTimeFormat,
-): string {
-  const timestamp = Date.parse(input);
-  if (Number.isNaN(timestamp)) return "";
-  const f = currentFormatters();
-  const time = (timeFormatter ?? f.time).format(timestamp);
-  const dateWithYear = f.dateWithYear.format(timestamp);
-  if (dateWithYear === f.dateWithYear.format(nowMs)) return time;
-  const sameYear = f.year.format(timestamp) === f.year.format(nowMs);
-  return `${sameYear ? f.date.format(timestamp) : dateWithYear} ${time}`;
-}
-
-/** `is24Hour` overrides the locale's hour cycle with the system clock preference when known. */
-export function createMessageTimeFormatter(is24Hour: boolean | undefined, locale?: string) {
-  let cached: { timeZone: string; formatter: Intl.DateTimeFormat } | null = null;
-  return (input: string, nowMs?: number): string => {
-    const { timeZone } = currentFormatters();
-    if (cached?.timeZone !== timeZone) {
-      cached = {
-        timeZone,
-        formatter: new Intl.DateTimeFormat(locale, {
-          hour: "numeric",
-          minute: "2-digit",
-          timeZone,
-          ...(is24Hour === undefined ? {} : { hourCycle: is24Hour ? "h23" : "h12" }),
-        }),
-      };
-    }
-    return formatMessageTimestamp(input, nowMs, cached.formatter);
+/**
+ * Time uses the device locale and clock preference. Older messages also show the date in `dateLocales`.
+ */
+export function createMessageTimeFormatter(
+  is24Hour: boolean | undefined,
+  dateLocales?: Intl.LocalesArgument,
+) {
+  let f: ReturnType<typeof buildFormatters> | null = null;
+  return (input: string, nowMs: number = Date.now()): string => {
+    const timestamp = Date.parse(input);
+    if (Number.isNaN(timestamp)) return "";
+    const zone = currentTimeZone();
+    if (f?.timeZone !== zone) f = buildFormatters(zone, dateLocales, is24Hour);
+    const time = f.time.format(timestamp);
+    const dateWithYear = f.dateWithYear.format(timestamp);
+    if (dateWithYear === f.dateWithYear.format(nowMs)) return time;
+    const sameYear = f.year.format(timestamp) === f.year.format(nowMs);
+    return `${sameYear ? f.date.format(timestamp) : dateWithYear} ${time}`;
   };
 }

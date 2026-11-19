@@ -4,9 +4,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { GTProvider, initializeGT, useLocale } from "gt-react-native";
 import { useDeferredValue, useEffect, type ReactNode } from "react";
-import { Platform, TurboModuleRegistry, View, type TurboModule } from "react-native";
+import { View } from "react-native";
 
 import { mobilePreferencesAtom } from "../state/preferences";
+import { readDeviceLocales } from "./deviceLocales";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
 import { setActiveLocale } from "./messages";
 
@@ -33,22 +34,6 @@ initializeGT({
   cacheExpiryTime: null,
 });
 
-// Read the device languages from gt-react-native's own native module: GT's getLocale() prefers
-// the last locale passed to GTProvider, which it persists, so it can't express "system".
-function readSystemLocales(): ReadonlyArray<string> {
-  try {
-    const locales =
-      TurboModuleRegistry.get<{ getNativeLocales(): string[] } & TurboModule>(
-        "GtReactNative",
-      )?.getNativeLocales() ?? [];
-    // On iOS the first entry is NSLocale.currentLocale, whose language is the app's bundle
-    // localization (English only), not the user's; preferredLanguages follow it.
-    return Platform.OS === "ios" ? locales.slice(1) : locales;
-  } catch {
-    return [];
-  }
-}
-
 export function useLanguagePreference(): string {
   const preferences = useAtomValue(mobilePreferencesAtom);
   return AsyncResult.isSuccess(preferences)
@@ -61,7 +46,12 @@ export function I18nProvider(props: { readonly children: ReactNode }) {
   // GT suspends while a locale's catalog loads. Deferring the switch keeps the current language
   // on screen until then, instead of GT's full-screen spinner.
   const locale = useDeferredValue(
-    resolveLocale(useLanguagePreference(), readSystemLocales(), SUPPORTED_LOCALES, DEFAULT_LOCALE),
+    resolveLocale(
+      useLanguagePreference(),
+      readDeviceLocales().preferredLanguages,
+      SUPPORTED_LOCALES,
+      DEFAULT_LOCALE,
+    ),
   );
   return (
     <GTProvider locale={locale} fallback={<View className="flex-1 bg-screen" />}>

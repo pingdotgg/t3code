@@ -1,6 +1,9 @@
+import { formattingLocales } from "@t3tools/client-runtime/locales";
 import { requireNativeModule } from "expo";
+import { useLocale } from "gt-react-native";
 import { useEffect, useMemo, useState } from "react";
 import { AppState, Platform } from "react-native";
+import { readDeviceLocales } from "../../i18n/deviceLocales";
 import { createMessageTimeFormatter } from "./messageTimestamp";
 
 function systemUses24HourClock() {
@@ -18,5 +21,12 @@ export function useMessageTimeFormatter() {
     });
     return () => subscription.remove();
   }, []);
-  return useMemo(() => createMessageTimeFormatter(is24Hour), [is24Hour]);
+  const locale = useLocale();
+  return useMemo(() => {
+    const { preferredLanguages, regionalLocale } = readDeviceLocales();
+    return createMessageTimeFormatter(
+      is24Hour,
+      formattingLocales(locale, preferredLanguages, regionalLocale),
+    );
+  }, [is24Hour, locale]);
 }

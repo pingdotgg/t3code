@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createMessageTimeFormatter, formatMessageTimestamp } from "./messageTimestamp";
+import { createMessageTimeFormatter } from "./messageTimestamp";
+
+function mockDeviceLocale(deviceLocale: string) {
+  const DateTimeFormat = Intl.DateTimeFormat;
+  return vi.spyOn(Intl, "DateTimeFormat").mockImplementation(function (locale, options) {
+    return new DateTimeFormat(locale ?? deviceLocale, options);
+  });
+}
 
 describe("formatMessageTimestamp", () => {
+  const formatMessageTimestamp = createMessageTimeFormatter(undefined);
   const now = new Date(2026, 10, 8, 20, 0).getTime();
   const time = (date: Date) =>
     date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -55,10 +63,29 @@ describe("createMessageTimeFormatter", () => {
   const now = new Date(2026, 0, 1, 20, 0).getTime();
 
   it("follows the system clock preference over the locale's hour cycle", () => {
-    const format24 = createMessageTimeFormatter(true, "en-US");
-    expect(format24(new Date(2026, 0, 1, 15, 7).toISOString(), now)).toBe("15:07");
-    expect(format24(new Date(2026, 0, 1, 0, 7).toISOString(), now)).toBe("00:07");
-    const format12 = createMessageTimeFormatter(false, "en-GB");
+    {
+      using _deviceLocale = mockDeviceLocale("en-US");
+      const format24 = createMessageTimeFormatter(true);
+      expect(format24(new Date(2026, 0, 1, 15, 7).toISOString(), now)).toBe("15:07");
+      expect(format24(new Date(2026, 0, 1, 0, 7).toISOString(), now)).toBe("00:07");
+    }
+    using _deviceLocale = mockDeviceLocale("en-GB");
+    const format12 = createMessageTimeFormatter(false);
     expect(format12(new Date(2026, 0, 1, 15, 7).toISOString(), now)).toMatch(/^3:07\spm$/i);
+  });
+
+  it("writes earlier days in the given locale's date order", () => {
+    const format = createMessageTimeFormatter(true, "de");
+    const june = new Date(2026, 5, 1, 20, 0).getTime();
+    expect(format(new Date(2026, 2, 5, 15, 7).toISOString(), june)).toBe("5.3. 15:07");
+    expect(format(new Date(2025, 2, 5, 15, 7).toISOString(), june)).toBe("5.3.2025 15:07");
+  });
+
+  it("formats dates in the UI locale and keeps the device clock when no override is available", () => {
+    using _deviceLocale = mockDeviceLocale("en-US");
+    const format = createMessageTimeFormatter(undefined, "de");
+    const june = new Date(2026, 5, 1, 20, 0).getTime();
+    expect(format(new Date(2026, 5, 1, 15, 7).toISOString(), june)).toMatch(/^3:07\sPM$/);
+    expect(format(new Date(2026, 2, 5, 15, 7).toISOString(), june)).toMatch(/^5\.3\. 3:07\sPM$/);
   });
 });
