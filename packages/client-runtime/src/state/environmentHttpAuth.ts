@@ -198,28 +198,32 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
             cause: input.prepared.target._tag,
           });
         }
-        const current = yield* remote.value
-          .authorizeDpopHttp({
-            expectedEnvironmentId: input.prepared.environmentId,
-            ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
-            ...(input.prepared.target._tag === "RelayConnectionTarget"
-              ? {}
-              : { directHttpBaseUrl: httpBaseUrl }),
-          })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new RemoteEnvironmentAuthFetchError({
-                  ...translatableMessage(msg("Could not authorize the environment request.")),
-                  cause,
-                }),
-            ),
-          );
-        // A learned direct route keeps its own origin; only the token renews.
-        if (input.prepared.target._tag === "RelayConnectionTarget") {
-          httpBaseUrl = current.httpBaseUrl;
+        const authFetchError = (cause: unknown) =>
+          new RemoteEnvironmentAuthFetchError({
+            ...translatableMessage(msg("Could not authorize the environment request.")),
+            cause,
+          });
+        const direct = authorization.directConnection;
+        if (direct !== undefined) {
+          authorization = yield* remote.value
+            .authorizeDirectDpopHttp(direct, rejectedAccessToken)
+            .pipe(Effect.mapError(authFetchError));
+        } else {
+          const current = yield* remote.value
+            .authorizeDpopHttp({
+              expectedEnvironmentId: input.prepared.environmentId,
+              ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
+              ...(input.prepared.target._tag === "RelayConnectionTarget"
+                ? {}
+                : { directHttpBaseUrl: httpBaseUrl }),
+            })
+            .pipe(Effect.mapError(authFetchError));
+          // A learned direct route keeps its own origin; only the token renews.
+          if (input.prepared.target._tag === "RelayConnectionTarget") {
+            httpBaseUrl = current.httpBaseUrl;
+          }
+          authorization = current.httpAuthorization;
         }
-        authorization = current.httpAuthorization;
       }
 
       const requestUrl = requestUrlFor(httpBaseUrl);

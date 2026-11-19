@@ -254,9 +254,11 @@ export const make = Effect.gen(function* () {
             .renewDpopBeforeExpiry({
               expectedEnvironmentId: prepared.environmentId,
               expiresAtEpochMs: prepared.httpAuthorization.expiresAtEpochMs,
-              ...(prepared.target._tag === "RelayConnectionTarget"
-                ? {}
-                : { directHttpBaseUrl: prepared.httpBaseUrl }),
+              ...(prepared.httpAuthorization.directConnection
+                ? { directConnection: prepared.httpAuthorization.directConnection }
+                : prepared.target._tag === "RelayConnectionTarget"
+                  ? {}
+                  : { directHttpBaseUrl: prepared.httpBaseUrl }),
             })
             .pipe(
               Effect.catch((error) =>
