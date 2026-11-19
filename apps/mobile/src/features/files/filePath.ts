@@ -14,11 +14,9 @@ export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
 }
 
-/**
- * Linking pattern for a file route's `path` param. React Navigation has no `*` params, so a regex
- * param is what lets one span every remaining segment of a link.
- */
-export const FILE_ROUTE_PATH_PARAM = ":path(.+)";
+export function stringifyFileRoutePath(path: unknown): string {
+  return Array.isArray(path) ? path.join("/") : String(path);
+}
 
 export function fileRoutePathSegments(path: string): string[] {
   const segments = path.split("/").filter((segment) => segment.length > 0);
