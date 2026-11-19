@@ -280,6 +280,27 @@ directly. Every other device, and the desktop app for other environments,
 streams them from the host. Agents keep using them while no device is
 connected, and `localhost` addresses reach servers on the host.
 
+A tab you open yourself in the desktop app for another environment loads on
+your computer instead, so the element picker, screenshots, and annotations work
+as they do locally. Its `localhost` addresses still reach servers on the host,
+over the connection the app already has, whichever way you connected. If the
+host cannot be reached, the tab shows a connection error; a `localhost`,
+`127.0.0.1`, or `[::1]` address never opens a server on your own computer.
+Other names that point at your computer, such as `/etc/hosts` entries, still
+do. These tabs ignore your system proxy settings, so they can't reach a host
+you connect to only through a proxy or over HTTPS with a privately issued
+certificate. The web app keeps streaming.
+
+On iPhone, iPad, and Android, a tab showing one of the host's `localhost` pages
+has **Open on this device** in its menu. So does a long press on a `localhost`
+link in a chat. It opens the page in the phone's own browser view, at the same
+`localhost` address, so it scrolls and responds to touch natively. Like the
+desktop app, it never opens a server on the phone itself. The streamed tab
+stays where it was, and agents keep using it. Each host keeps its own cookies
+and site data on the phone. On iPhone and iPad the page runs under a stand-in
+address while the address bar shows `localhost`, so browser features that need
+a secure page, such as the clipboard or service workers, aren't available there.
+
 The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
 only once. Some Linux hosts need [setup](#browser-host-setup) before it can
@@ -425,7 +446,8 @@ t3 pair --scope orchestration:read --scope relay:read
 The selected scopes replace the default permissions. The same option works with
 `t3 auth pairing create` and `t3 auth session issue`; each command's
 `--help` lists the available scopes. Without `--scope`, pairing tokens and issued
-bearer sessions get every permission, including managing access and T3 Connect.
+bearer sessions get the standard client permissions, including managing access.
+Setting up or replacing a T3 Connect link requires the separate `relay:configure` permission.
 A terminal or a full-access agent on the host can reach those as well, so a
 client that should not manage access also needs to go without `terminal:operate`
 and `orchestration:operate`.
@@ -448,8 +470,10 @@ worktree still creates that branch and worktree with `orchestration:operate`,
 and the agent it runs can use Git however the environment allows.
 
 Settings changes, provider management, environment maintenance, access
-management, and T3 Connect management can each be granted separately. New
-pairings without `--scope` include all of them. Existing clients keep the
+management, and T3 Connect preferences can each be granted separately. Setting
+up or replacing a T3 Connect link requires the administrative
+`relay:configure` permission. `relay:write` covers preferences and unlinking.
+New pairings without `--scope` include the standard client permissions. Existing clients keep the
 permissions they paired with and can stay connected after an update, but newly
 separated features may require pairing again with the permissions they need.
 Older clients may show controls that the server denies. Create a fresh pairing
@@ -458,6 +482,13 @@ link to change a client's permissions.
 `filesystem:read` allows browsing host files, opening workspace files, and viewing
 local changes. Add `filesystem:write` to allow editing files or saving plans to
 the workspace. These scopes control direct file access from the client.
+
+Some permissions also give a client indirect access. With `terminal:operate`,
+a client can run commands that read or change any files the server’s OS account
+can access, even when the pairing link omits file permissions. With
+`relay:configure`, a client can replace the trusted issuer of pairing
+credentials. Grant these permissions only to clients you trust with those
+capabilities.
 
 To remove an environment from T3 Connect, open your account menu's **T3 Connect**
 page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This
