@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -10,7 +11,11 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
-import { decodeGoKeyringSecret, makeAntigravityUsageProbe } from "./antigravityUsageLimits.ts";
+import {
+  decodeGoKeyringSecret,
+  makeAntigravityUsageProbe,
+  readWindowsCliCredential,
+} from "./antigravityUsageLimits.ts";
 
 const summary = {
   groups: [
@@ -67,6 +72,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
     keyringSecret?: string;
+    /** Reads the OS keyring instead of `keyringSecret`. */
+    nativeKeyring?: boolean;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -133,7 +140,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const usage = yield* makeAntigravityUsageProbe({
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
-    readKeyringSecret: Effect.succeed(options.keyringSecret),
+    ...(options.nativeKeyring ? {} : { readKeyringSecret: Effect.succeed(options.keyringSecret) }),
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
   return { ...usage, requests, writeToken, tokenPath };
 });
@@ -706,6 +713,37 @@ describe("Antigravity subscription limits", () => {
       expect((yield* expired.probe).unavailable?.reason).toBe("probeFailed");
       expect(expired.requests).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "reads go-keyring's Windows credential target without changing it",
+    (ctx) =>
+      Effect.gen(function* () {
+        // Never overwrite a real sign-in on a developer's machine.
+        if (readWindowsCliCredential(HostProcess.Architecture.defaultValue())) return ctx.skip();
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")),
+        );
+        const { AsyncEntry } = yield* Effect.promise(() => import("@napi-rs/keyring"));
+        // go-keyring writes the UTF-8 JSON at `<service>:<user>`.
+        const target = AsyncEntry.withTarget("gemini:antigravity", "gemini", "antigravity");
+        const stored = new TextEncoder().encode(
+          JSON.stringify({
+            token: { access_token: "access-token", expiry: "2026-10-09T14:00:00Z" },
+          }),
+        );
+        yield* Effect.acquireRelease(
+          Effect.promise(() => target.setSecret(stored)),
+          () => Effect.promise(() => target.deleteCredential()),
+        );
+        const { probe } = yield* fixture({ missingToken: true, nativeKeyring: true });
+        const limits = yield* probe;
+        expect(limits.unavailable).toBeUndefined();
+        expect(limits.windows).toHaveLength(4);
+        expect(readWindowsCliCredential(HostProcess.Architecture.defaultValue())).toEqual(
+          Buffer.from(stored),
+        );
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it("decodes go-keyring's macOS encodings", () => {
