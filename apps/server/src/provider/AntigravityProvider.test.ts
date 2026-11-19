@@ -31,6 +31,7 @@ import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
 } from "./AntigravityProvider.ts";
+import { mergeProviderSnapshot } from "./ProviderRegistry.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -287,12 +288,66 @@ describe("Antigravity model catalog", () => {
     expect(thinkingOf("gemini")).toMatchObject({ id: "thinking_level", currentValue: "high" });
     expect(thinkingOf("claude")).toMatchObject({ id: "thinking_level", currentValue: "low" });
     expect(thinkingOf("plain")).toBeUndefined();
-    expect(thinkingOf("unseen")).toMatchObject({ id: "thinking_level" });
-    expect(thinkingOf("unseen")).not.toHaveProperty("currentValue");
+    expect(thinkingOf("unseen")).toBeUndefined();
   });
 });
 
 it.layer(layerTest)("Antigravity provider snapshots", (it) => {
+  it.effect("keeps a model's reported thinking levels after a restart selects another model", () =>
+    Effect.gen(function* () {
+      const levels = (currentValue: string, values: ReadonlyArray<string>) =>
+        ({
+          id: "thinking_level",
+          name: "Thinking Level",
+          category: "thought_level",
+          type: "select",
+          currentValue,
+          options: values.map((value) => ({ value, name: value })),
+        }) satisfies EffectAcpSchema.SessionConfigOption;
+      const selecting = (model: string, thinking: EffectAcpSchema.SessionConfigOption) => ({
+        ...started,
+        sessionSetupResult: {
+          ...sessionSetupResult,
+          configOptions: [
+            {
+              ...modelConfig,
+              currentValue: model,
+              options: [
+                { value: "deep", name: "Deep" },
+                { value: "fast", name: "Fast" },
+              ],
+            },
+            thinking,
+          ],
+        },
+      });
+      const choicesOf = (provider: ServerProvider, slug: string) =>
+        provider.models
+          .find((model) => model.slug === slug)
+          ?.capabilities?.optionDescriptors?.flatMap((descriptor) =>
+            descriptor.type === "select" ? descriptor.options.map((option) => option.id) : [],
+          );
+
+      const before = yield* makeHarness();
+      yield* before.initialize;
+      yield* before.provider.onSessionStarted(
+        selecting("deep", levels("low", ["low", "medium", "high", "xhigh"])),
+      );
+      const published = yield* before.provider.snapshot.getSnapshot;
+      expect(choicesOf(published, "deep")).toEqual(["low", "medium", "high", "xhigh"]);
+
+      // A restarted server has the published catalog but has observed no model yet.
+      const after = yield* makeHarness();
+      yield* after.initialize;
+      yield* after.provider.onSessionStarted(
+        selecting("fast", levels("low", ["low", "medium", "high"])),
+      );
+      const merged = mergeProviderSnapshot(published, yield* after.provider.snapshot.getSnapshot);
+      expect(choicesOf(merged, "fast")).toEqual(["low", "medium", "high"]);
+      expect(choicesOf(merged, "deep")).toEqual(["low", "medium", "high", "xhigh"]);
+    }),
+  );
+
   it.effect("does not probe or run helper safety checks while disabled", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ enabled: false });
