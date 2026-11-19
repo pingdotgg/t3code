@@ -79,9 +79,10 @@ describe("mixed-height page layout", () => {
   it("restores a saved spot scaled to the new width and kept inside pages that remain", () => {
     expect(pdfRestoredScrollTop(ratios, width, { page: 1, offset: 100 })).toBe(256);
     expect(pdfRestoredScrollTop(ratios, width * 2, { page: 1, offset: 100 }, width)).toBe(496);
-    // A page that shrank keeps the reader on its last pixel; a removed page falls back to the last.
+    // A page that shrank keeps the reader on its last pixel; a removed page restores to the end.
     expect(pdfRestoredScrollTop(ratios, width, { page: 2, offset: 600 })).toBe(964 + 305);
-    expect(pdfRestoredScrollTop(ratios.slice(0, 2), width, { page: 2, offset: 0 })).toBe(156);
+    expect(pdfRestoredScrollTop(ratios.slice(0, 2), width, { page: 2, offset: 0 })).toBe(980);
+    expect(pdfRestoredScrollTop(ratios.slice(0, 1), width, { page: 2, offset: 0 })).toBe(172);
   });
 });
 

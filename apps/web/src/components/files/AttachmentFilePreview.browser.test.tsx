@@ -1493,6 +1493,9 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
 it("keeps a workspace PDF open across URL renewals and reloads it when the file changes", async () => {
   const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
   using _native = vi.spyOn(navigator, "pdfViewerEnabled", "get").mockReturnValue(true);
+  using fetches = vi.spyOn(window, "fetch");
+  const fetched = () =>
+    fetches.mock.calls.map(([input]) => String(input)).filter((url) => url.startsWith("blob:"));
   const original = URL.createObjectURL(new Blob(["%PDF-1.4"], { type: "application/pdf" }));
   const edited = URL.createObjectURL(new Blob(["%PDF-1.4 edited"], { type: "application/pdf" }));
   const preview = (mutation: string) => (
@@ -1514,8 +1517,15 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
   });
   try {
     await using screen = await render(preview("first"));
-    const opened = screen.container.querySelector("iframe");
-    expect(opened?.src.startsWith(original)).toBe(true);
+    // A right-panel PDF keeps its place, so it opens in PDF.js even where the browser has a viewer.
+    const viewer = () =>
+      screen.container.querySelector('[role="region"][aria-label="Planning PDF"]');
+    // PDF.js loads lazily, which can take longer than waitFor's default on a busy machine.
+    await vi.waitFor(() => expect(viewer()).not.toBeNull(), { timeout: 10_000 });
+    const opened = viewer();
+    expect(screen.container.querySelector("iframe")).toBeNull();
+    await vi.waitFor(() => expect(fetched().at(-1)?.startsWith(original)).toBe(true));
+    const loads = fetched().length;
 
     // An agent command renews the signed URL but leaves the file alone.
     assetUrlState.mockReturnValue({
@@ -1526,7 +1536,8 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
     });
     await screen.rerender(preview("second"));
     expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "second");
-    expect(screen.container.querySelector("iframe")).toBe(opened);
+    expect(viewer()).toBe(opened);
+    expect(fetched()).toHaveLength(loads);
 
     assetUrlState.mockReturnValue({
       _tag: "Success",
@@ -1535,9 +1546,9 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
       fileRevision: "two",
     });
     await screen.rerender(preview("third"));
-    const reloaded = screen.container.querySelector("iframe");
-    expect(reloaded).not.toBe(opened);
-    expect(reloaded?.src.startsWith(edited)).toBe(true);
+    await vi.waitFor(() => expect(viewer()).not.toBeNull());
+    expect(viewer()).not.toBe(opened);
+    await vi.waitFor(() => expect(fetched().at(-1)?.startsWith(edited)).toBe(true));
 
     // Servers without revisions hold the preview back until a fresh grant arrives.
     assetUrlState.mockReturnValue({
@@ -1547,10 +1558,11 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
       waiting: true,
     });
     await screen.rerender(preview("fourth"));
-    expect(screen.container.querySelector("iframe")).toBeNull();
+    expect(viewer()).toBeNull();
     assetUrlState.mockReturnValue({ _tag: "Success", url: original, expiresAt: 0 });
     await screen.rerender(preview("fourth"));
-    expect(screen.container.querySelector("iframe")?.src.startsWith(original)).toBe(true);
+    await vi.waitFor(() => expect(viewer()).not.toBeNull());
+    await vi.waitFor(() => expect(fetched().at(-1)?.startsWith(original)).toBe(true));
   } finally {
     URL.revokeObjectURL(original);
     URL.revokeObjectURL(edited);

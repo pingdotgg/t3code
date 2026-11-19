@@ -13,7 +13,7 @@ import {
 } from "./fileReadingStore";
 
 const DAY = 24 * 60 * 60 * 1000;
-const file = { environmentId: "env-1", absolutePath: "/work/a.ts" };
+const file = { kind: "path", environmentId: "env-1", absolutePath: "/work/a.ts" } as const;
 const sourceKey = 't3code.fileReading.v1:["env-1","/work/a.ts","source"]';
 
 function memoryStorage(options: { quota?: number } = {}) {
@@ -82,6 +82,30 @@ describe("file reading positions", () => {
       line: 12,
       offset: -4,
     });
+
+    const attachment = {
+      kind: "attachment",
+      environmentId: "env-1",
+      attachmentId: "/work/a.ts",
+    } as const;
+    readings.writePosition(attachment, { view: "source", line: 30, offset: 0 });
+    expect(items.has('t3code.fileReading.v1:["env-1",{"attachment":"/work/a.ts"},"source"]')).toBe(
+      true,
+    );
+    expect(readings.readPosition(file, "source")?.line).toBe(12);
+    expect(readings.readPosition(attachment, "source")?.line).toBe(30);
+
+    const places = [
+      { view: "rendered", block: 4, fraction: 0.5 },
+      { view: "pdf", page: 2, offset: 120, zoom: null, left: 0, width: 640 },
+      { view: "offset", top: 900, left: 12 },
+      { view: "media", time: 42.5 },
+    ] as const;
+    for (const place of places) readings.writePosition(attachment, place);
+    const reloaded = setup(storage).readings;
+    for (const place of places) {
+      expect(reloaded.readPosition(attachment, place.view)).toEqual(place);
+    }
   });
 
   it("names the newest of a file's saved views", () => {
@@ -146,6 +170,27 @@ describe("file reading positions", () => {
       JSON.stringify({ v: 1, at: 1_000_000, view: "rendered", block: 0, fraction: 1 }),
     );
     items.set(
+      't3code.fileReading.v1:["env-1","/top","offset"]',
+      JSON.stringify({ v: 1, at: 1_000_000, view: "offset", top: -1, left: 0 }),
+    );
+    items.set(
+      't3code.fileReading.v1:["env-1","/time","media"]',
+      JSON.stringify({ v: 1, at: 1_000_000, view: "media", time: -2 }),
+    );
+    items.set(
+      't3code.fileReading.v1:["env-1","/width","pdf"]',
+      JSON.stringify({
+        v: 1,
+        at: 1_000_000,
+        view: "pdf",
+        page: 0,
+        offset: 0,
+        zoom: null,
+        left: 0,
+        width: 0,
+      }),
+    );
+    items.set(
       key("/old"),
       JSON.stringify({ v: 1, at: 1_000_000 - 31 * DAY, view: "source", line: 1, offset: 0 }),
     );
@@ -162,6 +207,46 @@ describe("file reading positions", () => {
     expect(readings.readPosition({ ...file, absolutePath: "/corrupt" }, "source")).toBeNull();
     expect([...items.keys()]).toEqual([key("/good")]);
     expect(readings.readPosition({ ...file, absolutePath: "/good" }, "source")?.line).toBe(7);
+  });
+
+  it("keeps the newest sample: a held one is read at once, and a flush never replaces a later one", () => {
+    const { items, storage } = memoryStorage();
+    const { clock, readings } = setup(storage);
+    const held = readings.holdPosition(file, { view: "rendered", block: 7, fraction: 0 });
+    expect(items.size).toBe(0);
+    expect(readings.readPosition(file, "rendered")?.block).toBe(7);
+    expect(readings.newestView(file, ["source", "rendered"])).toBe("rendered");
+
+    clock.now += 50;
+    readings.writePosition(file, { view: "rendered", block: 9, fraction: 0 });
+    clock.now += 300;
+    held.flush();
+    expect(readings.readPosition(file, "rendered")?.block).toBe(9);
+    expect(setup(storage).readings.readPosition(file, "rendered")?.block).toBe(9);
+
+    const first = readings.holdPosition(file, { view: "source", line: 3, offset: 0 });
+    clock.now += 10;
+    const second = readings.holdPosition(file, { view: "source", line: 5, offset: 0 });
+    first.flush();
+    expect(readings.readPosition(file, "source")?.line).toBe(5);
+    second.flush();
+    expect(setup(storage).readings.readPosition(file, "source")?.line).toBe(5);
+
+    // Two samples in one millisecond keep the order they were captured in.
+    const earlier = readings.holdPosition(file, { view: "source", line: 7, offset: 0 });
+    const newer = readings.holdPosition(file, { view: "source", line: 8, offset: 0 });
+    newer.flush();
+    earlier.flush();
+    expect(readings.readPosition(file, "source")?.line).toBe(8);
+    expect(setup(storage).readings.readPosition(file, "source")?.line).toBe(8);
+
+    // The clock steps back, as after a VM resume; this page's newer sample still wins.
+    clock.now -= 5_000;
+    const stepped = readings.holdPosition(file, { view: "source", line: 9, offset: 0 });
+    expect(readings.readPosition(file, "source")?.line).toBe(9);
+    stepped.flush();
+    expect(readings.readPosition(file, "source")?.line).toBe(9);
+    expect(setup(storage).readings.readPosition(file, "source")?.line).toBe(9);
   });
 
   it("frees the oldest half on a full quota, retries once, then keeps writes in memory", () => {
