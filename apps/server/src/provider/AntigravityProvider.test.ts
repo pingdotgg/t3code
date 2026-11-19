@@ -290,6 +290,28 @@ describe("Antigravity model catalog", () => {
     expect(thinkingOf("unseen")).toMatchObject({ id: "thinking_level" });
     expect(thinkingOf("unseen")).not.toHaveProperty("currentValue");
   });
+
+  it("offers effort variants listed as separate models as one model with an effort choice", () => {
+    const models = buildAntigravityModelsFromSession({
+      configOptions: [
+        {
+          ...modelConfig,
+          currentValue: "gemini-4-argon-high",
+          options: [
+            { value: "gemini-4-argon-high", name: "Gemini 4 Argon (High)" },
+            { value: "gemini-4-argon-low", name: "Gemini 4 Argon (Low)" },
+            { value: "gemini-4-hydrogen-xhigh", name: "Gemini 4 Hydrogen (XHigh)" },
+            { value: "gemini-4-hydrogen-high", name: "Gemini 4 Hydrogen (High)" },
+          ],
+        },
+      ],
+    });
+
+    expect(models.map((model) => model.name)).toEqual(["Gemini 4 Argon", "Gemini 4 Hydrogen"]);
+    for (const model of models) {
+      expect(model.capabilities?.optionDescriptors?.[0]).toMatchObject({ type: "select" });
+    }
+  });
 });
 
 it.layer(layerTest)("Antigravity provider snapshots", (it) => {
