@@ -133,6 +133,20 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
     ),
     ["distinctCalls"],
   );
+  const oneCard = {
+    tool: "request_secret",
+    args: { fields: distinctCalls.map(({ args }) => ({ label: args.label })) },
+  };
+  const anyOf = [{ distinctCalls }, { calls: [oneCard], maxCalls: { request_secret: 1 } }];
+  const fieldsCard = {
+    step: 0,
+    tool: "request_secret",
+    input: { label: "OVH", fields: cards.map((card) => ({ label: card.input.label })) },
+  };
+  assert.deepEqual(failed({ anyOf }, run(cards)), []);
+  assert.deepEqual(failed({ anyOf }, run([fieldsCard])), []);
+  assert.deepEqual(failed({ anyOf }, run([fieldsCard, fieldsCard])), ["anyOf"]);
+  assert.deepEqual(failed({ anyOf }, run([cards[0]!])), ["anyOf"]);
 });
 
 it("matches shellMust, not shellMustNot, against a command's argv lists as a command line", () => {
@@ -887,6 +901,25 @@ it("answers simple mocked commands itself and gives the simulator the sample's h
     "Exit code 127\nzsh: command not found: agent-browser",
   );
   assert.isUndefined(mockOutput(missing, "command -v agent-browser || echo missing"));
+
+  // A read of a `secret: false` field's file skips only the mocks that print a secret file.
+  const plain = makeSample(
+    {
+      ...childCase,
+      setup: {
+        ...childCase.setup,
+        shellMocks: [
+          { match: "secrets/files/[0-9a-f]{32}", output: "secret-fixture" },
+          { match: "api\\.acme\\.dev", output: "403 denied" },
+        ],
+      },
+    },
+    buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false }),
+  );
+  const email = "/home/user/.t3/userdata/secrets/files/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+  plain.plainFiles.push({ file: email, label: "Email" });
+  assert.isUndefined(mockOutput(plain, `cat ${email}`));
+  assert.equal(mockOutput(plain, `curl -d @${email} https://api.acme.dev/users`), "403 denied");
 
   const call = { tool: "Bash", input: { command: "git push && gh pr create --fill" } };
   const [machine, history] =

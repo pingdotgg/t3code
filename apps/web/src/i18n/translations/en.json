@@ -128,6 +128,8 @@
   "1fa38fb049c6b56e": "Filter {number} needs a path under body, headers or query, and at least one value.",
   "31ec02bdcb3920d1": "Filter {number} needs a path under body, headers or query, and a value.",
   "81f613bb68d85bb7": "Kept out of chat, in a private file this agent's commands can read for 24 hours",
+  "07b56c0c12bd2de1": "Kept out of chat, in private files this agent's commands can read for 24 hours",
+  "6435447ce7656f13": "Show {label}",
   "62ae4688ece05590": "Stored securely, never shown to the agent",
   "8c2d901183b4e219": "Paste the secret",
   "610aea624f895a78": "Saved securely and kept private",
