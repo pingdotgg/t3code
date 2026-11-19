@@ -46,8 +46,7 @@ export function AppSignInRow(props: {
   const start = useAtomCommand(sourceControlEnvironment.startSignIn, { reportFailure: false });
   const wait = useAtomCommand(sourceControlEnvironment.waitForSignIn, { reportFailure: false });
   const cancel = useAtomCommand(sourceControlEnvironment.cancelSignIn, { reportFailure: false });
-  // The attempt this row still answers for; a cancel, a newer attempt or leaving the screen makes
-  // its outcome stale, so a server that fails it later raises no alert over another screen.
+  // The attempt pending calls belong to; a cancel, a newer attempt or leaving the screen makes them stale.
   const attempt = useRef<object | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the pending attempt's dialogs once the screen unmounts
   useEffect(
