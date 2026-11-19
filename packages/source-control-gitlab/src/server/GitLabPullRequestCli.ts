@@ -1002,6 +1002,16 @@ function query(params: ReadonlyArray<readonly [string, string]>): string {
   return params.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
 }
 
+/** REST names every label; GraphQL's `labels(first: 100)` only colours the ones on its page. */
+function colourLabels(
+  rest: ReadonlyArray<PullRequestLabel>,
+  graphql: ReadonlyArray<PullRequestLabel> | null,
+): ReadonlyArray<PullRequestLabel> {
+  if (graphql === null) return rest;
+  const byName = new Map(graphql.map((label) => [label.name, label]));
+  return rest.map((label) => byName.get(label.name) ?? label);
+}
+
 function actionArgs(
   action: PullRequestAction,
   mergeMethod: PullRequestMergeMethod | undefined,
@@ -1106,6 +1116,7 @@ export const make = Effect.gen(function* () {
         ...filterParams(input),
         ["order_by", "updated_at"],
         ["sort", "desc"],
+        ["with_labels_details", "true"],
         ["per_page", String(perPage)],
         ["page", String(input.page)],
       ])}`,
@@ -2016,14 +2027,17 @@ export const make = Effect.gen(function* () {
     readonly repository: string;
     readonly number: number;
   }) =>
-    graphqlRead({
-      cwd: input.cwd,
-      host: input.host,
-      operation: "getLabelPermission",
-      query: LABEL_PERMISSION_GRAPHQL_QUERY,
-      variables: { fullPath: input.repository, iid: String(input.number) },
-      decode: decodeLabelPermissionJson,
-    }).pipe(Effect.catchIf(isOptionalReadFailure, () => Effect.succeed(false)));
+    orWhenUnanswered(
+      graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getLabelPermission",
+        query: LABEL_PERMISSION_GRAPHQL_QUERY,
+        variables: { fullPath: input.repository, iid: String(input.number) },
+        decode: decodeLabelPermissionJson,
+      }),
+      { viewerCanEditLabels: false, labels: null },
+    );
 
   const sourceBranch = (input: {
     readonly cwd: string;
@@ -2327,18 +2341,20 @@ export const make = Effect.gen(function* () {
 
     getMergeRequestDetail: Effect.fn("GitLabPullRequestCli.getMergeRequestDetail")(
       function* (input) {
-        const [read, viewerCanEditLabels] = yield* Effect.all(
+        const [read, extras] = yield* Effect.all(
           [mergeRequestDetail(input), labelPermission(input)],
           { concurrency: 2 },
         );
+        const labeled = { ...read, labels: colourLabels(read.labels, extras.labels) };
+        const viewerCanEditLabels = extras.viewerCanEditLabels;
         // Only a closed or merged merge request offers its branch for deletion, and only an open
         // fork's has maintainer edits to change, so each extra read is skipped elsewhere.
         const detail =
-          read.state === "open"
-            ? input.maintainerEdits === false || read.maintainerCanModify === undefined
-              ? { ...read, viewerCanEditLabels }
+          labeled.state === "open"
+            ? input.maintainerEdits === false || labeled.maintainerCanModify === undefined
+              ? { ...labeled, viewerCanEditLabels }
               : {
-                  ...read,
+                  ...labeled,
                   viewerCanEditLabels,
                   viewerCanEditMaintainerEdits: yield* orWhenUnanswered(
                     graphqlRead({
@@ -2353,7 +2369,7 @@ export const make = Effect.gen(function* () {
                   ),
                 }
             : {
-                ...read,
+                ...labeled,
                 viewerCanEditLabels,
                 viewerCanDeleteBranch: yield* orWhenUnanswered(
                   sourceBranch(input).pipe(Effect.map((source) => source?.canDelete === true)),
