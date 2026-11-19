@@ -1272,6 +1272,37 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  it.effect("ends a continuation run whose replayed reply launched a subagent", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      // No records: nothing proves a child is at work, so none may hold a run open.
+      const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-antigravity-kids-" });
+      const { usage, offers, send, startTurn, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, profile);
+      yield* startTurn(1, false);
+      yield* throughTerminal;
+      yield* send({
+        sessionUpdate: "tool_call",
+        toolCallId: "call_follow_up",
+        kind: "other",
+        title: "Run invoke_subagent",
+        status: "completed",
+        rawInput: { TypeName: "research", Role: "Checker", Prompt: "Check it" },
+      });
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Started a checker." },
+      });
+      yield* send(usage);
+      assert.lengthOf(offers, 1, "the agent's own reply must wake the thread");
+      yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* startTurn(2, true);
+      yield* TestClock.adjust("3 seconds");
+      const terminal = (yield* throughTerminal).at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   it.effect.each([
     // session/cancel ends the agent's commands, so only Stop may send it.
     { ending: "Stop", cancels: 1, status: "interrupted" },

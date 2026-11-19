@@ -9032,6 +9032,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               context.promptSettled = true;
               context.promptSettledStatus = "completed";
+              // The replayed reply ended before the prompt counted as settled.
+              yield* idleReportedSubagents(context);
               if (drainedWakeCount === 0) {
                 if (continuationWasRequested && defersFinalizeForBackgroundWork) {
                   if (hasDeferredBackgroundWork(context)) {
