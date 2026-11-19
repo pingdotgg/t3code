@@ -2061,7 +2061,10 @@ export const layerQueryRunner: Layer.Layer<
 
 type ClaudeFlagSettings = Parameters<ClaudeQuery["applyFlagSettings"]>[0];
 
-/** Thinking requires a new process. Clearing effort also requires one to reload user settings instead of model defaults. */
+/**
+ * Thinking requires a new process. Clearing effort also requires one to reload user settings
+ * instead of model defaults. The Auto level is in the system prompt, which only a new process reads.
+ */
 function canApplyClaudeSelectionLive(
   live: CompiledClaudeModelSelection,
   next: CompiledClaudeModelSelection,
@@ -2069,7 +2072,8 @@ function canApplyClaudeSelectionLive(
   return (
     live.settings.alwaysThinkingEnabled === next.settings.alwaysThinkingEnabled &&
     (next.effort !== undefined || live.effort === undefined) &&
-    live.pinnedAlias === next.pinnedAlias
+    live.pinnedAlias === next.pinnedAlias &&
+    live.autoLevel === next.autoLevel
   );
 }
 
@@ -2341,6 +2345,9 @@ export function makeClaudeQueryOptions(input: {
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
                 : "")),
         ...launchAppendSystemPrompt,
+        ...(compiledSelection.autoLevel === undefined
+          ? []
+          : [`Auto level: ${compiledSelection.autoLevel}`]),
       ].join("\n\n"),
     },
     ...(deviceInstructions || input.onStop !== undefined
