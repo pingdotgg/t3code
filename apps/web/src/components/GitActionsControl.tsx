@@ -1786,7 +1786,7 @@ export default function GitActionsControl({
             >
               <MenuTrigger
                 disabled={isGitActionRunning || !hasGitMenuContent}
-                render={<ThreadDetailsControl part="choice" aria-label="Git action options" />}
+                render={<ThreadDetailsControl part="choice" aria-label={gt("Git action options")} />}
               >
                 <SourceControlIcon />
                 <MenuItemLabel>

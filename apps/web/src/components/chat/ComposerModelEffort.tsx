@@ -661,6 +661,7 @@ function PermissionsMenu(props: {
   options: ReadonlyArray<RuntimeModeOption>;
   onChange: (mode: RuntimeMode) => void;
 }) {
+  const gt = useGT();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const current = props.options.find((option) => option.mode === props.runtimeMode);
   if (!current) return null;
@@ -678,7 +679,7 @@ function PermissionsMenu(props: {
             ref={triggerRef}
             type="button"
             data-composer-permissions-trigger
-            aria-label={`Permissions: ${current.label}`}
+            aria-label={gt("Permissions: {mode}", { mode: current.label })}
             className="ms-auto"
           />
         }

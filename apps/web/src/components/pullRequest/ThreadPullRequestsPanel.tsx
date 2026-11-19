@@ -561,7 +561,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
                   />
                 </section>
                 {linkCount > 0 ? (
-                  <h2 className="mt-2 border-t border-border/60 px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
+                  <h2 className="mt-2 border-t border-border/60 px-3 pt-2 pb-1 text-meta text-muted-foreground">
                     <T>Pull requests</T>
                   </h2>
                 ) : null}
@@ -590,7 +590,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           drawDistance={440}
           className="min-h-0 flex-1 overscroll-contain p-1.5"
         />
-        <footer className="flex items-center justify-between border-t border-border py-1.5 ps-4 pe-2.25 text-2xs text-muted-foreground">
+        <footer className="flex items-center justify-between border-t border-border py-1.5 ps-4 pe-2.25 text-meta text-muted-foreground">
           <Tooltip>
             <TooltipTrigger render={<span />}>
               {linkCount > 0
