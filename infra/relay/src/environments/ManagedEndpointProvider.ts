@@ -242,7 +242,10 @@ export class ManagedEndpointTunnelClient extends Context.Service<
     readonly get: (
       tunnelId: string,
     ) => Effect.Effect<ManagedEndpointTunnel, ManagedEndpointTunnelClientError>;
-    readonly list: (request: ManagedEndpointTunnelListRequest) => Effect.Effect<
+    readonly list: (
+      request: ManagedEndpointTunnelListRequest,
+      options?: { readonly timeout?: Duration.Input },
+    ) => Effect.Effect<
       {
         readonly result: ReadonlyArray<ManagedEndpointTunnel>;
         readonly resultInfo?: {
@@ -392,7 +395,12 @@ function isManagedEndpointNotFound(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null) {
     return false;
   }
-  if ("_tag" in cause && (cause._tag === "NotFound" || cause._tag === "TunnelNotFound")) {
+  if (
+    "_tag" in cause &&
+    (cause._tag === "NotFound" ||
+      cause._tag === "TunnelNotFound" ||
+      cause._tag === "RecordNotFound")
+  ) {
     return true;
   }
   if ("status" in cause && cause.status === 404) {
@@ -499,6 +507,7 @@ const makeCloudflareApiGate = (alchemyRuntimeContext: Alchemy.BaseRuntimeContext
     });
     return <A, E>(
       call: Effect.Effect<A, E, Alchemy.RuntimeContext>,
+      timeout: Duration.Input = "8 seconds",
     ): Effect.Effect<A, E | CloudflareApiPaused | Cause.TimeoutError> =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
@@ -517,7 +526,7 @@ const makeCloudflareApiGate = (alchemyRuntimeContext: Alchemy.BaseRuntimeContext
         }
         return yield* call.pipe(
           Effect.provideService(CloudflareRetry.Retry, withoutRateLimitRetries),
-          Effect.timeout("8 seconds"),
+          Effect.timeout(timeout),
           Effect.tapError((cause) =>
             isCloudflareRateLimited(cause) ? recordRateLimit(cause) : Effect.void,
           ),
@@ -1602,8 +1611,8 @@ export const layerCloudflareBindings = (
                       }),
                   ),
                 ),
-              list: (request) =>
-                gate(tunnelClient.list(request)).pipe(
+              list: (request, options) =>
+                gate(tunnelClient.list(request), options?.timeout).pipe(
                   Effect.mapError(
                     (cause) =>
                       new ManagedEndpointTunnelClientError({

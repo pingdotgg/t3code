@@ -1,12 +1,15 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { splitFilePathPosition } from "@t3tools/shared/fileLinks";
-import { isMacPlatform } from "./lib/utils";
+import { isMacPlatform, isWindowsPlatform } from "./lib/utils";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import type { DragEvent } from "react";
 
 import { hostEnvironmentIdAtom } from "./state/primaryEnvironment";
 import { useEnvironmentScope } from "./state/session";
 import { toastManager } from "./components/ui/toast";
+import { m } from "./i18n/messages";
 
 export function useNativeFileDrag(
   environmentId: EnvironmentId | null | undefined,
@@ -16,7 +19,7 @@ export function useNativeFileDrag(
   const canOperate = useEnvironmentScope(environmentId ?? null, AuthOrchestrationOperateScope);
   const enabled =
     typeof window.desktopBridge?.startFileDrag === "function" &&
-    isMacPlatform(navigator.platform) &&
+    (isMacPlatform(navigator.platform) || isWindowsPlatform(navigator.platform)) &&
     environmentId != null &&
     environmentId === hostEnvironmentId &&
     canOperate;
@@ -33,13 +36,13 @@ export function useNativeFileDrag(
         const { path } = splitFilePathPosition(await resolvePath());
         if (released) return;
         const started = await window.desktopBridge?.startFileDrag({ environmentId, path });
-        if (!started) throw new Error("The file is unavailable on this Mac.");
+        if (!started) throw new Error(m(msg("The file is unavailable on this computer.")));
       })().catch((error: unknown) => {
         if (released) return;
         toastManager.add({
           type: "error",
-          title: "Unable to drag file",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: m(msg("Unable to drag file")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         });
       });
     },
