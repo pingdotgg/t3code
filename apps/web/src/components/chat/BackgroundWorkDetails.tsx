@@ -6,6 +6,7 @@ import type {
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { T, useGT } from "gt-react";
+import { ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
 
 import { InlineButton } from "../ui/button";
@@ -75,16 +76,33 @@ export function BackgroundWorkDetails(props: {
               const itemId =
                 task.itemId ?? (item?.type === "command_execution" ? item.id : undefined);
               const childThreadId = task.kind === "subagent" ? task.childThreadId : undefined;
+              const heading = <h3 className="min-w-0 font-medium">{title}</h3>;
+              const status = backgroundWorkHoldsCompletion([task])
+                ? gt("Waiting", { $context: "status of background work" })
+                : gt("Running", { $context: "status of background work" });
               return (
                 <section key={task.taskId} className="space-y-2 text-sm">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <h3 className="font-medium">{title}</h3>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {backgroundWorkHoldsCompletion([task])
-                        ? gt("Waiting", { $context: "status of background work" })
-                        : gt("Running", { $context: "status of background work" })}
-                    </span>
-                  </div>
+                  {childThreadId ? (
+                    <button
+                      type="button"
+                      className="-mx-2 flex w-[calc(100%+1rem)] cursor-pointer items-baseline justify-between gap-3 rounded-lg px-2 py-1.5 text-start outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                      onClick={() => {
+                        setOpen(false);
+                        props.onOpenThread(childThreadId);
+                      }}
+                    >
+                      {heading}
+                      <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                        {status}
+                        <ChevronRightIcon aria-hidden className="size-3.5" />
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="flex items-baseline justify-between gap-3">
+                      {heading}
+                      <span className="shrink-0 text-xs text-muted-foreground">{status}</span>
+                    </div>
+                  )}
                   {command ? (
                     <div className="rounded-md border border-border bg-muted/20 p-3 font-mono text-xs whitespace-pre-wrap break-words">
                       <ShellCommandBlock command={command} />
@@ -98,16 +116,6 @@ export function BackgroundWorkDetails(props: {
                         itemId={itemId}
                       />
                     </div>
-                  ) : null}
-                  {childThreadId ? (
-                    <InlineButton
-                      onClick={() => {
-                        setOpen(false);
-                        props.onOpenThread(childThreadId);
-                      }}
-                    >
-                      <T>Open subagent</T>
-                    </InlineButton>
                   ) : null}
                 </section>
               );
