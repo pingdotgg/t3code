@@ -675,11 +675,42 @@ describe("RemoteEnvironmentAuthorization", () => {
 
       expect(authorized.httpBaseUrl).toBe("http://192.168.1.10:3773/");
       expect(authorized.socketUrl).toMatch(/^ws:\/\/192\.168\.1\.10:3773\/ws\?/);
+      expect(authorized.socketUrl).toContain("connectionMethod=direct");
       expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
       expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
         "http://192.168.1.10:3773/.well-known/t3/environment",
         "http://192.168.1.10:3773/api/auth/websocket-ticket/rpc",
       ]);
+    }),
+  );
+
+  it.effect("reports a failed ticket at a learned direct address as a direct failure", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        initialToken: persistedToken({ accessToken: "cached-access-token" }),
+        responses: [
+          Response.json(DESCRIPTOR),
+          () => {
+            throw new TypeError("simulated ticket fetch failure");
+          },
+        ],
+      });
+
+      const error = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote
+          .authorizeDpop({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            directEndpoint: {
+              httpBaseUrl: "http://192.168.1.10:3773/",
+              wsBaseUrl: "ws://192.168.1.10:3773/",
+            },
+          })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(error).toMatchObject({ reason: "network", hop: "server", via: "direct" });
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
     }),
   );
 
