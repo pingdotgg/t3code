@@ -226,25 +226,25 @@ it("restores saved Viewed folds, follows cleared marks, and allows explicit expa
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
   await using screen = await render(tab(0), { container });
-  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeChecked();
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed a.ts" })).toBeChecked();
   await expect
     .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
     .toHaveAttribute("aria-expanded", "false");
 
   await screen.getByRole("button", { name: "Expand diff", exact: true }).click();
   await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
-  screen.getByRole("checkbox", { name: "Viewed" }).element().focus();
+  screen.getByRole("checkbox", { name: "Viewed a.ts" }).element().focus();
   await userEvent.keyboard(" ");
-  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).not.toBeChecked();
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed a.ts" })).not.toBeChecked();
   await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
-  screen.getByRole("checkbox", { name: "Viewed" }).element().focus();
+  screen.getByRole("checkbox", { name: "Viewed a.ts" }).element().focus();
   await userEvent.keyboard(" ");
   await expect
     .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
     .toHaveAttribute("aria-expanded", "false");
 
   deliverViewedPaths(new Set());
-  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).not.toBeChecked();
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed a.ts" })).not.toBeChecked();
   await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
   deliverViewedPaths(new Set(["a.ts"]));
   await expect
@@ -276,7 +276,7 @@ it("keeps a revealed file open when its Viewed mark loads afterwards", async () 
   await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
 
   deliverViewedPaths(new Set(["a.ts"]));
-  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeChecked();
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed a.ts" })).toBeChecked();
 
   await expect
     .element(screen.getByRole("button", { name: "Collapse diff" }))
@@ -373,6 +373,37 @@ it("never requests the diff of a selected commit the pull request no longer has"
     .element(screen.getByRole("button", { name: "Diff scope: All commits" }))
     .toBeVisible();
   expect(mocks.diffCommits).not.toContain("gone");
+});
+
+it("keeps an open comment on its line when the comment key is pressed again", async () => {
+  setup({ paged: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={detail}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+      onAddToAgentSelection={() => {}}
+    />,
+    { container },
+  );
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+  const panel = container.querySelector<HTMLElement>("[data-diff-panel]")!;
+  panel.focus();
+  await userEvent.keyboard("ic");
+  const draft = screen.getByRole("textbox");
+  await expect.element(draft).toBeVisible();
+  const line = draft.element().getAttribute("aria-label");
+
+  panel.focus();
+  await userEvent.keyboard("jjjc");
+
+  await expect.element(screen.getByRole("textbox")).toHaveAccessibleName(line!);
 });
 
 it("answers a commit's diff link only once that commit's diff is shown", async () => {

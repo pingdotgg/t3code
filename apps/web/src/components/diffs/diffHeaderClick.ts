@@ -2,7 +2,13 @@ export function getDiffHeaderClickAction(event: MouseEvent) {
   const path = event.composedPath();
   // Controls own their actions; handling the chevron here too would toggle twice.
   for (const node of path) {
-    if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) return null;
+    if (
+      node instanceof HTMLButtonElement ||
+      node instanceof HTMLAnchorElement ||
+      node instanceof HTMLLabelElement
+    ) {
+      return null;
+    }
   }
   const title = path.find(
     (node): node is HTMLElement => node instanceof HTMLElement && node.hasAttribute("data-title"),

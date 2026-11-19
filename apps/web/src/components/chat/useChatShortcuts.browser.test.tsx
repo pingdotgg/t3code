@@ -98,6 +98,21 @@ it("still types other letters into the composer while the launcher is open", asy
   expect(received).toEqual([]);
 });
 
+it("leaves letters typed in the Diff panel out of the composer", async () => {
+  const composerKeys: string[] = [];
+  await using _screen = await render(
+    <>
+      <Chat composerKeys={composerKeys} />
+      <div ref={focusOnMount} tabIndex={-1} data-diff-panel />
+    </>,
+    options,
+  );
+
+  await userEvent.keyboard("a ");
+
+  expect(composerKeys).toEqual([]);
+});
+
 it("leaves a non-Latin launcher letter to the launcher by its physical key", async () => {
   const composerKeys: string[] = [];
   const received: string[] = [];

@@ -768,6 +768,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("collapsed expanded collapse expand files pull request pr code tab")],
   },
   {
+    id: "diff-auto-advance-on-viewed",
+    title: msg("Auto-advance after marking viewed"),
+    to: "/settings/diffs",
+    searchTerms: [msg("viewed review next unviewed file jump keyboard")],
+  },
+  {
     id: "diff-layout",
     title: msg("Diff layout"),
     to: "/settings/diffs",

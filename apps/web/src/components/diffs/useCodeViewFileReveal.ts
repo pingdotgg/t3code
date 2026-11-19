@@ -65,6 +65,7 @@ export function createCodeViewFileReveal() {
   let detachedInstance: object | undefined;
   let pending: {
     id: string;
+    align: "start" | "nearest";
     range?: SelectedLineRange;
     positionedFile?: boolean;
     loadingFile?: boolean;
@@ -73,7 +74,8 @@ export function createCodeViewFileReveal() {
   const flush = () => {
     if (pending === null || viewer === null) return;
     const item = viewer.getItem(pending.id);
-    if (!viewer.getInstance() || item === undefined || item.collapsed === true) return;
+    if (!viewer.getInstance() || item === undefined) return;
+    if (pending.range && item.collapsed === true) return;
     const renderedItems = viewer.getInstance()?.getRenderedItems?.();
     if (pending.range && renderedItems) {
       const rendered = renderedItems.find((entry) => entry.id === pending?.id);
@@ -142,7 +144,7 @@ export function createCodeViewFileReveal() {
     viewer.scrollTo(
       target.range
         ? { type: "range", id: target.id, range: target.range, align: "center" }
-        : { type: "item", id: target.id, align: "start" },
+        : { type: "item", id: target.id, align: target.align },
     );
   };
   return {
@@ -163,8 +165,9 @@ export function createCodeViewFileReveal() {
       viewer = next;
       flush();
     },
-    request(fileKey: string, range?: SelectedLineRange) {
-      pending = { id: fileKey, ...(range ? { range } : {}) };
+    /** `nearest` leaves a file already on screen in place. */
+    request(fileKey: string, range?: SelectedLineRange, align: "start" | "nearest" = "start") {
+      pending = { id: fileKey, align, ...(range ? { range } : {}) };
       flush();
     },
     /** The user scrolled; a reveal still being positioned must not pull them back. */

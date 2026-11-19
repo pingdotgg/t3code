@@ -564,6 +564,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? [gt("Diff whitespace changes")]
       : []),
     ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? [gt("Diff layout")] : []),
+    ...(settings.diffAutoAdvanceOnViewed !== DEFAULT_UNIFIED_SETTINGS.diffAutoAdvanceOnViewed
+      ? [gt("Auto-advance after marking viewed")]
+      : []),
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
       ? [gt("Open pull requests and changes panels proactively")]
       : []),
@@ -705,6 +708,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
+      diffAutoAdvanceOnViewed: DEFAULT_UNIFIED_SETTINGS.diffAutoAdvanceOnViewed,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
@@ -1735,6 +1739,32 @@ export function DiffsSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...setting("diff-auto-advance-on-viewed")}
+          description={gt("After you mark a file viewed, move to the next unviewed file.")}
+          resetAction={
+            settings.diffAutoAdvanceOnViewed !==
+            DEFAULT_UNIFIED_SETTINGS.diffAutoAdvanceOnViewed ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset auto-advance after marking viewed to default")}
+                onClick={() =>
+                  updateSettings({
+                    diffAutoAdvanceOnViewed: DEFAULT_UNIFIED_SETTINGS.diffAutoAdvanceOnViewed,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.diffAutoAdvanceOnViewed}
+              onCheckedChange={(checked) =>
+                updateSettings({ diffAutoAdvanceOnViewed: Boolean(checked) })
+              }
+              aria-label={gt("Auto-advance after marking viewed")}
+            />
           }
         />
         <DiffColorsSettingsRow />
