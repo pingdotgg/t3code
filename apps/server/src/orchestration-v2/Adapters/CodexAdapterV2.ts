@@ -2360,12 +2360,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
         });
 
+        // The awaited roster is adapter-owned; a caller's snapshot can predate a completion.
+        const withCurrentAwaitedTasks = (
+          nativeThreadId: string,
+          providerThread: OrchestrationV2ProviderThread,
+        ): OrchestrationV2ProviderThread => {
+          const current = rootProviderThreads.get(nativeThreadId)?.pendingBackgroundTasks;
+          return current === undefined
+            ? providerThread
+            : { ...providerThread, pendingBackgroundTasks: current };
+        };
+
         const rememberRootProviderThread = Effect.fnUntraced(function* (
           providerThread: OrchestrationV2ProviderThread,
         ) {
           const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
           if (nativeThreadId == null) return;
-          rootProviderThreads.set(nativeThreadId, providerThread);
+          rootProviderThreads.set(
+            nativeThreadId,
+            withCurrentAwaitedTasks(nativeThreadId, providerThread),
+          );
           yield* emitGoalUpdate(nativeThreadId);
         });
 
@@ -2528,14 +2542,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               completedAt: null,
             },
           });
-          yield* rememberRootProviderThread({
-            ...input.turnInput.providerThread,
-            pendingBackgroundTasks:
-              (nativeThreadId == null
-                ? undefined
-                : rootProviderThreads.get(nativeThreadId)?.pendingBackgroundTasks) ??
-              input.turnInput.providerThread.pendingBackgroundTasks,
-          });
+          yield* rememberRootProviderThread(input.turnInput.providerThread);
           yield* emitMcpStartupFailures(context);
           return context;
         });
@@ -2630,7 +2637,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             pendingBackgroundTasks,
             updatedAt: yield* DateTime.now,
           };
-          yield* rememberRootProviderThread(updated);
+          rootProviderThreads.set(nativeThreadId, updated);
+          yield* emitGoalUpdate(nativeThreadId);
           yield* emitProviderEvent({
             type: "provider_thread.updated",
             driver: CODEX_PROVIDER,
@@ -7742,7 +7750,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ) {
             if (command.type === "set") yield* validateCodexGoalObjective(command.objective);
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
-            rootProviderThreads.set(threadId, turnInput.providerThread);
+            rootProviderThreads.set(
+              threadId,
+              withCurrentAwaitedTasks(threadId, turnInput.providerThread),
+            );
             const readGoal = client
               .request("thread/goal/get", { threadId })
               .pipe(
