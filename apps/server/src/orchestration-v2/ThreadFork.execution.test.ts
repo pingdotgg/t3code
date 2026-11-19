@@ -14,6 +14,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -935,6 +936,66 @@ it.effect("resolves an explicit checkpoint fork to its source run", () =>
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
+it.effect("a fresh send in a fork that has not run yet starts without the fork's context", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const parentId = ThreadId.make("fresh-fork-parent");
+    const forkId = ThreadId.make("fresh-fork-child");
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: RunId.make("fresh-fork-parent-run"),
+      ordinal: 1,
+      status: "completed",
+      text: "Work",
+      stable: true,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fresh-fork"),
+      sourceThreadId: parentId,
+      targetThreadId: forkId,
+      sourcePoint: { type: "latest_stable" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const scheduled = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("fresh-fork-scheduled"),
+        threadId: forkId,
+        messageId: MessageId.make("fresh-fork-scheduled"),
+        scheduledTaskId: ScheduledTaskId.make("fresh-fork-task"),
+        text: "Scheduled",
+        attachments: [],
+        freshContext: true,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.flip);
+    assert.include(String(scheduled.cause), "still being applied");
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("fresh-fork-send"),
+      threadId: forkId,
+      messageId: MessageId.make("fresh-fork-send"),
+      text: "Start over",
+      attachments: [],
+      freshContext: true,
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const fork = yield* orchestrator.getThreadProjection(forkId);
+    assert.isTrue(fork.runs.at(-1)?.freshContext === true);
+    assert.deepEqual(
+      fork.contextTransfers.filter((transfer) => transfer.type === "fork").map((t) => t.status),
+      ["superseded"],
+    );
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
 it.effect("a side chat of a busy parent points history recovery at the parent", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1363,6 +1424,24 @@ it.effect("merge-back rejects a second fork's context until the first is consume
     const second = yield* forkAndRun("second");
 
     yield* mergeBack("merge-back-guard-first", first);
+    const refusedFresh = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("merge-back-guard-fresh-send"),
+        threadId: parentId,
+        messageId: MessageId.make("merge-back-guard-fresh-send"),
+        text: "Start over",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        freshContext: true,
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.flip);
+    assert.include(
+      String(refusedFresh.cause),
+      "Send a message without /clear to apply the merged context first.",
+    );
     const rejected = yield* mergeBack("merge-back-guard-second", second).pipe(Effect.flip);
     assert.include(String(rejected.cause), "pending context from another side chat or fork");
     yield* mergeBack("merge-back-guard-first-again", first);
