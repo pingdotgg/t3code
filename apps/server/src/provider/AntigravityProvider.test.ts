@@ -850,6 +850,26 @@ it.layer(makeLayerTest(true))("Antigravity periodic health checks", (it) => {
 
       expect((yield* harness.provider.snapshot.getSnapshot).status).toBe("ready");
       expect((yield* Ref.get(published)).map((snapshot) => snapshot.status)).not.toContain("error");
+
+      yield* Ref.set(harness.probe, Effect.succeed(initializeResult));
+      yield* TestClock.adjust("30 seconds");
+      const failProbe = yield* Deferred.make<void>();
+      yield* Ref.set(
+        harness.probe,
+        Deferred.await(failProbe).pipe(
+          Effect.andThen(
+            Effect.fail(EffectAcpErrors.AcpRequestError.internalError("probe failed")),
+          ),
+        ),
+      );
+      yield* TestClock.adjust("5 minutes");
+      yield* harness.provider.onSignedOut;
+      yield* Deferred.succeed(failProbe, undefined);
+      yield* TestClock.adjust("30 seconds");
+
+      const auth = (yield* Ref.get(published)).map((snapshot) => snapshot.auth.status);
+      expect(auth.slice(auth.indexOf("unauthenticated"))).not.toContain("authenticated");
+      expect(auth.at(-1)).toBe("unauthenticated");
     }),
   );
 });

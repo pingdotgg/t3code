@@ -341,10 +341,12 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       } satisfies AntigravityProviderState;
     };
     // This state is published as it changes, so a failure the managed provider discards stays out.
-    const next =
-      errorMessage !== undefined && before.draft.status === "ready" && (yield* DeferringFailedCheck)
-        ? applyCheck(before)
-        : yield* SubscriptionRef.updateAndGet(metadata, applyCheck);
+    const deferFailure = errorMessage !== undefined && (yield* DeferringFailedCheck);
+    const next = yield* SubscriptionRef.modifySome(metadata, (state) => {
+      const checked = applyCheck(state);
+      const stored = deferFailure && state.draft.status === "ready" ? state : checked;
+      return [checked, stored === state ? Option.none() : Option.some(stored)];
+    });
     if (initialized !== undefined) yield* refreshUsage();
     return yield* options.stampIdentity(next.draft);
   });
