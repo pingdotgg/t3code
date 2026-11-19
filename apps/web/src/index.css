@@ -6626,6 +6626,10 @@ body {
     --pane-join-rim-k: 1.6;
     /* The rim's run along the pane's top edge, out from each ear. */
     --pane-join-tail: 36px;
+    /* How far the joined tab's fill runs on past the bar's foot. The bar's
+       foot snaps to a device pixel and the tab's layers do not, so at a
+       fractional zoom the bar's last row showed through. */
+    --pane-join-overlap: 2px;
 
     & [data-pane-header] {
       padding-block: var(--pane-join-shift)
@@ -6703,9 +6707,9 @@ body {
     & [data-pane-notch=""] [data-layout-tab-strip] {
       isolation: isolate;
       padding: var(--pane-join-rise) calc(var(--pane-join-ear) + var(--pane-join-tail))
-        calc(var(--pane-join-drop) + 1px) var(--pane-join-ear);
+        calc(var(--pane-join-drop) + var(--pane-join-overlap)) var(--pane-join-ear);
       margin: calc(var(--pane-join-rise) * -1) calc(var(--pane-join-tail) * -1)
-        calc(var(--pane-join-drop) * -1 - 1px) calc(var(--pane-join-ear) * -1);
+        calc(var(--pane-join-drop) * -1 - var(--pane-join-overlap)) calc(var(--pane-join-ear) * -1);
       /* Its padding passes presses on to the controls it runs under. */
       pointer-events: none;
       scroll-padding-inline: var(--pane-join-ear);
@@ -6876,13 +6880,13 @@ body {
         scale: -1 1;
       }
 
-      /* Body fill, 1px past the cap into the middle. It stops at the bar's
-         foot, so content scrolled under the bar meets one straight edge.
-         The overlap column skips the top row, where the middle's rim is. */
+      /* Body fill, 1px past the cap into the middle and the overlap past the
+         bar's foot. The overlap column skips the top row, where the middle's
+         rim is. */
       & [data-jf] {
         inset-inline-start: var(--e);
         width: calc(var(--r) + 1px);
-        height: 100%;
+        height: calc(100% + var(--pane-join-overlap));
         border-start-start-radius: var(--r);
         background:
           linear-gradient(var(--pane-join-fill), var(--pane-join-fill)) 0 0 / calc(100% - 1px) 100%
@@ -6916,7 +6920,7 @@ body {
         height: calc(var(--e) + 1px);
       }
       & [data-je] {
-        height: var(--e);
+        height: calc(var(--e) + var(--pane-join-overlap));
         background: radial-gradient(
           circle var(--e) at 0 0,
           transparent calc(var(--e) - 0.5px),
@@ -6946,9 +6950,10 @@ body {
         mask: linear-gradient(to right, transparent, #000);
       }
 
+      /* PANE_JOIN_MIDDLE_PX wide, scaled to the tab's middle (PaneTabs.tsx). */
       & [data-jm] {
-        width: 1px;
-        height: 100%;
+        width: 256px;
+        height: calc(100% + var(--pane-join-overlap));
         transform-origin: 0 0;
         translate: calc(var(--jx) + var(--r)) 0;
         scale: var(--jm) 1;

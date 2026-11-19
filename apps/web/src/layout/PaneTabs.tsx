@@ -153,6 +153,8 @@ function schedulePlacement(strip: HTMLElement, motionMs: number): void {
 const PANE_JOIN_RADIUS_PX = 10;
 const PANE_JOIN_EAR_PX = 10;
 const PANE_JOIN_TAIL_PX = 36;
+/** The middle's unscaled width (index.css). Scaling a 1px layer at a fractional zoom multiplied its rounding by the tab's width. */
+const PANE_JOIN_MIDDLE_PX = 256;
 /** The strip's edge fade (index.css), which the revealed tab's ears stay clear of. */
 const PANE_STRIP_FADE_PX = 24;
 
@@ -460,7 +462,8 @@ function moveJoin(
   measurePaneLit(entry);
   entry.shown = to;
   join.hidden = false;
-  const middle = (width: number) => Math.max(0, width - 2 * PANE_JOIN_RADIUS_PX);
+  const middle = (width: number) =>
+    Math.max(0, width - 2 * PANE_JOIN_RADIUS_PX) / PANE_JOIN_MIDDLE_PX;
   join.style.setProperty("--jx", `${to.x}px`);
   join.style.setProperty("--jw", `${to.w}px`);
   join.style.setProperty("--jm", String(middle(to.w)));
