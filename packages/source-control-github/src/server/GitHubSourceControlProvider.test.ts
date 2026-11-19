@@ -265,6 +265,35 @@ const githubContext = (host: string) => ({
 });
 
 describe("GitHubSourceControlProvider repository resolution", () => {
+  // regression: #38251 an Enterprise Server's hostname need not say "github"; a gh login vouches for it
+  it.effect.each([
+    ["github", "github"],
+    ["unknown", "unknown"],
+  ] as const)("refines a remote on an unknown host the gh login reads as %s", ([seen, expected]) =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider({});
+      const remoteUrl = "https://code.acme.test/acme/web.git";
+      const identity = {
+        canonicalKey: "code.acme.test/acme/web",
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+        rootPath: "/repo",
+        provider: SourceControlProviderKind.make("unknown"),
+      };
+      const refined = yield* provider.refineRepositoryIdentity!({
+        identity,
+        resolveContext: ({ context }) =>
+          Effect.succeed({
+            ...context,
+            provider: { ...context.provider, kind: SourceControlProviderKind.make(seen) },
+          }),
+      });
+      assert.deepStrictEqual(refined, {
+        ...identity,
+        provider: SourceControlProviderKind.make(expected),
+      });
+    }),
+  );
+
   it.effect("reads the repository gh would pick from the remotes", () => {
     const paths: string[] = [];
     const { layer } = harness({
@@ -453,11 +482,11 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
-      const probe = (defaultBranchHeadSelector?: string) =>
+      const probe = (ownerHeadSelector?: string) =>
         gh.headBranchProbe?.({
           headSelectors: ["me:main", "main"],
           state: "all",
-          defaultBranchHeadSelector,
+          ownerHeadSelector,
         }).headSelectors;
       assert.deepStrictEqual([probe(), probe("me:main")], [["main"], ["me:main"]]);
       const read = (state: "open" | "merged") =>
@@ -1058,7 +1087,9 @@ it("reports unauthenticated when Settings turn off every signed-in host", () => 
   assert.strictEqual(auth.status, "unauthenticated");
   assert.deepStrictEqual(
     auth.detail,
-    Option.some("Every GitHub host gh is signed in to is turned off in Settings → Source Control."),
+    Option.some(
+      "Every GitHub host gh is signed in to is turned off in Settings → Source control & issues.",
+    ),
   );
 });
 
