@@ -737,6 +737,9 @@ export const make = Effect.gen(function* () {
           ...(input.expectedStackHeads === undefined
             ? {}
             : { expectedStackHeads: input.expectedStackHeads }),
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : { expectedHeadSha: input.expectedHeadSha }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
         })
