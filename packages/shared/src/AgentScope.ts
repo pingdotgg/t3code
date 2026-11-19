@@ -119,3 +119,13 @@ export function agentScopeCommand(input: {
     ],
   };
 }
+
+/**
+ * Called with an agent CLI's own pid while it runs; the returned function releases it. The CLI
+ * carries its thread's T3CODE_THREAD_ID, so a port it holds would otherwise read as a server the
+ * thread started.
+ */
+export const AgentCliProcess = Context.Reference<(pid: number) => () => void>(
+  "@t3tools/shared/AgentScope/AgentCliProcess",
+  { defaultValue: () => () => () => undefined },
+);

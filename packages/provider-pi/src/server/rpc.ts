@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import { AgentCliProcess } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import {
@@ -230,6 +231,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       }),
     )
     .pipe(Effect.mapError((cause) => new PiRpcError({ operation: "spawn", cause })));
+  const releaseAgentCli = (yield* AgentCliProcess)(Number(child.pid));
+  yield* Scope.addFinalizer(scope, Effect.sync(releaseAgentCli));
 
   let childExited = false;
   let diagnosingStdoutClose = false;

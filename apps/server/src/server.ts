@@ -42,6 +42,7 @@ import {
 import { resolveLauncherPath } from "./cloud/pinnedRuntime.ts";
 import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
+import { AgentCliProcess } from "@t3tools/shared/AgentScope";
 import * as AgentScopeLive from "./process/agentScope.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as SpawnWorker from "./process/SpawnWorker.ts";
@@ -522,6 +523,13 @@ const layerPortScanner = PortScanner.layer.pipe(
   Layer.provide(ProcessRunner.layer),
   Layer.provide(layerBackground),
 );
+
+const layerAgentCliProcess = Layer.effect(
+  AgentCliProcess,
+  Effect.gen(function* () {
+    return (yield* PortScanner.PortDiscovery).trackAgent;
+  }),
+).pipe(Layer.provide(layerPortScanner));
 
 const layerTerminal = TerminalManager.layer(
   ProviderInstanceRegistryHydration.deriveProviderInstanceConfigMap,
@@ -1370,6 +1378,7 @@ const layerMakeServer = Layer.unwrap(
       ),
       Layer.provideMerge(layerHttpServer),
       Layer.provide(layerApplicationObservability),
+      Layer.provide(layerAgentCliProcess),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(VcsProcess.layer),
       Layer.provideMerge(AgentScopeLive.layer),

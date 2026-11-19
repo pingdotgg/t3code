@@ -53,10 +53,11 @@ export class PortDiscovery extends Context.Service<
     }) => Effect.Effect<void>;
     /**
      * Counts a running agent until the returned function is called. While one runs, any
-     * listener may be a server it started. Synchronous because provider spawn callbacks run
-     * outside Effect.
+     * listener may be a server it started. `cliPid` is the agent CLI's own process when it carries
+     * the thread itself: a port it holds is not a server. Synchronous because provider spawn
+     * callbacks run outside Effect.
      */
-    readonly trackAgent: () => () => void;
+    readonly trackAgent: (cliPid?: number) => () => void;
     /**
      * Tells an agent CLI's adapter which of its commands a user stop is about to signal, so the
      * exit is not reported to the agent as the command finishing by itself.
@@ -531,6 +532,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const agentThreadsRef = yield* Ref.make<ReadonlyMap<number, ThreadId | null>>(new Map());
   const agentCommandStopWatchers = new Set<AgentCommandStopWatcher>();
   let runningAgents = 0;
+  const agentCliPids = new Set<number>();
   // An agent that exited, or a cache cleared with a marked listener, owes one listener read: the
   // servers it left may still run. So does startup, for agents that ran before a restart.
   let agentScanPending = true;
@@ -588,7 +590,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const threads = yield* readAgentThreads(pids.filter((pid) => !terminalOwners.has(pid)));
     const owners = new Map(terminalOwners);
     for (const [pid, threadId] of threads) {
-      if (threadId !== null) owners.set(pid, { terminal: null, agent: { threadId } });
+      if (threadId !== null && !agentCliPids.has(pid)) {
+        owners.set(pid, { terminal: null, agent: { threadId } });
+      }
     }
     return owners;
   });
@@ -1062,13 +1066,15 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     });
   });
 
-  const trackAgent: PortDiscovery["Service"]["trackAgent"] = () => {
+  const trackAgent: PortDiscovery["Service"]["trackAgent"] = (cliPid) => {
     runningAgents += 1;
+    if (cliPid !== undefined) agentCliPids.add(cliPid);
     let released = false;
     return () => {
       if (released) return;
       released = true;
       runningAgents -= 1;
+      if (cliPid !== undefined) agentCliPids.delete(cliPid);
       agentScanPending = true;
     };
   };

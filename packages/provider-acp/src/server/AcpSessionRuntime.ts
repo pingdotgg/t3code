@@ -29,7 +29,12 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { AgentScope, AgentScopeThreadId, RAISE_OOM_SCORE_LINE } from "@t3tools/shared/AgentScope";
+import {
+  AgentCliProcess,
+  AgentScope,
+  AgentScopeThreadId,
+  RAISE_OOM_SCORE_LINE,
+} from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -1492,6 +1497,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           }),
       ),
     );
+
+  const releaseAgentCli = (yield* AgentCliProcess)(Number(child.pid));
+  yield* Scope.addFinalizer(runtimeScope, Effect.sync(releaseAgentCli));
 
   // Detached children can keep stdout open, delaying protocol termination.
   if (scopeUnit !== undefined) {

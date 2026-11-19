@@ -1,6 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeUtil from "node:util";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import { AgentCliProcess, AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { readToolOutputImage } from "@t3tools/shared/toolOutput";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
@@ -462,6 +462,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const agentScope = yield* AgentScope;
+  const agentCliProcess = yield* AgentCliProcess;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -574,6 +575,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return { connection, scope: connectionScope };
         }).pipe(
           Effect.provideService(Scope.Scope, connectionScope),
+          Effect.provideService(AgentCliProcess, agentCliProcess),
           Effect.onExit((exit) =>
             Exit.isFailure(exit) ? Scope.close(connectionScope, exit) : Effect.void,
           ),

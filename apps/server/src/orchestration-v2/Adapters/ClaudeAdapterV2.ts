@@ -1583,7 +1583,7 @@ export const layerQueryRunner: Layer.Layer<
         const child = spawnProcess(spawnOptions);
         spawnedProcess = child;
         // A spawn that fails emits only "error".
-        const releaseAgent = portDiscovery.trackAgent();
+        const releaseAgent = portDiscovery.trackAgent("pid" in child ? child.pid : undefined);
         child.once("exit", releaseAgent);
         child.on("error", releaseAgent);
         processExited = child.exitCode !== null || child.signalCode != null;

@@ -955,6 +955,11 @@ effectIt.effect.each(["linux", "darwin"] as const)(
       const lsofCallsAfterExit = lsofCalls;
       expect(yield* scanner.scan()).toEqual([]);
       expect(lsofCalls).toBe(lsofCallsAfterExit);
+
+      // An agent CLI carries its thread itself, so the port it holds is not its server.
+      lsofStdout = `${agentListener}${otherListener}`;
+      scanner.trackAgent(4242);
+      expect(yield* scanner.scan()).toEqual([]);
     }).pipe(Effect.provide(layer));
   },
 );
