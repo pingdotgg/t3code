@@ -1578,10 +1578,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             completedAt: finished ? emittedAt : null,
             updatedAt: emittedAt,
           },
-        });
-        yield* emit({
-          type: "turn_item.updated",
-          driver: PI_PROVIDER,
           turnItem: {
             ...baseItemFields(turn, nativeTaskId, startedAt, emittedAt),
             status: task.status,

@@ -17,6 +17,7 @@ import {
   OrchestrationV2ProviderTurn,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
+  OrchestrationV2SubagentTurnItem,
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
   ProviderInteractionMode,
@@ -119,6 +120,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("subagent.updated"),
     driver: ProviderDriverKind,
     subagent: OrchestrationV2Subagent,
+    /** The subagent's own item when nothing comes between them, so both commit in one write. */
+    turnItem: Schema.optional(OrchestrationV2SubagentTurnItem),
   }),
   Schema.Struct({
     type: Schema.Literal("message.updated"),
@@ -206,6 +209,15 @@ export const ProviderAdapterV2Event = Schema.Union([
   }),
 ]);
 export type ProviderAdapterV2Event = typeof ProviderAdapterV2Event.Type;
+
+/** The events an emission stands for, in order; each gets the per-event handling of its own. */
+export function providerEventMembers(
+  event: ProviderAdapterV2Event,
+): ReadonlyArray<ProviderAdapterV2Event> {
+  if (event.type !== "subagent.updated" || event.turnItem === undefined) return [event];
+  const { turnItem, ...record } = event;
+  return [record, { type: "turn_item.updated", driver: event.driver, turnItem }];
+}
 
 export class ProviderAdapterCapabilitiesError extends Schema.TaggedError<ProviderAdapterCapabilitiesError>()(
   "ProviderAdapterCapabilitiesError",

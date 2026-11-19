@@ -18376,6 +18376,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             event.subagent.progress === "Reading the last commits",
         ),
       );
+      const progressUpdate = harness.events.find(
+        (event) =>
+          event.type === "subagent.updated" &&
+          event.subagent.progress === "Reading the last commits",
+      );
+      // A progress-only update carries its item, so ingestion stores both in one commit.
+      assert.equal(
+        progressUpdate?.type === "subagent.updated" ? progressUpdate.turnItem?.progress : undefined,
+        "Reading the last commits",
+      );
       const routing = subagentRouting(harness.events, [STRADDLING_BASH, IDLE_BASH]);
       assert.deepEqual(routing.assistantTexts(routing.childThreadId), ["Still auditing."]);
       const straddling = latestToolItem(STRADDLING_BASH);

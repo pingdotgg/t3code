@@ -1712,6 +1712,24 @@ const OrchestrationV2LinkRequestFields = {
   failure: Schema.optional(Schema.String),
 } as const;
 
+export const OrchestrationV2SubagentTurnItem = Schema.Struct({
+  ...OrchestrationV2TurnItemBaseFields,
+  type: Schema.Literal("subagent"),
+  subagentId: NodeId,
+  origin: Schema.Literals(["provider_native", "app_owned"]),
+  driver: ProviderDriverKind,
+  providerInstanceId: ProviderInstanceId,
+  childThreadId: Schema.NullOr(ThreadId),
+  remoteChild: Schema.optional(OrchestrationV2RemoteTaskChild),
+  prompt: Schema.String,
+  progress: Schema.optional(Schema.String),
+  result: Schema.NullOr(Schema.String),
+  /** Same as the prompt and result of subagent `subagentId`. */
+  promptOmitted: DedupedBodyMarker,
+  resultOmitted: DedupedBodyMarker,
+});
+export type OrchestrationV2SubagentTurnItem = typeof OrchestrationV2SubagentTurnItem.Type;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1915,22 +1933,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2LinkRequestFields,
   }),
-  Schema.Struct({
-    ...OrchestrationV2TurnItemBaseFields,
-    type: Schema.Literal("subagent"),
-    subagentId: NodeId,
-    origin: Schema.Literals(["provider_native", "app_owned"]),
-    driver: ProviderDriverKind,
-    providerInstanceId: ProviderInstanceId,
-    childThreadId: Schema.NullOr(ThreadId),
-    remoteChild: Schema.optional(OrchestrationV2RemoteTaskChild),
-    prompt: Schema.String,
-    progress: Schema.optional(Schema.String),
-    result: Schema.NullOr(Schema.String),
-    /** Same as the prompt and result of subagent `subagentId`. */
-    promptOmitted: DedupedBodyMarker,
-    resultOmitted: DedupedBodyMarker,
-  }),
+  OrchestrationV2SubagentTurnItem,
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("dynamic_tool"),

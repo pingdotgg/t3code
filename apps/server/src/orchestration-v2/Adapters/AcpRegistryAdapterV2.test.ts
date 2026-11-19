@@ -298,7 +298,9 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   }
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
   yield* runtime.events.pipe(
-    Stream.runForEach((event) => Queue.offer(events, event)),
+    Stream.runForEach((event) =>
+      Queue.offerAll(events, ProviderAdapter.providerEventMembers(event)),
+    ),
     Effect.forkScoped,
   );
   const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });

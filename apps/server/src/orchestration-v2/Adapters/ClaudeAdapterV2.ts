@@ -117,6 +117,7 @@ import {
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2UserInputQuestion,
   type OrchestrationV2Subagent,
+  type OrchestrationV2SubagentTurnItem,
   type OrchestrationV2AppThread,
   type OrchestrationV2SubagentWorkflow,
   type OrchestrationV2WorkflowRunHandles,
@@ -8207,11 +8208,45 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               },
             });
           }
+          const turnItem = {
+            id: subagent.turnItemId,
+            threadId: task.threadId,
+            runId: task.runId,
+            nodeId: task.id,
+            providerThreadId: input.context.input.providerThread.id,
+            providerTurnId: input.context.providerTurnId,
+            nativeItemRef: task.nativeTaskRef,
+            parentItemId: null,
+            ordinal: subagent.turnItemOrdinal,
+            status: task.status,
+            title: task.title,
+            startedAt: task.startedAt,
+            completedAt: task.completedAt,
+            updatedAt: task.updatedAt,
+            type: "subagent",
+            subagentId: task.id,
+            origin: task.origin,
+            driver: task.driver,
+            providerInstanceId: task.providerInstanceId,
+            childThreadId: task.childThreadId,
+            prompt: task.prompt,
+            ...(task.progress === undefined ? {} : { progress: task.progress }),
+            result: task.result,
+          } satisfies OrchestrationV2SubagentTurnItem;
+          const promptNativeItemId =
+            existingSubagent === undefined
+              ? `${nativeItemId}:prompt`
+              : resumeToolUseId === null
+                ? null
+                : `${nativeItemId}:prompt:${resumeToolUseId}`;
+          const itemFollowsRecord =
+            !lifecycleChanged && promptNativeItemId === null && workflowWithThreads === undefined;
           // Emit before child records so the resumed run can adopt the child thread.
           yield* emitProviderEvent({
             type: "subagent.updated",
             driver: CLAUDE_PROVIDER,
             subagent: task,
+            ...(itemFollowsRecord ? { turnItem } : {}),
           });
           if (lifecycleChanged) {
             yield* emitProviderEvent({
@@ -8236,12 +8271,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               },
             });
           }
-          const promptNativeItemId =
-            existingSubagent === undefined
-              ? `${nativeItemId}:prompt`
-              : resumeToolUseId === null
-                ? null
-                : `${nativeItemId}:prompt:${resumeToolUseId}`;
           if (promptNativeItemId !== null) {
             yield* emitSubagentConversationMessage({
               nativeItemId: promptNativeItemId,
@@ -8265,35 +8294,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             if ((yield* Ref.get(sessionSubagentsByTaskId)).get(input.taskId) !== subagent) return;
           }
-          yield* emitProviderEvent({
-            type: "turn_item.updated",
-            driver: CLAUDE_PROVIDER,
-            turnItem: {
-              id: subagent.turnItemId,
-              threadId: task.threadId,
-              runId: task.runId,
-              nodeId: task.id,
-              providerThreadId: input.context.input.providerThread.id,
-              providerTurnId: input.context.providerTurnId,
-              nativeItemRef: task.nativeTaskRef,
-              parentItemId: null,
-              ordinal: subagent.turnItemOrdinal,
-              status: task.status,
-              title: task.title,
-              startedAt: task.startedAt,
-              completedAt: task.completedAt,
-              updatedAt: task.updatedAt,
-              type: "subagent",
-              subagentId: task.id,
-              origin: task.origin,
-              driver: task.driver,
-              providerInstanceId: task.providerInstanceId,
-              childThreadId: task.childThreadId,
-              prompt: task.prompt,
-              ...(task.progress === undefined ? {} : { progress: task.progress }),
-              result: task.result,
-            },
-          });
+          if (!itemFollowsRecord) {
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem,
+            });
+          }
 
           if (input.nativeOutcome !== undefined && subagent.confirmedOutcome !== undefined) {
             const outcome = subagentStopOutcomes.get(input.taskId);

@@ -1648,10 +1648,6 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             type: "subagent.updated",
             driver: OPENCODE_PROVIDER,
             subagent,
-          });
-          yield* emitProviderEvent({
-            type: "turn_item.updated",
-            driver: OPENCODE_PROVIDER,
             turnItem: {
               id: turnItemId,
               threadId: turn.threadId,

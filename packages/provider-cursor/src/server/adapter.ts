@@ -1916,10 +1916,6 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             type: "subagent.updated",
             driver: CursorAgentSdk.CURSOR_PROVIDER,
             subagent: task,
-          });
-          yield* emitProviderEvent({
-            type: "turn_item.updated",
-            driver: CursorAgentSdk.CURSOR_PROVIDER,
             turnItem: {
               id: subagent.turnItemId,
               threadId: input.context.input.threadId,

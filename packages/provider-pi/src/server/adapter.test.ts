@@ -3719,18 +3719,9 @@ describe("PiAdapterV2", () => {
       assert.isTrue(
         doneCard.type === "subagent.updated" &&
           doneCard.subagent.result === "repo has one file" &&
-          doneCard.subagent.childThreadId === null,
-      );
-      const subagentItem = yield* takeEvent(
-        (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "subagent" &&
-          event.turnItem.status === "completed",
-      );
-      assert.isTrue(
-        subagentItem.type === "turn_item.updated" &&
-          subagentItem.turnItem.type === "subagent" &&
-          subagentItem.turnItem.childThreadId === null,
+          doneCard.subagent.childThreadId === null &&
+          doneCard.turnItem?.status === "completed" &&
+          doneCard.turnItem.childThreadId === null,
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
