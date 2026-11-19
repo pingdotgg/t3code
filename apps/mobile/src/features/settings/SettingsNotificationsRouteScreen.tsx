@@ -1,8 +1,12 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
-import { useGT, useMessages } from "gt-react-native";
+import { msg, useGT, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
-import { AuthRelayWriteScope, type EnvironmentId } from "@t3tools/contracts";
+import {
+  AuthRelayConfigureScope,
+  AuthRelayWriteScope,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
@@ -12,6 +16,7 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState, useSyncExternalStore } from "react";
 import { Linking, Platform } from "react-native";
@@ -20,6 +25,7 @@ import { m as resolveMessage } from "../../i18n/messages";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import {
+  createEnvironmentCommand,
   isAtomCommandInterrupted,
   reportAtomCommandResult,
   settleAsyncResult,
@@ -31,7 +37,10 @@ import {
   openAndroidLiveUpdateSettings,
   supportsAndroidLiveUpdateSettings,
 } from "../agent-awareness/androidNotifications";
-import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
+import {
+  LiveActivityEnvironmentUpdateError,
+  setLiveActivityUpdatesEnabled,
+} from "../agent-awareness/liveActivityPreferences";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
   agentAwarenessNotificationsReady,
@@ -39,6 +48,12 @@ import {
   refreshAgentAwarenessRegistration,
   subscribeAgentAwarenessRegistrationStatus,
 } from "../agent-awareness/remoteRegistration";
+import { connectionAtomRuntime } from "../../connection/runtime";
+import {
+  CloudEnvironmentLinkError,
+  linkEnvironmentToCloudWithPreference,
+  updateLinkedEnvironmentLiveActivityPreference,
+} from "../cloud/linkEnvironment";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
@@ -51,16 +66,66 @@ import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
 
+const updateLiveActivityPreference = createEnvironmentCommand(connectionAtomRuntime, {
+  label: "updateLiveActivityPreference",
+  execute: updateLinkedEnvironmentLiveActivityPreference,
+});
+
+const linkLiveActivityEnvironment = createEnvironmentCommand(connectionAtomRuntime, {
+  label: "linkLiveActivityEnvironment",
+  execute: linkEnvironmentToCloudWithPreference,
+});
+
+const isLiveActivityEnvironmentUpdateError = Schema.is(LiveActivityEnvironmentUpdateError);
+const isCloudEnvironmentLinkError = Schema.is(CloudEnvironmentLinkError);
+
+function toCloudEnvironmentLinkError(cause: unknown, message: string) {
+  return isCloudEnvironmentLinkError(cause)
+    ? cause
+    : new CloudEnvironmentLinkError({ message, cause });
+}
+
+const updateEnvironmentPreference = Effect.fn("updateEnvironmentPreference")(function* (
+  environmentId: EnvironmentId,
+  enabled: boolean,
+) {
+  const result = yield* Effect.promise(() =>
+    updateLiveActivityPreference.run(appAtomRegistry, { environmentId, input: enabled }),
+  );
+  if (result._tag === "Success") return result.value;
+  return yield* toCloudEnvironmentLinkError(
+    squashAtomCommandFailure(result),
+    resolveMessage(msg("Could not update the environment's Live Activity preference.")),
+  );
+});
+
+const linkEnvironmentWithPreference = Effect.fn("linkEnvironmentWithPreference")(function* (
+  environmentId: EnvironmentId,
+  input: { readonly clerkToken: string; readonly liveActivitiesEnabled: boolean },
+) {
+  const result = yield* Effect.promise(() =>
+    linkLiveActivityEnvironment.run(appAtomRegistry, { environmentId, input }),
+  );
+  if (result._tag === "Success") return;
+  return yield* toCloudEnvironmentLinkError(
+    squashAtomCommandFailure(result),
+    resolveMessage(msg("Could not configure environment relay access.")),
+  );
+});
+
 /**
  * A policy that turns Connect off refuses relay links and preferences, which would fail the
  * whole batch, so those environments are skipped like ones this session cannot configure.
  */
-function canLinkEnvironmentToConnect(environmentId: EnvironmentId) {
+function canManageConnect(
+  environmentId: EnvironmentId,
+  scope: typeof AuthRelayConfigureScope | typeof AuthRelayWriteScope,
+) {
   const policy = appAtomRegistry.get(
     serverEnvironment.configValueAtom(environmentId),
   )?.managedPolicy;
   return (
-    readEnvironmentScope(environmentId, AuthRelayWriteScope) &&
+    readEnvironmentScope(environmentId, scope) &&
     managedCapabilityDenial(policy, "connect") === undefined
   );
 }
@@ -316,7 +381,12 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     const updateResult = await settleAsyncResult(() =>
       runtime.runPromiseExit(
         setLiveActivityUpdatesEnabled({
-          canConfigureEnvironment: canLinkEnvironmentToConnect,
+          updateEnvironment: updateEnvironmentPreference,
+          linkEnvironment: linkEnvironmentWithPreference,
+          canConfigureEnvironment: (id) =>
+            canManageConnect(id, AuthRelayConfigureScope) &&
+            canManageConnect(id, AuthRelayWriteScope),
+          canUpdateEnvironment: (id) => canManageConnect(id, AuthRelayWriteScope),
           enabled: true,
           previousEnabled: liveActivitiesPreferenceEnabled,
           clerkToken: tokenResult.value,
@@ -328,6 +398,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       setLiveActivityStatus("disabled");
       if (!isAtomCommandInterrupted(updateResult)) {
         const error = squashAtomCommandFailure(updateResult);
+        if (reportPartialEnvironmentUpdate(error)) return;
         Dialog.alert(
           Platform.OS === "android"
             ? gt("Ongoing activity unavailable")
@@ -344,11 +415,18 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     refreshManagedRelayEnvironments();
     setLiveActivityStatus("enabled");
     // Environment linking can precede device registration; only registered devices can receive Live Activities.
-    if (getAgentAwarenessRegistrationStatus() === "registered") {
+    if (updateResult.value) {
+      Dialog.alert(
+        gt("Some environments need an update"),
+        gt(
+          "The device preference was saved. Update older environment servers to apply the setting there.",
+        ),
+      );
+    } else if (getAgentAwarenessRegistrationStatus() === "registered") {
       Dialog.alert(
         Platform.OS === "android" ? gt("Ongoing activity enabled") : gt("Live Activities enabled"),
         environmentCount > 0
-          ? gt("Agent activity updates are enabled for environments this connection can configure.")
+          ? gt("Agent activity updates are enabled for eligible environments.")
           : gt(
               "Agent activity updates are enabled. Add an environment to start receiving updates.",
             ),
@@ -401,7 +479,12 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     const updateResult = await settleAsyncResult(() =>
       runtime.runPromiseExit(
         setLiveActivityUpdatesEnabled({
-          canConfigureEnvironment: canLinkEnvironmentToConnect,
+          updateEnvironment: updateEnvironmentPreference,
+          linkEnvironment: linkEnvironmentWithPreference,
+          canConfigureEnvironment: (id) =>
+            canManageConnect(id, AuthRelayConfigureScope) &&
+            canManageConnect(id, AuthRelayWriteScope),
+          canUpdateEnvironment: (id) => canManageConnect(id, AuthRelayWriteScope),
           enabled: false,
           previousEnabled: liveActivitiesPreferenceEnabled,
           clerkToken: token,
@@ -411,14 +494,36 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     );
     if (updateResult._tag === "Failure") {
       setLiveActivityStatus(isSignedIn ? "enabled" : "signed-out");
-      reportAtomCommandResult(updateResult, {
-        label: "live activity disable",
-      });
+      if (!reportPartialEnvironmentUpdate(squashAtomCommandFailure(updateResult))) {
+        reportAtomCommandResult(updateResult, {
+          label: "live activity disable",
+        });
+      }
       return;
     }
     savePreferences({ liveActivitiesEnabled: false });
     refreshManagedRelayEnvironments();
     setLiveActivityStatus("disabled");
+    if (updateResult.value) {
+      Dialog.alert(
+        gt("Some environments need an update"),
+        gt(
+          "The device preference was saved. Update older environment servers to apply the setting there.",
+        ),
+      );
+    }
+  }
+
+  function reportPartialEnvironmentUpdate(error: unknown): boolean {
+    if (!isLiveActivityEnvironmentUpdateError(error)) return false;
+    refreshManagedRelayEnvironments();
+    Dialog.alert(
+      gt("Some environments were updated"),
+      gt("The device setting was not saved. The new setting was applied to: {environments}.", {
+        environments: error.updatedEnvironments.join(", "),
+      }),
+    );
+    return true;
   }
 
   // Both writers settle their own failures, so awaiting them never throws.

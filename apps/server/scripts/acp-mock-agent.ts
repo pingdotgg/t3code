@@ -18,6 +18,7 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+const harnessFailure = process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE;
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -515,6 +516,16 @@ const program = Effect.gen(function* () {
       },
     });
 
+  const writeHarnessFailure = Effect.promise(
+    () =>
+      new Promise<void>((resolve) => {
+        process.stderr.write(
+          "I1022 11:04:37.910207 1865358 local_connection.py:551] harness stderr: Agent run failed: failed to handle call hook response: no pending hook for ID hook_request_2\n",
+          () => resolve(),
+        );
+      }),
+  );
+
   const finishPrompt = (
     targetSessionId: string,
     stopReason: AcpSchema.StopReason,
@@ -1005,6 +1016,18 @@ const program = Effect.gen(function* () {
         );
         return {};
       }
+      if (
+        harnessFailure === "1" ||
+        harnessFailure === "pending" ||
+        harnessFailure === "after-end-turn"
+      ) {
+        if (harnessFailure === "after-end-turn") {
+          return yield* finishPrompt(requestedSessionId, "end_turn");
+        }
+        yield* writeHarnessFailure;
+        if (harnessFailure === "pending") return yield* Effect.never;
+        return yield* finishPrompt(requestedSessionId, "end_turn");
+      }
 
       if (clientFsProbePath !== undefined && clientFsProbeLogPath !== undefined) {
         const probes = [
@@ -1268,6 +1291,33 @@ const program = Effect.gen(function* () {
             status: "completed",
             rawInput: { query: "TODO", path: "apps/web" },
           },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-explicit-location",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "  README.md  " },
+            locations: [{ path: "README.md" }],
+            rawOutput: "# Title",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-query-only",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "TODO" },
+            rawOutput: "src/a.ts: TODO",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-query-no-output",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "FIXME" },
+          },
           // Grok backend searches: the query only arrives in the completed rawOutput.
           {
             sessionUpdate: "tool_call_update",
@@ -1331,6 +1381,43 @@ const program = Effect.gen(function* () {
             status: "completed",
             rawInput: { command: "cat probe.txt" },
             rawOutput: { commandLine: "cat probe.txt", exitCode: 0, combinedOutput: "after\n" },
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-web-search",
+            title: "Web search",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "  top story on Hacker News today  " },
+            rawOutput:
+              "Sources:\n<https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz>.",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-run-search-web",
+            title: "Running search_web",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "top story on Hacker News today" },
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-web-search-streamed",
+            title: "Web search",
+            kind: "search",
+            status: "in_progress",
+            rawInput: { query: "streamed citations" },
+            rawOutput: "Sources: https://example.com/streamed_(detail)",
+          },
+          {
+            sessionUpdate: "tool_call_content_chunk",
+            toolCallId: "antigravity-web-search-streamed",
+            content: { type: "content", content: { type: "text", text: " (updated)" } },
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-web-search-streamed",
+            status: "completed",
           },
           {
             sessionUpdate: "compaction_update",
@@ -2074,7 +2161,9 @@ const program = Effect.gen(function* () {
             typeof params === "object" && params !== null ? Reflect.get(params, "code") : undefined;
           process.exit(typeof code === "number" ? code : 19);
         })
-      : Effect.void,
+      : method === "_test/harness-failure"
+        ? writeHarnessFailure
+        : Effect.void,
   );
 
   return yield* Effect.never;
