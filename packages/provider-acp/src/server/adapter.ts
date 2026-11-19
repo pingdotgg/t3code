@@ -1023,9 +1023,10 @@ function acpMcpContext(
           { name: "ELECTRON_RUN_AS_NODE", value: "1" },
           { name: "T3_ACP_MCP_ENDPOINT", value: session.endpoint },
           { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
-          ...(exposure === undefined
-            ? []
-            : [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: exposure }]),
+          // Copilot's stdio bridge keeps listing every tool; only proxy mode defers there.
+          ...(exposure === "deferred-proxy"
+            ? [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: exposure }]
+            : []),
         ],
       },
     ],

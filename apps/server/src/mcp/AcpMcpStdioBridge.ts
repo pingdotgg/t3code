@@ -9,7 +9,10 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { discardResponseBody, responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
-import type { McpToolExposureMode } from "@t3tools/provider-core/server/mcpSession";
+import {
+  type McpToolExposureMode,
+  parseMcpToolExposureMode,
+} from "@t3tools/provider-core/server/mcpSession";
 
 /** ACP mandates stdio MCP support; HTTP/SSE support varies. */
 
@@ -361,9 +364,7 @@ export async function runAcpMcpCliFastPath(
     return;
   }
   if (command === "acp-mcp-bridge") {
-    const rawExposure = process.env.T3_ACP_MCP_TOOL_EXPOSURE?.trim();
-    const toolExposure: McpToolExposureMode | undefined =
-      rawExposure === "deferred" || rawExposure === "deferred-proxy" ? rawExposure : undefined;
+    const toolExposure = parseMcpToolExposureMode(process.env.T3_ACP_MCP_TOOL_EXPOSURE);
     await Effect.runPromise(
       runAcpMcpStdioBridge({
         endpoint,
