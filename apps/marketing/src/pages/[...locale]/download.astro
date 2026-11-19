@@ -47,13 +47,16 @@ const imageProps = {
     <header class="download-head">
       <div class="sky" aria-hidden="true"></div>
       <div class="head-inner" data-rise>
-        <span class="head-icon">
-          <Image class="head-icon--stable" src={iconStable} width={64} height={64} loading="eager" {...imageProps} />
-          <Image class="head-icon--nightly" src={iconNightly} width={120} height={120} loading="eager" {...imageProps} />
+        <span class="head-icon swap">
+          <Image class="for-stable" src={iconStable} width={112} height={112} loading="eager" {...imageProps} />
+          <Image class="for-nightly" src={iconNightly} width={112} height={112} loading="eager" {...imageProps} />
         </span>
         <h1 class="heading">{t.heading}</h1>
       </div>
-      <p class="nightly-tagline" data-rise style="--d:60ms">{t.nightlyTagline}</p>
+      <div class="tagline swap" data-rise style="--d:60ms">
+        <p class="for-stable">{t.stableTagline}</p>
+        <p class="for-nightly">{t.nightlyTagline}</p>
+      </div>
       <div class="channel-toggle" role="tablist" aria-label={t.channelLabel} data-rise style="--d:90ms">
         <span class="channel-thumb" aria-hidden="true"></span>
         <button type="button" role="tab" data-channel="stable" aria-selected="true">{t.stable}</button>
@@ -74,10 +77,6 @@ const imageProps = {
         </div>
         <div class="download-cards">
           <a class="download-card" data-asset="arm64.dmg" href={RELEASES_URL}>
-            <span class="card-icon">
-              <Image class="card-icon--stable" src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
-              <Image class="card-icon--nightly" src={iconNightly} width={28} height={28} loading="lazy" {...imageProps} />
-            </span>
             <span class="card-text">
               <span class="card-arch">Apple Silicon (arm64)</span>
               <span class="card-format">.dmg</span>
@@ -85,7 +84,7 @@ const imageProps = {
             <svg class="card-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
           </a>
         </div>
-        <p class="intel-note">
+        <p class="platform-note">
           {templateParts(t.intelNote).map((part) =>
             typeof part === "string" ? part : <a data-asset="x64.dmg" href={RELEASES_URL}>{t.intelLink}</a>,
           )}
@@ -99,10 +98,6 @@ const imageProps = {
         </div>
         <div class="download-cards">
           <a class="download-card" data-asset="x64.exe" href={RELEASES_URL}>
-            <span class="card-icon">
-              <Image class="card-icon--stable" src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
-              <Image class="card-icon--nightly" src={iconNightly} width={28} height={28} loading="lazy" {...imageProps} />
-            </span>
             <span class="card-text">
               <span class="card-arch">Windows 10, 11</span>
               <span class="card-format">.exe</span>
@@ -110,6 +105,11 @@ const imageProps = {
             <svg class="card-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
           </a>
         </div>
+        <p class="platform-note">
+          {templateParts(t.exeArmNote).map((part) =>
+            typeof part === "string" ? part : <a data-asset="arm64.exe" href={RELEASES_URL}>.exe</a>,
+          )}
+        </p>
       </section>
 
       <section class="platform-section platform-section--linux" data-rise style="--d:360ms">
@@ -119,10 +119,6 @@ const imageProps = {
         </div>
         <div class="download-cards">
           <a class="download-card" data-asset="amd64.deb" href={RELEASES_URL}>
-            <span class="card-icon">
-              <Image class="card-icon--stable" src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
-              <Image class="card-icon--nightly" src={iconNightly} width={28} height={28} loading="lazy" {...imageProps} />
-            </span>
             <span class="card-text">
               <span class="card-arch">Debian, Ubuntu</span>
               <span class="card-format">.deb</span>
@@ -130,10 +126,6 @@ const imageProps = {
             <svg class="card-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
           </a>
           <a class="download-card" data-asset="x86_64.AppImage" href={RELEASES_URL}>
-            <span class="card-icon">
-              <Image class="card-icon--stable" src={iconStable} width={28} height={28} loading="lazy" {...imageProps} />
-              <Image class="card-icon--nightly" src={iconNightly} width={28} height={28} loading="lazy" {...imageProps} />
-            </span>
             <span class="card-text">
               <span class="card-arch">x86_64</span>
               <span class="card-format">AppImage</span>
@@ -141,7 +133,7 @@ const imageProps = {
             <svg class="card-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>
           </a>
         </div>
-        <p class="intel-note">
+        <p class="platform-note">
           {templateParts(t.armNote).map((part) =>
             typeof part === "string" ? part
             : part.key === "deb" ? <a data-asset="arm64.deb" href={RELEASES_URL}>.deb</a>
@@ -150,8 +142,28 @@ const imageProps = {
         </p>
       </section>
 
+      <section class="platform-section platform-section--cli" data-rise style="--d:420ms">
+        <div class="platform-header">
+          <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 17h7"/></svg>
+          <h2 class="platform-name">{t.terminal}</h2>
+        </div>
+        <div class="swap cli-cell cli-cell--sh">
+          <code class="cli-line for-stable">curl -fsSL https://t3.codes/install.sh | sh</code>
+          <code class="cli-line for-nightly">curl -fsSL https://t3.codes/install.sh | T3CODE_CHANNEL=nightly sh</code>
+        </div>
+        <div class="swap cli-cell cli-cell--ps">
+          <code class="cli-line for-stable">irm https://t3.codes/install.ps1 | iex</code>
+          <code class="cli-line for-nightly">$env:T3CODE_CHANNEL="nightly"; irm https://t3.codes/install.ps1 | iex</code>
+        </div>
+        <p class="cli-note">{t.tryOnce}</p>
+        <div class="swap cli-cell cli-cell--npx">
+          <code class="cli-line for-stable">npx t3@latest</code>
+          <code class="cli-line for-nightly">npx t3@nightly</code>
+        </div>
+      </section>
+
       <!-- Mobile has no nightly build. -->
-      <section class="platform-section platform-section--mobile" data-rise style="--d:420ms">
+      <section class="platform-section platform-section--mobile" data-rise style="--d:480ms">
         <div class="platform-header">
           <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18.5h2"/></svg>
           <h2 class="platform-name">{t.mobile}</h2>
@@ -162,32 +174,20 @@ const imageProps = {
               <span class="card-arch">{t.iphoneIpad}</span>
               <span class="card-format">App Store</span>
             </span>
+            <svg class="card-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
           </a>
           <a class="download-card" href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">
             <span class="card-text">
               <span class="card-arch">Android</span>
               <span class="card-format">Google Play</span>
             </span>
+            <svg class="card-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>
           </a>
         </div>
       </section>
-
-      <section class="platform-section platform-section--cli" data-rise style="--d:420ms">
-        <div class="platform-header">
-          <svg class="platform-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 17h7"/></svg>
-          <h2 class="platform-name">{t.terminal}</h2>
-        </div>
-        <code class="cli-line cli-line--stable">curl -fsSL https://t3.codes/install.sh | sh</code>
-        <code class="cli-line cli-line--stable">irm https://t3.codes/install.ps1 | iex</code>
-        <code class="cli-line cli-line--nightly">curl -fsSL https://t3.codes/install.sh | T3CODE_CHANNEL=nightly sh</code>
-        <code class="cli-line cli-line--nightly">$env:T3CODE_CHANNEL="nightly"; irm https://t3.codes/install.ps1 | iex</code>
-        <p class="cli-note">{t.tryOnce}</p>
-        <code class="cli-line cli-line--stable">npx t3@latest</code>
-        <code class="cli-line cli-line--nightly">npx t3@nightly</code>
-      </section>
     </div>
 
-    <p class="releases-link" data-rise style="--d:480ms">
+    <p class="releases-link" data-rise style="--d:540ms">
       {templateParts(t.allBuilds).map((part) =>
         typeof part === "string" ? part : (
           <a id="releases-page-link" href={RELEASES_URL} target="_blank" rel="noopener noreferrer">
@@ -269,6 +269,7 @@ const imageProps = {
 </script>
 
 <style>
+  /* Both channels share one layout. Only the art, the artwork and colors change with the channel. */
   .download-page {
     flex: 1;
     display: flex;
@@ -277,29 +278,32 @@ const imageProps = {
     padding: 0 1.5rem 4rem;
   }
 
-
   .download-head {
     position: relative;
     width: 100%;
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 9vh 1.5rem 2.5rem;
-    margin-bottom: 2rem;
+    text-align: center;
+    /* The bottom keeps the art's planet about 2rem under the pill: the limb rises 21.5% of the art's
+       height, and the art is 56.25vw tall where it is width-bound and the header's height where it is not. */
+    padding: clamp(2.5rem, 4vw, 4rem) 1.5rem max(13rem, calc(4rem + 12.1vw));
   }
 
   .sky {
     position: absolute;
     top: -80px;
-    bottom: 0;
+    bottom: 2rem;
     /* Break out of the page padding so the sky spans the full viewport width. */
     left: 50%;
     width: 100vw;
     margin-left: -50vw;
     z-index: -1;
-    background: url("/nightly-sky.svg") center / cover no-repeat;
-    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 100%);
+    background: url("/nightly-sky.svg") 90% 100% / cover no-repeat;
+    /* Fade only the art's bottom 3.5%, the planet's night side under the sun: cover sizes the art to
+       max(box height, 56.25vw), so the fade starts at min(96.5%, 100% - 1.97vw) and never reaches the sun. */
+    -webkit-mask-image: linear-gradient(to bottom, #000 min(96.5%, calc(100% - 1.97vw)), transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 min(96.5%, calc(100% - 1.97vw)), transparent 100%);
     opacity: 0;
     transform: scale(1.04);
     transition: opacity 0.9s ease, transform 1.4s cubic-bezier(0.2, 0.7, 0.2, 1);
@@ -311,56 +315,84 @@ const imageProps = {
     transform: none;
   }
 
+  /* Each channel's version of an element sits in the same grid cell, so the cell keeps the larger
+     size and toggling never reflows the page. */
+  .swap {
+    display: grid;
+  }
+
+  .swap > * {
+    grid-area: 1 / 1;
+    transition: opacity 0.45s ease, visibility 0.45s;
+  }
+
+  .download-page[data-channel="stable"] .for-nightly,
+  .download-page[data-channel="nightly"] .for-stable {
+    opacity: 0;
+    visibility: hidden;
+  }
+
   .head-inner {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 1rem;
+    gap: 1.5rem;
   }
 
   .head-icon {
-    position: relative;
-    width: 64px;
-    height: 64px;
-    flex-shrink: 0;
+    width: 112px;
+    height: 112px;
   }
 
-  /* Both channel icons stay mounted and cross-fade, so the title never moves. */
-  .head-icon img,
-  .card-icon img {
-    position: absolute;
-    inset: 0;
+  .head-icon img {
     width: 100%;
     height: 100%;
-    transition: opacity 0.45s ease;
   }
 
-  .head-icon--nightly,
-  .card-icon--nightly {
-    opacity: 0;
-  }
-
-  .download-page[data-channel="nightly"] .head-icon--stable,
-  .download-page[data-channel="nightly"] .card-icon--stable {
-    opacity: 0;
-  }
-
-  .download-page[data-channel="nightly"] .head-icon--nightly,
-  .download-page[data-channel="nightly"] .card-icon--nightly {
-    opacity: 1;
+  .head-icon .for-nightly {
+    filter: drop-shadow(0 18px 40px rgba(40, 70, 190, 0.45));
   }
 
   .heading {
-    font-weight: 500;
-    font-size: clamp(1.75rem, 4vw, 2.75rem);
-    letter-spacing: -0.035em;
-    line-height: 1.15;
+    font-weight: 600;
+    font-size: clamp(2rem, 5vw, 3.75rem);
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    text-wrap: balance;
   }
 
+  /* Japanese and other CJK text wraps at phrase boundaries instead of mid-word. */
+  .heading,
+  .tagline {
+    word-break: auto-phrase;
+  }
+
+  .tagline {
+    max-width: 42rem;
+    margin-top: 1rem;
+    font-size: clamp(16px, 1.4vw, 19px);
+    letter-spacing: -0.005em;
+    line-height: 1.55;
+    text-wrap: balance;
+  }
+
+  /* The shorter tagline centers in the space the longer one reserves. */
+  .tagline > * {
+    align-self: center;
+  }
+
+  .tagline .for-stable {
+    color: var(--fg-muted);
+  }
+
+  .tagline .for-nightly {
+    color: rgba(229, 231, 255, 0.82);
+  }
 
   .channel-toggle {
     position: relative;
     display: inline-flex;
-    margin-top: 1.5rem;
+    margin-top: 2rem;
     padding: 3px;
     border: 1px solid var(--border-strong);
     border-radius: 999px;
@@ -413,115 +445,119 @@ const imageProps = {
   }
 
   .head-meta {
-    margin-top: 1rem;
-    font-size: 0.8rem;
-    min-height: 1.2em;
+    margin-top: 1.25rem;
+    font-size: 0.875rem;
   }
 
   .changelog-link {
-    color: var(--fg-dim);
-    text-decoration: underline;
-    text-decoration-color: transparent;
-    text-underline-offset: 3px;
-    transition: color 0.3s ease, text-decoration-color 0.3s ease;
+    display: inline-block;
+    padding: 0.4rem 0.9rem;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--fg-muted);
+    transition: color 0.3s ease, border-color 0.3s ease, background 0.45s ease;
   }
 
   .changelog-link:hover {
+    border-color: rgba(255, 255, 255, 0.3);
     color: var(--fg);
-    text-decoration-color: var(--fg);
   }
 
   .download-page[data-channel="nightly"] .changelog-link {
+    border-color: rgba(185, 189, 255, 0.25);
+    background: rgba(7, 21, 47, 0.55);
     color: #b9bdff;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
   }
 
+  .download-page[data-channel="nightly"] .changelog-link:hover {
+    border-color: rgba(185, 189, 255, 0.55);
+    color: var(--fg);
+  }
 
   .platforms {
     width: 100%;
-    max-width: 720px;
-    display: flex;
-    flex-direction: column;
-    gap: 2.5rem;
+    max-width: 1180px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr);
+    gap: 1rem;
+    /* The tiles start where the art ends (the sky stops 2rem above the header's bottom), so none covers the sun. */
+    margin-top: -2rem;
   }
 
   .platform-section {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 1rem;
+    padding: 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: rgba(255, 255, 255, 0.02);
+    transition: border-color 0.45s ease;
+  }
+
+  .download-page[data-channel="nightly"] .platform-section {
+    border-color: rgba(140, 150, 255, 0.16);
+    background: linear-gradient(180deg, rgba(16, 20, 52, 0.7), rgba(6, 7, 20, 0.82));
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
+  .platform-section--cli,
+  .platform-section--mobile {
+    grid-column: 1 / -1;
   }
 
   .download-page[data-channel="nightly"] .platform-section--mobile {
     display: none;
   }
 
-  .cli-line--nightly,
-  .download-page[data-channel="nightly"] .cli-line--stable {
-    display: none;
-  }
-
-  .download-page[data-channel="nightly"] .cli-line--nightly {
-    display: block;
-  }
-
   .platform-header {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--border);
+    gap: 0.75rem;
   }
 
   .platform-icon {
-    width: 1.15em;
-    height: 1.15em;
-    color: var(--fg-muted);
+    width: 1.5rem;
+    height: 1.5rem;
+    color: var(--fg);
     flex-shrink: 0;
   }
 
   .platform-name {
     font-weight: 500;
-    font-size: 1.1rem;
+    font-size: 1.25rem;
     letter-spacing: -0.01em;
   }
 
-  .cli-note {
-    color: var(--fg-muted);
-    font-size: 0.85rem;
-    margin-top: 0.5rem;
-  }
-
-  .cli-line {
-    align-self: flex-start;
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    padding: 0.6rem 0.9rem;
-    border-radius: 10px;
-    border: 1px solid rgba(105, 111, 234, 0.35);
-    background: rgba(21, 20, 67, 0.3);
-    color: var(--fg);
-  }
-
-
   .download-cards {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: 1fr;
     gap: 0.5rem;
+  }
+
+  .platform-section--linux .download-cards,
+  .platform-section--mobile .download-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .download-card {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.85rem 1rem;
+    gap: 1rem;
+    padding: 1rem 1.1rem;
     border-radius: 10px;
-    border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-strong);
+    background: rgba(255, 255, 255, 0.03);
     transition: background 0.45s ease, border-color 0.45s ease, transform 0.2s ease;
   }
 
   .download-card:hover {
     background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.24);
     transform: translateY(-1px);
   }
 
@@ -530,19 +566,13 @@ const imageProps = {
   }
 
   .download-page[data-channel="nightly"] .download-card[data-asset] {
-    border-color: rgba(105, 111, 234, 0.4);
-    background: linear-gradient(135deg, rgba(81, 101, 216, 0.1), rgba(168, 91, 234, 0.06));
+    border-color: rgba(105, 111, 234, 0.45);
+    background: linear-gradient(135deg, rgba(81, 101, 216, 0.2), rgba(168, 91, 234, 0.1));
   }
 
   .download-page[data-channel="nightly"] .download-card[data-asset]:hover {
-    border-color: rgba(105, 111, 234, 0.7);
-  }
-
-  .card-icon {
-    position: relative;
-    width: 28px;
-    height: 28px;
-    flex-shrink: 0;
+    border-color: rgba(140, 146, 255, 0.85);
+    background: linear-gradient(135deg, rgba(81, 101, 216, 0.3), rgba(168, 91, 234, 0.16));
   }
 
   .card-text {
@@ -553,7 +583,7 @@ const imageProps = {
 
   .card-arch {
     font-weight: 600;
-    font-size: 0.95rem;
+    font-size: 1rem;
   }
 
   .card-format {
@@ -562,16 +592,32 @@ const imageProps = {
     transition: color 0.45s ease;
   }
 
-  .download-page[data-channel="nightly"] .card-format {
+  .card-arrow {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-left: auto;
+    flex-shrink: 0;
+    color: var(--fg-muted);
+    transition: transform 0.2s ease, color 0.2s ease;
+  }
+
+  .download-page[data-channel="nightly"] .card-format,
+  .download-page[data-channel="nightly"] .card-arrow {
     color: #b6b0ff;
   }
 
-  .intel-note {
-    font-size: 0.8rem;
-    color: var(--fg-dim);
+  .download-card:hover .card-arrow,
+  .download-page[data-channel="nightly"] .download-card:hover .card-arrow {
+    color: var(--fg);
+    transform: translateY(2px);
   }
 
-  .intel-note a,
+  .platform-note {
+    font-size: 0.8rem;
+    color: var(--fg-muted);
+  }
+
+  .platform-note a,
   .releases-link a {
     color: var(--fg-muted);
     text-decoration: underline;
@@ -580,12 +626,63 @@ const imageProps = {
     transition: color 0.3s ease, text-decoration-color 0.3s ease;
   }
 
-  .intel-note a:hover,
+  .platform-note a:hover,
   .releases-link a:hover {
     color: var(--fg);
     text-decoration-color: var(--fg);
   }
 
+  .cli-note {
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+  }
+
+  /* A box fills the height its cell reserves for the longer channel's command; the text stays centered. */
+  .cli-line {
+    display: flex;
+    align-items: center;
+    justify-self: start;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    padding: 0.6rem 0.9rem;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--fg);
+  }
+
+  .cli-line.for-nightly {
+    border-color: rgba(105, 111, 234, 0.35);
+    background: rgba(21, 20, 67, 0.3);
+  }
+
+  /* Wide screens put the one-off npx command beside the install commands: the two labels share
+     the first row and the first code boxes share the second. */
+  @media (min-width: 1101px) {
+    .platform-section--cli {
+      display: grid;
+      grid-template-columns: max-content minmax(0, 1fr);
+      column-gap: 3rem;
+      align-items: start;
+    }
+
+    .cli-note {
+      grid-area: 1 / 2;
+      align-self: center;
+      margin-top: 0;
+    }
+
+    .cli-cell--ps {
+      grid-area: 3 / 1;
+    }
+
+    .cli-cell--npx {
+      grid-area: 2 / 2;
+    }
+  }
 
   .releases-link {
     margin-top: 3rem;
@@ -593,228 +690,15 @@ const imageProps = {
     color: var(--fg-dim);
   }
 
-
-  /* Nightly: the Orbital Sunrise art is the hero, and the platform tiles sit on the planet's night side.
-     Every rule below is scoped to the nightly channel; the new elements stay hidden on Stable. */
-  .nightly-tagline,
-  .card-arrow {
-    display: none;
-  }
-
-  .download-page[data-channel="nightly"] .download-head {
-    padding: clamp(3rem, 9vh, 6rem) 1.5rem clamp(12rem, 28vh, 16rem);
-    margin-bottom: 0;
-  }
-
-  .download-page[data-channel="nightly"] .sky {
-    bottom: 2rem;
-    background-position: 90% 100%;
-    /* Fade only the art's bottom 3.5%, the planet's night side under the sun: cover sizes the art to
-       max(box height, 56.25vw), so the fade starts at min(96.5%, 100% - 1.97vw) and never reaches the sun. */
-    -webkit-mask-image: linear-gradient(to bottom, #000 min(96.5%, calc(100% - 1.97vw)), transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 min(96.5%, calc(100% - 1.97vw)), transparent 100%);
-  }
-
-  .download-page[data-channel="nightly"] .head-inner {
-    flex-direction: column;
-    gap: 1.5rem;
-    text-align: center;
-  }
-
-  .download-page[data-channel="nightly"] .head-icon {
-    width: 112px;
-    height: 112px;
-    filter: drop-shadow(0 18px 40px rgba(40, 70, 190, 0.45));
-  }
-
-  .download-page[data-channel="nightly"] .heading {
-    font-weight: 600;
-    font-size: clamp(2rem, 5vw, 3.75rem);
-    letter-spacing: -0.03em;
-    line-height: 1.05;
-  }
-
-  .download-page[data-channel="nightly"] .nightly-tagline {
-    display: block;
-    max-width: 34rem;
-    margin-top: 1rem;
-    color: rgba(229, 231, 255, 0.82);
-    font-size: clamp(16px, 1.4vw, 19px);
-    letter-spacing: -0.005em;
-    line-height: 1.55;
-    text-align: center;
-    text-wrap: balance;
-  }
-
-  .download-page[data-channel="nightly"] .channel-toggle {
-    margin-top: 2rem;
-  }
-
-  .download-page[data-channel="nightly"] .head-meta {
-    margin-top: 1.25rem;
-    font-size: 0.875rem;
-  }
-
-  .download-page[data-channel="nightly"] .changelog-link {
-    display: inline-block;
-    padding: 0.4rem 0.9rem;
-    border: 1px solid rgba(185, 189, 255, 0.25);
-    border-radius: 999px;
-    background: rgba(7, 21, 47, 0.55);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    text-decoration: none;
-  }
-
-  .download-page[data-channel="nightly"] .changelog-link:hover {
-    border-color: rgba(185, 189, 255, 0.55);
-    color: var(--fg);
-  }
-
-  .download-page[data-channel="nightly"] .platforms {
-    max-width: 1180px;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr);
-    gap: 1rem;
-    /* The tiles start where the art ends (the sky stops 2rem above the header's bottom), so none covers the sun. */
-    margin-top: -2rem;
-  }
-
-  .download-page[data-channel="nightly"] .platform-section {
-    gap: 1rem;
-    padding: 1.5rem;
-    border: 1px solid rgba(140, 150, 255, 0.16);
-    border-radius: var(--radius-lg);
-    background: linear-gradient(180deg, rgba(16, 20, 52, 0.7), rgba(6, 7, 20, 0.82));
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-  }
-
-  .download-page[data-channel="nightly"] .platform-section--cli {
-    grid-column: 1 / -1;
-  }
-
-  .download-page[data-channel="nightly"] .platform-header {
-    gap: 0.75rem;
-    padding-bottom: 0;
-    border-bottom: 0;
-  }
-
-  .download-page[data-channel="nightly"] .platform-icon {
-    width: 1.5rem;
-    height: 1.5rem;
-    color: var(--fg);
-  }
-
-  .download-page[data-channel="nightly"] .platform-name {
-    font-size: 1.25rem;
-  }
-
-  .download-page[data-channel="nightly"] .download-cards {
-    grid-template-columns: 1fr;
-  }
-
-  .download-page[data-channel="nightly"] .platform-section--linux .download-cards {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .download-page[data-channel="nightly"] .download-card[data-asset] {
-    gap: 1rem;
-    padding: 1rem 1.1rem;
-    border-color: rgba(105, 111, 234, 0.45);
-    background: linear-gradient(135deg, rgba(81, 101, 216, 0.2), rgba(168, 91, 234, 0.1));
-  }
-
-  .download-page[data-channel="nightly"] .download-card[data-asset]:hover {
-    border-color: rgba(140, 146, 255, 0.85);
-    background: linear-gradient(135deg, rgba(81, 101, 216, 0.3), rgba(168, 91, 234, 0.16));
-  }
-
-  .download-page[data-channel="nightly"] .card-icon {
-    display: none;
-  }
-
-  .download-page[data-channel="nightly"] .card-arch {
-    font-size: 1rem;
-  }
-
-  .download-page[data-channel="nightly"] .card-arrow {
-    display: block;
-    width: 1.25rem;
-    height: 1.25rem;
-    margin-left: auto;
-    flex-shrink: 0;
-    color: #b6b0ff;
-    transition: transform 0.2s ease, color 0.2s ease;
-  }
-
-  .download-page[data-channel="nightly"] .download-card:hover .card-arrow {
-    color: var(--fg);
-    transform: translateY(2px);
-  }
-
-  .download-page[data-channel="nightly"] .intel-note {
-    margin-top: auto;
-    color: var(--fg-muted);
-  }
-
-  .download-page[data-channel="nightly"] .cli-line {
-    justify-self: start;
-    max-width: 100%;
-    overflow-wrap: anywhere;
-  }
-
-  /* Wide screens put the install commands and the one-off npx command side by side. */
-  @media (min-width: 1101px) {
-    .download-page[data-channel="nightly"] .platform-section--cli {
-      display: grid;
-      grid-template-columns: max-content minmax(0, 1fr);
-      column-gap: 3rem;
-      align-items: end;
-    }
-
-    .download-page[data-channel="nightly"] .platform-section--cli .platform-header {
-      grid-column: 1 / -1;
-    }
-
-    .download-page[data-channel="nightly"] .cli-line--nightly {
-      grid-column: 1;
-    }
-
-    .download-page[data-channel="nightly"] .cli-note {
-      grid-column: 2;
-      grid-row: 2;
-      margin-top: 0;
-    }
-
-    .download-page[data-channel="nightly"] .cli-line--nightly:last-child {
-      grid-column: 2;
-      grid-row: 3;
-    }
-  }
-
   @media (max-width: 1100px) {
-    .download-page[data-channel="nightly"] .platforms {
+    .platforms {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .download-page[data-channel="nightly"] .platform-section--linux {
+    .platform-section--linux {
       grid-column: 1 / -1;
     }
   }
-
-  @media (prefers-reduced-motion: reduce) {
-    .card-arrow,
-    .sky,
-    .head-icon img,
-    .card-icon img,
-    .channel-thumb,
-    .channel-toggle,
-    .download-card {
-      transition: none;
-    }
-  }
-
 
   @media (max-width: 640px) {
     .download-page {
@@ -822,38 +706,36 @@ const imageProps = {
     }
 
     .download-head {
-      padding: 6vh 1.25rem 2rem;
+      padding-inline: 1.25rem;
     }
 
-    .head-inner {
-      flex-direction: column;
-      text-align: center;
-    }
-
-    .platforms {
-      padding: 0 0.25rem;
-    }
-
-    .download-cards {
-      grid-template-columns: 1fr;
-    }
-
-    .download-page[data-channel="nightly"] .platforms {
-      grid-template-columns: 1fr;
-      padding: 0;
-    }
-
-    .download-page[data-channel="nightly"] .platform-section--linux .download-cards {
-      grid-template-columns: 1fr;
-    }
-
-    .download-page[data-channel="nightly"] .platform-section {
-      padding: 1.25rem;
-    }
-
-    .download-page[data-channel="nightly"] .head-icon {
+    .head-icon {
       width: 96px;
       height: 96px;
+    }
+
+    .platforms,
+    .platform-section--linux .download-cards,
+    .platform-section--mobile .download-cards {
+      grid-template-columns: 1fr;
+    }
+
+    .platform-section {
+      padding: 1.25rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sky,
+    .swap > *,
+    .channel-thumb,
+    .channel-toggle,
+    .changelog-link,
+    .platform-section,
+    .download-card,
+    .card-format,
+    .card-arrow {
+      transition: none;
     }
   }
 </style>
