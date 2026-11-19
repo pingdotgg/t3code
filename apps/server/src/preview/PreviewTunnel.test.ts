@@ -61,6 +61,7 @@ const serveTunnel = (sessionInvalidated: Effect.Effect<void> = Effect.never) =>
                 sessionId: AuthSessionId.make("tunnel-test"),
                 subject: "tunnel-test",
                 method: "bearer-access-token",
+                client: { deviceType: "unknown" },
                 scopes: request.url.includes("wsTicket=reader")
                   ? [AuthOrchestrationReadScope]
                   : [AuthOrchestrationReadScope, AuthTerminalOperateScope],
