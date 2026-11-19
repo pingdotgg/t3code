@@ -1375,7 +1375,7 @@ function appendContextHandoffId(
   return handoffId === null ? handoffIds : Array.from(new Set([...handoffIds, handoffId]));
 }
 
-/** The provider thread a message continues: the active one, unless a fresh-session schedule run started it. */
+/** The provider thread a message continues: the active one, unless a fresh-session schedule run started it or it predates the latest fresh start. */
 function conversationProviderThread(
   projection: Pick<
     OrchestrationV2ThreadProjection,
@@ -1391,8 +1391,12 @@ function conversationProviderThread(
   const active = projection.providerThreads.find(
     (candidate) => candidate.id === projection.thread.activeProviderThreadId,
   );
-  if (active === undefined || !startedByScheduledFreshRun(active)) return active;
+  if (active === undefined) return active;
   const boundary = contextBoundaryOrdinal(projection);
+  // A pre-clear session that is still alive (background work) can become active again on its updates.
+  if (!startedByScheduledFreshRun(active) && !providerThreadPredatesBoundary(active, boundary)) {
+    return active;
+  }
   return (
     projection.providerThreads
       .filter(

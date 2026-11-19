@@ -11,6 +11,7 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { msg } from "gt-react";
 
+import { m, type MessageResolver } from "./i18n/messages";
 import type { Project } from "./types";
 
 export const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
@@ -139,21 +140,27 @@ export function buildPhysicalToLogicalProjectKeyMap(input: {
   return mapping;
 }
 
-export function buildSidebarProjectSnapshots(input: {
-  projects: ReadonlyArray<Project>;
-  settings: ProjectGroupingSettings;
-  groupScratchProjects?: boolean;
-  primaryEnvironmentId: EnvironmentId | null;
-  resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
-  isDesktopLocalEnvironment?: (environmentId: EnvironmentId) => boolean;
-  isWslEnvironment?: (environmentId: EnvironmentId) => boolean;
-}): SidebarProjectSnapshot[] {
-  return buildProjectGroups({
-    projects: input.projects,
-    groupScratchProjects: input.groupScratchProjects ?? false,
-    settings: input.settings,
-    preferredEnvironmentId: input.primaryEnvironmentId,
-  }).map((group): SidebarProjectSnapshot => {
+export function buildSidebarProjectSnapshots(
+  input: {
+    projects: ReadonlyArray<Project>;
+    settings: ProjectGroupingSettings;
+    groupScratchProjects?: boolean;
+    primaryEnvironmentId: EnvironmentId | null;
+    resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
+    isDesktopLocalEnvironment?: (environmentId: EnvironmentId) => boolean;
+    isWslEnvironment?: (environmentId: EnvironmentId) => boolean;
+  },
+  resolve: MessageResolver = m,
+): SidebarProjectSnapshot[] {
+  return buildProjectGroups(
+    {
+      projects: input.projects,
+      groupScratchProjects: input.groupScratchProjects ?? false,
+      settings: input.settings,
+      preferredEnvironmentId: input.primaryEnvironmentId,
+    },
+    resolve,
+  ).map((group): SidebarProjectSnapshot => {
     const members = group.members.map(
       ({ physicalProjectKey, project }): SidebarProjectGroupMember => ({
         ...project,
