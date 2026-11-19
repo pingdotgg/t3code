@@ -25,13 +25,13 @@ export function BrowserDialogCard({
   return (
     <div
       className={cn(
-        "absolute inset-x-2 top-2 z-10 flex flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg",
+        "absolute inset-x-2 top-2 z-10 flex max-h-[calc(100%-1rem)] flex-col gap-2 rounded-lg border border-border bg-background p-3 shadow-lg",
         className,
       )}
       role="dialog"
       aria-label={gt("Browser dialog")}
     >
-      <p className="break-words text-sm">{dialog.message}</p>
+      <p className="min-h-0 flex-1 overflow-y-auto break-words text-sm">{dialog.message}</p>
       {canAnswer ? (
         <>
           {dialog.type === "prompt" ? (
