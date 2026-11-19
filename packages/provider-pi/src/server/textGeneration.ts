@@ -16,7 +16,7 @@ import type { PiSettings } from "../settings.ts";
 
 import {
   makePiRpcConnection,
-  piAnthropicModelRefusal,
+  piExcludedModelRefusal,
   piRecordField,
   piRecordString,
   resolvePiModelSlug,
@@ -107,7 +107,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         const refusal =
           provider === undefined || modelId === undefined
             ? undefined
-            : piAnthropicModelRefusal(provider, modelId);
+            : piExcludedModelRefusal(provider, modelId);
         if (refusal !== undefined)
           return yield* new TextGenerationError({ operation, detail: refusal });
       } else {
@@ -122,7 +122,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
             detail: `Pi model '${modelSelection.model}' must use provider/model format.`,
           });
         }
-        const refusal = piAnthropicModelRefusal(parsed.provider, parsed.modelId);
+        const refusal = piExcludedModelRefusal(parsed.provider, parsed.modelId);
         if (refusal !== undefined)
           return yield* new TextGenerationError({ operation, detail: refusal });
         yield* connection

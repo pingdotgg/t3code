@@ -2635,9 +2635,22 @@ describe("PiAdapterV2", () => {
   );
 
   it.effect.each([
-    { selected: "amazon-bedrock/us.anthropic.claude-opus-5-5", piDefault: "acme/large" },
-    { selected: "default", piDefault: "anthropic/claude-sonnet-5" },
-  ])("refuses to run Anthropic model $selected through Pi", ({ selected, piDefault }) =>
+    {
+      selected: "amazon-bedrock/us.anthropic.claude-opus-5-5",
+      piDefault: "acme/large",
+      refusal: "T3 Code runs Anthropic models only through Claude",
+    },
+    {
+      selected: "default",
+      piDefault: "anthropic/claude-sonnet-5",
+      refusal: "T3 Code runs Anthropic models only through Claude",
+    },
+    {
+      selected: "google/gemini-3-pro",
+      piDefault: "acme/large",
+      refusal: "T3 Code runs Gemini models only through Antigravity",
+    },
+  ])("refuses to run $selected through Pi", ({ selected, piDefault, refusal }) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const [provider, id] = piDefault.split("/");
@@ -2649,7 +2662,7 @@ describe("PiAdapterV2", () => {
         runtimePolicy,
       });
       const error = yield* startTurn(runtime, providerThread, selected).pipe(Effect.flip);
-      assert.include(String(error.cause), "T3 Code runs Anthropic models only through Claude");
+      assert.include(String(error.cause), refusal);
       assert.isFalse(
         fake
           .allRequests()

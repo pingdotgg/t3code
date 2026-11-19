@@ -334,8 +334,9 @@ describe("PiProvider", () => {
       activeModel: { provider: "amazon-bedrock", id: "us.anthropic.claude-opus-5-5" },
       offersDefault: false,
     },
+    { activeModel: { provider: "google", id: "gemini-3-pro" }, offersDefault: false },
   ])(
-    "lists no Anthropic model, so Claude runs them ($activeModel.id)",
+    "lists no Anthropic or Gemini model, so Claude and Antigravity run them ($activeModel.id)",
     ({ activeModel, offersDefault }) =>
       Effect.gen(function* () {
         const spawner = yield* piDiscoverySpawner(
@@ -345,6 +346,8 @@ describe("PiProvider", () => {
               { provider: "anthropic", id: "claude-sonnet-5" },
               { provider: "amazon-bedrock", id: "us.anthropic.claude-opus-5-5" },
               { provider: "openrouter", id: "anthropic/claude-haiku-5-5" },
+              { provider: "google", id: "gemini-3-pro" },
+              { provider: "openrouter", id: "google/gemini-3-flash" },
             ],
           },
           undefined,

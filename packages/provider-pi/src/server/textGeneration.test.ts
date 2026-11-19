@@ -334,9 +334,22 @@ it.effect.each([
 );
 
 it.effect.each([
-  { model: "amazon-bedrock/global.anthropic.claude-haiku-5-5", defaultModel: undefined },
-  { model: "default", defaultModel: { provider: "anthropic", id: "claude-haiku-5-5" } },
-])("refuses to generate text with Anthropic model $model", ({ model, defaultModel }) =>
+  {
+    model: "amazon-bedrock/global.anthropic.claude-haiku-5-5",
+    defaultModel: undefined,
+    refusal: "T3 Code runs Anthropic models only through Claude",
+  },
+  {
+    model: "default",
+    defaultModel: { provider: "anthropic", id: "claude-haiku-5-5" },
+    refusal: "T3 Code runs Anthropic models only through Claude",
+  },
+  {
+    model: "default",
+    defaultModel: { provider: "google", id: "gemini-3-flash" },
+    refusal: "T3 Code runs Gemini models only through Antigravity",
+  },
+])("refuses to generate text with $model ($refusal)", ({ model, defaultModel, refusal }) =>
   Effect.gen(function* () {
     const pi = yield* makeFakePi(
       JSON.stringify({ subject: "Update README", body: "" }),
@@ -362,7 +375,7 @@ it.effect.each([
       })
       .pipe(Effect.flip);
 
-    assert.include(error.detail, "T3 Code runs Anthropic models only through Claude");
+    assert.include(error.detail, refusal);
     assert.isFalse(
       pi.received.some((record) => record["type"] === "prompt" || record["type"] === "set_model"),
     );

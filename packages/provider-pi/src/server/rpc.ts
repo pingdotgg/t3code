@@ -86,15 +86,25 @@ export function resolvePiModelSlug(
   return { provider: slug.slice(0, separator), modelId: slug.slice(separator + 1) };
 }
 
-/** T3 Code runs Anthropic models only through its Claude provider, never through Pi. */
-export function isAnthropicPiModel(provider: string, modelId: string): boolean {
-  return /anthropic|claude/i.test(`${provider}/${modelId}`);
+/** T3 Code runs Anthropic models only through Claude and Gemini models only through Antigravity. */
+function piModelOwner(provider: string, modelId: string) {
+  const slug = `${provider}/${modelId}`;
+  if (/anthropic|claude/i.test(slug)) return { family: "Anthropic", provider: "Claude" };
+  if (/gemini/i.test(slug)) return { family: "Gemini", provider: "Antigravity" };
+  return undefined;
 }
 
-/** Why a Pi model may not run, when it is an Anthropic model. */
-export function piAnthropicModelRefusal(provider: string, modelId: string): string | undefined {
-  if (!isAnthropicPiModel(provider, modelId)) return undefined;
-  return `Pi's model ${provider}/${modelId} is an Anthropic model. T3 Code runs Anthropic models only through Claude: start the thread with Claude, or choose a non-Anthropic Pi model.`;
+/** Whether T3 Code runs this model through another provider, never through Pi. */
+export function isPiExcludedModel(provider: string, modelId: string): boolean {
+  return piModelOwner(provider, modelId) !== undefined;
+}
+
+/** Why a Pi model may not run, when T3 Code runs it through another provider. */
+export function piExcludedModelRefusal(provider: string, modelId: string): string | undefined {
+  const owner = piModelOwner(provider, modelId);
+  if (owner === undefined) return undefined;
+  const article = owner.family === "Anthropic" ? "an" : "a";
+  return `Pi's model ${provider}/${modelId} is ${article} ${owner.family} model. T3 Code runs ${owner.family} models only through ${owner.provider}: start the thread with ${owner.provider}, or choose a non-${owner.family} Pi model.`;
 }
 
 export interface PiRpcSpawnOptions {

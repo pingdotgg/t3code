@@ -28,7 +28,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import {
-  isAnthropicPiModel,
+  isPiExcludedModel,
   makePiRpcConnection,
   PiRpcError,
   PiRpcTimeoutError,
@@ -86,8 +86,8 @@ interface PiDiscovery extends PiDiscoveredCommands {
   readonly unavailableActiveModel: { readonly provider: string; readonly id: string } | undefined;
   /** Pi without extensions can load no model, so text generation fails for every entry. */
   readonly textGenerationUnavailable: boolean;
-  /** Pi's active model is an Anthropic model, which T3 Code runs only through Claude. */
-  readonly anthropicDefaultModel: boolean;
+  /** Pi's active model is one T3 Code runs only through another provider, such as Claude. */
+  readonly excludedDefaultModel: boolean;
 }
 
 function piModelsFromSettings(
@@ -126,7 +126,7 @@ function parseDiscoveredModels(
       );
     }
     const slug = `${provider}/${id}`;
-    if (seen.has(slug) || isAnthropicPiModel(provider, id)) continue;
+    if (seen.has(slug) || isPiExcludedModel(provider, id)) continue;
     seen.add(slug);
     parsed.push({
       slug,
@@ -282,10 +282,10 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
   const activeModel = recordField(stateData, "model");
   const activeProvider = recordString(activeModel, "provider");
   const activeModelId = recordString(activeModel, "id");
-  const anthropicDefaultModel =
+  const excludedDefaultModel =
     activeProvider !== undefined &&
     activeModelId !== undefined &&
-    isAnthropicPiModel(activeProvider, activeModelId);
+    isPiExcludedModel(activeProvider, activeModelId);
   return {
     models:
       textGenerationModelSlugs === undefined
@@ -301,12 +301,12 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     unavailableActiveModel:
       activeProvider !== undefined &&
       activeModelId !== undefined &&
-      !anthropicDefaultModel &&
+      !excludedDefaultModel &&
       !discoveredModels.some((model) => model.subProvider === activeProvider)
         ? { provider: activeProvider, id: activeModelId }
         : undefined,
     textGenerationUnavailable: textGenerationModelSlugs?.size === 0,
-    anthropicDefaultModel,
+    excludedDefaultModel,
   } satisfies PiDiscovery;
 }, Effect.scoped);
 
@@ -640,7 +640,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   const models = piModelsFromSettings(
     piSettings.customModels,
     discovery.models,
-    !discovery.anthropicDefaultModel,
+    !discovery.excludedDefaultModel,
   );
   const message = !discovery.authenticated
     ? "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
