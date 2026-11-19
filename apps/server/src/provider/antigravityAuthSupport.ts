@@ -602,6 +602,10 @@ export function makeAntigravityStdoutTransform(
     });
 }
 
+// glog records from the managed harness after which its ACP process can no longer run a turn.
+const ANTIGRAVITY_HARNESS_FAILURE_LOG =
+  /^[IWEF]\d{4} \d{2}:\d{2}:\d{2}\.\d+ +\d+ (?:local_connection\.py:\d+\] harness stderr: Agent run failed:|server\.py:\d+\] (?:Failed to rebuild agent for session |Agent connection lost for session ))/;
+
 export function makeAntigravityStderrHandler(
   input: {
     readonly onAuthorizationUrl?: (
@@ -610,16 +614,12 @@ export function makeAntigravityStderrHandler(
   } = {},
 ) {
   let pending = "";
-  const handleLine = Effect.fn("antigravityAuthSupport.handleStderrLine")((line: string) => {
+  const handleLine = (line: string) => {
     const message = line.endsWith("\r") ? line.slice(0, -1) : line;
     if (message.length > maxBrowserHelperLineLength) {
       return Effect.void;
     }
-    if (
-      /^[IWEF]\d{4} \d{2}:\d{2}:\d{2}\.\d+ +\d+ (?:local_connection\.py:\d+\] harness stderr: Agent run failed:|server\.py:\d+\] (?:Failed to rebuild agent for session |Agent connection lost for session ))/.test(
-        message,
-      )
-    ) {
+    if (ANTIGRAVITY_HARNESS_FAILURE_LOG.test(message)) {
       return Effect.fail(
         new AcpErrors.AcpTransportError({
           method: "session/prompt",
@@ -645,7 +645,7 @@ export function makeAntigravityStderrHandler(
             : Effect.fail(authSupportError(ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE)),
       }),
     );
-  });
+  };
 
   return Effect.fn("antigravityAuthSupport.handleStderr")(function* (text: string) {
     const lines = `${pending}${text}`.split("\n");
