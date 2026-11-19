@@ -371,6 +371,7 @@ function SidebarUpdateControl() {
   };
 
   const runEverything = async () => {
+    if (!everything.hasUpdates && localUpdateVersion === null) return;
     const bridge = window.desktopBridge;
     setIsConfirmingEverything(false);
     setIsActionPending(true);
@@ -409,17 +410,6 @@ function SidebarUpdateControl() {
     );
   };
 
-  if (!isElectron && !runsEverything && !isRunningEverything) return null;
-
-  const statusIcon = (
-    <DesktopUpdateStatusIcon
-      key={showCheckIcon ? checkAnimationKey : iconStatus}
-      downloadPercent={state?.downloadPercent ?? null}
-      isCheckAnimating={showCheckIcon && !prefersReducedMotion}
-      onCheckAnimationIteration={handleCheckAnimationIteration}
-      status={iconStatus}
-    />
-  );
   const confirmDialog = (
     <UpdateEverythingDialog
       open={isConfirmingEverything}
@@ -430,6 +420,20 @@ function SidebarUpdateControl() {
       restarts={everything.restarts}
       checking={providerCheck === "dialog"}
       onConfirm={() => void runEverything()}
+    />
+  );
+
+  if (!isElectron && !runsEverything && !isRunningEverything) {
+    return isConfirmingEverything ? confirmDialog : null;
+  }
+
+  const statusIcon = (
+    <DesktopUpdateStatusIcon
+      key={showCheckIcon ? checkAnimationKey : iconStatus}
+      downloadPercent={state?.downloadPercent ?? null}
+      isCheckAnimating={showCheckIcon && !prefersReducedMotion}
+      onCheckAnimationIteration={handleCheckAnimationIteration}
+      status={iconStatus}
     />
   );
 

@@ -5,9 +5,11 @@ import {
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
@@ -30,6 +32,42 @@ interface ProviderSnapshotState {
   // null preserves an explicitly cleared plan across probes and enrichment.
   readonly usageAuthLabel: string | null | undefined;
   readonly checked: boolean;
+  // False while an explicit refresh holds publication for its one-shot enrichment.
+  readonly published: boolean;
+}
+
+function isPlaceholderVersionAdvisory(advisory: ServerProvider["versionAdvisory"]): boolean {
+  return (
+    advisory === undefined ||
+    (advisory.status === "unknown" &&
+      advisory.latestVersion === null &&
+      advisory.updateCommand === null &&
+      !advisory.canUpdate &&
+      !advisory.canInstallVersion &&
+      advisory.message === null)
+  );
+}
+
+function preserveVersionAdvisoryAcrossProbe(
+  previous: ServerProvider,
+  probed: ServerProvider,
+): ServerProvider {
+  const previousAdvisory = previous.versionAdvisory;
+  if (
+    !probed.enabled ||
+    !probed.installed ||
+    previousAdvisory === undefined ||
+    isPlaceholderVersionAdvisory(previousAdvisory) ||
+    !isPlaceholderVersionAdvisory(probed.versionAdvisory)
+  ) {
+    return probed;
+  }
+  const probedVersion =
+    probed.installedVersion !== undefined ? probed.installedVersion : probed.version;
+  if (probedVersion === null || probedVersion !== previousAdvisory.currentVersion) {
+    return probed;
+  }
+  return { ...probed, versionAdvisory: previousAdvisory };
 }
 
 function withUsageLimits(
@@ -70,6 +108,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly getSnapshot: Effect.Effect<ServerProvider>;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   }) => Effect.Effect<void>;
+  /** Set false when `enrichSnapshot` subscribes to a long-lived stream that never terminates. */
+  readonly awaitEnrichmentOnRefresh?: boolean;
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean | ((snapshot: ServerProvider) => boolean);
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
@@ -92,11 +132,26 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     enrichmentGeneration: 0,
     usageAuthLabel: undefined,
     checked: false,
+    published: true,
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const recheckPendingRef = yield* Ref.make(false);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
+  const enrichmentDoneRef = yield* Ref.make<Deferred.Deferred<void> | null>(null);
   const scope = yield* Effect.scope;
+  const awaitEnrichmentOnRefresh =
+    input.enrichSnapshot !== undefined && input.awaitEnrichmentOnRefresh !== false;
+
+  const publishPendingSnapshot = (generation: number) =>
+    Ref.modify(snapshotStateRef, (state) =>
+      state.enrichmentGeneration === generation && !state.published
+        ? ([state.snapshot, { ...state, published: true }] as const)
+        : ([null, state] as const),
+    ).pipe(
+      Effect.flatMap((snapshot) =>
+        snapshot === null ? Effect.void : PubSub.publish(changesPubSub, snapshot),
+      ),
+    );
 
   const publishEnrichedSnapshot = Effect.fn("publishEnrichedSnapshot")(function* (
     generation: number,
@@ -116,10 +171,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             },
         state.snapshot.usageLimits,
       );
-      if (Equal.equals(state.snapshot, merged)) {
+      if (state.published && Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
       }
-      return [merged, { ...state, snapshot: merged }] as const;
+      return [merged, { ...state, snapshot: merged, published: true }] as const;
     });
     if (snapshotToPublish === null) {
       return;
@@ -132,30 +187,59 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     snapshot: ServerProvider,
     generation: number,
   ) {
-    const previousFiber = yield* Ref.getAndSet(enrichmentFiberRef, null);
-    if (previousFiber) {
-      yield* Fiber.interrupt(previousFiber).pipe(Effect.ignore);
-    }
+    const enrichmentDone =
+      input.enrichSnapshot && snapshot.enabled ? yield* Deferred.make<void>() : null;
+    yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        // Publish the replacement barrier before interrupting the previous fiber so callers waiting
+        // on the old barrier observe the new one instead of a transient null gap.
+        yield* Ref.set(enrichmentDoneRef, enrichmentDone);
+        const previousFiber = yield* Ref.getAndSet(enrichmentFiberRef, null);
+        if (previousFiber) {
+          yield* restore(Fiber.interrupt(previousFiber).pipe(Effect.ignore));
+        }
 
-    if (!input.enrichSnapshot || !snapshot.enabled) {
-      return;
-    }
+        if (!input.enrichSnapshot || !snapshot.enabled || enrichmentDone === null) {
+          return;
+        }
 
-    const fiber = yield* input
-      .enrichSnapshot({
-        settings,
-        snapshot,
-        getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
-        publishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
-      })
-      .pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(scope));
+        const fiber = yield* Effect.interruptible(
+          input.enrichSnapshot({
+            settings,
+            snapshot,
+            getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
+            publishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
+          }),
+        ).pipe(
+          Effect.onExit((exit) =>
+            (Exit.hasInterrupts(exit) ? Effect.void : publishPendingSnapshot(generation)).pipe(
+              Effect.ensuring(Deferred.succeed(enrichmentDone, undefined)),
+            ),
+          ),
+          Effect.ignoreCause({ log: true }),
+          Effect.forkIn(scope),
+        );
 
-    yield* Ref.set(enrichmentFiberRef, fiber);
+        yield* Ref.set(enrichmentFiberRef, fiber);
+      }).pipe(
+        Effect.onInterrupt(() =>
+          enrichmentDone === null
+            ? Effect.void
+            : Ref.update(enrichmentDoneRef, (current) =>
+                current === enrichmentDone ? null : current,
+              ).pipe(Effect.andThen(Deferred.succeed(enrichmentDone, undefined)), Effect.asVoid),
+        ),
+      ),
+    );
   });
 
   const applySnapshotBase = Effect.fn("applySnapshot")(function* (
     nextSettings: Settings,
-    options?: { readonly forceRefresh?: boolean; readonly deferFailure?: boolean },
+    options?: {
+      readonly forceRefresh?: boolean;
+      readonly deferFailure?: boolean;
+      readonly deferPublish?: boolean;
+    },
   ) {
     const previousSettings = yield* Ref.get(settingsRef);
     const settingsChanged =
@@ -202,6 +286,10 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         return snapshot;
       }
     }
+    const deferPublish =
+      options?.deferPublish === true &&
+      input.enrichSnapshot !== undefined &&
+      probedSnapshot.enabled;
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
       (state) => {
@@ -238,25 +326,40 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
                 ...probedSnapshot,
                 auth: { ...probedSnapshot.auth, label: usageAuthLabel ?? undefined },
               };
-        const snapshot = withUsageLimits(
+        const probedWithUsage = withUsageLimits(
           workspaceId && !probedSnapshot.auth.workspaceId
             ? { ...labeledProbe, auth: { ...labeledProbe.auth, workspaceId } }
             : labeledProbe,
           usageLimits,
         );
+        // Base probes return an un-enriched versionAdvisory placeholder; carry the current
+        // advisory until enrichment refreshes it so periodic and usage probes never flicker updates.
+        const snapshot = input.enrichSnapshot
+          ? preserveVersionAdvisoryAcrossProbe(state.snapshot, probedWithUsage)
+          : probedWithUsage;
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation, usageAuthLabel, checked: true },
+          {
+            snapshot,
+            enrichmentGeneration: generation,
+            usageAuthLabel,
+            checked: true,
+            published: !deferPublish,
+          },
         ] as const;
       },
     );
     yield* Ref.set(settingsRef, nextSettings);
-    yield* PubSub.publish(changesPubSub, nextSnapshot);
+    if (!deferPublish) {
+      yield* PubSub.publish(changesPubSub, nextSnapshot);
+    }
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
     return nextSnapshot;
   });
-  const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
-    refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
+  const applySnapshot = (
+    nextSettings: Settings,
+    options?: { readonly forceRefresh?: boolean; readonly deferPublish?: boolean },
+  ) => refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
 
   // Providers call this on every token-usage tick, usually without changing the snapshot.
   const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = Effect.fnUntraced(
@@ -288,6 +391,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
             ...state,
             snapshot,
             usageAuthLabel: label ?? (complete ? null : state.usageAuthLabel),
+            published: true,
           },
         ] as const;
       });
@@ -297,9 +401,26 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     },
   );
 
+  const awaitEnrichment = Effect.fn("ManagedServerProvider.awaitEnrichment")(function* () {
+    while (true) {
+      const done = yield* Ref.get(enrichmentDoneRef);
+      if (done === null) return;
+      yield* Deferred.await(done);
+      if ((yield* Ref.get(enrichmentDoneRef)) === done) return;
+    }
+  });
+
   const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
     const nextSettings = yield* input.getSettings;
-    return yield* applySnapshot(nextSettings, { forceRefresh: true });
+    const probed = yield* applySnapshot(nextSettings, {
+      forceRefresh: true,
+      deferPublish: awaitEnrichmentOnRefresh,
+    });
+    if (!awaitEnrichmentOnRefresh) {
+      return probed;
+    }
+    yield* awaitEnrichment();
+    return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
   });
 
   const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {

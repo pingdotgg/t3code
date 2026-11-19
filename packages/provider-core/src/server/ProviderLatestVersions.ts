@@ -23,7 +23,7 @@ export class ProviderLatestVersions extends Context.Service<
     readonly cached: <E, R>(
       key: string,
       lookup: Effect.Effect<string | null, E, R>,
-      options?: { readonly fresh?: boolean },
+      options?: { readonly fresh?: boolean; readonly fallbackToStale?: boolean },
     ) => Effect.Effect<string | null, E, R>;
     readonly invalidate: (key: string) => Effect.Effect<void>;
     readonly invalidateAll: Effect.Effect<void>;
@@ -33,9 +33,17 @@ export class ProviderLatestVersions extends Context.Service<
 export const make = Effect.fn("ProviderLatestVersions.make")(function* (
   seed: Iterable<readonly [key: string, version: string | null]> = [],
 ) {
+  const seedEntries = Array.from(seed);
   const entries = yield* Ref.make(
     new Map<string, Entry>(
-      Array.from(seed, ([key, version]) => [key, { version, expiresAt: Number.MAX_SAFE_INTEGER }]),
+      seedEntries.map(([key, version]) => [key, { version, expiresAt: Number.MAX_SAFE_INTEGER }]),
+    ),
+  );
+  // Retains the last non-null version per key across invalidations and transient null lookups so
+  // advisory refreshes do not flicker known updates out on a timeout or network blip.
+  const lastKnown = yield* Ref.make(
+    new Map<string, string>(
+      seedEntries.flatMap(([key, version]) => (version !== null ? [[key, version] as const] : [])),
     ),
   );
   const cached: ProviderLatestVersions["Service"]["cached"] = Effect.fn(
@@ -46,7 +54,7 @@ export const make = Effect.fn("ProviderLatestVersions.make")(function* (
     // Replacing or invalidating this entry retires any lookup still in flight.
     const pending: Entry = { version: null, expiresAt: 0, inFlight };
     // Claim and cleanup registration must be atomic with respect to interruption.
-    return yield* Effect.acquireUseRelease(
+    const resolved = yield* Effect.acquireUseRelease(
       Ref.modify(entries, (current) => {
         const entry = current.get(key);
         return !options?.fresh && entry && (entry.expiresAt > now || entry.inFlight)
@@ -63,18 +71,33 @@ export const make = Effect.fn("ProviderLatestVersions.make")(function* (
       (existing, exit) => {
         if (existing) return Effect.void;
         const version = Exit.isSuccess(exit) ? Option.some(exit.value) : Option.none();
-        return Ref.update(entries, (current) => {
-          if (current.get(key) !== pending) return current;
+        return Ref.modify(entries, (current) => {
+          if (current.get(key) !== pending) return [false, current] as const;
           const next = new Map(current);
           if (Option.isNone(version)) {
             next.delete(key);
-            return next;
+            return [false, next] as const;
           }
           const ttl = version.value === null ? MISSING_TTL : FOUND_TTL;
-          return next.set(key, { version: version.value, expiresAt: now + Duration.toMillis(ttl) });
-        }).pipe(Effect.andThen(Deferred.succeed(inFlight, version)), Effect.asVoid);
+          return [
+            version.value !== null,
+            next.set(key, { version: version.value, expiresAt: now + Duration.toMillis(ttl) }),
+          ] as const;
+        }).pipe(
+          Effect.flatMap((recordLastKnown) =>
+            recordLastKnown && Option.isSome(version) && version.value !== null
+              ? Ref.update(lastKnown, (current) => new Map(current).set(key, version.value!))
+              : Effect.void,
+          ),
+          Effect.andThen(Deferred.succeed(inFlight, version)),
+          Effect.asVoid,
+        );
       },
     );
+    if (resolved !== null || options?.fallbackToStale !== true) {
+      return resolved;
+    }
+    return (yield* Ref.get(lastKnown)).get(key) ?? null;
   });
   return ProviderLatestVersions.of({
     cached,

@@ -1414,13 +1414,20 @@ export function latestProviderVersionCacheKeys(
 
 export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
+  options?: { readonly fallbackToStale?: boolean },
 ) {
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const installerKey = installerLatestVersionKey(maintenanceCapabilities);
+  const canFallBackToNpm =
+    maintenanceCapabilities.latestVersion === undefined &&
+    maintenanceCapabilities.packageName !== null;
   if (installerKey && maintenanceCapabilities.lookupLatestVersion) {
     const installable = yield* latestVersions.cached(
       installerKey,
       maintenanceCapabilities.lookupLatestVersion,
+      // When npm is a live fallback (such as bun without npm CLI on PATH), null means
+      // "fall through to npm" rather than "reuse a stale installer answer".
+      { fallbackToStale: options?.fallbackToStale === true && !canFallBackToNpm },
     );
     if (installable !== null) return installable;
   }
@@ -1432,7 +1439,9 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
     return null;
   }
 
-  return yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName));
+  return yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName), {
+    fallbackToStale: options?.fallbackToStale === true,
+  });
 });
 
 export const invalidateLatestProviderVersion = Effect.fn("invalidateLatestProviderVersion")(
@@ -1476,7 +1485,9 @@ export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
     };
   }
 
-  const latestVersion = yield* resolveLatestProviderVersion(capabilities);
+  const latestVersion = yield* resolveLatestProviderVersion(capabilities, {
+    fallbackToStale: true,
+  });
   return {
     ...snapshot,
     versionAdvisory: createProviderVersionAdvisory({

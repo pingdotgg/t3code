@@ -167,4 +167,26 @@ describe("SidebarUpdatePill update everything", () => {
     await expect.element(row.getByRole("cell", { name: label, exact: true })).toBeVisible();
     await expect.element(row.getByRole("cell", { name: "Claude", exact: true })).toBeVisible();
   });
+
+  it("avoids an empty 0-machine table and disables Update when only skipped machines remain", async () => {
+    setup(null, {
+      hasUpdates: true,
+      rows: [
+        {
+          environmentId: null,
+          label: "Remote box",
+          app: null,
+          skipped: "not connected",
+          providers: [],
+        },
+      ],
+    });
+    await using screen = await render(<SidebarUpdatePill />);
+    await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
+
+    await expect.element(page.getByText("1 skipped")).toBeVisible();
+    expect(document.body.textContent).not.toContain("Update 0 machines?");
+    expect(document.querySelector('[role="table"]')).toBeNull();
+    await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeDisabled();
+  });
 });

@@ -2452,6 +2452,66 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
+  it.effect("keeps the last known version advisory when a refreshed lookup fails transiently", () =>
+    Effect.gen(function* () {
+      let lookupCount = 0;
+      const capabilities = makeProviderMaintenanceCapabilities({
+        provider: driver("packageTool"),
+        packageName: "@example/package-tool",
+        updateExecutable: "/opt/homebrew/bin/brew",
+        updateArgs: ["upgrade", "package-tool"],
+        updateLockKey: "homebrew",
+        latestVersion: null,
+        lookupLatestVersion: Effect.sync(() => (++lookupCount === 1 ? "2.0.0" : null)),
+      });
+
+      const initial = yield* enrichProviderSnapshotWithVersionAdvisory(
+        installedPackageToolProvider,
+        capabilities,
+        { enableProviderUpdateChecks: true },
+      );
+      expect(initial.versionAdvisory).toMatchObject({
+        status: "behind_latest",
+        latestVersion: "2.0.0",
+        canUpdate: true,
+      });
+
+      yield* invalidateLatestProviderVersion(capabilities);
+
+      // Enrichment keeps the last known version across a transient lookup failure.
+      const afterFailure = yield* enrichProviderSnapshotWithVersionAdvisory(
+        installedPackageToolProvider,
+        capabilities,
+        { enableProviderUpdateChecks: true },
+      );
+      expect(afterFailure.versionAdvisory).toMatchObject({
+        status: "behind_latest",
+        latestVersion: "2.0.0",
+        canUpdate: true,
+      });
+
+      // Direct resolution still reports null so pre-update compatibility checks stay fresh.
+      expect(yield* resolveLatestProviderVersion(capabilities)).toBeNull();
+
+      // Disabling update checks still clears the advisory.
+      const disabled = yield* enrichProviderSnapshotWithVersionAdvisory(
+        afterFailure,
+        capabilities,
+        { enableProviderUpdateChecks: false },
+      );
+      expect(disabled.versionAdvisory).toMatchObject({
+        status: "unknown",
+        latestVersion: null,
+      });
+    }).pipe(
+      Effect.provide(ProviderLatestVersions.layer),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Homebrew's latest should not come from npm")),
+      ),
+    ),
+  );
+
   it.effect.skipIf(!symlinksSupported)("updates Yarn global installs with yarn", () =>
     Effect.gen(function* () {
       const tempDir = yield* makeTempDir("t3-yarn-capabilities");

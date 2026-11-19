@@ -1029,4 +1029,207 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
+
+  it.effect(
+    "keeps versionAdvisory across re-probes while enrichment runs and clears it on version change",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const placeholderAdvisory = (currentVersion: string, checkedAt: string) =>
+            ({
+              status: "unknown",
+              currentVersion,
+              latestVersion: null,
+              updateCommand: null,
+              canUpdate: false,
+              canInstallVersion: false,
+              checkedAt,
+              message: null,
+            }) as const;
+          const behindAdvisory = {
+            status: "behind_latest",
+            currentVersion: "1.0.0",
+            latestVersion: "2.0.0",
+            updateCommand: "npm install -g @openai/codex@latest",
+            canUpdate: true,
+            canInstallVersion: true,
+            checkedAt: "2026-04-10T00:00:02.000Z",
+            message: "Install the update now or review provider settings.",
+          } as const;
+          const probedRef = yield* Ref.make<ServerProvider>({
+            ...refreshedSnapshot,
+            version: "1.0.0",
+            versionAdvisory: placeholderAdvisory("1.0.0", "2026-04-10T00:00:01.000Z"),
+          });
+          const enrichCalls = yield* Ref.make(0);
+          const secondEnrichStarted = yield* Deferred.make<void>();
+          const releaseSecondEnrich = yield* Deferred.make<void>();
+          const thirdEnrichStarted = yield* Deferred.make<void>();
+          const releaseThirdEnrich = yield* Deferred.make<void>();
+
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Ref.get(probedRef),
+            refreshInterval: "1 minute",
+            enrichSnapshot: ({ snapshot, publishSnapshot }) =>
+              Effect.gen(function* () {
+                const call = yield* Ref.updateAndGet(enrichCalls, (n) => n + 1);
+                if (call === 1) {
+                  yield* publishSnapshot({ ...snapshot, versionAdvisory: behindAdvisory });
+                  return;
+                }
+                if (call === 2) {
+                  yield* Deferred.succeed(secondEnrichStarted, undefined);
+                  yield* Deferred.await(releaseSecondEnrich);
+                  yield* publishSnapshot({ ...snapshot, versionAdvisory: behindAdvisory });
+                  return;
+                }
+                yield* Deferred.succeed(thirdEnrichStarted, undefined);
+                yield* Deferred.await(releaseThirdEnrich);
+              }),
+          });
+
+          // Initial probe + enrichment settles with behind_latest.
+          yield* provider.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.versionAdvisory?.status === "behind_latest"),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+
+          // Periodic re-probe for the same version must not drop versionAdvisory while enrichment runs.
+          yield* Ref.set(probedRef, {
+            ...refreshedSnapshot,
+            version: "1.0.0",
+            checkedAt: "2026-04-10T00:01:01.000Z",
+            versionAdvisory: placeholderAdvisory("1.0.0", "2026-04-10T00:01:01.000Z"),
+          });
+          const periodicProbe = yield* provider.streamChanges.pipe(
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 minute");
+          yield* Deferred.await(secondEnrichStarted);
+          const [duringPeriodicEnrich] = Array.from(yield* Fiber.join(periodicProbe));
+          assert.deepStrictEqual(duringPeriodicEnrich?.versionAdvisory, behindAdvisory);
+          yield* Deferred.succeed(releaseSecondEnrich, undefined);
+
+          // Once the installed version changes, the stale behind_latest advisory must not carry over.
+          const updatedPlaceholder = placeholderAdvisory("2.0.0", "2026-04-10T00:02:01.000Z");
+          yield* Ref.set(probedRef, {
+            ...refreshedSnapshot,
+            version: "2.0.0",
+            checkedAt: "2026-04-10T00:02:01.000Z",
+            versionAdvisory: updatedPlaceholder,
+          });
+          const upgradedProbe = yield* provider.streamChanges.pipe(
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 minute");
+          yield* Deferred.await(thirdEnrichStarted);
+          const [duringUpgradeEnrich] = Array.from(yield* Fiber.join(upgradedProbe));
+          assert.deepStrictEqual(duringUpgradeEnrich?.versionAdvisory, updatedPlaceholder);
+          yield* Deferred.succeed(releaseThirdEnrich, undefined);
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
+  it.effect(
+    "awaits one-shot enrichment on explicit refresh without publishing an un-enriched snapshot",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const enrichCalls = yield* Ref.make(0);
+          const secondEnrichStarted = yield* Deferred.make<void>();
+          const releaseSecondEnrich = yield* Deferred.make<void>();
+          const behindAdvisory = {
+            status: "behind_latest",
+            currentVersion: "1.0.0",
+            latestVersion: "2.0.0",
+            updateCommand: "npm install -g @openai/codex@latest",
+            canUpdate: true,
+            canInstallVersion: true,
+            checkedAt: "2026-04-10T00:00:02.000Z",
+            message: "Install the update now or review provider settings.",
+          } as const;
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Effect.succeed({ ...refreshedSnapshot, version: "1.0.0" }),
+            refreshOnInterval: false,
+            enrichSnapshot: ({ snapshot, publishSnapshot }) =>
+              Effect.gen(function* () {
+                const call = yield* Ref.updateAndGet(enrichCalls, (n) => n + 1);
+                if (call === 1) {
+                  yield* publishSnapshot({
+                    ...snapshot,
+                    versionAdvisory: {
+                      ...behindAdvisory,
+                      status: "current",
+                      latestVersion: "1.0.0",
+                      message: null,
+                    },
+                  });
+                  return;
+                }
+                yield* Deferred.succeed(secondEnrichStarted, undefined);
+                yield* Deferred.await(releaseSecondEnrich);
+                yield* publishSnapshot({ ...snapshot, versionAdvisory: behindAdvisory });
+              }),
+          });
+          yield* provider.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.versionAdvisory?.status === "current"),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+
+          const published = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
+          yield* provider.streamChanges.pipe(
+            Stream.runForEach((snapshot) => Ref.update(published, (all) => [...all, snapshot])),
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+
+          const refresh = yield* provider.refresh.pipe(Effect.forkChild);
+          yield* Deferred.await(secondEnrichStarted);
+          assert.isUndefined(refresh.pollUnsafe());
+          assert.deepStrictEqual(yield* Ref.get(published), []);
+
+          yield* Deferred.succeed(releaseSecondEnrich, undefined);
+          const refreshed = yield* Fiber.join(refresh);
+          assert.deepStrictEqual(refreshed.versionAdvisory, behindAdvisory);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect("does not block explicit refresh when awaitEnrichmentOnRefresh is false", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.succeed(refreshedSnapshot),
+          refreshOnInterval: false,
+          awaitEnrichmentOnRefresh: false,
+          enrichSnapshot: () => Effect.never,
+        });
+        yield* provider.streamChanges.pipe(Stream.take(1), Stream.runDrain);
+        assert.deepStrictEqual(yield* provider.refresh, refreshedSnapshot);
+      }),
+    ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
 });
