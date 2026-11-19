@@ -8,20 +8,29 @@ import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import { useGT, useMessages } from "gt-react-native";
 import { useState, type ReactNode } from "react";
-import { ActivityIndicator, Pressable, ScrollView, View } from "react-native";
+import { ActivityIndicator, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { RefreshControl } from "../../components/ui/RefreshControl";
-import { GlassSurface } from "../../components/ui/GlassSurface";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
-import { relativeTime } from "../../lib/time";
 import { withKnownPullRequestSummary } from "../../state/use-thread-pr";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
+import {
+  DetailHeader,
+  DockedTabs,
+  KvIcon,
+  KvRow,
+  KvText,
+  LineTabs,
+  useDockedTabs,
+  type LineTab,
+} from "../detail/DetailLayout";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
+import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
 import { useNow, useOrbitTask } from "./orbitTasks";
 import { useOpenTaskAgent, useOpenTaskPullRequest } from "./taskNavigation";
 import {
@@ -41,7 +50,6 @@ import {
   DiffStat,
   EmptyLine,
   InfoRow,
-  InfoText,
   QuietValue,
   RowStatusView,
   SectionHeading,
@@ -49,89 +57,50 @@ import {
   TaskListRow,
 } from "./TaskRows";
 
-type TaskTab = "overview" | "subtasks" | "agents";
-type SubtaskTab = "overview" | "agents";
+type TaskTab = "brief" | "subtasks" | "agents";
+type SubtaskTab = "brief" | "agents";
 
-const OVERVIEW_ICON = "doc.text" satisfies AppSymbolName;
-const SUBTASKS_ICON = "checklist" satisfies AppSymbolName;
-const AGENTS_ICON: AppSymbolName = { ios: "cpu", android: "psychology" };
 const USAGE_ICON: AppSymbolName = { ios: "gauge.with.dots.needle.33percent", android: "build" };
 
-/** A detail screen's sections as a floating glass bar of icons, sized like the iPhone switcher. */
-function FloatingTabs<T extends string>(props: {
-  readonly value: T;
-  readonly items: ReadonlyArray<{ value: T; label: string; icon: AppSymbolName }>;
-  readonly onChange: (value: T) => void;
-}) {
-  const insets = useSafeAreaInsets();
-  return (
-    <View
-      pointerEvents="box-none"
-      className="absolute inset-x-0 items-center"
-      style={{ bottom: Math.max(16, insets.bottom - 4) }}
-    >
-      <GlassSurface
-        accessibilityRole="tablist"
-        glassEffectStyle="regular"
-        style={{ borderRadius: 24, flexDirection: "row", height: 48, padding: 4 }}
-      >
-        {props.items.map((item) => {
-          const selected = item.value === props.value;
-          return (
-            <Pressable
-              key={item.value}
-              accessibilityRole="tab"
-              accessibilityLabel={item.label}
-              accessibilityState={{ selected }}
-              onPress={() => props.onChange(item.value)}
-              className={selected ? "bg-foreground/12" : undefined}
-              style={{
-                width: 64,
-                height: 40,
-                borderRadius: 20,
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <SymbolView
-                name={item.icon}
-                size={21}
-                type="monochrome"
-                tintColorClassName={selected ? "accent-foreground" : "accent-foreground-muted"}
-              />
-            </Pressable>
-          );
-        })}
-      </GlassSurface>
-    </View>
-  );
-}
-
-/** Each tab scrolls on its own, so switching tabs opens the next one at the top. */
-function TabScroll(props: {
+/**
+ * A detail page: title and key-value rows scroll away, the tabs then stay under the bar. Short
+ * tabs still leave room for the rows to scroll away, so switching tabs never moves the tabs.
+ */
+function DetailScroll(props: {
+  readonly header: ReactNode;
+  readonly tabs: ReactNode;
   readonly children: ReactNode;
   readonly refreshing: boolean;
   readonly onRefresh: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const docked = useDockedTabs();
+  const [viewportHeight, setViewportHeight] = useState(0);
   return (
-    <ScrollView
-      className="flex-1 bg-screen"
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={{ paddingBottom: insets.bottom + 96 }}
-      refreshControl={<RefreshControl refreshing={props.refreshing} onRefresh={props.onRefresh} />}
-      alwaysBounceVertical
+    <View
+      className="flex-1"
+      onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
     >
-      {props.children}
-    </ScrollView>
-  );
-}
-
-function ScreenTitle(props: { readonly children: string }) {
-  return (
-    <Text className="px-4 pt-6 text-[24px] leading-[30px] font-t3-medium text-foreground">
-      {props.children}
-    </Text>
+      <ScrollView
+        className="flex-1 bg-screen"
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{
+          paddingBottom: insets.bottom + 24,
+          minHeight: docked.dockOffset === null ? undefined : docked.dockOffset + viewportHeight,
+        }}
+        onScroll={(event) => docked.onScrollOffset(event.nativeEvent.contentOffset.y)}
+        scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl refreshing={props.refreshing} onRefresh={props.onRefresh} />
+        }
+        alwaysBounceVertical
+      >
+        <View onLayout={docked.onHeaderLayout}>{props.header}</View>
+        {props.tabs}
+        <View className="pt-3">{props.children}</View>
+      </ScrollView>
+      <DockedTabs docked={docked}>{props.tabs}</DockedTabs>
+    </View>
   );
 }
 
@@ -140,7 +109,7 @@ function Brief(props: { readonly text: string }) {
   const gt = useGT();
   if (props.text.trim() === "") return <EmptyLine>{gt("No brief")}</EmptyLine>;
   return (
-    <View className="px-4">
+    <View className="px-4 pt-1">
       <SelectableMarkdownText
         markdown={props.text}
         textStyle={{
@@ -154,7 +123,7 @@ function Brief(props: { readonly text: string }) {
   );
 }
 
-/** A question or a block from Orbit, above the facts. */
+/** A question or a block from Orbit, under the title line. */
 function AttentionNotice(props: { readonly task: Pick<OrbitTaskSummary, "attention" | "status"> }) {
   const gt = useGT();
   const attention = props.task.attention;
@@ -305,7 +274,6 @@ function AgentsTab(props: { readonly task: OrbitTaskDetail; readonly subtaskId: 
   const agents = agentsFor(props.task, props.subtaskId);
   return (
     <>
-      <View className="pt-1" />
       <AgentRows rows={agents.current} empty={gt("No agent has started.")} />
       {agents.earlier.length > 0 ? (
         <>
@@ -316,6 +284,11 @@ function AgentsTab(props: { readonly task: OrbitTaskDetail; readonly subtaskId: 
     </>
   );
 }
+
+const agentCount = (task: OrbitTaskDetail, subtaskId: number | null) => {
+  const agents = agentsFor(task, subtaskId);
+  return agents.current.length + agents.earlier.length;
+};
 
 function LoadState(props: {
   readonly state: ReturnType<typeof useOrbitTask>["state"];
@@ -347,10 +320,39 @@ const knownTitle = (params: object) =>
     ? (params.initialSummary as { readonly title?: string } | undefined)?.title
     : undefined;
 
-function TaskOverview(props: {
-  readonly task: OrbitTaskDetail;
-  readonly onOpenSubtasks: () => void;
+function UsageRows(props: {
+  readonly metrics: OrbitTaskDetail["metrics"];
+  readonly showDuration: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
+  const { durationMs, tokens, linesAdded, linesDeleted } = props.metrics;
+  if (tokens === null && linesAdded === null && !(props.showDuration && durationMs !== null))
+    return null;
+  const tokensText =
+    tokens === null ? gt("tokens –") : gt("{tokens} tokens", { tokens: formatTokens(tokens) });
+  return (
+    <>
+      <KvRow icon={<KvIcon name={USAGE_ICON} />} label={gt("Usage")}>
+        <KvText className="tabular-nums">
+          {props.showDuration
+            ? [
+                durationMs === null ? "–" : formatWorkingDurationLabel(durationMs, m),
+                tokensText,
+              ].join(" · ")
+            : tokensText}
+        </KvText>
+      </KvRow>
+      {linesAdded !== null ? (
+        <KvRow icon={<KvIcon name="plusminus" />} label={gt("Changes")}>
+          <DiffStat added={linesAdded} deleted={linesDeleted} className="text-[15px]" />
+        </KvRow>
+      ) : null}
+    </>
+  );
+}
+
+function TaskRows(props: { readonly task: OrbitTaskDetail }) {
   const gt = useGT();
   const m = useMessages();
   const openPullRequest = useOpenTaskPullRequest();
@@ -370,258 +372,137 @@ function TaskOverview(props: {
         }),
       ) ?? prLink.repository)
     : null;
-  const done = task.subtasks.filter((subtask) => subtask.status === "completed").length;
-  const now = useNow(running);
+  const prStatus = pr ? pullRequestStatus({ state: pr.state ?? "open", isDraft: false }, m) : null;
   return (
     <>
-      <ScreenTitle>{task.title}</ScreenTitle>
-      <AttentionNotice task={task} />
-      <View className="mt-7">
-        {/* Status first; the run time on the right, blue while it runs, like a working thread. */}
-        <InfoRow
-          icon={<StateGlyph name={status.icon} tintClassName={ROW_TONE_TINT[status.tone]} />}
-          trailing={
-            duration !== null ? (
-              <Text
-                className={
-                  running
-                    ? "text-[15px] font-t3-medium tabular-nums text-adaptive-sky-600-400"
-                    : "text-[15px] tabular-nums text-foreground-tertiary"
-                }
-              >
-                {formatWorkingDurationLabel(duration, m)}
-              </Text>
-            ) : (
-              <QuietValue>{relativeTime(task.lastActivityAt ?? task.updatedAt, now, m)}</QuietValue>
-            )
-          }
+      <KvRow
+        icon={<StateGlyph name={status.icon} tintClassName={ROW_TONE_TINT[status.tone]} />}
+        label={gt("Status")}
+      >
+        <KvText className="shrink-0">{m(status.label)}</KvText>
+        {duration !== null ? (
+          <KvText
+            className={
+              running
+                ? "tabular-nums text-adaptive-sky-600-400"
+                : "tabular-nums text-foreground-muted"
+            }
+          >
+            · {formatWorkingDurationLabel(duration, m)}
+          </KvText>
+        ) : null}
+      </KvRow>
+      {task.workspace ? (
+        <KvRow icon={<KvIcon name="server.rack" />} label={gt("Workspace")}>
+          <KvText>{task.workspace.name}</KvText>
+          {task.workspace.node ? (
+            <KvText className="shrink-0 text-foreground-muted">
+              {gt("on {node}", { node: task.workspace.node.name })}
+            </KvText>
+          ) : null}
+        </KvRow>
+      ) : null}
+      {task.workspace?.branch ? (
+        <KvRow icon={<KvIcon name="arrow.triangle.branch" />} label={gt("Branch")}>
+          <KvText className="text-foreground-muted">{task.workspace.branch}</KvText>
+        </KvRow>
+      ) : null}
+      {pr && prStatus ? (
+        <KvRow
+          icon={<KvIcon name={PullRequestGlyph.pullRequest} />}
+          label={gt("Pull request")}
+          accessibilityLabel={gt("Pull request {number}", { number: pr.number })}
+          onPress={() => openPullRequest(pr.url, { id: task.id, title: task.title })}
         >
-          <InfoText className="font-t3-medium">{m(status.label)}</InfoText>
-        </InfoRow>
-        {task.workspace ? (
-          <InfoRow
-            icon={<StateGlyph name="server.rack" tintClassName="accent-foreground-muted" />}
-            trailing={
-              task.workspace.node ? <QuietValue>{task.workspace.node.name}</QuietValue> : null
-            }
-          >
-            {task.workspace.name}
-          </InfoRow>
-        ) : null}
-        {task.workspace?.branch ? (
-          <InfoRow
-            icon={
-              <StateGlyph name="arrow.triangle.branch" tintClassName="accent-foreground-muted" />
-            }
-          >
-            <InfoText>{task.workspace.branch}</InfoText>
-          </InfoRow>
-        ) : null}
-        {pr ? (
-          <InfoRow
-            icon={
-              <StateGlyph
-                name={
-                  pr.state === "merged"
-                    ? PullRequestGlyph.merged
-                    : pr.state === "closed"
-                      ? PullRequestGlyph.closed
-                      : PullRequestGlyph.pullRequest
-                }
-                tintClassName={
-                  pr.state === "merged"
-                    ? "accent-adaptive-violet-600-400"
-                    : pr.state === "closed"
-                      ? "accent-danger-foreground"
-                      : "accent-adaptive-emerald-600-400"
-                }
-              />
-            }
-            trailing={<QuietValue>#{pr.number}</QuietValue>}
-            accessibilityLabel={gt("Pull request {number}", { number: pr.number })}
-            onPress={() => openPullRequest(pr.url)}
-          >
-            {prTitle ?? gt("Pull request")}
-          </InfoRow>
-        ) : null}
-        {task.metrics.tokens !== null || task.metrics.linesAdded !== null ? (
-          <InfoRow
-            icon={<StateGlyph name={USAGE_ICON} tintClassName="accent-foreground-muted" />}
-            trailing={
-              <DiffStat added={task.metrics.linesAdded} deleted={task.metrics.linesDeleted} />
-            }
-          >
-            <InfoText className="tabular-nums text-foreground-muted">
-              {task.metrics.tokens === null
-                ? gt("tokens –")
-                : gt("{tokens} tokens", { tokens: formatTokens(task.metrics.tokens) })}
-            </InfoText>
-          </InfoRow>
-        ) : null}
-        {task.subtasks.length > 0 ? (
-          <InfoRow
-            icon={<StateGlyph name={SUBTASKS_ICON} tintClassName="accent-foreground-muted" />}
-            trailing={<QuietValue>{`${done}/${task.subtasks.length}`}</QuietValue>}
-            onPress={props.onOpenSubtasks}
-          >
-            {gt("Subtasks")}
-          </InfoRow>
-        ) : null}
-      </View>
-      <SectionHeading title={gt("Brief")} />
-      <Brief text={task.brief} />
+          <SymbolView
+            name={prStatus.icon}
+            size={16}
+            type="monochrome"
+            weight="medium"
+            tintColorClassName={prStatus.tint}
+          />
+          <KvText>{prTitle ?? gt("Pull request")}</KvText>
+          <KvText className="ml-auto shrink-0 tabular-nums text-foreground-muted">
+            #{pr.number}
+          </KvText>
+        </KvRow>
+      ) : null}
+      <UsageRows metrics={task.metrics} showDuration={false} />
     </>
   );
 }
 
-/** One Orbit task: Overview (facts and brief), Subtasks and Agents as floating tabs. */
+/** One Orbit task: title and facts, then Brief · Subtasks · Agents as tabs. */
 export function OrbitTaskRouteScreen({ route }: StaticScreenProps<{ taskId: number }>) {
   const gt = useGT();
   const navigation = useNavigation();
   const taskId = Number(route.params.taskId);
   const { state, refreshing, refresh } = useOrbitTask(taskId);
-  const [tab, setTab] = useState<TaskTab>("overview");
-  const title =
-    tab === "overview"
-      ? gt("Task #{id}", { id: taskId })
-      : tab === "subtasks"
-        ? gt("Subtasks of #{id}", { id: taskId })
-        : gt("Agents of #{id}", { id: taskId });
+  const [tab, setTab] = useState<TaskTab>("brief");
   const openSubtask = (subtask: OrbitSubtask) =>
     navigation.dispatch(StackActions.push("OrbitSubtask", { taskId, subtaskId: subtask.id }));
   return (
     <View className="flex-1 bg-screen">
-      <NativeStackScreenOptions options={{ title }} />
+      <NativeStackScreenOptions options={{ title: gt("Task #{id}", { id: taskId }) }} />
       <LoadState state={state}>
-        {(task) => (
-          <>
-            <TabScroll key={tab} refreshing={refreshing} onRefresh={() => void refresh()}>
-              {tab === "overview" ? (
-                <TaskOverview task={task} onOpenSubtasks={() => setTab("subtasks")} />
+        {(task) => {
+          const done = task.subtasks.filter((subtask) => subtask.status === "completed").length;
+          const agents = agentCount(task, null);
+          const items: ReadonlyArray<LineTab<TaskTab>> = [
+            { value: "brief", label: gt("Brief") },
+            {
+              value: "subtasks",
+              label: gt("Subtasks"),
+              count: `${done}/${task.subtasks.length}`,
+              accessibilityLabel: gt("Subtasks, {done} of {total} done", {
+                done,
+                total: task.subtasks.length,
+              }),
+            },
+            {
+              value: "agents",
+              label: gt("Agents"),
+              count: String(agents),
+              accessibilityLabel: gt("Agents, {count}", { count: agents }),
+            },
+          ];
+          return (
+            <DetailScroll
+              refreshing={refreshing}
+              onRefresh={() => void refresh()}
+              header={
+                <DetailHeader title={task.title} notice={<AttentionNotice task={task} />}>
+                  <TaskRows task={task} />
+                </DetailHeader>
+              }
+              tabs={<LineTabs value={tab} items={items} onChange={setTab} />}
+            >
+              {tab === "brief" ? (
+                <Brief text={task.brief} />
               ) : tab === "subtasks" ? (
-                <>
-                  <View className="pt-1" />
-                  <SubtaskList task={task} onOpen={openSubtask} />
-                </>
+                <SubtaskList task={task} onOpen={openSubtask} />
               ) : (
                 <AgentsTab task={task} subtaskId={null} />
               )}
-            </TabScroll>
-            <FloatingTabs
-              value={tab}
-              onChange={setTab}
-              items={[
-                { value: "overview", label: gt("Overview"), icon: OVERVIEW_ICON },
-                {
-                  value: "subtasks",
-                  label: gt("Subtasks, {count}", { count: task.subtasks.length }),
-                  icon: SUBTASKS_ICON,
-                },
-                {
-                  value: "agents",
-                  label: gt("Agents, {count}", { count: agentsFor(task, null).current.length }),
-                  icon: AGENTS_ICON,
-                },
-              ]}
-            />
-          </>
-        )}
+            </DetailScroll>
+          );
+        }}
       </LoadState>
     </View>
   );
 }
 
-function SubtaskOverview(props: {
-  readonly task: OrbitTaskDetail;
-  readonly subtask: OrbitSubtask;
-  readonly onOpenTask: () => void;
-}) {
-  const gt = useGT();
-  const m = useMessages();
-  const { task, subtask } = props;
-  const index = task.subtasks.indexOf(subtask);
-  const { durationMs, tokens } = subtask.metrics;
-  const started = subtask.status !== "todo";
-  return (
-    <>
-      <ScreenTitle>{subtask.title}</ScreenTitle>
-      <AttentionNotice task={{ attention: subtask.attention, status: task.status }} />
-      <View className="mt-7">
-        <InfoRow
-          icon={<SubtaskLeadGlyph task={task} subtask={subtask} />}
-          trailing={
-            <QuietValue>
-              {gt("{position} of {total}", { position: index + 1, total: task.subtasks.length })}
-            </QuietValue>
-          }
-        >
-          <InfoText className="font-t3-medium">{m(subtaskStatusText(task, subtask))}</InfoText>
-        </InfoRow>
-        {/* The parent task is a row, not a line above the title; Back returns to it too. */}
-        <InfoRow
-          icon={<StateGlyph name={SUBTASKS_ICON} tintClassName="accent-foreground-muted" />}
-          trailing={<QuietValue>#{task.id}</QuietValue>}
-          onPress={props.onOpenTask}
-        >
-          {task.title}
-        </InfoRow>
-        {started ? (
-          <InfoRow
-            icon={<StateGlyph name={USAGE_ICON} tintClassName="accent-foreground-muted" />}
-            trailing={
-              subtask.metrics.linesAdded === null ? null : (
-                <DiffStat
-                  added={subtask.metrics.linesAdded}
-                  deleted={subtask.metrics.linesDeleted}
-                />
-              )
-            }
-          >
-            <InfoText className="tabular-nums text-foreground-muted">
-              {[
-                durationMs === null ? "–" : formatWorkingDurationLabel(durationMs, m),
-                tokens === null
-                  ? gt("tokens –")
-                  : gt("{tokens} tokens", { tokens: formatTokens(tokens) }),
-              ].join(" · ")}
-            </InfoText>
-          </InfoRow>
-        ) : null}
-      </View>
-      <SectionHeading title={gt("Brief")} />
-      <Brief text={subtask.brief} />
-      {subtask.deliverables.length > 0 ? (
-        <>
-          <SectionHeading title={gt("Deliverables")} />
-          {subtask.deliverables.map((item) => (
-            <InfoRow
-              key={item.id}
-              multiline
-              icon={<View className="ml-1.5 h-1.5 w-1.5 rounded-full bg-foreground-muted" />}
-            >
-              {item.description}
-            </InfoRow>
-          ))}
-        </>
-      ) : null}
-    </>
-  );
-}
-
-/** One subtask: Overview (status, parent, usage, brief, deliverables) and Agents. */
+/** One subtask: status, its task, usage, then Brief (with deliverables) · Agents. */
 export function OrbitSubtaskRouteScreen({
   route,
 }: StaticScreenProps<{ taskId: number; subtaskId: number }>) {
   const gt = useGT();
+  const m = useMessages();
   const navigation = useNavigation();
   const taskId = Number(route.params.taskId);
   const subtaskId = Number(route.params.subtaskId);
   const { state, refreshing, refresh } = useOrbitTask(taskId);
-  const [tab, setTab] = useState<SubtaskTab>("overview");
-  const title =
-    tab === "overview"
-      ? gt("Subtask #{id}", { id: subtaskId })
-      : gt("Agents of #{id}", { id: subtaskId });
+  const [tab, setTab] = useState<SubtaskTab>("brief");
   const openTask = () => {
     const routes = navigation.getState()?.routes ?? [];
     const previous = routes.at(-2);
@@ -634,36 +515,90 @@ export function OrbitSubtaskRouteScreen({
   };
   return (
     <View className="flex-1 bg-screen">
-      <NativeStackScreenOptions options={{ title }} />
+      <NativeStackScreenOptions options={{ title: gt("Subtask #{id}", { id: subtaskId }) }} />
       <LoadState state={state}>
         {(task) => {
           const subtask = task.subtasks.find((item) => item.id === subtaskId);
           if (!subtask)
             return <EmptyLine>{gt("This subtask is no longer part of the task.")}</EmptyLine>;
+          const index = task.subtasks.indexOf(subtask);
+          const agents = agentCount(task, subtask.id);
           return (
-            <>
-              <TabScroll key={tab} refreshing={refreshing} onRefresh={() => void refresh()}>
-                {tab === "overview" ? (
-                  <SubtaskOverview task={task} subtask={subtask} onOpenTask={openTask} />
-                ) : (
-                  <AgentsTab task={task} subtaskId={subtask.id} />
-                )}
-              </TabScroll>
-              <FloatingTabs
-                value={tab}
-                onChange={setTab}
-                items={[
-                  { value: "overview", label: gt("Overview"), icon: OVERVIEW_ICON },
-                  {
-                    value: "agents",
-                    label: gt("Agents, {count}", {
-                      count: agentsFor(task, subtask.id).current.length,
-                    }),
-                    icon: AGENTS_ICON,
-                  },
-                ]}
-              />
-            </>
+            <DetailScroll
+              refreshing={refreshing}
+              onRefresh={() => void refresh()}
+              header={
+                <DetailHeader
+                  title={subtask.title}
+                  notice={
+                    <AttentionNotice task={{ attention: subtask.attention, status: task.status }} />
+                  }
+                >
+                  <KvRow
+                    icon={<SubtaskLeadGlyph task={task} subtask={subtask} />}
+                    label={gt("Status")}
+                  >
+                    <KvText className="shrink-0">{m(subtaskStatusText(task, subtask))}</KvText>
+                    <KvText className="tabular-nums text-foreground-muted">
+                      ·{" "}
+                      {gt("{position} of {total}", {
+                        position: index + 1,
+                        total: task.subtasks.length,
+                      })}
+                    </KvText>
+                  </KvRow>
+                  {/* The parent task, a level up: the same as Back when it is below. */}
+                  <KvRow icon={<KvIcon name="checklist" />} label={gt("Task")} onPress={openTask}>
+                    <KvText className="shrink-0 tabular-nums text-foreground-muted">
+                      #{task.id}
+                    </KvText>
+                    <KvText>{task.title}</KvText>
+                  </KvRow>
+                  {subtask.status !== "todo" ? (
+                    <UsageRows metrics={subtask.metrics} showDuration />
+                  ) : null}
+                </DetailHeader>
+              }
+              tabs={
+                <LineTabs
+                  value={tab}
+                  onChange={setTab}
+                  items={[
+                    { value: "brief", label: gt("Brief") },
+                    {
+                      value: "agents",
+                      label: gt("Agents"),
+                      count: String(agents),
+                      accessibilityLabel: gt("Agents, {count}", { count: agents }),
+                    },
+                  ]}
+                />
+              }
+            >
+              {tab === "brief" ? (
+                <>
+                  <Brief text={subtask.brief} />
+                  {subtask.deliverables.length > 0 ? (
+                    <>
+                      <SectionHeading title={gt("Deliverables")} />
+                      {subtask.deliverables.map((item) => (
+                        <InfoRow
+                          key={item.id}
+                          multiline
+                          icon={
+                            <View className="ml-1.5 h-1.5 w-1.5 rounded-full bg-foreground-muted" />
+                          }
+                        >
+                          {item.description}
+                        </InfoRow>
+                      ))}
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                <AgentsTab task={task} subtaskId={subtask.id} />
+              )}
+            </DetailScroll>
           );
         }}
       </LoadState>

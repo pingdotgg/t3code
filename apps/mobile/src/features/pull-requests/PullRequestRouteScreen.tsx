@@ -11,9 +11,8 @@ import {
   resolvePullRequestAnchorRange,
   resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
-import { T, useGT, useMessages, Var } from "gt-react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { Chip } from "../../components/ui/Chip";
 import { pullRequestTabOffset } from "./pullRequestTabScroll";
 import { guideFocusedRows, type GuideDiffFocus } from "./guide/guideDiffFocus";
 import { PullRequestGuideContent } from "./guide/PullRequestGuideScreen";
@@ -24,12 +23,7 @@ import { usePullRequestActivityFilter } from "./usePullRequestActivityFilter";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import Animated from "react-native-reanimated";
-import {
-  PR_ROW_LAYOUT,
-  PR_ROW_ENTER,
-  PR_ROW_EXIT,
-  PR_POSITION_LAYOUT,
-} from "./pullRequestAnimations";
+import { PR_ROW_LAYOUT, PR_ROW_ENTER, PR_ROW_EXIT } from "./pullRequestAnimations";
 import {
   canPerformPullRequestAction,
   openOnProviderLabel,
@@ -51,21 +45,19 @@ import {
 } from "./pullRequestDiffDebug";
 import { usePullRequestDiffHighlightFiles } from "./usePullRequestDiffHighlightFiles";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
-import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import {
-  pullRequestConversationThreads,
-  type PullRequestDetail,
-  type PullRequestListEntry,
-  type PullRequestSummary,
-} from "@t3tools/contracts";
-import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
+  StackActions,
+  useFocusEffect,
+  useNavigation,
+  type StaticScreenProps,
+} from "@react-navigation/native";
+import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { RegistryContext, useAtomRefresh } from "@effect/atom-react";
+import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
+import { pullRequestConversationThreads, type PullRequestDetail } from "@t3tools/contracts";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
-import { pullRequestStatus } from "./pullRequestStatus";
 import { use, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { Linking, Platform, Pressable, StyleSheet, View } from "react-native";
+import { Linking, Platform, StyleSheet, View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -77,13 +69,9 @@ import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSi
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAndroidWorkspaceBack } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
-import { SymbolView } from "../../components/ui/AppSymbol";
 import { ScreenContent } from "../../components/ui/ScreenContent";
-import { RelativeTime } from "../../components/RelativeTime";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { usePullRequestLiveChecks } from "./usePullRequestLiveChecks";
-import { pullRequestLabelColor } from "./pullRequestList";
 import { PullRequestReactions } from "./PullRequestReactions";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -113,23 +101,23 @@ import {
   usePullRequestDiffEntry,
   type PullRequestDiffParams,
   type PullRequestParams,
+  type PullRequestTaskLink,
 } from "./usePullRequestDiff";
-import {
-  PullRequestAvatar,
-  PullRequestDiffStats,
-  PullRequestReadStatus,
-} from "./PullRequestPresentation";
+import { PullRequestReadStatus } from "./PullRequestPresentation";
 import { usePullRequestFilesSection } from "./PullRequestFiles";
 import { usePullRequestMaintainerEdits } from "./usePullRequestMaintainerEdits";
 import { PullRequestDescription } from "./PullRequestDescription";
 import { PullRequestMediaVisibleContext } from "./PullRequestMedia";
 import { PullRequestMarkdownRepository } from "./PullRequestMarkdown";
+import { PullRequestBranchRow } from "./PullRequestStatusRows";
+import { PullRequestChecksTab, PullRequestKeyValues } from "./PullRequestDetailHeader";
 import {
-  PullRequestStatusMenu,
-  PullRequestChecksRow,
-  PullRequestBranchRow,
-  PullRequestReviewersRow,
-} from "./PullRequestStatusRows";
+  DetailHeader,
+  DockedTabs,
+  LINE_TABS_HEIGHT,
+  LineTabs,
+  useDockedTabs,
+} from "../detail/DetailLayout";
 import { PullRequestMergeControls } from "./PullRequestMergeControls";
 import { PullRequestStackCard } from "./PullRequestStackCard";
 import { usePullRequestStack, type PullRequestStackState } from "./usePullRequestStack";
@@ -154,13 +142,14 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
       { permissions, onChanged: result.refresh },
       filter.newestFirst,
       messages,
+      filter.kind === "all" ? detail.data : null,
     );
     if (!rows.length)
       rows.push({
         key: "empty",
         date: "",
         content: (
-          <Text className="py-6 text-sm text-foreground-muted">
+          <Text className="px-4 py-6 text-sm text-foreground-muted">
             <T>No activity matches these filters.</T>
           </Text>
         ),
@@ -197,179 +186,32 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
     targetKey,
     targetThread,
     hiddenCount: filtered?.hiddenCount ?? 0,
+    comments: result.data?.commentCount ?? 0,
+    commits: result.data?.commits.length ?? 0,
     pending: result.isPending && !result.data,
     error: result.error,
   };
 }
 
-function PullRequestIdentity(props: {
-  readonly pr: PullRequestDetail | PullRequestListEntry | PullRequestSummary;
-  readonly params: PullRequestParams;
-}) {
-  const { pr } = props;
-  const gt = useGT();
-  const messages = useMessages();
-  const status = pullRequestStatus({ state: pr.state, isDraft: pr.isDraft === true }, messages);
-  return (
-    <View className="gap-3">
-      <View className="flex-row flex-wrap items-center gap-2">
-        {"capabilities" in pr ? (
-          <PullRequestStatusMenu pr={pr} params={props.params} />
-        ) : (
-          <View className="min-h-8 flex-row items-center gap-1.5">
-            <SymbolView name={status.icon} size={14} tintColorClassName={status.tint} />
-            <Text className={`text-xs font-t3-medium ${status.text}`}>{status.label}</Text>
-          </View>
-        )}
-        <PullRequestDiffStats additions={pr.additions ?? 0} deletions={pr.deletions ?? 0} compact />
-        {"changedFiles" in pr && pr.changedFiles !== undefined ? (
-          <Text className="text-2xs text-foreground-muted">
-            {gt("{count, plural, one {{count} file} other {{count} files}}", {
-              count: pr.changedFiles,
-            })}
-          </Text>
-        ) : (
-          <View className="h-3 w-12 rounded bg-subtle-strong" />
-        )}
-      </View>
-      <Text selectable className="text-xl font-t3-bold leading-7">
-        {pr.title}
-      </Text>
-      <View className="flex-row items-center gap-2">
-        <PullRequestAvatar actor={pr.author ?? null} size={20} />
-        <Text className="min-w-0 flex-1 text-xs font-t3-medium" numberOfLines={1}>
-          {pr.author?.login ?? gt("Unknown author")}
-        </Text>
-        <Text className="shrink text-right text-2xs text-foreground-muted" numberOfLines={1}>
-          <T>
-            Updated{" "}
-            <Var>
-              <RelativeTime timestamp={pr.updatedAt} />
-            </Var>{" "}
-            ago
-          </T>
-        </Text>
-      </View>
-      <View className="flex-row items-start gap-1.5">
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={gt("Copy base branch {branch}", { branch: pr.baseBranch })}
-          onPress={() => void Clipboard.setStringAsync(pr.baseBranch)}
-          className="min-w-0 shrink active:opacity-70"
-          hitSlop={8}
-        >
-          <Text className="font-mono text-2xs text-foreground-muted">{pr.baseBranch}</Text>
-        </Pressable>
-        <View className="pt-0.5">
-          <SymbolView name="arrow.left" size={11} tintColorClassName="accent-icon-muted" />
-        </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={gt("Copy head branch {branch}", { branch: pr.headBranch })}
-          onPress={() => void Clipboard.setStringAsync(pr.headBranch)}
-          className="min-w-0 shrink active:opacity-70"
-          hitSlop={8}
-        >
-          <Text className="font-mono text-2xs text-foreground-muted">{pr.headBranch}</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
+type PullRequestTab = "description" | "checks" | "timeline" | "code" | "guide";
 
-function PullRequestLabels(props: {
+/** The Checks tab's merge state under the checks: what the checks gate. */
+function PullRequestMergeGroup(props: {
   readonly pr: PullRequestDetail;
-  readonly params: PullRequestParams;
-}) {
-  const navigation = useNavigation();
-  const gt = useGT();
-  const connected = usePullRequestConnected(props.params.environmentId);
-  const canWrite = useAtomValue(
-    composerPullRequests.setLabels.permissionAtom(requestTarget(props.params).environmentId),
-  );
-  const editable =
-    connected &&
-    canWrite &&
-    props.pr.capabilities.labels === true &&
-    props.pr.viewerPermissions.labels !== false;
-  if (!props.pr.labels.length && !editable) return null;
-  return (
-    <Animated.View layout={PR_ROW_LAYOUT} className="flex-row flex-wrap gap-2">
-      {props.pr.labels.map((label) => {
-        const color = pullRequestLabelColor(label.color);
-        // Tinted like the list row's label pills, at the overview's chip size.
-        return (
-          <View
-            key={label.name}
-            className="max-w-full flex-row items-center gap-1.5 rounded-2xl bg-grouped-card px-3 py-1"
-            style={color ? { backgroundColor: `${color}20` } : undefined}
-          >
-            {color ? (
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
-            ) : null}
-            <Text textRole="caption" className="shrink text-foreground-muted" numberOfLines={1}>
-              {label.name}
-            </Text>
-          </View>
-        );
-      })}
-      {editable ? (
-        <Chip
-          label={
-            props.pr.labels.length
-              ? gt("Edit", { $context: "verb, edit labels" })
-              : gt("Add labels")
-          }
-          icon="tag"
-          size="small"
-          accessibilityLabel={gt("Edit labels")}
-          onPress={() => navigation.navigate("PullRequestLabels", props.params)}
-        />
-      ) : null}
-    </Animated.View>
-  );
-}
-
-function PullRequestOverview(props: {
-  readonly pr: PullRequestDetail;
-  readonly description: ReturnType<typeof usePullRequestDescription>;
   readonly params: PullRequestParams;
   readonly stack: PullRequestStackState;
-  readonly onDescriptionLayout: (y: number) => void;
-  readonly onDescriptionCollapse: () => void;
-  readonly descriptionExpanded: boolean;
-  readonly onDescriptionExpandedChange: (expanded: boolean) => void;
 }) {
-  const { pr } = props;
   return (
-    <View className="gap-5">
+    <View className="gap-5 px-4 pt-5">
       <PullRequestStackCard params={props.params} state={props.stack} />
       <PullRequestCardGroup>
-        <PullRequestChecksRow pr={pr} params={props.params} />
-        <PullRequestReviewersRow pr={pr} params={props.params} />
         <Animated.View layout={PR_ROW_LAYOUT}>
-          <PullRequestBranchRow pr={pr} params={props.params} />
+          <PullRequestBranchRow pr={props.pr} params={props.params} />
         </Animated.View>
         <Animated.View layout={PR_ROW_LAYOUT}>
-          <PullRequestMergeControls pr={pr} params={props.params} stack={props.stack} />
+          <PullRequestMergeControls pr={props.pr} params={props.params} stack={props.stack} />
         </Animated.View>
       </PullRequestCardGroup>
-      <PullRequestLabels pr={pr} params={props.params} />
-      <Animated.View
-        layout={PR_POSITION_LAYOUT}
-        onLayout={(event) => props.onDescriptionLayout(event.nativeEvent.layout.y)}
-      >
-        <PullRequestDescription
-          markdown={props.description.body}
-          onTaskListChange={props.description.toggleTask}
-          collapse={{
-            expanded: props.descriptionExpanded,
-            onExpandedChange: props.onDescriptionExpandedChange,
-            onCollapse: props.onDescriptionCollapse,
-          }}
-          footer={<PullRequestReactions params={props.params} />}
-        />
-      </Animated.View>
     </View>
   );
 }
@@ -393,47 +235,50 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const params = route.params;
   usePullRequestEnvironmentFallback(params);
   const connected = usePullRequestConnected(params.environmentId);
-  const [chosenSection, setSection] = useState<"overview" | "activity" | "guide">(() => {
+  const [chosenSection, setSection] = useState<PullRequestTab>(() => {
     const kind = parsePullRequestAnchor(params.navigationUrl)?.kind;
-    return kind === "timeline" || kind === "commits" ? "activity" : "overview";
+    return kind === "timeline" || kind === "commits"
+      ? "timeline"
+      : kind === "checks"
+        ? "checks"
+        : "description";
   });
   const requestedSection = useRef(chosenSection);
   const [listAnimationsReady, setListAnimationsReady] = useState(false);
-  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
   const filesContent = usePullRequestFilesSection(params);
   const guidesEnabled = useReviewGuidesEnabled(params);
-  // The guide tab goes away while guides are off and overview stands in. The pick is kept, so
-  // guides coming back (a settings reload, a reconnect) return to the guide the user chose.
-  const shown = (tab: typeof chosenSection) =>
-    !guidesEnabled && tab === "guide" ? "overview" : tab;
+  // The guide tab goes away while guides are off and the description stands in. The pick is kept,
+  // so guides coming back (a settings reload, a reconnect) return to the guide the user chose.
+  const shown = (tab: PullRequestTab) => (!guidesEnabled && tab === "guide" ? "description" : tab);
   const section = shown(chosenSection);
   const activity = usePullRequestActivityFilter(parsePullRequestAnchor(params.navigationUrl)?.kind);
   const activityFilter = activity.filter;
   const activityContent = usePullRequestActivityRows(params, activityFilter);
+  const docked = useDockedTabs(contentTopInset);
   const scrollOffsets = useRef<Record<string, number>>({});
   // The offset of the tab last shown, and which tab that was: a tab standing in for a hidden guide
   // has its own offset, which only its next scroll would record here.
-  const currentScrollOffset = useRef<{ tab: typeof section; offset: number }>({
-    tab: "overview",
+  const currentScrollOffset = useRef<{ tab: PullRequestTab; offset: number }>({
+    tab: "description",
     offset: -contentTopInset,
   });
-  const bodyY = useRef(0);
-  const [headerHeight, setHeaderHeight] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
-  const scrollViews = useRef<Partial<Record<typeof section, LegendListRef | null>>>({});
+  const scrollViews = useRef<Partial<Record<PullRequestTab, LegendListRef | null>>>({});
   // AnimatedLegendList re-attaches its handle and sets state whenever its ref changes,
   // so an inline ref in the tab map loops the screen into "Maximum update depth exceeded".
   const [listRefs] = useState(() => {
-    const listRef = (tab: typeof section) => (list: LegendListRef | null) => {
+    const listRef = (tab: PullRequestTab) => (list: LegendListRef | null) => {
       scrollViews.current[tab] = list;
     };
     return {
-      overview: listRef("overview"),
+      description: listRef("description"),
+      checks: listRef("checks"),
+      timeline: listRef("timeline"),
+      code: listRef("code"),
       guide: listRef("guide"),
-      activity: listRef("activity"),
     };
   });
-  const selectSection = (next: typeof section) => {
+  const selectSection = (next: PullRequestTab) => {
     if (next === section) return;
     const from = shown(requestedSection.current);
     const current =
@@ -441,12 +286,14 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
         ? currentScrollOffset.current.offset
         : (scrollOffsets.current[from] ?? -contentTopInset);
     scrollOffsets.current[section] = current;
-    const headerEnd = Math.max(-contentTopInset, bodyY.current - contentTopInset);
+    // Docked tabs stay docked: the next tab opens where it was, or just under the tabs.
+    const headerEnd = docked.dockOffset ?? -contentTopInset;
     const offset = pullRequestTabOffset(current, scrollOffsets.current[next], headerEnd);
     requestedSection.current = next;
     scrollOffsets.current[next] = offset;
     currentScrollOffset.current = { tab: next, offset };
     scrollViews.current[next]?.scrollToOffset({ offset, animated: false });
+    docked.onScrollOffset(offset);
     setSection(next);
   };
   const followLink = useEffectEvent(() => {
@@ -459,17 +306,15 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
         ...(commit ? { commit } : {}),
       });
     } else if (target?.kind === "timeline") {
-      selectSection("activity");
+      selectSection("timeline");
       activity.showTimeline();
     } else if (target?.kind === "commits") {
-      selectSection("activity");
+      selectSection("timeline");
       activity.showCommits();
     } else if (target?.kind === "checks") {
-      selectSection("overview");
-      // Checks head Overview, which a reused screen may have scrolled past.
-      scrollViews.current.overview?.scrollToOffset({ offset: -contentTopInset, animated: false });
+      selectSection("checks");
     } else if (target?.kind === "summary") {
-      selectSection("overview");
+      selectSection("description");
     }
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a link selects its native PR section or diff even when the route is reused
@@ -487,10 +332,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   // Rows above the target measure in after the first jump, so it is held until the user scrolls.
   const heldActivityRow = useRef<number | null>(null);
   const positionActivityRow = (index: number) =>
-    void scrollViews.current.activity?.scrollToIndex({
+    void scrollViews.current.timeline?.scrollToIndex({
       index,
       viewPosition: 0,
-      viewOffset: contentTopInset + 12,
+      viewOffset: contentTopInset + LINE_TABS_HEIGHT + 12,
       animated: false,
     });
   const revealActivity = useEffectEvent(() => {
@@ -506,7 +351,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     // Later filter or refresh changes move the row; they must not pull the user back to it.
     if (activityTargetIndex >= 0 && positionedActivity.current !== key) {
       positionedActivity.current = key;
-      // Its top sits under the app bar; centering a long comment pushed its start off screen.
+      // Its top sits under the docked tabs; centering a long comment pushed its start off screen.
       heldActivityRow.current = activityTargetIndex + 1;
       positionActivityRow(activityTargetIndex + 1);
     }
@@ -517,11 +362,6 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     revealActivity();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- reruns when activity resolves the URL target, even a thread the filter hides
   }, [params.navigationUrl, params.navigationId, activityTargetIndex, targetThreadId]);
-  const tabContent = activityContent;
-  const filesY = useRef(0);
-  const descriptionY = useRef(0);
-  const pendingDescriptionJump = useRef(false);
-  const pendingFilesJump = useRef(false);
   const detailAtom = composerPullRequests.detail(requestTarget(params));
   const result = useEnvironmentQuery(detailAtom);
   const pullRefresh = usePullToRefresh(detailAtom);
@@ -576,22 +416,15 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
       refreshActivity();
       filesContent.refresh();
     });
-  const jumpToFiles = () => {
-    scrollViews.current.overview?.scrollToIndex({
-      index: 0,
-      viewPosition: 0,
-      viewOffset: -filesY.current,
-      animated: true,
-    });
-    pendingFilesJump.current = false;
-  };
-  const openFiles = () => {
-    if (section === "overview") jumpToFiles();
-    else {
-      pendingFilesJump.current = true;
-      selectSection("overview");
-      if (filesY.current > 0) requestAnimationFrame(jumpToFiles);
-    }
+  // From its task the pull request is one level deeper, so Task goes back up; else it opens it.
+  const openTask = (task: PullRequestTaskLink) => {
+    const previous = navigation.getState()?.routes.at(-2);
+    if (
+      previous?.name === "OrbitTask" &&
+      Number((previous.params as { taskId?: number } | undefined)?.taskId) === task.id
+    )
+      navigation.goBack();
+    else navigation.dispatch(StackActions.push("OrbitTask", { taskId: task.id }));
   };
   const verticalControls = usePullRequestVerticalControls();
   const pullRequestMenu: AppBarMenu = {
@@ -676,6 +509,23 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
             },
           ]
         : []),
+      // Draft, ready and revert: the status menu the old header carried, with its gating.
+      ...(["ready", "draft", "revert"] as const).filter(action.available).map((id) => ({
+        id,
+        title: pullRequestActionLabel(id, terminology, messages),
+        icon: PR_ACTION_ICONS[id],
+        onPress: () =>
+          id === "revert"
+            ? action.confirm(
+                id,
+                pullRequestActionLabel("revert", terminology, messages),
+                gt(
+                  "Open a new {term, select, mr {merge request} cr {change request} other {pull request}} that reverses these changes?",
+                  { term: changeRequestTermKind(terminology) },
+                ),
+              )
+            : void action.perform(id),
+      })),
       ...(stateAction
         ? [
             {
@@ -706,265 +556,231 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
         : []),
     ],
   };
+  const tabs: ReadonlyArray<PullRequestTab> = guidesEnabled
+    ? ["description", "checks", "timeline", "code", "guide"]
+    : ["description", "checks", "timeline", "code"];
+  const tabBar = (
+    <LineTabs
+      value={section}
+      onChange={selectSection}
+      items={tabs.map((tab) => ({
+        value: tab,
+        label:
+          tab === "description"
+            ? gt("Description")
+            : tab === "checks"
+              ? gt("Checks")
+              : tab === "timeline"
+                ? gt("Timeline")
+                : tab === "code"
+                  ? gt("Code")
+                  : gt("Guide", { $context: "review guide tab" }),
+      }))}
+    />
+  );
+  const loading = (
+    <PullRequestReadStatus
+      pending={result.isPending && !pr}
+      error={null}
+      terminology={terminology}
+    />
+  );
+  const tabBody = (tab: PullRequestTab) => {
+    switch (tab) {
+      case "description":
+        return identity ? (
+          <View className="px-4 pt-4">
+            <SourceControlAppAccessNotice
+              environmentId={params.environmentId}
+              provider={identity.provider}
+              host={params.host}
+              repository={params.repository}
+            />
+            {pr ? (
+              <PullRequestDescription
+                heading={false}
+                markdown={description.body}
+                onTaskListChange={description.toggleTask}
+                footer={<PullRequestReactions params={params} />}
+              />
+            ) : (
+              loading
+            )}
+          </View>
+        ) : null;
+      case "checks":
+        return pr ? (
+          <>
+            <PullRequestChecksTab pr={pr} params={params} />
+            <PullRequestMergeGroup pr={pr} params={params} stack={stack} />
+          </>
+        ) : (
+          loading
+        );
+      case "timeline":
+        return (
+          <>
+            <PullRequestActivityFilters
+              value={activityFilter}
+              onChange={activity.setFilter}
+              hiddenCount={activityContent.hiddenCount}
+              comments={activityContent.comments}
+              commits={activityContent.commits}
+            />
+            <View className="px-4">
+              <PullRequestReadStatus
+                pending={activityContent.pending}
+                error={activityContent.error}
+                terminology={terminology}
+              />
+            </View>
+          </>
+        );
+      case "code":
+        return filesContent.header;
+      case "guide":
+        return (
+          <View className="px-4 pt-4">
+            <PullRequestGuideContent params={params} visible={section === "guide"} />
+          </View>
+        );
+    }
+  };
   return (
     <PullRequestMarkdownRepository params={params} changeRequest={pr}>
       <View className="flex-1 android:bg-header ios:bg-screen">
         <AppBar
           title={`#${params.number}`}
           subtitle={
-            connected
-              ? params.repository
-              : gt("{repository} · Offline", { repository: params.repository })
+            connected ? undefined : gt("{repository} · Offline", { repository: params.repository })
           }
           onBack={layout.usesSplitView ? undefined : returnToList}
           menus={verticalControls ? undefined : [pullRequestMenu]}
         />
         <ScreenContent onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}>
-          {(["overview", "guide", "activity"] as const)
-            .filter((tab) => tab !== "guide" || guidesEnabled)
-            .map((tab) => (
-              <View
-                key={tab}
-                style={[StyleSheet.absoluteFill, { opacity: section === tab ? 1 : 0 }]}
-                pointerEvents={section === tab ? "auto" : "none"}
-                accessibilityElementsHidden={section !== tab}
-                importantForAccessibility={section === tab ? "auto" : "no-hide-descendants"}
-              >
-                <AnimatedLegendList
-                  ref={listRefs[tab]}
-                  // The scroll view owns its resting offset. LegendList keeps the first
-                  // initialScrollOffset it gets, and the first render has the window's top
-                  // inset (0 on the folded iPhone Duo), not the header's.
-                  onScrollBeginDrag={
-                    tab === "activity"
-                      ? () => {
-                          heldActivityRow.current = null;
-                        }
-                      : undefined
+          {tabs.map((tab) => (
+            <View
+              key={tab}
+              style={[StyleSheet.absoluteFill, { opacity: section === tab ? 1 : 0 }]}
+              pointerEvents={section === tab ? "auto" : "none"}
+              accessibilityElementsHidden={section !== tab}
+              importantForAccessibility={section === tab ? "auto" : "no-hide-descendants"}
+            >
+              <AnimatedLegendList
+                ref={listRefs[tab]}
+                // The scroll view owns its resting offset. LegendList keeps the first
+                // initialScrollOffset it gets, and the first render has the window's top
+                // inset (0 on the folded iPhone Duo), not the header's.
+                onScrollBeginDrag={
+                  tab === "timeline"
+                    ? () => {
+                        heldActivityRow.current = null;
+                      }
+                    : undefined
+                }
+                onScroll={(event) => {
+                  const offset = event.nativeEvent.contentOffset.y;
+                  scrollOffsets.current[tab] = offset;
+                  if (shown(requestedSection.current) === tab) {
+                    currentScrollOffset.current = { tab, offset };
+                    docked.onScrollOffset(offset);
                   }
-                  onScroll={(event) => {
-                    const offset = event.nativeEvent.contentOffset.y;
-                    scrollOffsets.current[tab] = offset;
-                    if (shown(requestedSection.current) === tab)
-                      currentScrollOffset.current = { tab, offset };
-                  }}
-                  className="flex-1"
-                  renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
-                  contentInsetAdjustmentBehavior="never"
-                  contentInset={
-                    Platform.OS === "ios"
-                      ? { top: contentTopInset, bottom: contentBottomInset }
-                      : undefined
-                  }
-                  refreshControl={
-                    <RefreshControl
-                      refreshing={section === tab && pullRefresh.refreshing}
-                      onRefresh={refresh}
-                    />
-                  }
-                  alwaysBounceVertical
-                  scrollsToTop={section === tab}
-                  onItemSizeChanged={({ itemKey }) => {
-                    const held = heldActivityRow.current;
-                    if (tab === "activity" && held !== null) {
-                      // A filter or refresh that moved the row ends the hold.
-                      if (held !== activityTargetIndex + 1) heldActivityRow.current = null;
-                      else positionActivityRow(held);
-                      return;
+                }}
+                scrollEventThrottle={16}
+                className="flex-1"
+                renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
+                contentInsetAdjustmentBehavior="never"
+                contentInset={
+                  Platform.OS === "ios"
+                    ? { top: contentTopInset, bottom: contentBottomInset }
+                    : undefined
+                }
+                refreshControl={
+                  <RefreshControl
+                    refreshing={section === tab && pullRefresh.refreshing}
+                    onRefresh={refresh}
+                  />
+                }
+                alwaysBounceVertical
+                scrollsToTop={section === tab}
+                onItemSizeChanged={() => {
+                  const held = heldActivityRow.current;
+                  if (tab !== "timeline" || held === null) return;
+                  // A filter or refresh that moved the row ends the hold.
+                  if (held !== activityTargetIndex + 1) heldActivityRow.current = null;
+                  else positionActivityRow(held);
+                }}
+                contentContainerStyle={{
+                  paddingBottom: 24 + (Platform.OS === "android" ? toolbarHeight : 0),
+                  // Short tabs must still be tall enough for the tabs to dock under the bar.
+                  minHeight: docked.dockOffset === null ? 0 : docked.dockOffset + viewportHeight,
+                }}
+                data={[
+                  { key: `${tab}:body`, content: tabBody(tab) },
+                  ...(tab === "code"
+                    ? filesContent.rows
+                    : tab === "timeline"
+                      ? activityContent.rows
+                      : []
+                  ).map((row) => ({ key: `${tab}:${row.key}`, content: row.content })),
+                ]}
+                keyExtractor={(row) => row.key}
+                getItemType={(row) => (row.key.endsWith(":body") ? row.key : row.key.split(":")[0])}
+                // Animating the description fights clipped markdown; rows can still fade.
+                itemLayoutAnimation={tab === "description" ? undefined : PR_ROW_LAYOUT}
+                onLoad={() => setListAnimationsReady(true)}
+                renderItem={({ item }) => (
+                  <Animated.View
+                    key={item.key}
+                    entering={
+                      listAnimationsReady && !item.key.endsWith(":body") ? PR_ROW_ENTER : undefined
                     }
-                    if (
-                      tab !== "overview" ||
-                      section !== "overview" ||
-                      itemKey !== "overview:body" ||
-                      !pendingDescriptionJump.current
-                    )
-                      return;
-                    pendingDescriptionJump.current = false;
-                    scrollViews.current.overview?.scrollToIndex({
-                      index: 0,
-                      viewPosition: 0,
-                      viewOffset: -descriptionY.current,
-                      animated: false,
-                    });
-                  }}
-                  contentContainerStyle={{
-                    paddingHorizontal: 16,
-                    paddingTop: 8,
-                    paddingBottom: 24 + (Platform.OS === "android" ? toolbarHeight : 0),
-                    // Short tabs must still be tall enough to preserve the collapsed header.
-                    minHeight: Math.max(
-                      0,
-                      viewportHeight + headerHeight - contentTopInset - contentBottomInset,
-                    ),
-                  }}
-                  data={[
-                    {
-                      key: `${tab}:body`,
-                      content: (
-                        <View>
-                          {tab === "overview" && identity ? (
-                            <View>
-                              <SourceControlAppAccessNotice
-                                environmentId={params.environmentId}
-                                provider={identity.provider}
-                                host={params.host}
-                                repository={params.repository}
-                              />
-                              {pr ? (
-                                <PullRequestOverview
-                                  pr={pr}
-                                  description={description}
-                                  params={params}
-                                  stack={stack}
-                                  descriptionExpanded={descriptionExpanded}
-                                  onDescriptionExpandedChange={setDescriptionExpanded}
-                                  onDescriptionLayout={(y) => {
-                                    descriptionY.current = y;
-                                  }}
-                                  onDescriptionCollapse={() => {
-                                    pendingDescriptionJump.current = true;
-                                  }}
-                                />
-                              ) : summary ? (
-                                <PullRequestOverviewLoading
-                                  summary={summary}
-                                  params={params}
-                                  stack={stack}
-                                />
-                              ) : null}
-                              <View
-                                className="mt-8 border-t border-border-subtle pt-3"
-                                onLayout={(event) => {
-                                  filesY.current = event.nativeEvent.layout.y;
-                                  if (pendingFilesJump.current) {
-                                    requestAnimationFrame(() => {
-                                      if (shown(requestedSection.current) === "overview")
-                                        jumpToFiles();
-                                    });
-                                  }
-                                }}
-                              >
-                                {filesContent.header}
-                              </View>
-                            </View>
-                          ) : null}
-                          {tab === "guide" ? (
-                            <PullRequestGuideContent
+                    exiting={
+                      listAnimationsReady && !item.key.endsWith(":body") ? PR_ROW_EXIT : undefined
+                    }
+                  >
+                    <PullRequestMediaVisibleContext value={section === tab}>
+                      {item.content}
+                    </PullRequestMediaVisibleContext>
+                  </Animated.View>
+                )}
+                recycleItems={false}
+                estimatedItemSize={tab === "description" ? 64 : 120}
+                maintainVisibleContentPosition={false}
+                ListHeaderComponent={
+                  <View>
+                    <PullRequestReadStatus
+                      pending={result.isPending && !identity}
+                      error={result.error}
+                      terminology={terminology}
+                    />
+                    {identity ? (
+                      <>
+                        <View onLayout={docked.onHeaderLayout}>
+                          <DetailHeader title={identity.title}>
+                            <PullRequestKeyValues
+                              pr={identity}
                               params={params}
-                              visible={section === "guide"}
+                              onOpenTask={openTask}
                             />
-                          ) : null}
-                          {tab === "activity" ? (
-                            <PullRequestActivityFilters
-                              value={activityFilter}
-                              onChange={activity.setFilter}
-                              hiddenCount={tabContent.hiddenCount}
-                            />
-                          ) : null}
-                          {tab === "activity" ? (
-                            <PullRequestReadStatus
-                              pending={tabContent.pending}
-                              error={tabContent.error}
-                              terminology={terminology}
-                            />
-                          ) : null}
+                          </DetailHeader>
                         </View>
-                      ),
-                    },
-                    ...(tab === "overview"
-                      ? identity
-                        ? filesContent.rows
-                        : []
-                      : tab === "activity"
-                        ? tabContent.rows
-                        : []
-                    ).map((row) => ({
-                      ...row,
-                      key: `${tab}:${row.key}`,
-                      content: row.content,
-                    })),
-                  ]}
-                  keyExtractor={(row) => row.key}
-                  getItemType={(row) =>
-                    row.key.endsWith(":body") ? row.key : row.key.split(":")[0]
-                  }
-                  // Animating overview fights clipped markdown and collapse scroll correction; file rows can still fade.
-                  itemLayoutAnimation={tab === "overview" ? undefined : PR_ROW_LAYOUT}
-                  onLoad={() => setListAnimationsReady(true)}
-                  renderItem={({ item }) => (
-                    <Animated.View
-                      key={item.key}
-                      entering={
-                        listAnimationsReady && !item.key.endsWith(":body")
-                          ? PR_ROW_ENTER
-                          : undefined
-                      }
-                      exiting={
-                        listAnimationsReady && !item.key.endsWith(":body") ? PR_ROW_EXIT : undefined
-                      }
-                    >
-                      <PullRequestMediaVisibleContext value={section === tab}>
-                        {item.content}
-                      </PullRequestMediaVisibleContext>
-                    </Animated.View>
-                  )}
-                  recycleItems={false}
-                  estimatedItemSize={tab === "overview" ? 64 : 220}
-                  maintainVisibleContentPosition={false}
-                  ListHeaderComponent={
-                    <>
-                      <PullRequestReadStatus
-                        pending={result.isPending && !identity}
-                        error={result.error}
-                        terminology={terminology}
-                      />
-                      {identity ? (
-                        <View
-                          className="gap-5 pb-5"
-                          onLayout={(event) => {
-                            bodyY.current = event.nativeEvent.layout.height;
-                            setHeaderHeight(event.nativeEvent.layout.height);
-                          }}
-                        >
-                          <PullRequestIdentity pr={identity} params={params} />
-                          {/* UIKit draws the tapped control's glass lens outside the hidden
-                              tab's opacity, so only the visible tab mounts the control. */}
-                          {Platform.OS !== "ios" || section === tab ? (
-                            <SegmentedControl
-                              options={[
-                                { value: "overview", label: gt("Overview") },
-                                ...(guidesEnabled
-                                  ? [
-                                      {
-                                        value: "guide" as const,
-                                        label: gt("Guide", { $context: "review guide tab" }),
-                                      },
-                                    ]
-                                  : []),
-                                { value: "activity", label: gt("Activity") },
-                              ]}
-                              selected={section}
-                              onSelect={selectSection}
-                              role="tab"
-                              size="compact"
-                            />
-                          ) : (
-                            <View style={{ height: 32 }} />
-                          )}
-                        </View>
-                      ) : null}
-                    </>
-                  }
-                  ListFooterComponent={tab === "overview" ? filesContent.footer : null}
-                />
-              </View>
-            ))}
+                        {tabBar}
+                      </>
+                    ) : null}
+                  </View>
+                }
+                ListFooterComponent={tab === "code" ? filesContent.footer : null}
+              />
+            </View>
+          ))}
+          {identity ? <DockedTabs docked={docked}>{tabBar}</DockedTabs> : null}
         </ScreenContent>
         <PullRequestActionToolbar
           pr={pr}
           params={params}
           menu={pullRequestMenu}
-          onOpenFiles={openFiles}
+          onOpenFiles={() => selectSection("code")}
           onHeightChange={setToolbarHeight}
         />
       </View>

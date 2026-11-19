@@ -11,6 +11,8 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { orbitGatewayClient } from "../orbit/orbitGatewayClient";
+import { fixturePullRequestParams } from "../pull-requests/pullRequestFixtures";
+import type { PullRequestTaskLink } from "../pull-requests/usePullRequestDiff";
 import { connectOrbitEnvironment, orbitGatewayState } from "../orbit/orbitGatewayStore";
 
 /** Pairs or turns on the agent's server, as the Orbit settings' Connect does. */
@@ -60,7 +62,10 @@ export function useOpenTaskAgent() {
 export function useOpenTaskPullRequest() {
   const navigation = useNavigation();
   const projects = useProjects();
-  return (url: string) => {
+  return (url: string, fromTask: PullRequestTaskLink) => {
+    const fixture = fixturePullRequestParams(url);
+    if (fixture)
+      return void navigation.dispatch(StackActions.push("PullRequest", { ...fixture, fromTask }));
     const configs = appAtomRegistry.get(environmentServerConfigsAtom);
     const target = resolveChangeRequestLinkTarget({
       url,
@@ -70,6 +75,7 @@ export function useOpenTaskPullRequest() {
       lendHostProject: true,
     });
     if (!target) return void tryOpenExternalUrl(url, "pull-request");
+    // The task it came from: its PR screen shows a Task row that goes back up to it.
     navigation.dispatch(
       StackActions.push("PullRequest", {
         environmentId: String(target.project.environmentId),
@@ -77,6 +83,7 @@ export function useOpenTaskPullRequest() {
         repository: target.repository,
         number: target.number,
         ...(target.host === undefined ? {} : { host: target.host }),
+        fromTask,
       }),
     );
   };

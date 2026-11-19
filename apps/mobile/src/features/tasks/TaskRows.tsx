@@ -270,17 +270,6 @@ export function InfoRow(props: {
   );
 }
 
-export function InfoText(props: { readonly children: ReactNode; readonly className?: string }) {
-  return (
-    <Text
-      className={cn("min-w-0 flex-1 text-[15px] text-foreground", props.className)}
-      numberOfLines={1}
-    >
-      {props.children}
-    </Text>
-  );
-}
-
 export function EmptyLine(props: { readonly children: ReactNode }) {
   return <Text className="px-4 py-3 text-[15px] text-foreground-muted">{props.children}</Text>;
 }

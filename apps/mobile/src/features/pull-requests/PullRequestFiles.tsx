@@ -5,10 +5,11 @@ import { StackActions, useNavigation, type StaticScreenProps } from "@react-navi
 import type { PullRequestChangeBreakdown } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { useState } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import Animated from "react-native-reanimated";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { AppText as Text } from "../../components/ui/AppText";
+import { cn } from "../../lib/cn";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { Button } from "../../components/ui/Button";
 import { EmptyState } from "../../components/ui/EmptyState";
@@ -22,7 +23,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import type { ReviewParsedDiff, ReviewRenderableFile } from "../review/reviewModel";
 import { PR_ROW_ENTER, PR_ROW_EXIT, PR_ROW_LAYOUT } from "./pullRequestAnimations";
 import { PullRequestDiffStats, PullRequestReadStatus } from "./PullRequestPresentation";
-import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import {
   pullRequestTarget,
   usePullRequestDiff,
@@ -118,18 +118,77 @@ function FileRow(props: {
   /** Shown under the file name where files aren't grouped by directory. */
   readonly directory?: string;
   readonly onPress: () => void;
+  /** Rows in the PR's Code tab: no chevron, a press fill 7pt in, 11pt from the fill to the content. */
+  readonly inset?: boolean;
 }) {
   const { file } = props;
   const gt = useGT();
   const values = { path: file.path, additions: file.additions, deletions: file.deletions };
+  const accessibilityLabel = props.viewed
+    ? gt("View diff for {path}, {additions} additions, {deletions} deletions, viewed", values)
+    : gt("View diff for {path}, {additions} additions, {deletions} deletions", values);
+  if (props.inset)
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        onPress={props.onPress}
+        className="mx-[7px]"
+      >
+        {({ pressed }) => (
+          <View
+            className={cn(
+              "flex-row items-start gap-3 rounded-xl p-[11px]",
+              pressed && "bg-row-hover",
+            )}
+          >
+            <View className="h-6 justify-center">
+              <PierreEntryIcon kind="file" path={file.path} size={16} />
+            </View>
+            <View className="min-w-0 flex-1">
+              <Text className="text-[15px] leading-6 text-foreground" numberOfLines={1}>
+                {file.path.split("/").at(-1)}
+              </Text>
+              {props.directory ? (
+                <Text className="text-[15px] leading-6 text-foreground-muted" numberOfLines={1}>
+                  {props.directory}
+                </Text>
+              ) : null}
+              {file.previousPath ? (
+                <Text className="text-[13px] leading-5 text-foreground-muted" numberOfLines={1}>
+                  <T>
+                    Renamed from <Var>{file.previousPath}</Var>
+                  </T>
+                </Text>
+              ) : null}
+            </View>
+            <View className="h-6 flex-row items-center gap-2">
+              {file.additions > 0 ? (
+                <Text className="text-[14px] tabular-nums text-adaptive-emerald-600-400">
+                  +{file.additions.toLocaleString()}
+                </Text>
+              ) : null}
+              {file.deletions > 0 ? (
+                <Text className="text-[14px] tabular-nums text-danger-foreground">
+                  −{file.deletions.toLocaleString()}
+                </Text>
+              ) : null}
+              {props.viewed ? (
+                <SymbolView
+                  name="checkmark.circle.fill"
+                  size={16}
+                  tintColorClassName="accent-adaptive-emerald-600-400"
+                />
+              ) : null}
+            </View>
+          </View>
+        )}
+      </Pressable>
+    );
   return (
     <RowPressable
       accessibilityRole="button"
-      accessibilityLabel={
-        props.viewed
-          ? gt("View diff for {path}, {additions} additions, {deletions} deletions, viewed", values)
-          : gt("View diff for {path}, {additions} additions, {deletions} deletions", values)
-      }
+      accessibilityLabel={accessibilityLabel}
       onPress={props.onPress}
       className="min-h-14 flex-row items-center gap-3 border-b border-border-subtle py-3 active:opacity-70"
     >
@@ -288,43 +347,36 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
   const gt = useGT();
   const m = useMessages();
   const files = useChangedFiles(params);
-  const { diff, filter, viewed, pr, parsed, loading } = files;
+  const { diff, filter, viewed, parsed, loading } = files;
   const breakdown = useEnvironmentQuery(
     composerPullRequests.changeBreakdown(pullRequestTarget(params)),
   ).data;
-  const expected = pr ?? params.initialSummary;
   return {
     refresh: diff.refresh,
     header: (
       <>
         <PullRequestReadStatus pending={false} error={diff.error} terminology={files.terminology} />
-        {loading ? (
-          <View
-            accessibilityLabel={gt("Loading changed files")}
-            accessibilityState={{ busy: true }}
-            className="min-h-17 flex-row items-center gap-2 py-3"
-          >
-            <View className="min-w-0 flex-1 gap-1">
-              <PullRequestSectionHeading>
-                <T>Changed files</T>
-              </PullRequestSectionHeading>
-              {pr ? (
-                <Text textRole="caption" className="text-foreground-muted">
-                  {gt("{count, plural, one {{count} file} other {{count} files}}", {
-                    count: pr.changedFiles,
-                  })}
+        {/* The Code tab's own row: what the list shows, then its filter. The size is a header row. */}
+        <View
+          accessibilityLabel={loading ? gt("Loading changed files") : undefined}
+          accessibilityState={loading ? { busy: true } : undefined}
+          className="min-h-12 flex-row items-center gap-2 px-4 pt-2"
+        >
+          <View className="min-w-0 flex-1 gap-0.5">
+            {parsed.kind === "files" && !loading ? (
+              <>
+                <Text className="text-[15px] text-foreground-muted" numberOfLines={2}>
+                  {describeFiles(parsed, files, m)}
                 </Text>
-              ) : (
-                <View className="h-2.5 w-28 rounded bg-subtle-strong" />
-              )}
-            </View>
-            {expected?.additions !== undefined && expected.deletions !== undefined ? (
-              <PullRequestDiffStats
-                additions={expected.additions}
-                deletions={expected.deletions}
-                compact
-              />
-            ) : null}
+                {breakdown ? <ChangeBreakdownLine breakdown={breakdown} /> : null}
+              </>
+            ) : (
+              <View className="h-3 w-40 rounded bg-subtle-strong" />
+            )}
+          </View>
+          {parsed.kind === "files" && !loading ? (
+            <FileFilterMenu filter={filter} />
+          ) : (
             <View className="size-11 items-center justify-center opacity-40">
               <SymbolView
                 name="line.3.horizontal.decrease"
@@ -332,38 +384,27 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
                 tintColorClassName="accent-icon-muted"
               />
             </View>
-          </View>
-        ) : parsed.kind === "files" ? (
-          <View className="min-h-17 flex-row items-center gap-2 py-3">
-            <View className="min-w-0 flex-1 gap-1">
-              <PullRequestSectionHeading>
-                <T>Changed files</T>
-              </PullRequestSectionHeading>
-              <Text textRole="caption" className="text-foreground-muted">
-                {describeFiles(parsed, files, m)}
-              </Text>
-              {breakdown ? <ChangeBreakdownLine breakdown={breakdown} /> : null}
-            </View>
-            <PullRequestDiffStats
-              additions={parsed.additions}
-              deletions={parsed.deletions}
-              compact
-            />
-            <FileFilterMenu filter={filter} />
-          </View>
-        ) : null}
-        <NoVisibleFiles files={files} />
+          )}
+        </View>
+        <View className="px-4">
+          <NoVisibleFiles files={files} />
+        </View>
       </>
     ),
     rows: loading
       ? Array.from({ length: loadingRowCount(files) }, (_, index) => ({
           key: `loading-file:${index}`,
-          content: <FileRowSkeleton index={index} />,
+          content: (
+            <View className="px-4">
+              <FileRowSkeleton index={index} />
+            </View>
+          ),
         }))
       : (parsed.kind === "files" ? parsed.files : []).map((file) => ({
           key: file.id,
           content: (
             <FileRow
+              inset
               file={file}
               directory={fileDirectory(file.path)}
               viewed={viewed.isViewed(file.path)}
@@ -371,7 +412,11 @@ export function usePullRequestFilesSection(params: PullRequestParams) {
             />
           ),
         })),
-    footer: <FilesFooter files={files} />,
+    footer: (
+      <View className="px-4">
+        <FilesFooter files={files} />
+      </View>
+    ),
   };
 }
 

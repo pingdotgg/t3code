@@ -1892,14 +1892,14 @@
   "c15d8570b0ac8ae5": "El entorno devolvió HTTP {status}.",
   "b87f2217123b4cbf": "No se pudo actualizar la preferencia de actividades en directo del entorno.",
   "2f18d65ea9f178da": "No se pudo actualizar la preferencia de actividades en directo del entorno: {detail}",
+  "013df8bdb9ca9096": "No se pudo activar la publicación de la actividad del agente.",
+  "7247ede5160a0154": "No se pudo activar la publicación de la actividad del agente: {detail}",
   "52c4bcf188d1af36": "No se pudo cargar el ID del dispositivo móvil.",
   "473457b89661c874": "No se pudo cargar el ID del dispositivo móvil: {detail}",
   "01da8c5b0a52e84a": "No se pudo obtener la prueba de vinculación del entorno.",
   "20732c0363a295a8": "No se pudo obtener la prueba de vinculación del entorno: {detail}",
   "78bf018d20589722": "No se pudo configurar el acceso del entorno al relay.",
   "a5e3ff0d1a60b766": "No se pudo configurar el acceso del entorno al relay: {detail}",
-  "013df8bdb9ca9096": "No se pudo activar la publicación de la actividad del agente.",
-  "7247ede5160a0154": "No se pudo activar la publicación de la actividad del agente: {detail}",
   "7d508fe978cb0f3b": "Apagado",
   "3ae222ec888dd171": "ID de traza:",
   "be00d572b18076d8": "Mantén pulsado para quitarlo de este dispositivo",
@@ -2534,13 +2534,11 @@
   "339ee12600085fde": "Toda la actividad",
   "fad1bd9faf8ca63d": "Comentarios",
   "649f2612d5164a6a": "Commits",
-  "9059ee76eba971c6": "Tipo de actividad, {kind}",
   "6a0a85c6239d6855": "Mostrar en la actividad",
   "1ca8e904d23f106b": "Comentarios de bots",
   "eac63f5d4749b7ec": "Resueltos o descartados",
-  "4a8ac98163c8915a": "{count, plural, one {Filtrar actividad, {count} oculta} other {Filtrar actividad, {count} ocultas}}",
-  "c3ce0d8084dc1e9b": "{count, plural, one {{count} oculto} other {{count} ocultos}}",
-  "a0d4600542d3ea69": "Más antiguos",
+  "9f9cc9e73315eb27": "{comments, plural, one {{comments} comentario} other {{comments} comentarios}}, {commits, plural, one {{commits} commit} other {{commits} commits}}. Filtrar actividad, {hidden} ocultos",
+  "b0c3ea0723dcc77c": "· {count} ocultos",
   "d29c6a17d78f5f78": "Mencionar a un usuario",
   "38e7f2b079e77c93": "Buscando usuarios...",
   "3b12e867832c9ed6": "No se pudieron buscar usuarios en el host",
@@ -2565,6 +2563,34 @@
   "fab845f54ae10809": "Mostrar más",
   "85308c9317c0d751": "No se proporcionó descripción.",
   "bf66f2a6e7907771": "Adjuntos",
+  "706084d25f85dd5a": "Repositorio",
+  "e176b5f17630f05b": "Enlace",
+  "45af525d50514254": "Abrir #{number} en el proveedor",
+  "9f52ea3133da8ea4": "Tarea",
+  "c1f4237a1a587e78": "Autor",
+  "008ac38b2f39a399": "Actualizado",
+  "06a684782801e8f7": "Copiar la rama head {branch}",
+  "227045bc57827a97": "en",
+  "85ae9979ad3b0c1e": "Copiar la rama base {branch}",
+  "d85877d9ef77c50c": "Cambios",
+  "9b3ae5edeae058a1": "Revisores",
+  "7020f0cde6e67564": "Ninguno",
+  "80c43a5371b3c8da": "{count} de {total} comprobaciones en curso",
+  "fd2c38376d9ebf7d": "Corregir comprobaciones con fallos",
+  "32f41927eab42c57": "Aprobar flujos de trabajo",
+  "c84c012042f57f45": "{count, plural, one {{count} esperando aprobación} other {{count} esperando aprobación}}",
+  "15e7f06da8c101c9": "¿Permitir que se ejecuten los flujos de trabajo de esta {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}? Revisa antes los cambios en los flujos de trabajo.",
+  "ffba07f29cf515cb": "Abrir comprobaciones en el proveedor",
+  "5bf4ff621a4697e6": [
+    "hace",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "406bfbc6b51dda02": "No se informó de ninguna comprobación.",
   "46fe3e345947866f": "El proveedor no pudo completar esta acción.",
   "c36593dad8813cd1": "Respuesta publicada.",
   "d944d055610be080": "Marcar como no resuelta",
@@ -2620,7 +2646,6 @@
     }
   ],
   "bfa2f673593efc5c": "No hay cambios de texto disponibles.",
-  "e2fb20ffcf133b45": "Archivos modificados",
   "ff6b088c383bf910": "Buscar autores",
   "300be410c27c2096": "Filtrar por autor",
   "795dd1ec1f3c15c5": "Cerrar filtro de etiquetas",
@@ -2733,14 +2758,6 @@
   "856d33dd50059360": "{count, plural, one {{label}, {count} capa de la pila hasta '#'{number}} other {{label}, {count} capas de la pila hasta '#'{number}}}",
   "824af344a2f36c1b": "Opciones de merge",
   "e1c256405d49078b": "Reintentar la búsqueda de la pila",
-  "8a764f8701428728": "Cargando los detalles de la pull request",
-  "7e5f3de9d35cd927": "Comprobaciones completadas",
-  "aa14acb0ea65d943": "Comprobaciones en curso",
-  "87afbfe1d757ed4f": "Comprobaciones",
-  "c84af77ebd768014": "Revisiones",
-  "698b57490dcff9b2": "Conflictos con {branch}",
-  "78bf470bf7712936": "Sin conflictos con {branch}",
-  "04ece553cf53e018": "Rama",
   "9058814024e831e5": "No se pudo cargar esta {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
   "2b5f0fdb45b4edbf": "No se pudo guardar la reacción",
   "178c1f055cbd6eaf": "Inténtalo de nuevo en un momento.",
@@ -2792,19 +2809,18 @@
   "f9d3c8aa453829ce": "Toca a alguien para solicitarle una revisión. Toca a un revisor solicitado para quitar la solicitud. Los cambios se envían al cerrar esta hoja.",
   "8d3770f150f0bcb4": "Solicitado",
   "fff1c3d17603f394": "Este proveedor acepta un ID de revisor, pero no puede listar candidatos.",
-  "85ae9979ad3b0c1e": "Copiar la rama base {branch}",
-  "06a684782801e8f7": "Copiar la rama head {branch}",
-  "8e4f3c862193b8a5": "Editar",
   "8cc970597921c38a": "¿Eliminar {branch} de {repository}? Las ramas locales y los worktrees no cambian.",
   "58bda2aa88d28696": "Acciones de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
   "ffd49822d34cbd30": "Permitir ediciones de los mantenedores",
+  "cdfe7771384370e8": "¿Abrir una {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}} nueva que revierta estos cambios?",
   "2a83c8767b3e1918": "Eliminando…",
   "99a3c6e593d6947d": "Vuelve a conectarte para eliminar esta rama.",
-  "42fd133c37a117fe": "{repository} · Sin conexión",
-  "c83fb5e64f34fb1a": "Resumen",
+  "655ace1b049d1c8e": "Comprobaciones",
+  "6b5e32fbfca3487f": "Cronología",
+  "58058320796d28f6": "Código",
   "8d1ad30ddb277f48": "Guía",
+  "42fd133c37a117fe": "{repository} · Sin conexión",
   "3724ff240986c6da": "Hacer commit de los cambios",
-  "d85877d9ef77c50c": "Cambios",
   "ebb089d626dfaa7c": "Cargando cambios",
   "4050f873dc790f8f": "Opciones del diff",
   "81cf438219f0a618": "Ajuste de línea",
@@ -2817,15 +2833,6 @@
   "b683d10f00d06824": "Abre esta {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}} en su proveedor para ver los cambios.",
   "227078c4bfaa6f78": "Reintentar la carga de los archivos restantes",
   "129a5cce3c991555": "Ninguna actividad coincide con estos filtros.",
-  "138ec0d0a64a8b02": [
-    "Actualizado hace",
-    " ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
   "624da266e73f125b": "Selecciona una línea actual y elige «Mover el borrador a esta línea» en su menú.",
   "8731a3896978fa9f": "La rama cambió. Recarga antes de añadir comentarios de línea.",
   "099f09dc56979b98": "Cargando más archivos…",
@@ -2843,93 +2850,84 @@
     },
     ". Abre una capa para revisarla o fusionar la pila hasta esa capa."
   ],
-  "7d50c5c18ba726fa": "Estado de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}, {status}",
-  "25019c947d3082dc": "Estado de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
-  "cdfe7771384370e8": "¿Abrir una {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}} nueva que revierta estos cambios?",
-  "c93589b9022328d4": "Comprobaciones, {summary}",
-  "fd2c38376d9ebf7d": "Corregir comprobaciones con fallos",
-  "32f41927eab42c57": "Aprobar flujos de trabajo",
-  "c84c012042f57f45": "{count, plural, one {{count} esperando aprobación} other {{count} esperando aprobación}}",
-  "15e7f06da8c101c9": "¿Permitir que se ejecuten los flujos de trabajo de esta {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}? Revisa antes los cambios en los flujos de trabajo.",
-  "ffba07f29cf515cb": "Abrir comprobaciones en el proveedor",
+  "698b57490dcff9b2": "Conflictos con {branch}",
+  "78bf470bf7712936": "Sin conflictos con {branch}",
+  "04ece553cf53e018": "Rama",
   "750195d317fe7e9e": "Rama, {summary}",
   "0dafdeb64cb13711": "Actualizar con {method, select, merge {merge} rebase {rebase} other {{method}}}",
-  "301edbbd0597cf4d": "Revisor desconocido",
-  "1e74602ca35d4c7e": "Aprobada",
-  "9f3f817e9111e162": "Comentó",
-  "82e3cbf8c92aa519": "{login}, revisión solicitada",
-  "b7b4efdb71c594be": "Ver revisores en el proveedor",
-  "406bfbc6b51dda02": "No se informó de ninguna comprobación.",
+  "eb60367cf891f1fa": "{count, plural, one {{count} respuesta} other {{count} respuestas}}",
+  "0b68aba89ab9ddaa": "Ver el commit {sha}, {headline}",
+  "f3b559e33853d3e4": "hace {time}",
+  "c83fb5e64f34fb1a": "Resumen",
   "37a9f9061345c783": "Abrir la conversación resuelta en el resumen",
   "5ba7fc63f4129a81": "Abrir la conversación sin resolver en el resumen",
   "4ba95157a7b83427": "Abrir la conversación resuelta en {path}",
   "9c5dd9f1862f207f": "Abrir la conversación sin resolver en {path}",
-  "0b68aba89ab9ddaa": "Ver el commit {sha}, {headline}",
-  "434c5d09b87ac637": [
+  "d437117fac8284f1": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " aprobó"
+      "i": 2,
+      "c": "aprobó"
     }
   ],
-  "e07dc0fde524c9ad": [
+  "472120eecb01657e": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " solicitó cambios"
+      "i": 2,
+      "c": "pidió cambios"
     }
   ],
-  "f9d6b1c8a43111e9": [
+  "29c437faf22ab4c8": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " comentó"
+      "i": 2,
+      "c": "abrió esta pull request"
     }
   ],
-  "f7790ab20fcd9015": [
+  "083b181a3c59575a": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " inició una conversación"
+      "i": 2,
+      "c": "fusionó esta pull request"
     }
   ],
-  "29f0824614831f53": "Resumen",
+  "89a0bf24401a77a7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "Text",
+      "i": 2,
+      "c": "cerró esta pull request"
+    }
+  ],
   "62c3b9089374dccf": "Hay más actividad disponible en el proveedor.",
   "9a8fd03416860d24": "PR que solicitan mi revisión",
   "e6fe2fa4f0b5d5f5": "Entorno",
@@ -3033,13 +3031,16 @@
   "078bb63ea2f3ee40": "Las comprobaciones requieren atención",
   "fd63b391898889f9": "{count, plural, one {{count} pendiente de acción} other {{count} pendientes de acción}}",
   "a39948e68089494f": "{count, plural, one {{count} pendiente} other {{count} pendientes}}",
+  "aa14acb0ea65d943": "Comprobaciones en curso",
   "a764ad3d20c73c61": "{passed} de {total} correctas",
   "a7c33927d8e6d14d": "Todas las comprobaciones se superaron",
+  "7e5f3de9d35cd927": "Comprobaciones completadas",
   "c7dbf49a6ff877da": "{count, plural, one {{count} completada} other {{count} completadas}}",
   "1b381201aba745c2": "No se informó de ninguna comprobación",
   "20047e62baec76a5": "{count, plural, one {{count} revisor} other {{count} revisores}}",
   "4f54fe109bb1ffe3": "Aprobada por {login}",
   "fd2ba92159319590": "{count, plural, one {{count} aprobó} other {{count} aprobaron}}",
+  "c84af77ebd768014": "Revisiones",
   "d2ebfa6ed1149e3b": "{count, plural, one {{count} comentó} other {{count} comentaron}}",
   "5f0d138bc198f058": "Esperando revisión",
   "eebb6fda3557adb5": "Solicitar una revisión",
@@ -3451,7 +3452,6 @@
   "1be65659f947b808": "Ningún ajuste coincide con «{query}».",
   "1cf216566c1ee064": "Proyecto no disponible",
   "2632f324dc2d9c48": "Agentes",
-  "58058320796d28f6": "Código",
   "2a546119bf3879ee": "Archivados",
   "e1d918265a01d82f": "Un hilo nuevo en cada ejecución",
   "799529c86158423c": "Un solo hilo, misma conversación",
@@ -3950,18 +3950,18 @@
   "c71bf7a8eee8c45a": "{title}. Conversación no disponible",
   "6671ed3067d17f60": "Ningún agente ha empezado.",
   "86e4db16fb6674e4": "Intentos anteriores",
-  "dd65e69f6a5b6681": "Pull request {number}",
+  "21d0ef064eefa159": "Estado",
+  "4143c30bdacff531": "en {node}",
   "da16af47eff38ae9": "Pull request",
-  "a6a838f6a8fb04aa": "Subtareas",
-  "cdab7266307ee937": "Brief",
+  "dd65e69f6a5b6681": "Pull request {number}",
   "aad888510f5c815c": "Tarea #{id}",
-  "912715e051f5b5de": "Subtareas de #{id}",
-  "2c376a0cd96f5c09": "Agentes de #{id}",
-  "c4e5adfc1f460ad4": "Subtareas, {count}",
+  "cdab7266307ee937": "Brief",
+  "a6a838f6a8fb04aa": "Subtareas",
+  "34a34aa76ef13150": "Subtareas, {done} de {total} hechas",
   "c15c9de0104f8af7": "Agentes, {count}",
-  "bbb5baf71b39f5ed": "Entregables",
   "c4a095ab381b3bc3": "Subtarea #{id}",
   "c8454f867f105322": "Esta subtarea ya no forma parte de la tarea.",
+  "bbb5baf71b39f5ed": "Entregables",
   "7ddc15c180ab01f4": "{done}/{total} subtareas",
   "56163dfae08b5976": "Carriles",
   "a8753618b379e894": "Ninguna tarea coincide",
@@ -5300,6 +5300,7 @@
   "7842a9e016fbdf50": "Estás en la rama predeterminada. Puedes crear una rama nueva al hacer commit.",
   "2e463c1f880b8d56": "Mensaje de commit",
   "9370fdce25dca815": "Déjalo vacío para generar un mensaje automáticamente.",
+  "e2fb20ffcf133b45": "Archivos modificados",
   "038a39e5c34e979a": [
     {
       "i": 1,

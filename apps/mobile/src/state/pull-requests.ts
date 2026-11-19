@@ -18,6 +18,7 @@ import {
   type PullRequestListPages,
   type PullRequestStatsCache,
 } from "../features/pull-requests/pullRequestList";
+import { withPullRequestFixtures } from "../features/pull-requests/pullRequestFixtures";
 
 export const pullRequestListPagesKey = (target: {
   readonly environmentId: EnvironmentId;
@@ -53,78 +54,82 @@ export const filesViewedReadsFamily = Atom.family((_key: string) =>
   Atom.make(0).pipe(Atom.setIdleTTL(5 * 60_000)),
 );
 
-export const composerPullRequests = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
-  // Rows on pages past each listing's head; the head itself is patched where it is cached.
-  actionReply: (target, reply, registry) =>
-    Effect.sync(() => {
-      for (const atom of registry.getNodes().keys()) {
-        const listing =
-          typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
-        if (listing === undefined || listing[0] !== target.environmentId) continue;
-        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) => {
-          if (pages === null) return pages;
-          const entries = patchPullRequestListEntries(
-            listing[1],
-            pages.entries,
-            target.input,
-            reply,
-            registry.get(pullRequestPendingEditsAtom(target.environmentId)),
-          );
-          return entries === "refresh" || entries === pages.entries ? pages : { ...pages, entries };
-        });
-      }
-    }),
-  acceptedEdit: (target, edit, registry) =>
-    Effect.sync(() => {
-      for (const atom of registry.getNodes().keys()) {
-        const listing =
-          typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
-        if (listing === undefined || listing[0] !== target.environmentId) continue;
-        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) => {
-          if (pages === null) return pages;
-          const entries = editHeldPullRequestListEntries(
-            listing[1],
-            pages.entries,
-            () => [edit],
-            registry.get(pullRequestPendingEditsAtom(target.environmentId)),
-          );
-          return entries === pages.entries ? pages : { ...pages, entries };
-        });
-      }
-    }),
-  // A new head can change which files GitHub still counts as viewed, so the viewed-files read is
-  // refreshed where the new head lands. The detail atom still holds the previous answer here.
-  detail: (target, value, registry) =>
-    Effect.sync(() => {
-      const previous = AsyncResult.value(registry.get(composerPullRequests.detail(target)));
-      if (Option.isSome(previous) && previous.value.headSha !== value.headSha)
-        registry.refresh(composerPullRequests.filesViewed(target));
-    }),
-  filesViewed: (target, _value, registry) =>
-    Effect.sync(() =>
-      registry.update(filesViewedReadsFamily(filesViewedReadsKey(target)), (reads) => reads + 1),
-    ),
-  list: (target, value, registry) =>
-    Effect.sync(() => {
-      const statsAtom = pullRequestListStatsFamily(target.environmentId);
-      const { cache, refresh } = withListedPullRequests(registry.get(statsAtom), value.entries);
-      registry.set(statsAtom, cache);
-      for (const input of refresh)
-        registry.refresh(
-          composerPullRequests.listStats({ environmentId: target.environmentId, input }),
-        );
-      if (target.input.cursors === undefined)
-        registry.update(pullRequestListPagesFamily(pullRequestListPagesKey(target)), (previous) =>
-          pullRequestListHead(previous, value),
-        );
-    }),
-  listStats: (target, value, registry) =>
-    Effect.sync(() =>
-      registry.update(pullRequestListStatsFamily(target.environmentId), (previous) =>
-        withAnsweredPullRequestStats(previous, target.input, value.stats),
+export const composerPullRequests = withPullRequestFixtures(
+  createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
+    // Rows on pages past each listing's head; the head itself is patched where it is cached.
+    actionReply: (target, reply, registry) =>
+      Effect.sync(() => {
+        for (const atom of registry.getNodes().keys()) {
+          const listing =
+            typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
+          if (listing === undefined || listing[0] !== target.environmentId) continue;
+          registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) => {
+            if (pages === null) return pages;
+            const entries = patchPullRequestListEntries(
+              listing[1],
+              pages.entries,
+              target.input,
+              reply,
+              registry.get(pullRequestPendingEditsAtom(target.environmentId)),
+            );
+            return entries === "refresh" || entries === pages.entries
+              ? pages
+              : { ...pages, entries };
+          });
+        }
+      }),
+    acceptedEdit: (target, edit, registry) =>
+      Effect.sync(() => {
+        for (const atom of registry.getNodes().keys()) {
+          const listing =
+            typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
+          if (listing === undefined || listing[0] !== target.environmentId) continue;
+          registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) => {
+            if (pages === null) return pages;
+            const entries = editHeldPullRequestListEntries(
+              listing[1],
+              pages.entries,
+              () => [edit],
+              registry.get(pullRequestPendingEditsAtom(target.environmentId)),
+            );
+            return entries === pages.entries ? pages : { ...pages, entries };
+          });
+        }
+      }),
+    // A new head can change which files GitHub still counts as viewed, so the viewed-files read is
+    // refreshed where the new head lands. The detail atom still holds the previous answer here.
+    detail: (target, value, registry) =>
+      Effect.sync(() => {
+        const previous = AsyncResult.value(registry.get(composerPullRequests.detail(target)));
+        if (Option.isSome(previous) && previous.value.headSha !== value.headSha)
+          registry.refresh(composerPullRequests.filesViewed(target));
+      }),
+    filesViewed: (target, _value, registry) =>
+      Effect.sync(() =>
+        registry.update(filesViewedReadsFamily(filesViewedReadsKey(target)), (reads) => reads + 1),
       ),
-    ),
-});
+    list: (target, value, registry) =>
+      Effect.sync(() => {
+        const statsAtom = pullRequestListStatsFamily(target.environmentId);
+        const { cache, refresh } = withListedPullRequests(registry.get(statsAtom), value.entries);
+        registry.set(statsAtom, cache);
+        for (const input of refresh)
+          registry.refresh(
+            composerPullRequests.listStats({ environmentId: target.environmentId, input }),
+          );
+        if (target.input.cursors === undefined)
+          registry.update(pullRequestListPagesFamily(pullRequestListPagesKey(target)), (previous) =>
+            pullRequestListHead(previous, value),
+          );
+      }),
+    listStats: (target, value, registry) =>
+      Effect.sync(() =>
+        registry.update(pullRequestListStatsFamily(target.environmentId), (previous) =>
+          withAnsweredPullRequestStats(previous, target.input, value.stats),
+        ),
+      ),
+  }),
+);
 export const pullRequestStackAtom = createPullRequestStackAtomFamily(
   connectionAtomRuntime,
   composerPullRequests.refreshes,

@@ -1892,14 +1892,14 @@
   "c15d8570b0ac8ae5": "O ambiente retornou HTTP {status}.",
   "b87f2217123b4cbf": "Não foi possível atualizar a preferência de Atividades ao Vivo do ambiente.",
   "2f18d65ea9f178da": "Não foi possível atualizar a preferência de Atividades ao Vivo do ambiente: {detail}",
+  "013df8bdb9ca9096": "Não foi possível ativar a publicação da atividade do agente.",
+  "7247ede5160a0154": "Não foi possível ativar a publicação da atividade do agente: {detail}",
   "52c4bcf188d1af36": "Não foi possível carregar o ID do dispositivo móvel.",
   "473457b89661c874": "Não foi possível carregar o ID do dispositivo móvel: {detail}",
   "01da8c5b0a52e84a": "Não foi possível obter a prova de vínculo do ambiente.",
   "20732c0363a295a8": "Não foi possível obter a prova de vínculo do ambiente: {detail}",
   "78bf018d20589722": "Não foi possível configurar o acesso do ambiente ao relay.",
   "a5e3ff0d1a60b766": "Não foi possível configurar o acesso do ambiente ao relay: {detail}",
-  "013df8bdb9ca9096": "Não foi possível ativar a publicação da atividade do agente.",
-  "7247ede5160a0154": "Não foi possível ativar a publicação da atividade do agente: {detail}",
   "7d508fe978cb0f3b": "Desligado",
   "3ae222ec888dd171": "ID do trace:",
   "be00d572b18076d8": "Mantenha pressionado para remover deste dispositivo",
@@ -2534,13 +2534,11 @@
   "339ee12600085fde": "Toda a atividade",
   "fad1bd9faf8ca63d": "Comentários",
   "649f2612d5164a6a": "Commits",
-  "9059ee76eba971c6": "Tipo de atividade, {kind}",
   "6a0a85c6239d6855": "Mostrar na atividade",
   "1ca8e904d23f106b": "Comentários de bots",
   "eac63f5d4749b7ec": "Resolvidos ou dispensados",
-  "4a8ac98163c8915a": "{count, plural, one {Filtrar atividade, {count} oculta} other {Filtrar atividade, {count} ocultas}}",
-  "c3ce0d8084dc1e9b": "{count, plural, one {{count} oculto} other {{count} ocultos}}",
-  "a0d4600542d3ea69": "Mais antigos",
+  "9f9cc9e73315eb27": "{comments, plural, one {{comments} comentário} other {{comments} comentários}}, {commits, plural, one {{commits} commit} other {{commits} commits}}. Filtrar atividade, {hidden} ocultos",
+  "b0c3ea0723dcc77c": "· {count} ocultos",
   "d29c6a17d78f5f78": "Mencionar um usuário",
   "38e7f2b079e77c93": "Pesquisando usuários...",
   "3b12e867832c9ed6": "Não foi possível pesquisar usuários no host",
@@ -2565,6 +2563,34 @@
   "fab845f54ae10809": "Mostrar mais",
   "85308c9317c0d751": "Nenhuma descrição fornecida.",
   "bf66f2a6e7907771": "Anexos",
+  "706084d25f85dd5a": "Repositório",
+  "e176b5f17630f05b": "Link",
+  "45af525d50514254": "Abrir #{number} no provedor",
+  "9f52ea3133da8ea4": "Tarefa",
+  "c1f4237a1a587e78": "Autor",
+  "008ac38b2f39a399": "Atualizado",
+  "06a684782801e8f7": "Copiar branch head {branch}",
+  "227045bc57827a97": "em",
+  "85ae9979ad3b0c1e": "Copiar branch base {branch}",
+  "d85877d9ef77c50c": "Alterações",
+  "9b3ae5edeae058a1": "Revisores",
+  "7020f0cde6e67564": "Nenhum",
+  "80c43a5371b3c8da": "{count} de {total} verificações em execução",
+  "fd2c38376d9ebf7d": "Corrigir verificações com falha",
+  "32f41927eab42c57": "Aprovar workflows",
+  "c84c012042f57f45": "{count, plural, one {{count} aguardando aprovação} other {{count} aguardando aprovação}}",
+  "15e7f06da8c101c9": "Permitir que os workflows {term, select, mr {deste merge request} cr {desta solicitação de alteração} other {deste pull request}} sejam executados? Revise as alterações nos workflows primeiro.",
+  "ffba07f29cf515cb": "Abrir verificações no provedor",
+  "5bf4ff621a4697e6": [
+    "há",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "406bfbc6b51dda02": "Nenhuma verificação informada.",
   "46fe3e345947866f": "O provedor não conseguiu concluir esta ação.",
   "c36593dad8813cd1": "Resposta publicada.",
   "d944d055610be080": "Reabrir",
@@ -2620,7 +2646,6 @@
     }
   ],
   "bfa2f673593efc5c": "Nenhuma alteração de texto disponível.",
-  "e2fb20ffcf133b45": "Arquivos alterados",
   "ff6b088c383bf910": "Pesquisar autores",
   "300be410c27c2096": "Filtrar por autor",
   "795dd1ec1f3c15c5": "Fechar filtro de rótulos",
@@ -2733,14 +2758,6 @@
   "856d33dd50059360": "{count, plural, one {{label}, {count} camada da pilha até '#'{number}} other {{label}, {count} camadas da pilha até '#'{number}}}",
   "824af344a2f36c1b": "Opções de merge",
   "e1c256405d49078b": "Tentar consultar a pilha novamente",
-  "8a764f8701428728": "Carregando detalhes do pull request",
-  "7e5f3de9d35cd927": "Verificações concluídas",
-  "aa14acb0ea65d943": "Verificações em execução",
-  "87afbfe1d757ed4f": "Verificações",
-  "c84af77ebd768014": "Revisões",
-  "698b57490dcff9b2": "Conflita com {branch}",
-  "78bf470bf7712936": "Sem conflitos com {branch}",
-  "04ece553cf53e018": "Branch",
   "9058814024e831e5": "Não foi possível carregar {term, select, mr {este merge request} cr {esta solicitação de alteração} other {este pull request}}",
   "2b5f0fdb45b4edbf": "Não foi possível salvar a reação",
   "178c1f055cbd6eaf": "Tente novamente em instantes.",
@@ -2792,19 +2809,18 @@
   "f9d3c8aa453829ce": "Toque em alguém para solicitar uma revisão. Toque em um revisor solicitado para remover a solicitação. As alterações são enviadas quando você fecha esta folha.",
   "8d3770f150f0bcb4": "Solicitado",
   "fff1c3d17603f394": "Este provedor aceita um ID de revisor, mas não consegue listar candidatos.",
-  "85ae9979ad3b0c1e": "Copiar branch base {branch}",
-  "06a684782801e8f7": "Copiar branch head {branch}",
-  "8e4f3c862193b8a5": "Editar",
   "8cc970597921c38a": "Excluir {branch} de {repository}? Os branches locais e os worktrees não são alterados.",
   "58bda2aa88d28696": "Ações {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}",
   "ffd49822d34cbd30": "Permitir edições dos mantenedores",
+  "cdfe7771384370e8": "Abrir {term, select, mr {um novo merge request} cr {uma nova solicitação de alteração} other {um novo pull request}} que reverte essas alterações?",
   "2a83c8767b3e1918": "Excluindo…",
   "99a3c6e593d6947d": "Reconecte para excluir este branch.",
-  "42fd133c37a117fe": "{repository} · Offline",
-  "c83fb5e64f34fb1a": "Visão geral",
+  "655ace1b049d1c8e": "Verificações",
+  "6b5e32fbfca3487f": "Linha do tempo",
+  "58058320796d28f6": "Código",
   "8d1ad30ddb277f48": "Guia",
+  "42fd133c37a117fe": "{repository} · Offline",
   "3724ff240986c6da": "Fazer commit das alterações",
-  "d85877d9ef77c50c": "Alterações",
   "ebb089d626dfaa7c": "Carregando alterações",
   "4050f873dc790f8f": "Opções do diff",
   "81cf438219f0a618": "Quebra de linha",
@@ -2817,15 +2833,6 @@
   "b683d10f00d06824": "Abra {term, select, mr {este merge request} cr {esta solicitação de alteração} other {este pull request}} no provedor para ver as alterações.",
   "227078c4bfaa6f78": "Tentar carregar os arquivos restantes novamente",
   "129a5cce3c991555": "Nenhuma atividade corresponde a estes filtros.",
-  "138ec0d0a64a8b02": [
-    "Atualizado há",
-    " ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
   "624da266e73f125b": "Selecione uma linha atual e escolha “Mover rascunho para esta linha” no menu dela.",
   "8731a3896978fa9f": "O branch mudou. Recarregue antes de adicionar comentários de linha.",
   "099f09dc56979b98": "Carregando mais arquivos…",
@@ -2843,93 +2850,84 @@
     },
     ". Abra uma camada para revisá-la ou mesclar a pilha até essa camada."
   ],
-  "7d50c5c18ba726fa": "Status {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}, {status}",
-  "25019c947d3082dc": "Status {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}",
-  "cdfe7771384370e8": "Abrir {term, select, mr {um novo merge request} cr {uma nova solicitação de alteração} other {um novo pull request}} que reverte essas alterações?",
-  "c93589b9022328d4": "Verificações, {summary}",
-  "fd2c38376d9ebf7d": "Corrigir verificações com falha",
-  "32f41927eab42c57": "Aprovar workflows",
-  "c84c012042f57f45": "{count, plural, one {{count} aguardando aprovação} other {{count} aguardando aprovação}}",
-  "15e7f06da8c101c9": "Permitir que os workflows {term, select, mr {deste merge request} cr {desta solicitação de alteração} other {deste pull request}} sejam executados? Revise as alterações nos workflows primeiro.",
-  "ffba07f29cf515cb": "Abrir verificações no provedor",
+  "698b57490dcff9b2": "Conflita com {branch}",
+  "78bf470bf7712936": "Sem conflitos com {branch}",
+  "04ece553cf53e018": "Branch",
   "750195d317fe7e9e": "Branch, {summary}",
   "0dafdeb64cb13711": "Atualizar com {method, select, merge {merge} rebase {rebase} other {{method}}}",
-  "301edbbd0597cf4d": "Revisor desconhecido",
-  "1e74602ca35d4c7e": "Aprovou",
-  "9f3f817e9111e162": "Comentou",
-  "82e3cbf8c92aa519": "{login}, revisão solicitada",
-  "b7b4efdb71c594be": "Ver revisores no provedor",
-  "406bfbc6b51dda02": "Nenhuma verificação informada.",
+  "eb60367cf891f1fa": "{count, plural, one {{count} resposta} other {{count} respostas}}",
+  "0b68aba89ab9ddaa": "Ver commit {sha}, {headline}",
+  "f3b559e33853d3e4": "há {time}",
+  "c83fb5e64f34fb1a": "Visão geral",
   "37a9f9061345c783": "Abrir discussão resolvida na visão geral",
   "5ba7fc63f4129a81": "Abrir discussão não resolvida na visão geral",
   "4ba95157a7b83427": "Abrir discussão resolvida em {path}",
   "9c5dd9f1862f207f": "Abrir discussão não resolvida em {path}",
-  "0b68aba89ab9ddaa": "Ver commit {sha}, {headline}",
-  "434c5d09b87ac637": [
+  "d437117fac8284f1": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " aprovou"
+      "i": 2,
+      "c": "aprovou"
     }
   ],
-  "e07dc0fde524c9ad": [
+  "472120eecb01657e": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " solicitou alterações"
+      "i": 2,
+      "c": "pediu alterações"
     }
   ],
-  "f9d6b1c8a43111e9": [
+  "29c437faf22ab4c8": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " comentou"
+      "i": 2,
+      "c": "abriu este pull request"
     }
   ],
-  "f7790ab20fcd9015": [
+  "083b181a3c59575a": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " iniciou uma discussão"
+      "i": 2,
+      "c": "mesclou este pull request"
     }
   ],
-  "29f0824614831f53": "Visão geral",
+  "89a0bf24401a77a7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "Text",
+      "i": 2,
+      "c": "fechou este pull request"
+    }
+  ],
   "62c3b9089374dccf": "Há mais atividade disponível no provedor.",
   "9a8fd03416860d24": "PRs que pedem minha revisão",
   "e6fe2fa4f0b5d5f5": "Ambiente",
@@ -3033,13 +3031,16 @@
   "078bb63ea2f3ee40": "As verificações precisam de atenção",
   "fd63b391898889f9": "{count, plural, one {{count} aguardando ação} other {{count} aguardando ação}}",
   "a39948e68089494f": "{count, plural, one {{count} pendente} other {{count} pendentes}}",
+  "aa14acb0ea65d943": "Verificações em execução",
   "a764ad3d20c73c61": "{passed} de {total} passaram",
   "a7c33927d8e6d14d": "Todas as verificações passaram",
+  "7e5f3de9d35cd927": "Verificações concluídas",
   "c7dbf49a6ff877da": "{count, plural, one {{count} concluído} other {{count} concluídos}}",
   "1b381201aba745c2": "Nenhuma verificação informada",
   "20047e62baec76a5": "{count, plural, one {{count} revisor} other {{count} revisores}}",
   "4f54fe109bb1ffe3": "Aprovado por {login}",
   "fd2ba92159319590": "{count, plural, one {{count} aprovou} other {{count} aprovaram}}",
+  "c84af77ebd768014": "Revisões",
   "d2ebfa6ed1149e3b": "{count, plural, one {{count} comentou} other {{count} comentaram}}",
   "5f0d138bc198f058": "Aguardando revisão",
   "eebb6fda3557adb5": "Solicitar uma revisão",
@@ -3451,7 +3452,6 @@
   "1be65659f947b808": "Nenhuma configuração encontrada para “{query}”.",
   "1cf216566c1ee064": "Projeto indisponível",
   "2632f324dc2d9c48": "Agentes",
-  "58058320796d28f6": "Código",
   "2a546119bf3879ee": "Arquivar",
   "e1d918265a01d82f": "Nova thread a cada execução",
   "799529c86158423c": "Uma thread, mesma conversa",
@@ -3950,18 +3950,18 @@
   "c71bf7a8eee8c45a": "{title}. Conversa indisponível",
   "6671ed3067d17f60": "Nenhum agente começou.",
   "86e4db16fb6674e4": "Tentativas anteriores",
-  "dd65e69f6a5b6681": "Pull request {number}",
+  "21d0ef064eefa159": "Status",
+  "4143c30bdacff531": "em {node}",
   "da16af47eff38ae9": "Pull request",
-  "a6a838f6a8fb04aa": "Subtarefas",
-  "cdab7266307ee937": "Briefing",
+  "dd65e69f6a5b6681": "Pull request {number}",
   "aad888510f5c815c": "Tarefa #{id}",
-  "912715e051f5b5de": "Subtarefas de #{id}",
-  "2c376a0cd96f5c09": "Agentes de #{id}",
-  "c4e5adfc1f460ad4": "Subtarefas, {count}",
+  "cdab7266307ee937": "Briefing",
+  "a6a838f6a8fb04aa": "Subtarefas",
+  "34a34aa76ef13150": "Subtarefas, {done} de {total} concluídas",
   "c15c9de0104f8af7": "Agentes, {count}",
-  "bbb5baf71b39f5ed": "Entregáveis",
   "c4a095ab381b3bc3": "Subtarefa #{id}",
   "c8454f867f105322": "Esta subtarefa não faz mais parte da tarefa.",
+  "bbb5baf71b39f5ed": "Entregáveis",
   "7ddc15c180ab01f4": "{done}/{total} subtarefas",
   "56163dfae08b5976": "Raias",
   "a8753618b379e894": "Nenhuma tarefa corresponde",
@@ -5300,6 +5300,7 @@
   "7842a9e016fbdf50": "Você está no branch padrão. Você pode criar um novo branch ao fazer commit.",
   "2e463c1f880b8d56": "Mensagem de commit",
   "9370fdce25dca815": "Deixe vazio para gerar uma mensagem automaticamente.",
+  "e2fb20ffcf133b45": "Arquivos alterados",
   "038a39e5c34e979a": [
     {
       "i": 1,

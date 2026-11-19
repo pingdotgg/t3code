@@ -1892,14 +1892,14 @@
   "c15d8570b0ac8ae5": "Die Umgebung meldete HTTP {status}.",
   "b87f2217123b4cbf": "Die Live-Aktivitätseinstellung der Umgebung konnte nicht geändert werden.",
   "2f18d65ea9f178da": "Die Live-Aktivitätseinstellung der Umgebung konnte nicht geändert werden: {detail}",
+  "013df8bdb9ca9096": "Die Veröffentlichung der Agentenaktivität konnte nicht aktiviert werden.",
+  "7247ede5160a0154": "Die Veröffentlichung der Agentenaktivität konnte nicht aktiviert werden: {detail}",
   "52c4bcf188d1af36": "Die ID des Mobilgeräts konnte nicht geladen werden.",
   "473457b89661c874": "Die ID des Mobilgeräts konnte nicht geladen werden: {detail}",
   "01da8c5b0a52e84a": "Der Nachweis für die Umgebungsverknüpfung konnte nicht abgerufen werden.",
   "20732c0363a295a8": "Verknüpfungsnachweis der Umgebung konnte nicht abgerufen werden: {detail}",
   "78bf018d20589722": "Der Relay-Zugriff der Umgebung konnte nicht konfiguriert werden.",
   "a5e3ff0d1a60b766": "Relay-Zugriff der Umgebung konnte nicht konfiguriert werden: {detail}",
-  "013df8bdb9ca9096": "Die Veröffentlichung der Agentenaktivität konnte nicht aktiviert werden.",
-  "7247ede5160a0154": "Die Veröffentlichung der Agentenaktivität konnte nicht aktiviert werden: {detail}",
   "7d508fe978cb0f3b": "Aus",
   "3ae222ec888dd171": "Trace-ID:",
   "be00d572b18076d8": "Lange drücken, um von diesem Gerät zu entfernen",
@@ -2538,13 +2538,11 @@
   "339ee12600085fde": "Alle Aktivitäten",
   "fad1bd9faf8ca63d": "Kommentare",
   "649f2612d5164a6a": "Commits",
-  "9059ee76eba971c6": "Aktivitätstyp, {kind}",
   "6a0a85c6239d6855": "In Aktivität anzeigen",
   "1ca8e904d23f106b": "Bot-Kommentare",
   "eac63f5d4749b7ec": "Gelöst oder verworfen",
-  "4a8ac98163c8915a": "{count, plural, one {Aktivität filtern, {count} ausgeblendet} other {Aktivität filtern, {count} ausgeblendet}}",
-  "c3ce0d8084dc1e9b": "{count, plural, one {{count} ausgeblendet} other {{count} ausgeblendet}}",
-  "a0d4600542d3ea69": "Älteste",
+  "9f9cc9e73315eb27": "{comments, plural, one {{comments} Kommentar} other {{comments} Kommentare}}, {commits, plural, one {{commits} Commit} other {{commits} Commits}}. Aktivität filtern, {hidden} ausgeblendet",
+  "b0c3ea0723dcc77c": "· {count} ausgeblendet",
   "d29c6a17d78f5f78": "Eine Person erwähnen",
   "38e7f2b079e77c93": "Personen werden gesucht...",
   "3b12e867832c9ed6": "Personen konnten auf dem Host nicht gesucht werden",
@@ -2569,6 +2567,34 @@
   "fab845f54ae10809": "Mehr anzeigen",
   "85308c9317c0d751": "Keine Beschreibung angegeben.",
   "bf66f2a6e7907771": "Anhänge",
+  "706084d25f85dd5a": "Repository",
+  "e176b5f17630f05b": "Link",
+  "45af525d50514254": "#{number} beim Anbieter öffnen",
+  "9f52ea3133da8ea4": "Aufgabe",
+  "c1f4237a1a587e78": "Autor",
+  "008ac38b2f39a399": "Aktualisiert",
+  "06a684782801e8f7": "Head-Branch {branch} kopieren",
+  "227045bc57827a97": "in",
+  "85ae9979ad3b0c1e": "Basis-Branch {branch} kopieren",
+  "d85877d9ef77c50c": "Änderungen",
+  "9b3ae5edeae058a1": "Reviewer",
+  "7020f0cde6e67564": "Keine",
+  "80c43a5371b3c8da": "{count} von {total} Checks laufen",
+  "fd2c38376d9ebf7d": "Fehlgeschlagene Checks beheben",
+  "32f41927eab42c57": "Workflows genehmigen",
+  "c84c012042f57f45": "{count, plural, one {{count} wartet auf Genehmigung} other {{count} warten auf Genehmigung}}",
+  "15e7f06da8c101c9": "{term, select, mr {Workflows dieses Merge Requests ausführen lassen? Prüfe zuerst die Workflow-Änderungen.} cr {Workflows dieser Änderungsanfrage ausführen lassen? Prüfe zuerst die Workflow-Änderungen.} other {Workflows dieses Pull Requests ausführen lassen? Prüfe zuerst die Workflow-Änderungen.}}",
+  "ffba07f29cf515cb": "Checks beim Anbieter öffnen",
+  "5bf4ff621a4697e6": [
+    "vor",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "406bfbc6b51dda02": "Keine Checks gemeldet.",
   "46fe3e345947866f": "Der Anbieter konnte diese Aktion nicht abschließen.",
   "c36593dad8813cd1": "Antwort gepostet.",
   "d944d055610be080": "Als ungelöst markieren",
@@ -2624,7 +2650,6 @@
     }
   ],
   "bfa2f673593efc5c": "Keine Textänderungen verfügbar.",
-  "e2fb20ffcf133b45": "Geänderte Dateien",
   "ff6b088c383bf910": "Autoren durchsuchen",
   "300be410c27c2096": "Nach Autor filtern",
   "795dd1ec1f3c15c5": "Label-Filter schließen",
@@ -2737,14 +2762,6 @@
   "856d33dd50059360": "{count, plural, one {{label}, {count} Stack-Ebene bis '#'{number}} other {{label}, {count} Stack-Ebenen bis '#'{number}}}",
   "824af344a2f36c1b": "Merge-Optionen",
   "e1c256405d49078b": "Stack-Abfrage wiederholen",
-  "8a764f8701428728": "Pull-Request-Details werden geladen",
-  "7e5f3de9d35cd927": "Checks abgeschlossen",
-  "aa14acb0ea65d943": "Checks laufen",
-  "87afbfe1d757ed4f": "Checks",
-  "c84af77ebd768014": "Reviews",
-  "698b57490dcff9b2": "Konflikte mit {branch}",
-  "78bf470bf7712936": "Keine Konflikte mit {branch}",
-  "04ece553cf53e018": "Branch",
   "9058814024e831e5": "{term, select, mr {Dieser Merge Request konnte nicht geladen werden} cr {Diese Änderungsanfrage konnte nicht geladen werden} other {Dieser Pull Request konnte nicht geladen werden}}",
   "2b5f0fdb45b4edbf": "Die Reaktion konnte nicht gespeichert werden",
   "178c1f055cbd6eaf": "Versuch es gleich noch einmal.",
@@ -2796,19 +2813,18 @@
   "f9d3c8aa453829ce": "Tippe auf eine Person, um ein Review anzufordern. Tippe auf einen angefragten Reviewer, um die Anfrage zu entfernen. Änderungen werden beim Schließen dieses Fensters gesendet.",
   "8d3770f150f0bcb4": "Angefragt",
   "fff1c3d17603f394": "Dieser Anbieter akzeptiert eine Reviewer-ID, kann aber keine Kandidaten auflisten.",
-  "85ae9979ad3b0c1e": "Basis-Branch {branch} kopieren",
-  "06a684782801e8f7": "Head-Branch {branch} kopieren",
-  "8e4f3c862193b8a5": "Bearbeiten",
   "8cc970597921c38a": "{branch} aus {repository} löschen? Lokale Branches und Worktrees bleiben unverändert.",
   "58bda2aa88d28696": "{term, select, mr {Aktionen für Merge Request} cr {Aktionen für Änderungsanfrage} other {Aktionen für Pull Request}}",
   "ffd49822d34cbd30": "Änderungen durch Maintainer erlauben",
+  "cdfe7771384370e8": "{term, select, mr {Einen neuen Merge Request öffnen, der diese Änderungen rückgängig macht?} cr {Eine neue Änderungsanfrage öffnen, die diese Änderungen rückgängig macht?} other {Einen neuen Pull Request öffnen, der diese Änderungen rückgängig macht?}}",
   "2a83c8767b3e1918": "Wird gelöscht…",
   "99a3c6e593d6947d": "Verbinde dich erneut, um diesen Branch zu löschen.",
-  "42fd133c37a117fe": "{repository} · Offline",
-  "c83fb5e64f34fb1a": "Übersicht",
+  "655ace1b049d1c8e": "Checks",
+  "6b5e32fbfca3487f": "Verlauf",
+  "58058320796d28f6": "Code",
   "8d1ad30ddb277f48": "Leitfaden",
+  "42fd133c37a117fe": "{repository} · Offline",
   "3724ff240986c6da": "Änderungen committen",
-  "d85877d9ef77c50c": "Änderungen",
   "ebb089d626dfaa7c": "Änderungen werden geladen",
   "4050f873dc790f8f": "Diff-Optionen",
   "81cf438219f0a618": "Zeilenumbruch",
@@ -2821,15 +2837,6 @@
   "b683d10f00d06824": "{term, select, mr {Öffne diesen Merge Request beim Anbieter, um die Änderungen zu sehen.} cr {Öffne diese Änderungsanfrage beim Anbieter, um die Änderungen zu sehen.} other {Öffne diesen Pull Request beim Anbieter, um die Änderungen zu sehen.}}",
   "227078c4bfaa6f78": "Laden der übrigen Dateien wiederholen",
   "129a5cce3c991555": "Keine Aktivität entspricht diesen Filtern.",
-  "138ec0d0a64a8b02": [
-    "Aktualisiert vor",
-    " ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
   "624da266e73f125b": "Wähle eine aktuelle Zeile und dann „Entwurf in diese Zeile verschieben“ in ihrem Menü.",
   "8731a3896978fa9f": "Der Branch hat sich geändert. Lade neu, bevor du Zeilenkommentare hinzufügst.",
   "099f09dc56979b98": "Weitere Dateien werden geladen…",
@@ -2847,93 +2854,84 @@
     },
     ". Öffne eine Ebene, um sie zu prüfen oder den Stack bis zu dieser Ebene zu mergen."
   ],
-  "7d50c5c18ba726fa": "{term, select, mr {Status des Merge Requests, {status}} cr {Status der Änderungsanfrage, {status}} other {Status des Pull Requests, {status}}}",
-  "25019c947d3082dc": "{term, select, mr {Status des Merge Requests} cr {Status der Änderungsanfrage} other {Status des Pull Requests}}",
-  "cdfe7771384370e8": "{term, select, mr {Einen neuen Merge Request öffnen, der diese Änderungen rückgängig macht?} cr {Eine neue Änderungsanfrage öffnen, die diese Änderungen rückgängig macht?} other {Einen neuen Pull Request öffnen, der diese Änderungen rückgängig macht?}}",
-  "c93589b9022328d4": "Checks, {summary}",
-  "fd2c38376d9ebf7d": "Fehlgeschlagene Checks beheben",
-  "32f41927eab42c57": "Workflows genehmigen",
-  "c84c012042f57f45": "{count, plural, one {{count} wartet auf Genehmigung} other {{count} warten auf Genehmigung}}",
-  "15e7f06da8c101c9": "{term, select, mr {Workflows dieses Merge Requests ausführen lassen? Prüfe zuerst die Workflow-Änderungen.} cr {Workflows dieser Änderungsanfrage ausführen lassen? Prüfe zuerst die Workflow-Änderungen.} other {Workflows dieses Pull Requests ausführen lassen? Prüfe zuerst die Workflow-Änderungen.}}",
-  "ffba07f29cf515cb": "Checks beim Anbieter öffnen",
+  "698b57490dcff9b2": "Konflikte mit {branch}",
+  "78bf470bf7712936": "Keine Konflikte mit {branch}",
+  "04ece553cf53e018": "Branch",
   "750195d317fe7e9e": "Branch, {summary}",
   "0dafdeb64cb13711": "Per {method, select, merge {Merge} rebase {Rebase} other {{method}}} aktualisieren",
-  "301edbbd0597cf4d": "Unbekannter Reviewer",
-  "1e74602ca35d4c7e": "Genehmigt",
-  "9f3f817e9111e162": "Kommentiert",
-  "82e3cbf8c92aa519": "{login}, Review angefordert",
-  "b7b4efdb71c594be": "Reviewer beim Anbieter ansehen",
-  "406bfbc6b51dda02": "Keine Checks gemeldet.",
+  "eb60367cf891f1fa": "{count, plural, one {{count} Antwort} other {{count} Antworten}}",
+  "0b68aba89ab9ddaa": "Commit {sha} ansehen, {headline}",
+  "f3b559e33853d3e4": "vor {time}",
+  "c83fb5e64f34fb1a": "Übersicht",
   "37a9f9061345c783": "Gelöste Diskussion in der Übersicht öffnen",
   "5ba7fc63f4129a81": "Ungelöste Diskussion in der Übersicht öffnen",
   "4ba95157a7b83427": "Gelöste Diskussion in {path} öffnen",
   "9c5dd9f1862f207f": "Ungelöste Diskussion in {path} öffnen",
-  "0b68aba89ab9ddaa": "Commit {sha} ansehen, {headline}",
-  "434c5d09b87ac637": [
+  "d437117fac8284f1": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " hat genehmigt"
+      "i": 2,
+      "c": "hat genehmigt"
     }
   ],
-  "e07dc0fde524c9ad": [
+  "472120eecb01657e": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " hat Änderungen angefordert"
+      "i": 2,
+      "c": "hat Änderungen angefordert"
     }
   ],
-  "f9d6b1c8a43111e9": [
+  "29c437faf22ab4c8": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " hat kommentiert"
+      "i": 2,
+      "c": "hat diesen Pull Request eröffnet"
     }
   ],
-  "f7790ab20fcd9015": [
+  "083b181a3c59575a": [
     {
-      "t": "Text",
       "i": 1,
-      "c": {
-        "i": 2,
-        "k": "_gt_value_2",
-        "v": "v"
-      }
+      "k": "_gt_value_1",
+      "v": "v"
     },
+    " ",
     {
       "t": "Text",
-      "i": 3,
-      "c": " hat eine Diskussion gestartet"
+      "i": 2,
+      "c": "hat diesen Pull Request gemergt"
     }
   ],
-  "29f0824614831f53": "Übersicht",
+  "89a0bf24401a77a7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " ",
+    {
+      "t": "Text",
+      "i": 2,
+      "c": "hat diesen Pull Request geschlossen"
+    }
+  ],
   "62c3b9089374dccf": "Weitere Aktivität ist beim Anbieter verfügbar.",
   "9a8fd03416860d24": "PRs mit Review-Anfrage an mich",
   "e6fe2fa4f0b5d5f5": "Umgebung",
@@ -3038,13 +3036,16 @@
   "078bb63ea2f3ee40": "Checks erfordern Aufmerksamkeit",
   "fd63b391898889f9": "{count, plural, one {{count} wartet auf Aktion} other {{count} warten auf Aktion}}",
   "a39948e68089494f": "{count, plural, one {{count} ausstehend} other {{count} ausstehend}}",
+  "aa14acb0ea65d943": "Checks laufen",
   "a764ad3d20c73c61": "{passed} von {total} erfolgreich",
   "a7c33927d8e6d14d": "Alle Checks bestanden",
+  "7e5f3de9d35cd927": "Checks abgeschlossen",
   "c7dbf49a6ff877da": "{count, plural, one {{count} abgeschlossen} other {{count} abgeschlossen}}",
   "1b381201aba745c2": "Keine Checks gemeldet",
   "20047e62baec76a5": "{count, plural, one {{count} Reviewer} other {{count} Reviewer}}",
   "4f54fe109bb1ffe3": "Genehmigt von {login}",
   "fd2ba92159319590": "{count, plural, one {{count} genehmigt} other {{count} genehmigt}}",
+  "c84af77ebd768014": "Reviews",
   "d2ebfa6ed1149e3b": "{count, plural, one {{count} kommentiert} other {{count} kommentiert}}",
   "5f0d138bc198f058": "Wartet auf Review",
   "eebb6fda3557adb5": "Review anfordern",
@@ -3456,7 +3457,6 @@
   "1be65659f947b808": "Keine Einstellungen für „{query}“ gefunden.",
   "1cf216566c1ee064": "Projekt nicht verfügbar",
   "2632f324dc2d9c48": "Agenten",
-  "58058320796d28f6": "Code",
   "2a546119bf3879ee": "Archivieren",
   "e1d918265a01d82f": "Neuer Thread bei jeder Ausführung",
   "799529c86158423c": "Ein Thread, gleiche Unterhaltung",
@@ -3955,18 +3955,18 @@
   "c71bf7a8eee8c45a": "{title}. Unterhaltung nicht verfügbar",
   "6671ed3067d17f60": "Noch kein Agent hat begonnen.",
   "86e4db16fb6674e4": "Frühere Versuche",
-  "dd65e69f6a5b6681": "Pull-Request {number}",
+  "21d0ef064eefa159": "Status",
+  "4143c30bdacff531": "auf {node}",
   "da16af47eff38ae9": "Pull-Request",
-  "a6a838f6a8fb04aa": "Teilaufgaben",
-  "cdab7266307ee937": "Briefing",
+  "dd65e69f6a5b6681": "Pull-Request {number}",
   "aad888510f5c815c": "Aufgabe #{id}",
-  "912715e051f5b5de": "Teilaufgaben von #{id}",
-  "2c376a0cd96f5c09": "Agenten von #{id}",
-  "c4e5adfc1f460ad4": "Teilaufgaben, {count}",
+  "cdab7266307ee937": "Briefing",
+  "a6a838f6a8fb04aa": "Teilaufgaben",
+  "34a34aa76ef13150": "Teilaufgaben, {done} von {total} erledigt",
   "c15c9de0104f8af7": "Agenten, {count}",
-  "bbb5baf71b39f5ed": "Ergebnisse",
   "c4a095ab381b3bc3": "Teilaufgabe #{id}",
   "c8454f867f105322": "Diese Teilaufgabe gehört nicht mehr zur Aufgabe.",
+  "bbb5baf71b39f5ed": "Ergebnisse",
   "7ddc15c180ab01f4": "{done}/{total} Teilaufgaben",
   "56163dfae08b5976": "Spalten",
   "a8753618b379e894": "Keine passenden Aufgaben",
@@ -5306,6 +5306,7 @@
   "7842a9e016fbdf50": "Du bist auf dem Standard-Branch. Du kannst beim Committen einen neuen Branch erstellen.",
   "2e463c1f880b8d56": "Commit-Nachricht",
   "9370fdce25dca815": "Leer lassen, um automatisch eine Nachricht zu generieren.",
+  "e2fb20ffcf133b45": "Geänderte Dateien",
   "038a39e5c34e979a": [
     {
       "i": 1,

@@ -30,6 +30,8 @@ export function PullRequestDescription(props: {
     readonly onCollapse: () => void;
   };
   readonly footer?: ReactNode;
+  /** False where a tab already names it. */
+  readonly heading?: boolean;
   readonly onTaskListChange?: ComponentProps<typeof PullRequestMarkdown>["onTaskListChange"];
 }) {
   const { collapse } = props;
@@ -65,9 +67,11 @@ export function PullRequestDescription(props: {
   return (
     <View className="gap-5">
       <View className="gap-3">
-        <PullRequestSectionHeading>
-          <T>Description</T>
-        </PullRequestSectionHeading>
+        {props.heading === false ? null : (
+          <PullRequestSectionHeading>
+            <T>Description</T>
+          </PullRequestSectionHeading>
+        )}
         {props.markdown.trim() ? (
           <View className="overflow-hidden">
             <View

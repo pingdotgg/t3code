@@ -30,7 +30,11 @@ export type PullRequestParams = {
   readonly navigationUrl?: string;
   readonly navigationId?: number;
   readonly initialSummary?: PullRequestListEntry | PullRequestSummary;
+  /** The Orbit task this was opened from; its Task row then goes back up to it. */
+  readonly fromTask?: PullRequestTaskLink;
 };
+
+export type PullRequestTaskLink = { readonly id: number; readonly title: string };
 
 export type PullRequestDiffParams = PullRequestParams & { readonly commit?: string };
 
