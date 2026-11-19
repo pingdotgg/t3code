@@ -2,7 +2,7 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { HomeProjectScope } from "../home/homeThreadList";
+import { buildHomeProjectScopes, type HomeProjectScope } from "../home/homeThreadList";
 import {
   getProjectScopeSelectionTarget,
   isSameRepository,
@@ -60,6 +60,29 @@ function makeScope(projects: ReadonlyArray<EnvironmentProject>): HomeProjectScop
 }
 
 describe("getProjectScopeSelectionTarget", () => {
+  it("chooses an open copy of a repository over an archived copy on the preferred machine", () => {
+    const repo = { repositoryKey: "github.com/t3tools/t3code" };
+    const archived = {
+      ...makeProject("archived-copy", "mac", repo),
+      archivedAt: "2026-07-02T00:00:00.000Z",
+    };
+    const open = makeProject("open-copy", "server", repo);
+    const [scope] = buildHomeProjectScopes({
+      projects: [archived, open],
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+    if (!scope || scope.archived) throw new Error("Expected a pickable repository group");
+
+    expect(
+      getProjectScopeSelectionTarget(
+        scope,
+        archived.environmentId,
+        new Set([archived.environmentId, open.environmentId]),
+      ).id,
+    ).toBe(open.id);
+  });
+
   it("prefers a connected copy of a project that spans environments", () => {
     const mac = makeProject("t3code", "mac");
     const server = makeProject("t3code", "server");
@@ -199,6 +222,30 @@ describe("resolveDraftProjectSelection", () => {
         pickerClosed: true,
       }),
     ).toEqual({ kind: "pick" });
+  });
+
+  it("starts a share draft in the last project when Use last project is on", () => {
+    const scopes = [makeScope([projects[0]!]), makeScope([projects[1]!])];
+    const shareDraft = {
+      incomingShareId: "share",
+      pickerClosed: false,
+      useLastProject: undefined,
+      lastProject: { environmentId: "environment", projectId: "t3code-2" },
+    };
+    expect(resolveDraftProjectSelection(null, projects, scopes, shareDraft)).toEqual({
+      kind: "select",
+      project: projects[1],
+    });
+    expect(
+      resolveDraftProjectSelection(null, projects, scopes, {
+        ...shareDraft,
+        useLastProject: false,
+      }),
+    ).toEqual({ kind: "pick" });
+    const archived = [projects[0]!, { ...projects[1]!, archivedAt: "2026-07-02T00:00:00.000Z" }];
+    expect(resolveDraftProjectSelection(null, archived, scopes, shareDraft)).toEqual({
+      kind: "pick",
+    });
   });
 });
 
