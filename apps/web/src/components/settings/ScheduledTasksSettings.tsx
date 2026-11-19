@@ -2309,7 +2309,10 @@ function ScheduledTaskEditorForm({
               <Label htmlFor="scheduled-task-enabled">
                 <T>Enabled</T>
               </Label>
-              <p id="scheduled-task-enabled-description" className="text-body text-muted-foreground">
+              <p
+                id="scheduled-task-enabled-description"
+                className="text-body text-muted-foreground"
+              >
                 <T>Disabled tasks stay saved but do not run.</T>
               </p>
             </div>
