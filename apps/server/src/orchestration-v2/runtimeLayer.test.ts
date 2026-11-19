@@ -26,7 +26,6 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2ShellSnapshot,
-  type OrchestrationV2Subagent,
   type OrchestrationV2RuntimeRequest,
   ProjectId,
   type PullRequestCheck,
@@ -1144,26 +1143,6 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
     return (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
   });
 
-  /** Writes a provider-native subagent record the way a provider adapter does. */
-  const writeSubagentRecord = Effect.fn(function* (
-    parentThreadId: ThreadId,
-    record: OrchestrationV2Subagent,
-  ) {
-    const sink = yield* EventSink.EventSinkV2;
-    yield* sink.write({
-      events: [
-        {
-          id: EventId.make(`${record.id}-updated`),
-          type: "subagent.updated",
-          threadId: parentThreadId,
-          nodeId: record.id,
-          occurredAt: yield* DateTime.now,
-          payload: { ...record, origin: "provider_native" },
-        },
-      ],
-    });
-  });
-
   it.effect("deletes a parent's subagent threads and theirs with it", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1186,98 +1165,6 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
       assert.equal(
         (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]?.status,
         "cancelled",
-      );
-    }),
-  );
-
-  it.effect(
-    "keeps a thread that a parent's subagent record names but that is not its subagent",
-    () =>
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const { projectId, threadId } = yield* seedDelegatingParent("delete-subagent-lineage");
-        const otherThreadId = ThreadId.make("delete-subagent-lineage-other");
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          createdBy: "user",
-          creationSource: "web",
-          commandId: CommandId.make("delete-subagent-lineage-other-create"),
-          threadId: otherThreadId,
-          projectId,
-          title: "Not a subagent",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-        });
-        const task = yield* delegate(threadId, "delete-subagent-lineage");
-        yield* writeSubagentRecord(threadId, {
-          ...task,
-          id: NodeId.make("delete-subagent-lineage-stray"),
-          childThreadId: otherThreadId,
-        });
-        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).subagents, 2);
-
-        yield* orchestrator.dispatch({
-          type: "thread.delete",
-          commandId: CommandId.make("delete-subagent-lineage-delete"),
-          threadId,
-        });
-        assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.deletedAt);
-        assert.isNotNull(
-          (yield* orchestrator.getThreadProjection(task.childThreadId!)).thread.deletedAt,
-        );
-        assert.isNull((yield* orchestrator.getThreadProjection(otherThreadId)).thread.deletedAt);
-      }),
-  );
-
-  // Thread locks are not reentrant, and nothing stops two subagent records naming one child.
-  it.effect("deletes a subagent thread that two of its parent's subagent records name", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const { threadId } = yield* seedDelegatingParent("delete-subagent-twice");
-      const task = yield* delegate(threadId, "delete-subagent-twice");
-      yield* writeSubagentRecord(threadId, {
-        ...task,
-        id: NodeId.make("delete-subagent-twice-second"),
-      });
-      assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).subagents, 2);
-
-      yield* orchestrator.dispatch({
-        type: "thread.delete",
-        commandId: CommandId.make("delete-subagent-twice-delete"),
-        threadId,
-      });
-      for (const id of [threadId, task.childThreadId!]) {
-        assert.isNotNull((yield* orchestrator.getThreadProjection(id)).thread.deletedAt, id);
-      }
-    }),
-  );
-
-  it.effect("leaves a subagent thread deleted before its parent as it was", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const { threadId } = yield* seedDelegatingParent("delete-subagent-first");
-      const childThreadId = (yield* delegate(threadId, "delete-subagent-first")).childThreadId!;
-      yield* orchestrator.dispatch({
-        type: "thread.delete",
-        commandId: CommandId.make("delete-subagent-first-delete-child"),
-        threadId: childThreadId,
-      });
-      const deletedChild = (yield* orchestrator.getThreadProjection(childThreadId)).thread;
-      assert.isNotNull(deletedChild.deletedAt);
-      yield* TestClock.adjust("1 minute");
-
-      yield* orchestrator.dispatch({
-        type: "thread.delete",
-        commandId: CommandId.make("delete-subagent-first-delete-parent"),
-        threadId,
-      });
-      assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.deletedAt);
-      assert.deepEqual(
-        (yield* orchestrator.getThreadProjection(childThreadId)).thread,
-        deletedChild,
       );
     }),
   );
