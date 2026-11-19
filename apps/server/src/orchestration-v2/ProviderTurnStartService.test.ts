@@ -22,6 +22,7 @@ import {
   ProviderSetupError,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   ProjectId,
   EnvironmentId,
@@ -465,6 +466,7 @@ function makeLocalCommandHarness(input: {
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly createdBy?: "agent" | "system";
+  readonly scheduledTaskId?: ScheduledTaskId;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
   readonly ensureThreadFailure?: unknown;
@@ -563,6 +565,7 @@ function makeLocalCommandHarness(input: {
     streaming: false,
     createdBy: input.createdBy ?? "user",
     creationSource: input.createdBy === undefined ? "web" : "mcp",
+    ...(input.scheduledTaskId === undefined ? {} : { scheduledTaskId: input.scheduledTaskId }),
     createdAt: now,
     updatedAt: now,
   };
@@ -3047,29 +3050,35 @@ effectIt.effect.each(["not_loaded", "error"] as const)(
     }),
 );
 
-effectIt.effect("refuses a provider sign-out that an agent or scheduled task sent", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({
-      text: " /LOGOUT ",
-      createdBy: "agent",
-      previousNativeSession: true,
-    });
+for (const sender of [
+  { name: "an agent", createdBy: "agent" as const },
+  // A scheduled delivery keeps its task author's createdBy.
+  { name: "a scheduled task", scheduledTaskId: ScheduledTaskId.make("task") },
+]) {
+  effectIt.effect(`refuses a provider sign-out that ${sender.name} sent`, () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: " /LOGOUT ",
+        ...sender,
+        previousNativeSession: true,
+      });
 
-    yield* harness.start;
+      yield* harness.start;
 
-    expect(harness.tryHandlePromptCommand).not.toHaveBeenCalled();
-    expect(harness.open).not.toHaveBeenCalled();
-    expect(harness.startRootRun).not.toHaveBeenCalled();
-    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
-    expect(harness.projection().turnItems).toMatchObject([
-      {
-        type: "error",
-        title: "Provider sign-out failed",
-        failure: { class: "permission_error" },
-      },
-    ]);
-  }),
-);
+      expect(harness.tryHandlePromptCommand).not.toHaveBeenCalled();
+      expect(harness.open).not.toHaveBeenCalled();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+      expect(harness.projection().turnItems).toMatchObject([
+        {
+          type: "error",
+          title: "Provider sign-out failed",
+          failure: { class: "permission_error" },
+        },
+      ]);
+    }),
+  );
+}
 
 for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
   effectIt.effect(

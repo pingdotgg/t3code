@@ -637,8 +637,9 @@ export const layer: Layer.Layer<
         const isEmptyCompaction =
           providerMessage.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
         // Only a person signs a provider out from chat; their RPC checks providers:manage.
+        // A scheduled delivery carries its task author's createdBy, so it is excluded by its task.
         const isUnauthorizedSignOut =
-          providerMessage.createdBy !== "user" &&
+          (providerMessage.createdBy !== "user" || providerMessage.scheduledTaskId !== undefined) &&
           providerMessage.text.trim().toLowerCase() === "/logout";
         // Preparation may select a new provider; account commands still target the last native session.
         const nativeThreads = new Map(
