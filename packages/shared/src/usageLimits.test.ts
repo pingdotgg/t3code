@@ -126,6 +126,8 @@ describe("new thread model fallback", () => {
     ).toBeDefined();
   });
   it.each([
+    ["claudeAgent", ["seven_day_fable"], "claude-opus-5-5", false, undefined, undefined],
+    ["claudeAgent", ["seven_day_fable"], "claude-fable-5-2", true, undefined, undefined],
     ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false, undefined, undefined],
     ["cursor", ["autoPercentUsed"], "composer-2.5", false, undefined, undefined],
     ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true, undefined, undefined],

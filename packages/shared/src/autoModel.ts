@@ -5,7 +5,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
-import { exhaustedUsageWindow } from "./usageLimits.ts";
+import { exhaustedUsageWindow, usageWindowLimitsModel } from "./usageLimits.ts";
 
 /**
  * "Auto" is a custom model (slug `auto`) on any provider instance. Picking it never reaches
@@ -59,7 +59,7 @@ const opencode = (model: string, effort: string): AutoCandidate => ({
  */
 const AUTO_CANDIDATES: Readonly<Record<AutoLevel, ReadonlyArray<AutoCandidate>>> = {
   high: [
-    claude("claude-opus-5-5", "xhigh"),
+    claude("claude-opus-5-5", "max"),
     antigravity("claude-opus-4-6-thinking", "high"),
     codex("gpt-6.1-sol", "high"),
     codex("gpt-6-astra", "high"),
@@ -155,37 +155,73 @@ function autoLevelOf(selection: ModelSelection): AutoLevel {
 
 /** Accounts whose 5-hour use differs by less than this many points count as equally far along. */
 const SESSION_BAND_PERCENT = 10;
+/** Weekly paces within this share of each other count as equal. */
+const PACE_BAND = 0.15;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
 
 function sessionUsedPercent(provider: ServerProvider): number {
   const windows = (provider.usageLimits?.windows ?? []).filter((w) => w.kind === "session");
   return Math.max(0, ...windows.map((w) => w.usedPercent ?? 0));
 }
 
-/** When the soonest weekly window resets; unused weekly quota is lost then. */
-function weeklyResetAt(provider: ServerProvider): number {
-  const resets = (provider.usageLimits?.windows ?? [])
-    .filter((w) => w.kind === "weekly" && w.resetsAt !== undefined)
-    .map((w) => Date.parse(w.resetsAt!))
-    .filter(Number.isFinite);
-  return resets.length > 0 ? Math.min(...resets) : Infinity;
+/**
+ * Weekly windows that limit `model` (a one-model window counts only for it) and when each
+ * resets. A window with no reported reset, such as one that has not started, counts as a full
+ * window from now.
+ */
+function weeklyWindows(provider: ServerProvider, model: string, now: number) {
+  return (provider.usageLimits?.windows ?? []).flatMap((w) => {
+    if (w.kind !== "weekly" || !usageWindowLimitsModel(provider, w, model)) return [];
+    const resetsAt =
+      w.resetsAt === undefined
+        ? now + (w.windowDurationMins ?? Number.NaN) * MINUTE
+        : Date.parse(w.resetsAt);
+    return Number.isFinite(resetsAt) ? [{ usedPercent: w.usedPercent, resetsAt }] : [];
+  });
 }
 
 /**
- * Best instance first: Auto-aware, then accounts under 90% everywhere. Among those, the further
- * along 5-hour window, so windows stagger (one refreshes while the other runs); within 10
- * points, the sooner weekly reset. Past 90% everywhere, the most left.
+ * Weekly % left per hour until that window resets: the burn rate that spends the quota exactly
+ * at its reset, when whatever is left is lost. The tightest window decides; undefined without
+ * weekly data.
  */
-function compareInstances(a: ServerProvider, b: ServerProvider): number {
+function weeklyPace(provider: ServerProvider, model: string, now: number): number | undefined {
+  const paces = weeklyWindows(provider, model, now).map(
+    (w) => (100 - w.usedPercent) / (Math.max(w.resetsAt - now, MINUTE) / HOUR),
+  );
+  return paces.length > 0 ? Math.min(...paces) : undefined;
+}
+
+/** When the soonest weekly window resets; unused weekly quota is lost then. */
+function weeklyResetAt(provider: ServerProvider, model: string, now: number): number {
+  return Math.min(...weeklyWindows(provider, model, now).map((w) => w.resetsAt));
+}
+
+/** The higher pace first; paces within 15% tie, and an account without weekly data goes last. */
+function comparePace(a: number | undefined, b: number | undefined): number {
+  if (a === undefined || b === undefined) return Number(a === undefined) - Number(b === undefined);
+  return Math.abs(a - b) > PACE_BAND * Math.max(a, b) ? b - a : 0;
+}
+
+/**
+ * Best instance for `model` first: Auto-aware, then accounts under 90% everywhere. Among those,
+ * the higher weekly pace, so the quota a reset would waste is spent first. With similar paces,
+ * the further along 5-hour window, so windows stagger (one refreshes while the other runs);
+ * within 10 points, the sooner weekly reset. Past 90% everywhere, the most left.
+ */
+function compareInstances(a: ServerProvider, b: ServerProvider, model: string, now: number) {
   const aware = Number(isAutoAware(b)) - Number(isAutoAware(a));
   if (aware !== 0) return aware;
   const room = Number(hasRoom(b)) - Number(hasRoom(a));
   if (room !== 0) return room;
   if (!hasRoom(a)) return peakUsedPercent(a) - peakUsedPercent(b);
+  const pace = comparePace(weeklyPace(a, model, now), weeklyPace(b, model, now));
+  if (pace !== 0) return pace;
   const session = sessionUsedPercent(b) - sessionUsedPercent(a);
   if (Math.abs(session) >= SESSION_BAND_PERCENT) return session;
-  const weekly = weeklyResetAt(a) - weeklyResetAt(b);
+  const weekly = weeklyResetAt(a, model, now) - weeklyResetAt(b, model, now);
   if (Number.isFinite(weekly) && weekly !== 0) return weekly;
-  if (weekly === Infinity || weekly === -Infinity) return weekly > 0 ? 1 : -1;
   return session || peakUsedPercent(a) - peakUsedPercent(b);
 }
 
@@ -304,7 +340,7 @@ export function resolveAutoModelSelection(input: {
           open(provider, candidate.model),
       )
       // A copy: `filter` already returned a new array, and Hermes has no `toSorted`.
-      .sort(compareInstances);
+      .sort((a, b) => compareInstances(a, b, candidate.model, input.now));
     const provider = instances[0];
     if (provider) {
       return { selection: toSelection(provider, candidate, level), level, sticky: false };

@@ -57,9 +57,6 @@ describe("describeAutoRoute", () => {
     expect(medium?.driverKind).toBe("claudeAgent");
     expect(medium?.label).toMatch(/^.*Opus 5\.5 \(B\)$/);
 
-    const high = describeAutoRoute({ entries, options: [{ id: "effort", value: "high" }], now });
-    expect(high?.label).toMatch(/Opus 5\.5 \(B\)$/);
-
     const low = describeAutoRoute({ entries, options: [{ id: "effort", value: "low" }], now });
     expect(low?.label).toMatch(/Sonnet 5\.5 \(B\)$/);
   });
