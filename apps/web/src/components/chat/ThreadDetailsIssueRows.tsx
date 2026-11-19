@@ -19,6 +19,11 @@ import {
   PullRequestRowLines,
 } from "../pullRequest/PullRequestListRow";
 import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
+import {
+  PAGE_ROW_CLASS,
+  PAGE_ROW_HOVER_CLASS,
+  PAGE_ROW_PRESS_CLASS,
+} from "../pullRequest/PullRequestRow";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -135,7 +140,9 @@ function LinkedIssueRow({
       {...anchorProps}
       className={cn(
         PULL_REQUEST_ROW_CLASS,
-        "px-2 hover:bg-accent/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
+        PAGE_ROW_CLASS,
+        PAGE_ROW_HOVER_CLASS,
+        PAGE_ROW_PRESS_CLASS,
       )}
     >
       {lines}

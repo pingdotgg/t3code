@@ -35,15 +35,21 @@ export const issuesSearchFromUrl = (raw: Record<string, unknown>): IssuesSearch 
   key: bounded(raw.key),
 });
 
-const distinguishTitles = <Project extends { readonly title: string }>(
-  projects: ReadonlyArray<Project>,
-  suffix: (project: Project) => string,
-) => {
+type Labeled<Project> = Project & {
+  readonly label: string;
+  readonly details: ReadonlyArray<string>;
+};
+
+const distinguish = <Project>(
+  projects: ReadonlyArray<Labeled<Project>>,
+  detail: (project: Project) => string,
+): ReadonlyArray<Labeled<Project>> => {
   const counts = new Map<string, number>();
-  for (const project of projects) counts.set(project.title, (counts.get(project.title) ?? 0) + 1);
+  const key = (project: Labeled<Project>) => JSON.stringify([project.label, project.details]);
+  for (const project of projects) counts.set(key(project), (counts.get(key(project)) ?? 0) + 1);
   return projects.map((project) =>
-    (counts.get(project.title) ?? 0) > 1
-      ? { ...project, title: `${project.title} · ${suffix(project)}` }
+    (counts.get(key(project)) ?? 0) > 1
+      ? { ...project, details: [...project.details, detail(project)] }
       : project,
   );
 };
@@ -53,13 +59,19 @@ export const issueFilterProjects = (
   projects: ReadonlyArray<EnvironmentProject>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
 ) => {
-  const byServer = distinguishTitles(
-    projects.filter((project) => !project.isScratch),
+  const labeled = projects
+    .filter((project) => !project.isScratch)
+    .map((project) => ({ ...project, label: project.title, details: [] as string[] }));
+  const byServer = distinguish(
+    labeled,
     (project) => environmentLabels.get(project.environmentId) ?? project.environmentId,
   );
-  const byPath = distinguishTitles(byServer, (project) => project.workspaceRoot);
-  const byEnvironment = distinguishTitles(byPath, (project) => project.environmentId);
-  return distinguishTitles(byEnvironment, (project) => project.id).toSorted((left, right) =>
-    left.title.localeCompare(right.title),
-  );
+  const byPath = distinguish(byServer, (project) => project.workspaceRoot);
+  const byEnvironment = distinguish(byPath, (project) => project.environmentId);
+  return distinguish(byEnvironment, (project) => project.id)
+    .map(({ label, details, ...project }) => ({
+      ...project,
+      title: details.length === 0 ? label : `${label} (${details.join(", ")})`,
+    }))
+    .toSorted((left, right) => left.title.localeCompare(right.title));
 };
