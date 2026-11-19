@@ -489,22 +489,17 @@ function CloudLinkSwitch({
   readonly pending?: boolean;
 }) {
   const gt = useGT();
-  const toggle = (
-    <Switch
-      aria-label={ariaLabel ?? gt("Enable T3 Connect")}
-      aria-busy={pending || undefined}
-      checked={checked}
-      disabled={disabled}
-      {...(onCheckedChange ? { onCheckedChange } : {})}
-    />
-  );
-  const control = pending ? (
+  const control = (
     <span className="inline-flex items-center gap-2">
-      <Spinner size="sm" tone="muted" />
-      {toggle}
+      {pending ? <Spinner size="sm" tone="muted" /> : null}
+      <Switch
+        aria-label={ariaLabel ?? gt("Enable T3 Connect")}
+        aria-busy={pending || undefined}
+        checked={checked}
+        disabled={disabled}
+        {...(onCheckedChange ? { onCheckedChange } : {})}
+      />
     </span>
-  ) : (
-    toggle
   );
   return disabledReason ? (
     <Tooltip>
