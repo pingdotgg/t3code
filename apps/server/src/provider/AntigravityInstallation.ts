@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest or free-space query.
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ModelManifest from "./ModelManifest.ts";
-import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
@@ -231,15 +230,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   const compatibility = Effect.fn("AntigravityInstallation.compatibility")(function* (
     version: string,
   ) {
-    const manifest = yield* manifestService.current;
-    return (
-      resolveProviderCompatibility(manifest.compatibility, DRIVER, version) ??
-      resolveProviderCompatibility(
-        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
-        DRIVER,
-        version,
-      )
-    );
+    return ModelManifest.providerCompatibility(yield* manifestService.current, DRIVER, version);
   });
   const isWithdrawn = Effect.fn("AntigravityInstallation.isWithdrawn")(function* (version: string) {
     const status = (yield* compatibility(version))?.status;

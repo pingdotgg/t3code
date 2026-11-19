@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
 import type { ProviderAuthController } from "../provider/ProviderAuthService.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as ModelManifest from "../provider/ModelManifest.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -40,6 +41,7 @@ const makeAdapter = (
 const makeInstance = (
   instanceId: ProviderInstanceId,
   orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"],
+  version: string | null = null,
 ): ProviderInstance => ({
   instanceId,
   driverKind: driver,
@@ -49,7 +51,9 @@ const makeInstance = (
   },
   displayName: String(instanceId),
   enabled: true,
-  snapshot: {} as ProviderInstance["snapshot"],
+  snapshot: {
+    getSnapshot: Effect.succeed({ version }),
+  } as unknown as ProviderInstance["snapshot"],
   orchestrationAdapter,
   textGeneration: {} as ProviderInstance["textGeneration"],
 });
@@ -68,18 +72,50 @@ const layerInstanceRegistry = Layer.succeed(ProviderInstanceRegistry.ProviderIns
   streamChanges: Stream.empty,
   subscribeChanges: Effect.never,
 });
-const layerTest = ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
-  Layer.provide(layerInstanceRegistry),
+const layerRegistry = ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+  Layer.provide(ModelManifest.layerTest),
 );
+const layerTest = layerRegistry.pipe(Layer.provide(layerInstanceRegistry));
 
 it.effect("routes two configured instances of the same driver independently", () =>
   Effect.gen(function* () {
     const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
 
-    assert.strictEqual(yield* registry.get(personalId), personalAdapter);
-    assert.strictEqual(yield* registry.get(workId), workAdapter);
+    assert.strictEqual((yield* registry.get(personalId)).instanceId, personalId);
+    assert.strictEqual((yield* registry.get(workId)).instanceId, workId);
     assert.deepEqual(yield* registry.list(), [personalId, workId]);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("refuses a session on a provider version the policy rates broken", () =>
+  Effect.gen(function* () {
+    const broken = makeInstance(personalId, personalAdapter, "0.100.0");
+    const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(
+      Effect.provide(
+        layerRegistry.pipe(
+          Layer.provide(
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              getInstance: () => Effect.succeed(broken),
+            }),
+          ),
+        ),
+      ),
+    );
+    const error = yield* (yield* registry.get(personalId))
+      .openSession({
+        threadId: ThreadId.make("broken-thread"),
+        providerSessionId: ProviderSessionId.make("broken-session"),
+        modelSelection: { instanceId: personalId, model: "test-model" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: "/workspace",
+        },
+      })
+      .pipe(Effect.flip);
+    assert.instanceOf(error, ProviderAdapter.ProviderAdapterOpenSessionError);
+    assert.include(String(error.cause), "0.100.0 does not work with this T3 Code release");
+  }),
 );
 
 it.effect(
@@ -104,7 +140,7 @@ it.effect(
         ProviderAdapterRegistry.ProviderAdapterRegistryV2,
       ).pipe(
         Effect.provide(
-          ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+          layerRegistry.pipe(
             Layer.provide(
               Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
                 getInstance: (id) =>
@@ -166,7 +202,7 @@ it.effect("interrupts admitted session startup when a shared peer signs out", ()
     ];
     const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(
       Effect.provide(
-        ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+        layerRegistry.pipe(
           Layer.provide(
             Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
               getInstance: (id) =>

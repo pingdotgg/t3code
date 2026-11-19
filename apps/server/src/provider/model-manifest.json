@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-19T00:00:00Z",
+  "updatedAt": "2026-11-19T23:30:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -35,6 +35,7 @@
     {
       "driver": "cursor",
       "t3CodeRange": ">=0.0.42",
+      "versionPattern": "^(\\d{4}\\.\\d{2}\\.\\d{2})-[a-f0-9]+$",
       "recommendedRange": ">=2026.05.09",
       "ranges": [
         { "range": ">=2026.05.09", "status": "supported" },
@@ -75,6 +76,7 @@
     {
       "driver": "antigravity",
       "t3CodeRange": ">=0.0.42 <0.1.10",
+      "versionPattern": "^(?:agy_acp_server_)?(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?$",
       "recommendedRange": "=1.4.5 || =1.4.1",
       "ranges": [
         { "range": "=1.4.5", "status": "supported" },
@@ -86,6 +88,7 @@
     {
       "driver": "antigravity",
       "t3CodeRange": ">=0.1.10",
+      "versionPattern": "^(?:agy_acp_server_)?(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?$",
       "recommendedRange": ">=1.5.12 <2",
       "ranges": [
         { "range": ">=1.5.0 <2", "status": "supported" },
@@ -110,6 +113,7 @@
     {
       "driver": "muse",
       "t3CodeRange": ">=0.0.46",
+      "versionPattern": "^(\\d+\\.\\d+\\.\\d+)-R\\d+(?:\\.\\d+)?$",
       "recommendedRange": ">=1.4.2",
       "ranges": [
         { "range": ">=1.4.2", "status": "supported" },
