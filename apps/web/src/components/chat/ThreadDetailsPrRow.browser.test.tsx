@@ -1,3 +1,5 @@
+import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
   IssueTrackerKind,
@@ -12,6 +14,8 @@ import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
+  issuesSupported: false,
+  isDraft: false,
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
@@ -26,6 +30,10 @@ const state = vi.hoisted(() => ({
   projectMergeMethods: {} as Record<string, "merge" | "squash" | "rebase">,
 }));
 
+vi.mock(import("~/state/use-atom-command"), () => ({
+  useAtomCommand: (() => state.perform) as never,
+}));
+
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   // Rows render a pull request only with a project, so this does not reach tests that pass none.
@@ -33,13 +41,15 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
     new Map([
       [
         EnvironmentId.make("environment"),
-        { environment: { capabilities: { pullRequests: true } } },
+        { environment: { capabilities: { pullRequests: true, issues: state.issuesSupported } } },
       ],
     ])) as never,
   useProjects: (() => state.projects) as never,
   useQuietThreadShell: ((ref: unknown) =>
     ref === null ? null : { branch: null, pullRequests: state.pullRequests }) as never,
 }));
+vi.mock(import("~/state/issues"), () => ({ useLinkedIssueDetail: () => null }));
+
 const queryData = () => ({
   projectId: ProjectId.make("project"),
   workspaceRoot: "/workspace",
@@ -47,7 +57,7 @@ const queryData = () => ({
   number: 1,
   title: "Test PR",
   state: "open",
-  isDraft: false,
+  isDraft: state.isDraft,
   mergeability: "mergeable",
   headBranch: "feature",
   baseBranch: "main",
@@ -60,8 +70,8 @@ const queryData = () => ({
     description: null,
     url: null,
   })),
-  capabilities: { actions: ["merge"], mergeMethods: state.mergeMethods },
-  viewerPermissions: { actions: ["merge"] },
+  capabilities: { actions: ["merge", "ready"], mergeMethods: state.mergeMethods },
+  viewerPermissions: { actions: ["merge", "ready"] },
   mergeCapabilities: {
     merge: state.mergeMethods.includes("merge"),
     squash: state.mergeMethods.includes("squash"),
@@ -87,7 +97,6 @@ vi.mock(import("~/state/query"), async (importOriginal) => ({
 }));
 vi.mock(import("../pullRequest/usePullRequestActions"), async (importOriginal) => ({
   ...(await importOriginal()),
-  usePullRequestActionRunner: () => ({ actionPending: false, perform: state.perform }),
   usePullRequestDefaultMergeMethodResolver: ((_environmentId: unknown, projectId: unknown) => () =>
     state.projectMergeMethods[String(projectId)]) as never,
 }));
@@ -120,7 +129,6 @@ import { act, render as renderUi } from "../../../test/render";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useUiStateStore } from "~/uiStateStore";
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
-import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import { ThreadDetailsThreadPrRows } from "./ThreadDetailsPrRows";
 
 const threadRef: ScopedThreadRef = {
@@ -139,6 +147,9 @@ const repositoryProject = {
   environmentId: EnvironmentId.make("environment"),
   title: "repo",
   workspaceRoot: "/work/repo",
+  defaultModelSelection: null,
+  createdAt: "2026-11-18T00:00:00.000Z",
+  updatedAt: "2026-11-18T00:00:00.000Z",
   scripts: [],
   repositoryIdentity: {
     canonicalKey: "github.com/owner/repo",
@@ -152,7 +163,7 @@ const repositoryProject = {
     name: "repo",
     displayName: "owner/repo",
   },
-};
+} satisfies EnvironmentProject;
 
 const clickButton = async (scope: ParentNode, label: string) =>
   await act(async () => {
@@ -173,7 +184,7 @@ it("merges with the last selected merge method", async () => {
         pr={null}
         number={1}
         status={null}
-        project={null}
+        project={repositoryProject}
         label="Test PR"
         onOpen={vi.fn()}
       />,
@@ -189,7 +200,11 @@ it("merges with the last selected merge method", async () => {
   const dialog = document.querySelector('[role="alertdialog"]')!;
   expect(dialog.textContent).toContain("using squash");
   await clickMerge(dialog);
-  expect(state.perform).toHaveBeenCalledWith("merge", "squash");
+  expect(state.perform).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({ action: "merge", mergeMethod: "squash" }),
+    }),
+  );
 });
 
 it("requires a new merge click after passing checks become pending and pass again", async () => {
@@ -201,7 +216,7 @@ it("requires a new merge click after passing checks become pending and pass agai
       pr={null}
       number={1}
       status={null}
-      project={null}
+      project={repositoryProject}
       label="Test PR"
       onOpen={vi.fn()}
     />
@@ -233,7 +248,7 @@ it("requires a new merge click after passing checks become pending and pass agai
 });
 
 async function setup() {
-  state.perform.mockReset();
+  state.perform.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   state.checkoutError = null;
   state.newThread.mockReset().mockResolvedValue({
     draftId: DraftId.make("new-draft"),
@@ -243,6 +258,8 @@ async function setup() {
   state.addToast.mockReset().mockReturnValue("checkout-toast");
   state.updateToast.mockReset();
 
+  state.issuesSupported = false;
+  state.isDraft = false;
   state.status = "success";
   state.extraStatus = null;
   state.mergeMethods = ["merge"];
@@ -264,7 +281,7 @@ it("adds the failing checks to a given composer instead of opening a new thread"
         pr={null}
         number={1}
         status={null}
-        project={null}
+        project={repositoryProject}
         label="Test PR"
         onOpen={vi.fn()}
         composerTarget={threadRef}
@@ -361,6 +378,13 @@ it("names a linked pull request row by its kind, number and title, not its URL",
   expect(name).toMatch(/pull request/i);
   expect(name).toContain("#1");
   expect(name).toContain("Test PR");
+  const exposedNumbers = [...screen.container.querySelectorAll("span")].filter(
+    (span) =>
+      span.textContent?.trim() === "#1" &&
+      span.closest("button") === null &&
+      span.closest('[aria-hidden="true"]') === null,
+  );
+  expect(exposedNumbers).toHaveLength(0);
 });
 
 it("names a linked issue row by its kind, number and title, not its URL", async () => {
@@ -382,16 +406,67 @@ it("names a linked issue row by its kind, number and title, not its URL", async 
             title: "Sidebar flickers on resize",
           },
         ]}
-        onOpenLink={vi.fn()}
+        threadRef={{
+          environmentId: EnvironmentId.make("environment"),
+          threadId: ThreadId.make("thread"),
+        }}
       />,
     );
   });
-  const row = [...screen.container.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("Sidebar flickers on resize"),
+  const row = [...screen.container.querySelectorAll("a")].find((anchor) =>
+    anchor.textContent?.includes("Sidebar flickers on resize"),
   )!;
   const name = row.getAttribute("aria-label") ?? row.textContent ?? "";
   expect(name).not.toContain("https://");
   expect(name).toMatch(/issue/i);
   expect(name).toContain("#123");
   expect(name).toContain("Sidebar flickers on resize");
+  const externalClick = new MouseEvent("click", { bubbles: true, cancelable: true });
+  await act(async () => {
+    row.dispatchEvent(externalClick);
+  });
+  expect(externalClick.defaultPrevented).toBe(false);
+});
+
+it("keeps Ready pending when refreshed detail becomes mergeable before the action settles", async () => {
+  await using screen = await setup();
+  const row = () => (
+    <ThreadDetailsPrRow
+      environmentId={EnvironmentId.make("environment")}
+      pr={null}
+      number={1}
+      status={null}
+      project={repositoryProject}
+      label="Test PR"
+      onOpen={vi.fn()}
+    />
+  );
+  let finish!: (result: { _tag: "Success"; value: undefined }) => void;
+  const result = new Promise<{ _tag: "Success"; value: undefined }>((resolve) => {
+    finish = resolve;
+  });
+  state.perform.mockReturnValueOnce(result);
+  state.isDraft = true;
+  await screen.rerender(row());
+  await clickButton(screen.container, "Ready");
+  expect(state.perform).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({
+        projectId: repositoryProject.id,
+        repository: "owner/repo",
+        number: 1,
+        action: "ready",
+      }),
+    }),
+  );
+  await expect.element(screen.getByRole("button", { name: "Marking..." })).toBeDisabled();
+
+  state.isDraft = false;
+  await screen.rerender(row());
+  await expect.element(screen.getByRole("button", { name: "Marking..." })).toBeDisabled();
+  await act(async () => {
+    finish({ _tag: "Success", value: undefined });
+    await result;
+  });
+  await expect.element(screen.getByRole("button", { name: "Merge", exact: true })).toBeEnabled();
 });
