@@ -994,7 +994,7 @@ export function NewTaskDraftScreen(props: {
     return (
       <ThreadScreenFallback header={<AppBar title={gt("New thread")} onBack={goBack} />}>
         <View className="flex-1 justify-end gap-3 p-4">
-          {environmentControl}
+          {contextControls}
           <Text className="text-foreground-muted">
             <T>
               Your draft is saved on this device. Connect to an environment to choose its first
