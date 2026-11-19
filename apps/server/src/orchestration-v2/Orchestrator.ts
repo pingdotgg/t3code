@@ -3384,17 +3384,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       turnItemStatuses: ["pending"],
       ...(runIds === undefined ? {} : { turnItemRunIds: runIds }),
     });
-    const unread = turnItems
-      .filter(
-        (item) =>
-          item.type === "user_message" &&
-          (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer"),
-      )
-      .toSorted((left, right) => left.ordinal - right.ordinal);
+    const unread = turnItems.filter(
+      (item) =>
+        item.type === "user_message" &&
+        (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer"),
+    );
     if (unread.length === 0) return;
     const projection = yield* projectionStore.getThreadRecords(threadId, ["runs", "messages"], {
       messageIds: unread.flatMap((item) => (item.type === "user_message" ? [item.messageId] : [])),
     });
+    const placed = [];
     for (const item of unread) {
       const run = projection.runs.find((candidate) => candidate.id === item.runId);
       const message = projection.messages.find(
@@ -3451,30 +3450,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       // The message's first steer effect recorded which runs were queued before it was sent; a
       // queued message that was promoted also stays behind only the runs queued before its own.
-      const steer = Option.getOrUndefined(
+      const firstSteer = Option.getOrUndefined(
         yield* effectOutbox.firstSteer(threadId, message.id),
       )?.request;
-      const steeredAfter =
-        steer?.type === "provider-turn.steer" ? steer.steerFollowUpAfterRunOrdinal : undefined;
+      const steer = firstSteer?.type === "provider-turn.steer" ? firstSteer : undefined;
+      const afterRunOrdinal = Math.max(
+        0,
+        Math.min(
+          steer?.steerFollowUpAfterRunOrdinal ??
+            Math.max(...projection.runs.map((candidate) => candidate.ordinal)),
+          ...projection.runs.flatMap((candidate) =>
+            candidate.userMessageId === message.id ? [candidate.ordinal - 1] : [],
+          ),
+        ),
+      );
+      placed.push({ item, run, message, steer, afterRunOrdinal });
+    }
+    // Each requeue starts the queue once it commits, so earlier places go first.
+    placed.sort(
+      (left, right) =>
+        left.afterRunOrdinal - right.afterRunOrdinal || left.item.ordinal - right.item.ordinal,
+    );
+    for (const { run, message, steer, afterRunOrdinal } of placed) {
       yield* dispatchWithReceiptEffect({
         type: "message.dispatch",
         commandId: CommandId.make(`command:unread-steer:${run.id}:${message.id}`),
         threadId,
         messageId: message.id,
         steerFollowUpOfRunId: run.id,
-        steerFollowUpAfterRunOrdinal: Math.max(
-          0,
-          Math.min(
-            steeredAfter ?? Math.max(...projection.runs.map((candidate) => candidate.ordinal)),
-            ...projection.runs.flatMap((candidate) =>
-              candidate.userMessageId === message.id ? [candidate.ordinal - 1] : [],
-            ),
-          ),
-        ),
-        modelSelection:
-          steer?.type === "provider-turn.steer" && steer.modelSelection !== undefined
-            ? steer.modelSelection
-            : run.modelSelection,
+        steerFollowUpAfterRunOrdinal: afterRunOrdinal,
+        modelSelection: steer?.modelSelection ?? run.modelSelection,
         text: message.text,
         ...(message.context ? { context: message.context } : {}),
         attachments: message.attachments,
