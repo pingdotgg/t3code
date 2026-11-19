@@ -503,6 +503,8 @@ function makeLocalCommandHarness(input: {
     readonly sourceRolledBack?: boolean;
     readonly switchedProvider?: boolean;
     readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
+    /** Starts this run as a fresh session, as `/clear` does. */
+    readonly freshContext?: boolean;
   };
 }) {
   const settledRuns: Array<string> = [];
@@ -803,7 +805,7 @@ function makeLocalCommandHarness(input: {
                     : input.sideChat.contextRun,
                 completedAt: now,
               },
-              run,
+              input.sideChat.freshContext ? { ...run, freshContext: true } : run,
             ],
       contextTransfers:
         input.sideChat.nativeForkFrom === undefined
@@ -2360,6 +2362,20 @@ effectIt.effect.each([
           delivery: { nativeThreadId: "side-chat-native", status: "inline" },
         },
       ]);
+    }),
+);
+
+effectIt.effect(
+  "a fresh session after a side chat's failed first run starts without its context",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "What do you know about the main thread?",
+        sideChat: { contextRun: "failed", freshContext: true },
+      });
+      yield* harness.start;
+      const texts = harness.startTurn.mock.calls.map(([turn]) => turn.message.text);
+      expect(texts).toEqual(["What do you know about the main thread?"]);
     }),
 );
 
