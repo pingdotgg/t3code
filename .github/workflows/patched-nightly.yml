@@ -65,7 +65,7 @@ jobs:
               continue
             fi
             # This commit is the fork-source copy of direct-apns-push.patch, which is re-anchored for upstream.
-            if [[ "$patch_commit" == "a165c53a2b"* ]]; then
+            if [[ "$patch_commit" == "a165c53a2b"* || "$patch_commit" == "4291a714e5"* ]]; then
               echo "Skipping $patch_commit; its behavior is carried by direct-apns-push.patch."
               continue
             fi
