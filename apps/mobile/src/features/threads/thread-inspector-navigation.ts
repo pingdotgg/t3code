@@ -7,10 +7,12 @@ import { useWorkspacePaneState } from "../layout/AdaptiveWorkspaceLayout";
 export type ThreadInspectorMode = "route" | "git" | "files" | "preview";
 
 export type ThreadInspectorTarget = {
-  readonly type: "thread" | "device";
+  readonly type: "thread" | "device" | "localPreview";
   readonly environmentId: string;
   readonly threadId: string;
   readonly deviceKey?: string;
+  /** The environment's localhost page a "localPreview" shows. */
+  readonly url?: string;
 };
 
 export const ThreadInspectorNavigationContext = createContext<

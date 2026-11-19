@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import { useSyncExternalStore } from "react";
 
@@ -15,7 +16,7 @@ export interface PullRequestFilesViewedView {
   readonly enabled: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
-  readonly setViewed: (path: string, viewed: boolean) => void;
+  readonly setViewed: (path: string, viewed: boolean, revision?: string) => void;
   readonly truncated: boolean;
   readonly error: string | null;
   readonly refresh: () => void;
@@ -37,6 +38,7 @@ export function usePullRequestFilesViewed(options: {
   const { environmentId, reference, enabled } = options;
   const query = useEnvironmentQuery(
     enabled ? pullRequestEnvironment.filesViewed({ environmentId, input: reference }) : null,
+    useMessages(),
   );
   const states = toFileViewedStates(query.data);
   // Stable per scope: `setViewed` is handed to every file header the viewer draws.

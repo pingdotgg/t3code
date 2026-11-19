@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { createContext, useContext, useState } from "react";
 import {
   pullRequestMediaSource,
@@ -47,12 +48,13 @@ export function PullRequestMedia(props: {
   readonly compact?: boolean;
 }) {
   const media = usePullRequestMediaUrl(props.url);
+  const gt = useGT();
   const visible = useContext(PullRequestMediaVisibleContext);
   const context = useContext(PullRequestMediaContext);
   const withGallery = useFilePreviewGallery();
   const [image, setImage] = useState<FilePreviewSource | null>(null);
   const [video, setVideo] = useState<VideoPreviewSource | null>(null);
-  const name = props.caption || new URL(props.url).pathname.split("/").pop() || "Attachment";
+  const name = props.caption || new URL(props.url).pathname.split("/").pop() || gt("Attachment");
   if (props.kind === "image")
     return (
       <>
@@ -117,12 +119,13 @@ export function PullRequestImageAttachment(props: {
   readonly gallery: readonly FilePreviewItem[];
 }) {
   const media = usePullRequestMediaUrl(props.url);
+  const gt = useGT();
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   return (
     <>
       <Pressable
         accessibilityRole="imagebutton"
-        accessibilityLabel={`View attachment: ${props.caption}`}
+        accessibilityLabel={gt("View attachment: {caption}", { caption: props.caption })}
         onPress={() => setPreview({ ...props.source, gallery: props.gallery })}
         className="gap-2 active:opacity-70"
         style={{ width: 176 }}
