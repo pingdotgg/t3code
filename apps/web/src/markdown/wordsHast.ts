@@ -756,6 +756,18 @@ function breakLines(paragraph: Element, breaks: boolean) {
  * The wrapper copying reads (markdown-clipboard's MATH_SELECTOR): the formula's TeX, as the source
  * Words drew it from, so copying any part of a formula copies the whole of it.
  */
+// A formula wider than its block scrolls, with room for the glyphs that reach past its box; in a
+// table it keeps its width and the table scrolls.
+const MATH_SCROLL = [
+  "max-w-full",
+  "overflow-x-auto",
+  "overflow-y-hidden",
+  "px-0.5",
+  "py-0.75",
+  "in-[.chat-markdown-table-container]:max-w-none",
+  "in-[.chat-markdown-table-container]:overflow-visible",
+];
+
 function mathWrapper(svg: Element): Element {
   const tex = String(svg.properties.ariaLabel ?? "").trim();
   const display = /display:\s*block/.test(String(svg.properties.style ?? ""));
@@ -764,12 +776,12 @@ function mathWrapper(svg: Element): Element {
     tagName: "span",
     properties: display
       ? {
-          className: ["chat-markdown-math-display", "block", "max-w-full", "overflow-x-auto"],
+          className: ["chat-markdown-math-display", "block", ...MATH_SCROLL],
           dataMarkdownMath: "display",
           dataMarkdownCopy: `\\[\n${tex}\n\\]\n\n`,
         }
       : {
-          className: ["inline-block", "max-w-full", "align-middle"],
+          className: ["inline-block", "align-middle", ...MATH_SCROLL],
           dataMarkdownMath: "inline",
           dataMarkdownCopy: `\\(${tex}\\)`,
         },
