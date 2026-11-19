@@ -8,6 +8,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   PULL_REQUEST_WATCH_WAKE_LIMIT,
   evaluatePullRequestWatch as evaluate,
+  pullRequestWatchEndMessage,
   pullRequestWatchMessage,
 } from "./pullRequestWatch.ts";
 
@@ -81,6 +82,45 @@ const remark = (
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
 
 describe("evaluatePullRequestWatch", () => {
+  it.each(["pending", "success"] as const)(
+    "reports a required rebase once with %s CI",
+    (status) => {
+      const blocked = detail({
+        mergeability: "unknown",
+        rebaseRequired: true,
+        checks: [check("test", status)],
+      });
+      const first = evaluatePullRequestWatch(watch(), blocked, noRemarks);
+      assert.include(
+        first.changes.map((change) => change.kind),
+        "needs-rebase",
+      );
+      assert.deepEqual(evaluatePullRequestWatch(first.next, blocked, noRemarks).changes, []);
+      const unknown = evaluatePullRequestWatch(
+        first.next,
+        { ...blocked, rebaseRequired: undefined },
+        noRemarks,
+      );
+      assert.deepEqual(evaluatePullRequestWatch(unknown.next, blocked, noRemarks).changes, []);
+      const clean = evaluatePullRequestWatch(
+        first.next,
+        { ...blocked, rebaseRequired: false },
+        noRemarks,
+      );
+      assert.deepEqual(evaluatePullRequestWatch(clean.next, blocked, noRemarks).changes, [
+        { kind: "needs-rebase" },
+      ]);
+      assert.include(
+        evaluatePullRequestWatch(
+          first.next,
+          { ...blocked, headSha: "bbbbbbbbbb" },
+          noRemarks,
+        ).changes.map((change) => change.kind),
+        "needs-rebase",
+      );
+    },
+  );
+
   it.each([false, true])("baselines already-passed checks (required: %s)", (required) => {
     const green = detail({ checks: [{ ...check("test", "success"), required }] });
     const baseline = evaluatePullRequestWatch(watch({ awaitingBaseline: "all" }), green, noRemarks);
@@ -115,6 +155,7 @@ describe("evaluatePullRequestWatch", () => {
     const broken = detail({
       checks: [check("lint", "failure"), check("test", "pending")],
       mergeability: "conflicting",
+      rebaseRequired: true,
     });
     const baseline = evaluatePullRequestWatch(
       watch({ awaitingBaseline: "all" }),
@@ -125,6 +166,7 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(baseline.next.failedChecks, ["lint"]);
     assert.isFalse(baseline.next.passed);
     assert.isTrue(baseline.next.conflicting);
+    assert.isTrue(baseline.next.rebaseRequired);
     assert.deepEqual(evaluatePullRequestWatch(baseline.next, broken, noRemarks).changes, []);
 
     const failed = evaluatePullRequestWatch(
@@ -135,11 +177,16 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(failed.changes, [
       { kind: "checks-failed", failed: [check("test", "failure")] },
     ]);
-    const clean = evaluatePullRequestWatch(failed.next, detail(), noRemarks);
+    const clean = evaluatePullRequestWatch(
+      failed.next,
+      detail({ rebaseRequired: false }),
+      noRemarks,
+    );
     assert.deepEqual(clean.changes, []);
     assert.deepEqual(evaluatePullRequestWatch(clean.next, broken, noRemarks).changes, [
       { kind: "checks-failed", failed: [check("lint", "failure")] },
       { kind: "conflicting" },
+      { kind: "needs-rebase" },
     ]);
   });
 
@@ -689,6 +736,47 @@ describe("evaluatePullRequestWatch", () => {
     assert.include(text, `"${"x".repeat(196)}..."`);
   });
 
+  it.each([
+    [
+      "a bot's leading badge",
+      '<a href="https://app.coderabbit.ai/change-stack/o/r/pull/1?cs_source=review_comment"><picture><source media="(prefers-color-scheme: dark)" srcset="https://coderabbit.ai/badge-dark.svg"><img alt="Severity > `Minor`" src="https://coderabbit.ai/badge.svg"></picture></a>\r\n\r\n_⚠️ Potential issue_ | _🟠 Major_\r\n\r\n**Guard the empty list.**',
+      "_⚠️ Potential issue_ | _🟠 Major_ **Guard the empty list.**",
+    ],
+    [
+      "tags in prose and a hidden comment",
+      "<!-- state -->\n<details>\n<summary>Why</summary>\n\n<p>Guard this</p>, then <br/>retry.\n</details>",
+      "Why Guard this , then retry.",
+    ],
+    [
+      "type arguments",
+      "Return Promise<void>, not Promise<A> or Vec<code>.",
+      "Return Promise<void>, not Promise<A> or Vec<code>.",
+    ],
+    [
+      "code spans and fences",
+      "Replace `<div>` with ``<span>``:\n~~~html\n<p>Done</p>\n~~~\r\nor\r\n```html\r\n<b>Done</b>\r\n```",
+      "Replace `<div>` with ``<span>``: ~~~html <p>Done</p> ~~~ or ```html <b>Done</b> ```",
+    ],
+    [
+      "indented code",
+      "Use this replacement:\n\n    <div>\n      <span>Ready</span>\n    </div>\n\nKeep the <b>wrapper</b>.",
+      "Use this replacement: <div> <span>Ready</span> </div> Keep the wrapper .",
+    ],
+    ["an indented continuation of an HTML block", "<div>\n    <span>Ready</span>\n</div>", "Ready"],
+  ])("quotes a remark's text without its HTML tags: %s", (_name, body, quoted) => {
+    const report = evaluatePullRequestWatch(watch(), detail(), [
+      remark("reviewer", "2026-10-02T12:06:00Z", body),
+    ]);
+    const { text } = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: null,
+      report,
+    });
+    assert.include(text, `: "${quoted}" `);
+  });
+
   it("reports a conflict once, until the branch is clean again", () => {
     const conflicting = detail({ mergeability: "conflicting" });
     const first = evaluatePullRequestWatch(watch(), conflicting, noRemarks);
@@ -919,5 +1007,44 @@ describe("evaluatePullRequestWatch", () => {
       ).next.checksPending;
     assert.isFalse(unanswered(null));
     assert.isTrue(unanswered(STARTED));
+  });
+});
+
+describe("pullRequestWatchEndMessage", () => {
+  const url = "https://git.cafe/pingdotgg/t3code/pull/7";
+  const end = (overrides: Partial<Parameters<typeof pullRequestWatchEndMessage>[0]["detail"]>) =>
+    pullRequestWatchEndMessage({
+      number: 7,
+      url,
+      detail: { state: "merged", baseBranch: "main", ...overrides },
+    });
+  const mergeCommitSha = "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9";
+
+  it("says how the pull request ended, with the merge commit and merger the host reports", () => {
+    const merged = end({
+      mergeCommitSha,
+      mergedBy: { login: "juliusmarminge", name: null, avatarUrl: null },
+    });
+    assert.equal(
+      merged.text,
+      `Pull request #7 (${url}) was merged into main by juliusmarminge as 3b2f958, so T3 Code stopped watching it.`,
+    );
+    assert.deepEqual(merged.notification, {
+      source: { kind: "monitor" },
+      outcome: "completed",
+      summary: "#7: merged, stopped watching",
+    });
+    // GitCafe reports a merge made on GitHub without who made it.
+    assert.equal(
+      end({ mergeCommitSha }).text,
+      `Pull request #7 (${url}) was merged into main as 3b2f958, so T3 Code stopped watching it.`,
+    );
+
+    const closed = end({ state: "closed" });
+    assert.equal(
+      closed.text,
+      `Pull request #7 (${url}) was closed without merging, so T3 Code stopped watching it. If it is reopened, call watch_pull_request to watch it again.`,
+    );
+    assert.equal(closed.notification.summary, "#7: closed, stopped watching");
   });
 });

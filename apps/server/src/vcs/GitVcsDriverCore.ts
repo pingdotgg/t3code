@@ -2,6 +2,7 @@ import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -28,6 +29,7 @@ import {
   type GitCommandFailureReason,
   T3_PROJECT_FILE_NAME,
   type ReviewBranchCommitsInput,
+  type ReviewDiffChangeType,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewInput,
   type ReviewDiffFileStat,
@@ -44,6 +46,7 @@ import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
+import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 import {
   explicitBareRepositoryEnv,
   gitConfigEnv,
@@ -81,6 +84,7 @@ const FETCH_REMOTE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const WORKTREE_INDEX_REFRESH_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
+const REF_SNAPSHOT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
 const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
@@ -230,18 +234,41 @@ function parseBranchAb(value: string): { ahead: number; behind: number } {
   };
 }
 
+function rawChangeType(status: string): ReviewDiffChangeType {
+  switch (status[0]) {
+    case "A":
+      return "new";
+    case "D":
+      return "deleted";
+    case "R":
+      return status === "R100" ? "rename-pure" : "rename-changed";
+    default:
+      return "change";
+  }
+}
+
+// Parses `--numstat -z`, optionally preceded by `--raw` records that carry each file's change type.
 function parseReviewNumstat(stdout: string): ReviewDiffFileStat[] {
   const fields = stdout.split("\0");
+  const changeTypes = new Map<string, ReviewDiffChangeType>();
   const files: ReviewDiffFileStat[] = [];
   for (let index = 0; index < fields.length; index++) {
     const field = fields[index]!;
+    if (field.startsWith(":")) {
+      const status = field.slice(field.lastIndexOf(" ") + 1);
+      if (/^[RC]/.test(status)) index++;
+      changeTypes.set(fields[++index]!, rawChangeType(status));
+      continue;
+    }
     const match = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/.exec(field);
     if (!match) continue;
     const previousPath = match[3] === "" ? fields[++index]! : null;
     const path = previousPath !== null ? fields[++index]! : match[3]!;
+    const changeType = changeTypes.get(path);
     files.push({
       path,
       previousPath,
+      ...(changeType === undefined ? {} : { changeType }),
       additions: match[1] === "-" ? 0 : Number(match[1]),
       deletions: match[2] === "-" ? 0 : Number(match[2]),
     });
@@ -605,6 +632,10 @@ export function isNonRepositoryGitStderr(stderr: string): boolean {
   const normalized = stderr.toLowerCase();
   return NON_REPOSITORY_STDERR_PHRASES.some((phrase) => normalized.includes(phrase));
 }
+const UNTRACKED_FILES_SHOWN_CONFIG_VALUES = new Set(["normal", "all", "true", "yes", "on", "1"]);
+function untrackedFilesHiddenByConfig(value: string | null): boolean {
+  return value !== null && !UNTRACKED_FILES_SHOWN_CONFIG_VALUES.has(value.toLowerCase());
+}
 function isUnbornHeadStderr(stderr: string): boolean {
   const normalized = stderr.toLowerCase();
   return (
@@ -654,6 +685,9 @@ function fetchFailureDetail(stderr: string): string | undefined {
   }
   if (isRefLockFailure(stderr)) {
     return "Git could not update a local reference. Another Git operation or a stale lock may be blocking the fetch; check the repository on the server, then retry.";
+  }
+  if (lines.some((line) => /^fatal: bad object refs\//i.test(line))) {
+    return "Git found a broken local ref. Check the local repository on the server for a damaged or stray ref, then retry.";
   }
   return undefined;
 }
@@ -992,7 +1026,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const random = yield* SecureRandom.SecureRandom;
   const hostPlatform = yield* HostProcess.Platform;
   const serviceScope = yield* Effect.scope;
-  const statusFetches = new Map<string, Fiber.Fiber<void, GitCommandError>>();
+  const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
+  type StatusFetchState = {
+    phase: "queued" | "running" | "claimed";
+    claimed: Deferred.Deferred<void>;
+    finished: Deferred.Deferred<boolean>;
+  };
+  const statusFetches = new Map<
+    string,
+    {
+      state: StatusFetchState;
+      fiber: Fiber.Fiber<void, GitCommandError>;
+    }
+  >();
   const statusFetchProcesses = yield* Semaphore.make(4);
 
   const executeRaw: GitVcsDriver.GitVcsDriver["Service"]["execute"] = Effect.fnUntraced(
@@ -1419,11 +1465,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const fiber = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const pending = statusFetches.get(key);
-        if (pending) return pending;
+        if (pending) return pending.fiber;
+        const claimed = yield* Deferred.make<void>();
+        const finished = yield* Deferred.make<boolean>();
+        const state: StatusFetchState = { phase: "queued", claimed, finished };
         // Frequent poll deadlines and disconnected clients must not interrupt a
         // healthy writer. A separate safety limit prevents a hung transport from
         // occupying its worker slot indefinitely.
-        const started = yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
+        const fetch = executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
           env: STATUS_UPSTREAM_REFRESH_ENV,
           fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
           timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
@@ -1436,18 +1485,39 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
           Effect.tapError(() => recordStatusRemoteRefreshFailure(key)),
           Effect.tapCause((cause) => Effect.logWarning("Background Git fetch failed", cause)),
-          statusFetchProcesses.withPermits(1),
+        );
+        const started = yield* Effect.raceFirst(
+          Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              if (state.phase !== "queued") return false;
+              state.phase = "running";
+              yield* restore(fetch);
+              return true;
+            }),
+          ).pipe(statusFetchProcesses.withPermits(1)),
+          Deferred.await(claimed).pipe(Effect.as(false)),
+        ).pipe(
+          Effect.flatMap((completed) =>
+            completed
+              ? Effect.void
+              : Deferred.await(finished).pipe(
+                  Effect.flatMap((succeeded) =>
+                    succeeded ? Effect.void : fetch.pipe(statusFetchProcesses.withPermits(1)),
+                  ),
+                ),
+          ),
           Effect.onExit(() =>
             Effect.sync(() => {
-              statusFetches.delete(key);
+              if (statusFetches.get(key)?.state === state) statusFetches.delete(key);
             }),
           ),
           Effect.forkIn(serviceScope, { startImmediately: false, uninterruptible: false }),
         );
-        statusFetches.set(key, started);
+        statusFetches.set(key, { state, fiber: started });
         return started;
       }),
     );
+    yield* Effect.annotateCurrentSpan("statusFetch.joining", true);
     const result = yield* Fiber.join(fiber).pipe(
       Effect.timeoutOption(STATUS_UPSTREAM_REFRESH_TIMEOUT),
     );
@@ -1487,7 +1557,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
 
-    const commonDirOutput = commonDirResult.stdout.trim();
+    const commonDirOutput = commonDirResult.stdout.replace(/\n$/, "");
     const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
     const resolvedGitCommonDir = path.isAbsolute(commonDirOutput)
       ? path.normalize(commonDirOutput)
@@ -1553,13 +1623,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     } satisfies GitRepositoryPaths;
   });
 
-  const resolveReviewWorktreeRoot = Effect.fn("resolveReviewWorktreeRoot")(function* (cwd: string) {
-    const worktreeRoot = yield* readWorktreeRoot(cwd);
-    if (worktreeRoot !== null) return { worktreeRoot, currentBranch: null };
-    // Full discovery tells bare and non-repository directories apart from real Git failures.
-    return yield* resolveRepositoryPathsUncached(cwd);
-  });
-
   const repositoryPathsCache = yield* Cache.makeWith(
     (cwd: string) => resolveRepositoryPathsUncached(cwd),
     {
@@ -1592,6 +1655,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const cacheKey = normalizeRepositoryPathsCacheKey(cwd);
     return Cache.get(refresh ? repositoryPathsRefreshCache : repositoryPathsCache, cacheKey);
   };
+
+  const resolveReviewRepository = Effect.fn("resolveReviewRepository")(function* (
+    cwd: string,
+    needsCurrentBranch: boolean,
+  ) {
+    // A cached layout outlives a removed cwd, which must still read as a missing cwd.
+    if (
+      !needsCurrentBranch &&
+      !(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true)))
+    ) {
+      return null;
+    }
+    const repository = yield* resolveRepositoryPaths(cwd);
+    if (repository?.worktreeRoot == null) return null;
+    // The cached branch outlives a checkout made outside T3 Code, so it is read fresh.
+    const currentBranch = needsCurrentBranch
+      ? yield* readCurrentBranch("GitVcsDriver.review.currentBranch", cwd)
+      : null;
+    return { worktreeRoot: repository.worktreeRoot, currentBranch };
+  });
 
   const defaultBranchCache = yield* Cache.makeWith(
     (gitCommonDir: string) =>
@@ -1634,9 +1717,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     function* (cwd: string, gitCommonDir?: string | null) {
       const commonDir =
         gitCommonDir === undefined
-          ? (yield* resolveRepositoryPaths(cwd).pipe(
+          ? yield* readGitCommonDir(cwd).pipe(
               Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
-            ))?.gitCommonDir
+            )
           : gitCommonDir;
       const cacheKey = commonDir ?? normalizeRepositoryPathsCacheKey(cwd);
       yield* Cache.invalidate(defaultBranchCache, cacheKey);
@@ -1664,6 +1747,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     string,
     {
       readonly roots: string;
+      readonly count: number;
+      readonly retryAt: number;
+      readonly detail: string;
+    }
+  >();
+  // Keyed by cwd: the HEAD and merge base whose totals diff failed, retried after a backoff.
+  const branchTotalsDiffFailures = new Map<
+    string,
+    {
+      readonly key: string;
       readonly count: number;
       readonly retryAt: number;
       readonly detail: string;
@@ -1707,9 +1800,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
   });
 
+  const readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"] = Effect.fn(
+    "GitVcsDriver.readRefSnapshot",
+  )(
+    function* (cwd) {
+      const result = yield* executeGit(
+        "GitVcsDriver.readRefSnapshot",
+        cwd,
+        ["show-ref", "--head"],
+        {
+          allowNonZeroExit: true,
+          maxOutputBytes: REF_SNAPSHOT_MAX_OUTPUT_BYTES,
+        },
+      );
+      if (result.exitCode !== 0) return null;
+      const symbolicHead = yield* executeGit(
+        "GitVcsDriver.readRefSnapshot",
+        cwd,
+        ["symbolic-ref", "--quiet", "HEAD"],
+        { allowNonZeroExit: true },
+      );
+      // Exit 1 means detached HEAD; other failures require a full status read.
+      if (symbolicHead.exitCode !== 0 && symbolicHead.exitCode !== 1) return null;
+      // Deepening a shallow clone changes ancestry without moving refs.
+      const shallowPath = path.join(yield* resolveGitCommonDir(cwd), "shallow");
+      const shallow = (yield* fileSystem.exists(shallowPath))
+        ? yield* fileSystem.readFileString(shallowPath)
+        : "";
+      return `${result.stdout}\0${symbolicHead.stdout}\0${shallow}`;
+    },
+    Effect.orElseSucceed(() => null),
+  );
+
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
     cwd: string,
   ) {
+    if (Duration.isZero(yield* automaticFetchInterval)) return;
     const headRef = yield* runGitStdout(
       "GitVcsDriver.refreshStatusUpstreamIfStale.headRef",
       cwd,
@@ -2035,6 +2161,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { baseRef: comparisonRef, comparisonRef };
     }
     if (configuredBase !== null) return configuredBase;
+    if (configuredBaseBranch.length > 0 && configuredBaseBranch !== refName) {
+      const trackedBase = yield* resolveTrackedRemoteBaseRef(cwd, configuredBaseBranch);
+      if (trackedBase !== null) return trackedBase;
+    }
 
     const primaryRemoteName = yield* resolvePrimaryRemoteName(cwd).pipe(
       Effect.orElseSucceed(() => null),
@@ -2237,27 +2367,52 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     options?: GitVcsDriver.GitLocalStatusOptions,
   ) {
     const includeDivergence = options?.includeDivergence !== false;
+    // Hidden untracked files could not be committed; `all` stays as configured.
+    const untrackedFilesHidden = untrackedFilesHiddenByConfig(
+      yield* readConfigValue(cwd, "status.showUntrackedFiles").pipe(
+        Effect.orElseSucceed(() => null),
+      ),
+    );
     const statusArgs = [
       "status",
       "--porcelain=2",
       "--branch",
       "-z",
+      ...(untrackedFilesHidden ? ["--untracked-files=normal"] : []),
       ...(includeDivergence ? [] : ["--no-ahead-behind"]),
     ];
-    const indexResult = yield* executeGitWithStableDiagnostics(
-      "GitVcsDriver.statusDetails.indexPath",
-      cwd,
-      ["rev-parse", "--git-path", "index"],
-      { allowNonZeroExit: true },
-    ).pipe(
-      Effect.catchTags({
-        GitCommandError: (error) =>
-          isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
-      }),
+    const readPaths = (...args: string[]) =>
+      executeGitWithStableDiagnostics(
+        "GitVcsDriver.statusDetails.indexPath",
+        cwd,
+        ["rev-parse", ...args],
+        { allowNonZeroExit: true },
+      ).pipe(
+        Effect.catchTags({
+          GitCommandError: (error) =>
+            isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+        }),
+      );
+    const paths = yield* readPaths(
+      "--path-format=absolute",
+      "--git-path",
+      "index",
+      "--git-common-dir",
+      "--show-toplevel",
     );
+    if (paths === null || (paths.exitCode !== 0 && isNonRepositoryGitStderr(paths.stderr))) {
+      return NON_REPOSITORY_STATUS_DETAILS;
+    }
+    // Older Git may echo the flag. Newlines in paths also require the separate lookups.
+    const fields = paths.stdout.replace(/\n$/, "").split("\n");
+    const [index, commonDir, root] =
+      paths.exitCode === 0 && fields.length === 3 && fields.every(path.isAbsolute) ? fields : [];
+    const indexResult = index === undefined ? yield* readPaths("--git-path", "index") : undefined;
     if (indexResult === null) return NON_REPOSITORY_STATUS_DETAILS;
-    if (indexResult.exitCode === 0) {
-      const lockPath = `${path.resolve(cwd, indexResult.stdout.trim())}.lock`;
+    const indexPath =
+      index ?? (indexResult?.exitCode === 0 ? indexResult.stdout.replace(/\n$/, "") : undefined);
+    if (indexPath) {
+      const lockPath = `${path.resolve(cwd, indexPath)}.lock`;
       const lockError = new GitCommandError({
         operation: "GitVcsDriver.statusDetails.indexPath",
         command: "git",
@@ -2280,10 +2435,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         return yield* lockError;
       }
     }
-    const repositoryPaths = yield* resolveRepositoryPaths(cwd).pipe(
-      Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
-    );
+    const repositoryPaths =
+      commonDir && root
+        ? {
+            gitCommonDir: yield* fileSystem
+              .realPath(commonDir)
+              .pipe(Effect.orElseSucceed(() => path.normalize(commonDir))),
+            worktreeRoot: path.normalize(root),
+          }
+        : yield* resolveRepositoryPaths(cwd).pipe(
+            Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
+          );
     const statusCacheKey = repositoryPaths?.gitCommonDir;
+    const refsGeneration =
+      statusCacheKey === undefined ? undefined : currentListRefsGeneration(statusCacheKey);
     const readStatus = executeGitWithStableDiagnostics(
       "GitVcsDriver.statusDetails.status",
       cwd,
@@ -2377,6 +2542,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // and also for an unborn HEAD, which can still track a fetched upstream.
     let upstreamRefExists = false;
     let isUnbornHead = false;
+    let headOid: string | null = null;
     let aheadCount = 0;
     let behindCount = 0;
     let aheadOfDefaultCount = 0;
@@ -2391,9 +2557,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         isUnbornHead = true;
         continue;
       }
+      if (line.startsWith("# branch.oid ")) {
+        headOid = line.slice("# branch.oid ".length).trim();
+        continue;
+      }
       if (line.startsWith("# branch.head ")) {
         const value = line.slice("# branch.head ".length).trim();
-        refName = value === "(detached)" ? null : value;
+        // `(unknown)` is printed while HEAD names no resolvable branch, e.g. mid-`git clone`.
+        refName = value === "(detached)" || value === "(unknown)" ? null : value;
         continue;
       }
       if (line.startsWith("# branch.upstream ")) {
@@ -2426,6 +2597,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
 
+    if (commonDir && root && repositoryPaths?.worktreeRoot) {
+      const { gitCommonDir, worktreeRoot } = repositoryPaths;
+      const cacheKey = normalizeRepositoryPathsCacheKey(cwd);
+      if (!(yield* Cache.has(repositoryPathsCache, cacheKey))) {
+        const isAtRepositoryRoot = yield* fileSystem.realPath(cwd).pipe(
+          Effect.map((physicalCwd) => path.relative(worktreeRoot, physicalCwd) === ""),
+          Effect.orElseSucceed(() => undefined),
+        );
+        if (
+          currentListRefsGeneration(gitCommonDir) === refsGeneration &&
+          !(yield* Cache.has(repositoryPathsCache, cacheKey))
+        ) {
+          yield* Cache.set(repositoryPathsCache, cacheKey, {
+            gitCommonDir,
+            worktreeRoot,
+            isAtRepositoryRoot,
+            currentBranch: refName,
+          });
+        }
+      }
+    }
+
     if (!upstreamRefExists && !isUnbornHead) upstreamRef = null;
 
     const isDefaultBranch =
@@ -2445,6 +2638,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? readBranchChangeTotals(repositoryPaths?.worktreeRoot ?? cwd, refName, {
               knownOriginDefaultBranch: defaultBranch,
               untrackedRoots,
+              headOid,
+              ...(index ? { indexPath: index } : {}),
             }).pipe(Effect.orElseSucceed(() => undefined))
           : Effect.undefined,
       ],
@@ -2572,6 +2767,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const config = env
       ? ["-c", "core.splitIndex=false", "-c", "splitIndex.sharedIndexExpire=never"]
       : [];
+    let preserveUnselectedConflicts = false;
     if (filePaths && filePaths.length > 0) {
       if (env) {
         const head = yield* executeGit(
@@ -2648,7 +2844,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             detail: `Cannot commit selected files during a ${operation}. Commit all files to finish the ${operation}.`,
           });
         }
-        yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset", "--quiet"]);
+        const selectedFiles = new Set(filePaths);
+        const unmergedPaths = yield* runGitStdoutWithOptions(
+          "GitVcsDriver.commit.unmergedPaths",
+          cwd,
+          ["-c", "diff.relative=false", "diff", "--cached", "--name-only", "--diff-filter=U", "-z"],
+          { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+        );
+        // Reset drops every conflict stage, so keep the index while unselected files are conflicted.
+        preserveUnselectedConflicts = unmergedPaths
+          .split("\0")
+          .some((file) => file.length > 0 && !selectedFiles.has(file));
+        if (!preserveUnselectedConflicts) {
+          yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset", "--quiet"]);
+        }
       }
       // Status paths are repository-relative, while cwd can be a subdirectory.
       const pathspecs = filePaths.map((file) => `:(top,literal)${file}`);
@@ -2696,7 +2905,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
         const reports = check.stdout.split("\n");
         const conflicted: string[] = [];
-        let topLevel: string | undefined;
+        let emptyTree: string | undefined;
         for (const file of unmergedPaths) {
           const markerLines = new Set(
             reports.flatMap((line) => {
@@ -2707,11 +2916,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }),
           );
           if (markerLines.size === 0) continue;
-          topLevel ??= (yield* runGitStdout("GitVcsDriver.commit.topLevel", cwd, [
-            "rev-parse",
-            "--show-toplevel",
-          ])).trim();
-          const lines = (yield* fileSystem.readFileString(path.join(topLevel, file)).pipe(
+          emptyTree ??= yield* readEmptyTreeHash(cwd);
+          // --check numbers lines after working-tree-encoding and clean filters; a diff from the
+          // empty tree prints that view. Read it in full so large resolved files can still commit.
+          const fileDiff = yield* runGitStdoutWithOptions(
+            "GitVcsDriver.commit.conflictMarkers",
+            cwd,
+            [
+              "-c",
+              "diff.relative=false",
+              "diff",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--text",
+              emptyTree,
+              "--",
+              `:(top,literal)${file}`,
+            ],
+            { ...(env ? { env } : {}), maxOutputBytes: Number.POSITIVE_INFINITY },
+          ).pipe(
             Effect.mapError(
               (cause) =>
                 new GitCommandError({
@@ -2722,7 +2946,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                   cause,
                 }),
             ),
-          )).split("\n");
+          );
+          const diffLines = fileDiff.split("\n");
+          const lines = diffLines
+            .slice(diffLines.findIndex((line) => line.startsWith("@@")) + 1)
+            .filter((line) => line.startsWith("+"))
+            .map((line) => line.slice(1));
           // Git also reports a lone "=======", which is valid content such as a heading underline.
           const reported = (marker: string) =>
             lines.some((line, index) => markerLines.has(index) && line.startsWith(marker));
@@ -2744,6 +2973,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         env ? { env } : {},
       );
     }
+    return preserveUnselectedConflicts && filePaths
+      ? filePaths.map((file) => `:(top,literal)${file}`)
+      : undefined;
   });
 
   const prepareCommitContext: GitVcsDriver.GitVcsDriver["Service"]["prepareCommitContext"] =
@@ -2888,13 +3120,25 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     body,
     options?: GitVcsDriver.GitCommitOptions,
   ) {
-    if (options?.stage !== undefined) {
-      yield* stageCommitChanges(cwd, options.stage.filePaths);
-    }
+    const partialCommitPaths =
+      options?.stage !== undefined
+        ? yield* stageCommitChanges(cwd, options.stage.filePaths)
+        : undefined;
     const args = ["commit", "-m", subject];
     const trimmedBody = body.trim();
     if (trimmedBody.length > 0) {
       args.push("-m", trimmedBody);
+    }
+    const onlyFromStdin = partialCommitPaths ? yield* supportsPathspecFromFile(cwd) : false;
+    const onlyPathspecArgs = onlyFromStdin
+      ? ["--pathspec-from-file=-", "--pathspec-file-nul"]
+      : ["--", ...(partialCommitPaths ?? [])];
+    const onlyPathspecStdin =
+      partialCommitPaths && onlyFromStdin
+        ? { stdin: partialCommitPaths.map((pathspec) => `${pathspec}\0`).join("") }
+        : {};
+    if (partialCommitPaths) {
+      args.push("--only", ...onlyPathspecArgs);
     }
     const progress =
       options?.progress?.onOutputLine === undefined
@@ -2908,9 +3152,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           };
     yield* executeGit("GitVcsDriver.commit.commit", cwd, args, {
       maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
+      ...onlyPathspecStdin,
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(progress ? { progress } : {}),
     }).pipe(Effect.asVoid);
+    if (partialCommitPaths) {
+      // --only runs hooks on a temporary index, so a hook's `git add` never reaches the real one.
+      yield* runGit(
+        "GitVcsDriver.commit.syncSelectedIndex",
+        cwd,
+        ["reset", "--quiet", "HEAD", ...onlyPathspecArgs],
+        onlyPathspecStdin,
+      );
+    }
     const commitSha = yield* runGitStdout("GitVcsDriver.commit.revParseHead", cwd, [
       "rev-parse",
       "HEAD",
@@ -3254,12 +3508,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
     const remote = yield* readConfigValue(cwd, `branch.${refName}.remote`);
+    // The upstream-only retry leaves other remote-tracking refs stale, so a claimed status
+    // fetch must still run after it.
+    let fetchedUpstreamOnly = false;
     if (remote) {
       const gitCommonDir = yield* resolveGitCommonDir(cwd);
       const pending = statusFetches.get(`${gitCommonDir}\0${remote}`);
       // The status wait can finish while its fetch still owns reference locks.
       // Let our existing writer finish before starting the pull's fetch.
-      if (pending) yield* Fiber.await(pending);
+      if (pending) {
+        const claimed = yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            if (pending.state.phase !== "queued") return false;
+            pending.state.phase = "claimed";
+            yield* Effect.addFinalizer((exit) =>
+              Deferred.succeed(
+                pending.state.finished,
+                Exit.isSuccess(exit) && !fetchedUpstreamOnly,
+              ),
+            );
+            yield* Deferred.succeed(pending.state.claimed, undefined);
+            return true;
+          }),
+        );
+        if (!claimed) yield* Fiber.await(pending.fiber);
+      }
     }
     const beforeSha = yield* runGitStdout(
       "GitVcsDriver.pullCurrentBranch.beforeSha",
@@ -3313,6 +3586,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         currentSha === beforeSha
       ) {
         args = ["pull", "--ff-only", "--", remote, mergeRef];
+        fetchedUpstreamOnly = true;
         result = yield* executeGitWithStableDiagnostics(
           "GitVcsDriver.pullCurrentBranch.pull",
           cwd,
@@ -3341,11 +3615,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const refreshed = yield* readStatusDetailsLocal(cwd);
     return {
-      status: beforeSha.length > 0 && beforeSha === afterSha ? "skipped_up_to_date" : "pulled",
+      status:
+        beforeSha.length > 0 && beforeSha === afterSha
+          ? ("skipped_up_to_date" as const)
+          : ("pulled" as const),
       refName,
       upstreamRef: refreshed.upstreamRef,
     };
-  });
+  }, Effect.scoped);
 
   const readRangeContext: GitVcsDriver.GitVcsDriver["Service"]["readRangeContext"] = Effect.fn(
     "readRangeContext",
@@ -3423,6 +3700,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     untrackedPaths: ReadonlyArray<string>,
     allowPartial: boolean,
+    knownIndexPath?: string,
   ) {
     const [stagedDeletionsStdout, indexValue] = yield* Effect.all(
       [
@@ -3441,11 +3719,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ],
           { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
         ),
-        runGitStdout("GitVcsDriver.readUnifiedWorkingTreeReviewDiff.indexPath", cwd, [
-          "rev-parse",
-          "--git-path",
-          "index",
-        ]),
+        knownIndexPath === undefined
+          ? runGitStdout("GitVcsDriver.readUnifiedWorkingTreeReviewDiff.indexPath", cwd, [
+              "rev-parse",
+              "--git-path",
+              "index",
+            ])
+          : Effect.succeed(knownIndexPath),
       ],
       { concurrency: 2 },
     );
@@ -3487,9 +3767,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const omitted = pathsToAdd.length < candidates.length;
     if (pathsToAdd.length === 0 || (omitted && !allowPartial)) return { env: undefined, omitted };
 
-    const indexPath = path.isAbsolute(indexValue.trim())
-      ? indexValue.trim()
-      : path.resolve(cwd, indexValue.trim());
+    const indexPath = knownIndexPath ?? path.resolve(cwd, indexValue.replace(/\n$/, ""));
     const tempIndexPath = yield* fileSystem.makeTempFileScoped({
       prefix: `t3code-review-index-${process.pid}-`,
     });
@@ -3556,6 +3834,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     pathArgs: ReadonlyArray<string>,
     onlyPath: string | undefined,
     allowPartial: boolean,
+    knownIndexPath?: string,
   ) {
     const untracked = yield* executeGit(
       "GitVcsDriver.review.listUntracked",
@@ -3577,7 +3856,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (paths.length === 0) return { env: undefined, omitted: false };
     if (paths.length > REVIEW_UNTRACKED_MAX_FILES)
       return { unavailable: "Too many untracked files to count." };
-    const index = yield* prepareReviewIndex(cwd, paths, allowPartial).pipe(
+    const index = yield* prepareReviewIndex(cwd, paths, allowPartial, knownIndexPath).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           Effect.fail(
@@ -3657,6 +3936,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     options?: {
       readonly knownOriginDefaultBranch: string | null;
       readonly untrackedRoots: ReadonlyArray<string>;
+      readonly headOid: string | null;
+      readonly indexPath?: string;
     },
   ) {
     const resolved = yield* resolveReviewMergeBase(
@@ -3670,6 +3951,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       branch === null || (yield* branchExists(cwd, branch))
         ? resolved
         : { baseRef: null, mergeBase: "HEAD" };
+    // A moved HEAD or merge base skips the backoff and diffs again.
+    const diffKey = options?.headOid ? `${options.headOid}\0${mergeBase}` : null;
+    const diffFailure = branchTotalsDiffFailures.get(cwd);
+    if (
+      diffFailure !== undefined &&
+      diffFailure.key === diffKey &&
+      (yield* Clock.currentTimeMillis) < diffFailure.retryAt
+    ) {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.readBranchChangeTotals",
+        command: "git diff --numstat",
+        cwd,
+        detail: diffFailure.detail,
+      });
+    }
     const roots = options?.untrackedRoots ?? [];
     // Bound pathspec matching work and stay below Windows' command-line limit.
     const pathspecs =
@@ -3691,8 +3987,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         detail: remembered.detail,
       });
     }
-    // Empty status can mean untracked files are hidden; retain the full scan.
-    const untracked = yield* prepareUntrackedReviewIndexOrReason(cwd, pathspecs, undefined, false);
+    // Status always lists untracked files, so no roots means there are none to scan.
+    const untracked =
+      roots.length === 0
+        ? { env: undefined, omitted: false }
+        : yield* prepareUntrackedReviewIndexOrReason(
+            cwd,
+            pathspecs,
+            undefined,
+            false,
+            options?.indexPath,
+          );
     if ("unavailable" in untracked) {
       const count = remembered?.roots === rootsKey ? remembered.count + 1 : 1;
       untrackedTotalsFailures.delete(cwd);
@@ -3728,7 +4033,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           env: untracked.env,
         },
       );
-    let result = yield* readNumstat(mergeBase);
+    let result = yield* readNumstat(mergeBase).pipe(
+      Effect.tapError((error) =>
+        Effect.gen(function* () {
+          if (diffKey === null) return;
+          const count = diffFailure?.key === diffKey ? diffFailure.count + 1 : 1;
+          branchTotalsDiffFailures.delete(cwd);
+          branchTotalsDiffFailures.set(cwd, {
+            key: diffKey,
+            count,
+            retryAt:
+              (yield* Clock.currentTimeMillis) +
+              Math.min(
+                UNTRACKED_TOTALS_RETRY_MIN_MS * 2 ** (count - 1),
+                UNTRACKED_TOTALS_RETRY_MAX_MS,
+              ),
+            detail: error.detail,
+          });
+          if (branchTotalsDiffFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
+            const oldestKey = branchTotalsDiffFailures.keys().next().value;
+            if (oldestKey !== undefined) branchTotalsDiffFailures.delete(oldestKey);
+          }
+        }),
+      ),
+    );
+    branchTotalsDiffFailures.delete(cwd);
     if (result.exitCode !== 0 && mergeBase === "HEAD" && isUnbornHeadStderr(result.stderr)) {
       result = yield* readNumstat(yield* readEmptyTreeHash(cwd));
     }
@@ -3815,7 +4144,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const getReviewBranchCommits = Effect.fn("getReviewBranchCommits")(function* (
     input: ReviewBranchCommitsInput,
   ) {
-    const repository = yield* resolveRepositoryPathsUncached(input.cwd);
+    const repository = yield* resolveReviewRepository(input.cwd, true);
     if (!repository?.worktreeRoot) return { commits: [], truncated: false };
     const cwd = repository.worktreeRoot;
     const head = yield* executeGit(
@@ -3901,11 +4230,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       input.commitSha === undefined &&
       input.file?.sourceKind !== "commit" &&
       sourceKind !== "working-tree";
-    const repository = yield* (
-      needsCurrentBranch
-        ? resolveRepositoryPathsUncached(input.cwd)
-        : resolveReviewWorktreeRoot(input.cwd)
-    ).pipe(
+    const repository = yield* resolveReviewRepository(input.cwd, needsCurrentBranch).pipe(
       Effect.catchTags({
         GitCommandError: (error) =>
           isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
@@ -3947,7 +4272,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const stat = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.commitStat",
         cwd,
-        [...diffArgs, "--numstat", "-z", commit.parent, commit.sha, "--", ...pathArgs],
+        [...diffArgs, "--raw", "--numstat", "-z", commit.parent, commit.sha, "--", ...pathArgs],
         { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
       );
       const files = parseReviewNumstat(stat.stdout);
@@ -3990,14 +4315,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const diffArgs = [
       ...REVIEW_DIFF_ARGS,
-      "--minimal",
       ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
     ];
     const readStats = Effect.fn("GitVcsDriver.getReviewDiffPreview.stat")(function* (
       ref: string,
       env?: NodeJS.ProcessEnv,
     ) {
-      const args = [...diffArgs, "--numstat", "-z"];
+      const args = [...diffArgs, "--raw", "--numstat", "-z"];
       const result = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.stat",
         cwd,
@@ -4769,6 +5093,47 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  // A new worktree has no files yet, so t3.json and its pattern file come from the ref itself.
+  const readWorktreeSparsePatterns = Effect.fn("readWorktreeSparsePatterns")(function* (
+    cwd: string,
+    refName: string,
+  ) {
+    // `git show` does not read a lone - as the previous checkout either.
+    const ref = refName === "-" ? "@{-1}" : refName;
+    const projectFile = yield* executeGit(
+      "GitVcsDriver.createWorktree.readProjectFile",
+      cwd,
+      ["show", `${ref}:${T3_PROJECT_FILE_NAME}`],
+      { allowNonZeroExit: true },
+    );
+    if (projectFile.exitCode !== 0) return null;
+    const file = parseT3ProjectFile(projectFile.stdout);
+    if (file === null) {
+      yield* Effect.logWarning("t3.json is invalid; checking out the full worktree", { cwd, ref });
+      return null;
+    }
+    if (file.worktreeSparsePatternsPath === undefined) return null;
+    // Git reads <ref>:./path from the working directory, so keep the path repository-relative.
+    const patternsPath = file.worktreeSparsePatternsPath.replace(/^(?:\.\/)+/, "");
+    const patterns = patternsPath.split("/").includes("..")
+      ? null
+      : yield* executeGit(
+          "GitVcsDriver.createWorktree.readSparsePatterns",
+          cwd,
+          ["cat-file", "blob", `${ref}:${patternsPath}`],
+          { allowNonZeroExit: true },
+        );
+    if (patterns === null || patterns.exitCode !== 0) {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.createWorktree",
+        command: "git worktree add",
+        cwd,
+        detail: `t3.json names the sparse-checkout pattern file "${file.worktreeSparsePatternsPath}", which is not a file in ${refName}.`,
+      });
+    }
+    return patterns.stdout;
+  });
+
   // A checkout stamps most files in the second it writes the index, and Git re-reads every file
   // stamped in the index's own second or later ("racily clean") on each status, diff and add.
   // T3's own git calls never rewrite a worktree's index, so refresh it once.
@@ -4892,6 +5257,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         worktreePath = `${basePath}-${suffix}`;
       }
     }
+    // Later steps run git inside the worktree, so resolve a relative path the way worktree add does.
+    worktreePath = path.resolve(input.cwd, worktreePath);
+    // Read before the branch exists, so a missing pattern file leaves nothing behind.
+    const sparsePatterns = yield* readWorktreeSparsePatterns(input.cwd, input.refName);
     const newRefName = input.newRefName;
     // Older Git still creates worktrees normally, but cannot prove ownership for cancellation.
     const addHelp = newRefName
@@ -4918,6 +5287,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const checkoutRef = newRefName ?? input.refName;
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
+    const checkoutProgressOptions: ExecuteGitOptions = onCheckoutProgress
+      ? {
+          // Git only prints checkout progress when stderr is a tty or the
+          // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+          env: { GIT_PROGRESS_DELAY: "0" },
+          progress: {
+            onStderrLine: (line) => {
+              const parsed = parseGitCheckoutProgressLine(line);
+              return parsed ? onCheckoutProgress(parsed) : Effect.void;
+            },
+          },
+        }
+      : {};
 
     // Both reads leave the repository alone, so they share one round trip before the checkout.
     const [configuredCheckoutWorkers, base] = yield* Effect.all(
@@ -4930,7 +5312,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: "unbounded" },
     );
     const checkoutWorkers = configuredCheckoutWorkers ?? "0";
-    const fastCheckout = checkoutCache !== undefined && options?.fastCheckout === true;
+    // The cache clones a full checkout, so a sparse worktree uses Git's own checkout.
+    const fastCheckout =
+      checkoutCache !== undefined && options?.fastCheckout === true && sparsePatterns === null;
     const cacheGeneration = fastCheckout ? yield* checkoutCache.currentGeneration : 0;
     const stockCheckout = executeGitWithStableDiagnostics(
       "GitVcsDriver.createWorktree",
@@ -4940,6 +5324,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         `checkout.workers=${checkoutWorkers}`,
         "worktree",
         "add",
+        ...(sparsePatterns === null ? [] : ["--no-checkout"]),
         ...(lockReason ? ["--lock", "--reason", lockReason] : []),
         "--",
         worktreePath,
@@ -4953,21 +5338,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         // Hooks and filter drivers may print without bound; only progress lines are read.
         appendTruncationMarker: true,
         keepLineCallbacksAfterTruncation: true,
-        ...(onCheckoutProgress
-          ? {
-              // Git only prints checkout progress when stderr is a tty or the
-              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0" },
-              progress: {
-                onStderrLine: (line) => {
-                  const parsed = parseGitCheckoutProgressLine(line);
-                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
-                },
-              },
-            }
-          : {}),
+        ...(sparsePatterns === null ? checkoutProgressOptions : {}),
       },
     );
+    const sparseCheckout =
+      sparsePatterns === null
+        ? Effect.void
+        : Effect.gen(function* () {
+            // The first sparse-checkout in a repository enables extensions.worktreeConfig.
+            yield* runGit(
+              "GitVcsDriver.createWorktree.sparseCheckout",
+              worktreePath,
+              ["sparse-checkout", "set", "--no-cone", "--stdin"],
+              { stdin: sparsePatterns, writesSharedConfig: true },
+            );
+            yield* executeGitWithStableDiagnostics(
+              "GitVcsDriver.createWorktree.checkout",
+              worktreePath,
+              ["-c", `checkout.workers=${checkoutWorkers}`, "checkout"],
+              {
+                fallbackErrorDetail: "git checkout failed",
+                timeoutMs: null,
+                appendTruncationMarker: true,
+                keepLineCallbacksAfterTruncation: true,
+                ...checkoutProgressOptions,
+              },
+            );
+          }).pipe(
+            // A worktree without its files is no use. removeWorktree refuses a locked worktree,
+            // so one that carries the lock reason is unlocked first.
+            Effect.onError(() =>
+              (lockReason
+                ? releaseWorktreeRegistration(input.cwd, lockReason, true)
+                : removeWorktree({ cwd: input.cwd, path: worktreePath, force: true })
+              ).pipe(Effect.ignore),
+            ),
+          );
     // Set inside the claim's uninterruptible region: a pending cancel still surfaces as it ends.
     let claimed = false;
     const onWorktreeClaimed = progress?.onWorktreeClaimed;
@@ -4984,6 +5390,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             .pipe(Effect.flatMap((cloned) => (cloned ? Effect.void : stockCheckout)))
         : stockCheckout
     ).pipe(
+      Effect.andThen(sparseCheckout),
       Effect.andThen(
         fastCheckout ? checkoutCache.schedule(worktreePath, cacheGeneration) : Effect.void,
       ),
@@ -5030,9 +5437,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
 
     // worktree add leaves submodules empty, potentially omitting project skills, tools or source.
-    const hasSubmodules = yield* fileSystem
-      .exists(path.join(worktreePath, ".gitmodules"))
-      .pipe(Effect.orElseSucceed(() => false));
+    // Ask HEAD, because sparse patterns can leave .gitmodules out of the working tree.
+    const hasSubmodules = yield* runGit(
+      "GitVcsDriver.createWorktree.findSubmodules",
+      worktreePath,
+      ["cat-file", "-e", "HEAD:.gitmodules"],
+    ).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
     const submoduleMode = !hasSubmodules
       ? { value: "none" as const, source: "environment" as const }
       : resolveProjectFileBackedSetting(
@@ -5040,9 +5453,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           options?.submodules ?? null,
           options?.submodules != null
             ? null
-            : yield* fileSystem.readFileString(path.join(worktreePath, T3_PROJECT_FILE_NAME)).pipe(
-                Effect.flatMap((contents) => {
-                  const file = parseT3ProjectFile(contents);
+            : // Read HEAD for the same reason: sparse patterns can leave t3.json out too.
+              yield* executeGit(
+                "GitVcsDriver.createWorktree.readProjectFile",
+                worktreePath,
+                ["show", `HEAD:${T3_PROJECT_FILE_NAME}`],
+                { allowNonZeroExit: true },
+              ).pipe(
+                Effect.flatMap((result) => {
+                  if (result.exitCode !== 0) return Effect.succeed(null);
+                  const file = parseT3ProjectFile(result.stdout);
                   return file === null
                     ? Effect.logWarning("t3.json is invalid; initializing submodules recursively", {
                         worktreePath,
@@ -5062,6 +5482,62 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* progress.onSubmodulesStarted();
       }
       const onSubmoduleLine = progress?.onSubmoduleLine;
+      const updateSubmodules = (paths: readonly string[]) =>
+        runGit(
+          "GitVcsDriver.createWorktree.updateSubmodules",
+          worktreePath,
+          [
+            "submodule",
+            "update",
+            "--init",
+            ...(submoduleMode.value === "recursive" ? ["--recursive"] : []),
+            // Git reports transfer progress to a pipe only when forced.
+            ...(onSubmoduleLine ? ["--progress"] : []),
+            // A clone left by a failed update already has HEAD at the gitlink, so Git would skip it.
+            ...(paths.length > 0 ? ["--force", "--", ...paths] : []),
+          ],
+          {
+            // Cloning scales with remote size; let it finish or be cancelled, like worktree add.
+            timeoutMs: null,
+            ...(onSubmoduleLine
+              ? {
+                  env: { LANGUAGE: "C" },
+                  progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
+                  // Progress for many submodules can pass the output cap; truncate instead of failing.
+                  appendTruncationMarker: true,
+                  keepLineCallbacksAfterTruncation: true,
+                }
+              : {}),
+          },
+        );
+      // One failed clone stops Git before it checks out any submodule, leaving the cloned ones
+      // as empty working trees that read as modified; check those out on their own.
+      const checkOutClonedSubmodules = Effect.gen(function* () {
+        // Records are "submodule.<name>.path\n<path>".
+        const submodulePaths = splitNullSeparatedPaths(
+          yield* runGitStdout("GitVcsDriver.createWorktree.listSubmodules", worktreePath, [
+            "config",
+            "-z",
+            // HEAD, not the working tree: sparse patterns can leave .gitmodules out.
+            "--blob",
+            "HEAD:.gitmodules",
+            "--get-regexp",
+            "^submodule\\..*\\.path$",
+          ]),
+          false,
+        ).flatMap((record) => {
+          const newline = record.indexOf("\n");
+          return newline === -1 ? [] : [record.slice(newline + 1)];
+        });
+        const clonedPaths = yield* Effect.filter(submodulePaths, (submodulePath) =>
+          fileSystem
+            .exists(path.join(worktreePath, submodulePath, ".git"))
+            .pipe(Effect.orElseSucceed(() => false)),
+        );
+        if (clonedPaths.length > 0) {
+          yield* updateSubmodules(clonedPaths);
+        }
+      });
       // Registering submodule URLs writes the shared config; the clones that follow do not.
       yield* runGit(
         "GitVcsDriver.createWorktree.initSubmodules",
@@ -5069,39 +5545,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ["submodule", "init"],
         { writesSharedConfig: true },
       ).pipe(
-        Effect.andThen(
-          runGit(
-            "GitVcsDriver.createWorktree.updateSubmodules",
-            worktreePath,
-            [
-              "submodule",
-              "update",
-              "--init",
-              ...(submoduleMode.value === "recursive" ? ["--recursive"] : []),
-              // Git reports transfer progress to a pipe only when forced.
-              ...(onSubmoduleLine ? ["--progress"] : []),
-            ],
-            {
-              // Cloning scales with remote size; let it finish or be cancelled, like worktree add.
-              timeoutMs: null,
-              ...(onSubmoduleLine
-                ? {
-                    env: { LANGUAGE: "C" },
-                    progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
-                    // Progress for many submodules can pass the output cap; truncate instead of failing.
-                    appendTruncationMarker: true,
-                    keepLineCallbacksAfterTruncation: true,
-                  }
-                : {}),
-            },
-          ),
-        ),
+        Effect.andThen(updateSubmodules([])),
         Effect.matchEffect({
           onFailure: (cause) =>
             Effect.logWarning("worktree submodule checkout failed; submodules may be incomplete", {
               worktreePath,
               cause,
             }).pipe(
+              Effect.andThen(
+                checkOutClonedSubmodules.pipe(
+                  Effect.catch((retryCause) =>
+                    Effect.logWarning("could not check out the submodules that did clone", {
+                      worktreePath,
+                      cause: retryCause,
+                    }),
+                  ),
+                ),
+              ),
               Effect.andThen(
                 progress?.onSubmodulesFinished
                   ? progress.onSubmodulesFinished({ ok: false, detail: cause.message })
@@ -5394,8 +5854,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         remoteName: "origin",
         branchName: input.refName,
       };
-      // `<remote>/HEAD` is the remote's default-branch pointer, not a branch it can serve.
-      return remoteNames.includes(remoteName) && branchName !== "HEAD"
+      // `<remote>/HEAD` is the remote's default-branch pointer, not a branch it can serve, and
+      // a revision expression such as `HEAD~1`, `@{-1}` or `:/text` is no branch name at all.
+      return remoteNames.includes(remoteName) &&
+        branchName !== "HEAD" &&
+        !branchName.startsWith("-") &&
+        !/[\x00-\x20\x7f~^:?*[\\]|\.\.|@\{/.test(branchName)
         ? { remoteName, branchName }
         : null;
     });
@@ -5450,14 +5914,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemoteTrackingBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteTrackingBranch"] =
     Effect.fn("fetchRemoteTrackingBranch")(function* (input) {
-      yield* runGit("GitVcsDriver.fetchRemoteTrackingBranch", input.cwd, [
-        "fetch",
-        "--quiet",
-        "--no-tags",
-        "--",
-        input.remoteName,
-        `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
-      ]);
+      // Storage cleanup runs this every sweep: like the status fetch, a killed fetch strands a
+      // `tmp_pack_*` and a failing `gc --auto` repeats each time, so allow time and skip gc.
+      yield* runGit(
+        "GitVcsDriver.fetchRemoteTrackingBranch",
+        input.cwd,
+        [
+          "fetch",
+          "--quiet",
+          "--no-tags",
+          "--no-auto-gc",
+          "--",
+          input.remoteName,
+          `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
+        ],
+        { timeoutMs: FETCH_REMOTE_TIMEOUT_MS },
+      );
     });
 
   const setBranchUpstream: GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"] = Effect.fn(
@@ -5625,22 +6097,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (input.oldBranch === input.newBranch) {
       return { branch: input.newBranch };
     }
-    const targetBranch = input.exactName
-      ? input.newBranch
-      : yield* resolveAvailableBranchName(input.cwd, input.newBranch);
-
-    yield* executeGit(
-      "GitVcsDriver.renameBranch",
+    // Parallel launches often generate the same name; picking it under the lock that serializes
+    // the renames keeps a second launch from choosing a name the first is about to take.
+    return yield* withSharedConfigLock(
       input.cwd,
-      ["branch", "-m", "--", input.oldBranch, targetBranch],
-      {
-        timeoutMs: 10_000,
-        fallbackErrorDetail: "git branch rename failed",
-        writesSharedConfig: true,
-      },
-    );
+      Effect.gen(function* () {
+        const targetBranch = input.exactName
+          ? input.newBranch
+          : yield* resolveAvailableBranchName(input.cwd, input.newBranch);
 
-    return { branch: targetBranch };
+        yield* executeGit(
+          "GitVcsDriver.renameBranch",
+          input.cwd,
+          ["branch", "-m", "--", input.oldBranch, targetBranch],
+          {
+            timeoutMs: 10_000,
+            fallbackErrorDetail: "git branch rename failed",
+          },
+        );
+
+        return { branch: targetBranch };
+      }),
+    );
   });
 
   const switchRef: GitVcsDriver.GitVcsDriver["Service"]["switchRef"] = Effect.fn("switchRef")(
@@ -5882,6 +6360,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     statusDetails,
     statusDetailsLocal,
     statusDetailsRemote,
+    readRefSnapshot,
     prepareCommitContext,
     commit: Effect.fnUntraced(function* (cwd, subject, body, options) {
       return yield* withListRefsInvalidation(cwd, commit(cwd, subject, body, options));

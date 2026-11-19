@@ -8,6 +8,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   PullRequestOperationError,
+  PullRequestUnavailableError,
   RunId,
   ThreadId,
   TurnItemId,
@@ -31,14 +32,18 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import { ChildProcessSpawner } from "effect/process";
 import { TestClock } from "effect/testing";
 
 import * as GitManager from "../git/GitManager.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerActivation from "../serverActivation.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as PullRequestSyncReactor from "./PullRequestSyncReactor.ts";
@@ -180,7 +185,7 @@ interface HarnessOptions {
   readonly snapshot: TestShellSnapshot;
   readonly summary?: (
     input: PullRequestRef,
-  ) => Effect.Effect<PullRequestSummary, PullRequestOperationError>;
+  ) => Effect.Effect<PullRequestSummary, PullRequestService.PullRequestError>;
   readonly stack?: (
     input: PullRequestRef,
   ) => Effect.Effect<PullRequestStack | null, PullRequestOperationError>;
@@ -322,6 +327,24 @@ const sweepAgain = Effect.fn("sweepPullRequestSyncHarness")(function* (
   yield* TestClock.adjust("1 minute");
   yield* Queue.take(fixture.snapshotReads);
   yield* reactor.drain;
+});
+
+const sweepFor = Effect.fn("sweepPullRequestSyncHarnessFor")(function* (
+  fixture: Harness,
+  reactor: PullRequestSyncReactor.PullRequestSyncReactor["Service"],
+  minutes: number,
+) {
+  for (let minute = 0; minute < minutes; minute++) yield* sweepAgain(fixture, reactor);
+});
+
+const failingGitLabLink = makeLink(13, null, {
+  host: "gitlab.com",
+  url: "https://gitlab.com/owner/repository/-/merge_requests/13",
+});
+
+const gitLabCliFailure = new PullRequestOperationError({
+  operation: "summary",
+  detail: "GitLab CLI command failed",
 });
 
 function runUpdated(
@@ -612,6 +635,39 @@ describe("PullRequestSyncReactor", () => {
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
+  it.effect("syncs a rebase blocker even when the PR timestamp is unchanged", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const required = yield* Ref.make(false);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("rebase", { pullRequests: [makeLink(7)] })]),
+          summary: (input) =>
+            Ref.get(required).pipe(
+              Effect.map((rebaseRequired) => makeSummary(input, { rebaseRequired })),
+            ),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* applyRecordedSyncs(fixture);
+          yield* Ref.set(required, true);
+          yield* reactor.requestSync({
+            host: "github.com",
+            repository: "owner/repository",
+            number: 7,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          const commands = yield* Ref.get(fixture.syncCommands);
+          assert.equal(commands.length, 2);
+          assert.equal(commands[0]?.snapshot?.rebaseRequired, false);
+          assert.equal(commands[1]?.snapshot?.rebaseRequired, true);
+          assert.equal(commands[0]?.snapshot?.updatedAt, commands[1]?.snapshot?.updatedAt);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("snapshots an unsynced link once and writes it to the thread", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));
@@ -1241,6 +1297,73 @@ describe("PullRequestSyncReactor", () => {
     }),
   );
 
+  it.effect("leaves a forge CLI slot for reads outside the sweep", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const asked = yield* Queue.unbounded<void>();
+      const started = yield* Queue.unbounded<string>();
+      const release = yield* Deferred.make<void>();
+      const vcs = yield* VcsProcess.make.pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({
+            run: (input) =>
+              Queue.offer(started, input.args.at(-1)!).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as({
+                  stdout: "",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                }),
+              ),
+          }),
+        ),
+      );
+      const glab = (number: string) =>
+        vcs.run({
+          operation: "synthetic.glab.view",
+          command: "glab",
+          args: ["mr", "view", number],
+          cwd: "/workspace",
+        });
+      const numbers = Array.from({ length: 6 }, (_, index) => index + 1);
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot(
+          numbers.map((number) =>
+            makeThread(`thread-${number}`, {
+              pullRequests: [makeLink(number, null, { host: "gitlab.example.com" })],
+            }),
+          ),
+        ),
+        batchesReads: () => false,
+        summary: (input) =>
+          Queue.offer(asked, undefined).pipe(
+            Effect.andThen(glab(String(input.number))),
+            Effect.orDie,
+            Effect.as(makeSummary(input)),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const reactor = yield* PullRequestSyncReactor.PullRequestSyncReactor;
+        yield* reactor.start();
+        yield* Deferred.succeed(fixture.activation, undefined);
+        yield* Queue.takeN(asked, numbers.length);
+        yield* Queue.takeN(started, 3);
+        const panel = yield* glab("panel").pipe(Effect.forkChild({ startImmediately: true }));
+        assert.strictEqual(yield* Queue.take(started), "panel");
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(panel);
+        yield* reactor.drain;
+        assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, numbers.length);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
   it.effect("reads a member a sibling flags while the sweep is full", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));
@@ -1674,6 +1797,45 @@ describe("PullRequestSyncReactor", () => {
       }),
   );
 
+  it.effect("stops reading a pull request on a host it cannot browse each sweep", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([
+          makeThread("unsupported", { pullRequests: [makeLink(9, { state: "open" })] }),
+          makeThread("fine", { pullRequests: [makeLink(8, { state: "open" })] }),
+        ]),
+        summary: (input) =>
+          input.number === 9
+            ? Effect.fail(new PullRequestUnavailableError({ reason: "provider-unsupported" }))
+            : Effect.succeed(makeSummary(input)),
+      });
+      const unsupportedReads = Ref.get(fixture.summaryCalls).pipe(
+        Effect.map((calls) => calls.filter((call) => call.number === 9).length),
+      );
+      yield* Effect.gen(function* () {
+        const reactor = yield* startAndSweep(fixture);
+        for (let index = 0; index < 5; index += 1) yield* sweepAgain(fixture, reactor);
+        const afterSweeps = yield* unsupportedReads;
+
+        // A refresh another link asks for must not re-read the unsupported one as well.
+        yield* reactor.requestSync(makeLink(9));
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+        const afterItsRefresh = yield* unsupportedReads;
+        for (let index = 0; index < 3; index += 1) {
+          yield* reactor.requestSync(makeLink(8));
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+        }
+        assert.deepStrictEqual(
+          { afterSweeps, afterItsRefresh, afterOtherRefreshes: yield* unsupportedReads },
+          { afterSweeps: 1, afterItsRefresh: 2, afterOtherRefreshes: 2 },
+        );
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
   it.effect(
     "holds missing links through sibling and link updates but honors a reader refresh",
     () =>
@@ -1764,6 +1926,76 @@ describe("PullRequestSyncReactor", () => {
         assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 1);
       }).pipe(Effect.provide(fixture.layer));
     }),
+  );
+
+  it.effect(
+    "caps the failed-read backoff at the slow cadence and restarts it after a success",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const failing = yield* Ref.make(true);
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([makeThread("one", { pullRequests: [failingGitLabLink] })]),
+            summary: (input) =>
+              Ref.get(failing).pipe(
+                Effect.flatMap((fails) =>
+                  fails ? Effect.fail(gitLabCliFailure) : Effect.succeed(makeSummary(input)),
+                ),
+              ),
+          });
+          yield* Effect.gen(function* () {
+            const reactor = yield* startAndSweep(fixture);
+            const readMinutes = [0];
+            const sweepMinutes = Effect.fnUntraced(function* (from: number, to: number) {
+              for (let minute = from; minute <= to; minute++) {
+                const before = (yield* Ref.get(fixture.summaryCalls)).length;
+                yield* sweepAgain(fixture, reactor);
+                if ((yield* Ref.get(fixture.summaryCalls)).length > before)
+                  readMinutes.push(minute);
+              }
+            });
+
+            yield* sweepMinutes(1, 60);
+            assert.deepStrictEqual(readMinutes, [0, 1, 3, 7, 15, 30, 45, 60]);
+
+            yield* Ref.set(failing, false);
+            yield* sweepMinutes(61, 75);
+            yield* Ref.set(failing, true);
+            readMinutes.length = 0;
+            yield* sweepMinutes(76, 80);
+            assert.deepStrictEqual(readMinutes, [76, 77, 79]);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
+  );
+
+  it.effect("reads a backed-off link at once when a refresh asks, then keeps backing off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [failingGitLabLink] })]),
+          summary: () => Effect.fail(gitLabCliFailure),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* sweepFor(fixture, reactor, 4);
+          const backedOffReads = (yield* Ref.get(fixture.summaryCalls)).length;
+
+          yield* reactor.requestSync(failingGitLabLink);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, backedOffReads + 1);
+
+          // The refresh failed at minute 4 with the backoff doubled to 8 minutes.
+          yield* sweepFor(fixture, reactor, 7);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, backedOffReads + 1);
+          yield* sweepAgain(fixture, reactor);
+          assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, backedOffReads + 2);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
   );
 
   it.effect.each([
