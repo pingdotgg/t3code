@@ -2,6 +2,7 @@ import { FILESYSTEM_METADATA_BATCH_LIMIT } from "@t3tools/contracts";
 import {
   isAbsolutePath,
   isWindowsAbsolutePath,
+  normalizeProjectPathForComparison,
   resolveWorkspaceFilePath,
 } from "@t3tools/shared/path";
 
@@ -121,7 +122,8 @@ function pickStrippedWorkspaceMatch(
 
 /**
  * The absolute path of the one file a chat link names across other project roots, or null when
- * no root or more than one has it. Agents cite paths relative to whichever repo they worked in.
+ * roots name different files. Agents cite paths relative to whichever repo they worked in.
+ * Nested project roots list the same file more than once, which still names one file.
  */
 export function pickProjectLinkMatch(
   relativePath: string,
@@ -130,11 +132,16 @@ export function pickProjectLinkMatch(
     readonly entries: ReadonlyArray<WorkspaceEntryCandidate>;
   }>,
 ): string | null {
-  const matches = searches.flatMap(({ root, entries }) => {
+  const matches = new Map<string, string>();
+  for (const { root, entries } of searches) {
     const match = pickWorkspaceLinkMatch(relativePath, root, entries);
-    return match === null ? [] : [resolveWorkspaceFilePath(match, root)];
-  });
-  return matches.length === 1 ? (matches[0] ?? null) : null;
+    if (match === null) continue;
+    const path = resolveWorkspaceFilePath(match, root);
+    const key = normalizeProjectPathForComparison(path);
+    if (!matches.has(key)) matches.set(key, path);
+  }
+  const [only, ...rest] = matches.values();
+  return rest.length === 0 ? (only ?? null) : null;
 }
 
 const AGENT_DIRECTORY_SEARCH_LIMIT = 4;
