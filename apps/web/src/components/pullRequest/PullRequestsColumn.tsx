@@ -83,6 +83,7 @@ export function PullRequestsColumn({
   onHost,
   searchInput,
   sortMenu,
+  groupMenu,
   filtersMenu,
   savedViewsMenu,
   rightPanelControl,
@@ -104,6 +105,7 @@ export function PullRequestsColumn({
   onHost: (host: string | undefined) => void;
   searchInput: ReactNode;
   sortMenu: ReactNode;
+  groupMenu: ReactNode;
   filtersMenu: ReactNode;
   savedViewsMenu: ReactNode;
   rightPanelControl: ReactNode;
@@ -245,10 +247,11 @@ export function PullRequestsColumn({
         <WorkspacePageContainer width="expanded" className="min-h-full gap-4">
           <div className="flex flex-col gap-3">
             <div ref={inFlowSearchRef} className="flex flex-wrap items-center gap-2">
-              <div className="min-w-0 basis-full @lg/pr-list:basis-0 @lg/pr-list:flex-1">
+              <div className="min-w-0 basis-full @lg/pr-list:min-w-56 @lg/pr-list:basis-0 @lg/pr-list:flex-1">
                 {searchInput}
               </div>
               {sortMenu}
+              {groupMenu}
               {filtersMenu}
               {savedViewsMenu}
               <PullRequestCompactFilterMenu

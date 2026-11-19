@@ -57,8 +57,11 @@ import {
   pullRequestListPreferences,
   type PullRequestListPreferencePatch,
   writePullRequestListPreferences,
+  DEFAULT_PULL_REQUEST_GROUP_BY,
+  DEFAULT_PULL_REQUEST_SUBGROUP_BY,
 } from "./pullRequestListPreferences";
 import { SavedViewsMenu } from "../SavedViewsMenu";
+import { PullRequestGroupMenu } from "./PullRequestGroupMenu";
 import { PULL_REQUEST_SAVED_VIEWS, pullRequestSavedViewPatch } from "./pullRequestSavedViews";
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
@@ -273,6 +276,8 @@ export function PullRequestsPage() {
           involvement: next.involvement ?? previous.involvement,
           state: next.state ?? previous.state,
           ...(next.sort && next.sort !== "ready" ? { sort: next.sort } : {}),
+          ...(next.groupBy ? { groupBy: next.groupBy } : {}),
+          ...(next.subGroupBy ? { subGroupBy: next.subGroupBy } : {}),
           ...(next.repository ? { repository: next.repository } : {}),
           ...(next.number ? { number: next.number } : {}),
           ...(next.projectId ? { projectId: next.projectId } : {}),
@@ -1013,6 +1018,8 @@ export function PullRequestsPage() {
     sort,
     text: typedParsed.text,
     involvement: search.involvement,
+    groupBy: search.groupBy ?? DEFAULT_PULL_REQUEST_GROUP_BY,
+    subGroupBy: search.subGroupBy ?? DEFAULT_PULL_REQUEST_SUBGROUP_BY,
   });
   const showProvider = hosts.length > 1;
   const [closeSweepKeys, setCloseSweepKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -1029,7 +1036,7 @@ export function PullRequestsPage() {
   useEffect(
     () => () => closeSensorRef.current?.cancel(),
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The pointer sensor lives outside React; a new list under a sweep in progress must end it.
-    [filterKey, search.q, sort],
+    [filterKey, search.q, sort, search.groupBy, search.subGroupBy],
   );
   const startCloseSweep = useStableCallback(
     (entry: EnvironmentPullRequestEntry, event: PointerEvent) => {
@@ -1377,6 +1384,11 @@ export function PullRequestsPage() {
       onChange={(next) => updateListScope({ sort: next })}
     />
   );
+  const groupBy = search.groupBy ?? DEFAULT_PULL_REQUEST_GROUP_BY;
+  const subGroupBy = search.subGroupBy ?? DEFAULT_PULL_REQUEST_SUBGROUP_BY;
+  const groupMenu = (
+    <PullRequestGroupMenu groupBy={groupBy} subGroupBy={subGroupBy} onChange={updateListScope} />
+  );
   const filtersMenu = (
     <PullRequestFiltersMenuInSidebarOrder
       onOpenChange={setFiltersOpen}
@@ -1437,6 +1449,7 @@ export function PullRequestsPage() {
     onHost: (host: string | undefined) => updateListScope({ host }),
     searchInput,
     sortMenu,
+    groupMenu,
     filtersMenu,
     savedViewsMenu: (
       <SavedViewsMenu

@@ -37,6 +37,35 @@ describe("pull requests route search", () => {
     expect(matchedSearch("/pull-requests?q=%224089%22")?.q).toBe("4089");
   });
 
+  it("keeps a known grouping and sub-grouping and drops anything else", () => {
+    const search = matchedSearch("/pull-requests?groupBy=repository&subGroupBy=review");
+    expect(search?.groupBy).toBe("repository");
+    expect(search?.subGroupBy).toBe("review");
+
+    const unknown = matchedSearch("/pull-requests?groupBy=colour&subGroupBy=7");
+    expect(unknown?.groupBy).toBeUndefined();
+    expect(unknown?.subGroupBy).toBeUndefined();
+    expect(
+      matchedSearch("/pull-requests?groupBy=none&subGroupBy=review")?.subGroupBy,
+    ).toBeUndefined();
+    expect(
+      matchedSearch("/pull-requests?groupBy=review&subGroupBy=review")?.subGroupBy,
+    ).toBeUndefined();
+    expect(
+      matchedSearch("/pull-requests?groupBy=repository&subGroupBy=involvement")?.subGroupBy,
+    ).toBeUndefined();
+  });
+
+  it("clears invalid sort and involvement values", () => {
+    expect(matchedSearch("/pull-requests?involvement=reviewing&sort=updated")).toMatchObject({
+      involvement: "reviewing",
+      sort: "updated",
+    });
+    const invalid = matchedSearch("/pull-requests?involvement=unknown&sort=unknown");
+    expect(invalid?.involvement).toBe("all");
+    expect(invalid?.sort).toBeUndefined();
+  });
+
   it("drops an author or labels the URL parser turned into a number", () => {
     expect(matchedSearch("/pull-requests?author=4089")?.author).toBeUndefined();
     expect(matchedSearch("/pull-requests?labels=4089")?.labels).toBeUndefined();

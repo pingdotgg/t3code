@@ -35,7 +35,13 @@ import {
   type PullRequestListOverride,
 } from "./pullRequestList.logic";
 import type { PullRequestExpectedHost } from "./PullRequestListFilters";
-import type { PullRequestListPreferences, PullRequestListSort } from "./pullRequestListPreferences";
+import type {
+  PullRequestGroupBy,
+  PullRequestListPreferences,
+  PullRequestListSort,
+} from "./pullRequestListPreferences";
+import { useNowMinute } from "~/hooks/useNowMinute";
+import { poolPullRequestGroups, regroupPullRequests } from "./pullRequestGrouping.logic";
 import {
   pullRequestProjectQueries,
   type PullRequestHostAvailability,
@@ -257,6 +263,8 @@ export function usePullRequestDisplayGroups({
   sort,
   text,
   involvement,
+  groupBy,
+  subGroupBy,
 }: {
   answered: MergedPullRequestList | null;
   host: string | undefined;
@@ -270,7 +278,10 @@ export function usePullRequestDisplayGroups({
   sort: PullRequestListSort;
   text: string;
   involvement: PullRequestInvolvement;
+  groupBy: PullRequestGroupBy;
+  subGroupBy: PullRequestGroupBy;
 }) {
+  const now = Date.parse(useNowMinute());
   const [hostsState, setHostsState] = useState<{
     readonly source: MergedPullRequestList | null;
     readonly host: string | undefined;
@@ -309,14 +320,21 @@ export function usePullRequestDisplayGroups({
             : overridden,
       };
     });
-    return sortPullRequestGroups(
-      enriched,
+    // Any grouping but the involvement split pools the rows, so the sort orders each bucket
+    // as it would the whole list.
+    const pooled =
+      groupBy === "involvement" || sort === "blocked" || enriched.length <= 1
+        ? enriched
+        : poolPullRequestGroups(enriched, text);
+    const sorted = sortPullRequestGroups(
+      pooled,
       sort,
       text,
       (entry) =>
         entry.additions + entry.deletions > 0 || statsByRow.has(pullRequestDiffStatKey(entry)),
       involvement,
     );
+    return regroupPullRequests(sorted, groupBy, subGroupBy, now);
   })();
   const shownCount = displayGroups.reduce((count, group) => count + group.entries.length, 0);
   const hostActionsOf = pullRequestHostActions(hosts);

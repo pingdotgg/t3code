@@ -243,7 +243,11 @@ export function SavedViewsMenu<Preferences extends Stored, Stored, Encoded>({
                     })}
               </DialogTitle>
               <DialogDescription>
-                <T>Save your search, filters, and sort order on this device.</T>
+                {kind.list === "pullRequest" ? (
+                  <T>Save your search, filters, sort order, and grouping on this device.</T>
+                ) : (
+                  <T>Save your search, filters, and sort order on this device.</T>
+                )}
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>

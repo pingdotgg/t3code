@@ -21,6 +21,8 @@ const preferences = {
   author: "me",
   labels: ["bug", "priority"],
   sort: "updated",
+  groupBy: "repository",
+  subGroupBy: "state",
 } as const satisfies PullRequestListPreferences;
 const view = { id: "review", name: "PRs Requesting My Review", preferences };
 
@@ -75,6 +77,32 @@ describe("saved PR views", () => {
     ).toBe(true);
     expect(pullRequestViewMatches(view, { ...preferences, q: "different" })).toBe(false);
     expect(pullRequestViewMatches(view, { ...preferences, labels: ["bug"] })).toBe(false);
+  });
+
+  it("saves the grouping with a view and drops a sub-grouping that has nothing to split", () => {
+    expect(pullRequestListPreferences(preferences)).toMatchObject({
+      groupBy: "repository",
+      subGroupBy: "state",
+    });
+    expect(
+      pullRequestListPreferences({ ...preferences, groupBy: "involvement" }),
+    ).not.toHaveProperty("groupBy");
+    expect(
+      pullRequestListPreferences({ ...preferences, subGroupBy: "repository" }),
+    ).not.toHaveProperty("subGroupBy");
+    expect(pullRequestListPreferences({ ...preferences, groupBy: "none" })).not.toHaveProperty(
+      "subGroupBy",
+    );
+    expect(
+      pullRequestListPreferences({ ...preferences, subGroupBy: "involvement" }),
+    ).not.toHaveProperty("subGroupBy");
+    expect(pullRequestViewMatches(view, { ...preferences, groupBy: "author" })).toBe(false);
+    expect(pullRequestViewMatches(view, { ...preferences, subGroupBy: "author" })).toBe(false);
+    const restored = {
+      ...preferences,
+      ...pullRequestSavedViewPatch({ involvement: "all", state: "open" }),
+    };
+    expect(pullRequestListPreferences(restored)).toEqual({ involvement: "all", state: "open" });
   });
 
   it("rejects blank and duplicate names while allowing a view to keep its own name", () => {

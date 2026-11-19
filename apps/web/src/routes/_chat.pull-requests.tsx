@@ -1,7 +1,10 @@
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { createFileRoute } from "@tanstack/react-router";
 
-import { type PullRequestListSort } from "../components/pullRequest/pullRequestListPreferences";
+import {
+  PullRequestGroupBy,
+  pullRequestListPreferences,
+} from "../components/pullRequest/pullRequestListPreferences";
 import { SORT_OPTIONS } from "../components/pullRequest/pullRequestListOptions";
 import { type PullRequestsSearch } from "../components/pullRequest/usePullRequestListView";
 import { PullRequestsPage } from "../components/pullRequest/PullRequestsPage";
@@ -27,6 +30,20 @@ function pullRequestSearchLabels(raw: unknown): PullRequestsSearch["labels"] {
   return labels.length === 0 ? undefined : labels;
 }
 
+const groupingOption = (raw: unknown): PullRequestGroupBy | undefined =>
+  PullRequestGroupBy.literals.find((option) => option === raw);
+
+/** The grouping as a saved view keeps it, so a sub-grouping with nothing to split is dropped. */
+function groupingOf(raw: Record<string, unknown>) {
+  const { groupBy, subGroupBy } = pullRequestListPreferences({
+    involvement: "all",
+    state: "open",
+    groupBy: groupingOption(raw.groupBy),
+    subGroupBy: groupingOption(raw.subGroupBy),
+  });
+  return { groupBy, subGroupBy };
+}
+
 export const Route = createFileRoute("/_chat/pull-requests")({
   validateSearch: (raw: Record<string, unknown>): PullRequestsSearch => ({
     ...(typeof raw.selectedUrl === "string" ? { selectedUrl: raw.selectedUrl.slice(0, 4096) } : {}),
@@ -34,9 +51,10 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       raw.involvement === "reviewing" || raw.involvement === "authored" ? raw.involvement : "all",
     state:
       raw.state === "closed" || raw.state === "merged" || raw.state === "all" ? raw.state : "open",
-    ...(SORT_OPTIONS.some((option) => option.value === raw.sort)
-      ? { sort: raw.sort as PullRequestListSort }
-      : {}),
+    sort: SORT_OPTIONS.find((option) => option.value === raw.sort)?.value,
+    // Always include the keys, so an unknown value in the parent route's unvalidated search
+    // cannot reach the list.
+    ...groupingOf(raw),
     ...(typeof raw.repository === "string" && raw.repository
       ? { repository: raw.repository.slice(0, 200) }
       : {}),

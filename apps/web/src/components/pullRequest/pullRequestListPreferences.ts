@@ -19,6 +19,31 @@ export const PullRequestListSort = Schema.Literals([
 ]);
 export type PullRequestListSort = typeof PullRequestListSort.Type;
 
+/**
+ * What the list is grouped by. `involvement` is the original Authored / Review requested /
+ * Others split; `none` shows one flat list.
+ */
+export const PullRequestGroupBy = Schema.Literals([
+  "involvement",
+  "none",
+  "project",
+  "repository",
+  "host",
+  "author",
+  "state",
+  "review",
+  "checks",
+  "draft",
+  "mergeability",
+  "label",
+  "base",
+  "updated",
+]);
+export type PullRequestGroupBy = typeof PullRequestGroupBy.Type;
+
+export const DEFAULT_PULL_REQUEST_GROUP_BY = "involvement" satisfies PullRequestGroupBy;
+export const DEFAULT_PULL_REQUEST_SUBGROUP_BY = "none" satisfies PullRequestGroupBy;
+
 export interface PullRequestListPreferences {
   readonly involvement: PullRequestInvolvement;
   readonly state: PullRequestListState;
@@ -31,7 +56,9 @@ export interface PullRequestListPreferences {
   readonly checks?: NonNullable<PullRequestListFilters["checks"]>;
   readonly author?: string | undefined;
   readonly labels?: ReadonlyArray<string> | undefined;
-  readonly sort?: PullRequestListSort;
+  readonly sort?: PullRequestListSort | undefined;
+  readonly groupBy?: PullRequestGroupBy | undefined;
+  readonly subGroupBy?: PullRequestGroupBy | undefined;
 }
 
 export type PullRequestListPreferencePatch = {
@@ -57,6 +84,8 @@ export const PullRequestListPreferencesSchema = Schema.Struct({
   author: Schema.optional(BoundedPreference),
   labels: Schema.optional(Schema.Array(BoundedPreference).check(Schema.isMaxLength(10))),
   sort: Schema.optional(PullRequestListSort),
+  groupBy: Schema.optional(PullRequestGroupBy),
+  subGroupBy: Schema.optional(PullRequestGroupBy),
 });
 
 const decodePullRequestListPreferences = Schema.decodeUnknownOption(
@@ -87,6 +116,17 @@ export function pullRequestListPreferences(
     ...(search.author ? { author: search.author } : {}),
     ...(search.labels && search.labels.length > 0 ? { labels: search.labels } : {}),
     ...(search.sort && search.sort !== "ready" ? { sort: search.sort } : {}),
+    ...(search.groupBy && search.groupBy !== DEFAULT_PULL_REQUEST_GROUP_BY
+      ? { groupBy: search.groupBy }
+      : {}),
+    // A sub-grouping equal to the grouping, or under no grouping, has nothing to split.
+    ...(search.subGroupBy &&
+    search.subGroupBy !== DEFAULT_PULL_REQUEST_SUBGROUP_BY &&
+    search.subGroupBy !== "involvement" &&
+    search.subGroupBy !== (search.groupBy ?? DEFAULT_PULL_REQUEST_GROUP_BY) &&
+    search.groupBy !== "none"
+      ? { subGroupBy: search.subGroupBy }
+      : {}),
   };
 }
 

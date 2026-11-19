@@ -40,7 +40,8 @@ export interface EnvironmentPullRequestError extends PullRequestListProjectError
 export type PullRequestGroupKey = "reviewRequested" | "authored" | "others";
 
 export interface PullRequestGroup<Entry extends PullRequestListEntry = PullRequestListEntry> {
-  readonly key: PullRequestGroupKey;
+  /** One of `PullRequestGroupKey` for the involvement split, otherwise the bucket's own key. */
+  readonly key: string;
   readonly label: string;
   readonly entries: ReadonlyArray<Entry>;
 }
@@ -761,7 +762,7 @@ export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
   }
   if (sort === "blocked") {
     if (searchText.trim().length > 0) return groups;
-    const role = (key: PullRequestGroupKey) =>
+    const role = (key: string) =>
       key === "others" ? involvement : key === "authored" ? "authored" : "reviewing";
     return groups.map((group) => {
       const groupRole = role(group.key);
