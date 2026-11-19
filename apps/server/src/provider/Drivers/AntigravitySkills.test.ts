@@ -25,6 +25,7 @@ const makeWorkspace = Effect.fn("makeWorkspace")(function* () {
   return {
     cwd: path.join(temporaryDirectory, "workspace"),
     userHome: path.join(temporaryDirectory, "home"),
+    profileDirectory: path.join(temporaryDirectory, "profile"),
   };
 });
 
@@ -110,6 +111,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         path.join(profileDirectory, "config", "config.json"),
         JSON.stringify({ plugins: { off: { enabled: false } } }),
       );
+      yield* fileSystem.writeFileString(path.join(plugins, ".DS_Store"), "x");
       const input = { ...workspace, profileDirectory };
 
       assert.deepEqual(

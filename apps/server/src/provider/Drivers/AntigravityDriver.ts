@@ -566,7 +566,7 @@ export const AntigravityDriver: ProviderDriver<
       snapshotForCwd: (cwd) =>
         !enabled
           ? provider.snapshot.getSnapshot
-          : discoverAntigravitySkills({ cwd, userHome }).pipe(
+          : discoverAntigravitySkills({ cwd, userHome, profileDirectory }).pipe(
               Effect.provideService(FileSystem.FileSystem, fileSystem),
               Effect.provideService(Path.Path, path),
               Effect.flatMap((skills) => provider.snapshotForCwd(cwd, skills)),
