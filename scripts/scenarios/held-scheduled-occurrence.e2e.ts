@@ -51,12 +51,25 @@ test(
     try {
       await runPromise(settings.supervise);
       const project = await t3.project("scheduled-hold");
-      await t3.thread({
-        project,
-        title: "Discover replay models",
-        messages: ["Start"],
-        model: "showcase",
-      });
+      // A fresh Replay instance initially advertises its bootstrap model; an already
+      // initialized instance advertises the recording names instead.
+      try {
+        await t3.thread({
+          project,
+          title: "Discover replay models",
+          messages: ["Start"],
+          model: "default",
+        });
+      } catch (error) {
+        if (!String(error).includes("Model default is not advertised by provider devReplay"))
+          throw error;
+        await t3.thread({
+          project,
+          title: "Discover replay models",
+          messages: ["Start"],
+          model: "showcase",
+        });
+      }
       const thread = await t3.thread({
         project,
         title: "Waiting scheduled thread",
