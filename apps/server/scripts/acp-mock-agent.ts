@@ -61,6 +61,8 @@ const agentVersion = process.env.T3_ACP_AGENT_VERSION ?? "0.0.0";
 const geminiApiKey = process.env.GEMINI_API_KEY;
 const idleError = process.env.T3_ACP_IDLE_ERROR;
 const emitTrackedToolCallKindThenHang = process.env.T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG;
+const trackedCommandField = process.env.T3_ACP_TRACKED_COMMAND_FIELD ?? "command";
+const trackedCommand = process.env.T3_ACP_TRACKED_COMMAND ?? "git status";
 const clientFsProbePath = process.env.T3_ACP_CLIENT_FS_PROBE_PATH;
 const clientFsProbeLogPath = process.env.T3_ACP_CLIENT_FS_PROBE_LOG_PATH;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -1549,7 +1551,9 @@ const program = Effect.gen(function* () {
             title: "git status",
             kind: emitTrackedToolCallKindThenHang as AcpSchema.ToolKind,
             status: "pending",
-            rawInput: { command: "git status" },
+            rawInput: {
+              [trackedCommandField]: trackedCommand,
+            },
           },
         });
         if (!failPrompt && promptCount !== failPromptOrdinal) return yield* Effect.never;

@@ -572,6 +572,8 @@ export interface AcpAdapterV2Flavor {
   ) => AcpAdapterV2SubagentUpdate | undefined;
   readonly isProvisionalSubagentTool?: (toolCall: AcpToolCallState) => boolean;
   readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
+  /** Approval text must preserve the input without activity truncation or file reads. */
+  readonly approvalPrompt?: (toolCall: AcpToolCallState) => string | undefined;
   readonly isCancelledToolCall?: (payload: unknown) => boolean;
   readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
   readonly extractBackgroundTaskId?: (toolCall: AcpToolCallState) => string | undefined;
@@ -6187,6 +6189,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           yield* closeTextStreams(context);
           const parsed = parsePermissionRequest(params);
+          const prompt =
+            (parsed.toolCall === undefined
+              ? undefined
+              : flavor.approvalPrompt?.(parsed.toolCall)) ?? parsed.detail;
           const approvalOptions = flavor.approvalOptions?.(params);
           const nativeRequestId = params.toolCall.toolCallId;
           const requestId = yield* idAllocator.allocate.runtimeRequest({
@@ -6261,7 +6267,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             type: "approval_request",
             requestId,
             requestKind,
-            ...(parsed.detail === undefined ? {} : { prompt: parsed.detail }),
+            ...(prompt === undefined ? {} : { prompt }),
             ...(approvalOptions === undefined ? {} : { options: approvalOptions }),
           };
           yield* Ref.update(pendingRuntimeRequests, (current) => {

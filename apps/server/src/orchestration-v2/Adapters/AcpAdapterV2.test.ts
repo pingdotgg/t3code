@@ -1,3 +1,4 @@
+import { extractAntigravityCommand } from "../../provider/acp/AntigravityProtocol.ts";
 import {
   extractCopilotSubagentUpdate,
   makeCopilotSubagentRouting,
@@ -5857,6 +5858,8 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           interruptPromptOnCancel: true,
+          approvalPrompt: extractAntigravityCommand,
+          normalizeToolCall: (toolCall) => ({ ...toolCall, kind: "execute" }),
           makeRuntime: (input) =>
             Effect.sync(() => {
               runtimeInput = input;
@@ -5904,6 +5907,7 @@ describe("AcpAdapterV2", () => {
           toolCall: {
             toolCallId: "unknown-permission-tool",
             title: "Unknown permission kind",
+            rawInput: { CommandLine: "git status" },
           },
           options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
         },
@@ -6076,6 +6080,50 @@ describe("AcpAdapterV2", () => {
 
   it.effect.each([
     {
+      label: "preserves Antigravity CommandLine in ID-only approval",
+      kind: "execute",
+      granted: true,
+      commandField: "CommandLine",
+      fullRequest: false,
+    },
+    {
+      label: "preserves Antigravity CommandLine in full approval",
+      kind: "execute",
+      granted: true,
+      commandField: "CommandLine",
+      fullRequest: true,
+    },
+    {
+      label: "preserves Antigravity command_line in ID-only approval",
+      kind: "execute",
+      granted: true,
+      commandField: "command_line",
+      fullRequest: false,
+    },
+    {
+      label: "preserves Antigravity command_line in full approval",
+      kind: "execute",
+      granted: true,
+      commandField: "command_line",
+      fullRequest: true,
+    },
+    {
+      label: "preserves long Antigravity CommandLine in full approval",
+      kind: "execute",
+      granted: true,
+      commandField: "CommandLine",
+      fullRequest: true,
+      longCommand: true,
+    },
+    {
+      label: "preserves long Antigravity command in full approval",
+      kind: "execute",
+      granted: true,
+      commandField: "command",
+      fullRequest: true,
+      longCommand: true,
+    },
+    {
       label: "grants an ID-only execute approval its tracked command",
       kind: "execute",
       granted: true,
@@ -6105,6 +6153,13 @@ describe("AcpAdapterV2", () => {
     },
   ] as const)("$label", ({ kind, granted, ...testCase }) =>
     Effect.gen(function* () {
+      const commandField = "commandField" in testCase ? testCase.commandField : "command";
+      const command =
+        "longCommand" in testCase
+          ? `echo start\n${"# padding\n".repeat(1000)}echo end`
+          : "commandField" in testCase
+            ? "git status --short\nprintf '%s\\n' approval-probe"
+            : "git status";
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* bundledMockAgentPath;
@@ -6115,7 +6170,11 @@ describe("AcpAdapterV2", () => {
       const makeRuntime = makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
-        environment: { T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: kind },
+        environment: {
+          T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: kind,
+          T3_ACP_TRACKED_COMMAND_FIELD: commandField,
+          T3_ACP_TRACKED_COMMAND: command,
+        },
         wrapRuntime: (runtime) => ({
           ...runtime,
           handleRequestPermission: (handler) =>
@@ -6135,6 +6194,7 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           interruptPromptOnCancel: true,
+          ...("commandField" in testCase ? { approvalPrompt: extractAntigravityCommand } : {}),
           makeRuntime: (input) =>
             Effect.sync(() => {
               runtimeInput = input;
@@ -6189,6 +6249,9 @@ describe("AcpAdapterV2", () => {
           sessionId: "mock-session-1",
           toolCall: {
             toolCallId: "tracked-tool-call",
+            ...("fullRequest" in testCase && testCase.fullRequest
+              ? { kind, title: command, rawInput: { [commandField]: command } }
+              : {}),
             ...("requestKind" in testCase ? { kind: testCase.requestKind } : {}),
           },
           options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
@@ -6237,7 +6300,7 @@ describe("AcpAdapterV2", () => {
           requestKind: approval.requestKind,
           terminalCreated: Exit.isSuccess(terminalExit),
         },
-        { prompt: "git status", requestKind: "command", terminalCreated: granted },
+        { prompt: command, requestKind: "command", terminalCreated: granted },
       );
 
       yield* runtime.interruptTurn({ providerThread, providerTurnId });
