@@ -312,6 +312,17 @@ function readEnvironmentPath(
   );
 }
 
+// Windows env keys are case-insensitive, and an inherited NPM_CONFIG_PREFIX would win over ours.
+function withoutNpmPrefix(
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv {
+  if (platform !== "win32") return environment;
+  return Object.fromEntries(
+    Object.entries(environment).filter(([key]) => key.toLowerCase() !== "npm_config_prefix"),
+  );
+}
+
 function withPreferredPath(
   environment: NodeJS.ProcessEnv,
   directory: string,
@@ -320,16 +331,6 @@ function withPreferredPath(
   return {
     ...environment,
     PATH: mergePathEntries(directory, readEnvironmentPath(environment, platform), platform),
-  };
-}
-
-// Windows env keys are case-insensitive and a child gets one spelling, so drop inherited ones.
-function withNpmPrefix(environment: NodeJS.ProcessEnv, prefix: string): NodeJS.ProcessEnv {
-  return {
-    ...Object.fromEntries(
-      Object.entries(environment).filter(([key]) => key.toLowerCase() !== "npm_config_prefix"),
-    ),
-    npm_config_prefix: prefix,
   };
 }
 
@@ -1260,7 +1261,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     );
     const packageEnvironment =
       distribution === "npx"
-        ? withNpmPrefix(environment, packageRoot)
+        ? { ...withoutNpmPrefix(environment, platform), npm_config_prefix: packageRoot }
         : {
             ...environment,
             UV_TOOL_DIR: packageRoot,

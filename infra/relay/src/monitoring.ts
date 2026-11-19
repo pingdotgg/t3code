@@ -181,15 +181,17 @@ const relayMonitors: ReadonlyArray<RelayMonitor> = [
   },
   {
     id: "RelayTunnelCleanupStoppedMonitor",
-    severity: "warn",
+    // Pages because nothing else surfaces it: unnoticed, it ran 2026-11-15..18 while 27k+ idle tunnels piled up.
+    severity: "page",
     name: "T3 Connect relay: tunnel cleanup stopped",
     description:
-      "Tunnel cleanup sweeps that finished in 30 min. Healthy: 6. The cron is not running, or every sweep fails, as during the 2026-10-19 Cloudflare 429s when listing tunnels timed out. Idle tunnels pile up and are billed meanwhile.",
+      "Tunnel cleanup sweeps that finished in 2 h. Healthy: 24. The cron is not running, or every sweep fails, as during the 2026-10-19 Cloudflare 429s and from 2026-11-15 when listing tunnels timed out. Idle tunnels pile up and are billed meanwhile.",
     query: (dataset) =>
       `['${dataset}']\n| where ${SWEEP} and error != true\n| summarize sweeps = count()`,
     operator: "Below",
     threshold: 1,
-    rangeMinutes: 30,
+    rangeMinutes: 120,
+    intervalMinutes: 15,
     triggerFromNRuns: 2,
     alertOnNoData: true,
   },

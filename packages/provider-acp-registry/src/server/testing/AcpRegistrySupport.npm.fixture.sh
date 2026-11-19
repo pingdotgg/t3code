@@ -1,7 +1,6 @@
 #!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_NPM_LOG"
-# Windows hands the child the inherited NPM_CONFIG_PREFIX over a lowercase duplicate.
-prefix="${NPM_CONFIG_PREFIX:-${npm_config_prefix:-$FAKE_NPM_PREFIX}}"
+prefix="${npm_config_prefix:-$FAKE_NPM_PREFIX}"
 if [ "$1" = "root" ] && [ "$2" = "--global" ]; then
   printf '%s\n' "$prefix/lib/node_modules"
   exit 0
