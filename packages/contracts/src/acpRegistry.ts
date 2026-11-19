@@ -268,6 +268,8 @@ export const AcpRegistryProbeModel = Schema.Struct({
   id: AcpRegistryProbeText,
   name: AcpRegistryProbeText,
   description: AcpRegistryProbeDescription,
+  // The reasoning control the agent advertises for this model; null when it has none.
+  reasoningEffort: Schema.optionalKey(Schema.NullOr(ProviderOptionDescriptor)),
 });
 export type AcpRegistryProbeModel = typeof AcpRegistryProbeModel.Type;
 
@@ -276,6 +278,7 @@ export const AcpRegistryProbeResult = Schema.Struct({
   // `ready` requires a disposable ACP session/new probe, not passive auth detection.
   ready: Schema.Literal(true),
   icon: Schema.NullOr(AcpRegistryUrl),
+  agentVersion: Schema.optionalKey(AcpRegistryProbeText),
   authMethods: Schema.Array(AcpRegistryProbeAuthMethod).check(Schema.isMaxLength(32)),
   models: Schema.Array(AcpRegistryProbeModel).check(Schema.isMaxLength(256)),
   currentModelId: Schema.NullOr(AcpRegistryProbeText),

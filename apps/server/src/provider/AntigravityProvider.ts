@@ -204,7 +204,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       },
     }),
     setup: { canAuthenticate: true, canInstall: true },
-    supportsConversationRollback: false,
+    supportsConversationRollback: true,
     supportsTextGeneration: false,
     workspaceSnapshots: [],
   } satisfies ServerProviderDraft;
@@ -456,7 +456,15 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
                   },
                 ].slice(-MAX_WORKSPACE_SNAPSHOTS),
               }
-            : {}),
+            : state.draft.workspaceSnapshots
+              ? // Thread sessions report commands without a cwd; folder entries seeded on start follow.
+                {
+                  workspaceSnapshots: state.draft.workspaceSnapshots.map((entry) => ({
+                    ...entry,
+                    slashCommands,
+                  })),
+                }
+              : {}),
         },
       };
     });
