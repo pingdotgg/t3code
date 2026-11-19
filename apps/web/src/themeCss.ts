@@ -16,9 +16,19 @@ const isRuleParent = (rule: CSSRule): rule is CSSRule & RuleParent =>
 
 function stripDeclarations(rule: CSSRule): boolean {
   if (!("style" in rule) || !(rule.style instanceof CSSStyleDeclaration)) return false;
+  const pending: string[] = [];
   for (let item = rule.style.length - 1; item >= 0; item--) {
     const property = rule.style.item(item);
-    if (themeCssValueFetches(rule.style.getPropertyValue(property))) {
+    const value = rule.style.getPropertyValue(property);
+    if (value === "") pending.push(property);
+    else if (themeCssValueFetches(value)) rule.style.removeProperty(property);
+  }
+  // A shorthand with var() leaves each longhand reading "". cssText shows the shorthand whole,
+  // or, once another declaration overrides one longhand, lists the rest bare with its text hidden.
+  const text = rule.style.cssText;
+  const fetches = themeCssValueFetches(text);
+  for (const property of pending) {
+    if (fetches || new RegExp(`(?:^|; )${property}:`).test(text)) {
       rule.style.removeProperty(property);
     }
   }

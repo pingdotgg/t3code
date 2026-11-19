@@ -14,7 +14,10 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
     @namespace svg url(http://www.w3.org/2000/svg);
     @property --registered { syntax: "<url>"; inherits: false; initial-value: url(https://example.com/d); }
     @counter-style leak { system: cyclic; symbols: url(https://example.com/f); }
-    @keyframes leak { to { background-image: url(https://example.com/g); } }
+    @keyframes leak {
+      from { background: var(--none, url(https://example.com/i)); }
+      to { background-image: url(https://example.com/g); }
+    }
     :root { --leak: u\\72l(https://example.com/a); }
     [data-theme-css-probe] {
       color: rgb(1, 2, 3);
@@ -24,6 +27,10 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
       mask-image: v\\61r(--none, u\\72l(https://example.com/e));
       @media (min-width: 0px) { cursor: url(https://example.com/c), auto; }
     }
+    [data-theme-css-probe] { background: var(--none, url(https://example.com/h)); }
+    [data-theme-css-probe] { list-style: var(--none, u\\72l(https://example.com/j)); }
+    [data-theme-css-probe] { mask: var(--none, url(https://example.com/k)); mask-size: auto; }
+    [data-workspace-area="conversation"] { background: var(--theme-background-image) center / cover no-repeat; }
   `);
 
   const style = getComputedStyle(probe);
@@ -36,6 +43,9 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
     Array.from(sheet.cssRules, (rule) => rule.cssText),
   );
   expect(kept.join("\n")).not.toContain("example.com");
+  expect(kept.join("\n")).toContain(
+    "background: var(--theme-background-image) center / cover no-repeat;",
+  );
   expect(style.cursor).toBe("auto");
 
   applyThemeCss(undefined);
