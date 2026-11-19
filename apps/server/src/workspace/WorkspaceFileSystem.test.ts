@@ -396,6 +396,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
         }
         const metadata = yield* workspaceFileSystem.getMetadata({
+          includeCanonicalPath: true,
           paths: [
             path.join(config.secretsDir, "example.bin"),
             path.join(config.stateDir, "statev2.sqlite"),

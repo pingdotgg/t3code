@@ -22,7 +22,7 @@ import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 
-import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
+import { makeCheckServerInternalPath } from "../auth/serverInternalPaths.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -163,7 +163,7 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
   const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
-  const isServerInternalPath = yield* makeIsServerInternalPath;
+  const checkServerInternalPath = yield* makeCheckServerInternalPath;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const toHostPath = (requestedPath: string) =>
@@ -183,8 +183,10 @@ export const make = Effect.gen(function* () {
     // path makes Windows sign in to its host with the user's NTLM credentials.
     if (!path.isAbsolute(expandedPath) || isNetworkPath(expandedPath)) return null;
     const stat = yield* fileSystem.stat(expandedPath).pipe(Effect.option);
+    if (stat._tag === "None") return null;
     // Server state files answer like missing paths, as readFile refuses them.
-    if (stat._tag === "None" || (yield* isServerInternalPath(expandedPath))) return null;
+    const { isInternal, canonicalPath } = yield* checkServerInternalPath(expandedPath);
+    if (isInternal) return null;
     if (stat.value.type === "Directory") return { kind: "directory" } as const;
     if (stat.value.type !== "File") return { kind: "other" } as const;
     let mimeType: string | undefined;
@@ -207,14 +209,11 @@ export const make = Effect.gen(function* () {
         catch: () => undefined,
       }).pipe(Effect.orElseSucceed(() => undefined));
     }
-    const canonicalPath = includeCanonicalPath
-      ? yield* Effect.promise(() => NodeFSP.realpath(expandedPath).catch(() => undefined))
-      : undefined;
     return {
       kind: "file",
       byteLength: Number(stat.value.size),
       ...(mimeType === undefined ? {} : { mimeType }),
-      ...(canonicalPath === undefined ? {} : { canonicalPath }),
+      ...(includeCanonicalPath && canonicalPath !== undefined ? { canonicalPath } : {}),
     } satisfies FilesystemEntryMetadata;
   });
 
@@ -404,7 +403,7 @@ export const make = Effect.gen(function* () {
     };
     const realTargetPath = target.realTargetPath;
     if (realTargetPath === null) return absentResult;
-    if (yield* isServerInternalPath(realTargetPath)) {
+    if ((yield* checkServerInternalPath(realTargetPath)).isInternal) {
       return yield* new WorkspacePaths.WorkspacePathOutsideRootError({
         workspaceRoot: input.cwd,
         relativePath: input.relativePath,
