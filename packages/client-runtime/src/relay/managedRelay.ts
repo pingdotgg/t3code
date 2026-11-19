@@ -47,8 +47,10 @@ import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpMethod from "effect/http/HttpMethod";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import type * as HttpApiError from "effect/http-api/HttpApiError";
+import { msg } from "gt-i18n";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
-import { relayRequestFailureDetail } from "./errorPresentation.ts";
+import { type MarkedText, markedTextEnglish } from "../errors/translatable.ts";
+import { relayRequestFailureText } from "./errorPresentation.ts";
 
 export interface ManagedRelayDpopProofInput {
   readonly method: HttpMethod.HttpMethod;
@@ -64,7 +66,11 @@ export class ManagedRelayDpopKeyLoadError extends Schema.TaggedError<ManagedRela
   },
 ) {
   override get message(): string {
-    return "Could not load relay DPoP proof key.";
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [msg("Could not load relay DPoP proof key.")];
   }
 }
 
@@ -125,6 +131,24 @@ export const ManagedRelayRequestActivity = Schema.Literals([
 ]);
 export type ManagedRelayRequestActivity = typeof ManagedRelayRequestActivity.Type;
 
+const REQUEST_TIMED_OUT_TEXT: Record<ManagedRelayRequestActivity, string> = {
+  "Relay DPoP access token exchange": msg("Relay DPoP access token exchange timed out."),
+  "Relay environment listing": msg("Relay environment listing timed out."),
+  "Relay client device listing": msg("Relay client device listing timed out."),
+  "Relay environment link challenge": msg("Relay environment link challenge timed out."),
+  "Relay environment linking": msg("Relay environment linking timed out."),
+  "Relay environment unlinking": msg("Relay environment unlinking timed out."),
+  "Relay environment status request": msg("Relay environment status request timed out."),
+  "Relay environment connection": msg("Relay environment connection timed out."),
+  "Relay mobile device registration": msg("Relay mobile device registration timed out."),
+  "Relay mobile device unregistration": msg("Relay mobile device unregistration timed out."),
+  "Relay Live Activity registration": msg("Relay Live Activity registration timed out."),
+  "Relay agent activity snapshot": msg("Relay agent activity snapshot timed out."),
+  "Relay T3 Chat link lookup": msg("Relay T3 Chat link lookup timed out."),
+  "Relay T3 Chat link request": msg("Relay T3 Chat link request timed out."),
+  "Relay T3 Chat unlinking": msg("Relay T3 Chat unlinking timed out."),
+};
+
 export class ManagedRelayRequestTimeoutError extends Schema.TaggedError<ManagedRelayRequestTimeoutError>()(
   "ManagedRelayRequestTimeoutError",
   {
@@ -134,7 +158,11 @@ export class ManagedRelayRequestTimeoutError extends Schema.TaggedError<ManagedR
   },
 ) {
   override get message(): string {
-    return `${this.activity} timed out. ${NETWORK_BLOCKING_HINT}`;
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [REQUEST_TIMED_OUT_TEXT[this.activity], NETWORK_BLOCKING_HINT];
   }
 }
 
@@ -145,9 +173,79 @@ export class ManagedRelayUrlInvalidError extends Schema.TaggedError<ManagedRelay
   },
 ) {
   override get message(): string {
-    return "Relay URL must be a secure absolute HTTPS origin.";
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [msg("Relay URL must be a secure absolute HTTPS origin.")];
   }
 }
+
+const REQUEST_FAILED_TEXT: Record<
+  ManagedRelayRequestAction,
+  { readonly failed: string; readonly failedWithDetail: string }
+> = {
+  "exchange relay DPoP access token": {
+    failed: msg("Could not exchange relay DPoP access token."),
+    failedWithDetail: msg("Could not exchange relay DPoP access token:"),
+  },
+  "list relay-managed environments": {
+    failed: msg("Could not list relay-managed environments."),
+    failedWithDetail: msg("Could not list relay-managed environments:"),
+  },
+  "list relay client devices": {
+    failed: msg("Could not list relay client devices."),
+    failedWithDetail: msg("Could not list relay client devices:"),
+  },
+  "create relay environment link challenge": {
+    failed: msg("Could not create relay environment link challenge."),
+    failedWithDetail: msg("Could not create relay environment link challenge:"),
+  },
+  "link relay environment": {
+    failed: msg("Could not link relay environment."),
+    failedWithDetail: msg("Could not link relay environment:"),
+  },
+  "unlink relay environment": {
+    failed: msg("Could not unlink relay environment."),
+    failedWithDetail: msg("Could not unlink relay environment:"),
+  },
+  "get relay environment status": {
+    failed: msg("Could not get relay environment status."),
+    failedWithDetail: msg("Could not get relay environment status:"),
+  },
+  "connect relay environment": {
+    failed: msg("Could not connect relay environment."),
+    failedWithDetail: msg("Could not connect relay environment:"),
+  },
+  "register relay mobile device": {
+    failed: msg("Could not register relay mobile device."),
+    failedWithDetail: msg("Could not register relay mobile device:"),
+  },
+  "unregister relay mobile device": {
+    failed: msg("Could not unregister relay mobile device."),
+    failedWithDetail: msg("Could not unregister relay mobile device:"),
+  },
+  "register relay live activity": {
+    failed: msg("Could not register relay live activity."),
+    failedWithDetail: msg("Could not register relay live activity:"),
+  },
+  "read relay agent activity snapshot": {
+    failed: msg("Could not read relay agent activity snapshot."),
+    failedWithDetail: msg("Could not read relay agent activity snapshot:"),
+  },
+  "read linked T3 Chat account": {
+    failed: msg("Could not read linked T3 Chat account."),
+    failedWithDetail: msg("Could not read linked T3 Chat account:"),
+  },
+  "start T3 Chat linking": {
+    failed: msg("Could not start T3 Chat linking."),
+    failedWithDetail: msg("Could not start T3 Chat linking:"),
+  },
+  "unlink T3 Chat account": {
+    failed: msg("Could not unlink T3 Chat account."),
+    failedWithDetail: msg("Could not unlink T3 Chat account:"),
+  },
+};
 
 export class ManagedRelayRequestFailedError extends Schema.TaggedError<ManagedRelayRequestFailedError>()(
   "ManagedRelayRequestFailedError",
@@ -161,9 +259,14 @@ export class ManagedRelayRequestFailedError extends Schema.TaggedError<ManagedRe
   },
 ) {
   override get message(): string {
-    if (this.transportFailed) return `Could not ${this.action}. ${NETWORK_BLOCKING_HINT}`;
-    const detail = relayRequestFailureDetail(this);
-    return detail ? `Could not ${this.action}: ${detail}` : `Could not ${this.action}.`;
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    const text = REQUEST_FAILED_TEXT[this.action];
+    if (this.transportFailed) return [text.failed, NETWORK_BLOCKING_HINT];
+    const detail = relayRequestFailureText(this);
+    return detail ? [text.failedWithDetail, ...detail] : [text.failed];
   }
 }
 
@@ -175,7 +278,11 @@ export class ManagedRelayAccessTokenScopesUnexpectedError extends Schema.TaggedE
   },
 ) {
   override get message(): string {
-    return "Relay granted unexpected DPoP access token scopes.";
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [msg("Relay granted unexpected DPoP access token scopes.")];
   }
 }
 
@@ -188,7 +295,11 @@ export class ManagedRelayTokenProofCreationError extends Schema.TaggedError<Mana
   },
 ) {
   override get message(): string {
-    return "Could not create relay token DPoP proof.";
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [msg("Could not create relay token DPoP proof.")];
   }
 }
 
@@ -201,7 +312,11 @@ export class ManagedRelayRequestProofCreationError extends Schema.TaggedError<Ma
   },
 ) {
   override get message(): string {
-    return "Could not create relay request DPoP proof.";
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [msg("Could not create relay request DPoP proof.")];
   }
 }
 
