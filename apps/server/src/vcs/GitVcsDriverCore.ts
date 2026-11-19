@@ -5936,20 +5936,35 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     Effect.fn("fetchRemoteTrackingBranch")(function* (input) {
       // Storage cleanup runs this every sweep: like the status fetch, a killed fetch strands a
       // `tmp_pack_*` and a failing `gc --auto` repeats each time, so allow time and skip gc.
-      yield* runGit(
+      const args = [
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-auto-gc",
+        "--",
+        input.remoteName,
+        `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
+      ];
+      const result = yield* executeGitWithStableDiagnostics(
         "GitVcsDriver.fetchRemoteTrackingBranch",
         input.cwd,
-        [
-          "fetch",
-          "--quiet",
-          "--no-tags",
-          "--no-auto-gc",
-          "--",
-          input.remoteName,
-          `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
-        ],
-        { timeoutMs: FETCH_REMOTE_TIMEOUT_MS },
+        args,
+        { timeoutMs: FETCH_REMOTE_TIMEOUT_MS, allowNonZeroExit: true },
       );
+      if (result.exitCode === 0) return;
+      const reason = classifyGitFailure(result.stderr);
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.fetchRemoteTrackingBranch",
+          cwd: input.cwd,
+          args,
+        }),
+        ...(reason === null ? {} : { reason }),
+        detail: fetchFailureDetail(result.stderr) ?? gitFailureDetail(reason),
+        ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
+        stdoutLength: result.stdout.length,
+        stderrLength: result.stderr.length,
+      });
     });
 
   const setBranchUpstream: GitVcsDriver.GitVcsDriver["Service"]["setBranchUpstream"] = Effect.fn(
