@@ -62,8 +62,16 @@ export type InRun =
   | WorkflowEngine.WorkflowInstance;
 
 /** Takes `name` for one step of the run. Step results and the step list are both kept by name. */
-export const claim = (name: string) =>
+export const claim = (name: string, cleanup = false) =>
   Effect.flatMap(RunContext, (run) => {
+    // The cleanup step's name is its own, or a body step would take it and cleanup never run.
+    if (name === END_STEP && !cleanup) {
+      return Effect.die(
+        new Error(
+          `"${END_STEP}" is the name of workflow ${run.workflow}'s cleanup step. Name this step something else.`,
+        ),
+      );
+    }
     if (run.names.has(name)) {
       return Effect.die(
         new Error(
@@ -159,8 +167,15 @@ export const step = <A, I, E>(
   name: string,
   options: { readonly returns: Schema.Codec<A, I>; readonly retry?: StepRetry },
   code: Effect.Effect<A, E, InStep>,
+): Effect.Effect<A, StepFailed, InRun> => stepAs(claim(name), name, options, code);
+
+const stepAs = <A, I, E>(
+  claimed: Effect.Effect<RunContext["Service"], never, InRun>,
+  name: string,
+  options: { readonly returns: Schema.Codec<A, I>; readonly retry?: StepRetry },
+  code: Effect.Effect<A, E, InStep>,
 ): Effect.Effect<A, StepFailed, InRun> =>
-  Effect.flatMap(claim(name), (run) => {
+  Effect.flatMap(claimed, (run) => {
     const retry = options.retry ?? DEFAULT_RETRY;
     const resultCodec = Schema.toCodecJson(options.returns);
     const encodeResult = Schema.encodeEffect(resultCodec);
@@ -180,12 +195,13 @@ export const step = <A, I, E>(
                 ...(retry.schedule === undefined ? {} : { schedule: retry.schedule }),
               }),
         ),
-        Effect.tap(() => run.store.stepEnded(run.runId, name, "completed", null)),
-        // For a person reading the run. A value that does not encode fails the step just after.
+        // A value that does not encode fails the step, so it is never marked done first.
         Effect.tap((value) =>
-          Effect.ignore(
-            Effect.flatMap(encodeResult(value), (json) =>
-              run.store.stepResult(run.runId, name, json as Schema.Json),
+          Effect.flatMap(encodeResult(value), (json) =>
+            Effect.andThen(
+              run.store.stepEnded(run.runId, name, "completed", null),
+              // For a person reading the run.
+              Effect.ignore(run.store.stepResult(run.runId, name, json as Schema.Json)),
             ),
           ),
         ),
@@ -529,7 +545,8 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
         Effect.tap((ended) =>
           definition.onEnd === undefined
             ? Effect.void
-            : step(
+            : stepAs(
+                claim(END_STEP, true),
                 END_STEP,
                 { returns: Schema.Void },
                 definition.onEnd(input, {
@@ -552,7 +569,9 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
       );
       yield* Activity.make({
         name: "run/end",
-        execute: store.runEnded(runId, outcome.outcome, outcome.reason ?? null, outcome.value),
+        execute: Effect.asVoid(
+          store.runEnded(runId, outcome.outcome, outcome.reason ?? null, outcome.value),
+        ),
       });
       yield* Activity.make({
         name: "run/told",

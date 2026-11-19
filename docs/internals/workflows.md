@@ -1,7 +1,9 @@
 # Workflows
 
-A workflow run is a journaled function: each step happens once, a restart replays the run to where
-it was, and a run sleeps on a wait until something outside signals it. The code is in
+A workflow run is a journaled function: a step's result is stored once it succeeds, a restart
+replays the run to where it was, and a run sleeps on a wait until something outside signals it. A
+step's body can run more than once, after a failure it retries or a crash mid-step, so what it does
+outside the run must be safe to repeat. The code is in
 [`apps/server/src/workflows`](../../apps/server/src/workflows). This page holds what is not
 obvious from it.
 
@@ -114,8 +116,9 @@ therefore ends the run's row first, so nothing the step still does is recorded a
 stops the agent's thread, which is what makes a long agent step return.
 
 **One signal wakes one wait.** A wait is taken by the first signal for it; a second signal on the
-same key is for the next run that waits on that key, and is kept until one does. A signal's id is
-remembered once delivered, so a sender's retry is not a second signal.
+same key is for the next run that waits on that key, and is kept until one does or its `ttl` runs
+out (seven days by default), after which it is gone. A signal's id is remembered for seven days
+once delivered, so a sender's retry within that time is not a second signal.
 
 **`signalAll` keeps nothing.** It wakes the waits open on a key now and is not kept for one that
 opens later: a kept broadcast would wake whichever single run waited next, days on. A run that

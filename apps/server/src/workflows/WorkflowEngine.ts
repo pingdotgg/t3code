@@ -247,7 +247,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         }
       }
     }
-  });
+  }).pipe(Effect.withSpan("Workflows.fireSchedules"));
 
   // Trackers and hosts count requests, and nothing here is in that much of a hurry.
   const lookedAt = new Map<string, number>();
@@ -302,10 +302,20 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
                 );
               }
               for (const entry of fresh) {
-                // The key is the address, so an issue seen twice is still one run.
+                // The key is the address, so an issue seen twice is still one run. One the
+                // workflow turns down is passed over, so it does not hold back the ones after it.
                 yield* start(definition.name, entry, {
                   idempotencyKey: `trigger:${id}:${entry.url}`,
-                });
+                }).pipe(
+                  Effect.catchTags({
+                    WorkflowInputError: (error) =>
+                      Effect.logWarning("A workflow turned down an item it was started on", {
+                        trigger: id,
+                        item: entry.url,
+                        error,
+                      }),
+                  }),
+                );
                 yield* store.triggerSet(id, entry.createdAt);
               }
             }),
@@ -316,7 +326,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         );
       }
     }
-  });
+  }).pipe(Effect.withSpan("Workflows.fireOpened"));
 
   const noChecksSince = new Map<string, number>();
   /** End each wait on a pull request that has got where the wait wanted it. */
@@ -353,7 +363,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         ),
       );
     }
-  });
+  }).pipe(Effect.withSpan("Workflows.fireWatches"));
 
   const hooks = yield* Effect.forEach(
     latestDefinitions.flatMap((definition) =>
@@ -481,9 +491,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     yield* fireOpened;
     yield* fireWatches;
     for (const row of yield* store.runsToEnd(END_STEP, END_TRIES)) yield* endCancelled(row);
-    for (const row of yield* store.runs("running")) yield* reconcile(row);
+    for (const row of yield* store.everyRun("running")) yield* reconcile(row);
     const at = yield* DateTime.now;
-    for (const row of yield* store.pausedRuns) {
+    for (const row of yield* store.everyRun("paused")) {
       const due = resumesAt(row);
       if (due === undefined || DateTime.isLessThan(at, due)) continue;
       yield* Effect.ignore(resume(row.run_id));
@@ -649,8 +659,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       const row = yield* requireRun(runId);
       if (row.ended_at !== null) return;
       const threads = yield* store.runningThreads(runId);
-      // Ended first, so nothing the run still does can be recorded as its outcome.
-      yield* store.runEnded(runId, "cancelled", reason, null);
+      // Ended first, so nothing the run still does can be recorded as its outcome. A run that
+      // finished in the meantime keeps its own ending, and its cleanup is its own.
+      if (!(yield* store.runEnded(runId, "cancelled", reason, null))) return;
       const engine = byTag.get(row.engine_tag);
       if (engine !== undefined) yield* withEngine(engine.interrupt(runId));
       // A step in flight cannot be interrupted, so the agent it waits on is stopped instead.

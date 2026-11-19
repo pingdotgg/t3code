@@ -118,7 +118,7 @@ export class WorkflowStore extends Context.Service<
       status: "completed" | "stopped" | "skipped" | "cancelled",
       detail: string | null,
       result: Schema.Json,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<boolean>;
     readonly runTitle: (runId: string, title: string) => Effect.Effect<void>;
     /** Marks the step running and returns how many times it has now been started. */
     readonly stepStarted: (
@@ -171,8 +171,8 @@ export class WorkflowStore extends Context.Service<
     ) => Effect.Effect<"delivered" | "gone" | "claimed">;
     /** Runs that were not ended while the run that invoked them was cancelled. */
     readonly orphans: Effect.Effect<ReadonlyArray<RunRow>>;
-    /** Every paused run, however many: the sweep decides which are due. */
-    readonly pausedRuns: Effect.Effect<ReadonlyArray<RunRow>>;
+    /** Every run in this state, however many: the sweep must not miss old ones past a page. */
+    readonly everyRun: (status: "running" | "paused") => Effect.Effect<ReadonlyArray<RunRow>>;
     /** Whether a signal with this id already woke a wait. */
     readonly signalSeen: (signalId: string) => Effect.Effect<boolean>;
     /** Counts one more arrival at `name` in this run and returns the count. */
@@ -324,20 +324,24 @@ export const make = Effect.gen(function* () {
     runEnded: Effect.fn("WorkflowStore.runEnded")(function* (runId, status, detail, result) {
       const at = yield* now;
       const resultJson = jsonText(result);
-      yield* write(
-        runId,
-        sql.withTransaction(
-          Effect.andThen(
-            sql`
+      // False when another outcome was recorded first: the run ended some other way.
+      const ended = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const rows = yield* sql`
               UPDATE workflow_runs
               SET status = ${status}, detail = ${detail}, result_json = ${resultJson},
                   pauses = 0, updated_at = ${at}, ended_at = ${at}
               WHERE run_id = ${runId} AND ended_at IS NULL
-            `,
-            sql`DELETE FROM workflow_waits WHERE run_id = ${runId}`,
-          ),
-        ),
-      );
+              RETURNING run_id
+            `;
+            yield* sql`DELETE FROM workflow_waits WHERE run_id = ${runId}`;
+            return rows.length > 0;
+          }),
+        )
+        .pipe(Effect.orDie);
+      yield* PubSub.publish(changes, runId);
+      return ended;
     }),
     runTitle: Effect.fn("WorkflowStore.runTitle")(function* (runId, title) {
       yield* write(
@@ -408,14 +412,24 @@ export const make = Effect.gen(function* () {
           RETURNING name
         `;
         if (taken.length > 0 && signalId !== undefined) {
-          yield* sql`
+          const receipt = yield* sql`
             INSERT INTO workflow_signals (signal_id, delivered_at) VALUES (${signalId}, ${at})
             ON CONFLICT (signal_id) DO NOTHING
+            RETURNING signal_id
           `;
+          // The id already woke a wait, so this one is not claimed: the transaction undoes it.
+          if (receipt.length === 0) return yield* Effect.fail("seen" as const);
         }
         return taken.length > 0;
       },
-      (effect) => sql.withTransaction(effect).pipe(Effect.orDie),
+      (effect) =>
+        sql.withTransaction(effect).pipe(
+          Effect.catchIf(
+            (error) => error === "seen",
+            () => Effect.succeed(false),
+          ),
+          Effect.orDie,
+        ),
     ),
     waitsToWake: Effect.gen(function* () {
       const before = DateTime.formatIso(
@@ -463,7 +477,11 @@ export const make = Effect.gen(function* () {
       JOIN workflow_runs p ON p.run_id = c.parent_run_id
       WHERE c.ended_at IS NULL AND p.status = 'cancelled'
     `.pipe(Effect.orDie),
-    pausedRuns: sql<RunRow>`SELECT * FROM workflow_runs WHERE status = 'paused'`.pipe(Effect.orDie),
+    everyRun: Effect.fn("WorkflowStore.everyRun")(function* (status) {
+      return yield* sql<RunRow>`SELECT * FROM workflow_runs WHERE status = ${status}`.pipe(
+        Effect.orDie,
+      );
+    }),
     signalSeen: Effect.fn("WorkflowStore.signalSeen")(function* (signalId) {
       const rows = yield* sql`
         SELECT 1 FROM workflow_signals WHERE signal_id = ${signalId}

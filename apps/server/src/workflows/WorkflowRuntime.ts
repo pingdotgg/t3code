@@ -266,40 +266,42 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     return built;
   });
 
-  const boot = Effect.fn("WorkflowRuntime.boot")(function* (
-    definitions: ReadonlyArray<WorkflowDefinition>,
-  ) {
-    const next = Deferred.makeUnsafe<Workflows.Workflows["Service"]>();
-    ready = next;
-    const previous = running;
-    if (engineScope !== undefined) yield* Scope.close(engineScope, Exit.void);
-    engineScope = undefined;
-    running = [];
-    if (definitions.length === 0) {
-      yield* Deferred.succeed(next, Workflows.disabled);
-      return null;
-    }
-    const built = yield* build(definitions);
-    if (Exit.isSuccess(built)) {
-      running = definitions;
-      yield* Deferred.succeed(next, Context.get(built.value, Workflows.Workflows));
-      yield* Effect.logInfo("Workflows registered", {
-        directory,
-        workflows: definitions.map(engineTag),
-      });
-      return null;
-    }
-    // What ran before comes back, so definitions that cannot start take nothing down.
-    const restored = previous.length === 0 ? undefined : yield* build(previous);
-    if (restored !== undefined && Exit.isSuccess(restored)) {
-      running = previous;
-      yield* Deferred.succeed(next, Context.get(restored.value, Workflows.Workflows));
-    } else {
-      // Nobody may be left waiting on an engine that never came up.
-      yield* Deferred.succeed(next, Workflows.disabled);
-    }
-    return `The workflow engine did not start: ${text(Cause.squash(built.cause))}`;
-  });
+  const boot = Effect.fn("WorkflowRuntime.boot")(
+    function* (definitions: ReadonlyArray<WorkflowDefinition>) {
+      const next = Deferred.makeUnsafe<Workflows.Workflows["Service"]>();
+      ready = next;
+      const previous = running;
+      if (engineScope !== undefined) yield* Scope.close(engineScope, Exit.void);
+      engineScope = undefined;
+      running = [];
+      if (definitions.length === 0) {
+        yield* Deferred.succeed(next, Workflows.disabled);
+        return null;
+      }
+      const built = yield* build(definitions);
+      if (Exit.isSuccess(built)) {
+        running = definitions;
+        yield* Deferred.succeed(next, Context.get(built.value, Workflows.Workflows));
+        yield* Effect.logInfo("Workflows registered", {
+          directory,
+          workflows: definitions.map(engineTag),
+        });
+        return null;
+      }
+      // What ran before comes back, so definitions that cannot start take nothing down.
+      const restored = previous.length === 0 ? undefined : yield* build(previous);
+      if (restored !== undefined && Exit.isSuccess(restored)) {
+        running = previous;
+        yield* Deferred.succeed(next, Context.get(restored.value, Workflows.Workflows));
+      } else {
+        // Nobody may be left waiting on an engine that never came up.
+        yield* Deferred.succeed(next, Workflows.disabled);
+      }
+      return `The workflow engine did not start: ${text(Cause.squash(built.cause))}`;
+    },
+    // Once `ready` is replaced it must be settled, or every caller waits on it for good.
+    Effect.uninterruptible,
+  );
 
   const unfinished = Effect.suspend(() =>
     running.length === 0

@@ -534,7 +534,13 @@ it.effect(
         .pipe(Effect.forkChild);
       yield* Effect.raceFirst(Deferred.await(subscribed), Fiber.await(fiber));
       // Something wakes the thread. The turn it starts was asked for nothing, and submits anyway.
-      runs = [...runs, run(wakeRunId, 2, { status: "running" })];
+      // A request queued behind it asks for a result of its own, and is not the one owed.
+      const queuedRunId = RunId.make("run:thread-management:owed:queued");
+      runs = [
+        ...runs,
+        run(wakeRunId, 2, { status: "running" }),
+        run(queuedRunId, 3, { status: "queued", outputSchema }),
+      ];
       const accepted = yield* service.submitRunOutput({
         threadId,
         commandId: CommandId.make("command:thread-management:owed"),
@@ -545,7 +551,7 @@ it.effect(
         { type: "run.output.submit", runId, value: { head: "abc" } },
       ]);
       const output = { value: { head: "abc" }, submittedAt: "2026-01-01T00:00:00.000Z" };
-      runs = [run(runId, 1, { status: "completed", outputSchema, output }), runs[1]!];
+      runs = [run(runId, 1, { status: "completed", outputSchema, output }), runs[1]!, runs[2]!];
       yield* Queue.offer(events, stored(1, { type: "run.output-submitted", payload: {} }));
       expect(yield* Fiber.join(fiber)).toMatchObject({
         timedOut: false,

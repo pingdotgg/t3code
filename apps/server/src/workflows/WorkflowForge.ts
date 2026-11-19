@@ -351,8 +351,9 @@ export const layer = Layer.effect(
           return result.entries;
         }),
         read: Effect.fn("WorkflowForge.pullRequests.read")(function* (pullRequest) {
+          // Fresh, not a held copy: checks that passed before a push must not end a wait after it.
           return yield* pullRequests
-            .detail(yield* pullRequestRef(pullRequest))
+            .detail({ ...(yield* pullRequestRef(pullRequest)), allowStale: false })
             .pipe(Effect.mapError(failed("Could not read the pull request")));
         }),
         comment: Effect.fn("WorkflowForge.pullRequests.comment")(function* (pullRequest, body) {
