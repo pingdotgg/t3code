@@ -105,9 +105,17 @@ it.each([true, false])(
   },
 );
 
-it.each([true, false])(
-  "handles a failed sibling without leaving a pending page (progressive: %s)",
-  async (progressiveGallery) => {
+it.each([
+  // The progressive viewer already gave the missing image a page; a viewer that waits opens without it.
+  [
+    true,
+    1,
+    [{ failed: true }, { uri: "https://signed.test/a.png" }, { uri: "https://signed.test/c.png" }],
+  ],
+  [false, 0, [{ uri: "https://signed.test/a.png" }, { uri: "https://signed.test/c.png" }]],
+])(
+  "opens the gallery when a sibling cannot be resolved (progressive: %s)",
+  async (progressiveGallery, selectedIndex, images) => {
     harness.refreshAssetUrl.mockImplementation(async (_environmentId, resource) => {
       if (resource.url.endsWith("missing.png")) throw new Error("not found");
       return `https://signed.test/${resource.url.split("/").pop()}`;
@@ -115,26 +123,16 @@ it.each([true, false])(
     const selected = image("https://github.com/a.png");
     await using preview = await openGallery(
       selected,
-      [selected, image("https://github.com/missing.png"), image("https://github.com/c.png")],
+      [image("https://github.com/missing.png"), selected, image("https://github.com/c.png")],
       progressiveGallery,
     );
 
-    if (!progressiveGallery) {
-      expect(preview.onRequestClose).toHaveBeenCalledOnce();
-      expect(harness.alert).toHaveBeenCalledOnce();
-      expect(harness.previews).toEqual([]);
-      return;
-    }
-
     expect(preview.onRequestClose).not.toHaveBeenCalled();
     expect(harness.alert).not.toHaveBeenCalled();
-    expect(harness.previews.at(-1)).toMatchObject({
-      selectedIndex: 0,
-      images: [
-        { uri: "https://signed.test/a.png" },
-        { failed: true },
-        { uri: "https://signed.test/c.png" },
-      ],
+    expect(harness.previews.at(-1)).toEqual({
+      kind: "image",
+      selectedIndex,
+      images: images.map((page) => expect.objectContaining(page)),
     });
   },
 );
