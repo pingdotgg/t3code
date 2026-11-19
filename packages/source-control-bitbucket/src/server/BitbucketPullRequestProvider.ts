@@ -38,9 +38,10 @@ const CAPABILITIES: PullRequestCapabilities = {
 };
 
 const UNAVAILABLE_REQUIREMENT = {
-  missing: "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
+  missing:
+    "Bitbucket needs API credentials on the server. Add them in Settings → Source control & issues.",
   unauthenticated:
-    "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
+    "Bitbucket rejected the configured credentials. Check them in Settings → Source control & issues.",
 };
 
 /**
