@@ -312,7 +312,12 @@ const fix = workflow(
   "fix",
   {
     version: 1,
-    payload: Schema.Struct({ project: Schema.String, environment: Schema.optional(Schema.String) }),
+    payload: Schema.Struct({
+      project: Schema.String,
+      environment: Schema.optional(Schema.String),
+      // Lands with a model of its own, which a continued thread cannot take.
+      reshape: Schema.optional(Schema.Boolean),
+    }),
     returns: Schema.String,
   },
   (payload) =>
@@ -329,7 +334,11 @@ const fix = workflow(
         data: { branch: written.value.branch },
       });
       if (Option.isNone(answer) || answer.value.choice !== "Merge") return yield* stop("left");
-      const landed = yield* agent("land", { brief: "Land it.", thread: written.thread });
+      const landed = yield* agent("land", {
+        brief: "Land it.",
+        thread: written.thread,
+        ...(payload.reshape === true ? { model: { instanceId: "codex", model: "gpt" } } : {}),
+      });
       return `${written.value.branch}: ${landed.value}`;
     }),
 );
@@ -1377,6 +1386,32 @@ it.effect("two agents run side by side, and one past its time limit is stopped",
           ["left", "completed"],
           ["right", "failed"],
         ]);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a continued thread keeps how it started", () =>
+  Effect.gen(function* () {
+    const { boot, agents } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const run = yield* workflows.start(
+          "fix",
+          { project: "p1", reshape: true },
+          { idempotencyKey: "r1" },
+        );
+        yield* agents.started(run.runId, "write/0");
+        yield* agents.end(run.runId, "write/0", { output: { branch: "fix/1" } });
+        yield* workflows.waitFor(run.runId, (current) => current.detail === "merge");
+        yield* workflows.signal(
+          { runId: run.runId, wait: "merge" },
+          { choice: "Merge" },
+          { id: "m" },
+        );
+        const paused = yield* workflows.waitFor(run.runId, status("paused"));
+        assert.include(paused.detail ?? "", "Drop `model`");
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
