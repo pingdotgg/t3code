@@ -76,9 +76,14 @@ export function evaluatePullRequestWatch(
   const awaiting = checks.filter((check) => check.status === "action-required");
   if (checks.length > 0) {
     // A run awaiting approval waits on a person, like a review, so only running checks count.
-    checksPending = checks.some((check) => check.status === "pending");
+    // An unfinished baseline read keeps the seed below for the next one.
+    checksPending =
+      checks.some((check) => check.status === "pending") ||
+      (checksBaseline && unread && watch.checksPending === true);
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
-    if (!checksBaseline && newlyFailed.length > 0) {
+    // The baseline hides failures from before the watch, but CI running at the start can fail
+    // before the first read.
+    if (newlyFailed.length > 0 && (!checksBaseline || watch.checksPending === true)) {
       changes.push({ kind: "checks-failed", failed: newlyFailed });
     }
     if (!approvalAnnounced && awaiting.length > 0) {
@@ -256,6 +261,7 @@ export function evaluatePullRequestWatch(
         }),
       checksAwaitedSince,
       checksPending,
+      ...(watch.until !== undefined && { until: watch.until }),
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
@@ -443,6 +449,33 @@ export function combinePullRequestWatchWakes(
           ? "completed"
           : "updated",
       summary: wakes.map((wake) => wake.notification.summary).join("; "),
+    },
+  };
+}
+
+export function pullRequestWatchEndMessage(input: {
+  readonly number: number;
+  readonly url: string;
+  readonly detail: Pick<PullRequestDetail, "state" | "baseBranch" | "mergeCommitSha" | "mergedBy">;
+}): { readonly text: string; readonly notification: OrchestrationV2Notification } {
+  const { detail } = input;
+  const merged = detail.state === "merged";
+  const how = merged
+    ? [
+        `was merged into ${detail.baseBranch}`,
+        detail.mergedBy ? ` by ${detail.mergedBy.login}` : "",
+        detail.mergeCommitSha ? ` as ${detail.mergeCommitSha.slice(0, 7)}` : "",
+      ].join("")
+    : "was closed without merging";
+  return {
+    text: [
+      `Pull request #${input.number} (${input.url}) ${how}, so T3 Code stopped watching it.`,
+      ...(merged ? [] : ["If it is reopened, call watch_pull_request to watch it again."]),
+    ].join(" "),
+    notification: {
+      source: { kind: "monitor" },
+      outcome: merged ? "completed" : "updated",
+      summary: `#${input.number}: ${merged ? "merged" : "closed"}, stopped watching`,
     },
   };
 }
