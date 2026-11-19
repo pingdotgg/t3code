@@ -533,19 +533,35 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       yield* harness.initialize;
       yield* harness.provider.onSessionStarted(started, "/workspace");
       yield* harness.provider.onAvailableCommands(commands, "/workspace");
+      expect((yield* harness.provider.snapshot.getSnapshot).status).toBe("ready");
       yield* Ref.set(
         harness.probe,
         Effect.fail(EffectAcpErrors.AcpRequestError.internalError("probe failed")),
       );
-      const snapshot = yield* harness.provider.snapshot.refresh;
+      const streamed = yield* Deferred.make<ServerProvider>();
+      yield* harness.provider.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.status !== "ready"),
+        Stream.take(1),
+        Stream.runForEach((snapshot) => Deferred.succeed(streamed, snapshot)),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* harness.provider.snapshot.refresh;
+      // One failure after a ready check keeps the catalog usable, wherever it is read.
+      const snapshot = yield* harness.provider.snapshot.getSnapshot;
+      expect((yield* Deferred.await(streamed)).status).toBe("warning");
       expect(snapshot).toMatchObject({
         installed: true,
-        status: "error",
+        status: "warning",
         auth: { status: "authenticated" },
       });
       expect(snapshot.models).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
       expect(snapshot.slashCommands).toEqual(expectedCommands);
       expect(snapshot.workspaceSnapshots?.[0]?.cwd).toBe("/workspace");
+
+      const failedAgain = yield* harness.provider.snapshot.refresh;
+      expect(failedAgain.status).toBe("error");
+      expect(failedAgain.models).toEqual(snapshot.models);
     }),
   );
 
@@ -578,7 +594,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         const snapshot = yield* harness.provider.snapshot.refresh;
         expect(snapshot).toMatchObject({
           installed,
-          status: "error",
+          status: installed ? "warning" : "error",
           auth: { status: "authenticated" },
         });
         expect(snapshot.models).toHaveLength(installed ? 11 : 0);
