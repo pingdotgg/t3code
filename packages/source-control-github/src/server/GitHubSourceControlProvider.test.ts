@@ -164,6 +164,7 @@ function harness(input: {
   readonly localBranches?: ReadonlyArray<string>;
   readonly resolved?: string;
   readonly gitFailure?: unknown;
+  readonly originUrls?: string;
 }) {
   const git: Array<readonly [string, unknown]> = [];
   const graphqlCalls: Array<GraphQlCall> = [];
@@ -178,7 +179,9 @@ function harness(input: {
     execute: (args) =>
       Effect.sync(() => {
         git.push(["execute", args.args]);
-        return processOutput("");
+        return processOutput(
+          args.args[0] === "config" ? (input.originUrls ?? "git@github.com:acme/web.git\n") : "",
+        );
       }),
     resolvePrimaryRemoteName: () => Effect.succeed("origin"),
     readConfigValue: () => Effect.succeed("git@github.com:acme/web.git"),
@@ -262,6 +265,35 @@ const githubContext = (host: string) => ({
 });
 
 describe("GitHubSourceControlProvider repository resolution", () => {
+  // regression: #38251 an Enterprise Server's hostname need not say "github"; a gh login vouches for it
+  it.effect.each([
+    ["github", "github"],
+    ["unknown", "unknown"],
+  ] as const)("refines a remote on an unknown host the gh login reads as %s", ([seen, expected]) =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider({});
+      const remoteUrl = "https://code.acme.test/acme/web.git";
+      const identity = {
+        canonicalKey: "code.acme.test/acme/web",
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+        rootPath: "/repo",
+        provider: SourceControlProviderKind.make("unknown"),
+      };
+      const refined = yield* provider.refineRepositoryIdentity!({
+        identity,
+        resolveContext: ({ context }) =>
+          Effect.succeed({
+            ...context,
+            provider: { ...context.provider, kind: SourceControlProviderKind.make(seen) },
+          }),
+      });
+      assert.deepStrictEqual(refined, {
+        ...identity,
+        provider: SourceControlProviderKind.make(expected),
+      });
+    }),
+  );
+
   it.effect("reads the repository gh would pick from the remotes", () => {
     const paths: string[] = [];
     const { layer } = harness({
@@ -450,11 +482,11 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
     });
     return Effect.gen(function* () {
       const gh = yield* GitHubSourceControlProvider.make;
-      const probe = (defaultBranchHeadSelector?: string) =>
+      const probe = (ownerHeadSelector?: string) =>
         gh.headBranchProbe?.({
           headSelectors: ["me:main", "main"],
           state: "all",
-          defaultBranchHeadSelector,
+          ownerHeadSelector,
         }).headSelectors;
       assert.deepStrictEqual([probe(), probe("me:main")], [["main"], ["me:main"]]);
       const read = (state: "open" | "merged") =>
@@ -580,7 +612,7 @@ describe("GitHubSourceControlProvider writes", () => {
         body: "Body",
         maintainer_can_modify: true,
       });
-    }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)), Effect.scoped);
+    }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)));
   });
 
   it.effect("creates a repository under an organization the viewer is not", () => {
@@ -679,6 +711,41 @@ describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {
       const gh = yield* GitHubSourceControlProvider.make;
       yield* Effect.flip(gh.checkoutChangeRequest({ cwd: "/repo", reference: "6", force: true }));
       assert.deepStrictEqual(git, []);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("adds a fork remote with the protocol of the URL origin fetches from", () => {
+    // `git remote -v` shows origin's SSH `insteadOf` rewrite; config holds HTTPS, then an SSH push URL.
+    const { layer, git } = harness({
+      remotes: [
+        "origin\tgit@github.com:acme/web.git (fetch)",
+        "origin\tgit@github.com:acme/web.git (push)",
+        "origin\tgit@github.com:acme/web.git (push)",
+      ].join("\n"),
+      originUrls: "https://github.com/acme/web.git\ngit@github.com:acme/web.git\n",
+      graphql: () => ({ pullRequest: node(7, "feature", "someone") }),
+      api: {
+        rest: (input) => {
+          const fullName = input.path.slice("repos/".length);
+          return Effect.succeed(
+            restResponse({
+              full_name: fullName,
+              html_url: `https://github.com/${fullName}`,
+              ssh_url: `git@github.com:${fullName}.git`,
+              default_branch: "main",
+            }),
+          );
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      yield* gh.checkoutChangeRequest({ cwd: "/repo", reference: "7" });
+      assert.deepStrictEqual(git.find(([name]) => name === "ensureRemote")?.[1], {
+        cwd: "/repo",
+        preferredName: "someone",
+        url: "https://github.com/someone/web",
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -1020,7 +1087,9 @@ it("reports unauthenticated when Settings turn off every signed-in host", () => 
   assert.strictEqual(auth.status, "unauthenticated");
   assert.deepStrictEqual(
     auth.detail,
-    Option.some("Every GitHub host gh is signed in to is turned off in Settings → Source Control."),
+    Option.some(
+      "Every GitHub host gh is signed in to is turned off in Settings → Source control & issues.",
+    ),
   );
 });
 
@@ -1146,7 +1215,7 @@ it.live.each([
       remoteName: "enterprise",
       remoteBranch: "feature",
     });
-  }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}), Effect.scoped);
+  }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
 });
 
 it.effect.each([
@@ -1228,7 +1297,6 @@ it.effect.each([
     }).pipe(
       Effect.provide(layer),
       Effect.provideService(HostProcess.Environment, { GH_REPO: envRepository }),
-      Effect.scoped,
     );
   },
 );
