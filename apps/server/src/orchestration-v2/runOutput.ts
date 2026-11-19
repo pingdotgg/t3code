@@ -20,7 +20,7 @@ const compile = (schema: OutputSchema) =>
 const MAX_SCHEMA_CHARS = 32_000;
 
 /** Why a declared output schema cannot be used, or null when it can. */
-export const outputSchemaProblem = (schema: OutputSchema): string | null =>
+const outputSchemaProblem = (schema: OutputSchema): string | null =>
   JSON.stringify(schema).length > MAX_SCHEMA_CHARS
     ? `The output schema is larger than ${MAX_SCHEMA_CHARS} characters.`
     : Result.isFailure(compile(schema))

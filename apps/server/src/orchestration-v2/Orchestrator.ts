@@ -89,7 +89,7 @@ import { modelSwitchSince } from "./modelSwitch.ts";
 import { contextBoundaryOrdinal, isScheduledFreshRun } from "./contextBoundary.ts";
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
-import { outputSchemaProblem } from "./runOutput.ts";
+import { outputRequestProblem } from "./runOutput.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
   backgroundWorkHoldsCompletion,
@@ -7247,7 +7247,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? undefined
         : projection.runs.find((run) => run.id === continuedRunId)?.outputSchema);
     const schemaProblem =
-      command.outputSchema === undefined ? null : outputSchemaProblem(command.outputSchema);
+      command.outputSchema === undefined
+        ? null
+        : outputRequestProblem(command.outputSchema, command);
     if (schemaProblem !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,

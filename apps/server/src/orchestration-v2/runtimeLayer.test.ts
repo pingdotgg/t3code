@@ -11481,6 +11481,52 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) => {
+  it.effect("turns down a provider command asked for a result", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make("runtime-layer-command-output-project");
+      const threadId = ThreadId.make("runtime-layer-command-output-thread");
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-command-output-project-create"),
+        projectId,
+        title: "Command output project",
+        workspaceRoot: "/tmp/runtime-layer-command-output-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-command-output-create"),
+        threadId,
+        projectId,
+        title: "Command output",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const rejected = yield* orchestrator
+        .dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("runtime-layer-command-output-message"),
+          threadId,
+          messageId: MessageId.make("runtime-layer-command-output-message"),
+          text: "/goal Review the changes",
+          attachments: [],
+          modelSelection,
+          outputSchema: { type: "object" },
+          dispatchMode: { type: "start_immediately" },
+        })
+        .pipe(Effect.flip);
+      assert.include(String(rejected.cause), "cannot be asked for a result");
+      assert.deepEqual((yield* orchestrator.getThreadProjection(threadId)).runs, []);
+    }),
+  );
+
   it.effect("turns down a result submitted after a stop was requested", () =>
     Effect.gen(function* () {
       const projects = yield* ProjectService.ProjectService;
