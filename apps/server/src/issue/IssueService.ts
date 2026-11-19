@@ -238,8 +238,9 @@ const make = Effect.gen(function* () {
       Effect.flatMap(
         Effect.fnUntraced(function* (shells) {
           if (shells.length === 0) return [];
-          // Use one fresh binding snapshot for the entire listing, including when Settings changes.
+          // One read per listing, not per project, and never cached so Settings changes apply.
           const bound = yield* bindings.list.pipe(
+            // A failed read is not an unbound project: that would list the git host's issues alone.
             Effect.mapError(
               (cause) =>
                 new IssueOperationError({
