@@ -293,6 +293,12 @@ export function IssuesPage() {
                     pullRequestProjectKey({ environmentId, id: entry.projectId }),
                   ),
               ),
+              errors: page.errors.filter(
+                (error) =>
+                  !hiddenProjects.has(
+                    pullRequestProjectKey({ environmentId, id: error.projectId }),
+                  ),
+              ),
               answer: {
                 ...page.answer,
                 scopes: page.answer.scopes?.filter(
