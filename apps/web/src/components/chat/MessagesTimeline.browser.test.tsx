@@ -302,15 +302,17 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("labels the running timer as elapsed time", async () => {
+    using _timers = fakeTimers();
+    vi.setSystemTime(new Date("2026-01-02T00:00:05.000Z"));
     const runId = RunId.make("live-elapsed");
-    const startedAt = new Date(Date.now() - 5_000).toISOString();
+    const startedAt = "2026-01-02T00:00:00.000Z";
     await using screen = await renderTimeline([message("Check the project", { runId })], {
       isWorking: true,
       activeTurnStartedAt: startedAt,
       latestRun: { runId, status: "running", startedAt, completedAt: null },
     });
 
-    await vi.waitFor(() => expect(screen.container.textContent).toMatch(/Elapsed [0-9]+s/));
+    expect(screen.container.textContent).toContain("Elapsed 5s");
   });
 
   it("keeps the elapsed-time heading in place when expanded at the bottom", async () => {
