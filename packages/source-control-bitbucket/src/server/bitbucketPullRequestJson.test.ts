@@ -91,6 +91,53 @@ describe("decodePullRequestPageJson", () => {
   });
 });
 
+describe("review decision", () => {
+  const reviewer = (state: string | null, approved = false) => ({
+    role: "REVIEWER",
+    state,
+    approved,
+    user: { display_name: "Rev" },
+  });
+
+  it.each([
+    ["no reviewers and no votes", {}, null],
+    ["a reviewer who has not voted", { reviewers: [{ display_name: "Rev" }] }, "review-required"],
+    ["an approval", { participants: [reviewer("approved", true)] }, "approved"],
+    ["an approval flag without a state", { participants: [reviewer(null, true)] }, "approved"],
+    ["an approval flag with a blank state", { participants: [reviewer("  ", true)] }, "approved"],
+    [
+      "an unassigned participant's approval",
+      { participants: [{ ...reviewer("approved", true), role: "PARTICIPANT" }] },
+      "approved",
+    ],
+    [
+      "an unassigned participant's change request",
+      { participants: [{ ...reviewer("changes_requested"), role: "PARTICIPANT" }] },
+      "changes-requested",
+    ],
+    ["a participant who has not voted", { participants: [{ role: "PARTICIPANT" }] }, null],
+    [
+      "changes requested over an approval",
+      { participants: [reviewer("approved", true), reviewer("changes_requested")] },
+      "changes-requested",
+    ],
+    [
+      "the author's own participation",
+      {
+        author: { uuid: "{author}", nickname: "bilal" },
+        participants: [
+          { role: "PARTICIPANT", user: { uuid: "{author}" }, approved: true, state: "approved" },
+        ],
+      },
+      null,
+    ],
+  ])("reads %s", (_name, overrides, expected) => {
+    const decoded = expectSuccess(decodePullRequestPageJson(page([pullRequest(overrides)])));
+
+    expect(decoded.items[0]?.reviewDecision).toBe(expected);
+  });
+});
+
 describe("decodePullRequestJson", () => {
   // regression: #18402 a pull request with no head commit hash still decodes, headSha null
   it.each([

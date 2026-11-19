@@ -1,7 +1,15 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import type {
+  PullRequestCapabilities,
+  PullRequestCheck,
+  PullRequestChecksState,
+  PullRequestViewerPermissions,
+} from "@t3tools/contracts";
 import { rollupCheckStatuses } from "@t3tools/source-control-core/server/pullRequestChecks";
-import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -112,8 +120,18 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
     createdAt: pullRequest.createdAt,
     updatedAt: pullRequest.updatedAt,
     reviewRequestLogins: pullRequest.reviewRequestLogins,
+    reviewDecision: pullRequest.reviewDecision,
     labels: [],
   };
+}
+
+const CHECKS_STATE_TTL = Duration.minutes(2);
+
+function checksStateOf(checks: ReadonlyArray<PullRequestCheck>): PullRequestChecksState | null {
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+  return statuses.has("success") ? "passing" : null;
 }
 
 /** The write's reply has no `closed_on`, line counts, or conflict state, so those stay absent. */
@@ -171,6 +189,18 @@ export const make = Effect.gen(function* () {
     });
   };
 
+  // Include the head commit so a push bypasses cached statuses from the previous head.
+  const checksStates = yield* Cache.makeWith(
+    (key: string) => {
+      const [repository, number] = JSON.parse(key) as [string, number, string];
+      return api.listChecks({ repository, number }).pipe(Effect.map(checksStateOf));
+    },
+    {
+      capacity: 1000,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? CHECKS_STATE_TTL : Duration.zero),
+    },
+  );
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
@@ -180,8 +210,13 @@ export const make = Effect.gen(function* () {
 
     getViewer: () => api.getViewer().pipe(Effect.mapError(fail("getViewer"))),
 
-    listChangeRequests: (input) =>
-      api
+    listChangeRequests: (input) => {
+      const filters = input.filters;
+      const filterAuthor =
+        filters?.author === undefined
+          ? undefined
+          : resolvePullRequestAuthorFilter(filters.author, input.viewer).toLowerCase();
+      return api
         .listPullRequests({
           repository: input.repository,
           state: input.state,
@@ -189,19 +224,51 @@ export const make = Effect.gen(function* () {
           query: input.query,
           cursor: input.cursor,
           author:
-            input.filters?.author === undefined
+            filters?.author === undefined
               ? undefined
-              : resolvePullRequestAuthorFilter(input.filters.author, input.viewer),
-          draft: input.filters?.draft === undefined ? undefined : input.filters.draft === "only",
+              : resolvePullRequestAuthorFilter(filters.author, input.viewer),
+          draft: filters?.draft === undefined ? undefined : filters.draft === "only",
         })
         .pipe(
+          Effect.flatMap((batch) => {
+            const readItems =
+              filters?.checks === undefined
+                ? Effect.succeed(batch.items.map(toChangeRequest))
+                : Effect.forEach(
+                    batch.items,
+                    (pullRequest) => {
+                      const item = toChangeRequest(pullRequest);
+                      if (
+                        (filters.review !== undefined &&
+                          (filters.review === "none"
+                            ? pullRequest.reviewDecision !== null
+                            : pullRequest.reviewDecision !== filters.review)) ||
+                        (filters.draft !== undefined &&
+                          pullRequest.isDraft !== (filters.draft === "only")) ||
+                        (filterAuthor !== undefined &&
+                          pullRequest.author?.login.toLowerCase() !== filterAuthor)
+                      ) {
+                        return Effect.succeed(item);
+                      }
+                      return Cache.get(
+                        checksStates,
+                        JSON.stringify([
+                          input.repository,
+                          pullRequest.number,
+                          pullRequest.headSha ?? "",
+                        ]),
+                      ).pipe(Effect.map((checksState) => ({ ...item, checksState })));
+                    },
+                    { concurrency: 5 },
+                  );
+            return readItems.pipe(
+              // Keep excluded rows so the service advances its cursor past every scanned row.
+              Effect.map((items) => ({ items, truncated: batch.truncated, continues: true })),
+            );
+          }),
           Effect.mapError(fail("listChangeRequests")),
-          Effect.map((batch) => ({
-            items: batch.items.map(toChangeRequest),
-            truncated: batch.truncated,
-            continues: true,
-          })),
-        ),
+        );
+    },
 
     getChangeRequestChecks: (input) =>
       Effect.all([api.getPullRequest(input), api.listChecks(input)], { concurrency: 2 }).pipe(
