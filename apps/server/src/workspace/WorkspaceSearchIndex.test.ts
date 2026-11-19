@@ -748,3 +748,27 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       }),
     ).pipe(Effect.provide(testLayer)),
 );
+
+// ripgrep and fff let a matching `.ignore` decide ahead of `.gitignore`, so Git's list must not hide it.
+it.live("finds Git-ignored files that a root .ignore re-includes", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const vcsProcess = yield* VcsProcess.VcsProcess;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-search-reinclude-" });
+    yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+    yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "notes/\n");
+    yield* fileSystem.writeFileString(
+      path.join(cwd, ".ignore"),
+      "!notes/\nnotes/**/*\n!notes/**/\n!notes/**/*.md\n",
+    );
+    yield* fileSystem.makeDirectory(path.join(cwd, "notes", "daily"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(cwd, "notes", "daily", "standup.md"), "");
+    yield* fileSystem.writeFileString(path.join(cwd, "notes", "daily", "standup.txt"), "");
+
+    const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+    const result = yield* searchIndex.search("standup", 50, "file");
+
+    expect(result.entries).toEqual([{ kind: "file", path: "notes/daily/standup.md" }]);
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
+);

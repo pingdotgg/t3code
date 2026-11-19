@@ -461,6 +461,68 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect.each(["cached update", "reverify"] as const)(
+  "reports a verification timeout during %s and preserves the managed runtime",
+  (operation) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-verify-test-" });
+      const managed = `${baseDir}/tools/codex`;
+      const installedVersion = operation === "cached update" ? "0.156.0" : asset.version;
+      const target = "aarch64-pc-windows-msvc";
+      const checksum = "a".repeat(64);
+      for (const version of new Set([installedVersion, asset.version])) {
+        const directory = `${managed}/${version}`;
+        yield* fs.makeDirectory(`${directory}/bin`, { recursive: true });
+        yield* fs.makeDirectory(`${directory}/codex-path`, { recursive: true });
+        for (const name of ["bin/codex.exe", "bin/codex-code-mode-host.exe", "codex-path/rg.exe"]) {
+          yield* fs.writeFileString(`${directory}/${name}`, "fixture executable");
+        }
+        yield* fs.writeFileString(
+          `${directory}/codex-package.json`,
+          JSON.stringify({ layoutVersion: 1, version, target, entrypoint: "bin/codex.exe" }),
+        );
+        yield* fs.writeFileString(
+          `${directory}/.install-complete.json`,
+          JSON.stringify({ version, target, sha256: checksum }),
+        );
+      }
+      const pointer = JSON.stringify({ version: installedVersion });
+      yield* fs.writeFileString(`${managed}/active.json`, pointer);
+      const entered = yield* Deferred.make<void>();
+      const h = yield* makeHarness({
+        baseDir,
+        platform: "win32",
+        manifestCurrent: Effect.succeed({
+          ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+          compatibility: [
+            {
+              driver: "codex",
+              t3CodeRange: ">=0.0.0",
+              ranges: [{ range: ">=0.156.0", status: "supported" }],
+            },
+          ],
+        }),
+        options: {
+          releaseAsset: operation === "reverify" ? null : { ...asset, target, sha256: checksum },
+          validate: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+        },
+      });
+      yield* h.installation.start;
+      yield* Deferred.await(entered);
+      yield* TestClock.adjust("90 seconds");
+      expect(yield* terminalState(h.installation)).toMatchObject({
+        phase: "failed",
+        installedVersion,
+        message:
+          "Codex runtime verification timed out after 90 seconds. Check this environment's server logs for startup errors, then retry installation.",
+      });
+      expect(yield* fs.readFileString(`${managed}/active.json`)).toBe(pointer);
+      expect((yield* h.installation.resolve()).version).toBe(installedVersion);
+      expect(h.downloads()).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect("reports a download timeout and cleans the staging directory", () =>
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
@@ -567,6 +629,8 @@ it.effect("updates a managed install to OpenAI's newest release and never downgr
       version: upstreamVersion,
     });
 
+    const sessionScope = yield* Scope.make();
+    const previous = yield* h.installation.acquire().pipe(Scope.provide(sessionScope));
     yield* h.installation.start;
     expect(yield* terminalState(h.installation)).toMatchObject({
       phase: "succeeded",
@@ -574,9 +638,13 @@ it.effect("updates a managed install to OpenAI's newest release and never downgr
       version: upstreamVersion,
     });
     expect((yield* h.installation.resolve()).version).toBe(upstreamVersion);
+    // The running session keeps its release until the next start prunes it.
+    expect(yield* h.fs.exists(previous.managedVersionDirectory!)).toBe(true);
+    yield* Scope.close(sessionScope, Exit.void);
 
     // Without upstream information the older pin is not offered as a reinstall.
     const restarted = yield* makeHarness({ baseDir: h.baseDir });
+    expect(yield* h.fs.exists(previous.managedVersionDirectory!)).toBe(false);
     expect(yield* restarted.installation.state).toMatchObject({
       installedVersion: upstreamVersion,
       version: upstreamVersion,
