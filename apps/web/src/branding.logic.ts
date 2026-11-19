@@ -13,6 +13,7 @@ export function formatAppDisplayName(input: {
 
 export function resolveHostedAppChannelLabel(channel: string | null | undefined): string | null {
   const normalized = channel?.trim().toLowerCase();
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
   return normalized === "nightly" ? "Nightly" : normalized === "latest" ? "Latest" : null;
 }
 
@@ -22,6 +23,7 @@ export function resolveWebAppStageLabel(input: {
   readonly development: boolean;
 }): string {
   return (
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
     resolveHostedAppChannelLabel(input.hostedAppChannel) ?? (input.development ? "Dev" : "Beta")
   );
 }
@@ -32,7 +34,8 @@ export function resolveServerBackedAppStageLabel(input: {
 }): string {
   return input.primaryServerVersion &&
     NIGHTLY_SERVER_VERSION_PATTERN.test(input.primaryServerVersion)
-    ? "Nightly"
+    ? // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
+      "Nightly"
     : input.fallbackStageLabel;
 }
 
@@ -60,14 +63,23 @@ export function resolveWindowTitle(input: {
   readonly appDisplayName: string;
   readonly projectTitle: string | null;
   readonly threadTitle: string | null;
+  /** The screen reader title: status, then thread, then project, since a screen reader reads from the start. */
+  readonly screenReader?: { readonly threadStatus: string | null };
   readonly desktop: boolean;
 }): string {
   const threadTitle = input.threadTitle?.trim() ?? "";
+  const status = input.screenReader?.threadStatus;
   if (threadTitle === "") {
-    return input.appDisplayName;
+    return status ? `${status}: ${input.appDisplayName}` : input.appDisplayName;
   }
 
   const projectTitle = input.projectTitle?.trim() ?? "";
-  const context = projectTitle === "" ? threadTitle : `${projectTitle} / ${threadTitle}`;
-  return input.desktop ? context : `${context} - ${input.appDisplayName}`;
+  const context =
+    projectTitle === ""
+      ? threadTitle
+      : input.screenReader
+        ? `${threadTitle} - ${projectTitle}`
+        : `${projectTitle} / ${threadTitle}`;
+  const title = status ? `${status}: ${context}` : context;
+  return input.desktop ? title : `${title} - ${input.appDisplayName}`;
 }
