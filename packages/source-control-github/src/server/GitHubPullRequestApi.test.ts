@@ -1562,6 +1562,58 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("lists the rows the app can read when the user's own login is rate limited", () =>
+    Effect.gen(function* () {
+      mockedAppToken.mockReturnValue(Effect.succeedSome("app"));
+      mockedCredential.mockReturnValue(
+        // Its own token: the pause this test leaves is scoped to the credential's fingerprint.
+        Effect.succeed({ token: Redacted.make("spent"), fingerprint: "github.com:spent" }),
+      );
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          call.kind === "graphql" && call.authorization === "Bearer app"
+            ? output(
+                encodeJson({
+                  data: { search: { pageInfo: lastPage, nodes: rows(2, 1) } },
+                  errors: [
+                    {
+                      type: "FORBIDDEN",
+                      message: "Resource not accessible by integration",
+                      path: ["search", "nodes", 0, "reviewRequests"],
+                    },
+                  ],
+                }),
+              )
+            : output(
+                encodeJson({
+                  data: null,
+                  errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }],
+                }),
+                false,
+                false,
+                graphqlQuota(0),
+              ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const list = cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      // The first read meets the personal limit; the second finds the host paused for it.
+      for (const _ of [1, 2]) {
+        const batch = yield* list;
+        expect(batch.items.map((item) => item.number)).toEqual([1, 2]);
+      }
+    }),
+  );
+
   /**
    * Lists a repository GitHub will not return, answering credential lookups in turn (the last
    * answer repeats; `undefined` is no credential), and returns the error with the tokens sent.
