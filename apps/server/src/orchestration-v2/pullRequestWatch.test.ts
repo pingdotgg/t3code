@@ -216,6 +216,23 @@ describe("evaluatePullRequestWatch", () => {
       ).changes,
       [],
     );
+
+    // A read the host could not finish keeps the baseline and must keep the seed with it.
+    const placeholder = { ...check("Workflow approval status", "pending"), placeholder: true };
+    const incomplete = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      detail({ checks: [check("lint", "success"), placeholder] }),
+      noRemarks,
+    );
+    assert.deepEqual(incomplete.changes, []);
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        incomplete.next,
+        detail({ checks: [check("lint", "success"), check("gated", "failure")] }),
+        noRemarks,
+      ).changes,
+      [{ kind: "checks-failed", failed: [check("gated", "failure")] }],
+    );
   });
 
   it("baselines checks already awaiting approval", () => {
