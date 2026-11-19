@@ -57,11 +57,11 @@ internal class SocksListener(private val requestAccess: () -> String?) {
         val admitted = synchronized(sockets) {
           !server.isClosed && sockets.size < MAX_CONNECTIONS && sockets.add(socket)
         }
-        if (!admitted) {
+        if (admitted) {
+          Thread({ serve(socket) }, "t3-preview-tunnel").apply { isDaemon = true }.start()
+        } else {
           runCatching { socket.close() }
-          continue
         }
-        Thread({ serve(socket) }, "t3-preview-tunnel").apply { isDaemon = true }.start()
       }
     }, "t3-preview-tunnel-accept").apply { isDaemon = true }.start()
   }
