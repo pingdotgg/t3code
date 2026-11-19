@@ -1,4 +1,4 @@
-import { themeCssValueFetches } from "@t3tools/shared/themeCss";
+import { themeCssValueFetches, themeCssVarBlockFetches } from "@t3tools/shared/themeCss";
 
 // Theme CSS comes from imported files and from agents, so it must not fetch: a
 // url() on an attribute selector can send what is on screen to another host.
@@ -14,7 +14,7 @@ type RuleParent = Pick<CSSStyleSheet, "cssRules" | "deleteRule">;
 const isRuleParent = (rule: CSSRule): rule is CSSRule & RuleParent =>
   "cssRules" in rule && "deleteRule" in rule && !(rule instanceof CSSKeyframesRule);
 
-function stripDeclarations(rule: CSSRule, sourceFetches: boolean): boolean {
+function stripDeclarations(rule: CSSRule, varSourceFetches: boolean): boolean {
   if (!("style" in rule) || !(rule.style instanceof CSSStyleDeclaration)) return false;
   const pending: string[] = [];
   for (let item = rule.style.length - 1; item >= 0; item--) {
@@ -26,11 +26,11 @@ function stripDeclarations(rule: CSSRule, sourceFetches: boolean): boolean {
   }
   // A shorthand with var() leaves each longhand reading "". cssText shows the shorthand whole,
   // or, once another declaration overrides one longhand, lists the rest bare with its text hidden.
-  // Only the theme's source still has that text, so a bare one goes when the source can fetch.
+  // Only the theme's source still has that text, so a bare one goes when a var() block there fetches.
   const text = rule.style.cssText;
   const fetches = themeCssValueFetches(text);
   for (const property of pending) {
-    if (fetches || (sourceFetches && new RegExp(`(?:^|; )${property}:`).test(text))) {
+    if (fetches || (varSourceFetches && new RegExp(`(?:^|; )${property}:`).test(text))) {
       rule.style.removeProperty(property);
     }
   }
@@ -38,15 +38,15 @@ function stripDeclarations(rule: CSSRule, sourceFetches: boolean): boolean {
 }
 
 /** Keeps only rule shapes it can check, so a new at-rule that fetches is dropped by default. */
-function stripFetches(parent: RuleParent, sourceFetches: boolean): void {
+function stripFetches(parent: RuleParent, varSourceFetches: boolean): void {
   for (let index = parent.cssRules.length - 1; index >= 0; index--) {
     const rule = parent.cssRules[index];
     if (!rule) continue;
-    const hasStyle = stripDeclarations(rule, sourceFetches);
+    const hasStyle = stripDeclarations(rule, varSourceFetches);
     if (rule instanceof CSSKeyframesRule) {
-      for (const frame of rule.cssRules) stripDeclarations(frame, sourceFetches);
+      for (const frame of rule.cssRules) stripDeclarations(frame, varSourceFetches);
     } else if (isRuleParent(rule)) {
-      stripFetches(rule, sourceFetches);
+      stripFetches(rule, varSourceFetches);
     } else if (rule instanceof CSSPropertyRule) {
       // A registered property's initial value is used wherever var() reads it.
       if (themeCssValueFetches(rule.initialValue ?? "")) parent.deleteRule(index);
@@ -72,5 +72,5 @@ export function applyThemeCss(css: string | undefined): void {
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, themeSheet];
   }
   themeSheet.replaceSync(next);
-  stripFetches(themeSheet, themeCssValueFetches(next));
+  stripFetches(themeSheet, themeCssVarBlockFetches(next));
 }

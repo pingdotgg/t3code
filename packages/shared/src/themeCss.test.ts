@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { themeCssLoadsRemoteFiles, themeCssValueFetches } from "./themeCss.ts";
+import {
+  themeCssLoadsRemoteFiles,
+  themeCssValueFetches,
+  themeCssVarBlockFetches,
+} from "./themeCss.ts";
 
 // %23 decodes to # inside the SVG, so url(%23g) names its own gradient.
 const SVG_WITH_OWN_GRADIENT =
@@ -57,5 +61,18 @@ describe("themeCssLoadsRemoteFiles", () => {
     expect(
       themeCssLoadsRemoteFiles(`.repro { background-image: url('${SVG_WITH_OWN_GRADIENT}'); }`),
     ).toBe(false);
+  });
+});
+
+describe("themeCssVarBlockFetches", () => {
+  it.each([
+    ["a { border: var(--edge); } b { cursor: url(https://e.com/x), auto; }", false],
+    ["a { mask: var(--none, url(https://e.com/k)); mask-size: auto; }", true],
+    ['a { background: var(--none, "{" url(https://e.com/k)); }', true],
+    ["a { background: var(--none, { } url(https://e.com/k)); }", true],
+    ["a { background: v\\61r(--none, url(https://e.com/k)); }", true],
+    ["a { background: var(--none, url(data:image/png;base64,AA)); }", false],
+  ])("%s -> %s", (css, fetches) => {
+    expect(themeCssVarBlockFetches(css)).toBe(fetches);
   });
 });
