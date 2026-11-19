@@ -24,6 +24,7 @@ import {
   resolveNewDraftStartFromOrigin,
   threadHasStarted,
 } from "../../lib/chatThreadActions";
+import { resolveWorkspaceModeEnvMode, type WorkspaceMode } from "../BranchToolbar.logic";
 import {
   type DraftThreadEnvMode,
   isSameModel,
@@ -52,7 +53,11 @@ interface ComposerSelectionInput {
   readonly isLocalDraftThread: boolean;
   readonly canOverrideServerThreadEnvMode: boolean;
   readonly setPendingServerThreadEnvModeEntry: Dispatch<
-    SetStateAction<{ readonly threadId: ThreadId; readonly mode: DraftThreadEnvMode } | null>
+    SetStateAction<{
+      readonly threadId: ThreadId;
+      readonly mode: DraftThreadEnvMode;
+      readonly checkoutBranch: boolean;
+    } | null>
   >;
   readonly setPendingServerThreadStartFromOriginByThreadId: Dispatch<
     SetStateAction<Record<string, boolean>>
@@ -238,26 +243,36 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     if (options?.focusComposer !== false) scheduleComposerFocus();
   };
   const onProviderModelSelectStable = useStableCallback(onProviderModelSelect);
-  const onEnvModeChange = (mode: DraftThreadEnvMode) => {
+  const onWorkspaceModeChange = (workspaceMode: WorkspaceMode) => {
     if (multipleModelSelections !== null) return;
+    const mode = resolveWorkspaceModeEnvMode(workspaceMode);
+    const checkoutBranch = workspaceMode === "open";
     if (canOverrideServerThreadEnvMode) {
-      if (activeThread) setPendingServerThreadEnvModeEntry({ threadId: activeThread.id, mode });
+      if (activeThread) {
+        setPendingServerThreadEnvModeEntry({ threadId: activeThread.id, mode, checkoutBranch });
+      }
       scheduleComposerFocus();
       return;
     }
     if (isLocalDraftThread) {
+      const leavingReusedWorktree = Boolean(draftThread?.worktreePath);
       setDraftThreadContext(composerDraftTarget, {
         envMode: mode,
+        checkoutBranch,
         startFromOrigin: resolveNewDraftStartFromOrigin({
           envMode: mode,
           newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
         }),
-        ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
+        // A reused worktree's branch belongs to that folder, not to the project root,
+        // but it stays the base or target for a new worktree.
+        ...(leavingReusedWorktree
+          ? { worktreePath: null, ...(workspaceMode === "switch" ? { branch: null } : {}) }
+          : {}),
       });
     }
     scheduleComposerFocus();
   };
-  const onEnvModeChangeStable = useStableCallback(onEnvModeChange);
+  const onWorkspaceModeChangeStable = useStableCallback(onWorkspaceModeChange);
 
   // Reads only the id: the shell changes on every streamed event, and a new handler
   // re-renders the branch toolbar and thread details panel with it.
@@ -280,7 +295,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   return {
     getModelDisabledReason,
     handleRuntimeModeChangeStable,
-    onEnvModeChangeStable,
+    onWorkspaceModeChangeStable,
     onProviderModelSelectStable,
     onStartFromOriginChange,
     openProviderSetupStable,

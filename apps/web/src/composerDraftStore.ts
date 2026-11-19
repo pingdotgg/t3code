@@ -420,6 +420,7 @@ const PersistedDraftThreadState = Schema.Struct({
   checkoutPullRequest: Schema.optionalKey(
     Schema.Struct({ url: Schema.String, branch: Schema.String }),
   ),
+  checkoutBranch: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -518,6 +519,8 @@ export interface DraftSessionState {
   startFromOrigin: boolean;
   /** Linked to the thread when the draft is sent on this branch. */
   checkoutPullRequest?: DraftCheckoutPullRequest;
+  // "Open in worktree": a new worktree checks out `branch` itself instead of branching from it.
+  checkoutBranch: boolean;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -586,6 +589,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      checkoutBranch?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -603,6 +607,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      checkoutBranch?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -619,6 +624,7 @@ interface ComposerDraftStoreState {
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
       startFromOrigin?: boolean;
+      checkoutBranch?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       environmentSelection?: "auto" | "manual";
@@ -1713,6 +1719,7 @@ function createDraftThreadState(
     createdAt?: string;
     envMode?: DraftThreadEnvMode;
     startFromOrigin?: boolean;
+    checkoutBranch?: boolean;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
     environmentSelection?: "auto" | "manual";
@@ -1740,6 +1747,10 @@ function createDraftThreadState(
     options?.startFromOrigin === undefined
       ? (existingThread?.startFromOrigin ?? false)
       : options.startFromOrigin;
+  const nextCheckoutBranch =
+    options?.checkoutBranch === undefined
+      ? (existingThread?.checkoutBranch ?? false)
+      : options.checkoutBranch;
   const environmentSelection =
     options?.environmentSelection ?? existingThread?.environmentSelection;
   const checkoutPullRequest = resolveCheckoutPullRequest(
@@ -1772,6 +1783,7 @@ function createDraftThreadState(
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
     startFromOrigin: nextStartFromOrigin,
     ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
+    checkoutBranch: nextCheckoutBranch,
     promotedTo: null,
   };
 }
@@ -1824,6 +1836,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
     checkoutPullRequestsEqual(left.checkoutPullRequest, right.checkoutPullRequest) &&
+    left.checkoutBranch === right.checkoutBranch &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1935,6 +1948,7 @@ function normalizePersistedDraftThreads(
       const branch = candidateDraftThread.branch;
       const worktreePath = candidateDraftThread.worktreePath;
       const startFromOrigin = candidateDraftThread.startFromOrigin === true;
+      const checkoutBranch = candidateDraftThread.checkoutBranch === true;
       const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
       const checkoutPullRequest = normalizePersistedCheckoutPullRequest(
         candidateDraftThread.checkoutPullRequest,
@@ -1986,6 +2000,7 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
+        checkoutBranch,
         ...(candidateDraftThread.environmentSelection === "manual" ||
         candidateDraftThread.environmentSelection === "auto"
           ? { environmentSelection: candidateDraftThread.environmentSelection }
@@ -2047,6 +2062,7 @@ function normalizePersistedDraftThreads(
           worktreePath: null,
           envMode: "local",
           startFromOrigin: false,
+          checkoutBranch: false,
           promotedTo: null,
         };
       } else if (
@@ -2765,6 +2781,7 @@ function toHydratedDraftThreadState(
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
+    checkoutBranch: persistedDraftThread.checkoutBranch,
     ...(persistedDraftThread.environmentSelection
       ? { environmentSelection: persistedDraftThread.environmentSelection }
       : {}),
@@ -3031,6 +3048,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               options.startFromOrigin === undefined
                 ? existing.startFromOrigin
                 : options.startFromOrigin;
+            const nextCheckoutBranch =
+              options.checkoutBranch === undefined
+                ? existing.checkoutBranch
+                : options.checkoutBranch;
             const environmentSelection =
               options.environmentSelection ??
               (options.branch != null || options.worktreePath != null
@@ -3065,6 +3086,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
               startFromOrigin: nextStartFromOrigin,
               ...(checkoutPullRequest ? { checkoutPullRequest } : {}),
+              checkoutBranch: nextCheckoutBranch,
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -3084,6 +3106,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 nextDraftThread.checkoutPullRequest,
                 existing.checkoutPullRequest,
               ) &&
+              nextDraftThread.checkoutBranch === existing.checkoutBranch &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;

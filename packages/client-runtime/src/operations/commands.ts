@@ -176,6 +176,7 @@ interface StartThreadBootstrap {
     readonly baseBranch: string;
     readonly branch?: string;
     readonly startFromOrigin?: boolean;
+    readonly checkoutExisting?: boolean;
   };
   readonly runSetupScript?: boolean;
 }
@@ -781,6 +782,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
             ...(prepareWorktree.startFromOrigin === undefined
               ? {}
               : { startFromOrigin: prepareWorktree.startFromOrigin }),
+            ...(prepareWorktree.checkoutExisting === true ? { checkoutExisting: true } : {}),
           }
         : bootstrap?.worktreePath
           ? {
