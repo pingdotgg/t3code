@@ -240,6 +240,29 @@ describe("evaluatePullRequestWatch", () => {
       noRemarks,
     );
     assert.deepEqual(laterGreen.changes, []);
+
+    // Incomplete baseline (placeholder): keep the pending seed so the first complete read
+    // can still report a check that never appeared as pending.
+    const placeholder = {
+      ...check("Workflow approval status", "pending"),
+      placeholder: true as const,
+    };
+    const incomplete = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      detail({ checks: [check("lint", "success"), placeholder] }),
+      noRemarks,
+    );
+    assert.deepEqual(incomplete.changes, []);
+    assert.equal(incomplete.next.awaitingBaseline, "checks");
+    assert.isTrue(incomplete.next.checksPending);
+    const afterPlaceholder = evaluatePullRequestWatch(
+      incomplete.next,
+      detail({ checks: [check("lint", "success"), check("gated", "failure")] }),
+      noRemarks,
+    );
+    assert.deepEqual(afterPlaceholder.changes, [
+      { kind: "checks-failed", failed: [check("gated", "failure")] },
+    ]);
   });
 
   it("baselines checks already awaiting approval", () => {

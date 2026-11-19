@@ -77,6 +77,11 @@ export function evaluatePullRequestWatch(
   if (checks.length > 0) {
     // A run awaiting approval waits on a person, like a review, so only running checks count.
     checksPending = checks.some((check) => check.status === "pending");
+    // An incomplete baseline (placeholder) must keep the pending-at-start seed; otherwise the
+    // next complete read treats failures as already known and stays quiet.
+    if (checksBaseline && unread && watch.checksPending === true) {
+      checksPending = true;
+    }
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     // Baseline suppresses failures that were already terminal when the watch started. A watch
     // seeded with checksPending (CI still running at watch_pull_request) must still report
