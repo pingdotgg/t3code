@@ -133,6 +133,8 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
   const remoteAuthorization = RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization.of({
     authorizeBearer: () => Effect.die("Unexpected bearer connection preparation."),
     authorizeDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
+    authorizeDirectDpop: () => Effect.die("HTTP requests must not prepare a WebSocket connection."),
+    authorizeDirectDpopHttp: () => Effect.die("Unexpected direct DPoP authorization."),
     authorizeDpopHttp: (input) =>
       Effect.sync(() => {
         authorizations.push(input);
