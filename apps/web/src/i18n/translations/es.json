@@ -1421,6 +1421,7 @@
   "61a552a67e9e3eac": "Respuesta al cuadro de diálogo",
   "3d000b56e95f3150": "Ceder el control",
   "0633c3bcdcb95b2f": "Tomar el control",
+  "b8ba763621bcdd70": "El navegador del servidor cargó esta página, pero no la está dibujando. Prueba a recargarla o abre la página en un navegador de este ordenador.",
   "db4deed9433e0482": "La página pide archivos.",
   "730765790c9965e2": "La página pide un archivo.",
   "d15d4ce9981708e9": "Cancelar",
