@@ -41,6 +41,26 @@ export function toPushDeviceRegistration(
 const registeredSignatures = new Map<EnvironmentId, string>();
 let lastRequest: RelayDeviceRegistrationRequest | null = null;
 let watchingCatalog = false;
+const registeredListeners = new Set<() => void>();
+
+// True once at least one connected T3 server holds this device's token. The
+// notification settings read it, since a signed-out device never reaches the relay.
+export function isDirectApnsRegistered(): boolean {
+  return registeredSignatures.size > 0;
+}
+
+export function subscribeDirectApnsRegistered(listener: () => void): () => void {
+  registeredListeners.add(listener);
+  return () => {
+    registeredListeners.delete(listener);
+  };
+}
+
+function setRegisteredSignature(environmentId: EnvironmentId, signature: string): void {
+  const wasRegistered = isDirectApnsRegistered();
+  registeredSignatures.set(environmentId, signature);
+  if (!wasRegistered) for (const listener of registeredListeners) listener();
+}
 
 async function registerWithConnectedEnvironments(
   request: RelayDeviceRegistrationRequest,
@@ -58,7 +78,7 @@ async function registerWithConnectedEnvironments(
         { environmentId, input: registration },
         { reportFailure: false, reportDefect: false },
       );
-      if (result._tag === "Success") registeredSignatures.set(environmentId, signature);
+      if (result._tag === "Success") setRegisteredSignature(environmentId, signature);
     }),
   );
 }
@@ -80,6 +100,7 @@ export async function registerDirectApnsDevice(
 
 export function __resetDirectApnsRegistrationForTest(): void {
   registeredSignatures.clear();
+  registeredListeners.clear();
   lastRequest = null;
   watchingCatalog = false;
 }

@@ -26,6 +26,10 @@ import {
   supportsAndroidLiveUpdateSettings,
 } from "../agent-awareness/androidNotifications";
 import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
+import {
+  isDirectApnsRegistered,
+  subscribeDirectApnsRegistered,
+} from "../agent-awareness/directApnsRegistration";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
   getAgentAwarenessRegistrationStatus,
@@ -46,13 +50,17 @@ import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen
 type NotificationStatus = "checking" | "enabled" | "disabled" | "unsupported";
 type LiveActivityStatus = "checking" | "enabled" | "disabled" | "signed-out" | "linking";
 
-function useDeviceRegistered(): boolean {
+function useRelayRegistered(): boolean {
   const status = useSyncExternalStore(
     subscribeAgentAwarenessRegistrationStatus,
     getAgentAwarenessRegistrationStatus,
     () => "unknown" as const,
   );
   return status === "registered";
+}
+
+function useDirectPushRegistered(): boolean {
+  return useSyncExternalStore(subscribeDirectApnsRegistered, isDirectApnsRegistered, () => false);
 }
 
 export function SettingsNotificationsRouteScreen() {
@@ -90,7 +98,10 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>("checking");
   const [liveActivityStatus, setLiveActivityStatus] = useState<LiveActivityStatus>("checking");
   const liveActivityWriteInFlight = useRef(false);
-  const deviceRegistered = useDeviceRegistered();
+  const relayRegistered = useRelayRegistered();
+  // Device notifications work through a T3 server alone, so a signed-out device counts.
+  const directPushRegistered = useDirectPushRegistered();
+  const deviceNotificationsRegistered = relayRegistered || directPushRegistered;
   const liveActivitiesPreferenceEnabled = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value.liveActivitiesEnabled !== false
     : true;
@@ -168,12 +179,12 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
     if (result.value.type === "granted") {
       setNotificationStatus("enabled");
-      if (getAgentAwarenessRegistrationStatus() === "registered") {
+      if (getAgentAwarenessRegistrationStatus() === "registered" || isDirectApnsRegistered()) {
         Dialog.alert("Notifications enabled", "Agent notifications are enabled for this device.");
       } else {
         Dialog.alert(
           "Couldn't finish enabling notifications",
-          "Notification access was granted, but this device could not be registered with T3 Connect. Notifications will start once registration succeeds.",
+          "Notification access was granted, but this device could not be registered with a connected server or T3 Connect. Add an environment and notifications will start once registration succeeds.",
         );
       }
       return;
@@ -314,10 +325,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
 
   const handleDeviceNotificationsChange = (enabled: boolean) => {
     if (enabled) {
-      if (!isSignedIn) {
-        promptSignIn();
-        return;
-      }
       void requestNotifications();
       return;
     }
@@ -414,7 +421,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
             }
             subtitle={agentAwarenessSubtitle}
             value={
-              agentAwarenessPushAvailable && notificationStatus === "enabled" && deviceRegistered
+              agentAwarenessPushAvailable &&
+              notificationStatus === "enabled" &&
+              deviceNotificationsRegistered
             }
             onValueChange={handleDeviceNotificationsChange}
           />
@@ -438,7 +447,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
             value={
               agentAwarenessPushAvailable &&
               (liveActivityStatus === "enabled" || liveActivityStatus === "linking") &&
-              deviceRegistered
+              relayRegistered
             }
             onValueChange={(enabled) => void handleLiveActivitiesChange(enabled)}
           />

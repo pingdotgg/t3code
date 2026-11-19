@@ -503,7 +503,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
 
     expect(end).toHaveBeenCalledWith("immediate");
     expect(widgetMocks.dismissEnded).toHaveBeenCalled();
-    expect(appStateMock.listeners).toHaveLength(0);
+    // Direct server push keeps its foreground trigger, but Live Activity
+    // reconciliation is gone.
+    expect(appStateMock.listeners).toHaveLength(1);
   });
 
   it.effect("registers the APNs device when cloud auth becomes available", () => {
@@ -587,6 +589,62 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
     }).pipe(
       Effect.ensuring(Effect.sync(() => directApns.register.mockResolvedValue(undefined))),
+      Effect.provide(layerRelayTest),
+    );
+  });
+
+  it.effect("registers directly when signed out, without touching the relay", () => {
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    directApns.register.mockClear();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    return Effect.gen(function* () {
+      yield* refreshAgentAwarenessRegistration();
+      expect(directApns.register).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: "device-1", pushToken: "apns-token" }),
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(getAgentAwarenessRegistrationStatus()).toBe("unknown");
+    }).pipe(Effect.provide(layerRelayTest));
+  });
+
+  it.effect("keeps registering directly on foreground and token rotation after sign-out", () => {
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      setAgentAwarenessRelayTokenProvider(null);
+      yield* runBackgroundOperations();
+      directApns.register.mockClear();
+
+      appStateMock.listeners[0]?.("active");
+      yield* runBackgroundOperations();
+      expect(directApns.register).toHaveBeenCalledTimes(1);
+
+      const rotation = vi.mocked(Notifications.addPushTokenListener).mock.calls.at(-1)?.[0];
+      rotation?.({ type: "ios", data: "rotated-token" } as never);
+      yield* runBackgroundOperations();
+      expect(directApns.register).toHaveBeenLastCalledWith(
+        expect.objectContaining({ pushToken: "rotated-token" }),
+      );
+    }).pipe(Effect.provide(layerRelayTest));
+  });
+
+  it.effect("still registers directly when the relay registration fails", () => {
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    directApns.register.mockClear();
+    registrationRecordStore.current = null;
+    vi.stubGlobal("fetch", () => Promise.reject(new Error("relay down")));
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      expect(directApns.register).toHaveBeenCalledTimes(1);
+      expect(getAgentAwarenessRegistrationStatus()).toBe("failed");
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
       Effect.provide(layerRelayTest),
     );
   });

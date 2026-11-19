@@ -32,6 +32,7 @@ vi.mock("../../state/server", () => ({
 
 import {
   __resetDirectApnsRegistrationForTest,
+  isDirectApnsRegistered,
   registerDirectApnsDevice,
   toPushDeviceRegistration,
 } from "./directApnsRegistration";
@@ -127,6 +128,15 @@ describe("registerDirectApnsDevice", () => {
     await expect(registerDirectApnsDevice(request())).resolves.toBeUndefined();
     await registerDirectApnsDevice(request());
     expect(mocks.runAtomCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports registered only once a server accepted the token", async () => {
+    mocks.environmentIds = [ENV_A];
+    mocks.runAtomCommand.mockResolvedValueOnce({ _tag: "Failure" });
+    await registerDirectApnsDevice(request());
+    expect(isDirectApnsRegistered()).toBe(false);
+    await registerDirectApnsDevice(request());
+    expect(isDirectApnsRegistered()).toBe(true);
   });
 
   it("registers environments that connect after the token was registered", async () => {
