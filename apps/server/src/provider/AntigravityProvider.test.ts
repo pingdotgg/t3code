@@ -840,4 +840,109 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       expect(afterFailedSwitch?.auth.email).toBeUndefined();
     }),
   );
+
+  it.effect(
+    "does not pair a previous account's email or retained limits with a different credential",
+    () =>
+      Effect.gen(function* () {
+        const accountALimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-10-09T12:00:00.000Z",
+          credentialFingerprint: "fingerprint-a",
+          windows: [
+            {
+              id: "3p-weekly",
+              kind: "weekly",
+              label: "Claude & GPT (shared) · Weekly",
+              usedPercent: 75,
+            },
+          ],
+        };
+        const usage = yield* Ref.make<AntigravityUsageProbeResult>({
+          limits: accountALimits,
+          email: "account-a@example.com",
+        });
+        const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
+        const initialPublish = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+        yield* harness.initialize;
+        const first = yield* initialPublish;
+        expect(first?.auth.email).toBe("account-a@example.com");
+        expect(first?.usageLimits).toEqual(accountALimits);
+
+        const waitForUsageRefresh = Effect.gen(function* () {
+          const checks = yield* Ref.make(0);
+          const applied = yield* Deferred.make<void>();
+          yield* Ref.set(
+            harness.probe,
+            Ref.updateAndGet(checks, (count) => count + 1).pipe(
+              Effect.tap((count) =>
+                count === 2 ? Deferred.succeed(applied, undefined) : Effect.void,
+              ),
+              Effect.as(initializeResult),
+            ),
+          );
+          yield* harness.provider.snapshot.refresh;
+          yield* Deferred.await(applied);
+          return yield* harness.provider.snapshot.getSnapshot;
+        });
+
+        // Missing email on unchanged credential fingerprint retains the previous email.
+        const updatedALimits: ServerProviderUsageLimits = {
+          ...accountALimits,
+          checkedAt: "2026-10-09T12:01:00.000Z",
+          windows: [{ ...accountALimits.windows[0]!, usedPercent: 80 }],
+        };
+        yield* Ref.set(usage, { limits: updatedALimits });
+        const sameAccountWithoutEmail = yield* waitForUsageRefresh;
+        expect(sameAccountWithoutEmail.auth.email).toBe("account-a@example.com");
+        expect(sameAccountWithoutEmail.usageLimits).toEqual(updatedALimits);
+
+        // Quota-read failure for a different account must not retain account A's limits.
+        const failedAccountBLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-10-09T12:02:00.000Z",
+          credentialFingerprint: "fingerprint-b",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        };
+        yield* Ref.set(usage, {
+          limits: failedAccountBLimits,
+          email: "account-b@example.com",
+        });
+        const afterFailedSwitch = yield* waitForUsageRefresh;
+        expect(afterFailedSwitch.auth.email).toBe("account-b@example.com");
+        expect(afterFailedSwitch.usageLimits).toEqual(failedAccountBLimits);
+
+        // Successful read for another credential without email must not keep account B's email.
+        const accountCLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-10-09T12:03:00.000Z",
+          credentialFingerprint: "fingerprint-c",
+          windows: [
+            {
+              id: "gemini-5h",
+              kind: "session",
+              label: "Gemini · 5-hour",
+              usedPercent: 20,
+            },
+          ],
+        };
+        yield* Ref.set(usage, { limits: accountCLimits });
+        const afterMissingEmailSwitch = yield* waitForUsageRefresh;
+        expect(afterMissingEmailSwitch.auth.email).toBeUndefined();
+        expect(afterMissingEmailSwitch.usageLimits).toEqual(accountCLimits);
+
+        // Quota-read failure with a newly discovered email that was not verified for fingerprint-c
+        // must not retain fingerprint-c's limits.
+        const unverifiedFailedLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-10-09T12:04:00.000Z",
+          windows: [],
+          unavailable: { reason: "probeFailed" },
+        };
+        yield* Ref.set(usage, {
+          limits: unverifiedFailedLimits,
+          email: "account-d@example.com",
+        });
+        const afterUnverifiedEmailFailure = yield* waitForUsageRefresh;
+        expect(afterUnverifiedEmailFailure.auth.email).toBe("account-d@example.com");
+        expect(afterUnverifiedEmailFailure.usageLimits).toEqual(unverifiedFailedLimits);
+      }),
+  );
 });

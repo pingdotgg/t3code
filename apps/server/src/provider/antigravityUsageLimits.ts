@@ -273,6 +273,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     let account: string;
     let email: string | undefined;
     if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
+      const previous = cached?.fingerprint === fingerprint ? cached : undefined;
       cached = undefined;
       const refreshed = yield* request(
         HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
@@ -300,7 +301,10 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
             })),
           ),
         ),
-        Effect.orElseSucceed(() => ({ account: fingerprint, email: undefined })),
+        Effect.orElseSucceed(() => ({
+          account: previous?.account ?? fingerprint,
+          email: previous?.email,
+        })),
       );
       account = identity.account;
       email = identity.email;
@@ -364,11 +368,14 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         );
     if (windows.length === 0) {
       return {
-        limits: makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message: "Antigravity did not return usable quota information.",
-        }),
+        limits: {
+          ...makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            message: "Antigravity did not return usable quota information.",
+          }),
+          credentialFingerprint: account,
+        },
         ...(email ? { email } : {}),
       };
     }

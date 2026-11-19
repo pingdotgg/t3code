@@ -241,11 +241,37 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       options.probeUsage.pipe(
         Effect.flatMap((probed) =>
           SubscriptionRef.update(metadata, (state) => {
-            const { email: _previousEmail, ...auth } = state.draft.auth;
+            const { email: previousEmail, ...auth } = state.draft.auth;
+            const previousLimits = state.draft.usageLimits;
+            const previousFingerprint = previousLimits?.credentialFingerprint;
+            const probedEmail = probed.email?.trim() || undefined;
+            const probedFingerprint = probed.limits.credentialFingerprint;
+            const fingerprintConflict =
+              (probedFingerprint !== undefined || !probed.limits.unavailable) &&
+              probedFingerprint !== previousFingerprint;
+            const emailConflict =
+              probedEmail !== undefined &&
+              previousEmail !== undefined &&
+              probedEmail !== previousEmail;
+            const sameFingerprint =
+              probedFingerprint !== undefined && probedFingerprint === previousFingerprint;
+            const sameEmail = probedEmail !== undefined && probedEmail === previousEmail;
+            const transientFailureWithoutIdentity =
+              probed.limits.unavailable?.reason === "probeFailed" &&
+              probedFingerprint === undefined &&
+              probedEmail === undefined;
+            const sameAccount =
+              !fingerprintConflict &&
+              !emailConflict &&
+              (sameFingerprint || sameEmail || transientFailureWithoutIdentity);
+            const usageLimits = resolveUsageLimitsAfterProbe({
+              published: sameAccount ? previousLimits : undefined,
+              probed: probed.limits,
+            });
             const email =
               probed.limits.unavailable?.reason === "unsupported"
                 ? undefined
-                : probed.email?.trim() || state.draft.auth.email;
+                : (probedEmail ?? (sameAccount ? previousEmail : undefined));
             return {
               ...state,
               draft: {
@@ -256,10 +282,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
                     : email
                       ? { ...auth, email }
                       : auth,
-                usageLimits: resolveUsageLimitsAfterProbe({
-                  published: state.draft.usageLimits,
-                  probed: probed.limits,
-                }),
+                usageLimits,
               },
             };
           }),

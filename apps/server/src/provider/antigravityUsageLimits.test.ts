@@ -696,6 +696,21 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("includes account identity when quota endpoints return no usable windows", () =>
+    Effect.gen(function* () {
+      const { probe } = yield* fixture({
+        userId: "google-user-1",
+        userEmail: "someone@example.com",
+        summaryStatus: 503,
+        models: { models: {} },
+      });
+      const { limits, email } = yield* probe;
+      expect(email).toBe("someone@example.com");
+      expect(limits.unavailable?.reason).toBe("probeFailed");
+      expect(limits.credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("does not make network requests for API keys or missing sign-ins", () =>
     Effect.gen(function* () {
       for (const options of [{ authMethod: "gemini-api-key" as const }, { missingToken: true }]) {
