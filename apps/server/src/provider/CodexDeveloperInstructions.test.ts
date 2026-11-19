@@ -50,16 +50,20 @@ describe("Codex orchestration context", () => {
       .map(([, entry]) => entry.value)
       .join("\n");
 
-    NodeAssert.ok(orchestration.includes("use your native tool when the child uses your provider"));
+    NodeAssert.ok(
+      orchestration.includes("native tools for same-provider children on offered models"),
+    );
     NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
-    NodeAssert.ok(orchestration.includes("A native type on another provider's model"));
     NodeAssert.ok(
-      orchestration.includes("Background agent: `delegate_task`, never a background `Agent`."),
+      orchestration.includes(
+        "Use `delegate_task` for other-provider models (even with native types)",
+      ),
     );
+    NodeAssert.ok(orchestration.includes("or background agents. Never background `Agent`."));
     NodeAssert.ok(
-      orchestration.includes("Every new delegate review or re-check is a new `delegate_task`"),
+      orchestration.includes("Use a new `delegate_task` for every delegate review/re-check"),
     );
-    NodeAssert.ok(orchestration.includes("never a `t3_thread_send`"));
+    NodeAssert.ok(orchestration.includes("never `t3_thread_send`"));
     NodeAssert.ok(!orchestration.includes("inheritedOptions"));
     NodeAssert.ok(!orchestration.includes("Prefer native"));
     // The ACP terminal fallback is ACP-only; Codex agents never need it.
