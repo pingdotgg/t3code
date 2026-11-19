@@ -15,6 +15,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
+  antigravityCliSessionMode,
   applyAntigravityAcpModelSelection,
   antigravityClientInfo,
   antigravitySessionMeta,
@@ -98,6 +99,25 @@ describe("Antigravity release gates", () => {
       expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
     },
   );
+});
+
+describe("Antigravity CLI session modes", () => {
+  const fullCliModes = ["default", "accept-edits", "auto", "plan"] as const;
+  const noAutoCliModes = ["default", "accept-edits", "plan"] as const;
+  const minimalCliModes = ["default", "plan"] as const;
+
+  it.each([
+    { requested: "yolo", available: fullCliModes, expected: "auto" },
+    { requested: "yolo", available: noAutoCliModes, expected: "accept-edits" },
+    { requested: "yolo", available: minimalCliModes, expected: "default" },
+    { requested: "yolo", available: undefined, expected: "default" },
+    { requested: "auto_edit", available: fullCliModes, expected: "accept-edits" },
+    { requested: "auto_edit", available: minimalCliModes, expected: "default" },
+    { requested: "auto_edit", available: undefined, expected: "default" },
+    { requested: "plan", available: fullCliModes, expected: "plan" },
+  ])("maps $requested with $available to $expected", ({ requested, available, expected }) => {
+    expect(antigravityCliSessionMode(requested, available)).toBe(expected);
+  });
 });
 
 describe("applyAntigravityAcpModelSelection", () => {

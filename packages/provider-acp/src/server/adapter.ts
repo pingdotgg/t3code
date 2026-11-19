@@ -474,7 +474,10 @@ export interface AcpAdapterV2Flavor {
    * `reasoningEffort` is its `effortLevel`).
    */
   readonly ownedModelOptionIds?: ReadonlyArray<string>;
-  readonly lockSessionModeToPolicy?: true;
+  /** Ignore a picked session mode in favor of `sessionModeForPolicy`, always or for some policies. */
+  readonly lockSessionModeToPolicy?:
+    | true
+    | ((policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) => boolean);
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => string | undefined;
@@ -8074,10 +8077,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               },
             );
           }
+          const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
+          const lock = flavor.lockSessionModeToPolicy;
+          const modeLocked =
+            policyMode !== undefined &&
+            (lock === true || (lock !== undefined && lock(runtimePolicy)));
           for (const selection of configSelections) {
             if (!availableConfigIds.has(selection.id)) continue;
             // Advertised values union models; skip per-model rejections instead of failing session open.
             const option = configOptions.find((candidate) => candidate.id === selection.id);
+            if (modeLocked && option?.category === "mode") continue;
             if (
               option !== undefined &&
               option.type === "select" &&
@@ -8112,8 +8121,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (!advertisedValues.includes(selection.value)) continue;
             yield* runtime.setConfigOption(selection.id, selection.value);
           }
-          const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
-          const modeLocked = flavor.lockSessionModeToPolicy && policyMode !== undefined;
           if (policyMode !== undefined) {
             yield* runtime.setMode(policyMode);
           }
@@ -8172,10 +8179,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (
                 !modeLocked &&
                 nativeBuild.modeId !== undefined &&
-                effectiveModeState?.currentModeId !== nativeBuild.modeId &&
-                effectiveModeState?.availableModes.some(
-                  (mode) => mode.id === nativeBuild.modeId,
-                ) === true
+                effectiveModeState !== undefined &&
+                isAcpPlanModeId(effectiveModeState.currentModeId) &&
+                effectiveModeState.currentModeId !== nativeBuild.modeId &&
+                effectiveModeState.availableModes.some((mode) => mode.id === nativeBuild.modeId) ===
+                  true
               ) {
                 yield* runtime.setMode(nativeBuild.modeId);
               }
@@ -8186,7 +8194,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 if (
                   option === undefined ||
                   option.type !== "select" ||
-                  (modeLocked && option.category === "mode")
+                  (modeLocked && option.category === "mode") ||
+                  !isAcpPlanModeId(option.currentValue)
                 )
                   continue;
                 const choices = option.options.flatMap((entry) =>
