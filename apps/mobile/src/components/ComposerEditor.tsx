@@ -1,12 +1,20 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "./ui/Dialog";
 import { ComposerContextId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT } from "gt-react-native";
 import { useEffect, useState } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import {
+  collectAssistantCitations,
+  serializeAssistantCitation,
+  withAssistantCitationComment,
+} from "@t3tools/shared/assistantCitations";
+import { AssistantCitationSheet } from "./AssistantCitationSheet";
 import { ComposerEditor as NativeComposerEditor } from "../native/T3ComposerEditor";
 import type { ComposerEditorProps as NativeComposerEditorProps } from "../native/T3ComposerEditor";
 import {
@@ -34,10 +42,12 @@ import { useLinkedEnvironments } from "../state/peerLinks";
 import { ComposerContextSheet } from "./ComposerContextSheet";
 import { AppText as Text } from "./ui/AppText";
 import {
+  assistantCitationDraftWithinLimit,
   composerDocumentAttachment,
   composerMentionPath,
   type ComposerDocumentAttachment,
 } from "../lib/composerContext";
+import { m } from "../i18n/messages";
 
 export type ComposerEditorProps = NativeComposerEditorProps & {
   readonly draftKey?: string | null;
@@ -59,6 +69,7 @@ export function ComposerEditor({
   onInertChipPress,
   ...props
 }: ComposerEditorProps) {
+  const gt = useGT();
   const draft = useComposerDraft(draftKey ?? null);
   const readResetGeneration = useComposerDraftResetGeneration(draftKey ?? null);
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
@@ -76,7 +87,7 @@ export function ComposerEditor({
     props.onChangeText(text);
     if (draftKey) {
       setComposerDraftContext(draftKey, restored.context);
-      appendComposerDraftAttachments(draftKey, restored.attachments, { allowOverflow: true });
+      appendComposerDraftAttachments(draftKey, restored.attachments, { restore: true });
     }
   };
   const [selected, setSelected] = useState<{ source: string; start: number; end: number } | null>(
@@ -117,24 +128,32 @@ export function ComposerEditor({
       }
       if (!insertComposerDraftContext(draftKey, result, insertion)) {
         Dialog.alert(
-          "Could not paste context",
-          "Remove some attachments or context items from the draft, then paste again.",
+          gt("Could not paste context"),
+          gt("Remove some attachments or context items from the draft, then paste again."),
         );
         return;
       }
       const warnings: string[] = [];
       if (result.failures.length > 0)
         warnings.push(
-          "Some attachments could not be copied. Reconnect to the source environment and copy them again.",
+          gt(
+            "Some attachments could not be copied. Reconnect to the source environment and copy them again.",
+          ),
         );
       if (result.skippedThreads.length > 0)
         warnings.push(
-          `${result.skippedThreads.map((title) => `"${title}"`).join(", ")} ${result.skippedThreads.length === 1 ? "is" : "are"} on another machine.`,
+          gt(
+            "{count, plural, one {{titles} is on another machine.} other {{titles} are on another machine.}}",
+            {
+              count: result.skippedThreads.length,
+              titles: result.skippedThreads.map((title) => `"${title}"`).join(", "),
+            },
+          ),
         );
       if (warnings.length > 0)
         Dialog.alert(
-          "Some context is unavailable",
-          [...warnings, "Those references are marked unavailable."].join("\n\n"),
+          gt("Some context is unavailable"),
+          [...warnings, gt("Those references are marked unavailable.")].join("\n\n"),
         );
     });
     operation.finish();
@@ -142,8 +161,10 @@ export function ComposerEditor({
     if (AsyncResult.isFailure(settled) && !signal.aborted) {
       const error = squashAtomCommandFailure(settled);
       Dialog.alert(
-        "Could not paste context",
-        error instanceof Error ? error.message : "Try copying again.",
+        gt("Could not paste context"),
+        error instanceof Error
+          ? (errorDisplayMessage(error, m) ?? error.message)
+          : gt("Try copying again."),
       );
     }
   };
@@ -169,6 +190,9 @@ export function ComposerEditor({
   const selectedReference = selected
     ? collectComposerContextReferences(selected.source)[0]
     : undefined;
+  const selectedCitation = selected
+    ? collectAssistantCitations(selected.source)[0]?.citation
+    : undefined;
   const selectedSkillName = selected?.source.match(/^\p{Sc}(.+)$/u)?.[1];
   const selectedSkill = selectedSkillName
     ? props.skills?.find((skill) => skill.name === selectedSkillName)
@@ -176,6 +200,41 @@ export function ComposerEditor({
   const record = draft.context?.records.find(
     (entry) => entry.contextId === selectedReference?.contextId,
   );
+  const removeSelected =
+    props.readOnly || props.editable === false
+      ? undefined
+      : () => {
+          if (!selected) return;
+          if (props.value.slice(selected.start, selected.end) === selected.source) {
+            changeText(props.value.slice(0, selected.start) + props.value.slice(selected.end));
+            props.onSelectionChange?.({ start: selected.start, end: selected.start });
+          }
+          setSelected(null);
+        };
+  const commentSelectedCitation =
+    props.readOnly || props.editable === false || !selected || !selectedCitation
+      ? undefined
+      : (comment: string) => {
+          if (props.value.slice(selected.start, selected.end) !== selected.source) return;
+          const next = serializeAssistantCitation(
+            withAssistantCitationComment(selectedCitation, comment),
+          );
+          const text =
+            props.value.slice(0, selected.start) + next + props.value.slice(selected.end);
+          if (!assistantCitationDraftWithinLimit(text)) {
+            Dialog.alert(
+              gt("Could not update quote"),
+              gt(
+                "This comment would make the message too long to send. Shorten the comment or draft.",
+              ),
+            );
+            return;
+          }
+          const cursor = selected.start + next.length;
+          if (draftKey)
+            rememberComposerDraftSelection(draftKey, text, { start: cursor, end: cursor });
+          changeText(text);
+        };
   return (
     <>
       {/* Reset revision history with the recreated iOS view without aborting context imports. */}
@@ -224,12 +283,37 @@ export function ComposerEditor({
         }}
       />
       {importing ? (
-        <Text className="py-2 text-xs text-foreground-muted">Copying context…</Text>
+        <Text className="py-2 text-xs text-foreground-muted">
+          <T>Copying context…</T>
+        </Text>
+      ) : null}
+      {selectedCitation ? (
+        <AssistantCitationSheet
+          citation={selectedCitation}
+          onClose={() => setSelected(null)}
+          onRemove={removeSelected}
+          onCommentChange={commentSelectedCitation}
+          canChangeComment={
+            selected && commentSelectedCitation
+              ? (comment) =>
+                  assistantCitationDraftWithinLimit(
+                    props.value.slice(0, selected.start) +
+                      serializeAssistantCitation(
+                        withAssistantCitationComment(selectedCitation, comment),
+                      ) +
+                      props.value.slice(selected.end),
+                  )
+              : undefined
+          }
+        />
       ) : null}
       {selected && (selectedReference || selectedSkill) ? (
         <ComposerContextSheet
           label={
-            selectedReference?.label ?? selectedSkill?.displayName ?? selectedSkill?.name ?? "Skill"
+            selectedReference?.label ??
+            selectedSkill?.displayName ??
+            selectedSkill?.name ??
+            gt("Skill", { $context: "agent skill" })
           }
           record={
             record ??
@@ -264,19 +348,7 @@ export function ComposerEditor({
           records={draft.context?.records}
           attachments={draft.attachments}
           onClose={() => setSelected(null)}
-          onRemove={
-            props.readOnly || props.editable === false
-              ? undefined
-              : () => {
-                  if (props.value.slice(selected.start, selected.end) === selected.source) {
-                    changeText(
-                      props.value.slice(0, selected.start) + props.value.slice(selected.end),
-                    );
-                    props.onSelectionChange?.({ start: selected.start, end: selected.start });
-                  }
-                  setSelected(null);
-                }
-          }
+          onRemove={removeSelected}
         />
       ) : null}
     </>
