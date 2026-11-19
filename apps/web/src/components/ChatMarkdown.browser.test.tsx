@@ -792,6 +792,13 @@ describe("ChatMarkdown copy", () => {
       htmlText: "2. Configure\n3. Test\n4. Deploy",
     },
     {
+      source:
+        "1. First\n2. [x] Outer\n   1. [ ] Setup\n   2. [ ] Configure\n   3. [x] Deploy\n\nAfter.",
+      from: "Configure",
+      text: "2. [x] 2. [ ] Configure\n   3. [x] Deploy\n\nAfter.",
+      htmlText: "2. 2. Configure\n   3. Deploy\n\nAfter.",
+    },
+    {
       source: "1. A\n2. B\n7. C\n8. D",
       from: "B",
       to: "C",

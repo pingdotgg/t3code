@@ -579,10 +579,10 @@ function cloneWithListMarkers(range: Range, container: Element): void {
     clone = clone?.firstChild ?? null;
     if (!(clone instanceof Element) || !(source instanceof Element)) continue;
     if (source.tagName === "LI" && clone.tagName === "LI") {
-      // A selection starting at the task label leaves its checkbox outside the clone.
       const checkbox = source.querySelector(LIST_ITEM_CHECKBOX);
       if (checkbox && !clone.querySelector(LIST_ITEM_CHECKBOX)) {
-        clone.prepend(checkbox.cloneNode(false));
+        // Keep the first-child chain intact for nested items.
+        clone.append(checkbox.cloneNode(false));
       }
       continue;
     }
