@@ -76,6 +76,7 @@ export function IssueCommentComposer({
     >
       <WorkItemCommentForm
         form={form}
+        textareaRef={textareaRef}
         completionScope={null}
         label={gt("Add a comment")}
         placeholder={blocked ?? gt("Leave a comment")}

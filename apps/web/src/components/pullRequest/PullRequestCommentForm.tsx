@@ -88,6 +88,7 @@ export function PullRequestCommentForm({
   return (
     <WorkItemCommentForm
       form={form}
+      textareaRef={textareaRef}
       completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
       label={gt(
         "Comment on this {term, select, mr {merge request} cr {change request} other {pull request}}",

@@ -68,7 +68,6 @@ export function useWorkItemCommentForm<Action extends string = never>({
     speech,
     locked,
     submitting,
-    textareaRef,
     submit: (action: Action | "comment") =>
       speech.submitAfterDictation((text) => void submit(action, text)),
     submitDisabled:
@@ -78,12 +77,15 @@ export function useWorkItemCommentForm<Action extends string = never>({
 
 export function WorkItemCommentForm<Action extends string = never>({
   form,
+  textareaRef,
   completionScope,
   label,
   placeholder,
   children,
 }: {
   form: ReturnType<typeof useWorkItemCommentForm<Action>>;
+  /** The one handed to `useWorkItemCommentForm`, which dictation writes through. */
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
   completionScope: PullRequestCompletionScope | null;
   label: string;
   placeholder: string;
@@ -95,7 +97,7 @@ export function WorkItemCommentForm<Action extends string = never>({
   return (
     <div className="space-y-2">
       <PullRequestMarkdownTextarea
-        ref={form.textareaRef}
+        ref={textareaRef}
         completionScope={completionScope}
         // Lock while posting because success clears the draft.
         disabled={form.locked}
