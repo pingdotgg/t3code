@@ -8653,6 +8653,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ),
       );
       yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = ${threadId}`;
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+        (turn_item_id, thread_id, run_id, node_id, ordinal, type, status, updated_at, payload_json)
+        VALUES ('limit-shell:malformed-error', ${threadId}, ${original.id}, ${original.rootNodeId},
+          99, 'error', 'failed', '2999-01-01T00:00:00.000Z', '{broken')`;
+      assert.isUndefined(
+        (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
+          (row) => row.id === threadId,
+        ),
+      );
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id = 'limit-shell:malformed-error'`;
       const recoveryOptions = { now, autoResume: false, snooze: false };
       assert.isUndefined(
         (yield* store.getLimitRecoveryCandidates(recoveryOptions)).find(
@@ -9261,6 +9271,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const plan = (yield* sql.unsafe<{ readonly detail: string }>(
           `EXPLAIN QUERY PLAN ${statement}`,
         )).map((row) => row.detail);
+        if (marker === "AS failure_payload_json") {
+          assert.include(
+            plan.join("\n"),
+            "orchestration_v2_projection_turn_items_usage_limit_idx",
+            marker,
+          );
+        }
         const bindingLookup = plan.findIndex((detail) => detail.startsWith("SEARCH binding "));
         const sessionLookup = plan.findIndex((detail) => detail.startsWith("SEARCH session "));
         assert.isAtLeast(bindingLookup, 0, marker);
