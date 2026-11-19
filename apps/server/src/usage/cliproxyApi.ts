@@ -228,6 +228,8 @@ type HubCall = (
   url: string,
   data?: unknown,
 ) => Effect.Effect<string, UsageLimitSourceError | Schema.SchemaError>;
+/** Runs an optional request, or yields undefined once the refresh's shared budget is spent. */
+type HubOptional = <A, E>(effect: Effect.Effect<A, E>) => Effect.Effect<A | undefined>;
 type HubReading = Omit<UsageLimitSourceAccount, "id" | "driver">;
 interface HubProvider {
   readonly driver: ProviderDriverKind;
@@ -239,6 +241,7 @@ interface HubProvider {
   readonly read: (input: {
     readonly account: AuthFile;
     readonly call: HubCall;
+    readonly optional: HubOptional;
     readonly checkedAt: string;
   }) => Effect.Effect<HubReading, UsageLimitSourceError | Schema.SchemaError, Digest.Digest>;
 }
@@ -337,15 +340,15 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
         // The OAuth usage endpoint can return 429 without a Claude Code user agent.
         "User-Agent": "claude-code/2.1.273",
       }),
-      read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
+      read: Effect.fnUntraced(function* ({ account, call, optional, checkedAt }) {
         const [body, profile] = yield* Effect.all(
           [
             call("https://api.anthropic.com/api/oauth/usage"),
             // The tier only weights pools, so a failed read keeps the usage.
-            call("https://api.anthropic.com/api/oauth/profile").pipe(
-              Effect.flatMap(decodeClaudeProfile),
-              Effect.timeout("3 seconds"),
-              Effect.orElseSucceed(() => undefined),
+            optional(
+              call("https://api.anthropic.com/api/oauth/profile").pipe(
+                Effect.flatMap(decodeClaudeProfile),
+              ),
             ),
           ],
           { concurrency: 2 },
@@ -505,11 +508,22 @@ export const makeCliproxyApi = Effect.gen(function* () {
     hub: CliproxyHub,
     account: AuthFile,
     provider: HubProvider,
+    optionalUntil: number,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const call: HubCall = (url, data) =>
       apiCall(hub, account, provider.header(account, platform, architecture), url, data);
-    const reading = yield* provider.read({ account, call, checkedAt }).pipe(
+    const optional: HubOptional = Effect.fn("CliproxyApi.optional")(function* <A, E>(
+      effect: Effect.Effect<A, E>,
+    ) {
+      const left = optionalUntil - DateTime.toEpochMillis(yield* DateTime.now);
+      if (left <= 0) return undefined;
+      return yield* effect.pipe(
+        Effect.timeout(left),
+        Effect.orElseSucceed(() => undefined),
+      );
+    });
+    const reading = yield* provider.read({ account, call, optional, checkedAt }).pipe(
       Effect.provideService(Digest.Digest, digest),
       Effect.orElseSucceed(() => ({
         ...listedIdentity(account),
@@ -533,12 +547,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
           : new UsageLimitSourceError({ detail: "The hub could not list accounts." }),
       ),
     );
+    // One budget for the whole refresh: per-account timeouts would stack across batches
+    // and outlast the usage-limit reset fallback's deadline.
+    const optionalUntil = DateTime.toEpochMillis(yield* DateTime.now) + 3_000;
     return yield* Effect.forEach(
       accounts.flatMap((account) => {
         const provider = HUB_PROVIDERS.get(account.provider);
         return provider && !account.disabled ? [{ account, provider }] : [];
       }),
-      ({ account, provider }) => readAccount(hub, account, provider),
+      ({ account, provider }) => readAccount(hub, account, provider, optionalUntil),
       { concurrency: 4 },
     );
   });

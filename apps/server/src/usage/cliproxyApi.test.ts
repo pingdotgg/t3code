@@ -58,13 +58,13 @@ function fixture(
       project_id?: string;
       id_token?: { chatgpt_account_id: string; plan_type?: string; chatgpt_plan_type?: string };
     }>;
-    upstream?: (request: RequestBody) => { status: number; body: unknown };
+    upstream?: (request: RequestBody) => { status: number; body: unknown } | "stall";
     cooldownStatus?: number;
   } = {},
 ) {
   const requests: Array<{ path: string; body?: RequestBody }> = [];
   const http = HttpClient.make((request) =>
-    Effect.sync(() => {
+    Effect.suspend(() => {
       expect(request.headers.authorization).toBe("Bearer management-secret");
       const path = new URL(request.url).pathname;
       const body =
@@ -73,14 +73,18 @@ function fixture(
           : undefined;
       requests.push({ path, ...(body ? { body } : {}) });
       if (path.endsWith("/auth-files"))
-        return HttpClientResponse.fromWeb(
-          request,
-          Response.json({ files: options.accounts ?? accounts }),
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({ files: options.accounts ?? accounts }),
+          ),
         );
       if (path.endsWith("/reset-quota"))
-        return HttpClientResponse.fromWeb(
-          request,
-          Response.json({}, { status: options.cooldownStatus ?? 200 }),
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json({}, { status: options.cooldownStatus ?? 200 }),
+          ),
         );
       expect(path).toMatch(/\/v0\/management\/api-call$/);
       expect(body?.header?.Authorization).toBe("Bearer $TOKEN$");
@@ -108,9 +112,12 @@ function fixture(
                 },
               },
       };
-      return HttpClientResponse.fromWeb(
-        request,
-        Response.json({ status_code: upstream.status, body: encodeJson(upstream.body) }),
+      if (upstream === "stall") return Effect.never;
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({ status_code: upstream.status, body: encodeJson(upstream.body) }),
+        ),
       );
     }),
   );
@@ -403,6 +410,32 @@ describe("CLIProxyAPI built-in management API", () => {
       const result = yield* (yield* test.api).readAccounts(config);
       expect(result[0]?.plan).toBe(plan);
       expect(result[0]?.usageLimits.windows.map((window) => window.id)).toEqual(["seven_day"]);
+    }),
+  );
+
+  it.effect("bounds stalled Claude profile reads across the whole refresh", () =>
+    Effect.gen(function* () {
+      const claude = Array.from({ length: 5 }, (_, index) => ({
+        ...accounts[0]!,
+        id: `claude-${index}.json`,
+        auth_index: `c${index}`,
+        provider: "claude",
+      }));
+      const test = fixture({
+        accounts: claude,
+        upstream: (request) =>
+          request.url?.endsWith("/api/oauth/profile")
+            ? "stall"
+            : { status: 200, body: { seven_day: { utilization: 100, resets_at: null } } },
+      });
+      const api = yield* test.api;
+      const reading = yield* Effect.forkChild(api.readAccounts(config));
+      yield* TestClock.adjust("3 seconds");
+      const exit = reading.pollUnsafe();
+      expect(exit?._tag).toBe("Success");
+      expect(
+        exit?._tag === "Success" ? exit.value.map((account) => account.plan) : undefined,
+      ).toEqual(Array.from({ length: 5 }, () => "Claude Subscription"));
     }),
   );
 
