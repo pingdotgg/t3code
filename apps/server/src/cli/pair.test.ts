@@ -14,6 +14,7 @@ import * as Cause from "effect/Cause";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -29,6 +30,8 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
 } from "../cloud/serviceProtocol.ts";
 import * as ServiceLauncherClient from "../cloud/serviceLauncherClient.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerOwnership from "../serverOwnership.ts";
 import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
@@ -692,56 +695,128 @@ describe("t3 pair", () => {
 });
 
 describe("auth session revoke", () => {
+  // Nothing listens on the recorded port; `server` stubs what fetch meets there instead.
   it.effect.each([
-    { server: "answers", label: "goes through a running server, which closes open connections" },
-    { server: "absent", label: "writes the database when no server runs" },
-    { server: "silent", label: "writes the database when the running server does not answer" },
-  ] as const)("$label", ({ server }) =>
+    {
+      label: "goes through a running server, which closes open connections",
+      recorded: true,
+      lockHeld: false,
+      server: "answers",
+      outcome: "revoked by server",
+    },
+    {
+      label: "writes the database when no server runs",
+      recorded: false,
+      lockHeld: false,
+      server: "none",
+      outcome: "revoked locally",
+    },
+    {
+      label: "writes the database when the recorded server has stopped",
+      recorded: true,
+      lockHeld: false,
+      server: "none",
+      outcome: "revoked locally",
+    },
+    {
+      label: "changes nothing when a running server does not answer",
+      recorded: true,
+      lockHeld: true,
+      server: "none",
+      outcome: "unreachable",
+    },
+    {
+      label: "changes nothing when a running server never finishes answering",
+      recorded: true,
+      lockHeld: true,
+      server: "hangs",
+      outcome: "unreachable",
+    },
+  ] as const)("$label", ({ recorded, lockHeld, server, outcome }) =>
     provideCliTestLayers(
       Effect.gen(function* () {
         const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-revoke-test-"));
+        const statePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
         const issued = JSON.parse(
           yield* captureStdout(
             runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"]),
           ),
         ) as { readonly sessionId: string };
-        if (server !== "absent") {
+        if (recorded) {
           yield* persistServerRuntimeState({
-            path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
-            state: { ...baseState, pid: process.pid },
+            path: statePath,
+            state: { ...baseState, pid: process.pid, port: 1, origin: "http://127.0.0.1:1" },
           });
         }
+        if (lockHeld) {
+          yield* ServerOwnership.acquireServerOwnership(statePath).pipe(
+            Effect.provide(ProcessRunner.layer),
+          );
+        }
+
         const requests: Array<{ readonly path: string; readonly body: unknown }> = [];
-        yield* runCli(["auth", "session", "revoke", "--base-dir", baseDir, issued.sessionId]).pipe(
-          Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
-            if (server === "silent") return new Response(null, { status: 502 });
-            requests.push({
-              path: new URL(String(input)).pathname,
-              body: JSON.parse(String(init?.body)),
-            });
-            return Response.json({ revoked: true });
-          }),
-        );
+        const requestStarted = Promise.withResolvers<void>();
+        const fetch: typeof globalThis.fetch | undefined =
+          server === "answers"
+            ? async (input, init) => {
+                requests.push({
+                  path: new URL(String(input)).pathname,
+                  body: JSON.parse(String(init?.body)),
+                });
+                return Response.json({ revoked: true });
+              }
+            : server === "hangs"
+              ? (_input, init) => {
+                  requestStarted.resolve();
+                  return new Promise((_resolve, reject) =>
+                    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason)),
+                  );
+                }
+              : undefined;
+        const revoke = runCli([
+          "auth",
+          "session",
+          "revoke",
+          "--base-dir",
+          baseDir,
+          issued.sessionId,
+        ]);
+        const running = yield* (
+          fetch === undefined
+            ? revoke
+            : revoke.pipe(Effect.provideService(FetchHttpClient.Fetch, fetch))
+        ).pipe(Effect.exit, Effect.forkChild);
+        if (server === "hangs") {
+          yield* Effect.promise(() => requestStarted.promise);
+          yield* TestClock.adjust("30 seconds");
+        }
+        const exit = yield* Fiber.join(running);
         const listed = JSON.parse(
           yield* captureStdout(
             runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]),
           ),
         ) as ReadonlyArray<{ readonly sessionId: string }>;
 
-        if (server === "answers") {
-          assert.deepEqual(requests, [
-            { path: "/api/auth/clients/revoke", body: { sessionId: issued.sessionId } },
-          ]);
-          // The fake server revoked nothing; the CLI's own short-lived session is gone.
-          assert.deepEqual(
-            listed.map((session) => session.sessionId),
-            [issued.sessionId],
+        assert.deepEqual(
+          requests,
+          outcome === "revoked by server"
+            ? [{ path: "/api/auth/clients/revoke", body: { sessionId: issued.sessionId } }]
+            : [],
+        );
+        if (outcome === "unreachable") {
+          assert.include(
+            Cause.pretty(Exit.isFailure(exit) ? exit.cause : Cause.empty),
+            "RunningServerUnreachableError",
           );
         } else {
-          assert.deepEqual(requests, []);
-          assert.deepEqual(listed, []);
+          assert.isTrue(Exit.isSuccess(exit));
         }
-      }),
+        // The stub server revokes nothing, and the CLI's own session is gone either way.
+        assert.deepEqual(
+          listed.map((session) => session.sessionId),
+          outcome === "revoked locally" ? [] : [issued.sessionId],
+        );
+      }).pipe(Effect.scoped),
     ),
   );
 });
