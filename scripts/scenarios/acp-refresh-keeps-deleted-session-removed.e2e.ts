@@ -14,32 +14,40 @@ const ACP = `
 import { createInterface } from "node:readline";
 
 const [origin] = process.argv.slice(2);
-for await (const line of createInterface({ input: process.stdin })) {
-  const { id, method, params } = JSON.parse(line);
-  if (id === undefined) continue;
-  let result;
+const reply = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+const handle = async ({ method, params }) => {
   if (method === "initialize") {
-    result = {
+    return {
       protocolVersion: 1,
       agentInfo: { name: "session-scenario", version: "1.0.0" },
       agentCapabilities: { sessionCapabilities: { list: {}, delete: {} } },
       authMethods: [],
     };
-  } else if (method === "session/new") {
-    result = { sessionId: "health-probe" };
-  } else if (method === "session/list") {
+  }
+  if (method === "session/new") return { sessionId: "health-probe" };
+  if (method === "session/list") {
     const response = await fetch(origin + "/list");
     const { present, title } = await response.json();
-    result = { sessions: present ? [{ sessionId: "native-draft", cwd: params.cwd, title }] : [] };
-  } else if (method === "session/delete") {
-    if (params.sessionId === "native-draft") await fetch(origin + "/delete");
-    result = {};
-  } else {
-    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } }) + "\\n");
-    continue;
+    return { sessions: present ? [{ sessionId: "native-draft", cwd: params.cwd, title }] : [] };
   }
-  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
-}
+  if (method === "session/delete") {
+    if (params.sessionId === "native-draft") await fetch(origin + "/delete");
+    return {};
+  }
+  return undefined;
+};
+// A gated session/list must not block the session/delete that arrives while it waits.
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  void handle(request).then((result) =>
+    reply(
+      result === undefined
+        ? { id: request.id, error: { code: -32601, message: "Method not found" } }
+        : { id: request.id, result },
+    ),
+  );
+});
 `;
 
 test(
