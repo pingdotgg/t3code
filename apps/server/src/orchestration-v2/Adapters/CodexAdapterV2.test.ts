@@ -1745,86 +1745,153 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  const dangerousCommand = {
+    method: "item/commandExecution/requestApproval",
+    params: {
+      itemId: "full-access-command",
+      startedAtMs: 2,
+      command: "/bin/zsh -lc 'tmpdir=$(mktemp -d); rm -rf \"$tmpdir\"'",
+    },
+  } as const;
+  const patch = {
+    method: "item/fileChange/requestApproval",
+    params: { itemId: "full-access-patch", startedAtMs: 2, reason: null, grantRoot: null },
+  } as const;
   // Full access sends a granular policy, under which Codex still asks before some commands.
   it.effect.each([
+    { name: "command, default policy", ...dangerousCommand, override: {}, asks: false },
+    { name: "patch, default policy", ...patch, override: {}, asks: false },
     {
-      method: "item/commandExecution/requestApproval",
+      name: "command, approval policy override",
+      ...dangerousCommand,
+      override: { approvalPolicy: "on-request" },
+      asks: true,
+    },
+    {
+      name: "patch, sandbox policy override",
+      ...patch,
+      override: { sandboxPolicy: { type: "workspaceWrite" } },
+      asks: true,
+    },
+    {
+      name: "managed-network command, default policy",
+      method: dangerousCommand.method,
       params: {
-        itemId: "full-access-command",
-        command: "/bin/zsh -lc 'tmpdir=$(mktemp -d); rm -rf \"$tmpdir\"'",
-        availableDecisions: ["accept", "cancel"],
+        ...dangerousCommand.params,
+        command: "curl https://example.com",
+        networkApprovalContext: { host: "example.com", protocol: "https" },
       },
+      override: {},
+      asks: true,
     },
     {
-      method: "item/fileChange/requestApproval",
-      params: { itemId: "full-access-patch", startedAtMs: 2, reason: null, grantRoot: null },
+      name: "network amendment proposal, default policy",
+      method: dangerousCommand.method,
+      params: {
+        ...dangerousCommand.params,
+        proposedNetworkPolicyAmendments: [{ action: "allow", host: "example.com" }],
+      },
+      override: {},
+      asks: true,
     },
-  ] as const)("answers $method in full access without asking the user", ({ method, params }) =>
-    Effect.gen(function* () {
-      const nativeThreadId = "full-access-approval-thread";
-      const nativeTurnId = "full-access-approval-turn";
-      const prompt = "Clean up the scratch directory.";
-      const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
-      const harness = yield* makeCodexReplayHarness(
-        makeCodexReplayTranscript({
-          scenario: `full-access-${params.itemId}`,
-          entries: [
-            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
-            {
-              type: "emit_inbound",
-              frame: {
-                id: 0,
-                method,
-                params: { threadId: nativeThreadId, turnId: nativeTurnId, ...params },
-              },
-            },
-            { type: "expect_outbound", frame: { id: 0, result: { decision: "accept" } } },
-            {
-              type: "emit_inbound",
-              frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+    {
+      name: "terminal input, default policy",
+      method: dangerousCommand.method,
+      params: { ...dangerousCommand.params, kind: "writeStdin" },
+      override: {},
+      asks: true,
+    },
+    {
+      name: "patch with a grant root, default policy",
+      method: patch.method,
+      params: { ...patch.params, grantRoot: "/" },
+      override: {},
+      asks: true,
+    },
+  ] as const)(
+    "full access asks the user only when it must: $name",
+    ({ name, method, params, override, asks }) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "full-access-approval-thread";
+        const nativeTurnId = "full-access-approval-turn";
+        const prompt = "Clean up the scratch directory.";
+        const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: `full-access-${name}`,
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId,
+                prompt,
+                turnPolicy: override,
+              }),
+              {
+                type: "emit_inbound",
+                frame: {
+                  id: 0,
+                  method,
+                  params: { threadId: nativeThreadId, turnId: nativeTurnId, ...params },
                 },
               },
-            },
-          ],
-        }),
-        (event) =>
-          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
-            ? Queue.offer(pending, event.runtimeRequest)
-            : Effect.void,
-      );
-      yield* harness.runtime.startTurn(
-        makeCodexTestTurnInput({
+              { type: "expect_outbound", frame: { id: 0, result: { decision: "accept" } } },
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ],
+          }),
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+              ? Queue.offer(pending, event.runtimeRequest)
+              : Effect.void,
+        );
+        const turnInput = makeCodexTestTurnInput({
           threadId: harness.threadId,
           providerThread: harness.providerThread,
           now: yield* DateTime.now,
           attemptId: RunAttemptId.make(`full-access-${params.itemId}-attempt`),
           text: prompt,
-        }),
-      );
-      const request = yield* Effect.raceFirst(
-        harness.firstTerminal.pipe(Effect.as(undefined)),
-        Queue.take(pending),
-      );
-      assert.isUndefined(request, "Full access must not wait for an approval");
-      assert.deepEqual(
-        harness.terminalEvents().map((event) => event.status),
-        ["completed"],
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+        });
+        yield* harness.runtime.startTurn({
+          ...turnInput,
+          runtimePolicy: { ...turnInput.runtimePolicy, ...override },
+        });
+        const request = yield* Effect.raceFirst(
+          harness.firstTerminal.pipe(Effect.as(undefined)),
+          Queue.take(pending),
+        );
+        if (asks) {
+          assert.isDefined(request, "This approval must reach the user");
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: request.id,
+            decision: "accept",
+          });
+          yield* harness.firstTerminal;
+        } else {
+          assert.isUndefined(request, "Full access must not wait for an approval");
+        }
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   it.effect.each(["native", "ordinary"] as const)(

@@ -784,6 +784,15 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   }
 }
 
+// An explicit approval or sandbox policy stays authoritative, as it does in ClaudeAdapterV2.
+function usesCodexFullAccessDefaults(policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) {
+  return (
+    policy.runtimeMode === "full-access" &&
+    policy.approvalPolicy === undefined &&
+    policy.sandboxPolicy === undefined
+  );
+}
+
 const isCodexCyberAccessProgram = Schema.is(CodexSchema.V2TurnStartParams__CyberAccessProgram);
 
 function codexCyberAccess(
@@ -5864,8 +5873,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
-            // Full access sends a granular policy, under which Codex still asks before some commands.
-            if (context.input.runtimePolicy.runtimeMode === "full-access") {
+            // Under the granular policy Codex still asks before commands it judges dangerous.
+            // Terminal input and managed-network prompts stay with the user.
+            if (
+              usesCodexFullAccessDefaults(context.input.runtimePolicy) &&
+              (payload.kind ?? "command") === "command" &&
+              (payload.networkApprovalContext ?? null) === null &&
+              (payload.proposedNetworkPolicyAmendments ?? []).length === 0
+            ) {
               return {
                 decision: "accept",
               } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
@@ -5941,7 +5956,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
-            if (context.input.runtimePolicy.runtimeMode === "full-access") {
+            // A grant root asks for session-wide writes, which stays the user's call.
+            if (
+              usesCodexFullAccessDefaults(context.input.runtimePolicy) &&
+              (payload.grantRoot ?? null) === null
+            ) {
               return {
                 decision: "accept",
               } satisfies CodexSchema.FileChangeRequestApprovalResponse;
