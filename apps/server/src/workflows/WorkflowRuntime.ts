@@ -33,7 +33,8 @@ const definitionsOverride = Config.String("T3CODE_WORKFLOWS").pipe(Config.option
 // An editor saves in several writes, and a save from here is followed by its own file event.
 const RELOAD_SETTLE = "300 millis";
 // A leading dot is how a file is kept out: a draft being checked, an editor's swap file.
-const DEFINITION_FILE = /^[^.][\w.-]*\.(ts|mts|js|mjs)$/;
+// One name in the folder, never a path: the name is also the key a save and a removal go by.
+const DEFINITION_FILE = /^[A-Za-z0-9_][\w.-]*\.(ts|mts|js|mjs)$/;
 
 export class WorkflowDefinitionsLoadError extends Schema.TaggedError<WorkflowDefinitionsLoadError>()(
   "WorkflowDefinitionsLoadError",
@@ -243,9 +244,10 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
         ? [path.basename(target)]
         : [];
     }
-    const entries = yield* fileSystem
-      .readDirectory(directory)
-      .pipe(Effect.orElseSucceed((): Array<string> => []));
+    // A folder that is not there yet is empty. One that cannot be read just now is not: it
+    // fails, and what was loaded stays.
+    if (!(yield* fileSystem.exists(directory).pipe(Effect.orElseSucceed(() => false)))) return [];
+    const entries = yield* fileSystem.readDirectory(directory);
     return entries.filter((entry) => DEFINITION_FILE.test(entry)).toSorted();
   });
 
@@ -306,7 +308,14 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
 
   /** Take in what changed in the folder, and run the result unless something is wrong with it. */
   const reload = Effect.fn("WorkflowRuntime.reload")(function* () {
-    const present = yield* names;
+    const listed = yield* Effect.option(names);
+    if (Option.isNone(listed)) {
+      yield* Effect.logWarning(
+        "The workflows folder could not be read; its workflows stay as they are",
+      );
+      return;
+    }
+    const present = listed.value;
     let changed = false;
     for (const name of present) {
       const file = path.join(directory, name);
@@ -392,7 +401,15 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       return yield* (yield* current).list(...input);
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (...input) {
-      return yield* (yield* current).waitFor(...input);
+      // A reload replaces the engine, and a wait on the old one would never hear of the run again.
+      while (true) {
+        const live = yield* current;
+        const reloaded = SubscriptionRef.changes(state).pipe(Stream.drop(1), Stream.runHead);
+        const waited = yield* live
+          .waitFor(...input)
+          .pipe(Effect.asSome, Effect.raceFirst(Effect.as(reloaded, Option.none())));
+        if (Option.isSome(waited)) return waited.value;
+      }
     }),
     questions: Effect.flatMap(current, (live) => live.questions),
     hooks: Effect.flatMap(current, (live) => live.hooks),
@@ -481,19 +498,21 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       WorkflowDefinitions,
       WorkflowDefinitions.of({
         read: Effect.gen(function* () {
-          const files = yield* Effect.forEach(yield* names, (name) =>
-            fileSystem.readFileString(path.join(directory, name)).pipe(
-              Effect.orElseSucceed(() => ""),
-              Effect.map((source) => {
-                const problem = broken.get(name);
-                return {
-                  name,
-                  source,
-                  workflows: (good.get(name) ?? []).map(engineTag),
-                  problems: problem === undefined ? [] : [problem],
-                };
-              }),
-            ),
+          const files = yield* Effect.forEach(
+            yield* Effect.orElseSucceed(names, () => []),
+            (name) =>
+              fileSystem.readFileString(path.join(directory, name)).pipe(
+                Effect.orElseSucceed(() => ""),
+                Effect.map((source) => {
+                  const problem = broken.get(name);
+                  return {
+                    name,
+                    source,
+                    workflows: (good.get(name) ?? []).map(engineTag),
+                    problems: problem === undefined ? [] : [problem],
+                  };
+                }),
+              ),
           );
           const at = yield* SubscriptionRef.get(state);
           return { directory, single, files, problems: between, ...at };
