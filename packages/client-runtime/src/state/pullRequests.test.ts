@@ -3151,7 +3151,10 @@ it.effect.each(["commit", "live"] as const)(
         ).toBe("updated");
       }
 
-      yield* SubscriptionRef.update(supervisor.state, (state) => ({ ...state, phase: "offline" }));
+      yield* SubscriptionRef.update(supervisor.state, (state) => ({
+        ...state,
+        phase: "offline" as const,
+      }));
       const offline = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
         Effect.sync(() => registry.dispose()),
       );

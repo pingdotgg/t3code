@@ -37,6 +37,7 @@ import * as Schema from "effect/Schema";
 import { persistPullRequestStats } from "./pullRequestStatsPersistence.ts";
 import { persistQuery, type QueryPersistence } from "./queryPersistence.ts";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
@@ -786,16 +787,13 @@ type PullRequestDiffCacheInput = PullRequestDiffInput & {
   readonly cacheRevision?: string;
 };
 
-function createDiffRevision(): string {
-  const bytes = new Uint8Array(16);
-  if (globalThis.crypto?.getRandomValues) {
-    globalThis.crypto.getRandomValues(bytes);
-  } else {
-    // Native runtimes may lack Web Crypto; this is a cache key, not a credential.
-    for (let index = 0; index < bytes.length; index++) bytes[index] = Math.random() * 256;
-  }
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
+const createDiffRevision = Effect.suspend(() =>
+  globalThis.crypto?.getRandomValues
+    ? Effect.succeed<ArrayLike<number>>(globalThis.crypto.getRandomValues(new Uint8Array(16)))
+    : Effect.all(Array.from({ length: 16 }, () => Random.nextIntBetween(0, 255))),
+).pipe(
+  Effect.map((bytes) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")),
+);
 
 const diffPersistence = persistQuery(CachedPullRequestDiff);
 
@@ -1352,16 +1350,19 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       // Guide heads and pagination revisions namespace the client cache only.
       execute: ({ cacheHeadSha, cacheRevision, ...input }: PullRequestDiffCacheInput) =>
         loadDiff(input).pipe(
-          Effect.map((diff): CachedPullRequestDiff => {
-            const revision =
+          Effect.flatMap((diff): Effect.Effect<CachedPullRequestDiff> => {
+            if (
               diff.nextCursor !== null &&
               input.cursor === undefined &&
               input.path === undefined &&
               input.commit === undefined &&
               cacheHeadSha === undefined
-                ? createDiffRevision()
-                : cacheRevision;
-            return revision === undefined ? diff : { ...diff, revision };
+            ) {
+              return Effect.map(createDiffRevision, (revision) => ({ ...diff, revision }));
+            }
+            return Effect.succeed(
+              cacheRevision === undefined ? diff : { ...diff, revision: cacheRevision },
+            );
           }),
         ),
     }),
