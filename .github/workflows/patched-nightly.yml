@@ -45,7 +45,7 @@ jobs:
           # Head of main before it was reconciled with upstream. Its history has unrelated SHAs
           # (upstream rewrote its history), so its old patch commits are already folded into the
           # reconciled tree and must not be replayed.
-          LEGACY_MAIN_SHA: 26c16e60b97da2133017a00947d5240011fd232a
+          LEGACY_MAIN_SHA: c4afed3e330a9795185d7800ce602cb8c430da6b
         run: |
           set -euo pipefail
 
