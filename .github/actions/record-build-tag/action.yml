@@ -1,0 +1,57 @@
+name: Record build tag
+description: Pushes the tag that tells later runs a build for this fingerprint exists.
+
+inputs:
+  tag:
+    description: Tag name, without refs/tags/
+    required: true
+  message:
+    description: Annotated tag message; empty makes a lightweight tag
+    default: ""
+  replace:
+    description: "true replaces an existing tag; otherwise an existing tag counts as recorded"
+    default: "false"
+  token:
+    description: Token with contents write
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Record build tag
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+        MESSAGE: ${{ inputs.message }}
+        REPLACE: ${{ inputs.replace }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+        # GitHub occasionally fails ref writes server-side ("fatal error in commit_refs").
+        for attempt in 1 2 3; do
+          if refs="$(git ls-remote "$remote" "refs/tags/$TAG")"; then
+            old="$(printf '%s\n' "$refs" | while read -r sha ref; do
+              if [ "$ref" = "refs/tags/$TAG" ]; then echo "$sha"; fi
+            done)"
+            if [ -n "$old" ] && [ "$REPLACE" != "true" ]; then
+              echo "$TAG exists."
+              exit 0
+            fi
+            if [ -n "$MESSAGE" ]; then
+              git tag -f -a "$TAG" -m "$MESSAGE"
+            else
+              git tag -f "$TAG"
+            fi
+            # An empty lease means the tag must not exist yet.
+            if git push --force-with-lease="refs/tags/$TAG:$old" "$remote" "refs/tags/$TAG"; then
+              exit 0
+            fi
+          fi
+          if [ "$attempt" = 3 ]; then
+            echo "::error::Could not push $TAG."
+            exit 1
+          fi
+          sleep $((attempt * 15))
+        done

@@ -1,5 +1,6 @@
 import { CommandId } from "@t3tools/contracts";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -11,7 +12,7 @@ import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
-const make = Effect.gen(function* () {
+export const makeReconcile = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const git = yield* GitWorkflowService.GitWorkflowService;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -70,12 +71,17 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-    const reconcile = yield* make;
+    const reconcile = yield* makeReconcile;
+    // Each update waits on its thread's lock, so a busy thread delays only its own worktree.
+    const worktrees = yield* KeyedLock.makeRunner<string>();
     yield* forkParked(
       Stream.runForEach(broadcaster.streamBranchChanges, (input) =>
-        reconcile(input).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Failed to reconcile worktree branch", { cwd: input.cwd, cause }),
+        worktrees.run(
+          input.cwd,
+          reconcile(input).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to reconcile worktree branch", { cwd: input.cwd, cause }),
+            ),
           ),
         ),
       ),
