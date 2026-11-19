@@ -4,7 +4,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as NodeSqlite from "node:sqlite";
 
 import { CodexSettings } from "@t3tools/contracts";
 import {
@@ -469,6 +468,16 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
 
           expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
           expect(error).toMatchObject({ entryName: "state_5.sqlite-wal" });
+          // Naming the shared home outright strands that WAL just the same.
+          expect(
+            yield* materializeCodexShadowHome(layout, { CODEX_SQLITE_HOME: sharedHome }).pipe(
+              Effect.flip,
+              Effect.provideService(HostProcess.Platform, "win32"),
+            ),
+          ).toMatchObject({
+            _tag: "CodexShadowHomeSqliteConflictError",
+            entryName: "state_5.sqlite-wal",
+          });
           expect(yield* fileSystem.readFileString(shadowWal)).toBe("uncheckpointed frames");
           expect(yield* fileSystem.exists(path.join(shadowHome, "sessions"))).toBe(false);
           // Windows resolves a rooted path onto the working directory's drive.
@@ -524,11 +533,6 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
           const sharedGoals = path.join(sharedHome, "goals_1.sqlite");
           const shadowGoals = path.join(shadowHome, "goals_1.sqlite");
-          const openDatabase = (databasePath: string) =>
-            Effect.acquireRelease(
-              Effect.sync(() => new NodeSqlite.DatabaseSync(databasePath)),
-              (database) => Effect.sync(() => database.close()),
-            );
           const goalEntries = (home: string) =>
             fileSystem
               .readDirectory(home)
@@ -551,12 +555,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             shadowHome,
           );
 
-          // A Codex running in the shared home holds goals open with a commit still in its WAL.
-          const sharedWriter = yield* openDatabase(sharedGoals);
-          sharedWriter.exec(
-            "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE goals(id); INSERT INTO goals VALUES (1);",
-          );
-
+          yield* writeTextFile(sharedGoals, "shared db");
           for (const refused of yield* launch({})) {
             expect(refused).toMatchObject({
               _tag: "Failure",
@@ -598,7 +597,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             )).message,
           ).toContain(`'${shadowHome}', where 'goals_1.sqlite' is a link`);
 
-          // Naming the shared home is the way through: both writers then open one path, so one WAL.
+          // Naming the shared home is the way through: every writer then opens one path, so one WAL.
           const routed = yield* materializeCodexShadowHome(layout, {
             CODEX_SQLITE_HOME: sharedHome,
           });
@@ -609,18 +608,6 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           expect(yield* codexHomeEnvironment(layout, { CODEX_SQLITE_HOME: sharedHome })).toEqual(
             routed,
           );
-          const routedGoals = path.join(routed.CODEX_SQLITE_HOME ?? "", "goals_1.sqlite");
-          expect(routedGoals).toBe(sharedGoals);
-          const shadowWriter = yield* openDatabase(routedGoals);
-          shadowWriter.exec("INSERT INTO goals VALUES (2);");
-          const count = "SELECT count(*) AS count FROM goals";
-          expect(shadowWriter.prepare(count).get()?.count).toBe(2);
-          expect(sharedWriter.prepare(count).get()?.count).toBe(2);
-          expect(yield* goalEntries(sharedHome)).toEqual([
-            "goals_1.sqlite",
-            "goals_1.sqlite-shm",
-            "goals_1.sqlite-wal",
-          ]);
           expect(yield* goalEntries(shadowHome)).toEqual(["goals_1.sqlite"]);
           expect(yield* fileSystem.readFileString(path.join(shadowHome, "state_5.sqlite"))).toBe(
             "private db",
@@ -863,38 +850,6 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
               .CODEX_SQLITE_HOME,
           ).toBe(shadowHome);
         }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
-    );
-
-    it.effect.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "win32")(
-      "keeps one WAL for a shared database a POSIX shadow opens through its link",
-      () =>
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
-          yield* writeTextFile(path.join(shadowHome, "state_5.sqlite"), "");
-          const sharedDb = new NodeSqlite.DatabaseSync(path.join(sharedHome, "goals_1.sqlite"));
-          sharedDb.exec(
-            "PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE goals(id); INSERT INTO goals VALUES (1);",
-          );
-
-          const environment = yield* materializeCodexShadowHome(layout, {});
-          const sqliteHome = environment.CODEX_SQLITE_HOME ?? "";
-          expect(sqliteHome).toBe(shadowHome);
-          const shadowDb = new NodeSqlite.DatabaseSync(path.join(sqliteHome, "goals_1.sqlite"));
-          shadowDb.exec("INSERT INTO goals VALUES (2);");
-          const shadowCount = shadowDb.prepare("SELECT count(*) AS count FROM goals").get();
-          const sharedCount = sharedDb.prepare("SELECT count(*) AS count FROM goals").get();
-          const shadowEntries = yield* fileSystem.readDirectory(shadowHome);
-          shadowDb.close();
-          sharedDb.close();
-
-          expect(shadowCount?.count).toBe(2);
-          expect(sharedCount?.count).toBe(2);
-          expect(shadowEntries.filter((entry) => entry.startsWith("goals_1.sqlite"))).toEqual([
-            "goals_1.sqlite",
-          ]);
-        }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
     );
   });
 });

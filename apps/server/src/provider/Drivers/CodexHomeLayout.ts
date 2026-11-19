@@ -281,6 +281,60 @@ const readHomeEntries = (
     }),
   );
 
+/** The shadow's SQLite entries; fails on a sidecar whose data the shared home may not have. */
+const scanShadowSqlite = Effect.fn("CodexHomeLayout.scanShadowSqlite")(function* (
+  layout: CodexHomeLayout,
+  effectiveHomePath: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const regularDatabases = new Set<string>();
+  const linkedDatabases: Array<string> = [];
+  const sidecarsWithData: Array<{ readonly entryName: string; readonly databaseName: string }> = [];
+  for (const entryName of yield* readHomeEntries(
+    fileSystem,
+    layout,
+    effectiveHomePath,
+    effectiveHomePath,
+  )) {
+    if (!SQLITE_ENTRY_NAME.test(entryName)) continue;
+    const linkPath = path.join(effectiveHomePath, entryName);
+    const state = yield* readLinkState({
+      fileSystem,
+      sharedHomePath: layout.sharedHomePath,
+      effectiveHomePath,
+      entryName,
+      linkPath,
+    });
+    if (state._tag === "Symlink" && SQLITE_DATABASE_ENTRY_NAME.test(entryName)) {
+      linkedDatabases.push(entryName.toLowerCase());
+    }
+    if (state._tag !== "NotSymlink") continue;
+    if (SQLITE_DATABASE_ENTRY_NAME.test(entryName)) {
+      regularDatabases.add(entryName.toLowerCase());
+      continue;
+    }
+    // `-shm` is a rebuildable index and an empty WAL or journal holds nothing to lose.
+    const sidecar = SQLITE_DATA_SIDECAR_ENTRY_NAME.exec(entryName);
+    if (!sidecar?.[1]) continue;
+    const info = yield* fileSystem.stat(linkPath).pipe(Effect.option);
+    if (Option.isSome(info) && Number(info.value.size) > 0) {
+      sidecarsWithData.push({ entryName, databaseName: sidecar[1].toLowerCase() });
+    }
+  }
+
+  // A WAL or journal beside a linked or missing database may hold writes the shared copy lacks.
+  const stranded = sidecarsWithData.find((sidecar) => !regularDatabases.has(sidecar.databaseName));
+  if (stranded) {
+    return yield* new CodexShadowHomeSqliteConflictError({
+      sharedHomePath: layout.sharedHomePath,
+      effectiveHomePath,
+      entryName: stranded.entryName,
+    });
+  }
+  return { regularDatabases, linkedDatabases };
+});
+
 /**
  * Codex opens its SQLite databases from `CODEX_SQLITE_HOME`. Windows SQLite derives `-wal`/`-shm`
  * from the path it was given, so a database reached through a shadow-home link gets its own WAL.
@@ -378,6 +432,7 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
       fileSystem.realPath(directory).pipe(Effect.orElseSucceed(() => path.resolve(directory)));
     const sqliteHomePath = yield* canonical(expanded);
     if (sqliteHomePath.toLowerCase() === (yield* canonical(layout.sharedHomePath)).toLowerCase()) {
+      yield* scanShadowSqlite(layout, effectiveHomePath);
       return route(layout.sharedHomePath);
     }
     // Naming a directory outright, the shadow included, must not reach a database through a link.
@@ -407,50 +462,7 @@ export const codexHomeEnvironment = Effect.fn("CodexHomeLayout.codexHomeEnvironm
     return route(sqliteHomePath);
   }
 
-  const regularDatabases = new Set<string>();
-  const linkedDatabases: Array<string> = [];
-  const sidecarsWithData: Array<{ readonly entryName: string; readonly databaseName: string }> = [];
-  for (const entryName of yield* readHomeEntries(
-    fileSystem,
-    layout,
-    effectiveHomePath,
-    effectiveHomePath,
-  )) {
-    if (!SQLITE_ENTRY_NAME.test(entryName)) continue;
-    const linkPath = path.join(effectiveHomePath, entryName);
-    const state = yield* readLinkState({
-      fileSystem,
-      sharedHomePath: layout.sharedHomePath,
-      effectiveHomePath,
-      entryName,
-      linkPath,
-    });
-    if (state._tag === "Symlink" && SQLITE_DATABASE_ENTRY_NAME.test(entryName)) {
-      linkedDatabases.push(entryName.toLowerCase());
-    }
-    if (state._tag !== "NotSymlink") continue;
-    if (SQLITE_DATABASE_ENTRY_NAME.test(entryName)) {
-      regularDatabases.add(entryName.toLowerCase());
-      continue;
-    }
-    // `-shm` is a rebuildable index and an empty WAL or journal holds nothing to lose.
-    const sidecar = SQLITE_DATA_SIDECAR_ENTRY_NAME.exec(entryName);
-    if (!sidecar?.[1]) continue;
-    const info = yield* fileSystem.stat(linkPath).pipe(Effect.option);
-    if (Option.isSome(info) && Number(info.value.size) > 0) {
-      sidecarsWithData.push({ entryName, databaseName: sidecar[1].toLowerCase() });
-    }
-  }
-
-  // A WAL or journal beside a linked or missing database may hold writes the shared copy lacks.
-  const stranded = sidecarsWithData.find((sidecar) => !regularDatabases.has(sidecar.databaseName));
-  if (stranded) {
-    return yield* new CodexShadowHomeSqliteConflictError({
-      sharedHomePath: layout.sharedHomePath,
-      effectiveHomePath,
-      entryName: stranded.entryName,
-    });
-  }
+  const { regularDatabases, linkedDatabases } = yield* scanShadowSqlite(layout, effectiveHomePath);
   if (regularDatabases.size === 0) return route(layout.sharedHomePath);
   const sharedDatabases = (yield* readHomeEntries(
     fileSystem,
