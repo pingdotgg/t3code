@@ -1327,6 +1327,16 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     var(--surface-fill) border-box;
   box-shadow: var(--surface-shadow);
 }
+/* Docked in the pane's top corner, the card's corner is concentric with the pane's:
+   the pane radius minus the gap, and the box inside it its 1px border and p-1 less. */
+[data-thread-details-panel="inline"][data-pane-corner] [data-thread-details-workspace] {
+  --thread-details-corner: max(0px, calc(var(--radius-pane) - var(--thread-details-gap)));
+  border-start-end-radius: var(--thread-details-corner);
+
+  & > .surface-composer {
+    border-start-end-radius: max(0px, calc(var(--thread-details-corner) - 1px - var(--spacing)));
+  }
+}
 /* Keep details at least as readable as the pre-redesign 13px rows and 12px metadata. */
 @media (min-width: 640px) {
   .thread-details-stack {

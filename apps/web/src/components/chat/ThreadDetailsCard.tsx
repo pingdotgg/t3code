@@ -3,6 +3,7 @@ import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import {
   useLayoutEffect,
   useState,
+  type CSSProperties,
   type MouseEventHandler,
   type ReactNode,
   type RefObject,
@@ -126,14 +127,18 @@ export function ThreadDetailsCard({
             "absolute z-20",
             topInset > 0 && "transition-[top] duration-150 ease-out motion-reduce:transition-none",
           )}
-          style={{
-            right: placement.right,
-            top: placement.y,
-            width: placement.width,
-            maxHeight: height,
-          }}
+          style={
+            {
+              right: placement.right,
+              top: placement.y,
+              width: placement.width,
+              maxHeight: height,
+              "--thread-details-gap": `${THREAD_DETAILS_CARD_GAP}px`,
+            } as CSSProperties
+          }
           data-density={density}
           data-thread-details-panel="inline"
+          data-pane-corner={topInset === 0 || undefined}
           data-sidebar-slide-track="end"
         >
           {card}
