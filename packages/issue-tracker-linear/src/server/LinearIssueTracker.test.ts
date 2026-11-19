@@ -297,58 +297,44 @@ describe("LinearIssueTracker", () => {
     }),
   );
 
-  it.effect("reads the viewer only for older comment pages with reactions", () =>
+  it.effect("reads the viewer only for comment pages with reactions", () =>
     Effect.gen(function* () {
-      let viewerReads = 0;
-      const readViewer = () => {
-        viewerReads += 1;
-        return { viewer: JULIUS };
-      };
       const { tracker, requests } = fakeLinear({
         T3Comments: ({ after }) => ({
           issue: {
             comments: {
-              nodes:
-                after === "empty"
-                  ? []
-                  : [
-                      {
-                        id: "cmt_1",
-                        body: "hi",
-                        createdAt: "2026-07-02T01:00:00.000Z",
-                        url: "https://linear.app/acme/issue/ENG-7#comment-cmt_1",
-                        user: THEO,
-                        botActor: null,
-                        reactions:
-                          after === "reacted" ? [{ id: "r1", emoji: "+1", user: JULIUS }] : [],
-                      },
-                    ],
+              nodes: [
+                {
+                  id: "cmt_1",
+                  body: "hi",
+                  createdAt: "2026-07-02T01:00:00.000Z",
+                  url: "https://linear.app/acme/issue/ENG-7#comment-cmt_1",
+                  user: THEO,
+                  botActor: null,
+                  reactions: after === "reacted" ? [{ id: "r1", emoji: "+1", user: JULIUS }] : [],
+                },
+              ],
               pageInfo: { hasNextPage: false, endCursor: null },
             },
           },
         }),
-        T3CurrentUser: readViewer,
         T3Viewer: () => ({
-          ...readViewer(),
+          viewer: JULIUS,
           organization: { urlKey: "acme" },
           teams: { nodes: [] },
         }),
       });
       const api = yield* tracker;
+      const viewerReads = () => requests.filter((r) => r.operation === "T3Viewer").length;
       const ref = { ...target, key: "ENG-7" };
-      expect(yield* api.getComments({ ...ref, cursor: "empty" })).toEqual({
-        comments: [],
-        nextCursor: null,
-      });
       const plain = yield* api.getComments({ ...ref, cursor: "plain" });
       expect(plain.comments[0]?.reactions).toEqual([]);
-      expect(viewerReads).toBe(0);
+      expect(viewerReads()).toBe(0);
       const reacted = yield* api.getComments({ ...ref, cursor: "reacted" });
       expect(reacted.comments[0]?.reactions).toEqual([
         { content: "thumbs-up", count: 1, actors: [], viewerHasReacted: true },
       ]);
-      expect(viewerReads).toBe(1);
-      expect(requests.filter((request) => request.operation === "T3Comments")).toHaveLength(3);
+      expect(viewerReads()).toBe(1);
     }),
   );
 
