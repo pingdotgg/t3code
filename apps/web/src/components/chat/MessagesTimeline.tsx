@@ -147,6 +147,8 @@ import { ThreadActivityAnnouncer } from "./ThreadActivityAnnouncer";
 import { useStableHandoffRuns, useIncrementalTimelineRows, useStableRows } from "./useTimelineRows";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useStableFyiRuns } from "../../fork/fyi/useStableFyiRuns";
+import type { TimelineReaderLine } from "../../fork/timelineReaderLine";
+import { useTimelineReaderLine } from "../../fork/useTimelineReaderLine";
 
 function timelineListStateFor(identity: string): {
   readonly identity: string;
@@ -499,6 +501,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     ready: boolean;
   } | null>(null);
   const disclosureRevealFrameRef = useRef<number | null>(null);
+  const readerLineRef = useRef<TimelineReaderLine | null>(null);
 
   // Anchoring keeps the toggled row still, so content that expands below it
   // near the bottom would otherwise land under the composer.
@@ -525,6 +528,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       composerOverlayHeight: contentInsetEndAdjustment,
       anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
     });
+    if (delta > 0 && readerLineRef.current?.yieldToScroll(delta) === false) return;
     // Nested lists can finish measuring before their height reaches the outer scroller.
     if (pending.ready && element.scrollTop + delta <= element.scrollHeight - element.clientHeight) {
       disclosureRevealRef.current = null;
@@ -1010,7 +1014,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const rememberPosition = (followingEnd: boolean) => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
-    const isAtEnd = resolveTimelineIsAtEnd(state);
+    const isAtEnd = readerLineRef.current?.keepsOffEnd() ? false : resolveTimelineIsAtEnd(state);
     const position = state.data.length ? resolveWorkGroupScrollAnchor(state) : undefined;
     if (position && isAtEnd !== undefined) {
       const index = state.indexByKey(position.rowId);
@@ -1258,6 +1262,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const canvas = useChatCanvas();
   const registerTimeline = canvas?.registerTimeline;
+  const attachReaderLine = useTimelineReaderLine(readerLineRef, {
+    liveFollowEnabled,
+    findActive,
+    citationPositioning,
+    restoringThreadPosition,
+    listIdentityKey,
+    onHoldEnd: handleScroll,
+  });
   // Stable so the list attaches once per mount, not on every render.
   const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
@@ -1273,6 +1285,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         })
       : null;
     viewportRef.current = viewport;
+    const detachReaderLine = viewport ? attachReaderLine(viewport) : undefined;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopRememberingRelease = viewport?.onFollowReleased(rememberReleasedPosition);
     const stopDisclosureReveal = viewport?.subscribe(() => {
@@ -1293,6 +1306,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         contentSizeFrame = null;
         handleContentSizeChanged(laidOutData);
         revealExpandedDisclosure();
+        readerLineRef.current?.refresh();
       });
     };
     const stopListeningToContentSize = list
@@ -1309,6 +1323,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         disclosureRevealFrameRef.current = null;
       }
       detachViewport?.();
+      detachReaderLine?.();
       viewport?.dispose();
       if (viewportRef.current === viewport) viewportRef.current = null;
       if (minimapRefreshFrameRef.current !== null) {

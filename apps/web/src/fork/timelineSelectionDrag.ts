@@ -3,10 +3,13 @@
 const AUTOSCROLL_EDGE_DEVICE_PX = 20;
 
 /**
- * Whether the browser is autoscrolling the timeline for a text selection the reader drags
- * to its top edge. That scroll comes with no wheel, key or touch event.
+ * Watches the reader drag a text selection in the timeline. At an edge the browser autoscrolls
+ * it, with no wheel, key or touch event.
  */
 export function observeTimelineSelectionDrag(scrollNode: HTMLElement): {
+  /** The primary button is down and a selection in the timeline is not collapsed. */
+  readonly isDragging: () => boolean;
+  /** The drag is at the top edge, where the browser autoscrolls the timeline up. */
   readonly isActive: () => boolean;
   readonly dispose: () => void;
 } {
@@ -43,16 +46,17 @@ export function observeTimelineSelectionDrag(scrollNode: HTMLElement): {
   scrollNode.addEventListener("pointerdown", handlePointerDown, { passive: true });
   // A release in another window or tab reaches this page as a blur only.
   window.addEventListener("blur", end);
+  const selectsInTimeline = () => {
+    const selection = scrollNode.ownerDocument.getSelection();
+    return (
+      selection !== null && !selection.isCollapsed && scrollNode.contains(selection.anchorNode)
+    );
+  };
   return {
+    isDragging: () => press !== null && selectsInTimeline(),
     // The browser's clamp after content shrinks moves scrollTop during a press too, but the
     // pointer is not dragging at the top edge then.
-    isActive: () => {
-      if (!press?.atEdge) return false;
-      const selection = scrollNode.ownerDocument.getSelection();
-      return (
-        selection !== null && !selection.isCollapsed && scrollNode.contains(selection.anchorNode)
-      );
-    },
+    isActive: () => press?.atEdge === true && selectsInTimeline(),
     dispose: () => {
       end();
       scrollNode.removeEventListener("pointerdown", handlePointerDown);
