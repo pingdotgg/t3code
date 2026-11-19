@@ -19,6 +19,7 @@ describe("terminalUiStateStore actions", () => {
     useTerminalUiStateStore.setState({
       terminalUiStateByThreadKey: {},
       suppressedTerminalIdsByThreadKey: {},
+      serverTerminalIdsByThreadKey: {},
     });
   });
 

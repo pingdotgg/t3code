@@ -451,11 +451,24 @@ function closeThreadTerminal(
 
 function reconcileThreadTerminalSessionIds(
   state: ThreadTerminalUiState,
-  nextIds: string[],
+  serverIds: string[],
+  previousServerIds: readonly string[],
 ): ThreadTerminalUiState {
   const normalized = normalizeThreadTerminalUiState(state);
-  if (arraysEqual(normalized.terminalIds, nextIds)) {
+  const serverIdSet = new Set(serverIds);
+  const unreportedIds = normalized.terminalIds.filter((id) => !serverIdSet.has(id));
+  const serverIdsAllShown = serverIds.every((id) => normalized.terminalIds.includes(id));
+  if (unreportedIds.length === 0 && serverIdsAllShown) {
     return normalized;
+  }
+  // Server sessions lag terminal.open, so only drop ids the server reported before and no longer does.
+  let nextIds = serverIds;
+  if (serverIdsAllShown) {
+    const previousIdSet = new Set(previousServerIds);
+    nextIds = normalized.terminalIds.filter((id) => serverIdSet.has(id) || !previousIdSet.has(id));
+    if (nextIds.length === normalized.terminalIds.length) {
+      return normalized;
+    }
   }
 
   const nextActiveTerminalId = nextIds.includes(normalized.activeTerminalId)
@@ -561,6 +574,8 @@ function removeRecordEntry<T>(record: Record<string, T>, key: string): Record<st
 interface TerminalUiStateStoreState {
   terminalUiStateByThreadKey: Record<string, ThreadTerminalUiState>;
   suppressedTerminalIdsByThreadKey: Record<string, string[]>;
+  /** The server's last reported terminal ids per thread, to tell a removal from a terminal still opening. */
+  serverTerminalIdsByThreadKey: Record<string, string[]>;
   setTerminalOpen: (threadRef: ScopedThreadRef, open: boolean) => void;
   setTerminalHeight: (threadRef: ScopedThreadRef, height: number) => void;
   splitTerminal: (threadRef: ScopedThreadRef, terminalId: string) => void;
@@ -584,19 +599,14 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
     (set, get) => {
       const updateTerminal = (
         threadRef: ScopedThreadRef,
-        updater: (
-          state: ThreadTerminalUiState,
-          suppressedTerminalIds: readonly string[],
-        ) => ThreadTerminalUiState,
+        updater: (state: ThreadTerminalUiState) => ThreadTerminalUiState,
         suppression?: { terminalId: string; suppressed: boolean },
       ) => {
         set((state) => {
-          const threadKey = terminalThreadKey(threadRef);
-          const suppressedTerminalIds = state.suppressedTerminalIdsByThreadKey[threadKey] ?? [];
           const nextTerminalUiStateByThreadKey = updateTerminalUiStateByThreadKey(
             state.terminalUiStateByThreadKey,
             threadRef,
-            (terminalState) => updater(terminalState, suppressedTerminalIds),
+            updater,
           );
           const nextSuppressedTerminalIdsByThreadKey = suppression
             ? updateSuppressedTerminalId(
@@ -622,6 +632,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
       return {
         terminalUiStateByThreadKey: {},
         suppressedTerminalIdsByThreadKey: {},
+        serverTerminalIdsByThreadKey: {},
         setTerminalOpen: (threadRef, open) => {
           const terminalState = selectThreadTerminalUiState(
             get().terminalUiStateByThreadKey,
@@ -684,16 +695,37 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             terminalId,
             suppressed: true,
           }),
-        reconcileTerminalIds: (threadRef, nextIds) =>
-          updateTerminal(threadRef, (state, suppressedTerminalIds) => {
-            if (suppressedTerminalIds.length === 0) {
-              return reconcileThreadTerminalSessionIds(state, nextIds);
-            }
-            const suppressedIds = new Set(suppressedTerminalIds);
-            return reconcileThreadTerminalSessionIds(
-              state,
-              nextIds.filter((terminalId) => !suppressedIds.has(terminalId)),
+        reconcileTerminalIds: (threadRef, serverIds) =>
+          set((state) => {
+            if (threadRef.threadId.length === 0) return state;
+            const threadKey = terminalThreadKey(threadRef);
+            const previousServerIds = state.serverTerminalIdsByThreadKey[threadKey] ?? [];
+            const suppressedIds = new Set(state.suppressedTerminalIdsByThreadKey[threadKey]);
+            const nextTerminalUiStateByThreadKey = updateTerminalUiStateByThreadKey(
+              state.terminalUiStateByThreadKey,
+              threadRef,
+              (terminalState) =>
+                reconcileThreadTerminalSessionIds(
+                  terminalState,
+                  serverIds.filter((terminalId) => !suppressedIds.has(terminalId)),
+                  previousServerIds,
+                ),
             );
+            const nextServerTerminalIdsByThreadKey = arraysEqual(previousServerIds, serverIds)
+              ? state.serverTerminalIdsByThreadKey
+              : serverIds.length === 0
+                ? removeRecordEntry(state.serverTerminalIdsByThreadKey, threadKey)
+                : { ...state.serverTerminalIdsByThreadKey, [threadKey]: serverIds };
+            if (
+              nextTerminalUiStateByThreadKey === state.terminalUiStateByThreadKey &&
+              nextServerTerminalIdsByThreadKey === state.serverTerminalIdsByThreadKey
+            ) {
+              return state;
+            }
+            return {
+              terminalUiStateByThreadKey: nextTerminalUiStateByThreadKey,
+              serverTerminalIdsByThreadKey: nextServerTerminalIdsByThreadKey,
+            };
           }),
         clearTerminalUiState: (threadRef) =>
           set((state) => {
@@ -705,9 +737,12 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             );
             const hadSuppressedTerminalIds =
               state.suppressedTerminalIdsByThreadKey[threadKey] !== undefined;
+            const hadServerTerminalIds =
+              state.serverTerminalIdsByThreadKey[threadKey] !== undefined;
             if (
               nextTerminalUiStateByThreadKey === state.terminalUiStateByThreadKey &&
-              !hadSuppressedTerminalIds
+              !hadSuppressedTerminalIds &&
+              !hadServerTerminalIds
             ) {
               return state;
             }
@@ -715,6 +750,10 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
               terminalUiStateByThreadKey: nextTerminalUiStateByThreadKey,
               suppressedTerminalIdsByThreadKey: removeRecordEntry(
                 state.suppressedTerminalIdsByThreadKey,
+                threadKey,
+              ),
+              serverTerminalIdsByThreadKey: removeRecordEntry(
+                state.serverTerminalIdsByThreadKey,
                 threadKey,
               ),
             };
@@ -725,7 +764,9 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             const hadTerminalUiState = state.terminalUiStateByThreadKey[threadKey] !== undefined;
             const hadSuppressedTerminalIds =
               state.suppressedTerminalIdsByThreadKey[threadKey] !== undefined;
-            if (!hadTerminalUiState && !hadSuppressedTerminalIds) {
+            const hadServerTerminalIds =
+              state.serverTerminalIdsByThreadKey[threadKey] !== undefined;
+            if (!hadTerminalUiState && !hadSuppressedTerminalIds && !hadServerTerminalIds) {
               return state;
             }
             return {
@@ -737,6 +778,10 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
                 state.suppressedTerminalIdsByThreadKey,
                 threadKey,
               ),
+              serverTerminalIdsByThreadKey: removeRecordEntry(
+                state.serverTerminalIdsByThreadKey,
+                threadKey,
+              ),
             };
           }),
         removeOrphanedTerminalUiStates: (activeThreadKeys) =>
@@ -745,6 +790,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
               [
                 ...Object.keys(state.terminalUiStateByThreadKey),
                 ...Object.keys(state.suppressedTerminalIdsByThreadKey),
+                ...Object.keys(state.serverTerminalIdsByThreadKey),
               ].filter((key) => !activeThreadKeys.has(key)),
             );
             if (orphanedIds.size === 0) {
@@ -754,13 +800,16 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
             const nextSuppressedTerminalIdsByThreadKey = {
               ...state.suppressedTerminalIdsByThreadKey,
             };
+            const nextServerTerminalIdsByThreadKey = { ...state.serverTerminalIdsByThreadKey };
             for (const id of orphanedIds) {
               delete nextTerminalUiStateByThreadKey[id];
               delete nextSuppressedTerminalIdsByThreadKey[id];
+              delete nextServerTerminalIdsByThreadKey[id];
             }
             return {
               terminalUiStateByThreadKey: nextTerminalUiStateByThreadKey,
               suppressedTerminalIdsByThreadKey: nextSuppressedTerminalIdsByThreadKey,
+              serverTerminalIdsByThreadKey: nextServerTerminalIdsByThreadKey,
             };
           }),
       };
