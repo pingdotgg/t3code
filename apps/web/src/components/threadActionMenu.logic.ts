@@ -98,6 +98,8 @@ export interface ThreadActionMenuState {
   /** Settle, snooze and their undo can queue before the environment's session loads. */
   readonly canTriage?: boolean;
   readonly canFind?: boolean;
+  /** False where no inline title editor is rendered, such as sidebar search results. */
+  readonly canRename?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -210,7 +212,13 @@ export function buildThreadActionMenuItems(
               },
         ]
       : []),
-    { id: "rename", label: resolve(msg("Rename thread")), icon: "pencil", separatorBefore: true },
+    {
+      id: "rename",
+      label: resolve(msg("Rename thread")),
+      icon: "pencil",
+      disabled: state.canRename === false,
+      separatorBefore: true,
+    },
     ...(state.supports.titleRegeneration
       ? [
           {

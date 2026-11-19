@@ -4643,6 +4643,134 @@ describe("orchestration v2 provider switching", () => {
     }),
   );
 
+  it.live(
+    "keeps the post-clear conversation when the pre-clear session's background task settles",
+    () =>
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("fresh-context-old-session-wake");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const backgroundWork = yield* Ref.make(false);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            backgroundWork,
+            nativeThreadGeneration: yield* Ref.make(0),
+            holdFirstTurn: started,
+            releaseFirstTurn: release,
+          }),
+        ]);
+        const threadId = ThreadId.make("thread:fresh-context-old-session-wake");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const dispatch = (name: string, freshContext = false) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:fresh-context-old-session-wake:${name}`),
+              threadId,
+              messageId: MessageId.make(`message:fresh-context-old-session-wake:${name}`),
+              text: name,
+              attachments: [],
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              dispatchMode: { type: "queue_after_active" },
+              ...(freshContext ? { freshContext: true } : {}),
+            });
+          const send = (name: string) =>
+            Effect.gen(function* () {
+              yield* dispatch(name);
+              yield* worker.drain();
+              yield* waitForIdle(threadId);
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command:fresh-context-old-session-wake:create"),
+            threadId,
+            projectId: ProjectId.make("project:fresh-context-old-session-wake"),
+            title: "Fresh context with an old session's background task",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* dispatch("before-clear");
+          yield* Deferred.await(started);
+          // Queued behind a running turn, the fresh run starts without waiting for its background work.
+          yield* dispatch("after-clear", true);
+          // The turn ends with a run_in_background command still running in its session.
+          yield* Ref.set(backgroundWork, true);
+          yield* Deferred.succeed(release, undefined);
+          yield* worker.drain();
+          yield* waitForIdle(threadId);
+          yield* send("after-clear-reply");
+          const turns = () => Ref.get(capturedTurns);
+          const turnFor = (all: ReadonlyArray<CapturedTurn>, name: string) =>
+            all.find((turn) => turn.text.endsWith(name))!;
+          const oldProviderThreadId = turnFor(yield* turns(), "before-clear").providerThreadId;
+          assert.notEqual(
+            turnFor(yield* turns(), "after-clear").providerThreadId,
+            oldProviderThreadId,
+          );
+          assert.equal(
+            turnFor(yield* turns(), "after-clear-reply").nativeThreadId,
+            turnFor(yield* turns(), "after-clear").nativeThreadId,
+          );
+          // The old Claude session reports its background task settled, as on task_notification.
+          const oldProviderThread = (yield* orchestrator.getThreadProjection(
+            threadId,
+          )).providerThreads.find((providerThread) => providerThread.id === oldProviderThreadId)!;
+          const settledAt = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make("event:fresh-context-old-session-wake:old-session-settled"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: settledAt,
+                payload: { ...oldProviderThread, pendingBackgroundTasks: [], updatedAt: settledAt },
+              },
+            ],
+          });
+          yield* send("next-user-message");
+          const all = yield* turns();
+          assert.equal(
+            turnFor(all, "next-user-message").nativeThreadId,
+            turnFor(all, "after-clear").nativeThreadId,
+          );
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "fresh-context-old-session-wake",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+  );
+
   it.live("keeps the thread a queued fresh run reserved for that run", () =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("fresh-context-reserved");
