@@ -187,3 +187,11 @@
 - Numbers: `vp run i18n:check` pass; `vp run check:changed`: format, lint, knip, typecheck (3 packages), 2 test files and react compiler pass.
 - Real run: dev server on a seeded worktree `.t3`; Settings → Threads shows the new text, and searching "failover" lists the switch.
 - Next: Tomáš merges the PR.
+
+## 2026-11-19: Fork Usage strings translated
+
+- What: the 17 web strings the fork added to Usage → Limits (the pooled view: "Pool empty", "First empty", "Next reset", the burn labels, "Reset advice:", "Subscriptions", the chart's "Now", "projected" and aria label, and their values) are translated in de, es, fr, ja, ko, pt-BR, ru, sv and zh, following each catalog's existing words for pool and reset. Mobile has none of these keys.
+- Why: they were added before the 2026-11-18 sync and stayed English in every non-English catalog.
+- How found: keys in the fork's web `en.json` that upstream's lacks: 17, all still English in `ja.json`.
+- Numbers: `vp run i18n:check` pass; `vp run check:changed`: format and typecheck (2 packages) pass.
+- Next: Tomáš merges the PR.
