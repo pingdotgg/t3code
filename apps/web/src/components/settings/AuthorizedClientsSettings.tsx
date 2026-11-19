@@ -845,14 +845,14 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
                           {m(description)}
                         </span>
                         {terminalSelected && scope === AuthTerminalOperateScope ? (
-                          <span className="block text-xs text-warning">
+                          <span className="block text-meta text-warning-foreground">
                             {gt(
                               "Terminal commands can read or change files within the server account’s permissions.",
                             )}
                           </span>
                         ) : null}
                         {relayAdminSelected && scope === AuthRelayConfigureScope ? (
-                          <span className="block text-xs text-warning">
+                          <span className="block text-meta text-warning-foreground">
                             {gt("This client can change who can issue pairing credentials.")}
                           </span>
                         ) : null}
