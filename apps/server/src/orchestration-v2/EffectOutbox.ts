@@ -154,6 +154,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread-settlement.remote"),
     action: Schema.Literals(["settle", "unsettle"]),
+    /** The ancestor whose manual settle the children follow; rows from before it name none. */
+    settledBy: Schema.optional(ThreadId),
     settledAt: Schema.DateTimeUtcFromString,
     threadIds: Schema.Array(ThreadId),
     environmentId: Schema.optional(Schema.String),

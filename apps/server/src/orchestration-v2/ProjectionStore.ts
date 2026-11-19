@@ -553,6 +553,7 @@ export type ActiveThreadListEntry = Pick<
   | "title"
   | "lineage"
   | "parentThreadId"
+  | "parentEnvironmentId"
   | "parentRelationship"
   | "delegatedFrom"
   | "settledOverride"
@@ -9636,6 +9637,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly owner_thread_id: string | null;
         readonly parent_relationship_type: string | null;
         readonly parent_relationship: string | null;
+        readonly parent_environment_id: string | null;
         readonly delegated_from_environment_id: string | null;
         readonly delegated_from_thread_id: string | null;
         readonly delegated_from_title: string | null;
@@ -9655,6 +9657,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.parentThreadId') AS owner_thread_id,
           json_type(t.payload_json, '$.parentRelationship') AS parent_relationship_type,
           json_extract(t.payload_json, '$.parentRelationship') AS parent_relationship,
+          json_extract(t.payload_json, '$.parentEnvironmentId') AS parent_environment_id,
           json_extract(t.payload_json, '$.delegatedFrom.environmentId') AS delegated_from_environment_id,
           json_extract(t.payload_json, '$.delegatedFrom.threadId') AS delegated_from_thread_id,
           json_extract(t.payload_json, '$.delegatedFrom.title') AS delegated_from_title,
@@ -9671,6 +9674,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         title: row.title,
         lineage: shellIndexLineage(row),
         ...shellIndexParent(row),
+        parentEnvironmentId:
+          row.parent_environment_id === null ? null : EnvironmentId.make(row.parent_environment_id),
         ...(row.delegated_from_environment_id === null || row.delegated_from_thread_id === null
           ? {}
           : {

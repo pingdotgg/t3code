@@ -5187,6 +5187,18 @@ describe("OrchestratorMcpService thread list", () => {
           ["thread:a-awaiting-command", null, null],
         ],
       );
+      const childrenOf = (environmentId: string) =>
+        mcp
+          .listThreads(client, {
+            allProjects: true,
+            childrenOf: {
+              environmentId: EnvironmentId.make(environmentId),
+              threadIds: [ThreadId.make("thread:remote-card"), ThreadId.make("thread:a-awake")],
+            },
+          })
+          .pipe(Effect.map((listed) => listed.threads.map((thread) => thread.threadId)));
+      assert.deepStrictEqual(yield* childrenOf("environment:dev-box"), ["thread:a-under-remote"]);
+      assert.deepStrictEqual(yield* childrenOf("environment:elsewhere"), []);
     }).pipe(Effect.provide(service)),
   );
 

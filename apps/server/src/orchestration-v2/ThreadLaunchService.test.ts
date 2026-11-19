@@ -491,6 +491,8 @@ it.effect("leaves a task delegated from a linked environment out of the top-leve
       ...launchInput({ command: "command:delegated", thread: "thread:delegated" }),
       createdBy: "agent",
       creationSource: "mcp",
+      parentThreadId: ThreadId.make("thread:remote-parent"),
+      parentEnvironmentId: EnvironmentId.make("environment:linked"),
       linkOrigin: { sessionId: "mcp-session:linked", label: "Linked laptop" },
       delegatedFrom: {
         environmentId: EnvironmentId.make("environment:linked"),
@@ -504,9 +506,14 @@ it.effect("leaves a task delegated from a linked environment out of the top-leve
       [ThreadId.make("thread:top-level")],
     );
     const all = yield* threads.listProjectThreads({ projectId, includeSubagents: true });
-    assert.include(
-      all.map((thread) => thread.id),
-      delegated.threadId,
+    // The linked environment's settle finds its children here by this parent.
+    assert.deepInclude(
+      all.map((thread) => [thread.id, thread.parentThreadId, thread.parentEnvironmentId]),
+      [
+        delegated.threadId,
+        ThreadId.make("thread:remote-parent"),
+        EnvironmentId.make("environment:linked"),
+      ],
     );
   }).pipe(Effect.provide(harness.layer));
 });
