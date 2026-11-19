@@ -25,13 +25,13 @@ import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RelativeTime } from "../../components/RelativeTime";
+import { AppBar } from "../../components/ui/AppBar";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { cn } from "../../lib/cn";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -76,9 +76,9 @@ function Facts(props: {
   return (
     <View className="flex-row flex-wrap gap-1.5">
       {props.facts.map((fact) => (
-        <View key={fact.label} className="flex-row gap-1 rounded-md bg-subtle px-2 py-1">
+        <View key={fact.label} className="max-w-full flex-row gap-1 rounded-md bg-subtle px-2 py-1">
           <Text className="text-xs text-foreground-muted">{fact.label}</Text>
-          <Text className="font-t3-medium text-xs text-foreground">{fact.value}</Text>
+          <Text className="shrink font-t3-medium text-xs text-foreground">{fact.value}</Text>
         </View>
       ))}
     </View>
@@ -353,7 +353,6 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
       contentContainerClassName="gap-3 px-4 pt-3"
       contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
     >
-      <NativeStackScreenOptions options={{ title: run.workflow }} />
       <View className="gap-1 px-1">
         <View className="flex-row items-start gap-3">
           <Text className="min-w-0 flex-1 font-t3-bold text-lg text-foreground">{run.title}</Text>
@@ -460,27 +459,40 @@ export function WorkflowRunRouteScreen({ route }: StaticScreenProps<WorkflowRunP
   const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
   const snapshot = live.data;
   const gt = useGT();
-  if (snapshot === null) {
-    return (
-      <EmptyState
-        variant="plain"
-        title={live.error === null ? gt("Loading the run…") : gt("Could not load the run")}
-        detail={live.error ?? gt("One moment.")}
+  const navigation = useNavigation();
+  const groups =
+    snapshot === null
+      ? null
+      : groupWorkflowRuns(snapshot.workflows, snapshot.runs, snapshot.questions);
+  const node =
+    groups === null
+      ? undefined
+      : allWorkflowRunNodes(groups).find((candidate) => candidate.run.runId === route.params.runId);
+  return (
+    <View className="flex-1 bg-screen">
+      <AppBar
+        title={
+          node?.run.workflow ?? gt("Run", { $context: "noun, page title for one workflow run" })
+        }
+        onBack={() => {
+          if (navigation.canGoBack()) navigation.goBack();
+        }}
       />
-    );
-  }
-  const groups = groupWorkflowRuns(snapshot.workflows, snapshot.runs, snapshot.questions);
-  const node = allWorkflowRunNodes(groups).find(
-    (candidate) => candidate.run.runId === route.params.runId,
+      {snapshot === null ? (
+        <EmptyState
+          variant="plain"
+          title={live.error === null ? gt("Loading the run…") : gt("Could not load the run")}
+          detail={live.error ?? gt("One moment.")}
+        />
+      ) : node === undefined ? (
+        <EmptyState
+          variant="plain"
+          title={gt("This run is not in the list")}
+          detail={gt("It may be older than the runs this server still lists.")}
+        />
+      ) : (
+        <RunBody key={node.run.runId} environmentId={environmentId} node={node} />
+      )}
+    </View>
   );
-  if (node === undefined) {
-    return (
-      <EmptyState
-        variant="plain"
-        title={gt("This run is not in the list")}
-        detail={gt("It may be older than the runs this server still lists.")}
-      />
-    );
-  }
-  return <RunBody key={node.run.runId} environmentId={environmentId} node={node} />;
 }
