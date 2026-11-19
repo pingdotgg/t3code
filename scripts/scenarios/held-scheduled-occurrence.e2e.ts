@@ -106,11 +106,11 @@ test(
       await screen.getByRole("button", "Create task").tap();
 
       await app.open(threadUrl);
-      await expect(screen.getByRole("button", "Approve", { exact: true })).toBeVisible();
-      await expect(screen.getByRole("button", "Automation Held recurring task")).toBeVisible({
+      await screen.getByRole("button", "Approve", { exact: true }).waitFor();
+      await screen.getByRole("button", "Automation Held recurring task").waitFor({
         timeout: 100_000,
       });
-      await expect(screen.getByRole("button", "Edit queued message")).toBeVisible();
+      await screen.getByRole("button", "Edit queued message").waitFor();
       const session = await runPromise(
         cli(["auth", "session", "issue", "--scope", "orchestration:read", "--token-only"]),
       );
@@ -140,17 +140,14 @@ test(
       const queued = beforeStop.runs.find(
         (run) => run.status === "queued" && scheduledMessageIds.has(run.userMessageId),
       );
-      expect(queued).toBeDefined();
+      if (queued === undefined) throw new Error("Scenario setup: scheduled run was not queued.");
       await screen.getByRole("button", "Stop generation").tap();
-      await expect(screen.getByRole("button", "Resume thread")).toBeVisible();
-      await expect(screen.getByRole("button", "Edit queued message")).toBeVisible();
-      await expect
-        .poll(async () =>
-          (await readThread()).projection.runs.some(
-            (run) => run.id === queued?.id && run.status === "queued" && run.queueHeld === true,
-          ),
-        )
-        .toBe(true);
+      await screen.getByRole("button", "Resume thread").waitFor();
+      await screen.getByRole("button", "Edit queued message").waitFor();
+      const held = (await readThread()).projection.runs.some(
+        (run) => run.id === queued.id && run.status === "queued" && run.queueHeld === true,
+      );
+      if (!held) throw new Error("Scenario setup: scheduled run was not held after Stop.");
       await app.open("/settings/scheduled-tasks");
       await expect(
         screen.getByText(
