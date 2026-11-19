@@ -24,7 +24,7 @@ export class RunningServerUnreachableError extends Schema.TaggedError<RunningSer
   { origin: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `The T3 Code server at ${this.origin} is running but did not answer, so nothing was changed. Retry, or restart the server and retry.`;
+    return `The T3 Code server at ${this.origin} is running but did not answer, so the change may or may not have been made. Check the current state before you retry, or restart the server.`;
   }
 }
 

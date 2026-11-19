@@ -745,7 +745,14 @@ describe("auth session revoke", () => {
         if (recorded) {
           yield* persistServerRuntimeState({
             path: statePath,
-            state: { ...baseState, pid: process.pid, port: 1, origin: "http://127.0.0.1:1" },
+            // An owner id skips the legacy liveness probe, so only the lock decides.
+            state: {
+              ...baseState,
+              pid: process.pid,
+              ownerId: "test-owner",
+              port: 1,
+              origin: "http://127.0.0.1:1",
+            },
           });
         }
         if (lockHeld) {
