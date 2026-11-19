@@ -27,11 +27,6 @@ describe("custom snooze calendar conversion", () => {
     expect(date.getDate()).toBe(16);
   });
 
-  it("labels the picked date and time in the app language", () => {
-    const date = new Date(2027, 4, 5, 14, 30);
-    expect(snoozePickerLabels(date, "fr", true)).toEqual({ date: "5 mai", time: "14:30" });
-  });
-
   it.each([
     { language: SYSTEM_LANGUAGE, catalog: "en", dateLabel: "5 May" },
     { language: "fr", catalog: "fr", dateLabel: "5 mai" },
