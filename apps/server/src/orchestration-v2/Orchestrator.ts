@@ -942,7 +942,10 @@ function delegatedCompletionWakeDetail(
       const task = tasks.find((candidate) => candidate.id === taskId);
       const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
       if (task?.result != null) {
-        const detail = `${label}:\n${task.result}`;
+        // An inlined result needs no task_status pointer, so a title alone names the task.
+        const inlineLabel =
+          task.title == null ? label : `Delegated task "${task.title}" [${task.status}]`;
+        const detail = `${inlineLabel}:\n${task.result}`;
         const bytes = Buffer.byteLength(detail);
         if (bytes <= remainingBytes) {
           remainingBytes -= bytes;
