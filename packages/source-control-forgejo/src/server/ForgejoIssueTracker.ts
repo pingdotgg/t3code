@@ -188,7 +188,10 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
         Effect.map((rows) => rows ?? []),
       );
 
-    /** One page of a listing, and whether Forgejo's `Link` header announced another. */
+    /**
+     * One page of a listing, and whether another follows. Some endpoints (labels) never send a
+     * `Link` header, so without one only a full page implies more.
+     */
     const readPage = <A>(
       target: Target,
       operation: string,
@@ -211,7 +214,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
           }
           const rows = decoded.success ?? [];
           const links = /^link:\s*(.*)$/im.exec(result.stderr)?.[1];
-          const more = rows.length > 0 && (links === undefined || /rel="?next"?/i.test(links));
+          const more = links === undefined ? rows.length >= PAGE_SIZE : /rel="?next"?/i.test(links);
           return Effect.succeed({ rows, nextCursor: more ? String(page + 1) : null });
         }),
       );

@@ -87,6 +87,7 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
           },
           { id: 4, type: "milestone", user: { login: "theo" }, created_at: "2026-07-02T02:00:00Z" },
         ]),
+        stderr: 'link: <https://forgejo.test:3000/api/v1/x?page=2>; rel="next"\n',
       };
     case "repos/acme/web/issues/42/reactions":
       return { stdout: encode([{ content: "eyes", user: { login: "theo" } }]) };
@@ -165,7 +166,7 @@ describe("ForgejoIssueTracker", () => {
             return { stdout: encode([{ login: "theo" }]) };
           case "repos/acme/web/labels":
             return {
-              stdout: encode(labelLinks === undefined ? [] : ISSUE.labels),
+              stdout: encode(ISSUE.labels),
               ...(labelLinks === undefined ? {} : { stderr: labelLinks }),
             };
           default:
@@ -175,7 +176,7 @@ describe("ForgejoIssueTracker", () => {
       const target = { cwd: "/w", host: "forgejo.test:3000", scope: "acme/web" };
       const complete = yield* api.listCandidates!(target);
       expect(complete).toEqual({
-        labels: [],
+        labels: [{ name: "bug", color: "d73a4a", description: null }],
         assignees: [{ id: "theo", login: "theo", name: null, avatarUrl: null }],
         truncated: false,
       });
@@ -183,7 +184,6 @@ describe("ForgejoIssueTracker", () => {
       labelLinks =
         'Link: <https://forgejo.test:3000/api/v1/repos/acme/web/labels?page=2>; rel="next"';
       const partial = yield* api.listCandidates!(target);
-      expect(partial.labels).toEqual([{ name: "bug", color: "d73a4a", description: null }]);
       expect(partial.truncated).toBe(true);
     }),
   );
@@ -391,8 +391,8 @@ describe("ForgejoIssueTracker", () => {
         "repos/acme/web/issues?type=issues&state=open&sort=latest&assigned_by=theo&limit=50&page=1",
       ]);
       expect(page.items.map((item) => item.key)).toEqual(["42"]);
-      // No `Link` header at all means the server may still have more; a full page carries on.
-      expect(page.nextCursor).toBe("3");
+      // Without a `Link` header, only a full page implies another.
+      expect(page.nextCursor).toBeNull();
     }),
   );
 });

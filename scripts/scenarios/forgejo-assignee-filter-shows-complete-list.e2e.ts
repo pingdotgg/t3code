@@ -36,8 +36,11 @@ test(
         case "/api/v1/repos/acme/web/assignees":
           response.end(JSON.stringify([{ login: "theo" }]));
           break;
-        case "/api/v1/repos/acme/web/issues":
         case "/api/v1/repos/acme/web/labels":
+          // Forgejo sends no `Link` header on labels.
+          response.end(JSON.stringify([{ id: 1, name: "bug", color: "d73a4a" }]));
+          break;
+        case "/api/v1/repos/acme/web/issues":
           response.end("[]");
           break;
         default:
