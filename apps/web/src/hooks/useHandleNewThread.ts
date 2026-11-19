@@ -51,6 +51,7 @@ import {
   type LayoutTab,
 } from "../layout/layoutModel";
 import { runInNewLayoutTab, useLayoutStore } from "../layout/layoutStore";
+import { followLayoutCompanions } from "../layout/openRules";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings } from "./useSettings";
@@ -479,7 +480,10 @@ export function createNewThreadHandler(router: AnyRouter) {
       store.newTabRequest !== null && store.newTabRequest.request !== "active-pane";
     const reused = args[1] === undefined && !placedByCaller ? findEmptyDraftTab(args[0]) : null;
     if (reused) {
-      // Route sync focuses the tab already showing this draft, and also leaves a modal page.
+      // Focus too: the draft may already be behind the URL, seen from a surface or launcher tab.
+      followLayoutCompanions(() =>
+        useLayoutStore.getState().focusChat({ kind: "draft", draftId: reused.draftId }),
+      );
       await router.navigate({ to: "/draft/$draftId", params: { draftId: reused.draftId } });
       return reused;
     }

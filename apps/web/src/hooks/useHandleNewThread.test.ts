@@ -265,8 +265,11 @@ vi.mock("../uiStateStore", () => ({
   useUiStateStore: () => [],
 }));
 vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
+vi.mock("../layout/openRules", () => ({
+  followLayoutCompanions: (open: () => void) => open(),
+}));
 
-import { createLayoutState, type LayoutTabContent } from "../layout/layoutModel";
+import { createLayoutState, selectFocusedTab, type LayoutTabContent } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
 import { resolveDefaultProjectRef, useNewThreadHandler } from "./useHandleNewThread";
 
@@ -427,6 +430,7 @@ describe("useNewThreadHandler", () => {
       draftId: "draft-in-tab",
       threadId: "thread-in-tab",
     });
+    expect(selectFocusedTab(useLayoutStore.getState().layout)?.content).toBe(draftTab);
     expect(testState.router.navigate).toHaveBeenCalledOnce();
     expect(testState.router.navigate).toHaveBeenCalledWith(
       expect.objectContaining({ params: { draftId: "draft-in-tab" } }),
