@@ -215,6 +215,7 @@ const make = Effect.gen(function* () {
       ...dimensions,
     });
     if (!sent) {
+      // A failed clear leaves the report reading as sent, on purpose: uncertain reads as sent.
       yield* sql`UPDATE agent_feedback SET sent = 0 WHERE id = ${report.id}`.pipe(
         Effect.mapError(storageError),
       );

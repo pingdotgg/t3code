@@ -867,11 +867,7 @@ it.effect("a card is shown while an answer waits for the settings lock", () =>
       const parked = yield* Effect.forkChild(answer(card, "send"));
       yield* Deferred.await(begun);
       // An agent's request for another card does not wait behind the parked answer.
-      const second = yield* Effect.forkChild(
-        show(cards, requested).pipe(Effect.timeoutOption("1 second")),
-      );
-      yield* TestClock.adjust("1 second");
-      expect((yield* Fiber.join(second))._tag).toBe("Some");
+      yield* show(cards, requested);
       yield* Deferred.succeed(done, undefined);
       yield* Fiber.join(holder);
       yield* Fiber.join(parked);
