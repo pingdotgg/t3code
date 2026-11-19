@@ -34,15 +34,15 @@ export const fr: Messages = {
     screenshotAlt:
       "T3 Code exécutant des sous-agents Claude, Codex, Muse et Gemini dans un même fil",
     endorsementsTitle: "Toléré par plus de {users} devs",
-    endorsementsSub: "Certains en ont même parlé sur X.",
+    endorsementsSub: "Certains en ont même dit du bien sur X.",
     endorsementsLabel: "Avis de développeurs",
     readPost: "Lire le post de {handle} sur X",
     harnessTitle: "Apportez votre abonnement",
     harnessBody:
-      "T3 Code ne revend pas de tokens. Branchez Claude Code, Codex, Antigravity, OpenCode, Cursor ou Grok avec les identifiants que vous avez déjà. Nous les orchestrons, vous gardez votre abonnement.",
+      "T3 Code ne vous facture aucun token. Branchez Claude Code, Codex, Antigravity, OpenCode, Cursor ou Grok avec les identifiants que vous avez déjà. Nous les orchestrons, vous gardez votre abonnement.",
     googleSignIn: "Connexion Google",
     harnessPoints: [
-      "Aucune clé revendue. Aucun quota imposé.",
+      "Aucun token refacturé. Aucun quota imposé.",
       "Changez de modèle en cours de fil.",
       "De nouveaux agents chaque semaine.",
     ],

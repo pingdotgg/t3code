@@ -34,7 +34,7 @@ export const de: Messages = {
     screenshotAlt:
       "T3 Code führt Subagenten von Claude, Codex, Muse und Gemini in einem Thread aus",
     endorsementsTitle: "Toleriert von über {users} Devs",
-    endorsementsSub: "Manche haben sogar darüber getwittert.",
+    endorsementsSub: "Ein paar haben sogar Nettes getwittert.",
     endorsementsLabel: "Stimmen von Entwicklern",
     readPost: "Beitrag von {handle} auf X lesen",
     harnessTitle: "Bring dein eigenes Abo mit",
@@ -42,7 +42,7 @@ export const de: Messages = {
       "T3 Code verkauft keine Tokens weiter. Verbinde Claude Code, Codex, Antigravity, OpenCode, Cursor oder Grok mit den Zugangsdaten, die du schon hast. Wir orchestrieren sie, du behältst dein Abo.",
     googleSignIn: "Google-Anmeldung",
     harnessPoints: [
-      "Keine weiterverkauften Keys. Keine Kontingentgrenzen.",
+      "Kein Aufpreis auf Tokens. Keine Kontingentgrenzen.",
       "Modell mitten im Thread wechseln.",
       "Jede Woche neue Agenten.",
     ],
@@ -76,7 +76,7 @@ export const de: Messages = {
     browseSource: "Quellcode ansehen",
     ctaTitle: "Deine Agenten verdienen Besseres als ein Terminal.",
     ctaSub:
-      "T3 Code ist kostenlos, Open Source und schnell. Installier es, binde das Tool ein, für das du schon zahlst, und lass deine Agenten loslegen.",
+      "T3 Code ist kostenlos, Open Source und schnell. Installiere es, verbinde die Agenten, für die du schon zahlst, und lass sie direkt loslegen.",
     otherPlatforms: "Andere Plattformen",
   },
   download: {
