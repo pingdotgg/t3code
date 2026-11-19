@@ -3734,6 +3734,8 @@
   "20e3a8aab5f9426a": "Reporter jusqu’à la réinitialisation des limites",
   "0769f91ca46e3003": "Reporte les fils jusqu’à la réinitialisation de leurs limites d’utilisation. Activez la reprise automatique pour que l’agent continue après la réinitialisation.",
   "7c27e91e75cce7a3": "Clôture automatique",
+  "39cc7e89d3ec184a": "Continuer les fils très chargés en contexte",
+  "40244e4472847ca1": "Permet aux agents utilisant les outils T3 de poursuivre les tâches longues dans un nouveau fil avec une passation. Attend la fin du travail en cours. Désactivé par défaut.",
   "e89c6d8932de7863": "Clore automatiquement les fils fusionnés",
   "f760219456ce86fc": "Clore automatiquement les fils inactifs",
   "6dfcc5e39925612b": "Entre environnements",

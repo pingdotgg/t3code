@@ -3740,6 +3740,8 @@
   "20e3a8aab5f9426a": "Snooze until limits reset",
   "0769f91ca46e3003": "Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset.",
   "7c27e91e75cce7a3": "Auto-settle",
+  "39cc7e89d3ec184a": "Continue context-heavy threads",
+  "40244e4472847ca1": "Let agents with T3 tools continue long tasks in a fresh thread with a handoff. Waits for active work to finish. Off by default.",
   "e89c6d8932de7863": "Auto-settle merged threads",
   "f760219456ce86fc": "Auto-settle inactive threads",
   "6dfcc5e39925612b": "Across environments",

@@ -5966,6 +5966,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       const latest = sourceProjection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
       if (
+        command.createdBy !== "agent" ||
+        command.creationSource !== "server" ||
         latest?.id !== command.continuationAfterRunId ||
         latest.status !== "completed" ||
         sourceProjection.messages.filter((message) => message.role === "user").length !==

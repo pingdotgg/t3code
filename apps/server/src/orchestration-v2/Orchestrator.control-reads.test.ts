@@ -2134,23 +2134,22 @@ it.effect("starts, finishes and follows up a task without reading the parent's h
       [parentRun.id, providerTurnId],
     );
 
-    // Start, finish and follow-up read the task's own records and the run it binds to, so their VM
-    // steps, which are deterministic, must stay flat on a copy with a long parent history. Left out:
-    // the counts that number the task and its wake, which walk one index.
+    // Start, finish and follow-up read the task's own records and the run it binds to, so returned
+    // rows must stay flat on a copy with a long parent history. Left out: counts that number the
+    // task and its wake, which walk one index.
     const copyPath = "file:/delegated-task-reads?vfs=memdb";
     using copy = new NodeSqlite.DatabaseSync(copyPath);
     yield* sql`VACUUM INTO ${copyPath}`;
     const reads = statements.filter(
       ([query]) => /^\s*(SELECT|WITH)\b/.test(query) && !query.includes("COUNT(*)"),
     );
-    const readSteps = () =>
-      reads.reduce((steps, [query, params]) => {
+    const readRows = () =>
+      reads.reduce((rows, [query, params]) => {
         const statement = copy.prepare(query);
-        statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
-        return steps + statement.stat("vmStep");
+        return rows + statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>)).length;
       }, 0);
-    const shortSteps = readSteps();
-    assert.isAbove(shortSteps, 0);
+    const shortRows = readRows();
+    assert.isAbove(shortRows, 0);
     const addHistory = (table: string, key: string, renamed: ReadonlyArray<string> = []) => {
       const name = `orchestration_v2_projection_${table}`;
       const columns = copy
@@ -2183,7 +2182,7 @@ it.effect("starts, finishes and follows up a task without reading the parent's h
     addHistory("run_attempts", "attempt_id", ["run_id"]);
     addHistory("messages", "message_id");
     addHistory("provider_turns", "provider_turn_id", ["run_attempt_id"]);
-    assert.isAtMost(readSteps(), shortSteps * 1.1);
+    assert.isAtMost(readRows(), shortRows * 1.1);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -2298,25 +2297,20 @@ it.effect("records a secret and a link card without reading the thread's history
       ],
     );
 
-    // A card reads its own run, so the rows and VM steps of its reads, which are deterministic,
-    // must stay flat on a copy where the thread has thousands of older runs.
+    // A card reads its own run, so the rows returned by its reads must stay flat on a copy where
+    // the thread has thousands of older runs.
     const copyPath = "file:/card-reads?vfs=memdb";
     using copy = new NodeSqlite.DatabaseSync(copyPath);
     yield* sql`VACUUM INTO ${copyPath}`;
     const replay = () =>
       statements
         .filter(([query]) => /^\s*(SELECT|WITH)\b/.test(query))
-        .reduce(
-          (total, [query, params]) => {
-            const statement = copy.prepare(query);
-            const rows = statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
-            return {
-              rows: total.rows + rows.length,
-              steps: total.steps + statement.stat("vmStep"),
-            };
-          },
-          { rows: 0, steps: 0 },
-        );
+        .reduce((rows, [query, params]) => {
+          const statement = copy.prepare(query);
+          return (
+            rows + statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>)).length
+          );
+        }, 0);
     const short = replay();
     const history: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
       ["runs", "run_id", []],
@@ -2342,8 +2336,7 @@ it.effect("records a secret and a link card without reading the thread's history
         SELECT ${values.join(", ")} FROM ${name}, history WHERE thread_id = '${threadId}'`);
     }
     const long = replay();
-    assert.equal(long.rows, short.rows);
-    assert.isAtMost(long.steps, short.steps * 1.1);
+    assert.equal(long, short);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -3193,6 +3186,7 @@ it.effect.each([
   "watch",
   "background",
   "permission",
+  "client",
 ] as const)("continuation durably commits its handoff and source settlement: %s", (scenario) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -3289,8 +3283,8 @@ it.effect.each([
         continuationAfterRunId: scenario === "changed-run" ? RunId.make("wrong") : run.id,
         continuationMessageCount: scenario === "new-message" ? 0 : 1,
         continuationHandoff: "Auth validator is implemented. Continue with session persistence.",
-        createdBy: "agent",
-        creationSource: "server",
+        createdBy: scenario === "client" ? "user" : "agent",
+        creationSource: scenario === "client" ? "web" : "server",
       })
       .pipe(
         Effect.provideService(

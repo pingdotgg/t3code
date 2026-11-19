@@ -681,9 +681,10 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "auto-continue-heavy-threads",
-    title: "Continue context-heavy threads",
+    title: msg("Continue context-heavy threads"),
     to: "/settings/threads",
-    searchTerms: ["context rollover handoff automatic continuation expensive"],
+    searchTerms: [msg("context rollover handoff automatic continuation expensive")],
+    scope: "environment-defaults",
   },
   {
     id: "auto-settle-inactive-threads",
