@@ -102,11 +102,11 @@ const rewrite = (id: string, second: number, done: number, input: Record<string,
     output: { ok: true },
   }) satisfies OrchestrationV2TurnItem;
 
-const entriesOf = (items: ReadonlyArray<OrchestrationV2TurnItem>) =>
+const entriesOf = (items: ReadonlyArray<OrchestrationV2TurnItem>, inherited?: string) =>
   deriveTimelineEntriesFromVisibleTurnItems({
     visibleTurnItems: items.map((item, position): OrchestrationV2ProjectedTurnItem => ({
       position,
-      visibility: "local",
+      visibility: item.id === inherited ? "inherited" : "local",
       sourceThreadId: threadId,
       sourceItemId: item.id,
       item,
@@ -151,6 +151,134 @@ describe("Chat mode rows", () => {
       "a1",
       "more",
     ]);
+  });
+
+  it("draws a waiting card, a render and an app where the message their run answers is", () => {
+    const inRun = <T extends OrchestrationV2TurnItem>(item: T, run: string): T => ({
+      ...item,
+      runId: RunId.make(run),
+    });
+    const asking = {
+      ...base("asking", 8),
+      status: "running" as const,
+      completedAt: null,
+      type: "dynamic_tool" as const,
+      toolName: "mcp__t3-code__request_secret",
+      input: { label: "API token" },
+    } satisfies OrchestrationV2TurnItem;
+    const secret = {
+      ...base("secret", 9),
+      status: "waiting" as const,
+      completedAt: null,
+      type: "secret_request" as const,
+      label: "API token",
+      reason: "Deploy needs it",
+      secretStatus: "pending" as const,
+    } satisfies OrchestrationV2TurnItem;
+    const link = {
+      ...base("link", 10),
+      status: "waiting" as const,
+      completedAt: null,
+      type: "link_request" as const,
+      reason: "Run it on the vps",
+      linkStatus: "pending" as const,
+    } satisfies OrchestrationV2TurnItem;
+    const chart = {
+      ...base("chart", 11),
+      type: "dynamic_tool" as const,
+      toolName: "mcp__t3-code__html_render",
+      input: { title: "Chart", height: 420 },
+      output: {
+        structuredContent: {
+          htmlRender: { attachmentId: "chart.html", title: "Chart", height: 420 },
+        },
+        content: [],
+      },
+    } satisfies OrchestrationV2TurnItem;
+    const app = {
+      ...base("app", 12),
+      type: "dynamic_tool" as const,
+      toolName: "weather.get_weather",
+      input: {},
+      output: {
+        t3McpApp: {
+          attachmentId: "weather-app.html",
+          server: "weather",
+          tool: "get_weather",
+          resourceUri: "ui://weather/dashboard",
+        },
+        result: { content: [] },
+      },
+    } satisfies OrchestrationV2TurnItem;
+    const ask = typed("ask", 7, "Deploy it.");
+    const shown = [ask, asking, secret, link, chart, app].map((item) => inRun(item, "deploy"));
+    shown.unshift(...items);
+    const mainList = (rows: ReadonlyArray<OrchestrationV2TurnItem>, inherited?: string) =>
+      ids(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, entriesOf(rows, inherited)));
+    expect(mainList(shown)).toEqual([
+      "q1",
+      "news",
+      "a1",
+      "ask",
+      "secret",
+      "link",
+      "chart",
+      "mcp-app:app",
+    ]);
+    expect(ids(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, entriesOf(shown), "q1"))).toEqual([
+      "q1",
+      "q2",
+      "a2",
+    ]);
+    // A card after a reply shows in that reply's sub-thread only, also after the agent's answer.
+    const tint = inRun(typed("tint", 13, "Which color?", "news"), "tint");
+    const answer = inRun(
+      sent("teal", 14, { text: "Teal.", reply_to: shortId("tint"), user_message: "x" }),
+      "tint",
+    );
+    const swatch = inRun({ ...chart, id: TurnItemId.make("swatch"), ordinal: 15 }, "tint");
+    const asked = [...shown, tint, answer, swatch];
+    expect(mainList(asked)).toEqual(mainList(shown));
+    expect(ids(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, entriesOf(asked), "news"))).toEqual([
+      "news",
+      "why",
+      "tint",
+      "teal",
+      "swatch",
+    ]);
+    // A run the user typed nothing in, such as one a task started, shows its cards in the main list.
+    const report = inRun({ ...chart, id: TurnItemId.make("report"), ordinal: 16 }, "task");
+    expect(mainList([...asked, report])).toEqual([...mainList(shown), "report"]);
+    // A message an agent wrote under a first message places nothing.
+    const relay = inRun(
+      {
+        ...typed("relay", 16, "Check the logs.", "news"),
+        createdBy: "agent",
+        creationSource: "mcp",
+      },
+      "relay",
+    );
+    const logs = inRun({ ...chart, id: TurnItemId.make("logs"), ordinal: 17 }, "relay");
+    expect(mainList([...asked, relay, logs])).toEqual([...mainList(shown), "logs"]);
+    // The latest message the user typed in the run places its cards, here a steer in the main list.
+    const steer = inRun(typed("steer", 14, "Use blue instead."), "tint");
+    const steered = [...shown, tint, steer, swatch];
+    expect(mainList(steered)).toEqual([...mainList(shown), "steer", "swatch"]);
+    expect(ids(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, entriesOf(steered), "news"))).toEqual([
+      "news",
+      "why",
+      "tint",
+    ]);
+    // A reply under a first message that is not loaded opens no sub-thread, so its card stays in view.
+    const lost = inRun(typed("lost", 13, "Still there?", "gone"), "tint");
+    expect(mainList([...shown, lost, swatch])).toEqual([...mainList(shown), "swatch"]);
+    // An answered card has nothing left to ask, and a fork's inherited card is answered in its own thread.
+    const answered = [
+      { ...secret, status: "completed" as const, secretStatus: "saved" as const },
+      { ...link, status: "cancelled" as const, linkStatus: "declined" as const },
+    ];
+    expect(mainList([...items, ...answered])).toEqual(["q1", "news", "a1"]);
+    expect(mainList([...items, inRun(secret, "deploy")], "secret")).toEqual(["q1", "news", "a1"]);
   });
 
   it("marks a rewritten message with the time its rewrite completed, a first message too", () => {
@@ -320,6 +448,51 @@ describe("displayModeRows", () => {
       marked.map((each) => each.kind === "message" && each.followsAgentMessage === true),
     ).toEqual([false, false, false, true, false, false]);
     expect(marked[1]).toBe(rows[1]);
+  });
+
+  it("does not mark an agent message that a card parts from the one before it", () => {
+    const chart: MessagesTimelineRow = {
+      kind: "html-render",
+      id: "chart",
+      createdAt: time(0),
+      htmlRender: { attachmentId: "chart.html", title: "Chart", height: 420 },
+    };
+    const app: MessagesTimelineRow = {
+      kind: "mcp-app",
+      id: "mcp-app:app",
+      createdAt: time(0),
+      sourceThreadId: threadId,
+      itemId: TurnItemId.make("app"),
+      revision: "1",
+      mcpApp: {
+        attachmentId: "weather-app.html",
+        server: "weather",
+        tool: "get_weather",
+        resourceUri: "ui://weather/dashboard",
+      },
+    };
+    const secret = entriesOf([
+      {
+        ...base("secret", 0),
+        status: "waiting",
+        completedAt: null,
+        type: "secret_request",
+        label: "API token",
+        reason: "Deploy needs it",
+        secretStatus: "pending",
+      },
+    ])[0]!;
+    if (secret.kind !== "event") throw new Error("a secret card is an event row");
+    const card: MessagesTimelineRow = { ...secret, kind: "event" };
+    for (const parting of [chart, app, card]) {
+      const marked = displayModeRows(
+        [row("u1", "user"), row("a1", "assistant"), parting, row("a2", "assistant")],
+        true,
+      );
+      expect(
+        marked.map((each) => each.kind === "message" && each.followsAgentMessage === true),
+      ).toEqual([false, false, false, false]);
+    }
   });
 });
 

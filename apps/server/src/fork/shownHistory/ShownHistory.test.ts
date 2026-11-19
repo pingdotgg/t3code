@@ -36,6 +36,7 @@ import {
 } from "@t3tools/shared/displayModes";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
+import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
@@ -90,6 +91,7 @@ const UNANSWERED = ThreadId.make("thread:shown:unanswered");
 const LARGE = ThreadId.make("thread:shown:large");
 const REWRITES = ThreadId.make("thread:shown:rewrites");
 const HUGE = ThreadId.make("thread:shown:huge");
+const SPLIT = ThreadId.make("thread:shown:split");
 
 const runIdOf = (threadId: ThreadId, run: number) => RunId.make(`run:${threadId}:${run}`);
 const nodeIdOf = (threadId: ThreadId, run: number) => NodeId.make(`node:${threadId}:${run}`);
@@ -330,7 +332,88 @@ function botThread(): OrchestrationV2TurnItem[] {
   return items;
 }
 
-/** A typed message, then 300 sends in 30 bot runs, three hidden rows after each. */
+const render = (threadId: ThreadId, run: number, k: number): OrchestrationV2TurnItem => ({
+  ...base(threadId, run, k),
+  type: "dynamic_tool",
+  toolName: "mcp__t3-code__html_render",
+  input: { title: "Chart", height: 420 },
+  output: {
+    structuredContent: {
+      htmlRender: { attachmentId: `chart-${k}.html`, title: "Chart", height: 420 },
+    },
+    content: [],
+  },
+});
+
+const mcpApp = (threadId: ThreadId, run: number, k: number): OrchestrationV2TurnItem => ({
+  ...base(threadId, run, k),
+  type: "dynamic_tool",
+  toolName: "weather.get_weather",
+  input: {},
+  output: {
+    t3McpApp: {
+      attachmentId: `weather-${k}.html`,
+      server: "weather",
+      tool: "get_weather",
+      resourceUri: "ui://weather/dashboard",
+    },
+    result: { content: [] },
+  },
+});
+
+const mailApp = (threadId: ThreadId, run: number, k: number): OrchestrationV2TurnItem => {
+  const app = mcpApp(threadId, run, k);
+  return app.type === "dynamic_tool"
+    ? {
+        ...app,
+        toolName: "mail.send_to_user",
+        output: {
+          t3McpApp: {
+            attachmentId: `mail-${k}.html`,
+            server: "mail",
+            tool: "send_to_user",
+            resourceUri: "ui://mail/compose",
+          },
+          result: { content: [] },
+        },
+      }
+    : app;
+};
+
+/** Inline work output that is no card: a subagent's result. */
+const delegated = (threadId: ThreadId, run: number, k: number): OrchestrationV2TurnItem => ({
+  ...base(threadId, run, k),
+  type: "dynamic_tool",
+  toolName: "mcp__t3-code__delegate_task",
+  input: { task: "check" },
+  output: { content: [{ type: "text", text: "done" }] },
+});
+
+/** A link card the agent did not wait on, so it can wait for the user long after its run. */
+const linkCard = (
+  threadId: ThreadId,
+  run: number,
+  k: number,
+  status: "waiting" | "cancelled",
+): OrchestrationV2TurnItem => ({
+  ...base(threadId, run, k, status),
+  type: "link_request",
+  reason: "Run it on the vps",
+  linkStatus: status === "waiting" ? "pending" : "declined",
+});
+
+const secretCard = (threadId: ThreadId, run: number, k: number): OrchestrationV2TurnItem => ({
+  ...base(threadId, run, k, "waiting"),
+  type: "secret_request",
+  label: "API token",
+  reason: "Deploy needs it",
+  secretStatus: "pending",
+});
+
+/**
+ * A typed message, then 300 sends in 30 bot runs, three hidden rows after each, and cards in runs 5
+ * and 30.
+ */
 function pagedThread(): OrchestrationV2TurnItem[] {
   const items = [userMessage(PAGED, 1, 1, "Start the long job.")];
   for (const run of range(2, 31)) {
@@ -341,6 +424,17 @@ function pagedThread(): OrchestrationV2TurnItem[] {
       items.push(send(PAGED, run, 2 + 4 * j, `Step ${run}.${j} done.`));
       items.push(...range(3 + 4 * j, 5 + 4 * j).map((k) => hidden(PAGED, run, k)));
     }
+    if (run === 5 || run === 30)
+      items.push(render(PAGED, run, 42), mcpApp(PAGED, run, 43), delegated(PAGED, run, 44));
+    // An app whose tool name holds send_to_user, which the agent's message view must still skip.
+    if (run === 30) items.push(mailApp(PAGED, run, 49));
+    if (run === 5)
+      items.push(
+        linkCard(PAGED, run, 45, "waiting"),
+        linkCard(PAGED, run, 46, "cancelled"),
+        { ...mcpApp(PAGED, run, 47), status: "failed" },
+        secretCard(PAGED, run, 48),
+      );
   }
   return items;
 }
@@ -528,10 +622,30 @@ const rewritesThread = () => [
 
 const LARGE_TEXT = "A full report line. ".repeat(512);
 
-/** A typed message and 150 sends of about 10 KiB each, one per run. */
+/**
+ * A typed message, then 150 runs of a typed request, a send of about 10 KiB and a waiting card, so
+ * the byte cap falls between a card and the message its run answers.
+ */
 const largeThread = () => [
   userMessage(LARGE, 1, 1, "Send the full reports."),
-  ...range(2, 151).map((run) => send(LARGE, run, 1, `${LARGE_TEXT}${run}`)),
+  ...range(2, 151).flatMap((run) => [
+    userMessage(LARGE, run, 1, `Send report ${run}.`),
+    send(LARGE, run, 2, `${LARGE_TEXT}${run}`),
+    secretCard(LARGE, run, 3),
+  ]),
+];
+
+const SPLIT_FIRST = itemIdOf(SPLIT, 1, 1);
+
+/**
+ * An agent's first message; a later run with a reply under it and a card; then 127 newer sends in
+ * one run, so the window has its messages right after the card, before the reply's run ends.
+ */
+const splitThread = () => [
+  send(SPLIT, 1, 1, "The nightly job is done."),
+  userMessage(SPLIT, 2, 1, "Which one?", TYPED, String(SPLIT_FIRST)),
+  secretCard(SPLIT, 2, 2),
+  ...range(1, 127).map((k) => send(SPLIT, 3, k, `Note ${k}.`)),
 ];
 
 const HUGE_TEXT = "x".repeat(5 * 1_048_576);
@@ -579,6 +693,7 @@ const seed = Effect.gen(function* () {
     [LARGE, largeThread(), threadCreated(LARGE)],
     [REWRITES, rewritesThread(), threadCreated(REWRITES)],
     [HUGE, hugeThread(), threadCreated(HUGE)],
+    [SPLIT, splitThread(), threadCreated(SPLIT)],
   ];
   for (const [threadId, items, created] of threads) {
     yield* projections.apply(created);
@@ -727,14 +842,51 @@ const allPages = (threadId: ThreadId, cursor: string | null | undefined) =>
 const visibleIds = (projection: OrchestrationV2ThreadProjection) =>
   projection.visibleTurnItems.map((row) => String(row.sourceItemId));
 
-const isShownItem = (item: OrchestrationV2TurnItem) => {
+const isShownMessage = (item: OrchestrationV2TurnItem) => {
   const event = displayEventFromTurnItem(item);
   return event?.type === "user" || event?.type === "sent" || event?.type === "rewrite";
 };
 
+/** A message, or a card the screen draws beside the messages. */
+const isShownItem = (item: OrchestrationV2TurnItem) =>
+  isShownMessage(item) ||
+  ((item.type === "link_request" || item.type === "secret_request") && item.status === "waiting") ||
+  (item.type === "dynamic_tool" &&
+    ((item.status === "completed" && htmlRenderFromToolItem(item) !== undefined) ||
+      mcpAppFromToolItem(item) !== undefined));
+
 /** The ids of `items` that a display mode shows, oldest first. */
 const shownIdsOf = (items: ReadonlyArray<OrchestrationV2TurnItem>) =>
   items.filter(isShownItem).map((item) => String(item.id));
+
+/**
+ * The screen places a card by the latest message the user typed in its run, so that message comes
+ * no later than the card: on its page or a newer one. `pages` runs newest first.
+ */
+function assertCardsPlaced(
+  pages: ReadonlyArray<
+    ReadonlyArray<{ readonly item: OrchestrationV2TurnItem; readonly sourceItemId: unknown }>
+  >,
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+) {
+  const typedIn = new Map(
+    items.flatMap((item) =>
+      displayEventFromTurnItem(item)?.type === "user" && item.runId !== null
+        ? [[String(item.runId), String(item.id)] as const]
+        : [],
+    ),
+  );
+  const pageOf = new Map(
+    pages.flatMap((rows, index) => rows.map((row) => [String(row.sourceItemId), index] as const)),
+  );
+  for (const [index, rows] of pages.entries()) {
+    for (const { item, sourceItemId } of rows) {
+      const typed = isShownMessage(item) ? undefined : typedIn.get(String(item.runId));
+      if (typed === undefined) continue;
+      assert.isAtMost(pageOf.get(typed) ?? Infinity, index, `${sourceItemId} comes with ${typed}`);
+    }
+  }
+}
 
 it.layer(TestLayer)("shown-only history", (it) => {
   it.effect("a shown subscription opens a bot-heavy thread on its messages", () =>
@@ -767,7 +919,11 @@ it.layer(TestLayer)("shown-only history", (it) => {
         assert.isTrue(page.items.every((row) => isShownItem(row.item)));
       }
       for (const page of pages.slice(0, -1)) {
-        assert.isAtLeast(page.items.length, 100, "a page that is not the last holds 100 messages");
+        assert.isAtLeast(
+          page.items.filter((row) => isShownMessage(row.item)).length,
+          100,
+          "a page that is not the last holds 100 messages",
+        );
       }
       assert.isFalse(pages.at(-1)!.hasMoreHistory);
       assert.isNull(pages.at(-1)!.nextCursor);
@@ -775,6 +931,12 @@ it.layer(TestLayer)("shown-only history", (it) => {
         String(row.sourceItemId),
       );
       assert.deepStrictEqual(loaded, shownIdsOf(pagedThread()));
+      assertCardsPlaced([window, ...pages.map((page) => page.items)], pagedThread());
+      assert.notInclude(
+        visibleIds(boundedSnapshotProjection(snapshot)),
+        String(itemIdOf(PAGED, 30, 44)),
+        "inline work output that is no card",
+      );
     }),
   );
 
@@ -793,6 +955,10 @@ it.layer(TestLayer)("shown-only history", (it) => {
       assert.strictEqual(replies.length, 3);
       assert.isTrue(replies.every((core) => core.first === FIRST));
       assert.isTrue(loaded.has(FIRST));
+
+      // A reply that the window takes in to finish a card's run brings its first message too.
+      const split = visibleIds(boundedSnapshotProjection(yield* shownSnapshot(SPLIT)));
+      assert.includeMembers(split, [String(itemIdOf(SPLIT, 2, 2)), String(SPLIT_FIRST)]);
     }),
   );
 
@@ -932,6 +1098,7 @@ it.layer(TestLayer)("shown-only history", (it) => {
         ),
         shown,
       );
+      assertCardsPlaced([window, ...pages.map((page) => page.items)], largeThread());
     }),
   );
 
@@ -942,7 +1109,10 @@ it.layer(TestLayer)("shown-only history", (it) => {
         selectShownTail(sql, threadId, ProjectionStore.inheritedRunFork, minCores);
       const ids = (rows: ReadonlyArray<{ readonly itemId: TurnItemId }>) =>
         rows.map((row) => String(row.itemId));
-      const paged = shownIdsOf(pagedThread());
+      // The agent's message view reads no cards.
+      const paged = pagedThread()
+        .filter(isShownMessage)
+        .map((item) => String(item.id));
 
       const enough = yield* tail(PAGED, 240);
       assert.strictEqual(enough?.stop, "enough");
