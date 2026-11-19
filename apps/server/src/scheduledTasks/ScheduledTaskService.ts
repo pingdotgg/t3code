@@ -1274,7 +1274,16 @@ export const layer = Layer.effect(
         UPDATE scheduled_tasks
         SET next_run_at = ${next},
             updated_at = ${iso(now)}
-            ${runError === undefined ? sql`` : sql`, last_run_status = 'failed', last_run_error = ${runError}`}
+            ${
+              runError === undefined
+                ? sql``
+                : sql`, last_run_status = CASE
+                    WHEN last_run_status IS ${task.lastRunStatus} AND last_run_error IS ${task.lastRunError}
+                    THEN 'failed' ELSE last_run_status END,
+                  last_run_error = CASE
+                    WHEN last_run_status IS ${task.lastRunStatus} AND last_run_error IS ${task.lastRunError}
+                    THEN ${runError} ELSE last_run_error END`
+            }
         WHERE task_id = ${task.id}
           AND next_run_at IS ${task.nextRunAt}
           AND last_run_at IS ${task.lastRunAt}
