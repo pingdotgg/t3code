@@ -1352,6 +1352,7 @@ describe("AntigravityAdapterV2 foreground command settlement", () => {
     type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
     type SessionUpdateHandler = Parameters<RuntimeService["handleSessionUpdate"]>[0];
     let sessionUpdate: SessionUpdateHandler | undefined;
+    let onTermination: ((error: EffectAcpErrors.AcpError) => Effect.Effect<void>) | undefined;
     const receivedPrompts: Array<string> = [];
     const instanceId = ProviderInstanceId.make(`antigravity-${input.name}`);
     const adapter = yield* makeAntigravityAdapterV2({
@@ -1376,9 +1377,12 @@ describe("AntigravityAdapterV2 foreground command settlement", () => {
           Effect.map((runtime): RuntimeService => ({
             ...runtime,
             start: () =>
-              runtime
-                .start()
-                .pipe(Effect.map((started) => ({ ...started, sessionId: input.sessionId }))),
+              runtime.start().pipe(
+                Effect.map((started) => {
+                  onTermination = runtimeInput.onTermination;
+                  return { ...started, sessionId: input.sessionId };
+                }),
+              ),
             handleSessionUpdate: (handler) =>
               Effect.sync(() => {
                 sessionUpdate = handler;
@@ -1503,6 +1507,15 @@ describe("AntigravityAdapterV2 foreground command settlement", () => {
       startedTurnId,
       receivedPrompts,
       startTurn,
+      terminateRuntime: () =>
+        onTermination === undefined
+          ? Effect.die(new Error("runtime termination handler was not registered"))
+          : onTermination(
+              new EffectAcpErrors.AcpTransportError({
+                detail: "agent exited",
+                cause: new Error("agent exited"),
+              }),
+            ),
     };
   });
 
@@ -1619,6 +1632,42 @@ describe("AntigravityAdapterV2 foreground command settlement", () => {
         const terminal = events.find((event) => event.type === "turn.terminal");
         assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "interrupted");
       }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.live("fails the turn instead of waiting when the runtime terminates during settlement", () =>
+    Effect.gen(function* () {
+      const sessionId = "6063c071-f83e-427d-ab35-6caf4c8dbfa8";
+      const { profileDirectory } = yield* createNativeStepsDb(sessionId, [
+        { idx: 53, callId: "call_orphan", status: 2 },
+      ]);
+      const firstPromptReturned = yield* Deferred.make<void>();
+      const fixture = yield* makeForegroundFixture({
+        name: "fg-runtime-exit",
+        profileDirectory,
+        sessionId,
+        onPrompt: ({ emit }) =>
+          Effect.gen(function* () {
+            yield* emit({
+              sessionUpdate: "tool_call",
+              toolCallId: "call_orphan",
+              title: "Long job",
+              kind: "execute",
+              status: "in_progress",
+              rawInput: { CommandLine: "npm run e2e", IsDaemon: false },
+            });
+            yield* Deferred.succeed(firstPromptReturned, undefined);
+            return { stopReason: "end_turn" as const };
+          }),
+      });
+
+      yield* fixture.startTurn();
+      yield* Deferred.await(firstPromptReturned);
+      yield* fixture.terminateRuntime();
+      const events = Array.from(yield* Fiber.join(fixture.eventsFiber));
+      assert.equal(fixture.receivedPrompts.length, 1);
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "failed");
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 
   it.live(

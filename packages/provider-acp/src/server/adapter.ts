@@ -2590,6 +2590,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
+              const settlingTurn = yield* Ref.get(activeTurn);
+              if (settlingTurn !== null) yield* notifyForegroundCommandWaiters(settlingTurn);
               if (!followsAgentWorkState) return;
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
@@ -9053,8 +9055,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   return { result, hiddenFailure };
                 }
 
+                // Termination only flags a restart here, so settlement must not prompt a dead runtime.
+                const terminatedOutcome = {
+                  result,
+                  hiddenFailure: {
+                    failure: makeProviderFailure({ class: "transport_error" }),
+                    threadDisposition: "broken",
+                  } satisfies AcpPromptOutcomeFailure,
+                };
                 yield* runtime.drainEvents;
                 if (context.interrupted || context.finalized) return { result, hiddenFailure };
+                if (yield* Ref.get(runtimeRestartRequired)) return terminatedOutcome;
 
                 const openTools = () =>
                   [...context.tools.values()].filter(settlement.isOpenForegroundCommand);
@@ -9069,6 +9080,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 >();
                 const waitLoop = Effect.gen(function* () {
                   while (!context.interrupted && !context.finalized) {
+                    if (yield* Ref.get(runtimeRestartRequired)) return;
                     const pending = yield* runtimeCallbackPermit.withPermit(Effect.sync(openTools));
                     if (pending.length === 0) return;
                     if (readNativeStatuses !== undefined) {
@@ -9088,8 +9100,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     }
                     const signal = yield* Deferred.make<void, never>();
                     const shouldWait = yield* runtimeCallbackPermit.withPermit(
-                      Effect.sync(() => {
-                        if (context.interrupted || context.finalized || openTools().length === 0) {
+                      Effect.gen(function* () {
+                        if (
+                          context.interrupted ||
+                          context.finalized ||
+                          openTools().length === 0 ||
+                          (yield* Ref.get(runtimeRestartRequired))
+                        ) {
                           return false;
                         }
                         context.foregroundCommandWaiters.add(signal);
@@ -9120,6 +9137,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* waitLoop.pipe(Effect.timeoutOption(maxWait), Effect.asVoid);
 
                 if (context.interrupted || context.finalized) return { result, hiddenFailure };
+                if (yield* Ref.get(runtimeRestartRequired)) return terminatedOutcome;
 
                 const detachedSettled: Array<AcpToolCallState> = [];
                 const stillRunning: Array<AcpToolCallState> = [];
@@ -9150,13 +9168,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       Effect.forEach(
                         stillRunning,
                         (tool) => {
+                          const latest = context.tools.get(tool.toolCallId);
+                          if (latest === undefined || !settlement.isOpenForegroundCommand(latest)) {
+                            return Effect.void;
+                          }
                           const notice =
                             lastKnownNativeStates.get(tool.toolCallId) === "running"
                               ? "\n[T3 stopped waiting after continuation limit; command may still be running natively]"
                               : "\n[T3 stopped waiting after continuation limit; final command status was not delivered over ACP]";
                           return emitTool(
                             context,
-                            appendToolOutputText({ ...tool, status: "failed" }, notice),
+                            appendToolOutputText({ ...latest, status: "failed" }, notice),
                             "interrupted",
                           );
                         },
