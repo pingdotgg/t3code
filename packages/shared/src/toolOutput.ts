@@ -29,6 +29,8 @@ const MAX_CONTENT_BLOCKS = 32;
 const MAX_ENVELOPE_DEPTH = 4;
 const MAX_ENVELOPE_NODES = 128;
 const encoder = new TextEncoder();
+// Antigravity's terminal tool prefixes an `acp-mcp-call` result's stdout with timestamps and exit status.
+const TERMINAL_OUTPUT_MARKER = "\nCommand output:\n";
 
 interface ResultReadBudget {
   remainingBytes: number;
@@ -105,7 +107,12 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     value.is_error === true ||
     value._tag === "OrchestratorMcpFailure" ||
     value.error != null;
-  const content = value.structuredContent ?? value.content;
+  const terminal = typeof value.output === "string" ? value.output : "";
+  const marker = terminal.indexOf(TERMINAL_OUTPUT_MARKER);
+  const content =
+    value.structuredContent ??
+    value.content ??
+    (marker === -1 ? undefined : terminal.slice(marker + TERMINAL_OUTPUT_MARKER.length));
   if (content !== undefined) {
     const nested = readResult(content, budget, depth + 1);
     return { ...nested, failed: failed || nested.failed };
@@ -274,6 +281,19 @@ export function toolOutputIndicatesFailure(text: string): boolean {
       (/is not recognized/i.test(text) && /the term '/i.test(text)) ||
       /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
       /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text))
+  );
+}
+
+/** Whether a command failed. A reported exit code outranks text in its output. */
+export function commandIndicatesFailure(command: {
+  readonly exitCode?: number | undefined;
+  readonly outputIndicatesFailure?: boolean | undefined;
+  readonly output?: string | undefined;
+}): boolean {
+  if (command.exitCode !== undefined) return command.exitCode !== 0;
+  return (
+    command.outputIndicatesFailure === true ||
+    (command.output !== undefined && toolOutputIndicatesFailure(command.output.slice(0, 32_768)))
   );
 }
 
