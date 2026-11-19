@@ -65,6 +65,12 @@ test(
       );
       try {
         await expect(days).toHaveValue("9");
+        await runPromise(
+          Effect.flatMap(FileSystem.FileSystem, (fs) =>
+            fs.writeFileString(`${active}/settings.json`, contents(11)),
+          ),
+        );
+        await expect(days).toHaveValue("11");
       } finally {
         await app.screenshot("retention-after-settings-directory-restore");
       }

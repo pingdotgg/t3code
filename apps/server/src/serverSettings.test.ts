@@ -3158,10 +3158,58 @@ it.live("reloads a symlinked settings file after its target directory is replace
       Stream.runHead,
     );
     assert.isTrue(Option.isSome(reloaded));
+
+    yield* fs.writeFileString(
+      path.join(active, "settings.json"),
+      `{ "responseStreamingMode": "turn" }`,
+    );
+    const edited = yield* changes.pipe(
+      Stream.filter((settings) => settings.responseStreamingMode === "turn"),
+      Stream.runHead,
+    );
+    assert.isTrue(Option.isSome(edited));
   }).pipe(
     Effect.scoped,
     // @effect-diagnostics-next-line multipleEffectProvide:off -- the settings layer reads the Node services provided below.
     Effect.provide(layerServerSettings()),
     Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   ),
+);
+
+it.effect("starts with symlinked settings when the settings directory watch fails", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    let settingsDirectory: string | undefined;
+    const watchFailure = PlatformError.systemError({
+      _tag: "Unknown",
+      module: "FileSystem",
+      method: "watch",
+      description: "No file watches available.",
+    });
+    const failingFileSystem = FileSystem.FileSystem.of({
+      ...fs,
+      watch: (directory, options) =>
+        directory === settingsDirectory ? Stream.fail(watchFailure) : fs.watch(directory, options),
+    });
+    const settingsLayer = layerServerSettings().pipe(
+      Layer.provide(Layer.succeed(FileSystem.FileSystem, failingFileSystem)),
+    );
+
+    yield* Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      settingsDirectory = path.dirname(config.settingsPath);
+      const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+      const target = path.join(dotfiles, "settings.json");
+      yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
+      yield* fs.remove(config.settingsPath, { force: true });
+      yield* fs.symlink(target, config.settingsPath);
+
+      yield* service.start;
+
+      const settings = yield* service.getSettings;
+      assert.equal(settings.responseStreamingMode, "paragraph");
+    }).pipe(Effect.provide(settingsLayer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
