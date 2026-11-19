@@ -135,6 +135,49 @@ for (const operation of [
   );
 }
 
+it.effect("returns the pull request when only its diffstat read is rate limited", () =>
+  Effect.gen(function* () {
+    const pullRequest = Result.getOrThrow(
+      decodePullRequestJson(`{
+        "id": 1, "title": "Rate limited diffstat", "state": "OPEN",
+        "source": { "branch": { "name": "feature" } },
+        "destination": { "branch": { "name": "main" } },
+        "created_on": "2026-09-16T00:00:00Z",
+        "updated_on": "2026-09-16T00:00:00Z",
+        "links": { "html": { "href": "https://bitbucket.org/acme/web/pull-requests/1" } }
+      }`),
+    );
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
+          getPullRequest: () => Effect.succeed(pullRequest),
+          getDiffStat: () =>
+            Effect.fail(
+              new BitbucketApi.BitbucketResponseError({
+                operation: "request",
+                status: 429,
+                responseBodyLength: 0,
+              }),
+            ),
+          getMergeability: () => Effect.succeed("unknown" as const),
+          listChecks: () => Effect.succeed([]),
+          getRepositoryPermission: () => Effect.succeed(true),
+        }),
+      ),
+    );
+    const result = yield* Effect.result(
+      provider.getChangeRequest({
+        cwd: "/repo",
+        repository: "acme/web",
+        host: "bitbucket.org",
+        number: 1,
+      }),
+    );
+
+    expect(result).toMatchObject({ _tag: "Success", success: { title: "Rate limited diffstat" } });
+  }),
+);
+
 it.effect("reads checks and PR state without diff, mergeability, or permission requests", () =>
   Effect.gen(function* () {
     const pullRequest = Result.getOrThrow(
