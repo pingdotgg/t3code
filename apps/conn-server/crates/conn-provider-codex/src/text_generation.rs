@@ -11,7 +11,8 @@
 //!    its last message, a JSON object, to the output file (180 s).
 //!
 //! The environment is the server's, the instance's entries, and `CODEX_HOME` when a home is
-//! set; nothing else is added (no originator: the app-server's alone). The schema and output
+//! set, after the originator (`codexAppServerEnvironment`, #38464), which the server's or the
+//! instance's environment overrides. The schema and output
 //! files sit in their own temporary folders, named as T3 names them, and are removed after.
 
 use std::{
@@ -192,10 +193,18 @@ fn launch_args(config: &CodexConfig) -> String {
         .unwrap_or_else(|| config.launch_args.trim().to_owned())
 }
 
-/// The environment the CLI gets on top of the server's: the instance's entries, then
-/// `CODEX_HOME` when a home is set.
+/// The environment the CLI gets on top of the server's: the originator (T3's
+/// `codexAppServerEnvironment`, unless the server's environment sets one), the instance's
+/// entries, then `CODEX_HOME` when a home is set.
 fn env_set(config: &CodexConfig) -> Vec<(String, String)> {
-    let mut env = config.instance_env.0.clone();
+    let mut env = Vec::new();
+    if conn_support::login_env::var_os(launch::ORIGINATOR_ENV).is_none() {
+        env.push((
+            launch::ORIGINATOR_ENV.to_owned(),
+            launch::CLIENT_NAME.to_owned(),
+        ));
+    }
+    env.extend(config.instance_env.0.iter().cloned());
     if let Some(home) = &config.home_path {
         env.push((
             "CODEX_HOME".to_owned(),
