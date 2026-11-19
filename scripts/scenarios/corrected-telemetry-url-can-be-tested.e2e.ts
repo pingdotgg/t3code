@@ -23,7 +23,8 @@ test(
     });
     collector.listen(0, "127.0.0.1");
     try {
-      await NodeEvents.EventEmitter.once(collector, "listening");
+      // @ts-expect-error @types/node types node:events as `export =`, hiding the namespace export `once` that Node provides.
+      await NodeEvents.once(collector, "listening");
       const address = collector.address();
       if (address === null || typeof address === "string") throw new Error("No collector port");
       const origin = `http://127.0.0.1:${address.port}`;
