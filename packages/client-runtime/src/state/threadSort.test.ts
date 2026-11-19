@@ -254,6 +254,18 @@ describe("generateSpreadPinOrderKeys", () => {
 });
 
 describe("sortActiveThreadsByOrderKey", () => {
+  it("orders unplaced threads by latest activity", () => {
+    const sorted = sortActiveThreadsByOrderKey([
+      { id: "quiet", createdAt: "2026-03-09T11:00:00.000Z" },
+      {
+        id: "busy",
+        createdAt: "2026-03-09T09:00:00.000Z",
+        latestRun: { completedAt: "2026-03-09T12:00:00.000Z" },
+      },
+    ]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["busy", "quiet"]);
+  });
+
   it("keeps new and reopened threads ahead of the saved order", () => {
     const sorted = sortActiveThreadsByOrderKey([
       {
