@@ -8,6 +8,7 @@ import {
   markdownForNativeRendering,
   markdownWithFileEmbeds,
   markdownForNativeParsing,
+  markdownWithSvgImagesAsText,
   markdownWithInlineFileLinks,
   markdownWithTableBreaks,
 } from "../lib/markdownDocument";
@@ -258,7 +259,10 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       ENRICHED_INLINE_FILE_LINK_REGEX,
     );
     const files = markdownWithFileEmbeds(content, fileEmbedLabel);
-    return { ...files, markdown: markdownWithTableBreaks(files.markdown) };
+    return {
+      ...files,
+      markdown: markdownWithTableBreaks(markdownWithSvgImagesAsText(files.markdown)),
+    };
   }, [props.markdown, fileEmbedLabel]);
   const [parsedLinkUrls, setParsedLinkUrls] = useState<ReadonlyArray<string>>([]);
   const onLinksChange = (links: MarkdownLinkOccurrence[]) => {

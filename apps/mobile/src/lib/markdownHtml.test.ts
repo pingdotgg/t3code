@@ -28,6 +28,49 @@ describe("HTML in native Markdown", () => {
     ).toBe("[![Review](<https://example.com/banner.svg>)](<https://example.com>)");
   });
 
+  it.each([
+    // An image alone in its paragraph is drawn by the React image renderer, quoted or not.
+    ["![Diagram](https://example.com/d.svg)", "![Diagram](https://example.com/d.svg)"],
+    ["> ![Diagram](https://example.com/d.svg?v=2)", "> ![Diagram](https://example.com/d.svg?v=2)"],
+    ["![](https://example.com/d.svg)", "![](https://example.com/d.svg)"],
+    ["> ![](https://example.com/d.svg)", "> ![](https://example.com/d.svg)"],
+    ["- ![In list](https://example.com/d.svg)", "- In list"],
+    ["- ![](https://example.com/d.svg)\n- ![a [b]](https://example.com/d.svg)", "- \n- a \\[b\\]"],
+    [
+      "[![Review →](https://example.com/b.svg?v=3)](https://example.com)",
+      "[Review →](https://example.com)",
+    ],
+    [
+      "| Check |\n| --- |\n| ![Passed][badge] 3 |\n\n[badge]: https://example.com/passed.svg",
+      "| Check |\n| --- |\n| Passed 3 |\n\n[badge]: https://example.com/passed.svg",
+    ],
+    [
+      '<details>\n<summary><img src="https://example.com/cog.svg" width="16" height="16" alt=""> Run configuration</summary>\n\nBody\n\n</details>',
+      "\n\n\n\n\n**Run configuration**\n\n\n\nBody\n\n\n\n",
+    ],
+    ["**![ Passed ](https://example.com/p.svg) checks**", "**Passed checks**"],
+    ["**Title ![](https://example.com/i.svg)**", "**Title**"],
+    ["**Done**![](https://example.com/i.svg) next", "**Done** next"],
+    ["a ![](https://example.com/i.svg) ![](https://example.com/j.svg) b", "a b"],
+    [
+      "See **![](https://example.com/i.svg)** [![](https://example.com/i.svg)](https://example.com) it",
+      "See it",
+    ],
+    [
+      "![# 1. a|b](https://example.com/i.svg)[Details](https://example.com)",
+      "\\# 1\\. a\\|b[Details](https://example.com)",
+    ],
+    [
+      "![Shot](https://example.com/shot.png) and `![a](b.svg)`",
+      "![Shot](https://example.com/shot.png) and `![a](b.svg)`",
+    ],
+  ])(
+    "keeps only the alt text of an SVG image the native renderer cannot draw: %s",
+    (markdown, expected) => {
+      expect(markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX)).toBe(expected);
+    },
+  );
+
   it("decodes HTML attributes once and preserves entity-shaped query values through Markdown", () => {
     const markdown =
       '<img alt="&amp;lt;" src="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">';

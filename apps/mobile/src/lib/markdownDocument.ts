@@ -497,6 +497,83 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+function definitionUrls(root: Root): Map<string, string> {
+  const definitions = new Map<string, string>();
+  const collect = (node: MarkdownNode) => {
+    if (node.type === "definition") {
+      const identifier = node.identifier.toUpperCase();
+      if (!definitions.has(identifier)) definitions.set(identifier, node.url);
+    }
+    if ("children" in node) node.children.forEach(collect);
+  };
+  collect(root);
+  return definitions;
+}
+
+// Destination syntax only: a reply that merely names an SVG file must not pay for a parse.
+const SVG_DESTINATION = /\](?:\([^)\r\n]*|:\s*<?\S*)\.svg/i;
+const SVG_URL = /\.svg(?:[?#]|$)/i;
+const TEXTLESS_WHEN_EMPTY = new Set(["emphasis", "strong", "delete", "link", "linkReference"]);
+
+/**
+ * The native image loaders cannot decode SVG and leave an empty box. Only an image alone in its
+ * paragraph reaches the React image renderer, which can, so every other SVG keeps just its alt text.
+ */
+export function markdownWithSvgImagesAsText(markdown: string): string {
+  if (!markdown.includes("![") || !SVG_DESTINATION.test(markdown)) return markdown;
+  const root = parser.parse(markdown);
+  const definitions = definitionUrls(root);
+  const altText = (node: MarkdownNode): string | null => {
+    if (node.type !== "image" && node.type !== "imageReference") return null;
+    const url = node.type === "image" ? node.url : definitions.get(node.identifier.toUpperCase());
+    if (url === undefined || !SVG_URL.test(url)) return null;
+    // Escaped throughout: the text may start a line, sit in a table cell or a link label.
+    return (node.alt ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/[!-/:-@[-`{-~]/g, "\\$&");
+  };
+  // Emphasis or a link left without text would show its delimiters instead.
+  const vanishes = (node: MarkdownNode): boolean =>
+    altText(node) === "" ||
+    (TEXTLESS_WHEN_EMPTY.has(node.type) &&
+      "children" in node &&
+      node.children.length > 0 &&
+      node.children.every(vanishes));
+  const edits: MarkdownEdit[] = [];
+  const visit = (node: MarkdownNode, hostsSlots: boolean) => {
+    if (!("children" in node)) return;
+    const children: readonly MarkdownNode[] = node.children;
+    // Mirrors the renderer's slot rule: root or quote, outside lists, one image and nothing else.
+    const standalone = hostsSlots && node.type === "paragraph" && children.length === 1;
+    const childrenHostSlots = node.type === "root" || (hostsSlots && node.type === "blockquote");
+    children.forEach((child, index) => {
+      if (standalone && (child.type === "image" || child.type === "imageReference")) return;
+      const text = altText(child);
+      const gone = text === "" || (text === null && vanishes(child));
+      let start = child.position?.start.offset;
+      let end = child.position?.end.offset;
+      if ((text === null && !gone) || start === undefined || end === undefined) {
+        visit(child, childrenHostSlots);
+        return;
+      }
+      if (gone) {
+        // The space beside a removed image goes too: `** Title**` would no longer be bold.
+        const opens = index === 0 || /\s/.test(markdown[start - 1] ?? "");
+        if (opens && /[ \t]/.test(markdown[end] ?? "")) {
+          while (/[ \t]/.test(markdown[end] ?? "")) end += 1;
+        } else if (index > 0 && index === children.length - 1) {
+          const floor = edits.at(-1)?.end ?? 0;
+          while (start > floor && /[ \t]/.test(markdown[start - 1]!)) start -= 1;
+        }
+      }
+      edits.push({ start, end, content: text ?? "" });
+    });
+  };
+  visit(root, false);
+  return applyMarkdownEdits(markdown, edits);
+}
+
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
 export function markdownForNativeParsing(markdown: string): string {
   return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
@@ -507,7 +584,11 @@ export function parseMarkdownDocument(markdown: string): Root {
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
-  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
+  return transformNativeMarkdown(
+    markdownWithSvgImagesAsText(markdownForNativeParsing(markdown)),
+    fileLink,
+    true,
+  );
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */
@@ -519,15 +600,7 @@ export function markdownWithFileEmbeds(
   if (!markdown.includes("![")) return { markdown, fileHrefs };
   const root = parser.parse(markdown);
   const topLevelBlocks = new Set<MarkdownNode>(root.children);
-  const definitions = new Map<string, string>();
-  const collect = (node: MarkdownNode) => {
-    if (node.type === "definition") {
-      const identifier = node.identifier.toUpperCase();
-      if (!definitions.has(identifier)) definitions.set(identifier, node.url);
-    }
-    if ("children" in node) node.children.forEach(collect);
-  };
-  collect(root);
+  const definitions = definitionUrls(root);
   const edits: Array<{ start: number; end: number; content: string }> = [];
   const visit = (node: MarkdownNode, standalone = false, insideLink = false) => {
     if (node.type === "image" || node.type === "imageReference") {
