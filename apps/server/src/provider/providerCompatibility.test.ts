@@ -147,6 +147,18 @@ describe("provider compatibility", () => {
     },
   );
 
+  it("marks Antigravity below 1.5 broken and recommends 1.5.12 in the bundled manifest", () => {
+    const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
+    const antigravity = ProviderDriverKind.make("antigravity");
+    for (const version of ["1.1.1", "1.3.0", "1.4.1", "1.4.5", "1.4.9"]) {
+      const advisory = resolveProviderCompatibility(policies, antigravity, version);
+      assert.strictEqual(advisory?.status, "broken", version);
+    }
+    const supported = resolveProviderCompatibility(policies, antigravity, "1.5.11");
+    assert.strictEqual(supported?.status, "supported");
+    assert.strictEqual(supported?.recommendedRange, ">=1.5.12 <2");
+  });
+
   it("classifies boundaries and treats unlisted versions and release tags as unknown", () => {
     for (const [version, expected] of [
       ["0.9.9", "broken"],
