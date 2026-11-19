@@ -190,6 +190,9 @@ function boundCommandOutput(text: string, limit = TOOL_TEXT_LIMIT): string {
   return copyBoundedText(`${TOOL_TEXT_TRUNCATED}${tail}`);
 }
 
+// 1.5 runtimes report command output as `output` and repeat it as content `text`.
+const OUTPUT_TEXT_FIELDS = new Set(["combinedOutput", "combined_output", "output", "text"]);
+
 /** Keeps the tail of long tool text, as every bounded tool payload does. */
 export { boundText as boundAntigravityToolText };
 
@@ -215,7 +218,7 @@ function sanitizeToolValue(
       return undefined;
     }
     const bound =
-      field === "combinedOutput" || field === "combined_output" ? boundCommandOutput : boundText;
+      field !== undefined && OUTPUT_TEXT_FIELDS.has(field) ? boundCommandOutput : boundText;
     const text = bound(value, Math.min(TOOL_TEXT_LIMIT, budget.text));
     budget.text -= text.length;
     return text;
