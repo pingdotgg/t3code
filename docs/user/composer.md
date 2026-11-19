@@ -196,32 +196,29 @@ shows the last outcome and the **Automatic** filter lists automatically saved fa
 A second call reads the proposed facts without the conversation and asks whether
 a new agent on unrelated work would need each one.
 A fact that only applies to one task, or that describes how code behaves, is
-saved as set aside: ordinary recall, search, and browsing leave it out. Use the
-**Set aside** filter to inspect it, or search while that filter is selected.
-The fact's details say what the check decided. When
-you edit a fact's text, that decision is cleared and the fact can be recalled
-again; an agent's edit or replacement keeps it. If the check fails, T3 saves nothing and
+discarded automatically. Only standing project knowledge is saved; there is no
+review queue or approval step. If the check fails, T3 saves nothing and
 tries the batch again later. Some providers, such as Grok, cannot run the check; with one of
 those as your text generation model, T3 skips each batch without calling the model.
 
-An exact repeat can add new citations to a saved fact. You decide when similar
-or conflicting facts should supersede one another. Trust, age and retrieval
+An exact repeat can add new citations to a saved fact. Trust, age and retrieval
 history affect recall. Forgetting a fact removes its content, and a later run
 can supply new evidence for it.
 
 **Curate project memories** is on by default in **Settings → Labs → Zack** and
 can be overridden per project. Your text generation model periodically reviews
-small batches of that project's agent-written memories. It can set aside task
-notes and code descriptions, or link an outdated or duplicate fact to an existing
-replacement. It needs evidence for a replacement; a fact's age alone is not a
+small batches of that project's agent-written memories. It automatically removes
+task notes and code descriptions, and removes outdated or duplicate facts when
+an existing replacement is supported by evidence. A fact's age alone is not a
 reason to retire it. Facts you wrote or explicitly restored are protected from
 automatic review.
 
-The curator keeps the original content and records its reason in the fact's
-history. **Memory health** shows the last review's outcome. To reverse a review,
-find the fact under **Set aside** or enable **Show superseded**, then choose
-**Restore to recall**. Restoration is a user action, and the curator leaves
-restored facts alone. Forgetting remains permanent.
+Removal takes effect immediately, without asking for confirmation. It erases the
+fact's content, earlier revisions, and stored copies sent to agents. The original
+source conversations stay intact. **Memory health** shows the last review's
+outcome. Removed memories cannot be restored; the **Forgotten** list retains only
+an empty record of their removal. Memories previously set aside automatically are
+removed by background maintenance too.
 
 You don't need to pick facts by hand. When you send a message, T3 sends up to two
 saved facts related to it along with your message, as **Recalled project memory**.

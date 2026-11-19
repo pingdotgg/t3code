@@ -1,5 +1,6 @@
 import {
   ActiveProjectFact,
+  CommandId,
   type KnowledgeMessageRef,
   type ProjectFactId,
   ProjectId,
@@ -77,11 +78,20 @@ const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const fileSystem = yield* FileSystem.FileSystem;
   const lock = yield* Semaphore.make(1);
-  const eligibleSql = sql`f.status = 'saved' AND f.superseded_by_id IS NULL
-    AND (f.verdict IS NULL OR f.verdict = 'standing')
+  const automaticSql = sql`f.status = 'saved'
     AND (f.verdict_by IS NULL OR f.verdict_by != 'person')
     AND json_extract(f.origin_json, '$.kind') IN ('assisted', 'agent-thread', 'agent-client')
     AND NOT EXISTS (SELECT 1 FROM json_each(f.sources_json) source WHERE json_extract(source.value, '$.kind') = 'user')`;
+  const eligibleSql = sql`${automaticSql} AND f.superseded_by_id IS NULL
+    AND (f.verdict IS NULL OR f.verdict = 'standing')`;
+  const retiredSql = sql`${automaticSql} AND (
+    (f.verdict IN ('task', 'code') AND f.verdict_by IN ('check', 'agent'))
+    OR (f.superseded_by_id IS NOT NULL AND EXISTS (
+      SELECT 1 FROM project_knowledge_fact_history h
+      WHERE h.project_id = f.project_id AND h.fact_id = f.id AND h.revision = f.revision
+        AND h.event = 'curated' AND h.related_fact_id = f.superseded_by_id
+        AND json_extract(h.actor_json, '$.kind') = 'curator'
+    )))`;
 
   const reviewProject = Effect.fn("MemoryCuration.reviewProject")(function* (projectId: ProjectId) {
     const started = DateTime.toEpochMillis(yield* DateTime.now);
@@ -126,6 +136,45 @@ const make = Effect.gen(function* () {
       ).settings;
       if (!currentSettings.enableMemoryCuration)
         return yield* finish({ status: "skipped", reason: "disabled" });
+      const cleaned = yield* settings.withSettingsSnapshot((latest) =>
+        sql.withTransaction(
+          Effect.gen(function* () {
+            if (!resolveProjectSettings(latest, projectId).settings.enableMemoryCuration) {
+              yield* finish({ status: "skipped", reason: "disabled" });
+              return true;
+            }
+            const currentProject = yield* projects.get(projectId);
+            if (Option.isNone(currentProject) || currentProject.value.archivedAt !== null) {
+              yield* finish({ status: "skipped", reason: "project_unavailable" });
+              return true;
+            }
+            const retired = yield* sql<{ readonly id: ProjectFactId; readonly revision: number }>`
+              SELECT f.id, f.revision FROM project_knowledge_facts f
+              WHERE f.project_id = ${projectId} AND ${retiredSql}
+              ORDER BY f.id LIMIT ${PAGE_SIZE}`;
+            if (retired.length === 0) return false;
+            for (const fact of retired)
+              yield* knowledge.mutate(
+                {
+                  action: "forget",
+                  commandId: CommandId.make(`curation-forget:${fact.id}:${fact.revision}`),
+                  projectId,
+                  factId: fact.id,
+                  expectedRevision: fact.revision,
+                },
+                { kind: "curator" },
+              );
+            yield* finish({
+              status: "ran",
+              reason: "curated",
+              reviewed: retired.length,
+              changed: retired.length,
+            });
+            return true;
+          }),
+        ),
+      );
+      if (cleaned) return;
       if (
         !(yield* textGeneration.supportsOperation(
           "curateProjectMemory",
@@ -325,7 +374,8 @@ const make = Effect.gen(function* () {
       LEFT JOIN project_knowledge_curation_state s ON s.project_id = p.project_id
       WHERE p.deleted_at IS NULL AND p.archived_at IS NULL
         AND (s.project_id IS NULL OR s.next_due_at <= ${now})
-        AND EXISTS (SELECT 1 FROM project_knowledge_facts f WHERE f.project_id = p.project_id AND ${eligibleSql})
+        AND EXISTS (SELECT 1 FROM project_knowledge_facts f WHERE f.project_id = p.project_id
+          AND (${eligibleSql} OR ${retiredSql}))
       ORDER BY COALESCE(s.next_due_at, 0), p.project_id LIMIT ${MAX_PROJECTS_PER_TICK}`;
     for (const { projectId } of due) yield* reviewProject(projectId);
   }).pipe(

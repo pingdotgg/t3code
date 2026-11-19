@@ -74,13 +74,14 @@ import {
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { contextRestartDue, contextRestartRefusal } from "./ContextRestart.ts";
 import {
+  ContextHandoffEvidenceChangedError,
   deliverContextHandoffs,
+  formatHistoricalSummary,
   refreshHistoricalMessageSources,
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
 import {
   formatMessageWithProvenance,
   messageProvenance,
@@ -2338,12 +2339,13 @@ export const layer: Layer.Layer<
             yield* knowledgeDelivery
               .record("prepared")
               .pipe(Effect.tapError(() => delivery.unsent));
+            yield* Effect.tapError(delivery.revalidate, () => knowledgeDelivery.record("failed"));
             const start = compact ? session.compactThread! : session.startTurn;
             // Like history, the side chat context waits for a turn that sends a prompt.
             const sideChatContext =
               sideChatHandoff === undefined || compact || goalCommand
                 ? ""
-                : conversationEvidenceText(sideChatHandoff.summaryText);
+                : formatHistoricalSummary(sideChatHandoff.summaryText);
             const context = [delivery.context, sideChatContext, turnNotes]
               .filter((part) => part !== "")
               .join("\n\n");
@@ -2429,6 +2431,7 @@ export const layer: Layer.Layer<
               { discard: true },
             );
           },
+          Effect.retry({ while: Schema.is(ContextHandoffEvidenceChangedError), times: 1 }),
           Effect.mapError((cause) =>
             cause._tag === "ProviderAdapterTurnStartError"
               ? cause

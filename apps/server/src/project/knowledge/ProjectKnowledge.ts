@@ -249,16 +249,15 @@ export class ProjectKnowledge extends Context.Service<
       readonly afterId?: string | undefined;
     }) => Effect.Effect<string | null, ProjectKnowledgeError>;
     /**
-     * Saves an automatically learned fact through the normal create path with the blind check's
-     * verdict; recall skips it unless that is standing. An exact duplicate adds only new validated
-     * citations and keeps the existing fact's verdict; lexical similarities never replace a fact.
+     * Saves standing automatic facts and discards other verdicts. An exact duplicate adds only new
+     * validated citations and keeps the existing fact's verdict; similarities never replace a fact.
      */
     readonly saveAutomatic: (
       input: Extract<ProjectKnowledgeMutation, { readonly action: "create" }>,
       actor: Extract<KnowledgeOrigin, { readonly kind: "assisted" }>,
       verdict: ProjectFactVerdict,
     ) => Effect.Effect<
-      { readonly outcome: "saved" | "duplicate" | "existing" },
+      { readonly outcome: "saved" | "duplicate" | "existing" | "discarded" },
       ProjectKnowledgeError
     >;
     readonly hasAssistedRun: (
@@ -812,11 +811,11 @@ const make = Effect.gen(function* () {
                 });
               fact = { ...existing, revision: existing.revision + 1, updatedAt: now };
               // A person's edit is the owner's way back to recall; an agent's edit keeps the verdict.
-              const clearsCheck =
+              const clearsAutomaticVerdict =
                 input.action === "edit" &&
                 actor.kind === "user" &&
                 input.content !== existing.content &&
-                existing.verdict?.by === "check";
+                (existing.verdict?.by === "check" || existing.verdict?.by === "agent");
               switch (input.action) {
                 case "restore": {
                   if (existing.supersededBy != null) {
@@ -852,7 +851,9 @@ const make = Effect.gen(function* () {
                   const { verdict, ...rest } = fact;
                   // An owner's restoration approves this content, not a later agent rewrite.
                   const keepsVerdict =
-                    verdict && !clearsCheck && (actor.kind === "user" || verdict.by !== "person");
+                    verdict &&
+                    !clearsAutomaticVerdict &&
+                    (actor.kind === "user" || verdict.by !== "person");
                   fact = {
                     ...rest,
                     ...(keepsVerdict ? { verdict } : {}),
@@ -1000,6 +1001,7 @@ const make = Effect.gen(function* () {
       );
       const byId = new Map(active.map((fact) => [String(fact.id), fact]));
       const now = DateTime.formatIso(yield* DateTime.now);
+      const removed: Array<ProjectFactId> = [];
       let skipped = 0;
       for (const decision of changing) {
         const fact = byId.get(decision.factId)!;
@@ -1021,6 +1023,12 @@ const make = Effect.gen(function* () {
           ...fact,
           revision: fact.revision + 1,
           updatedAt: now,
+          status: "forgotten",
+          content: null,
+          entities: [],
+          tags: [],
+          sources: [],
+          forgottenAt: now,
           ...(decision.action === "set_aside"
             ? { verdict: { value: decision.verdict, by: "agent" as const, at: now } }
             : { supersededBy: replacement!.id }),
@@ -1048,6 +1056,12 @@ const make = Effect.gen(function* () {
           reason: decision.reason.trim(),
           reviewedFactIds: input.facts.map((snapshot) => snapshot.id),
         });
+        removed.push(fact.id);
+      }
+      // A later decision in this batch can quote an earlier removed fact.
+      for (const factId of removed) {
+        yield* store.eraseHistory(input.projectId, factId);
+        yield* store.scrubDeliveries(input.projectId, factId);
       }
       return { changed: changing.length - skipped, skipped };
     },
@@ -1873,6 +1887,7 @@ const make = Effect.gen(function* () {
   const saveAutomatic: ProjectKnowledge["Service"]["saveAutomatic"] = Effect.fn(
     "ProjectKnowledge.saveAutomatic",
   )(function* (input, actor, verdict) {
+    if (verdict !== "standing") return { outcome: "discarded" as const };
     return yield* sql
       .withTransaction(
         Effect.gen(function* () {

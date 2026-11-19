@@ -84,9 +84,12 @@ const harnessHash = hash(
   ),
 );
 const settingsHash = hash({ settings, harnessHash });
-const sourcePaths = ["GroupConversation.ts", "GroupPrompt.ts", "ContextHandoffService.ts"].map(
-  (path) => `../../apps/server/src/orchestration-v2/${path}`,
-);
+const sourcePaths = [
+  "GroupConversation.ts",
+  "GroupPrompt.ts",
+  "ContextHandoffService.ts",
+  "ContextHandoffDelivery.ts",
+].map((path) => `../../apps/server/src/orchestration-v2/${path}`);
 sourcePaths.push(
   "../../packages/provider-core/src/server/handoffBudget.ts",
   "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts",

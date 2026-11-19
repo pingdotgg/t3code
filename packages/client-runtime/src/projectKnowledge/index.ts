@@ -237,10 +237,7 @@ export function memoryCurationRunLabel(
 }
 
 export function projectFactHistoryLabel(entry: ProjectFactHistoryEntry): string {
-  if (entry.memoryAction === "curated")
-    return entry.relatedFactId === null
-      ? "Set aside by the memory curator"
-      : "Superseded by the memory curator";
+  if (entry.memoryAction === "curated") return "Removed automatically";
   if (entry.memoryAction === "restored") return "Restored to recall";
   switch (entry.event) {
     case "baseline":
@@ -252,7 +249,7 @@ export function projectFactHistoryLabel(entry: ProjectFactHistoryEntry): string 
     case "confirmed":
       return "Confirmed";
     case "forgotten":
-      return "Forgotten";
+      return entry.actor.kind === "curator" ? "Removed automatically" : "Forgotten";
     case "feedback":
       return entry.helpful === false ? "Marked unhelpful" : "Marked helpful";
     case "superseded":

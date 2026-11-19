@@ -335,7 +335,7 @@ it.effect("saves a settled run's cited facts exactly once, recallable without re
   }).pipe(Effect.provide(makeLayer(model.generate)));
 });
 
-it.effect("stores what the blind check set aside without making it recallable", () => {
+it.effect("discards task-only proposals without saving a review queue", () => {
   const scopeLimit = {
     kind: "constraint" as const,
     content: "Keep this change limited to the API handlers.",
@@ -365,16 +365,10 @@ it.effect("stores what the blind check set aside without making it recallable", 
       saved.map((fact) => [fact.content, fact.verdict?.value, fact.verdict?.by]),
       [[snakeCase.content, "standing", "check"]],
     );
-    assert.deepEqual(
-      (yield* knowledge.list({ projectId, verdict: "set_aside" })).facts.map((fact) => [
-        fact.content,
-        fact.verdict?.value,
-        fact.verdict?.by,
-      ]),
-      [[scopeLimit.content, "task", "check"]],
-    );
+    assert.deepEqual((yield* knowledge.list({ projectId, verdict: "set_aside" })).facts, []);
+    assert.deepEqual((yield* knowledge.list({ projectId, status: "forgotten" })).facts, []);
     const lastRun = (yield* knowledge.status({ projectId })).assistedLearning?.lastRun;
-    assert.deepEqual([lastRun?.saved, lastRun?.reason], [1, "1 set aside: 1 task note."]);
+    assert.deepEqual([lastRun?.saved, lastRun?.reason], [1, "1 discarded: 1 task note."]);
   }).pipe(Effect.provide(makeLayer(model.generate, {}, check)));
 });
 
@@ -1174,16 +1168,9 @@ it.effect(
       const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
       const { facts } = yield* knowledge.list({ projectId, status: "saved" });
       assert.equal(facts.length, 1);
-      const { facts: setAside } = yield* knowledge.list({
-        projectId,
-        status: "saved",
-        verdict: "set_aside",
-      });
-      assert.equal(setAside.length, 1);
-      const observation = setAside[0]!;
-      assert.equal(observation.content, `Unverified agent report: ${incident.content}`);
-      assert.equal(observation.kind, "note");
-      assert.equal(observation.verdict?.value, "task");
+      // Even a standing blind verdict cannot make unsupported agent claims durable memories.
+      assert.deepEqual((yield* knowledge.list({ projectId, verdict: "set_aside" })).facts, []);
+      assert.deepEqual((yield* knowledge.list({ projectId, status: "forgotten" })).facts, []);
       assert.equal(
         facts.find((fact) => fact.content === snakeCase.content)?.verdict?.value,
         "standing",

@@ -184,8 +184,8 @@ it.effect("curates only the selected project's automatic facts and protects user
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
     assert.equal(
       (yield* knowledge.readFact({ projectId: alpha, factId: ProjectFactId.make("alpha-auto") }))
-        .fact.verdict?.value,
-      "task",
+        .fact.status,
+      "forgotten",
     );
     assert.equal(
       (yield* knowledge.readFact({ projectId: alpha, factId: ProjectFactId.make("alpha-user") }))
@@ -200,6 +200,124 @@ it.effect("curates only the selected project's automatic facts and protects user
     assert.equal((yield* readState(alpha)).changed, 1);
   }).pipe(Effect.provide(makeLayer(generate)));
 });
+
+it.effect("removes prior automatic retirements in bounded pages without a provider", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("a-legacy");
+    const disabled = ProjectId.make("b-disabled");
+    const archived = ProjectId.make("c-archived");
+    yield* createProject(projectId);
+    yield* createProject(disabled);
+    yield* createProject(archived);
+    for (let index = 0; index < 18; index++)
+      yield* createFact(
+        projectId,
+        `legacy-${String(index).padStart(2, "0")}`,
+        `Task note ${index}.`,
+      );
+    yield* createFact(projectId, "legacy-user", "The owner maintains this memory.", true);
+    yield* createFact(projectId, "legacy-person", "The owner explicitly classified this memory.");
+    yield* createFact(disabled, "disabled-legacy", "A task note in a disabled project.");
+    yield* createFact(archived, "archived-legacy", "A task note in an archived project.");
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE project_knowledge_facts SET verdict = 'task', verdict_by = 'check',
+      verdict_at = '1970-01-01T00:00:00.000Z'`;
+    yield* sql`UPDATE project_knowledge_facts SET verdict = 'code', verdict_by = 'agent'
+      WHERE id = 'legacy-17'`;
+    yield* sql`UPDATE project_knowledge_facts SET verdict_by = 'person' WHERE id = 'legacy-person'`;
+    const replacement = yield* createFact(
+      projectId,
+      "legacy-replacement",
+      "A retained owner rule.",
+      true,
+    );
+    for (const [id, event] of [
+      ["legacy-18", "curated"],
+      ["legacy-restored", "curated"],
+      ["legacy-reviewed", "curated"],
+      ["legacy-manual", "superseded"],
+    ] as const) {
+      yield* createFact(projectId, id, `Earlier policy ${id}.`);
+      yield* sql`UPDATE project_knowledge_facts SET superseded_by_id = ${replacement.id}, revision = 2 WHERE id = ${id}`;
+      yield* sql`INSERT INTO project_knowledge_fact_history (
+        project_id, fact_id, revision, event, actor_json, sources_json, trust_after, related_fact_id, created_at
+      ) VALUES (${projectId}, ${id}, 2, ${event}, ${event === "curated" ? '{"kind":"curator"}' : '{"kind":"user"}'}, '[]', 0.5, ${replacement.id}, '1970-01-01T00:00:00.000Z')`;
+    }
+    yield* sql`UPDATE projection_projects SET archived_at = '1970-01-01T00:00:00.000Z'
+      WHERE project_id = ${archived}`;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [disabled]: { enableMemoryCuration: false } },
+    });
+    const curator = yield* MemoryCuration.MemoryCuration;
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const restored = yield* knowledge.mutate(
+      {
+        action: "restore",
+        commandId: CommandId.make("restore-legacy-owner"),
+        projectId,
+        factId: ProjectFactId.make("legacy-restored"),
+        expectedRevision: 2,
+      },
+      { kind: "user" },
+    );
+    yield* knowledge.mutate(
+      {
+        action: "edit",
+        commandId: CommandId.make("edit-restored-legacy-owner"),
+        projectId,
+        factId: restored.id,
+        expectedRevision: restored.revision,
+        content: "The owner revised and retained this policy.",
+        kind: "decision",
+        entities: [],
+        tags: [],
+        sources: [{ kind: "user" }],
+      },
+      { kind: "user" },
+    );
+    yield* knowledge.mutate(
+      {
+        action: "feedback",
+        commandId: CommandId.make("review-legacy-owner"),
+        projectId,
+        factId: ProjectFactId.make("legacy-reviewed"),
+        expectedRevision: 2,
+        helpful: true,
+      },
+      { kind: "user" },
+    );
+    yield* curator.drainDue;
+    assert.equal((yield* knowledge.list({ projectId, status: "forgotten" })).facts.length, 16);
+    assert.equal((yield* readState(projectId)).changed, 16);
+    assert.equal((yield* readState(disabled)).reason, "disabled");
+    yield* curator.drainDue;
+    assert.equal((yield* knowledge.list({ projectId, status: "forgotten" })).facts.length, 16);
+    yield* TestClock.adjust("15 minutes");
+    yield* curator.drainDue;
+    const forgotten = (yield* knowledge.list({ projectId, status: "forgotten" })).facts;
+    assert.equal(forgotten.length, 19);
+    assert.equal((yield* readState(projectId)).changed, 3);
+    assert.isTrue(forgotten.every((fact) => fact.content === null && fact.sources.length === 0));
+    for (const [owner, factId] of [
+      [projectId, "legacy-user"],
+      [projectId, "legacy-person"],
+      [projectId, "legacy-manual"],
+      [projectId, "legacy-restored"],
+      [projectId, "legacy-reviewed"],
+      [projectId, "legacy-replacement"],
+      [disabled, "disabled-legacy"],
+      [archived, "archived-legacy"],
+    ] as const)
+      assert.equal(
+        (yield* knowledge.readFact({ projectId: owner, factId: ProjectFactId.make(factId) })).fact
+          .status,
+        "saved",
+      );
+  }).pipe(
+    Effect.provide(makeLayer(() => Effect.die("Prior classifications need no model call"), false)),
+  ),
+);
 
 it.effect(
   "bounds each tick, resumes fair pages after restart, and pauses after a complete sweep",
