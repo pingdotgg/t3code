@@ -7,6 +7,12 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../test/render";
 import ProjectScriptsControl, { type ProjectScriptActionResult } from "./ProjectScriptsControl";
 
+function assertNoPreviousSave(
+  result: AsyncResult.Failure<unknown, unknown>,
+): asserts result is AsyncResult.Failure<void, unknown> {
+  expect(result.previousSuccess._tag).toBe("None");
+}
+
 it.each(["edit", "dismiss", "older import fails first", "newer import fails first"] as const)(
   "keeps a failed import from replacing a newer action after %s",
   async (nextAction) => {
@@ -39,9 +45,8 @@ it.each(["edit", "dismiss", "older import fails first", "newer import fails firs
     const actions = screen.getByRole("button", { name: "Script actions" });
     const dialog = page.getByRole("dialog");
     const name = dialog.getByRole("textbox", { name: "Name" });
-    const failure: ProjectScriptActionResult = AsyncResult.failure(
-      Cause.fail(new Error("Settings write failed")),
-    );
+    const failure = AsyncResult.failure(Cause.fail(new Error("Settings write failed")));
+    assertNoPreviousSave(failure);
 
     await actions.click();
     await page.getByRole("menuitem", { name: /Shared build/ }).click();
