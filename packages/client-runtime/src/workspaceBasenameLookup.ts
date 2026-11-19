@@ -122,7 +122,7 @@ function pickStrippedWorkspaceMatch(
 
 /**
  * The absolute path of the one file a chat link names across other project roots, or null when
- * roots name different files. Agents cite paths relative to whichever repo they worked in.
+ * no root has it or roots name different files. Agents cite paths relative to their repo.
  * Nested project roots list the same file more than once, which still names one file.
  */
 export function pickProjectLinkMatch(
