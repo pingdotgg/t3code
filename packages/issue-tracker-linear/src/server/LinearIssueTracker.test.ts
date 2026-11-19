@@ -77,6 +77,7 @@ function fakeLinear(
 ) {
   const requests: Array<{
     readonly authorization: string | undefined;
+    readonly fileUrlsExpireIn: string | undefined;
     readonly operation: string;
   }> = [];
   const http = Layer.succeed(
@@ -88,7 +89,11 @@ function fakeLinear(
           body._tag === "Uint8Array" ? new TextDecoder().decode(body.body) : String(body._tag);
         const parsed = JSON.parse(text) as { query: string; variables: Record<string, unknown> };
         const operation = /^(?:query|mutation) (\w+)/.exec(parsed.query)?.[1] ?? "?";
-        requests.push({ authorization: request.headers.authorization, operation });
+        requests.push({
+          authorization: request.headers.authorization,
+          fileUrlsExpireIn: request.headers["public-file-urls-expire-in"],
+          operation,
+        });
         const answer = answers[operation];
         const answered = answer?.(parsed.variables);
         const response =
@@ -224,6 +229,8 @@ describe("LinearIssueTracker", () => {
       });
       // The stored key goes in as-is, not as a bearer token.
       expect(requests.map((request) => request.authorization)).toEqual(["lin_api_stored"]);
+      // Uploads are private: the browser can only load images Linear signed for this read.
+      expect(requests.map((request) => request.fileUrlsExpireIn !== undefined)).toEqual([true]);
 
       // Linear's reset header is an absolute time in epoch milliseconds.
       const resetAt = 4_102_444_800_000;
