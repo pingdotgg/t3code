@@ -73,7 +73,9 @@ class T3TunnelWebView(context: Context, appContext: AppContext) : ExpoView(conte
         request: WebResourceRequest,
         error: WebResourceError
       ) {
-        if (request.isForMainFrame) fail(error.description.toString(), request.url.toString())
+        if (request.isForMainFrame) {
+          fail(error.description.toString(), request.url.toString(), listener?.lastFailure)
+        }
       }
     }
     webView.webChromeClient = object : WebChromeClient() {
@@ -85,8 +87,15 @@ class T3TunnelWebView(context: Context, appContext: AppContext) : ExpoView(conte
     pendingUrl?.let { loadUrl(it) }
   }
 
-  private fun fail(description: String, url: String = "") {
-    onLoadError(mapOf("code" to -1, "description" to description, "url" to url))
+  private fun fail(description: String, url: String = "", failure: TunnelFailure? = null) {
+    onLoadError(
+      mapOf(
+        "code" to -1,
+        "description" to description,
+        "url" to url,
+        "cause" to (failure?.cause ?: "")
+      )
+    )
   }
 
   /** Reports the page's scroll position in steps, enough for the bar to follow its direction. */
