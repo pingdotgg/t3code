@@ -1002,18 +1002,14 @@ function query(params: ReadonlyArray<readonly [string, string]>): string {
   return params.map(([key, value]) => `${key}=${encodeURIComponent(value)}`).join("&");
 }
 
-/** GraphQL `labels(first: 100)` must not drop REST names past that page. */
-function enrichLabels(
+/** REST names every label; GraphQL's `labels(first: 100)` only colours the ones on its page. */
+function colourLabels(
   rest: ReadonlyArray<PullRequestLabel>,
   graphql: ReadonlyArray<PullRequestLabel> | null,
 ): ReadonlyArray<PullRequestLabel> {
   if (graphql === null) return rest;
   const byName = new Map(graphql.map((label) => [label.name, label]));
-  const named = new Set(rest.map((label) => label.name));
-  return [
-    ...rest.map((label) => byName.get(label.name) ?? label),
-    ...graphql.filter((label) => !named.has(label.name)),
-  ];
+  return rest.map((label) => byName.get(label.name) ?? label);
 }
 
 function actionArgs(
@@ -2349,7 +2345,7 @@ export const make = Effect.gen(function* () {
           [mergeRequestDetail(input), labelPermission(input)],
           { concurrency: 2 },
         );
-        const labeled = { ...read, labels: enrichLabels(read.labels, extras.labels) };
+        const labeled = { ...read, labels: colourLabels(read.labels, extras.labels) };
         const viewerCanEditLabels = extras.viewerCanEditLabels;
         // Only a closed or merged merge request offers its branch for deletion, and only an open
         // fork's has maintainer edits to change, so each extra read is skipped elsewhere.

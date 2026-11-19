@@ -107,6 +107,7 @@ const RawTemplateSchema = Schema.Struct({ content: Schema.optional(Schema.NullOr
 
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeIssue = decodeJsonResult(RawIssueSchema);
+const decodeIssueList = decodeJsonResult(Schema.Array(RawIssueSchema));
 const decodeIssueEntry = Schema.decodeUnknownExit(RawIssueSchema);
 const decodeNoteEntry = Schema.decodeUnknownExit(RawNoteSchema);
 const decodeLabelEventEntry = Schema.decodeUnknownExit(RawLabelEventSchema);
@@ -190,30 +191,13 @@ interface GitLabIssueDetail extends TrackerIssueSummary {
   readonly body: string;
 }
 
-function toDetail(issue: typeof RawIssueSchema.Type): GitLabIssueDetail {
-  return {
-    ...toSummary(issue),
-    body: issue.description ?? "",
-  };
-}
-
-function decodeIssueDetailJson(raw: string): Result.Result<GitLabIssueDetail, DecodeFailure> {
-  return Result.map(decodeIssue(raw), toDetail);
-}
-
-/** GitLab's GET /issues/:iid ignores `with_labels_details`; the list serializer is the one that forwards it. */
+/** GitLab's GET /issues/:iid ignores `with_labels_details`, so the detail is read as an `iids[]` list. */
 export function decodeIssueDetailListJson(
   raw: string,
 ): Result.Result<GitLabIssueDetail | null, DecodeFailure> {
-  const decoded = decodeUnknownList(raw);
-  if (!Result.isSuccess(decoded)) {
-    return Result.fail(decoded.failure);
-  }
-  const first = decoded.success[0];
-  if (first === undefined) {
-    return Result.succeed(null);
-  }
-  return decodeIssueDetailJson(JSON.stringify(first));
+  return Result.map(decodeIssueList(raw), ([issue]) =>
+    issue === undefined ? null : { ...toSummary(issue), body: issue.description ?? "" },
+  );
 }
 
 /** The ids of the users a `/users?username=` lookup answered with: one, or none. */

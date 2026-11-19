@@ -1972,8 +1972,10 @@ export function decodeMergeRequestStatsJson(
   return Result.succeed(stats);
 }
 
-/** GitLab lets whoever may change a merge request's metadata set its labels. */
-/** GitLab's GET /merge_requests/:iid ignores `with_labels_details`; this query is the supported detail colour read. */
+/**
+ * GitLab lets whoever may change a merge request's metadata set its labels. The labels ride along
+ * because GET /merge_requests/:iid ignores `with_labels_details` and so carries no colours.
+ */
 export const LABEL_PERMISSION_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
   project(fullPath: $fullPath) {
     mergeRequest(iid: $iid) {
