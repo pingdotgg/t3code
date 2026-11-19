@@ -343,6 +343,40 @@ export const BrowserCustomSearchUrl = Schema.String.check(
   Schema.isMaxLength(BROWSER_CUSTOM_SEARCH_URL_MAX_LENGTH),
 );
 
+/**
+ * The origin external services call for webhooks, such as a Tailscale Funnel or reverse proxy
+ * in front of this server: an absolute HTTPS origin, or an HTTP loopback origin.
+ */
+export function normalizeWebhookPublicBaseUrl(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    const isLoopbackHttp =
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]");
+    if (
+      (url.protocol !== "https:" && !isLoopbackHttp) ||
+      url.pathname !== "/" ||
+      url.search !== "" ||
+      url.hash !== "" ||
+      url.username !== "" ||
+      url.password !== ""
+    ) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+export const WEBHOOK_PUBLIC_BASE_URL_INVALID =
+  "Enter an HTTPS origin without a path, such as https://example.com:8443.";
+const WebhookPublicBaseUrlPatch = TrimmedString.check(
+  Schema.makeFilter(
+    (value: string) => value === "" || normalizeWebhookPublicBaseUrl(value) !== null,
+    { message: WEBHOOK_PUBLIC_BASE_URL_INVALID },
+  ),
+);
+
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
@@ -1387,6 +1421,8 @@ export const ServerSettings = Schema.Struct({
   ),
 
   worktreesDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  /** Public origin shown in webhook URLs when T3 Connect gives none. Lenient here; invalid values are ignored. */
+  webhookPublicBaseUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** macOS only, Labs beta: clone new worktrees from a cached checkout instead of writing every file. */
   fastWorktreeCheckout: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Server-maintained history keeps old worktrees eligible for cleanup and review diffs. */
@@ -1876,6 +1912,7 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
+  webhookPublicBaseUrl: Schema.optionalKey(WebhookPublicBaseUrlPatch),
   fastWorktreeCheckout: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
