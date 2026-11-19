@@ -321,7 +321,14 @@ const control = [
   /** Gives the job to a second agent when the first one fails, and says how it went. */
   workflow(
     "fallback",
-    { version: 1, payload: Schema.Struct({ project: Schema.String }), returns: Schema.String },
+    {
+      version: 1,
+      payload: Schema.Struct({
+        project: Schema.String,
+        timeout: Schema.optional(Schema.Literal("1 minute")),
+      }),
+      returns: Schema.String,
+    },
     (payload) =>
       Effect.gen(function* () {
         const output = Schema.Struct({ head: Schema.String });
@@ -329,6 +336,7 @@ const control = [
           brief: "Fix it.",
           project: payload.project,
           output,
+          ...(payload.timeout === undefined ? {} : { timeout: payload.timeout }),
         });
         if (first.outcome === "done") return first.value.head;
         const second = yield* agent.try("second", { brief: "Fix it.", project: "p1", output });
@@ -1587,6 +1595,18 @@ it.effect("a workflow can take an agent's failure as an answer and go on", () =>
           found.result,
           "def after: the agent could not be started: No project is registered there.",
         );
+
+        // One past its time whose turn cannot be stopped says so, for the workflow to weigh.
+        agents.refuseStops(3);
+        const stuck = yield* workflows.start(
+          "fallback",
+          { project: "p1", timeout: "1 minute" },
+          { idempotencyKey: "s" },
+        );
+        yield* agents.started(stuck.runId, "second/0");
+        yield* agents.end(stuck.runId, "second/0", { output: { head: "ghi" } });
+        const weighed = yield* workflows.waitFor(stuck.runId, status("completed", "paused"));
+        assert.include(weighed.result as string, "its turn could not be stopped");
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

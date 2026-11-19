@@ -582,8 +582,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         }
         // One signal per wait: a second one for the same key is for the next run that waits on it.
         const woke = { expired: false, value };
-        if (yield* store.waitSignalled(wait.run_id, wait.name, woke)) {
-          yield* store.signalDelivered(options.id);
+        if (yield* store.waitSignalled(wait.run_id, wait.name, woke, options.id)) {
           yield* wake(wait, woke);
           return "delivered" as const;
         }
