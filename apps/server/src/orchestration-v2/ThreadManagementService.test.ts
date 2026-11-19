@@ -697,6 +697,8 @@ it.effect.each([
   { status: "completed" as const, followUp: "steered-notification", settles: false },
   // Send now cancels the queued run; its message joins the run that asked to settle.
   { status: "completed" as const, followUp: "promoted-to-steer", settles: true },
+  // A delegated-completion wake cancelled unstarted because the turn already took the result.
+  { status: "completed" as const, followUp: "cancelled-delegated", settles: true },
 ])("settleAfterRun handles $status with $followUp follow-up", ({ status, followUp, settles }) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:settle-after-run");
@@ -747,7 +749,7 @@ it.effect.each([
                       runId: followUp === "promoted-to-steer" ? runId : followUpId,
                       role: "user" as const,
                       ...(followUp.endsWith("notification") ? { notification: {} } : {}),
-                      ...(followUp === "delegated" ? { delegatedCompletion: {} } : {}),
+                      ...(followUp.endsWith("delegated") ? { delegatedCompletion: {} } : {}),
                     },
                     { id: MessageId.make("reply"), runId: followUpId, role: "assistant" as const },
                     ...(followUp === "steered-notification"
@@ -811,7 +813,7 @@ it.effect.each([
           ? "failed"
           : followUp === "held-notification"
             ? "queued"
-            : followUp === "promoted-to-steer"
+            : followUp === "promoted-to-steer" || followUp === "cancelled-delegated"
               ? "cancelled"
               : "completed";
       yield* Queue.offer(events, {
