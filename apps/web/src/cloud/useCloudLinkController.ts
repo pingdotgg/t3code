@@ -16,7 +16,11 @@ import { m } from "../i18n/messages";
 import { stackedThreadToast } from "../components/ui/toastHelpers";
 import { relayFailureReason } from "./relayFailureReason";
 import { relayEnvironmentDiscovery } from "../state/relay";
-import { readEnvironmentScope } from "../state/session";
+import {
+  readEnvironmentCanConfigureRelay,
+  readEnvironmentScope,
+  useEnvironmentCanConfigureRelay,
+} from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useCloudAuth } from "./cloudAuth";
 import { isCloudEnvironmentLinkError } from "./linkEnvironment";
@@ -111,6 +115,15 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
   const publishAgentActivity = cloudLinkState.data?.publishAgentActivity ?? false;
   const holdWebhooksWhileOffline = cloudLinkState.data?.holdWebhooksWhileOffline ?? false;
   const linked = !linkRevoked && (cloudLinkState.data?.linked ?? false);
+  const canConfigureRelay = useEnvironmentCanConfigureRelay(environmentId);
+  const replacesLink = (linkState: NonNullable<typeof linkData>, desired: CloudLinkDesiredState) =>
+    (desired.managedTunnel || desired.publish) &&
+    (!linkState.linked ||
+      linkState.linkRevoked === true ||
+      (managedTunnels && isManagedTunnelActive(linkState, relayProviderKind)) !==
+        (desired.managedTunnel && managedTunnels));
+  const needsRelayConfiguration = (desired: CloudLinkDesiredState) =>
+    !canConfigureRelay && linkData !== null && replacesLink(linkData, desired);
 
   const reconcileCloudState = async (desired: CloudLinkDesiredState): Promise<boolean> => {
     setOperationError(null);
@@ -189,14 +202,20 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         reportUpdateFailure(new Error(m(msg("Sign in to T3 Connect before enabling this."))));
         return false;
       }
-      const currentManagedTunnel =
-        managedTunnels && isManagedTunnelActive(currentLinkState, relayProviderKind);
       const desiredManagedTunnel = desired.managedTunnel && managedTunnels;
-      if (
-        !currentLinkState.linked ||
-        currentLinkState.linkRevoked === true ||
-        currentManagedTunnel !== desiredManagedTunnel
-      ) {
+      if (replacesLink(currentLinkState, desired)) {
+        if (!readEnvironmentCanConfigureRelay(environmentId)) {
+          reportUpdateFailure(
+            new Error(
+              m(
+                msg(
+                  "This connection needs the relay configuration permission to configure T3 Connect.",
+                ),
+              ),
+            ),
+          );
+          return false;
+        }
         const linkResult = await linkEnvironment({
           target,
           clerkToken,
@@ -256,6 +275,7 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
     holdWebhooksWhileOffline,
     operationError,
     tunnelLimit,
+    needsRelayConfiguration,
     reconcileCloudState,
   };
 }

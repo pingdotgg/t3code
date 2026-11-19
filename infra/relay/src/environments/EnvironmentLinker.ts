@@ -16,10 +16,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as SqlError from "effect/sql/SqlError";
 
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import { validateManualEndpoint } from "./EnvironmentConnector.ts";
+import * as RelayDb from "../db.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
@@ -141,6 +143,7 @@ function isLoopbackManagedTunnelOrigin(
 
 const make = Effect.gen(function* () {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
+  const transactions = yield* RelayDb.RelayTransactions;
   const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
   const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
   const proofReplay = yield* DpopProofs.DpopProofReplay;
@@ -339,11 +342,28 @@ const make = Effect.gen(function* () {
           stage: "validate_endpoint",
         });
       }
-      yield* links.upsert({ ...input, proof: verified, endpoint });
-      const environmentCredential = yield* credentials.create({
-        environmentId: verified.environmentId,
-        environmentPublicKey: verified.environmentPublicKey,
-      });
+      const environmentCredential = yield* transactions
+        .withTransaction(
+          links.upsert({ ...input, proof: verified, endpoint }).pipe(
+            Effect.andThen(
+              credentials.create({
+                environmentId: verified.environmentId,
+                environmentPublicKey: verified.environmentPublicKey,
+              }),
+            ),
+          ),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            SqlError.isSqlError(cause)
+              ? new EnvironmentLinks.EnvironmentLinkUpsertPersistenceError({
+                  userId: input.userId,
+                  environmentId: verified.environmentId,
+                  cause,
+                })
+              : cause,
+          ),
+        );
       return {
         environmentId: verified.environmentId,
         endpoint,
